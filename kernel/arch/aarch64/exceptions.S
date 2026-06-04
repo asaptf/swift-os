@@ -116,11 +116,25 @@ sync_lower_el_aarch64_entry:
     save_frame
     mov     x0, sp
     bl      sync_lower_el_aarch64_handler
-    restore_frame
+    b       trap_return
 
 // IRQ (from EL0 or EL1).
 .global irq_entry
 irq_entry:
     save_frame
     bl      irq_handler
+    b       trap_return
+
+// Shared trap return: restore the frame at SP and eret. fork() crafts a child
+// kernel context whose first scheduling lands here with SP pointing at a copy
+// of the parent's frame (x0=0), so the child "returns from the syscall" into EL0.
+.global trap_return
+trap_return:
     restore_frame
+
+// uintptr_t trap_return_addr(void)
+.global trap_return_addr
+trap_return_addr:
+    adrp    x0, trap_return
+    add     x0, x0, :lo12:trap_return
+    ret
