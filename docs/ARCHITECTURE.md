@@ -94,6 +94,58 @@ Design rules:
 - record boot progress with cheap timestamped tracepoints once the timer exists;
 - keep boot tests strict enough to catch accidental slowdowns.
 
+## Initialization model
+
+Initialization is staged and deterministic. The early boot path should be a short sequence of kernel-owned
+steps that reaches the first user process quickly, without a large service manager or broad driver probing
+blocking progress.
+
+Bring-up flow:
+
+```
+QEMU -kernel
+  -> arch entry
+  -> early kernel
+  -> memory isolation
+  -> interrupts and timer
+  -> scheduler and process substrate
+  -> VFS/base image/tmpfs
+  -> default cell/session
+  -> first user process
+```
+
+Stage responsibilities:
+
+- **Arch entry.** Enter EL1, set the stack, clear BSS, establish the minimal CPU state, and call the Swift
+  kernel entry point.
+- **Early kernel.** Bring up UART logging, panic output, exception vectors, early heap/runtime hooks, and the
+  physical page allocator.
+- **Memory isolation.** Build translation tables, enable the MMU, install kernel/device mappings, and expose
+  the page map/unmap primitives needed by user processes.
+- **Interrupts and timer.** Initialize the GIC and generic timer, then enable the system tick and preemption
+  hooks.
+- **Scheduler and process substrate.** Create kernel thread/process structures, establish EL0 entry/return,
+  and enable the SVC/syscall path.
+- **VFS/base image/tmpfs.** Mount the read-only base image, mount tmpfs scratch, and prepare the initial
+  namespace.
+- **Default cell/session.** Create the default/global cell and boot session, then grant only the capabilities
+  needed for the first shell or init process.
+- **First user process.** For M8 this may be an auto-login busybox `sh` in the default cell. Later it should be
+  a small `/sbin/init` supervisor.
+
+`/sbin/init` should remain small. It is not a systemd-style orchestration layer and should not become part of
+the boot-critical kernel path. Its long-term responsibilities are:
+
+- start essential userland services after the kernel can already run a user process;
+- supervise restartable driver services;
+- create console/login sessions;
+- reap orphaned processes;
+- report service and boot state through the observability model.
+
+Services that are not required for the first interactive shell or declared boot target should start lazily or
+under supervisor control after boot. Init receives capabilities like any other process; it does not get a
+special all-powerful root identity.
+
 ## Historical ideas worth stealing (record, don't build yet)
 
 swift-os deliberately avoids legacy ABIs and compatibility traps, but old research and workstation/server

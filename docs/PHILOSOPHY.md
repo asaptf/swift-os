@@ -114,6 +114,7 @@ When choosing between designs:
 - choose explicit ownership over implicit sharing;
 - choose measured behavior over assumptions;
 - choose static structure on boot-critical paths;
+- choose staged initialization and lazy services over a large early service manager;
 - choose restartable services over privileged in-kernel code when practical;
 - choose a typed kernel object over an unstructured integer or pointer;
 - choose one well-tested path over multiple partially working paths;
