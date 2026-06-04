@@ -18,6 +18,8 @@
 #define SYS_SIGACTION 9
 #define SYS_KILL      10
 #define SYS_GETPID    11
+#define SYS_SPAWN     12
+#define SYS_WAITPID   13
 
 #ifndef __ASSEMBLER__
 
@@ -59,6 +61,17 @@ static inline long lseek(int fd, long offset, int whence) {
 static inline void _exit(int code) {
     __syscall3(SYS_EXIT, code, 0, 0);
     __builtin_unreachable();
+}
+
+// Launch a program by path with argv (NULL-terminated). Runs synchronously and
+// returns the child's exit status (spawn = fork+exec+wait, since we have no
+// COW fork). Negative on error.
+static inline long spawn(const char *path, char *const argv[]) {
+    return __syscall3(SYS_SPAWN, (long)path, (long)argv, 0);
+}
+
+static inline int getpid(void) {
+    return (int)__syscall3(SYS_GETPID, 0, 0, 0);
 }
 
 #endif // __ASSEMBLER__

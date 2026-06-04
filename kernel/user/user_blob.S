@@ -27,3 +27,10 @@ ttydemo_elf_end:
 argvdemo_elf_start:
 .incbin "build/argvdemo.elf"
 argvdemo_elf_end:
+
+.balign 8
+.global spawndemo_elf_start
+.global spawndemo_elf_end
+spawndemo_elf_start:
+.incbin "build/spawndemo.elf"
+spawndemo_elf_end:

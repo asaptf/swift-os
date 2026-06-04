@@ -128,8 +128,16 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     argv from `sp+8`, and computes envp. `processRunElf` takes packed NUL-separated args; `packArgs`
     builds them in Swift. New `argvdemo` prints its argv (`argv[0]=argvdemo argv[1]=alpha argv[2]=beta`,
     exits argc=3). `boot_test.sh` generalized to assert a list of lines (M6 + M8a argv).
-  - Remaining: (a2-spawn) spawn/execve + waitpid; (b) VFS dirs/stat/getdents/tmpfs; (c) cross-build
-    newlib; (d) cross-build busybox; (e) run `sh`.
+  - **(a2-spawn) Nested process launch — DONE.** Process runs are now a depth stack: `process.swift`
+    tracks per-level return context, child address space, and exit status, and unwinds the innermost
+    level to its launcher on `SYS_exit`/signal, restoring the parent's `TTBR0`. New `spawn(path, argv)`
+    syscall (12) resolves an embedded program (`exec.swift` built-in table) and runs it synchronously
+    (= fork+exec+wait, since we have no COW), returning the child's exit status; `waitpid` (13) is a
+    stub (ECHILD) because spawn is synchronous. Demo: `spawndemo` (EL0) spawns `/bin/argvdemo`
+    (own address space), gets status 2, continues — proving the shell-launches-command model.
+  - Remaining: (b) VFS dirs/stat/getdents/tmpfs; (c) cross-build newlib; (d) cross-build busybox;
+    (e) run `sh`. Note: real busybox `sh` uses fork+execve+waitpid; whether our synchronous spawn
+    suffices or we need an eager-copy fork (no COW) will be decided at step (d).
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed

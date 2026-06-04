@@ -11,6 +11,8 @@ private let sysTcSetAttr: UInt = 8  // tcsetattr(fd, actions, termios*)
 private let sysSigaction: UInt = 9  // sigaction(sig, handler)
 private let sysKill: UInt = 10      // kill(pid, sig)
 private let sysGetpid: UInt = 11    // getpid()
+private let sysSpawn: UInt = 12     // spawn(path, argv) -> child exit status
+private let sysWaitpid: UInt = 13   // waitpid(pid, status*, options)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -55,6 +57,18 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = 0
     } else if number == sysGetpid {
         result = 1
+    } else if number == sysSpawn {
+        // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
+        let (addr, len) = execResolve(frame[0])
+        if addr == 0 {
+            result = -2 // ENOENT
+        } else {
+            let (packed, packedLen, argc) = packUserArgv(frame[1])
+            result = processRunElf(addr, len, packed: packed, packedLen: packedLen, argc: argc)
+        }
+    } else if number == sysWaitpid {
+        // spawn() is synchronous, so there are no outstanding children to reap.
+        result = -10 // ECHILD
     } else {
         result = -38 // ENOSYS
     }

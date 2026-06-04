@@ -168,6 +168,15 @@ private func runArgvDemo() {
     uartPuts("\n")
 }
 
+private func runSpawnDemo() {
+    uartPuts("swift-os M8a: spawn a child from EL0\n")
+    let (p, n, argc) = packArgs(["spawndemo"])
+    let code = processRunElf(spawndemo_elf_addr(), UInt(spawndemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8a OK: spawn parent exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
     let (p, n, argc) = packArgs(["ttydemo"])
@@ -300,6 +309,8 @@ func kernelMain() {
     runProcessDemo()
 
     runArgvDemo()
+
+    runSpawnDemo()
 
     runTtyDemo()
 

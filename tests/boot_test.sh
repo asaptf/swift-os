@@ -18,7 +18,9 @@ TIMEOUT="${TIMEOUT:-10}"
 EXPECTS="${EXPECTS:-hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha
-M8a OK: argv delivered, argc=3}"
+M8a OK: argv delivered, argc=3
+spawndemo: child exit status 2
+M8a OK: spawn parent exited, code 0}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

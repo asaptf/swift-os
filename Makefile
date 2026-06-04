@@ -44,6 +44,7 @@ SWIFT_SRCS := \
 	kernel/signal/signal.swift \
 	kernel/user/user_process.swift \
 	kernel/user/process.swift \
+	kernel/user/exec.swift \
 	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift
@@ -93,6 +94,7 @@ KERNEL_BIN := $(BUILD)/kernel.bin
 USER_HELLO_ELF := $(BUILD)/hello.elf
 USER_TTYDEMO_ELF := $(BUILD)/ttydemo.elf
 USER_ARGVDEMO_ELF := $(BUILD)/argvdemo.elf
+USER_SPAWNDEMO_ELF := $(BUILD)/spawndemo.elf
 
 .PHONY: build run debug gdb test clean tools-check
 
@@ -150,6 +152,9 @@ $(BUILD)/user_ttydemo.o: userland/ttydemo.c userland/lib/syscall.h Makefile | $(
 $(BUILD)/user_argvdemo.o: userland/argvdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/argvdemo.c -o $@
 
+$(BUILD)/user_spawndemo.o: userland/spawndemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/spawndemo.c -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -159,8 +164,11 @@ $(USER_TTYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_tty
 $(USER_ARGVDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_argvdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_argvdemo.o -o $@
 
+$(USER_SPAWNDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_spawndemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_spawndemo.o -o $@
+
 # Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) Makefile | $(BUILD)/.dir
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
