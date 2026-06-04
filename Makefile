@@ -61,6 +61,7 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic -kernel $(BUILD)/kernel
 BOOT_OBJ   := $(BUILD)/boot.o
 EXC_OBJ    := $(BUILD)/exceptions.o
 HEAP_OBJ   := $(BUILD)/heap.o
+VM_OBJ     := $(BUILD)/vm.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
@@ -84,12 +85,15 @@ $(EXC_OBJ): $(ARCH_DIR)/exceptions.S Makefile | $(BUILD)/.dir
 $(HEAP_OBJ): kernel/runtime/heap.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
+$(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(SWIFT_FLAGS) -c $(SWIFT_SRCS) -o $@
 
 # Link the freestanding image.
-$(KERNEL_ELF): $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(KERNEL_OBJ) $(LINKER)
-	$(LDBIN) $(LD_FLAGS) $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(KERNEL_OBJ) -o $@
+$(KERNEL_ELF): $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(VM_OBJ) $(KERNEL_OBJ) $(LINKER)
+	$(LDBIN) $(LD_FLAGS) $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(VM_OBJ) $(KERNEL_OBJ) -o $@
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 

@@ -12,7 +12,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 QEMU="${QEMU:-qemu-system-aarch64}"
-EXPECT="${EXPECT:-tick 3}"
+EXPECT="${EXPECT:-M3 OK: MMU enabled and page map/unmap works}"
+EXPECT2="${EXPECT2:-tick 3}"
 TIMEOUT="${TIMEOUT:-10}"
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -29,9 +30,15 @@ trap 'rm -f "$LOG"' EXIT
 QEMU_PID=$!
 
 found=0
+found2=0
 for _ in $(seq 1 "$((TIMEOUT * 10))"); do
     if grep -qF "$EXPECT" "$LOG" 2>/dev/null; then
         found=1
+    fi
+    if [[ -z "$EXPECT2" ]] || grep -qF "$EXPECT2" "$LOG" 2>/dev/null; then
+        found2=1
+    fi
+    if [[ "$found" -eq 1 && "$found2" -eq 1 ]]; then
         break
     fi
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
@@ -43,12 +50,18 @@ done
 kill "$QEMU_PID" 2>/dev/null
 wait "$QEMU_PID" 2>/dev/null
 
-if [[ "$found" -eq 1 ]]; then
+if [[ "$found" -eq 1 && "$found2" -eq 1 ]]; then
     echo "PASS: serial console produced: \"$EXPECT\""
+    if [[ -n "$EXPECT2" ]]; then
+        echo "PASS: serial console produced: \"$EXPECT2\""
+    fi
     exit 0
 fi
 
-echo "FAIL: \"$EXPECT\" not seen within ${TIMEOUT}s. Serial log was:" >&2
+echo "FAIL: expected serial output not seen within ${TIMEOUT}s." >&2
+echo "EXPECT : \"$EXPECT\"" >&2
+echo "EXPECT2: \"$EXPECT2\"" >&2
+echo "Serial log was:" >&2
 echo "---------------------------------------------" >&2
 cat "$LOG" >&2
 echo "---------------------------------------------" >&2

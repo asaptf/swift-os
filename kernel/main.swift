@@ -22,6 +22,53 @@ final class HeapProbe {
 
 private var retainedProbe: HeapProbe? = nil
 
+private func runVirtualMemoryProbe() {
+    uartPuts("swift-os M3: enabling MMU\n")
+    mmu_init_identity_map()
+    uartPuts("M3 probe: page tables initialized\n")
+    mmu_configure_translation()
+    uartPuts("M3 probe: translation registers configured\n")
+    mmu_enable_sctlr()
+    uartPuts("M3 probe: MMU enable returned\n")
+
+    if mmu_is_enabled() == 0 {
+        uartPuts("panic: MMU did not enable\n")
+        while true {}
+    }
+
+    guard let rawPage = swiftos_kernel_alloc(4096, 4096) else {
+        uartPuts("panic: VM probe page allocation failed\n")
+        while true {}
+    }
+
+    let physicalPage = UInt(bitPattern: rawPage)
+    let testVA: UInt = 0x8000_0000
+    if vm_map_page(testVA, physicalPage, UInt32(VM_ATTR_NORMAL)) != 0 {
+        uartPuts("panic: vm_map_page failed\n")
+        while true {}
+    }
+
+    if vm_translate(testVA) != physicalPage {
+        uartPuts("panic: vm_translate after map failed\n")
+        while true {}
+    }
+
+    let mapped = UnsafeMutableRawPointer(bitPattern: testVA)!
+    mapped.storeBytes(of: UInt64(0xA11C_A7ED_0000_0003), as: UInt64.self)
+    let stored = rawPage.load(as: UInt64.self)
+    if stored != 0xA11C_A7ED_0000_0003 {
+        uartPuts("panic: mapped VA write did not reach PA\n")
+        while true {}
+    }
+
+    if vm_unmap_page(testVA) != 0 || vm_translate(testVA) != 0 {
+        uartPuts("panic: vm_unmap_page failed\n")
+        while true {}
+    }
+
+    uartPuts("M3 OK: MMU enabled and page map/unmap works\n")
+}
+
 @_cdecl("exception_handler")
 func exceptionHandler() {
     uartPuts("panic: unexpected EL1 exception\n")
@@ -90,6 +137,8 @@ func kernelMain() {
     uartPuts("heap used: ")
     uartPutHex(swiftos_kernel_heap_used_bytes())
     uartPuts("\n")
+
+    runVirtualMemoryProbe()
 
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()

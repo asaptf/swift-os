@@ -71,7 +71,20 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 > Re-confirm with `qemu-system-aarch64 -M virt,dumpdtb=...` + `dtc`, or the QEMU
 > `hw/arm/virt.c` memory map, when QEMU or machine options change.
 
-## Build / run commands (verified at M2)
+## Early virtual memory (M3)
+
+- Translation regime: EL1 stage-1, TTBR0 only, 4 KiB granule, 48-bit VA (`T0SZ=16`),
+  36-bit PA (`IPS=1`), TTBR1 walks disabled for now.
+- MAIR slots:
+  - AttrIdx 0: normal write-back/write-allocate cacheable memory (`0xff`).
+  - AttrIdx 1: Device-nGnRnE (`0x00`).
+- Initial mappings are identity mappings:
+  - `0x0000_0000..0x3fff_ffff` as device memory for early MMIO.
+  - `0x4000_0000..0x7fff_ffff` as normal memory for RAM/kernel.
+- A scratch L3 table under VA `0x8000_0000` is reserved for M3 page map/unmap tests.
+- RAM identity mapping is executable during bring-up; device and scratch pages are XN.
+
+## Build / run commands (verified at M3)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -79,11 +92,19 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  `tick 3` appears on serial within 10 s.
+  both `M3 OK: MMU enabled and page map/unmap works` and `tick 3` appear on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
 
+- **M3 (2026-06-04) — DONE.** Virtual memory and MMU:
+  - Early AArch64 stage-1 translation tables added in `kernel/mm/vm.c`.
+  - Kernel/devices are identity-mapped, `MAIR_EL1`/`TCR_EL1`/`TTBR0_EL1` are configured,
+    and `SCTLR_EL1.M` is enabled.
+  - A scratch VA page at `0x8000_0000` maps to a page-aligned heap page; the kernel writes
+    through the mapped VA, verifies the physical page contents, unmaps it, and checks software
+    translation returns unmapped.
+  - Timer interrupts still run after MMU enable; `make test` passes.
 - **M2 (2026-06-04) — DONE.** Interrupt and timer bring-up:
   - EL1 vector table now dispatches IRQ entries through an assembly save/restore path and returns
     with `eret`.

@@ -17,6 +17,20 @@ void swiftos_heap_init(void);
 uintptr_t swiftos_kernel_heap_used_bytes(void);
 void *swiftos_kernel_alloc(uintptr_t byte_count, uintptr_t alignment);
 
+void mmu_init_identity_map(void);
+void mmu_configure_translation(void);
+void mmu_enable_sctlr(void);
+void mmu_enable(void);
+int mmu_is_enabled(void);
+int vm_map_page(uintptr_t va, uintptr_t pa, uint32_t attr_index);
+int vm_unmap_page(uintptr_t va);
+uintptr_t vm_translate(uintptr_t va);
+
+enum {
+    VM_ATTR_NORMAL = 0,
+    VM_ATTR_DEVICE = 1
+};
+
 static inline void mmio_write32(uintptr_t addr, uint32_t value) {
     *(volatile uint32_t *)addr = value;
 }
@@ -54,6 +68,18 @@ static inline uint64_t read_far_el1(void) {
 static inline uint64_t read_sctlr_el1(void) {
     uint64_t value;
     __asm__ volatile("mrs %0, sctlr_el1" : "=r"(value));
+    return value;
+}
+
+static inline uint64_t read_tcr_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, tcr_el1" : "=r"(value));
+    return value;
+}
+
+static inline uint64_t read_ttbr0_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(value));
     return value;
 }
 
