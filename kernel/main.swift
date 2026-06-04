@@ -192,6 +192,15 @@ private func runNewlibDemo() {
     uartPuts("\n")
 }
 
+private func runConcurrentDemo() {
+    uartPuts("swift-os M8d: preemptive EL0 multitasking\n")
+    let (pa, na, ca) = packArgs(["coproc", "A"])
+    let (pb, nb, cb) = packArgs(["coproc", "B"])
+    processRunPair(coproc_elf_addr(), UInt(coproc_elf_len()), pa, na, ca,
+                   coproc_elf_addr(), UInt(coproc_elf_len()), pb, nb, cb)
+    uartPuts("M8d OK: two EL0 processes ran concurrently\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -253,7 +262,8 @@ func irqHandler() {
     // Everything below runs after the EOI so a context switch / process
     // termination never leaves an interrupt active at the GIC.
     if interruptId == physicalTimerIrq {
-        schedulerTick()
+        schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
+        processOnTick()  // preempt the current EL0 process
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
     }
@@ -320,7 +330,7 @@ func kernelMain() {
 
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()
-    timerInit(ticksPerSecond: 4)
+    timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     schedulerInit()
     processInit()
     vfsInit()
@@ -340,6 +350,8 @@ func kernelMain() {
     runBrkDemo()
 
     runNewlibDemo()
+
+    runConcurrentDemo()
 
     runFsDemo()
 

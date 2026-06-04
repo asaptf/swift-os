@@ -23,10 +23,8 @@ func timerScheduleNext() {
 
 func timerHandleTick() {
     systemTicks += 1
-
-    uartPuts("tick ")
-    uartPutUInt(systemTicks)
-    uartPuts("\n")
+    // Per-tick logging is silenced (it spammed the console once we run at a high
+    // tick rate for preemption). systemTicks remains available for accounting.
 
     // Rearm the timer. Rescheduling is driven from irqHandler AFTER the GIC EOI,
     // so a context switch never strands an active interrupt at the controller.

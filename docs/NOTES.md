@@ -165,11 +165,19 @@ This is the largest single step: it replaces the current **synchronous nested** 
 call `processRunElf` and get a return value) with a **real process table + preemptive EL0 scheduler**,
 because `fork` needs parent and child alive at once. Staged:
 
-- **d1 — Unified preemptive process model.** Process table entry = {pid, ppid, state
-  (ready/running/zombie/blocked), ttbr0, kernel stack, saved CPUContext, exit status}. Timer preempts
-  among EL0 processes (trap frame from M8a1 makes this safe; scheduler core from M4.5). The kernel
-  launches an init process and `waitpid`s it, so existing "run a demo and print its code" still works,
-  now via the real scheduler. Per-process **fd table and cwd** move out of the global VFS state.
+- **d1 — Unified preemptive process model — DONE.** `process.swift` rewritten as a real process table
+  {state, ppid, ttbr0, kernel stack, CPUContext, exit status, wait target, brk}. A dedicated scheduler
+  context (the kernel_main stack) switches into a runnable process and regains control when it yields,
+  blocks, is preempted, or exits. The timer preempts the current EL0 process (`processOnTick` →
+  `yieldToScheduler`, safe thanks to the M8a1 trap frame); tick rate raised to 100 Hz and per-tick
+  logging silenced. `processRunElf` launches a top process and runs the scheduler until it exits;
+  `spawn` blocks the parent and the same loop runs the child then wakes the parent (foundation for
+  fork/waitpid). A new `coproc` demo runs **two** EL0 processes that interleave under preemption
+  (`coproc A/B iter 0..2` in alternation) → real preemptive multitasking proven. All prior demos
+  (M5–M8c) and the interactive tty/Ctrl-C test still pass.
+  - NOTE: process teardown does not yet reclaim frames (AS/stacks/heap) — a follow-up.
+  - NOTE: per-process fd table/cwd still global in the VFS — fine while one EL0 process uses fds at a
+    time; will move into the process struct when fork needs fd inheritance (d2/d4).
 - **d2 — `fork()`** eager copy: new address space, copy all mapped user pages, clone the trap frame with
   child `x0=0`; parent gets child pid.
 - **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build

@@ -55,3 +55,10 @@ brkdemo_elf_end:
 newlibtest_elf_start:
 .incbin "build/newlibtest.elf"
 newlibtest_elf_end:
+
+.balign 8
+.global coproc_elf_start
+.global coproc_elf_end
+coproc_elf_start:
+.incbin "build/coproc.elf"
+coproc_elf_end:

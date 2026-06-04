@@ -70,7 +70,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             result = -2 // ENOENT
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
-            result = processRunElf(addr, len, packed: packed, packedLen: packedLen, argc: argc)
+            result = processSpawnChild(addr, len, packed: packed, packedLen: packedLen, argc: argc)
         }
     } else if number == sysWaitpid {
         // spawn() is synchronous, so there are no outstanding children to reap.
