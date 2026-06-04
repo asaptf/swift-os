@@ -106,6 +106,7 @@ USER_FSDEMO_ELF := $(BUILD)/fsdemo.elf
 USER_BRKDEMO_ELF := $(BUILD)/brkdemo.elf
 USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
+USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 
 .PHONY: build run debug gdb test clean tools-check newlib
@@ -176,6 +177,9 @@ $(BUILD)/user_brkdemo.o: userland/brkdemo.c userland/lib/syscall.h Makefile | $(
 $(BUILD)/user_coproc.o: userland/coproc.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/coproc.c -o $@
 
+$(BUILD)/user_forkdemo.o: userland/forkdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/forkdemo.c -o $@
+
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
 
@@ -200,6 +204,9 @@ $(USER_BRKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_brk
 $(USER_COPROC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_coproc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_coproc.o -o $@
 
+$(USER_FORKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_forkdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_forkdemo.o -o $@
+
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
 
@@ -220,7 +227,7 @@ $(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_sys
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
 
 # Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) $(USER_COPROC_ELF) $(USER_SECURITYDEMO_ELF) Makefile | $(BUILD)/.dir
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) $(USER_COPROC_ELF) $(USER_FORKDEMO_ELF) $(USER_SECURITYDEMO_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir

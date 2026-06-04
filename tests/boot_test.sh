@@ -32,6 +32,9 @@ M8c OK: newlib program exited, code 0
 coproc A done
 coproc B done
 M8d OK: two EL0 processes ran concurrently
+forkdemo: child sees private marker
+forkdemo: parent waited child
+M8d OK: fork demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0}"
 

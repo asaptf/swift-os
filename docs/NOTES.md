@@ -190,8 +190,12 @@ because `fork` needs parent and child alive at once. Staged:
   addresses, unmapped user pages, integer-overflowed ranges, and huge lengths before copying or scanning
   user buffers. `securitydemo` now exercises faulting-class inputs (`0x4000_0000` kernel identity map and
   unmapped user VAs) without panicking the kernel.
-- **d2 — `fork()`** eager copy: new address space, copy all mapped user pages, clone the trap frame with
-  child `x0=0`; parent gets child pid.
+- **d2 — `fork()` + first real `waitpid` — DONE.** `SYS_fork` (20) eager-copies the current process
+  address space, preserving user page permissions, and clones the saved trap frame onto a fresh child
+  kernel stack with child `x0=0`; the parent gets the child pid. `waitpid` can now block on a direct
+  child and reap its zombie, writing a minimal status word. `forkdemo` proves parent/child split,
+  private copied data (`marker` stays `7` in parent while child writes `42`), child exit status `42`,
+  and parent wake/reap.
 - **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build
   argv stack, jump to entry).
 - **d4 — `waitpid`/`exit`/SIGCHLD**: real reaping of zombie children; parent blocks/wakes.

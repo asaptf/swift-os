@@ -46,6 +46,7 @@ uintptr_t address_space_create(void);
 int address_space_map(uintptr_t ttbr0, uintptr_t va, uintptr_t pa, int perm);
 void address_space_switch(uintptr_t ttbr0);
 uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va);
+uintptr_t address_space_clone(uintptr_t parent); // eager fork copy
 
 void user_program_install(void *code_dst, void *data_dst);
 void enter_el0(uintptr_t entry, uintptr_t stack_top);
@@ -54,6 +55,7 @@ void enter_el0(uintptr_t entry, uintptr_t stack_top);
 void cpu_switch_context(void *prev, void *next);
 uintptr_t thread_trampoline_addr(void);
 void thread_exit(void); // provided by kernel/sched/scheduler.swift
+uintptr_t trap_return_addr(void); // exceptions.S — fork child trap-return entry
 
 // ELF64 loader (kernel/user/elf.c) and EL0 entry trampoline (user_entry.S).
 uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
@@ -134,6 +136,15 @@ static inline uintptr_t coproc_elf_addr(void) {
 }
 static inline unsigned long coproc_elf_len(void) {
     return (unsigned long)(coproc_elf_end - coproc_elf_start);
+}
+
+extern const unsigned char forkdemo_elf_start[];
+extern const unsigned char forkdemo_elf_end[];
+static inline uintptr_t forkdemo_elf_addr(void) {
+    return (uintptr_t)forkdemo_elf_start;
+}
+static inline unsigned long forkdemo_elf_len(void) {
+    return (unsigned long)(forkdemo_elf_end - forkdemo_elf_start);
 }
 
 extern const unsigned char securitydemo_elf_start[];

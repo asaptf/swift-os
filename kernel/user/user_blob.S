@@ -64,6 +64,13 @@ coproc_elf_start:
 coproc_elf_end:
 
 .balign 8
+.global forkdemo_elf_start
+.global forkdemo_elf_end
+forkdemo_elf_start:
+.incbin "build/forkdemo.elf"
+forkdemo_elf_end:
+
+.balign 8
 .global securitydemo_elf_start
 .global securitydemo_elf_end
 securitydemo_elf_start:

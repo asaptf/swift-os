@@ -13,6 +13,7 @@ private let sysKill: UInt = 10      // kill(pid, sig)
 private let sysGetpid: UInt = 11    // getpid()
 private let sysSpawn: UInt = 12     // spawn(path, argv) -> child exit status
 private let sysWaitpid: UInt = 13   // waitpid(pid, status*, options)
+private let sysFork: UInt = 20      // fork() -> child pid (0 in child)
 private let sysStat: UInt = 14      // stat(path, statbuf)
 private let sysFstat: UInt = 15     // fstat(fd, statbuf)
 private let sysGetdents: UInt = 16  // getdents(fd, buf, count)
@@ -64,7 +65,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         signalDeliverToForeground() // may not return (fatal default action)
         result = 0
     } else if number == sysGetpid {
-        result = 1
+        result = processCurrentPid()
+    } else if number == sysFork {
+        result = processFork(frame)
     } else if number == sysSpawn {
         // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
         let (addr, len) = execResolve(frame[0])
@@ -75,8 +78,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             result = processSpawnChild(addr, len, packed: packed, packedLen: packedLen, argc: argc)
         }
     } else if number == sysWaitpid {
-        // spawn() is synchronous, so there are no outstanding children to reap.
-        result = -10 // ECHILD
+        result = processWaitpid(Int(bitPattern: frame[0]), frame[1])
     } else if number == sysStat {
         result = vfsStat(path: frame[0], statbuf: frame[1])
     } else if number == sysFstat {

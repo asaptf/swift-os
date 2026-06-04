@@ -324,3 +324,54 @@ uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va) {
     }
     return 0;
 }
+
+extern void *memcpy(void *dst, const void *src, unsigned long n); // string.c
+
+// Eager fork: create a new address space and copy every mapped USER page
+// (VA >= 0x8000_0000, i.e. L1 index >= 2) from `parent`, preserving each page's
+// permission/attribute bits. The kernel/device identity blocks come fresh from
+// address_space_create(). Returns the child TTBR0, or 0 on failure.
+uintptr_t address_space_clone(uintptr_t parent) {
+    uintptr_t child = address_space_create();
+    if (child == 0) {
+        return 0;
+    }
+    uint64_t *pl0 = (uint64_t *)parent;
+    uint64_t *cl0 = (uint64_t *)child;
+    if (!(pl0[0] & DESC_VALID)) {
+        return child;
+    }
+    uint64_t *pl1 = (uint64_t *)(uintptr_t)(pl0[0] & PAGE_4K_MASK);
+
+    for (unsigned i1 = 2; i1 < ENTRIES_PER_TABLE; i1 += 1) {
+        uint64_t d1 = pl1[i1];
+        if (!(d1 & DESC_VALID) || !(d1 & DESC_TABLE)) continue;
+        uint64_t *pl2 = (uint64_t *)(uintptr_t)(d1 & PAGE_4K_MASK);
+        for (unsigned i2 = 0; i2 < ENTRIES_PER_TABLE; i2 += 1) {
+            uint64_t d2 = pl2[i2];
+            if (!(d2 & DESC_VALID) || !(d2 & DESC_TABLE)) continue;
+            uint64_t *pl3 = (uint64_t *)(uintptr_t)(d2 & PAGE_4K_MASK);
+            for (unsigned i3 = 0; i3 < ENTRIES_PER_TABLE; i3 += 1) {
+                uint64_t d3 = pl3[i3];
+                if (!(d3 & DESC_VALID)) continue;
+
+                uintptr_t va = ((uintptr_t)i1 << 30) | ((uintptr_t)i2 << 21) | ((uintptr_t)i3 << 12);
+                uintptr_t srcpa = (uintptr_t)(d3 & PAGE_4K_MASK);
+                uintptr_t dstpa = pmm_alloc_page();
+                if (dstpa == 0) return 0;
+                memcpy((void *)dstpa, (void *)srcpa, PAGE_SIZE);
+
+                uint64_t *cl1 = next_table(cl0, (unsigned)((va >> 39) & 0x1ffU));
+                if (!cl1) return 0;
+                uint64_t *cl2 = next_table(cl1, (unsigned)((va >> 30) & 0x1ffU));
+                if (!cl2) return 0;
+                uint64_t *cl3 = next_table(cl2, (unsigned)((va >> 21) & 0x1ffU));
+                if (!cl3) return 0;
+                cl3[(unsigned)((va >> 12) & 0x1ffU)] = (d3 & ~PAGE_4K_MASK) | (dstpa & PAGE_4K_MASK);
+            }
+        }
+    }
+    dsb_sy();
+    tlbi_all();
+    return child;
+}

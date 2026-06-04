@@ -201,6 +201,15 @@ private func runConcurrentDemo() {
     uartPuts("M8d OK: two EL0 processes ran concurrently\n")
 }
 
+private func runForkDemo() {
+    uartPuts("swift-os M8d: fork + waitpid\n")
+    let (p, n, argc) = packArgs(["forkdemo"])
+    let code = processRunElf(forkdemo_elf_addr(), UInt(forkdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8d OK: fork demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -361,6 +370,8 @@ func kernelMain() {
     runNewlibDemo()
 
     runConcurrentDemo()
+
+    runForkDemo()
 
     runFsDemo()
 

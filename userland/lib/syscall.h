@@ -26,6 +26,7 @@
 #define SYS_CHDIR     17
 #define SYS_GETCWD    18
 #define SYS_SBRK      19
+#define SYS_FORK      20
 
 #ifndef __ASSEMBLER__
 
@@ -78,6 +79,14 @@ static inline long spawn(const char *path, char *const argv[]) {
 
 static inline int getpid(void) {
     return (int)__syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+static inline int fork(void) {
+    return (int)__syscall3(SYS_FORK, 0, 0, 0);
+}
+
+static inline int waitpid(int pid, int *status, int options) {
+    return (int)__syscall3(SYS_WAITPID, pid, (long)status, options);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

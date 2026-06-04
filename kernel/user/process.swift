@@ -217,6 +217,81 @@ func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UIn
     return code
 }
 
+func processCurrentPid() -> Int { currentProc >= 0 ? currentProc + 1 : 0 }
+
+/// fork(): eager-copy the current process. The child gets a cloned address
+/// space and a copy of the parent's trap frame with x0=0, so it "returns from
+/// fork()" into EL0 at the same point seeing 0; the parent gets the child pid.
+func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
+    let parent = currentProc
+    guard parent >= 0 else { return -11 }
+    let child = allocSlot()
+    if child < 0 { return -11 } // EAGAIN
+
+    let childTtbr0 = address_space_clone(pTtbr0[parent])
+    if childTtbr0 == 0 { return -12 } // ENOMEM
+
+    let kstack = pmmAllocPages(2)
+    if kstack == 0 { return -12 }
+    let kstackTop = kstack + 2 * PageAllocator.pageSize
+
+    // Copy the parent's 288-byte trap frame to the top of the child kstack.
+    let frameWords = 36
+    let childFrameAddr = kstackTop - 288
+    let childFrame = UnsafeMutablePointer<UInt>(bitPattern: childFrameAddr)!
+    for i in 0..<frameWords { childFrame[i] = frame[i] }
+    childFrame[0] = 0 // child's fork() returns 0
+
+    let ctx = procCtx.advanced(by: child)
+    ctx.pointee = CPUContext()
+    ctx.pointee.sp = UInt64(childFrameAddr)
+    ctx.pointee.lr = UInt64(trap_return_addr())
+
+    pState[child] = pReady
+    pParent[child] = parent
+    pTtbr0[child] = childTtbr0
+    pExit[child] = 0
+    pKilled[child] = false
+    pWait[child] = waitNone
+    pBrk[child] = pBrk[parent]
+    return child + 1 // pid
+}
+
+/// waitpid(pid, *status, opts): reap a (matching) zombie child, blocking until
+/// one is available. Returns the child pid, or -10 (ECHILD) if no such child.
+func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
+    let parent = currentProc
+    guard parent >= 0 else { return -10 }
+    if statusVA != 0 && userWritableBuffer(statusVA, 4) == nil { return -22 }
+    let wantSlot = pid > 0 ? pid - 1 : waitAny
+
+    while true {
+        var found = -1
+        var live = 0
+        for i in 0..<maxProc where pState[i] != pUnused && pParent[i] == parent {
+            if wantSlot != waitAny && i != wantSlot { continue }
+            live += 1
+            if pState[i] == pZombie { found = i; break }
+        }
+        if found >= 0 {
+            let code = pExit[found]
+            let killed = pKilled[found]
+            pState[found] = pUnused // reap
+            pWait[parent] = waitNone
+            if statusVA != 0, let sp = userWritableBuffer(statusVA, 4) {
+                // WEXITSTATUS = (s >> 8) & 0xff; signal in low 7 bits.
+                let s: Int32 = killed ? Int32(code - 128) : Int32((code & 0xff) << 8)
+                UnsafeMutableRawPointer(sp).storeBytes(of: s, as: Int32.self)
+            }
+            return found + 1
+        }
+        if live == 0 { return -10 } // ECHILD
+        pState[parent] = pBlocked
+        pWait[parent] = wantSlot
+        yieldToScheduler()
+    }
+}
+
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
 func processOnTick() {
     if currentProc >= 0 && pState[currentProc] == pRunning {
