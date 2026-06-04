@@ -7,7 +7,7 @@
 
 /// Compare the NUL-terminated C string at user VA `va` to `expected`.
 private func userPathEquals(_ va: UInt, _ expected: StaticString) -> Bool {
-    guard let p = UnsafePointer<UInt8>(bitPattern: va) else { return false }
+    guard let p = userCString(va) else { return false }
     var ok = true
     expected.withUTF8Buffer { e in
         var i = 0
@@ -41,18 +41,21 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
 /// space and pack the strings as NUL-separated bytes in a kernel buffer.
 /// Returns (buffer address, total length, argc).
 func packUserArgv(_ argvVA: UInt) -> (UInt, UInt, Int) {
-    guard argvVA != 0, let arr = UnsafePointer<UInt>(bitPattern: argvVA) else {
+    guard argvVA != 0, let arr8 = userReadableBuffer(argvVA, 8) else {
         return (0, 0, 0)
     }
+    let arr = UnsafeRawPointer(arr8).assumingMemoryBound(to: UInt.self)
 
     // First pass: count args and total byte length.
     var argc = 0
     var total = 0
     while argc < 64, arr[argc] != 0 {
-        guard let s = UnsafePointer<UInt8>(bitPattern: arr[argc]) else { break }
+        guard userReadableBuffer(argvVA + UInt(argc * 8), 8) != nil,
+              let s = userCString(arr[argc]) else { break }
         var len = 0
         while s[len] != 0 { len += 1 }
         total += len + 1
+        if total > userAccessMaxCString { break }
         argc += 1
     }
     if argc == 0 { return (0, 0, 0) }
@@ -61,7 +64,7 @@ func packUserArgv(_ argvVA: UInt) -> (UInt, UInt, Int) {
     let buf = raw.bindMemory(to: UInt8.self, capacity: total)
     var off = 0
     for i in 0..<argc {
-        guard let s = UnsafePointer<UInt8>(bitPattern: arr[i]) else { break }
+        guard let s = userCString(arr[i]) else { break }
         var j = 0
         while s[j] != 0 { buf[off] = s[j]; off += 1; j += 1 }
         buf[off] = 0

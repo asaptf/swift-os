@@ -217,7 +217,7 @@ private func allocFD() -> Int {
 // ---- syscalls -------------------------------------------------------------
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
-    guard let path = UnsafePointer<UInt8>(bitPattern: pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return errInvalid }
 
     var node = resolve(path)
     let f = Int(bitPattern: flags)
@@ -260,8 +260,9 @@ private func createTmpFile(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
 }
 
 func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
+    if count == 0 { return 0 }
     guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    guard let dst = UnsafeMutablePointer<UInt8>(bitPattern: buffer) else { return errInvalid }
+    guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
     let node = fds[fd].node
     if nodes[node].isDir { return errIsDir }
 
@@ -276,9 +277,10 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
 }
 
 func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
+    if count == 0 { return 0 }
     // stdout / stderr go to the console.
     if fd == 1 || fd == 2 {
-        guard let src = UnsafePointer<UInt8>(bitPattern: buffer) else { return errInvalid }
+        guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
         var w = 0
         while w < Int(count) { uartPutc(src[w]); w += 1 }
         return Int(count)
@@ -288,7 +290,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     let node = fds[fd].node
     if nodes[node].isDir { return errIsDir }
     if nodes[node].readOnly { return errReadOnly }
-    guard let src = UnsafePointer<UInt8>(bitPattern: buffer) else { return errInvalid }
+    guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
 
     let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     var w = 0
@@ -320,7 +322,8 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
 }
 
 private func writeStat(_ va: UInt, _ node: Int) -> Int {
-    guard let p = UnsafeMutableRawPointer(bitPattern: va) else { return errInvalid }
+    guard let p8 = userWritableBuffer(va, 16) else { return errInvalid }
+    let p = UnsafeMutableRawPointer(mutating: p8)
     let mode: UInt32 = nodes[node].isDir ? (sIFDIR | 0o755) : (sIFREG | 0o644)
     p.storeBytes(of: mode, toByteOffset: 0, as: UInt32.self)
     p.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
@@ -329,7 +332,7 @@ private func writeStat(_ va: UInt, _ node: Int) -> Int {
 }
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
-    guard let path = UnsafePointer<UInt8>(bitPattern: pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return errInvalid }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     return writeStat(statbuf, node)
@@ -342,10 +345,12 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
 
 // dirent: d_ino(8) d_off(8) d_reclen(2) d_type(1) d_name[](NUL-terminated).
 func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
+    if count == 0 { return 0 }
     guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
     let dir = fds[fd].node
     if !nodes[dir].isDir { return errInvalid }
-    guard let buf = UnsafeMutableRawPointer(bitPattern: buffer) else { return errInvalid }
+    guard let b = userWritableBuffer(buffer, count) else { return errInvalid }
+    let buf = UnsafeMutableRawPointer(mutating: b)
 
     // Walk to the child at dirCursor.
     var child = nodes[dir].firstChild
@@ -376,7 +381,7 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
 }
 
 func vfsChdir(path pathVA: UInt) -> Int {
-    guard let path = UnsafePointer<UInt8>(bitPattern: pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return errInvalid }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !nodes[node].isDir { return errInvalid }
@@ -386,7 +391,7 @@ func vfsChdir(path pathVA: UInt) -> Int {
 
 // Build the absolute path of cwd into the user buffer. Returns length, or error.
 func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
-    guard let buf = UnsafeMutablePointer<UInt8>(bitPattern: buffer), size > 0 else {
+    guard size > 0, let buf = userWritableBuffer(buffer, size) else {
         return errInvalid
     }
 

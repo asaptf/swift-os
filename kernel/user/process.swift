@@ -61,6 +61,9 @@ func processInit() {
 
 func processIsActive() -> Bool { currentProc >= 0 }
 func processLastKilledBySignal() -> Bool { lastReapedKilled }
+func processCurrentAddressSpace() -> UInt {
+    currentProc >= 0 ? pTtbr0[currentProc] : 0
+}
 
 /// Pack argv into a kernel buffer as NUL-separated strings ("a\0b\0c\0").
 /// Returns (buffer address, total length, argc). Heap-allocated; never freed.

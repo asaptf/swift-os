@@ -185,6 +185,11 @@ because `fork` needs parent and child alive at once. Staged:
   `Int(UInt.max)` conversions. `syscallDispatch` now decodes signed fd/offset/whence fields with
   `Int(bitPattern:)`. Host PMM tests now also cover reserve idempotence, fragmentation, exhaustion, and
   double-free behavior.
+- **User pointer hardening — DONE.** Added `kernel/user/user_access.swift` and moved VFS, TTY, termios,
+  and spawn argv/path handling away from direct EL0 pointer dereferences. Syscalls now reject kernel/device
+  addresses, unmapped user pages, integer-overflowed ranges, and huge lengths before copying or scanning
+  user buffers. `securitydemo` now exercises faulting-class inputs (`0x4000_0000` kernel identity map and
+  unmapped user VAs) without panicking the kernel.
 - **d2 — `fork()`** eager copy: new address space, copy all mapped user pages, clone the trap frame with
   child `x0=0`; parent gets child pid.
 - **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build

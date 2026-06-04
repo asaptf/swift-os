@@ -42,6 +42,7 @@ SWIFT_SRCS := \
 	kernel/syscall/syscall.swift \
 	kernel/tty/tty.swift \
 	kernel/signal/signal.swift \
+	kernel/user/user_access.swift \
 	kernel/user/user_process.swift \
 	kernel/user/process.swift \
 	kernel/user/exec.swift \

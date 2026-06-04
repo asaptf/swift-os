@@ -104,8 +104,8 @@ func ttyOnInput(_ byte: UInt8) {
 /// cooked buffer, and Ctrl-C is delivered along the IRQ path (terminating the
 /// process without returning here).
 func ttyRead(buffer: UInt, count: UInt) -> Int {
-    guard let dst = UnsafeMutablePointer<UInt8>(bitPattern: buffer) else { return -22 }
     if count == 0 { return 0 }
+    guard let dst = userWritableBuffer(buffer, count) else { return -22 }
 
     enable_irq()
     while cookedCount() == 0 {

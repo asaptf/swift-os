@@ -98,8 +98,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
 }
 
 private func syscallTcGetAttr(termios ptr: UInt) -> Int {
-    guard let base = UnsafeMutablePointer<UInt8>(bitPattern: ptr) else { return -22 }
-    let words = UnsafeMutableRawPointer(base)
+    guard let base = userWritableBuffer(ptr, 16) else { return -22 }
+    let words = UnsafeMutableRawPointer(mutating: base)
     // Zero the four flag words, then publish the current c_lflag.
     words.storeBytes(of: UInt32(0), toByteOffset: 0, as: UInt32.self)
     words.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
@@ -109,7 +109,8 @@ private func syscallTcGetAttr(termios ptr: UInt) -> Int {
 }
 
 private func syscallTcSetAttr(termios ptr: UInt) -> Int {
-    guard let base = UnsafeRawPointer(bitPattern: ptr) else { return -22 }
+    guard let base8 = userReadableBuffer(ptr, 16) else { return -22 }
+    let base = UnsafeRawPointer(base8)
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
     ttySetLflag(lflag)
     return 0
