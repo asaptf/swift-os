@@ -406,9 +406,9 @@ M10b (ExitBootServices + kernel handoff); details below.
 - **Firmware:** QEMU's prebuilt **AAVMF/edk2** at `/opt/homebrew/share/qemu/edk2-aarch64-code.fd`,
   loaded with `-bios` (no separate NVRAM vars store needed — AAVMF's default boot order scans removable
   media for `\EFI\BOOT\BOOTAA64.EFI`).
-- **ESP without mkfs:** the host has no `mkfs.fat`/`mtools`, so the EFI System Partition is served as
-  **virtual FAT** from a directory (`-drive file=fat:rw:build/esp,format=raw,if=virtio`). A real GPT
-  image is deferred (needs `mtools`, comes with M10b/M11).
+- **ESP bring-up:** M10a initially used QEMU virtual FAT from a directory
+  (`-drive file=fat:rw:build/esp,format=raw,if=virtio`) so no mount/root privileges were needed. M10c
+  adds a real GPT disk image path; virtual FAT remains available as `UEFI_BOOT=fat`.
 - **Device tree handoff:** AAVMF defaults to **ACPI**, which does NOT publish an FDT table. Booting
   `-M virt,acpi=off` makes the firmware run in device-tree mode and install the FDT configuration table
   (vendor GUID `b1b621d5-f19c-41a5-830b-d9152c69aae0`, EDK2 `gFdtTableGuid`). The loader walks
@@ -450,16 +450,42 @@ The loader now hands off to the Swift kernel and the OS boots to busybox **from 
   dsb; isb`. This normalizes both entry paths — UEFI (MMU on) and QEMU `-kernel` (MMU off) — to the same
   MMU-off bring-up, so the rest of boot is unchanged. The DTB pointer in x0 flows straight into the M9
   HAL (`platformInit`), which parses it (no scan needed).
-- **Verified:** under QEMU+AAVMF (`-M virt,acpi=off`, `-bios`, virtual-FAT ESP) the kernel runs every
+- **Verified:** under QEMU+AAVMF (`-M virt,acpi=off`, `-bios`, real GPT disk image) the kernel runs every
   milestone demo M1→M8 identically to `-kernel`, reaches the busybox shell, and `tests/uefi_boot_test.sh`
   drives `echo`/`ls`/`cat` (`M10-UEFI-OK`, dir listing, `Welcome to swift-os.`). Wired into `make test`
   alongside the `-kernel` path (both green).
-- **Remaining (deferred, not blocking M10):** a real **GPT disk image** instead of QEMU virtual FAT
-  (needs `mtools`); pairs naturally with M11's on-disk base image. Also note the loader embeds the kernel
-  rather than reading it from the ESP — fine for now, revisit if the image grows.
 
-Next: **M10.5** — validate this image under VirtualBox ARM on Apple Silicon (research its device model:
-UART, GICv2/v3, storage, ACPI vs DT), adapting the HAL where it differs from QEMU `virt`.
+### M10c — real GPT disk image for UEFI boot (DONE, 2026-06-04)
+
+- `scripts/make-disk.sh` creates `build/swift-os.img`: a sparse GPT disk with one EFI System Partition
+  starting at sector 2048, type `EF00`, formatted/populated with `mtools` via byte-offset access
+  (`image@@offset`) so no mount or root privileges are required.
+- `make disk` builds `BOOTAA64.EFI`, creates the image, and copies it to `\EFI\BOOT\BOOTAA64.EFI`.
+  `make disk-run` boots QEMU+AAVMF from that raw disk image (`-drive file=build/swift-os.img,...`), with
+  no `-kernel` and no QEMU virtual FAT.
+- `tests/uefi_boot_test.sh` defaults to `UEFI_BOOT=disk` and is wired into `make test`; `UEFI_BOOT=fat`
+  remains as a quick fallback for the directory-backed ESP path.
+- **Remaining (deferred, not blocking M10):** the loader still embeds the kernel rather than reading it
+  from the ESP — fine for now, revisit if the image grows or once M11's on-disk base image exists.
+
+### M10.5 — VirtualBox ARM validation (prep DONE; needs a manual run)
+
+VirtualBox ARM is a developer preview whose machine model differs from QEMU `virt`, and it is a GUI
+hypervisor that cannot run in this headless dev environment — so M10.5 needs a manual run on an Apple
+Silicon Mac with VirtualBox installed. Prepared for that:
+
+- **Loader diagnostics.** Before handing off, `loader.c` now reports, via the firmware-independent UEFI
+  console: device tree present/absent, ACPI 2.0 table present/absent, `CurrentEL` + MMU bit, and the
+  largest conventional RAM region (base/size) from `GetMemoryMap`. These print even if the kernel cannot
+  drive VirtualBox's UART after handoff, so the first run is informative regardless. (On QEMU+AAVMF with
+  `acpi=off`: DTB found, ACPI absent, EL1, RAM region base `0x4800_0000`.)
+- **Procedure** is in `docs/VIRTUALBOX.md`: `make disk` → `VBoxManage convertfromraw … --format VDI` →
+  create an EFI ARM VM (256 MB, 1 core) → attach the disk → capture serial-to-file and/or a screenshot →
+  send the `UEFI:` lines back. Those lines (DTB vs ACPI, RAM base, EL) drive the HAL adaptation.
+- **Expected first outcome.** The loader banner should appear (proving VBox launches our EFI app); the
+  kernel may stay silent after handoff if VBox's UART base differs from QEMU's PL011 `0x0900_0000`. That
+  is the signal to extend `platform.swift` (and, if VBox is ACPI-only with no DTB, add minimal ACPI
+  table discovery — likely the SPCR table for the console UART — alongside the M9 device-tree path).
 
 ## Open decisions / resolved
 

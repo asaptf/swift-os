@@ -2,41 +2,81 @@
 # uefi_boot_test.sh - M10 acceptance: boot to busybox from disk via UEFI firmware.
 #
 # Boots QEMU `virt` with the prebuilt AAVMF/edk2 firmware (NOT `-kernel`). The
-# firmware loads \EFI\BOOT\BOOTAA64.EFI from the EFI System Partition (served as
-# virtual FAT); the loader locates the device tree, stages the embedded kernel,
-# ExitBootServices, and jumps into it. We then drive the kernel exactly like the
-# `-kernel` busybox test (satisfy the M7 tty demo, then run echo/ls/cat in the
-# busybox shell) and assert the whole UEFI -> kernel -> userland path.
+# default path uses the real GPT disk image produced by `make disk`; set
+# UEFI_BOOT=fat to use the older QEMU virtual-FAT ESP path. The loader locates
+# the device tree, stages the embedded kernel, ExitBootServices, and jumps into
+# it. We then drive the kernel exactly like the `-kernel` busybox test.
 
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ESP_DIR="$ROOT/build/esp"
 EFI_APP="$ESP_DIR/EFI/BOOT/BOOTAA64.EFI"
+DISK_IMG="$ROOT/build/swift-os.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+UEFI_BOOT="${UEFI_BOOT:-disk}"
 
-[[ -f "$EFI_APP" ]] || { echo "FAIL: $EFI_APP missing (run 'make uefi')" >&2; exit 2; }
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }
 
+drive_args=()
+if [[ "$UEFI_BOOT" == "disk" ]]; then
+    [[ -f "$DISK_IMG" ]] || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
+    drive_args=(-drive "file=$DISK_IMG,format=raw,if=virtio")
+elif [[ "$UEFI_BOOT" == "fat" ]]; then
+    [[ -f "$EFI_APP" ]] || { echo "FAIL: $EFI_APP missing (run 'make uefi')" >&2; exit 2; }
+    drive_args=(-drive "file=fat:rw:$ESP_DIR,format=raw,if=virtio")
+else
+    echo "FAIL: unknown UEFI_BOOT=$UEFI_BOOT (use disk or fat)" >&2
+    exit 2
+fi
+
 LOG="$(mktemp -t swiftos-uefi.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+IN="$(mktemp -u -t swiftos-uefi-in.XXXXXX)"
+mkfifo "$IN"
+QP=""
+cleanup() {
+    [[ -n "$QP" ]] && kill "$QP" 2>/dev/null
+    rm -f "$LOG" "$IN"
+}
+trap cleanup EXIT
+
+wait_for() {
+    local needle="$1"
+    local tenths="${2:-300}"
+    for _ in $(seq 1 "$tenths"); do
+        grep -qF "$needle" "$LOG" 2>/dev/null && return 0
+        kill -0 "$QP" 2>/dev/null || return 1
+        sleep 0.1
+    done
+    return 1
+}
 
 # acpi=off -> firmware publishes the FDT table the loader hands to the kernel.
-(
-  sleep 11; printf 'tty-line\n'          # M7 ttydemo: a line (firmware adds boot latency)
-  sleep 1;  printf '\003'                # Ctrl-C -> ttydemo exits, busybox starts
-  sleep 2;  printf 'echo M10-UEFI-OK\n'
-  sleep 1;  printf 'ls /\n'
-  sleep 1;  printf 'cat /etc/motd\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
         -bios "$AAVMF_CODE" \
-        -drive file=fat:rw:"$ESP_DIR",format=raw,if=virtio >"$LOG" 2>&1 &
+        "${drive_args[@]}" <"$IN" >"$LOG" 2>&1 &
 QP=$!
-sleep 24
-kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null
+
+exec 3>"$IN"
+if wait_for "M7 tty: type a line then Enter" 350; then
+    printf 'tty-line\n' >&3
+fi
+sleep 0.5
+printf '\003' >&3
+if wait_for "built-in shell (ash)" 120; then
+    printf 'echo M10-UEFI-OK\n' >&3
+    printf 'ls /\n' >&3
+    printf 'cat /etc/motd\n' >&3
+    printf 'exit\n' >&3
+fi
+wait_for "M10-UEFI-OK" 80 || true
+wait_for "Welcome to swift-os." 80 || true
+exec 3>&-
+
+kill "$QP" 2>/dev/null
+wait "$QP" 2>/dev/null
+QP=""
 
 ok=1
 check() { grep -qF "$1" "$LOG" || { echo "FAIL: missing '$1'" >&2; ok=0; }; }
@@ -50,7 +90,7 @@ check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from disk (M10 acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT (M10 acceptance)"
     exit 0
 fi
 echo "--- serial log ---" >&2

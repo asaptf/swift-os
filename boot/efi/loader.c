@@ -114,6 +114,40 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     puthex(st, sctlr & 1);
     puts16(st, "\r\n");
 
+    // Survey what the firmware exposes. On a non-QEMU board (VirtualBox), the
+    // table set and memory map differ; this report is what we use to adapt the
+    // HAL, and it prints regardless of whether the kernel can drive the UART.
+    EFI_GUID acpi = EFI_ACPI_20_TABLE_GUID;
+    int have_acpi = 0;
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        if (guid_eq(&st->ConfigurationTable[i].VendorGuid, &acpi)) {
+            have_acpi = 1;
+        }
+    }
+    puts16(st, "UEFI: ACPI 2.0 table ");
+    puts16(st, have_acpi ? "present\r\n" : "absent\r\n");
+
+    {
+        UINTN ms = sizeof(mmap_buf), mk = 0, ds = 0;
+        UINT32 dv = 0;
+        if (bs->GetMemoryMap(&ms, mmap_buf, &mk, &ds, &dv) == EFI_SUCCESS &&
+            ds >= sizeof(EFI_MEMORY_DESCRIPTOR)) {
+            UINT64 best_base = 0, best_pages = 0;
+            for (UINTN off = 0; off + ds <= ms; off += ds) {
+                EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)(mmap_buf + off);
+                if (d->Type == EfiConventionalMemory && d->NumberOfPages > best_pages) {
+                    best_pages = d->NumberOfPages;
+                    best_base = d->PhysicalStart;
+                }
+            }
+            puts16(st, "UEFI: largest RAM region base ");
+            puthex(st, best_base);
+            puts16(st, " size ");
+            puthex(st, best_pages * 4096);
+            puts16(st, "\r\n");
+        }
+    }
+
     // Reserve the kernel's fixed load address and stage the embedded image.
     UINTN ksize = (UINTN)(kernel_blob_end - kernel_blob);
     UINTN npages = (ksize + 0xFFF) / 0x1000;

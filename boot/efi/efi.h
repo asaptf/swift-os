@@ -135,9 +135,23 @@ typedef struct {
     EFI_CONFIGURATION_TABLE         *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
+typedef struct {
+    UINT32               Type;
+    UINT32               Pad;
+    EFI_PHYSICAL_ADDRESS PhysicalStart;
+    EFI_PHYSICAL_ADDRESS VirtualStart;
+    UINT64               NumberOfPages;
+    UINT64               Attribute;
+} EFI_MEMORY_DESCRIPTOR;
+
 // QEMU/AAVMF expose the flattened device tree through this configuration-table
 // vendor GUID (the EDK2 gFdtTableGuid).
 #define EFI_FDT_TABLE_GUID \
     { 0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } }
+
+// ACPI 2.0+ root table (RSDP). Used only to report whether the firmware is
+// ACPI-based (e.g. VirtualBox) vs device-tree based (QEMU virt, acpi=off).
+#define EFI_ACPI_20_TABLE_GUID \
+    { 0x8868e871, 0xe4f1, 0x11d3, { 0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81 } }
 
 #endif // SWIFT_OS_EFI_H

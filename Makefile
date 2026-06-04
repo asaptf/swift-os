@@ -142,7 +142,7 @@ USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run
+.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run
 
 build: $(KERNEL_ELF)
 
@@ -303,7 +303,7 @@ debug: build $(QEMU_DTB)
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build $(QEMU_DTB) uefi
+test: build $(QEMU_DTB) disk
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
@@ -312,7 +312,7 @@ test: build $(QEMU_DTB) uefi
 	./tests/boot_test.sh
 	./tests/tty_test.sh
 	./tests/busybox_test.sh
-	./tests/uefi_boot_test.sh
+	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the
@@ -337,6 +337,17 @@ uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
 uefi-run: uefi
 	$(QEMU) $(UEFI_QEMU_FLAGS)
 
+# Build a real bootable GPT disk image (ESP + BOOTAA64.EFI). Bootable under
+# QEMU+AAVMF and attachable to VirtualBox / other hypervisors.
+DISK_IMG := $(BUILD)/swift-os.img
+disk: uefi
+	./scripts/make-disk.sh $(DISK_IMG)
+
+# Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT).
+disk-run: disk
+	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
+		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio
+
 newlib:
 	./scripts/build-newlib.sh
 
@@ -351,7 +362,7 @@ busybox-check:
 	./scripts/busybox-check.sh
 
 clean:
-	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(ESP_DIR)
+	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:
