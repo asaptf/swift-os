@@ -44,3 +44,18 @@ func uartPutHex(_ value: UInt) {
         shift -= 4
     }
 }
+
+func uartPutUInt(_ value: UInt64) {
+    var divisor: UInt64 = 1
+    while value / divisor >= 10 {
+        divisor *= 10
+    }
+
+    var remaining = value
+    while divisor > 0 {
+        let digit = UInt8(remaining / divisor)
+        uartPutc(0x30 + digit)
+        remaining %= divisor
+        divisor /= 10
+    }
+}

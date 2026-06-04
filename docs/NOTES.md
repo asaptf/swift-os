@@ -61,14 +61,17 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 
 - RAM base: `0x4000_0000`.
 - UART: **PL011** @ `0x0900_0000` (MMIO).
-- Interrupt controller: **GIC** (version depends on QEMU `-machine` opts).
+- Interrupt controller: **GICv2** (`arm,cortex-a15-gic`) verified from QEMU 11.0.1 DTB:
+  distributor @ `0x0800_0000`, CPU interface @ `0x0801_0000`.
+- ARM generic timer: DTB `arm,armv8-timer`; physical timer PPI is interrupt ID **30**
+  (`interrupts = <0x01 0x0e ...>`).
 - Block/etc devices: **virtio-mmio**.
 - Boot: `-kernel <image>`, entry at **EL1**.
 
-> These are reference values. Always re-confirm with `qemu-system-aarch64 -M virt,dumpdtb=...` +
-> `dtc`, or the QEMU `hw/arm/virt.c` memory map, for the installed QEMU version.
+> Re-confirm with `qemu-system-aarch64 -M virt,dumpdtb=...` + `dtc`, or the QEMU
+> `hw/arm/virt.c` memory map, when QEMU or machine options change.
 
-## Build / run commands (verified at M1)
+## Build / run commands (verified at M2)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -76,11 +79,17 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  `M1 OK: heap, ARC class, exception vectors` appears on serial within 10 s.
+  `tick 3` appears on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
 
+- **M2 (2026-06-04) — DONE.** Interrupt and timer bring-up:
+  - EL1 vector table now dispatches IRQ entries through an assembly save/restore path and returns
+    with `eret`.
+  - Minimal GICv2 driver enables the physical timer PPI (ID 30).
+  - ARM generic physical timer is configured from `CNTFRQ_EL0`; the kernel logs periodic ticks.
+  - `make test` passes and asserts `tick 3` on the QEMU serial console.
 - **M1 (2026-06-04) — DONE.** Runtime/memory bring-up:
   - EL1 vector table installed in `boot.S`; unexpected exceptions dump `ESR_EL1`, `ELR_EL1`,
     `FAR_EL1`, `SCTLR_EL1`, and `CPACR_EL1`.

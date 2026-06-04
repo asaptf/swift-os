@@ -34,6 +34,8 @@ BUILD     := build
 SWIFT_SRCS := \
 	kernel/main.swift \
 	kernel/drivers/uart.swift \
+	kernel/drivers/gic.swift \
+	kernel/timer/generic_timer.swift \
 	kernel/mm/page_allocator.swift
 
 # ---- Flags -----------------------------------------------------------------

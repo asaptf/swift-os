@@ -39,6 +39,24 @@ func exceptionHandler() {
     while true {}
 }
 
+@_cdecl("irq_handler")
+func irqHandler() {
+    let iar = gicAcknowledge()
+    let interruptId = iar & 0x3FF
+
+    if interruptId == physicalTimerIrq {
+        timerHandleTick()
+    } else if interruptId != gicSpuriousInterrupt {
+        uartPuts("unexpected IRQ ")
+        uartPutUInt(UInt64(interruptId))
+        uartPuts("\n")
+    }
+
+    if interruptId != gicSpuriousInterrupt {
+        gicEndInterrupt(iar)
+    }
+}
+
 /// Kernel entry point, called from the boot stub. Must never return.
 @_cdecl("kernel_main")
 func kernelMain() {
@@ -73,8 +91,13 @@ func kernelMain() {
     uartPutHex(swiftos_kernel_heap_used_bytes())
     uartPuts("\n")
 
-    // Nothing to schedule yet — halt the core forever.
+    uartPuts("swift-os M2: enabling GIC and generic timer\n")
+    gicInit()
+    timerInit(ticksPerSecond: 4)
+    enable_irq()
+
     while true {
-        // wfi would be nicer, but interrupts aren't set up until M2.
+        // Wake on timer IRQ.
+        wfi()
     }
 }

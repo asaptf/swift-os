@@ -63,4 +63,48 @@ static inline uint64_t read_cpacr_el1(void) {
     return value;
 }
 
+static inline uint64_t read_daif(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, daif" : "=r"(value));
+    return value;
+}
+
+static inline void enable_irq(void) {
+    __asm__ volatile("msr daifclr, #2" ::: "memory");
+}
+
+static inline void disable_irq(void) {
+    __asm__ volatile("msr daifset, #2" ::: "memory");
+}
+
+static inline void wfi(void) {
+    __asm__ volatile("wfi" ::: "memory");
+}
+
+static inline uint64_t read_cntfrq_el0(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(value));
+    return value;
+}
+
+static inline uint64_t read_cntpct_el0(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(value));
+    return value;
+}
+
+static inline uint64_t read_cntp_ctl_el0(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(value));
+    return value;
+}
+
+static inline void write_cntp_ctl_el0(uint64_t value) {
+    __asm__ volatile("msr cntp_ctl_el0, %0; isb" :: "r"(value) : "memory");
+}
+
+static inline void write_cntp_tval_el0(uint64_t value) {
+    __asm__ volatile("msr cntp_tval_el0, %0; isb" :: "r"(value) : "memory");
+}
+
 #endif // SWIFT_OS_IO_H

@@ -12,7 +12,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 QEMU="${QEMU:-qemu-system-aarch64}"
-EXPECT="${EXPECT:-M1 OK: heap, ARC class, exception vectors}"
+EXPECT="${EXPECT:-tick 3}"
 TIMEOUT="${TIMEOUT:-10}"
 
 if [[ ! -f "$KERNEL" ]]; then
