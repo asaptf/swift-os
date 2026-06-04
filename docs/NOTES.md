@@ -19,7 +19,23 @@ Host: macOS (Darwin 25.5.0), Apple Silicon (arm64, T6050).
 | `make`, `git`       | present       | —                                                                          |
 | Network             | **up**        | Homebrew (`/opt/workbrew/bin/brew`) usable                                 |
 
-### Toolchain gap analysis
+### Resolution (installed 2026-06-04)
+
+- **Brew tools installed:** `qemu` 11.0.1, `llvm` 22.1.6 (clang + `llvm-objcopy`),
+  `aarch64-elf-binutils` (`aarch64-elf-ld`), `aarch64-elf-gdb`.
+- **Embedded Swift toolchain:** swift.org **6.3.2-RELEASE**, extracted user-locally (no sudo) to
+  `~/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain` via
+  `pkgutil --expand-full`. It ships `usr/lib/swift/embedded/` including the
+  **`aarch64-none-none-elf`** target — exactly what we build for.
+- **Pinned target triple:** `aarch64-none-none-elf`.
+- **Pinned Embedded Swift flags:**
+  `-target aarch64-none-none-elf -enable-experimental-feature Embedded -wmo -parse-as-library -Osize -Xfrontend -function-sections -import-objc-header kernel/arch/aarch64/io.h`
+- **Linker:** GNU `aarch64-elf-ld` (`--gc-sections -nostdlib -T kernel.ld`). `ld.lld` is keg-only
+  under a separate prefix; binutils `ld` is simpler for a custom script.
+- **MMIO:** volatile access via C inlines in `kernel/arch/aarch64/io.h` (bridging header).
+  The toolchain also ships a `_Volatile` embedded module — a possible modern refinement later.
+
+### Toolchain gap analysis (historical — resolved above)
 
 - **Embedded Swift stdlib is the blocker.** The Command Line Tools toolchain does not include the
   embedded stdlib for bare-metal ELF targets. Options:
@@ -50,16 +66,24 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 > These are reference values. Always re-confirm with `qemu-system-aarch64 -M virt,dumpdtb=...` +
 > `dtc`, or the QEMU `hw/arm/virt.c` memory map, for the installed QEMU version.
 
-## Build / run commands
+## Build / run commands (verified at M0)
 
-To be finalized at M0 once the toolchain is pinned. Targets: `make build|run|debug|clean|test`.
+- `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
+  emit `build/kernel.elf` (+ `kernel.bin`).
+- `make run`   — `qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -kernel build/kernel.elf`.
+  Exit QEMU serial with `Ctrl-A X`.
+- `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
+- `make test`  — builds, then `tests/boot_test.sh` asserts the banner appears on serial within 10 s.
+- `make clean` — remove build artifacts.
 
-- `run`:   `qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -kernel build/kernel.elf`
-- `debug`: same + `-s -S`, then attach GDB/LLDB to `localhost:1234`.
+## Milestone log
 
-## Open decisions
+- **M0 (2026-06-04) — DONE.** Boot skeleton boots on QEMU `virt`; serial prints
+  `Hello from Swift kernel`. `make test` passes. Files: `kernel/arch/aarch64/{boot.S,kernel.ld,io.h}`,
+  `kernel/drivers/uart.swift`, `kernel/main.swift`, `Makefile`, `tests/boot_test.sh`.
 
-- [ ] Which Embedded Swift toolchain (swift.org snapshot vs. release vs. full Xcode)?
-- [ ] Confirm exact Embedded Swift flags (`-enable-experimental-feature Embedded -wmo ...`) and the
-      target triple the chosen toolchain expects for bare-metal aarch64.
-- [ ] Linker: `ld.lld` vs `aarch64-elf-ld`.
+## Open decisions / resolved
+
+- [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).
+- [x] Embedded Swift flags & triple → pinned above (`aarch64-none-none-elf`).
+- [x] Linker → `aarch64-elf-ld`.
