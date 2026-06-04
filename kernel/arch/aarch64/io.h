@@ -23,8 +23,13 @@ void mmu_enable_sctlr(void);
 void mmu_enable(void);
 int mmu_is_enabled(void);
 int vm_map_page(uintptr_t va, uintptr_t pa, uint32_t attr_index);
+int vm_map_user_code_page(uintptr_t va, uintptr_t pa);
+int vm_map_user_data_page(uintptr_t va, uintptr_t pa);
 int vm_unmap_page(uintptr_t va);
 uintptr_t vm_translate(uintptr_t va);
+
+void user_program_install(void *dst);
+void enter_el0(uintptr_t entry, uintptr_t stack_top);
 
 enum {
     VM_ATTR_NORMAL = 0,
@@ -56,6 +61,12 @@ static inline uint64_t read_esr_el1(void) {
 static inline uint64_t read_elr_el1(void) {
     uint64_t value;
     __asm__ volatile("mrs %0, elr_el1" : "=r"(value));
+    return value;
+}
+
+static inline uint64_t read_spsr_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, spsr_el1" : "=r"(value));
     return value;
 }
 

@@ -84,7 +84,7 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 - A scratch L3 table under VA `0x8000_0000` is reserved for M3 page map/unmap tests.
 - RAM identity mapping is executable during bring-up; device and scratch pages are XN.
 
-## Build / run commands (verified at M3)
+## Build / run commands (verified at M4)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -92,11 +92,23 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  both `M3 OK: MMU enabled and page map/unmap works` and `tick 3` appear on serial within 10 s.
+  both `M4 OK: EL0 process trapped back via SVC x0=42` and
+  `M4 scheduler: kernel threads interleaved` appear on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
 
+- **M4 (2026-06-04) — DONE.** Minimal processes/scheduler:
+  - Timer IRQs now drive a tiny round-robin scheduler model that runs two kernel-thread slots
+    and proves A/B interleaving on serial.
+  - Lower-EL AArch64 synchronous exceptions dispatch through a separate vector entry; SVC traps
+    from EL0 are handled in the kernel.
+  - A tiny EL0 program page is installed at `0x8010_0000`, mapped read-only executable for EL0,
+    entered via `eret`, executes `mov x0, #42; svc #0`, and traps back into the kernel.
+    Its EL0 stack page is mapped read/write and XN.
+  - Kernel/device identity mappings remain EL1-only, so EL0 is confined to its mapped user window.
+  - Full saved-context thread switching and per-process TTBR switching remain future M4/M5
+    refinements; this milestone establishes the tested EL0 trap path.
 - **M3 (2026-06-04) — DONE.** Virtual memory and MMU:
   - Early AArch64 stage-1 translation tables added in `kernel/mm/vm.c`.
   - Kernel/devices are identity-mapped, `MAIR_EL1`/`TCR_EL1`/`TTBR0_EL1` are configured,

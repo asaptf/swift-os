@@ -15,6 +15,8 @@
 #define DESC_AF (1ULL << 10)
 #define DESC_SH_INNER (3ULL << 8)
 #define DESC_AP_EL1_RW (0ULL << 6)
+#define DESC_AP_EL0_RW (1ULL << 6)
+#define DESC_AP_EL0_RO (3ULL << 6)
 #define DESC_ATTR_SHIFT 2
 #define DESC_UXN (1ULL << 54)
 #define DESC_PXN (1ULL << 53)
@@ -35,10 +37,19 @@ static uint64_t table_desc(uint64_t table_addr) {
     return (table_addr & PAGE_4K_MASK) | DESC_TABLE | DESC_VALID;
 }
 
-static uint64_t mem_attrs(uint32_t attr_index, int executable) {
-    uint64_t desc = DESC_AF | DESC_AP_EL1_RW;
+static uint64_t mem_attrs(uint32_t attr_index, int executable, int user_access, int user_read_only) {
+    uint64_t desc = DESC_AF;
+    if (user_read_only) {
+        desc |= DESC_AP_EL0_RO;
+    } else if (user_access) {
+        desc |= DESC_AP_EL0_RW;
+    } else {
+        desc |= DESC_AP_EL1_RW;
+    }
     if (!executable) {
         desc |= DESC_UXN | DESC_PXN;
+    } else if (user_access) {
+        desc |= DESC_PXN;
     }
     desc |= ((uint64_t)attr_index) << DESC_ATTR_SHIFT;
     if (attr_index == ATTR_NORMAL) {
@@ -49,11 +60,19 @@ static uint64_t mem_attrs(uint32_t attr_index, int executable) {
 
 static uint64_t block_desc_1g(uint64_t pa, uint32_t attr_index) {
     int executable = attr_index == ATTR_NORMAL;
-    return (pa & BLOCK_1G_MASK) | mem_attrs(attr_index, executable) | DESC_VALID;
+    return (pa & BLOCK_1G_MASK) | mem_attrs(attr_index, executable, 0, 0) | DESC_VALID;
 }
 
 static uint64_t page_desc(uint64_t pa, uint32_t attr_index) {
-    return (pa & PAGE_4K_MASK) | mem_attrs(attr_index, 0) | DESC_TABLE | DESC_VALID;
+    return (pa & PAGE_4K_MASK) | mem_attrs(attr_index, 0, 0, 0) | DESC_TABLE | DESC_VALID;
+}
+
+static uint64_t user_code_page_desc(uint64_t pa) {
+    return (pa & PAGE_4K_MASK) | mem_attrs(ATTR_NORMAL, 1, 1, 1) | DESC_TABLE | DESC_VALID;
+}
+
+static uint64_t user_data_page_desc(uint64_t pa) {
+    return (pa & PAGE_4K_MASK) | mem_attrs(ATTR_NORMAL, 0, 1, 0) | DESC_TABLE | DESC_VALID;
 }
 
 static void zero_table(uint64_t *table) {
@@ -151,6 +170,29 @@ int vm_map_page(uintptr_t va, uintptr_t pa, uint32_t attr_index) {
     dsb_sy();
     tlbi_va(va);
     return 0;
+}
+
+static int vm_map_user_page_with_desc(uintptr_t va, uintptr_t pa, uint64_t desc) {
+    if ((va & (PAGE_SIZE - 1)) != 0 || (pa & (PAGE_SIZE - 1)) != 0) {
+        return -1;
+    }
+    if (va < 0x80000000ULL || va >= 0x80200000ULL) {
+        return -2;
+    }
+
+    unsigned l3_index = (unsigned)((va >> 12) & 0x1ffU);
+    probe_l3_table[l3_index] = desc;
+    dsb_sy();
+    tlbi_va(va);
+    return 0;
+}
+
+int vm_map_user_code_page(uintptr_t va, uintptr_t pa) {
+    return vm_map_user_page_with_desc(va, pa, user_code_page_desc(pa));
+}
+
+int vm_map_user_data_page(uintptr_t va, uintptr_t pa) {
+    return vm_map_user_page_with_desc(va, pa, user_data_page_desc(pa));
 }
 
 int vm_unmap_page(uintptr_t va) {

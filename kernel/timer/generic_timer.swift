@@ -28,5 +28,6 @@ func timerHandleTick() {
     uartPutUInt(systemTicks)
     uartPuts("\n")
 
+    schedulerOnTick()
     timerScheduleNext()
 }

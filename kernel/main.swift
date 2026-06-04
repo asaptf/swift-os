@@ -104,6 +104,26 @@ func irqHandler() {
     }
 }
 
+@_cdecl("sync_lower_el_aarch64_handler")
+func syncLowerELAArch64Handler(_ x0: UInt) {
+    let esr = read_esr_el1()
+    let exceptionClass = (esr >> 26) & 0x3F
+    if exceptionClass == 0x15 {
+        userProcessHandleSVC(argument: x0)
+        return
+    }
+
+    uartPuts("panic: unexpected lower-EL sync exception\n")
+    uartPuts("  ESR_EL1=")
+    uartPutHex(UInt(esr))
+    uartPuts("\n  ELR_EL1=")
+    uartPutHex(UInt(read_elr_el1()))
+    uartPuts("\n  FAR_EL1=")
+    uartPutHex(UInt(read_far_el1()))
+    uartPuts("\n")
+    while true {}
+}
+
 /// Kernel entry point, called from the boot stub. Must never return.
 @_cdecl("kernel_main")
 func kernelMain() {
@@ -143,7 +163,10 @@ func kernelMain() {
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()
     timerInit(ticksPerSecond: 4)
+    schedulerInit()
     enable_irq()
+
+    userProcessStart()
 
     while true {
         // Wake on timer IRQ.

@@ -12,8 +12,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 QEMU="${QEMU:-qemu-system-aarch64}"
-EXPECT="${EXPECT:-M3 OK: MMU enabled and page map/unmap works}"
-EXPECT2="${EXPECT2:-tick 3}"
+EXPECT="${EXPECT:-M4 OK: EL0 process trapped back via SVC x0=42}"
+EXPECT2="${EXPECT2:-M4 scheduler: kernel threads interleaved}"
 TIMEOUT="${TIMEOUT:-10}"
 
 if [[ ! -f "$KERNEL" ]]; then
