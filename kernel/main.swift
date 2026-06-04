@@ -105,11 +105,12 @@ func irqHandler() {
 }
 
 @_cdecl("sync_lower_el_aarch64_handler")
-func syncLowerELAArch64Handler(_ x0: UInt) {
+func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
     let esr = read_esr_el1()
     let exceptionClass = (esr >> 26) & 0x3F
     if exceptionClass == 0x15 {
-        userProcessHandleSVC(argument: x0)
+        let frame = framePointer.assumingMemoryBound(to: UInt.self)
+        syscallDispatch(number: frame[8], frame: frame)
         return
     }
 

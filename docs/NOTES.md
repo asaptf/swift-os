@@ -84,7 +84,21 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 - A scratch L3 table under VA `0x8000_0000` is reserved for M3 page map/unmap tests.
 - RAM identity mapping is executable during bring-up; device and scratch pages are XN.
 
-## Build / run commands (verified at M4)
+## Syscall ABI (M5)
+
+- EL0 syscall entry is `svc #0`.
+- `x8` holds the syscall number.
+- `x0...x2` hold the first three arguments.
+- Return value is written back to `x0`.
+- Implemented bring-up calls:
+  - `1 open(path, flags)` — supports `/hello.txt`, read-only.
+  - `2 read(fd, buffer, count)` — reads from fd 3.
+  - `3 write(fd, buffer, count)` — writes fd 1/2 to UART.
+  - `4 close(fd)` — closes fd 3.
+  - `5 exit(status)` — records M5 success.
+  - `6 lseek(fd, offset, whence)` — implemented for fd 3.
+
+## Build / run commands (verified at M5)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -92,12 +106,21 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  both `M4 OK: EL0 process trapped back via SVC x0=42` and
-  `M4 scheduler: kernel threads interleaved` appear on serial within 10 s.
+  both `M5 OK: user open/read/write/close completed` and
+  `M5 file: hello from VFS read()` appear on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
 
+- **M5 (2026-06-04) — DONE.** Syscall entry and VFS skeleton:
+  - Lower-EL SVC handling now receives a saved register frame, dispatches by `x8`, and writes
+    syscall return values back to saved `x0`.
+  - Minimal VFS/file table added with one read-only base file, `/hello.txt`, plus stdout/stderr
+    writes to UART.
+  - EL0 test program now performs `open/read/write/close/exit` through syscalls; the file content
+    is copied into an EL0 buffer and written back out through `write(1, ...)`.
+  - `lseek` is present for the read-only file. Wider VFS calls (`stat`, `getdents`, cwd handling)
+    remain to be expanded before busybox.
 - **M4 (2026-06-04) — DONE.** Minimal processes/scheduler:
   - Timer IRQs now drive a tiny round-robin scheduler model that runs two kernel-thread slots
     and proves A/B interleaving on serial.

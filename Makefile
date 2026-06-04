@@ -37,7 +37,9 @@ SWIFT_SRCS := \
 	kernel/drivers/gic.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
+	kernel/syscall/syscall.swift \
 	kernel/user/user_process.swift \
+	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift
 
 # ---- Flags -----------------------------------------------------------------

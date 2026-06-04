@@ -61,6 +61,7 @@ sync_lower_el_aarch64_entry:
     stp     x28, x29, [sp, #224]
     str     x30,      [sp, #240]
 
+    mov     x0, sp
     bl      sync_lower_el_aarch64_handler
 
     ldp     x0,  x1,  [sp, #0]

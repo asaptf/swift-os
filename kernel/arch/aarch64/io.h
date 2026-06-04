@@ -28,7 +28,7 @@ int vm_map_user_data_page(uintptr_t va, uintptr_t pa);
 int vm_unmap_page(uintptr_t va);
 uintptr_t vm_translate(uintptr_t va);
 
-void user_program_install(void *dst);
+void user_program_install(void *code_dst, void *data_dst);
 void enter_el0(uintptr_t entry, uintptr_t stack_top);
 
 enum {
