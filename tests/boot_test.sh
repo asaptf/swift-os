@@ -42,6 +42,10 @@ execdemo: before execve
 argv[1]=exec-alpha
 argv[2]=exec-beta
 M8d exec OK: exec demo exited, code 3
+fdopsdemo: dup/dup2 shared offsets OK
+fdopsdemo: pipe/poll/fork OK
+fdopsdemo: rename/unlink/mkdir/rmdir OK
+M8e OK: fdops demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
 swift-os userland: Swift ps

@@ -226,6 +226,15 @@ private func runExecDemo() {
     uartPuts("\n")
 }
 
+private func runFdOpsDemo() {
+    uartPuts("swift-os M8e: fd sharing, pipes, poll, tmpfs mutations\n")
+    let (p, n, argc) = packArgs(["fdopsdemo"])
+    let code = processRunElf(fdopsdemo_elf_addr(), UInt(fdopsdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8e OK: fdops demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -421,6 +430,8 @@ func kernelMain(_ dtbPhys: UInt) {
     runForkDemo()
 
     runExecDemo()
+
+    runFdOpsDemo()
 
     runFsDemo()
 

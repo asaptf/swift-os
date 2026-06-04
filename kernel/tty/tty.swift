@@ -36,6 +36,7 @@ func ttyInit() {
 
 func ttyGetLflag() -> UInt32 { lflag }
 func ttySetLflag(_ value: UInt32) { lflag = value }
+func ttyReadable() -> Bool { cookedCount() > 0 }
 
 private func cookedCount() -> Int {
     (cookedTail - cookedHead + cookedCap) % cookedCap

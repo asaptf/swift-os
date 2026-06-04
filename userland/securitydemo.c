@@ -40,7 +40,7 @@ int main(void) {
     expect_eq("getcwd kernel buf", getcwd((char *)0x40000000, sizeof(buf)), -22);
     expect_eq("getcwd unmapped buf", getcwd((char *)0x88000000, sizeof(buf)), -22);
     expect_eq("getcwd tiny buf", getcwd(buf, 1), -28);
-    expect_eq("chdir file", chdir("/etc/motd"), -22);
+    expect_eq("chdir file", chdir("/etc/motd"), -20);
     expect_eq("waitpid no child", __syscall3(SYS_WAITPID, -1, (long)&st, 0), -10);
     expect_eq("tcgetattr NULL", __syscall3(SYS_TCGETATTR, 0, 0, 0), -22);
     expect_eq("tcsetattr NULL", __syscall3(SYS_TCSETATTR, 0, 0, 0), -22);

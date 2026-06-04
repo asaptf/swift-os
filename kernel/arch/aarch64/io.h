@@ -156,6 +156,15 @@ static inline unsigned long execdemo_elf_len(void) {
     return (unsigned long)(execdemo_elf_end - execdemo_elf_start);
 }
 
+extern const unsigned char fdopsdemo_elf_start[];
+extern const unsigned char fdopsdemo_elf_end[];
+static inline uintptr_t fdopsdemo_elf_addr(void) {
+    return (uintptr_t)fdopsdemo_elf_start;
+}
+static inline unsigned long fdopsdemo_elf_len(void) {
+    return (unsigned long)(fdopsdemo_elf_end - fdopsdemo_elf_start);
+}
+
 extern const unsigned char securitydemo_elf_start[];
 extern const unsigned char securitydemo_elf_end[];
 static inline uintptr_t securitydemo_elf_addr(void) {

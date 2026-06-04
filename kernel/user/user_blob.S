@@ -78,6 +78,13 @@ execdemo_elf_start:
 execdemo_elf_end:
 
 .balign 8
+.global fdopsdemo_elf_start
+.global fdopsdemo_elf_end
+fdopsdemo_elf_start:
+.incbin "build/fdopsdemo.elf"
+fdopsdemo_elf_end:
+
+.balign 8
 .global securitydemo_elf_start
 .global securitydemo_elf_end
 securitydemo_elf_start:

@@ -23,6 +23,7 @@
 #define SYS_KILL  10
 #define SYS_GETPID 11
 #define SYS_SBRK  19
+#define SYS_UNLINK 27
 
 static long sys3(long n, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = n;
@@ -87,7 +88,11 @@ int _stat(const char *path, struct stat *st) {
 
 // Stubs newlib may pull in but that we don't support yet.
 int _link(const char *a, const char *b) { (void)a; (void)b; errno = EMLINK; return -1; }
-int _unlink(const char *a) { (void)a; errno = ENOENT; return -1; }
+int _unlink(const char *a) {
+    long r = sys3(SYS_UNLINK, (long)a, 0, 0);
+    if (r < 0) { errno = (int)-r; return -1; }
+    return (int)r;
+}
 int _times(struct tms *t) { (void)t; return -1; }
 int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; return -1; }
 int _wait(int *status) { (void)status; errno = ECHILD; return -1; }

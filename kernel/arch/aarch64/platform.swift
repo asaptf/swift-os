@@ -7,16 +7,16 @@
 // passes in x0. Drivers read from `platform` instead of hardcoding constants,
 // which is what lets the same kernel boot under UEFI / a different board.
 
-struct Platform {
-    // PL011 UART.
-    var uartBase: UInt = 0x0900_0000
-    var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
-    // GICv2 distributor and CPU interface.
-    var gicDist: UInt = 0x0800_0000
-    var gicCpu: UInt = 0x0801_0000
+@_alignment(16) struct Platform {
     // Main RAM.
     var ramBase: UInt = 0x4000_0000
     var ramSize: UInt = 0x1000_0000   // 256 MiB (matches `-m 256M`).
+    // GICv2 distributor and CPU interface.
+    var gicDist: UInt = 0x0800_0000
+    var gicCpu: UInt = 0x0801_0000
+    // PL011 UART.
+    var uartBase: UInt = 0x0900_0000
+    var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
     // EL1 physical timer PPI - architectural, not board-specific.
     var timerIrq: UInt32 = 30
 }

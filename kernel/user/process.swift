@@ -288,6 +288,12 @@ func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UIn
 
 func processCurrentPid() -> Int { currentProc >= 0 ? currentProc + 1 : 0 }
 
+func processYieldForIO() {
+    if currentProc < 0 { return }
+    pState[currentProc] = pReady
+    yieldToScheduler()
+}
+
 /// fork(): eager-copy the current process. The child gets a cloned address
 /// space and a copy of the parent's trap frame with x0=0, so it "returns from
 /// fork()" into EL0 at the same point seeing 0; the parent gets the child pid.
@@ -428,6 +434,7 @@ func processOnTick() {
 /// SYS_exit: zombify the current process, wake a waiting parent, leave the CPU.
 func processExit(_ code: Int) {
     let me = currentProc
+    vfsProcessCloseAll(slot: me)
     pExit[me] = code
     pKilled[me] = false
     pState[me] = pZombie
@@ -439,6 +446,7 @@ func processExit(_ code: Int) {
 /// Fatal-signal termination of the current process (status 128+signo).
 func processTerminateBySignal(_ sig: Int) {
     let me = currentProc
+    vfsProcessCloseAll(slot: me)
     pExit[me] = 128 + sig
     pKilled[me] = true
     pState[me] = pZombie

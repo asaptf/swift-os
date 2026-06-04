@@ -29,6 +29,14 @@
 #define SYS_FORK      20
 #define SYS_EXECVE    21
 #define SYS_PSINFO    22
+#define SYS_DUP       23
+#define SYS_DUP2      24
+#define SYS_PIPE      25
+#define SYS_POLL      26
+#define SYS_UNLINK    27
+#define SYS_RENAME    28
+#define SYS_MKDIR     29
+#define SYS_RMDIR     30
 
 #ifndef __ASSEMBLER__
 
@@ -94,6 +102,35 @@ static inline int waitpid(int pid, int *status, int options) {
 static inline int execve(const char *path, char *const argv[], char *const envp[]) {
     (void)envp;
     return (int)__syscall3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
+}
+
+static inline int dup(int fd) {
+    return (int)__syscall3(SYS_DUP, fd, 0, 0);
+}
+
+static inline int dup2(int oldfd, int newfd) {
+    return (int)__syscall3(SYS_DUP2, oldfd, newfd, 0);
+}
+
+static inline int pipe(int fds[2]) {
+    return (int)__syscall3(SYS_PIPE, (long)fds, 0, 0);
+}
+
+static inline int unlink(const char *path) {
+    return (int)__syscall3(SYS_UNLINK, (long)path, 0, 0);
+}
+
+static inline int rename(const char *oldpath, const char *newpath) {
+    return (int)__syscall3(SYS_RENAME, (long)oldpath, (long)newpath, 0);
+}
+
+static inline int mkdir(const char *path, int mode) {
+    (void)mode;
+    return (int)__syscall3(SYS_MKDIR, (long)path, mode, 0);
+}
+
+static inline int rmdir(const char *path) {
+    return (int)__syscall3(SYS_RMDIR, (long)path, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

@@ -22,6 +22,14 @@ private let sysGetcwd: UInt = 18    // getcwd(buf, size)
 private let sysSbrk: UInt = 19      // sbrk(incr) -> previous break
 private let sysExecve: UInt = 21    // execve(path, argv, envp)
 private let sysPsInfo: UInt = 22    // psinfo(buffer, capacity) -> total processes
+private let sysDup: UInt = 23       // dup(fd)
+private let sysDup2: UInt = 24      // dup2(oldfd, newfd)
+private let sysPipe: UInt = 25      // pipe(int fds[2])
+private let sysPoll: UInt = 26      // poll(pollfd*, nfds, timeout_ms)
+private let sysUnlink: UInt = 27    // unlink(path)
+private let sysRename: UInt = 28    // rename(old, new)
+private let sysMkdir: UInt = 29     // mkdir(path, mode)
+private let sysRmdir: UInt = 30     // rmdir(path)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -33,11 +41,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     if number == sysOpen {
         result = vfsOpen(path: frame[0], flags: frame[1])
     } else if number == sysRead {
-        if Int(bitPattern: frame[0]) == 0 {
-            result = ttyRead(buffer: frame[1], count: frame[2]) // stdin → tty
-        } else {
-            result = vfsRead(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
-        }
+        result = vfsRead(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
     } else if number == sysWrite {
         result = vfsWrite(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
     } else if number == sysClose {
@@ -105,6 +109,22 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         return // result already written (sbrk returns an address, not errno)
     } else if number == sysPsInfo {
         result = processSnapshot(buffer: frame[0], capacity: frame[1])
+    } else if number == sysDup {
+        result = vfsDup(fd: Int(bitPattern: frame[0]))
+    } else if number == sysDup2 {
+        result = vfsDup2(oldfd: Int(bitPattern: frame[0]), newfd: Int(bitPattern: frame[1]))
+    } else if number == sysPipe {
+        result = vfsPipe(fdsVA: frame[0])
+    } else if number == sysPoll {
+        result = vfsPoll(fds: frame[0], nfds: frame[1], timeout: Int(bitPattern: frame[2]))
+    } else if number == sysUnlink {
+        result = vfsUnlink(path: frame[0])
+    } else if number == sysRename {
+        result = vfsRename(old: frame[0], new: frame[1])
+    } else if number == sysMkdir {
+        result = vfsMkdir(path: frame[0])
+    } else if number == sysRmdir {
+        result = vfsRmdir(path: frame[0])
     } else {
         result = -38 // ENOSYS
     }

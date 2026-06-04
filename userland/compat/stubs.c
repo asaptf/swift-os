@@ -41,6 +41,19 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_GETDENTS 16
 #define SYS_FORK 20
 #define SYS_EXECVE 21
+#define SYS_DUP 23
+#define SYS_DUP2 24
+#define SYS_PIPE 25
+#define SYS_POLL 26
+#define SYS_UNLINK 27
+#define SYS_RENAME 28
+#define SYS_MKDIR 29
+#define SYS_RMDIR 30
+
+static int sysret(long r) {
+    if (r < 0) { errno = (int)-r; return -1; }
+    return (int)r;
+}
 
 // ---- process ---------------------------------------------------------------
 W pid_t fork(void) { return (pid_t)sys3(SYS_FORK, 0, 0, 0); }
@@ -204,8 +217,16 @@ W int fstatfs(int fd, void *b) { (void)fd; (void)b; errno = ENOSYS; return -1; }
 W int sysinfo(void *info) { (void)info; errno = ENOSYS; return -1; }
 W void *mmap(void *a, size_t l, int p, int f, int fd, long o) { (void)a; (void)l; (void)p; (void)f; (void)fd; (void)o; return (void *)-1; }
 W int munmap(void *a, size_t l) { (void)a; (void)l; return 0; }
-W int poll(void *fds, unsigned long n, int timeout) { (void)fds; (void)n; (void)timeout; return 0; }
-W int ppoll(void *fds, unsigned long n, const void *ts, const void *sig) { (void)fds; (void)n; (void)ts; (void)sig; return 0; }
+W int poll(void *fds, unsigned long n, int timeout) { return sysret(sys3(SYS_POLL, (long)fds, (long)n, timeout)); }
+W int ppoll(void *fds, unsigned long n, const void *ts, const void *sig) {
+    (void)sig;
+    int timeout = -1;
+    if (ts) {
+        const long *p = (const long *)ts;
+        timeout = (int)(p[0] * 1000 + p[1] / 1000000);
+    }
+    return poll(fds, n, timeout);
+}
 
 // ---- networking / mount / utmp / shadow: not supported (ENOSYS / NULL) -----
 W int socket(int a, int b, int c) { (void)a; (void)b; (void)c; errno = ENOSYS; return -1; }
@@ -257,9 +278,13 @@ W int chdir(const char *p) { return (int)sys3(SYS_CHDIR, (long)p, 0, 0); }
 W int fchdir(int fd) { (void)fd; errno = ENOSYS; return -1; }
 W char *getcwd(char *buf, size_t n) { long r = sys3(SYS_GETCWD, (long)buf, (long)n, 0); return r < 0 ? 0 : buf; }
 W int chroot(const char *p) { (void)p; errno = ENOSYS; return -1; }
-W int dup(int fd) { (void)fd; errno = ENOSYS; return -1; }
-W int dup2(int o, int n) { return n; } // best-effort: no kernel dup yet
-W int pipe(int fds[2]) { (void)fds; errno = ENOSYS; return -1; }
+W int dup(int fd) { return sysret(sys3(SYS_DUP, fd, 0, 0)); }
+W int dup2(int o, int n) { return sysret(sys3(SYS_DUP2, o, n, 0)); }
+W int pipe(int fds[2]) { return sysret(sys3(SYS_PIPE, (long)fds, 0, 0)); }
+W int unlink(const char *p) { return sysret(sys3(SYS_UNLINK, (long)p, 0, 0)); }
+W int rename(const char *o, const char *n) { return sysret(sys3(SYS_RENAME, (long)o, (long)n, 0)); }
+W int mkdir(const char *p, mode_t m) { return sysret(sys3(SYS_MKDIR, (long)p, m, 0)); }
+W int rmdir(const char *p) { return sysret(sys3(SYS_RMDIR, (long)p, 0, 0)); }
 W mode_t umask(mode_t m) { (void)m; return 0; }
 W int settimeofday(const void *tv, const void *tz) { (void)tv; (void)tz; errno = ENOSYS; return -1; }
 W int ttyname_r(int fd, char *buf, size_t n) {
