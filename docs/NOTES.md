@@ -155,9 +155,29 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     RX/RW segments (no RWX) so newlib's writable globals work. `newlibtest` (built with `aarch64-elf-gcc`)
     runs `printf`, `malloc`/`free`, and `fopen`/`fgets` of `/etc/motd` on the OS — all pass.
     **Prerequisite:** run `make newlib` once before `make build` (kernel embeds the newlib program).
-  - Remaining: (d) cross-build busybox against the sysroot; (e) run `sh`. Note: real busybox `sh` uses
-    fork+execve+waitpid; whether our synchronous spawn suffices or we need an eager-copy fork (no COW)
-    will be decided at step (d).
+  - Remaining: (d) process subsystem + cross-build busybox; (e) run `sh`. **Decisions (locked):**
+    eager-copy `fork` (no COW) + `execve` + real `waitpid` + preemptive EL0 multitasking; busybox config
+    minimal (ash + ls/cat/echo only).
+
+### M8d plan — process subsystem for fork/exec/wait + busybox (the finale)
+
+This is the largest single step: it replaces the current **synchronous nested** process model (all demos
+call `processRunElf` and get a return value) with a **real process table + preemptive EL0 scheduler**,
+because `fork` needs parent and child alive at once. Staged:
+
+- **d1 — Unified preemptive process model.** Process table entry = {pid, ppid, state
+  (ready/running/zombie/blocked), ttbr0, kernel stack, saved CPUContext, exit status}. Timer preempts
+  among EL0 processes (trap frame from M8a1 makes this safe; scheduler core from M4.5). The kernel
+  launches an init process and `waitpid`s it, so existing "run a demo and print its code" still works,
+  now via the real scheduler. Per-process **fd table and cwd** move out of the global VFS state.
+- **d2 — `fork()`** eager copy: new address space, copy all mapped user pages, clone the trap frame with
+  child `x0=0`; parent gets child pid.
+- **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build
+  argv stack, jump to entry).
+- **d4 — `waitpid`/`exit`/SIGCHLD**: real reaping of zombie children; parent blocks/wakes.
+- **d5 — busybox**: fetch busybox.net release, minimal `.config` (ash + ls/cat/echo), cross-build with
+  `aarch64-elf-gcc` against `./sysroot` + our stubs; add whatever syscalls it needs (`dup`, `pipe`,
+  `ioctl`/`TCGETS`, `wait4`, `getuid`, …); run `sh` and execute ls/cat/echo → M8 acceptance.
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed
