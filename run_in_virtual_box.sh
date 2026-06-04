@@ -2,9 +2,11 @@
 # run_in_virtual_box.sh — build the swift-os UEFI disk image and convert it to a
 # VirtualBox VDI, after verifying (and offering to install) every dependency.
 #
-#   1. checks the host tooling needed to build the image and run VirtualBox;
+#   1. checks the host tooling needed to build the image and run VirtualBox,
+#      plus the one-time userland cross-builds (newlib sysroot + busybox.elf);
 #   2. offers to install anything missing (Homebrew formulae + the VirtualBox
-#      cask automatically; the Swift Embedded toolchain with confirmation);
+#      cask automatically; the Swift Embedded toolchain with confirmation) and
+#      runs the one-time `make newlib` / `make busybox` builds if absent;
 #   3. runs:  make disk
 #             VBoxManage convertfromraw build/swift-os.img build/swift-os.vdi --format VDI
 #
@@ -127,12 +129,28 @@ fi
 
 # ---- Swift Embedded toolchain ---------------------------------------------
 # Not a Homebrew package; pinned at swift.org 6.3.2-RELEASE (see docs/NOTES.md).
+# The Makefile (TOOLCHAIN ?=) looks user-locally in ~/Library, but swift.org's
+# installer also offers "for all users" -> /Library. Accept either; if only the
+# system copy exists, symlink it into the user-local path the build expects.
 SWIFT_TC="$HOME/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain"
+SWIFT_TC_SYS="/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain"
 SWIFT_PKG_URL="https://download.swift.org/swift-6.3.2-release/xcode/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE-osx.pkg"
+SWIFT_OK=0
 
 say "Checking Swift Embedded toolchain"
 if [[ -x "$SWIFT_TC/usr/bin/swiftc" ]]; then
     ok "swift-6.3.2-RELEASE toolchain"
+    SWIFT_OK=1
+elif [[ -x "$SWIFT_TC_SYS/usr/bin/swiftc" ]]; then
+    # Installed "for all users"; link it where the Makefile looks.
+    if [[ "$CHECK_ONLY" -eq 0 ]]; then
+        mkdir -p "$(dirname "$SWIFT_TC")"
+        ln -snf "$SWIFT_TC_SYS" "$SWIFT_TC"
+        ok "swift-6.3.2-RELEASE toolchain (linked $SWIFT_TC -> /Library)"
+    else
+        ok "swift-6.3.2-RELEASE toolchain (in /Library; will link on build)"
+    fi
+    SWIFT_OK=1
 else
     miss "swift-6.3.2-RELEASE Embedded toolchain ($SWIFT_TC)"
     if [[ "$CHECK_ONLY" -eq 0 ]]; then
@@ -145,13 +163,16 @@ else
             rm -rf "$tmp_dir"
             pkgutil --expand-full "$tmp_pkg" "$tmp_dir"
             mkdir -p "$(dirname "$SWIFT_TC")"
-            # The xctoolchain payload is the directory containing usr/bin/swiftc.
-            payload_root="$(dirname "$(find "$tmp_dir" -type f -path '*/usr/bin/swiftc' -print -quit)")"
-            payload_root="${payload_root%/usr/bin}"
+            # The xctoolchain payload is the directory containing usr/bin. We key
+            # off swift-driver (a real file) rather than swiftc, which ships as a
+            # symlink (-> swift-driver) that `find -type f` would skip.
+            driver="$(find "$tmp_dir" -path '*/usr/bin/swift-driver' -print -quit)"
+            payload_root="${driver%/usr/bin/swift-driver}"
             if [[ -n "$payload_root" && -x "$payload_root/usr/bin/swiftc" ]]; then
                 rm -rf "$SWIFT_TC"
                 cp -R "$payload_root" "$SWIFT_TC"
                 ok "installed swift-6.3.2-RELEASE toolchain"
+                SWIFT_OK=1
             else
                 err "could not locate swiftc inside the expanded package."
                 echo "  Install manually: download $SWIFT_PKG_URL and place the .xctoolchain at:" >&2
@@ -195,15 +216,40 @@ else
     fi
 fi
 
+# ---- userland prerequisites (one-time cross-builds) ------------------------
+# `make disk` bakes the newlib-linked userland + busybox into the kernel blob.
+# Both are one-time builds (download + cross-compile) that live outside git:
+# the newlib sysroot and build/busybox.elf. Each needs the aarch64-elf GNU
+# toolchain (the recommended formulae above) and network access.
+SYSROOT_LIB="sysroot/aarch64-elf/lib/libc.a"
+BUSYBOX_ELF="build/busybox.elf"
+NEED_NEWLIB=0
+NEED_BUSYBOX=0
+
+say "Checking userland prerequisites"
+if [[ -f "$SYSROOT_LIB" ]]; then ok "newlib sysroot"; else miss "newlib sysroot (make newlib)";  NEED_NEWLIB=1;  fi
+if [[ -f "$BUSYBOX_ELF" ]]; then ok "busybox.elf";    else miss "busybox (make busybox)";       NEED_BUSYBOX=1; fi
+
 # ---- check-only stops here -------------------------------------------------
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
-    if [[ ${#MISSING_REQ[@]} -gt 0 || -z "${VBOXMANAGE:-}" || ! -x "$SWIFT_TC/usr/bin/swiftc" ]]; then
+    if [[ ${#MISSING_REQ[@]} -gt 0 || -z "${VBOXMANAGE:-}" || "$SWIFT_OK" -ne 1 \
+          || "$NEED_NEWLIB" -eq 1 || "$NEED_BUSYBOX" -eq 1 ]]; then
         echo
-        err "missing required dependencies (see 'need' above). Re-run without --check to install."
+        err "missing required dependencies (see 'need' above). Re-run without --check to install/build."
         exit 1
     fi
     say "All required dependencies present."
     exit 0
+fi
+
+# ---- build the userland prerequisites if missing ---------------------------
+if [[ "$NEED_NEWLIB" -eq 1 ]]; then
+    say "Building newlib into ./sysroot (one-time; downloads + cross-compiles)"
+    make newlib
+fi
+if [[ "$NEED_BUSYBOX" -eq 1 ]]; then
+    say "Building busybox (one-time; downloads + cross-compiles)"
+    make busybox
 fi
 
 # ---- build the image + convert to VDI --------------------------------------
