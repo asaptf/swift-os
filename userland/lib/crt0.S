@@ -9,9 +9,14 @@
 .section ".text._start", "ax"
 .global _start
 _start:
-    bl      main             // x0 = main()'s return value
-    mov     x8, #SYS_EXIT    // exit(x0); x8 = syscall number
+    // The kernel hands us a SysV-style stack: [sp] = argc, sp+8 = argv[].
+    ldr     x0, [sp]              // argc
+    add     x1, sp, #8            // argv
+    add     x2, x1, x0, lsl #3    // envp = argv + (argc+1)*8
+    add     x2, x2, #8
+    bl      main                  // x0 = main(argc, argv, envp)
+    mov     x8, #SYS_EXIT         // exit(x0); x8 = syscall number
     svc     #0
-.Lspin:                       // exit never returns
+.Lspin:                           // exit never returns
     wfe
     b       .Lspin

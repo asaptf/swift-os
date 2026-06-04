@@ -59,6 +59,10 @@ void thread_exit(void); // provided by kernel/sched/scheduler.swift
 uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
 uintptr_t user_thread_launch_addr(void);
 
+// Build the initial EL0 stack (argc/argv/envp). kernel/user/ustack.c.
+uintptr_t user_stack_build(uintptr_t ttbr0, uintptr_t stack_top,
+                           const char *packed, unsigned long packed_len, int argc);
+
 // Userland ELF embedded in the kernel image (kernel/user/user_blob.S).
 extern const unsigned char hello_elf_start[];
 extern const unsigned char hello_elf_end[];
@@ -76,6 +80,15 @@ static inline uintptr_t ttydemo_elf_addr(void) {
 }
 static inline unsigned long ttydemo_elf_len(void) {
     return (unsigned long)(ttydemo_elf_end - ttydemo_elf_start);
+}
+
+extern const unsigned char argvdemo_elf_start[];
+extern const unsigned char argvdemo_elf_end[];
+static inline uintptr_t argvdemo_elf_addr(void) {
+    return (uintptr_t)argvdemo_elf_start;
+}
+static inline unsigned long argvdemo_elf_len(void) {
+    return (unsigned long)(argvdemo_elf_end - argvdemo_elf_start);
 }
 
 enum {

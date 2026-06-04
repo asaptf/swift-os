@@ -20,3 +20,10 @@ hello_elf_end:
 ttydemo_elf_start:
 .incbin "build/ttydemo.elf"
 ttydemo_elf_end:
+
+.balign 8
+.global argvdemo_elf_start
+.global argvdemo_elf_end
+argvdemo_elf_start:
+.incbin "build/argvdemo.elf"
+argvdemo_elf_end:

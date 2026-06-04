@@ -44,9 +44,28 @@ func processLastKilledBySignal() -> Bool {
     return killedBySignal
 }
 
+/// Pack argv into a kernel buffer as NUL-separated strings ("a\0b\0c\0").
+/// Returns (buffer address, total length, argc). Heap-allocated; never freed.
+func packArgs(_ args: [StaticString]) -> (UInt, UInt, Int) {
+    var total = 0
+    for a in args { total += a.utf8CodeUnitCount + 1 }
+    guard let raw = swiftos_kernel_alloc(UInt(total), 16) else { return (0, 0, 0) }
+    let buf = raw.bindMemory(to: UInt8.self, capacity: total)
+    var off = 0
+    for a in args {
+        a.withUTF8Buffer { b in
+            for c in b { buf[off] = c; off += 1 }
+        }
+        buf[off] = 0
+        off += 1
+    }
+    return (UInt(bitPattern: raw), UInt(total), args.count)
+}
+
 /// Load the ELF at [image, image+size) into a fresh address space and run it at
-/// EL0. Returns the program's exit code once it calls exit().
-func processRunElf(_ image: UInt, _ size: UInt) -> Int {
+/// EL0 with the given argv (packed as NUL-separated strings). Returns the
+/// program's exit code once it calls exit().
+func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int) -> Int {
     let ttbr0 = address_space_create()
     if ttbr0 == 0 {
         uartPuts("panic: address_space_create failed\n")
@@ -78,9 +97,18 @@ func processRunElf(_ image: UInt, _ size: UInt) -> Int {
     }
     let kstackTop = kstack + 2 * PageAllocator.pageSize
 
+    // Lay out argc/argv/envp at the top of the user stack; SP starts there.
+    var userSP = userStackTop
+    if packedLen > 0 && argc > 0 {
+        let built = user_stack_build(ttbr0, userStackTop,
+                                     UnsafePointer<CChar>(bitPattern: packed),
+                                     packedLen, Int32(argc))
+        if built != 0 { userSP = built }
+    }
+
     launchCtx.pointee = CPUContext()
     launchCtx.pointee.x19 = UInt64(entry)
-    launchCtx.pointee.x20 = UInt64(userStackTop)
+    launchCtx.pointee.x20 = UInt64(userSP)
     launchCtx.pointee.x21 = UInt64(ttbr0)
     launchCtx.pointee.lr = UInt64(user_thread_launch_addr())
     launchCtx.pointee.sp = UInt64(kstackTop)

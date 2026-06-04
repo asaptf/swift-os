@@ -152,15 +152,26 @@ private func runSchedulerDemo() {
 
 private func runProcessDemo() {
     uartPuts("swift-os M6: load + run static ELF at EL0\n")
-    let code = processRunElf(hello_elf_addr(), UInt(hello_elf_len()))
+    let (p, n, argc) = packArgs(["hello"])
+    let code = processRunElf(hello_elf_addr(), UInt(hello_elf_len()), packed: p, packedLen: n, argc: argc)
     uartPuts("M6 OK: ELF process exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+private func runArgvDemo() {
+    uartPuts("swift-os M8a: argv/argc to EL0\n")
+    let (p, n, argc) = packArgs(["argvdemo", "alpha", "beta"])
+    let code = processRunElf(argvdemo_elf_addr(), UInt(argvdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8a OK: argv delivered, argc=")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
 }
 
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
-    let code = processRunElf(ttydemo_elf_addr(), UInt(ttydemo_elf_len()))
+    let (p, n, argc) = packArgs(["ttydemo"])
+    let code = processRunElf(ttydemo_elf_addr(), UInt(ttydemo_elf_len()), packed: p, packedLen: n, argc: argc)
     if processLastKilledBySignal() {
         uartPuts("M7 OK: foreground interrupted by Ctrl-C (SIGINT), status ")
     } else {
@@ -287,6 +298,8 @@ func kernelMain() {
     runSchedulerDemo()
 
     runProcessDemo()
+
+    runArgvDemo()
 
     runTtyDemo()
 

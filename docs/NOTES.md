@@ -123,8 +123,13 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     SP_EL0/ELR_EL1/SPSR_EL1) on every lower-EL entry, making exceptions nestable. This resolves the M7
     constraint: `read(0)` is back to a clean `enable_irq` + `wfi` block (validated — it panicked before
     the frame, passes now), and it unblocks preemptive EL0 scheduling. No regressions: M5/M6/M7 green.
-  - Remaining: (a2) execve/wait + argv/env; (b) VFS dirs/stat/getdents/tmpfs; (c) cross-build newlib;
-    (d) cross-build busybox; (e) run `sh`.
+  - **(a2-argv) Process arguments — DONE.** `ustack.c` builds the SysV AArch64 entry stack
+    (argc/argv/envp/auxv) at the top of the process's user stack; `crt0.S` reads argc from `[sp]`,
+    argv from `sp+8`, and computes envp. `processRunElf` takes packed NUL-separated args; `packArgs`
+    builds them in Swift. New `argvdemo` prints its argv (`argv[0]=argvdemo argv[1]=alpha argv[2]=beta`,
+    exits argc=3). `boot_test.sh` generalized to assert a list of lines (M6 + M8a argv).
+  - Remaining: (a2-spawn) spawn/execve + waitpid; (b) VFS dirs/stat/getdents/tmpfs; (c) cross-build
+    newlib; (d) cross-build busybox; (e) run `sh`.
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed

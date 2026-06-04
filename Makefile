@@ -82,6 +82,7 @@ STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
 ELF_OBJ    := $(BUILD)/elf.o
+USTACK_OBJ := $(BUILD)/ustack.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
 USER_BLOB_OBJ  := $(BUILD)/user_blob.o
 KERNEL_OBJ := $(BUILD)/kernel.o
@@ -91,6 +92,7 @@ KERNEL_BIN := $(BUILD)/kernel.bin
 # Userland artifacts (static C programs, embedded into the kernel image).
 USER_HELLO_ELF := $(BUILD)/hello.elf
 USER_TTYDEMO_ELF := $(BUILD)/ttydemo.elf
+USER_ARGVDEMO_ELF := $(BUILD)/argvdemo.elf
 
 .PHONY: build run debug gdb test clean tools-check
 
@@ -126,6 +128,9 @@ $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
 $(ELF_OBJ): kernel/user/elf.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
+$(USTACK_OBJ): kernel/user/ustack.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
 $(USER_ENTRY_OBJ): $(ARCH_DIR)/user_entry.S Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
@@ -142,14 +147,20 @@ $(BUILD)/user_hello.o: userland/hello.c userland/lib/syscall.h Makefile | $(BUIL
 $(BUILD)/user_ttydemo.o: userland/ttydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/ttydemo.c -o $@
 
+$(BUILD)/user_argvdemo.o: userland/argvdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/argvdemo.c -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
 $(USER_TTYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o -o $@
 
+$(USER_ARGVDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_argvdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_argvdemo.o -o $@
+
 # Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) Makefile | $(BUILD)/.dir
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -157,7 +168,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
