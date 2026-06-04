@@ -99,27 +99,17 @@ func ttyOnInput(_ byte: UInt8) {
 /// Backing for read(0). Blocks until input is available; in canonical mode a
 /// whole line at a time.
 ///
-/// Syscalls are entered with IRQs masked. We must NOT unmask here: an interrupt
-/// taken at EL1 would overwrite ELR_EL1/SPSR_EL1, corrupting the pending return
-/// to EL0. Instead we poll the UART RX FIFO directly and run the line
-/// discipline inline. Ctrl-C still works — it sets SIGINT pending, which we
-/// deliver right here (terminating the process without returning).
+/// The full trap frame (exceptions.S) makes it safe to unmask IRQs inside a
+/// syscall, so we simply enable interrupts and wait: the UART IRQ fills the
+/// cooked buffer, and Ctrl-C is delivered along the IRQ path (terminating the
+/// process without returning here).
 func ttyRead(buffer: UInt, count: UInt) -> Int {
     guard let dst = UnsafeMutablePointer<UInt8>(bitPattern: buffer) else { return -22 }
     if count == 0 { return 0 }
 
+    enable_irq()
     while cookedCount() == 0 {
-        var byte = uartTryReadByte()
-        while byte >= 0 {
-            ttyOnInput(UInt8(byte))
-            byte = uartTryReadByte()
-        }
-        if signalHasPending() {
-            signalDeliverToForeground() // fatal default action never returns
-        }
-        if cookedCount() == 0 {
-            wfi() // wakes on a pending RX even with IRQs masked
-        }
+        wfi()
     }
 
     var n = 0
