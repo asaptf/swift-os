@@ -196,8 +196,11 @@ because `fork` needs parent and child alive at once. Staged:
   child and reap its zombie, writing a minimal status word. `forkdemo` proves parent/child split,
   private copied data (`marker` stays `7` in parent while child writes `42`), child exit status `42`,
   and parent wake/reap.
-- **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build
-  argv stack, jump to entry).
+- **d3 — `execve(path, argv, envp)` — DONE.** `SYS_execve` (21) resolves an embedded executable path,
+  packs argv from the old address space, builds a fresh address space + stack, rewrites the current trap
+  frame (`SP_EL0`/`ELR_EL1`/`SPSR_EL1`), switches `TTBR0`, and returns from the syscall directly into the
+  new image. `execdemo` replaces itself with `/bin/argvdemo exec-alpha exec-beta`, proving argv survives
+  and the old image does not resume.
 - **d4 — `waitpid`/`exit`/SIGCHLD** — mostly DONE with d2: `waitpid(pid|-1, *status)` blocks, reaps a
   matching zombie, returns the pid (ECHILD with no children). Remaining: SIGCHLD delivery and
   per-process fd/cwd inheritance across fork (needed once busybox keeps fds open across fork/exec).

@@ -19,6 +19,10 @@ private let userStackPages = 4
 private let userHeapBase: UInt = 0xA000_0000
 private let maxProc = 16
 
+private let trapFrameSPIndex = 31
+private let trapFrameELRIndex = 32
+private let trapFrameSPSRIndex = 33
+
 // Process states.
 private let pUnused: Int32 = 0
 private let pReady: Int32 = 1
@@ -131,6 +135,31 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
     return slot
+}
+
+private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
+                            argc: Int) -> (UInt, UInt, UInt) {
+    let ttbr0 = address_space_create()
+    if ttbr0 == 0 { return (0, 0, 0) }
+    let entry = elf_load(ttbr0, UnsafeRawPointer(bitPattern: image), size)
+    if entry == 0 { return (0, 0, 0) }
+
+    var va = userStackTop - UInt(userStackPages) * PageAllocator.pageSize
+    while va < userStackTop {
+        let pa = pmmAllocZeroedPage()
+        if pa == 0 || address_space_map(ttbr0, va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+            return (0, 0, 0)
+        }
+        va += PageAllocator.pageSize
+    }
+
+    var userSP = userStackTop
+    if packedLen > 0 && argc > 0 {
+        let built = user_stack_build(ttbr0, userStackTop,
+                                     UnsafePointer<CChar>(bitPattern: packed), packedLen, Int32(argc))
+        if built != 0 { userSP = built }
+    }
+    return (ttbr0, entry, userSP)
 }
 
 private func pickReady() -> Int {
@@ -290,6 +319,25 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
         pWait[parent] = wantSlot
         yieldToScheduler()
     }
+}
+
+/// execve(path, argv, envp): replace the current process image and return from
+/// this syscall directly into the new EL0 entry point. envp is ignored today.
+func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
+                 argc: Int, frame: UnsafeMutablePointer<UInt>) -> Int {
+    let me = currentProc
+    guard me >= 0 else { return -22 }
+
+    let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed, packedLen: packedLen, argc: argc)
+    if ttbr0 == 0 { return -12 } // ENOMEM / invalid image during bring-up
+
+    pTtbr0[me] = ttbr0
+    pBrk[me] = userHeapBase
+    frame[trapFrameSPIndex] = userSP
+    frame[trapFrameELRIndex] = entry
+    frame[trapFrameSPSRIndex] = 0
+    address_space_switch(ttbr0)
+    return 0
 }
 
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).

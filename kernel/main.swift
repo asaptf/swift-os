@@ -210,6 +210,15 @@ private func runForkDemo() {
     uartPuts("\n")
 }
 
+private func runExecDemo() {
+    uartPuts("swift-os M8d: execve image replacement\n")
+    let (p, n, argc) = packArgs(["execdemo"])
+    let code = processRunElf(execdemo_elf_addr(), UInt(execdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8d exec OK: exec demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -372,6 +381,8 @@ func kernelMain() {
     runConcurrentDemo()
 
     runForkDemo()
+
+    runExecDemo()
 
     runFsDemo()
 

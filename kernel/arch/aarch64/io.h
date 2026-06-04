@@ -147,6 +147,15 @@ static inline unsigned long forkdemo_elf_len(void) {
     return (unsigned long)(forkdemo_elf_end - forkdemo_elf_start);
 }
 
+extern const unsigned char execdemo_elf_start[];
+extern const unsigned char execdemo_elf_end[];
+static inline uintptr_t execdemo_elf_addr(void) {
+    return (uintptr_t)execdemo_elf_start;
+}
+static inline unsigned long execdemo_elf_len(void) {
+    return (unsigned long)(execdemo_elf_end - execdemo_elf_start);
+}
+
 extern const unsigned char securitydemo_elf_start[];
 extern const unsigned char securitydemo_elf_end[];
 static inline uintptr_t securitydemo_elf_addr(void) {

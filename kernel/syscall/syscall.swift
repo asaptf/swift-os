@@ -20,6 +20,7 @@ private let sysGetdents: UInt = 16  // getdents(fd, buf, count)
 private let sysChdir: UInt = 17     // chdir(path)
 private let sysGetcwd: UInt = 18    // getcwd(buf, size)
 private let sysSbrk: UInt = 19      // sbrk(incr) -> previous break
+private let sysExecve: UInt = 21    // execve(path, argv, envp)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -68,6 +69,15 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processCurrentPid()
     } else if number == sysFork {
         result = processFork(frame)
+    } else if number == sysExecve {
+        let (addr, len) = execResolve(frame[0])
+        if addr == 0 {
+            result = -2 // ENOENT
+        } else {
+            let (packed, packedLen, argc) = packUserArgv(frame[1])
+            result = processExec(image: addr, size: len, packed: packed,
+                                 packedLen: packedLen, argc: argc, frame: frame)
+        }
     } else if number == sysSpawn {
         // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
         let (addr, len) = execResolve(frame[0])

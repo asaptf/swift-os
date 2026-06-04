@@ -35,6 +35,10 @@ M8d OK: two EL0 processes ran concurrently
 forkdemo: child sees private marker
 forkdemo: parent waited child
 M8d OK: fork demo exited, code 0
+execdemo: before execve
+argv[1]=exec-alpha
+argv[2]=exec-beta
+M8d exec OK: exec demo exited, code 3
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0}"
 

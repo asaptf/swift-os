@@ -71,6 +71,13 @@ forkdemo_elf_start:
 forkdemo_elf_end:
 
 .balign 8
+.global execdemo_elf_start
+.global execdemo_elf_end
+execdemo_elf_start:
+.incbin "build/execdemo.elf"
+execdemo_elf_end:
+
+.balign 8
 .global securitydemo_elf_start
 .global securitydemo_elf_end
 securitydemo_elf_start:

@@ -27,6 +27,7 @@
 #define SYS_GETCWD    18
 #define SYS_SBRK      19
 #define SYS_FORK      20
+#define SYS_EXECVE    21
 
 #ifndef __ASSEMBLER__
 
@@ -87,6 +88,11 @@ static inline int fork(void) {
 
 static inline int waitpid(int pid, int *status, int options) {
     return (int)__syscall3(SYS_WAITPID, pid, (long)status, options);
+}
+
+static inline int execve(const char *path, char *const argv[], char *const envp[]) {
+    (void)envp;
+    return (int)__syscall3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.
