@@ -146,6 +146,53 @@ Services that are not required for the first interactive shell or declared boot 
 under supervisor control after boot. Init receives capabilities like any other process; it does not get a
 special all-powerful root identity.
 
+## Configuration format guidance
+
+swift-os should have one preferred human-authored configuration style, but this is guidance rather than a
+hard rule for every application. The preferred format for OS-owned configuration is a **small TOML subset**.
+
+Rationale:
+
+- TOML is readable for humans and maps cleanly to typed data;
+- it has less surprising implicit typing than YAML;
+- it does not require anchors, aliases, custom tags, or indentation-sensitive object graphs;
+- a strict subset can be parsed by small, auditable code;
+- tables and arrays are enough for services, drivers, cells, identity policy, and boot profiles.
+
+YAML is not the preferred system configuration format. It may be accepted by user applications, but swift-os
+should not require a broad YAML parser in the trusted base or boot-critical path.
+
+Guidelines:
+
+- use `.toml` for human-authored OS configuration in the immutable base image;
+- keep schemas explicit, versioned, and validated before use;
+- prefer arrays of strings for capabilities and handles until richer typed manifests are needed;
+- reject unknown required fields and invalid types loudly;
+- do not parse OS configuration in the kernel unless it is unavoidable;
+- compile or precompute boot-critical configuration into compact manifests when boot speed matters;
+- use generated compatibility files only at the edges, such as `/etc/passwd` or `/etc/group` views.
+
+Example style:
+
+```toml
+[service.console]
+binary = "/sbin/console-login"
+cell = "default"
+capabilities = [
+  "console:stdio",
+  "fs:read:/",
+  "fs:write:/tmp",
+  "process:spawn",
+]
+restart = "on-failure"
+
+[cell.default]
+root = "base:/"
+scratch = "tmpfs:/tmp"
+memory_limit = "256M"
+process_limit = 64
+```
+
 ## Historical ideas worth stealing (record, don't build yet)
 
 swift-os deliberately avoids legacy ABIs and compatibility traps, but old research and workstation/server
