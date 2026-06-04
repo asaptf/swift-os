@@ -34,12 +34,19 @@ The kernel is written in Embedded Swift, but it must meet the standards expected
 - no Foundation and no full standard library in the kernel;
 - value types and `Unsafe*` pointers for low-level data structures;
 - move-only ownership (`~Copyable`) for resources such as pages, handles, locks, and mappings;
+- protocols as compile-time capability interfaces for drivers, filesystems, HAL seams, and test doubles;
 - classes only when the heap is available and the ARC cost is acceptable;
 - no hidden allocation or reference-counting traffic on hot paths;
 - clear boundaries around assembly and C helper code.
 
 Swift is not an excuse for abstraction overhead. It is used because its type system, ownership model, and
 modern tooling can make low-level code safer without giving up control.
+
+Protocol-oriented design is encouraged when it keeps interfaces small and statically dispatched. Prefer
+generic constraints such as `func use<D: BlockDevice>(_ device: inout D)` over existential storage such as
+`any BlockDevice` in kernel code. Runtime polymorphism should remain explicit: tagged tables, fixed operation
+tables, or handle registries are easier to audit in freestanding code than hidden allocation or witness-box
+machinery.
 
 ## Security model
 

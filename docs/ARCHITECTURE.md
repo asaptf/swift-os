@@ -38,6 +38,33 @@ model, and driver strategy are stable.
 - `vfs/` — vnode abstraction, read-only packed base FS, RAM tmpfs.
 - `drivers/` — PL011 UART, GIC, virtio-mmio, timer.
 
+## Swift protocol use
+
+Protocols are part of the intended kernel architecture. Use them to describe small, capability-shaped
+interfaces where the concrete type is known at compile time:
+
+- driver capabilities: `SerialPort`, `BlockDevice`, `InterruptController`, `TimerSource`;
+- filesystem capabilities: read-only image readers, tmpfs backends, directory emitters, inode allocators;
+- HAL boundaries and host-test doubles for code that should not depend directly on QEMU `virt` constants.
+
+Preferred shape:
+
+```swift
+protocol BlockDevice {
+    mutating func readSector(_ lba: UInt64, into buffer: UnsafeMutableRawPointer) -> Int
+}
+
+func loadHeader<D: BlockDevice>(_ device: inout D) -> Int {
+    // Statically dispatched under Embedded Swift.
+    device.readSector(0, into: headerBuffer)
+}
+```
+
+Avoid storing kernel objects as `any Protocol` unless the Embedded Swift toolchain and runtime costs have been
+explicitly re-evaluated. Early kernel polymorphism should be visible in the data structure: an enum tag, a
+fixed operation table, a vnode kind, or a handle registry. That keeps boot-critical drivers and the VFS easy to
+reason about while still letting protocol constraints make generic helpers and tests type-safe.
+
 ## Driver loading model
 
 swift-os uses a hybrid driver model:
