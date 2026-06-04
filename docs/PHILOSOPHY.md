@@ -48,6 +48,7 @@ swift-os should move toward explicit authority:
 - one address space per process;
 - capability-like handles for files, devices, IPC endpoints, clocks, and process control;
 - cells as future kernel-native isolation domains;
+- identity as principals, sessions, cells, and capabilities rather than Unix `root` as the primary authority;
 - private namespaces where isolation requires them;
 - restartable userland driver services where possible;
 - small trusted kernel core.

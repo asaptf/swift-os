@@ -166,6 +166,43 @@ Explicitly postponed until after the busybox milestone: network isolation, OCI i
 registries, overlay layers, seccomp-like policy VMs, multi-user accounting, nested cells, live migration, and
 SMP-aware resource scheduling.
 
+## Future identity and login model (record, don't build yet)
+
+swift-os should not build its security architecture around Unix `/etc/passwd`, `/etc/group`, numeric UIDs,
+or a privileged `root` identity. Those concepts may be exposed later as compatibility views for ported tools,
+but they are not the source of authority inside the kernel.
+
+The long-term login model is:
+
+```
+principal -> session -> cell -> process tree -> explicit capabilities
+```
+
+A successful login or service launch should:
+
+1. authenticate or otherwise identify a principal;
+2. create a session object;
+3. create or select a cell;
+4. attach a namespace and root view;
+5. grant explicit capabilities and inherited handles;
+6. apply resource limits;
+7. spawn the requested shell, service, or application.
+
+Kernel authorization should be based on explicit capabilities and object ownership, not checks such as
+`uid == 0`. Example capability categories include filesystem rights, console/TTY access, process spawning,
+cell management, clock access, IPC endpoints, and later network rights.
+
+Early milestones keep this deliberately simple:
+
+- M8 may use a single auto-login console session in the default/global cell.
+- `/etc/passwd` and `/etc/group` may be absent or minimal generated compatibility files if busybox/newlib
+  expects them.
+- Real authentication, identity storage, roles, policy files, and multi-session management are post-M8 work.
+
+Future identity data should live in a simple structured store in the immutable base image, with writable
+session state in tmpfs or a dedicated service. Compatibility files such as `/etc/passwd` should be generated
+from that store when needed, not treated as kernel security policy.
+
 ## Future hot update model (record, don't build yet)
 
 swift-os should keep a path open for updating drivers and the kernel without rebooting the whole OS, but this
