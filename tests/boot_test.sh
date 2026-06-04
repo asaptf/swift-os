@@ -45,6 +45,12 @@ security OK: syscall abuse demo exited, code 0
 swift-os userland: Swift ps
  PID PPID STATE CMD
    1    0 RUN   ps
+UID   PID  PPID STATE CMD
+root     1     0 RUN   ps
+USER   PID  PPID STAT COMMAND
+root     1     0 R    ps
+PID PPID STAT CMD
+1 0 R ps
 ps OK: Swift ps exited, code 0}"
 
 if [[ ! -f "$KERNEL" ]]; then

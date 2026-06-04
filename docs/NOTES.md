@@ -103,6 +103,8 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   - `6 lseek(fd, offset, whence)` — implemented for fd 3.
 - M7 additions: `2 read` from fd 0 is served by the tty; `5 exit` unwinds an active process to the
   kernel; `7 tcgetattr` / `8 tcsetattr`; `9 sigaction`; `10 kill`; `11 getpid`.
+- M8d additions include process control plus `22 psinfo(buffer, capacity)`: copies fixed 32-byte
+  process records (`pid`, `ppid`, state, short command name) for userland tools such as `/bin/ps`.
 
 ## Build / run commands (verified at M7)
 
@@ -119,6 +121,12 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 ## Milestone log
 
 - **M8 (in progress) — toward busybox.** Staged sub-milestones; libc strategy = cross-build newlib.
+  - **Swift `/bin/ps` utility — DONE.** Added `SYS_PSINFO` (22), short process names captured from
+    `argv[0]`, and an Embedded Swift EL0 utility (`userland/ps.swift`) linked through a tiny C
+    syscall/runtime bridge. `/bin/ps` is embedded in the kernel image and asserted in `boot_test.sh`.
+    Supported syntax with today's process data: `ps`, `ps -e`, `ps -A`, `ps -ef`, `ps ax`,
+    `ps aux`, `ps -aux`, `ps -p pid[,pid...]`, and `ps -o pid,ppid,state,stat,user,uid,cmd` (plus aliases
+    `comm`/`command`/`args` for `cmd`). CPU, memory, tty, and time columns need more kernel accounting.
   - **(a1) Full trap frame — DONE.** `exceptions.S` now saves/restores a complete frame (x0..x30 +
     SP_EL0/ELR_EL1/SPSR_EL1) on every lower-EL entry, making exceptions nestable. This resolves the M7
     constraint: `read(0)` is back to a clean `enable_irq` + `wfi` block (validated — it panicked before
