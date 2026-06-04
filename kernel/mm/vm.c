@@ -110,8 +110,18 @@ void mmu_init_identity_map(void) {
 
     l0_table[0] = table_desc((uint64_t)(uintptr_t)l1_table);
 
+#ifdef BOARD_VIRTUALBOX
+    // VirtualBox ARM: RAM (incl. the kernel) lives in the first 1 GiB at
+    // 0x0800_0000, and the UART/GIC sit in the top 1 GiB (PL011 0xFFDD_F000,
+    // GIC 0xFCD3_0000). Map the low block as normal so the kernel executes, and
+    // the high block as device for the MMIO. (Flash/PCI in the low block are
+    // mapped normal but untouched during bring-up.)
+    l1_table[0] = block_desc_1g(0x00000000ULL, ATTR_NORMAL);
+    l1_table[3] = block_desc_1g(0xC0000000ULL, ATTR_DEVICE);
+#else
     l1_table[0] = block_desc_1g(0x00000000ULL, ATTR_DEVICE);
     l1_table[1] = block_desc_1g(0x40000000ULL, ATTR_NORMAL);
+#endif
     l1_table[2] = table_desc((uint64_t)(uintptr_t)probe_l2_table);
     probe_l2_table[0] = table_desc((uint64_t)(uintptr_t)probe_l3_table);
 }
@@ -271,9 +281,16 @@ uintptr_t address_space_create(void) {
     zero_table((uint64_t *)l1);
 
     ((uint64_t *)l0)[0] = table_desc((uint64_t)l1);
-    // Identity-map the kernel and device 1 GiB blocks into every space.
+    // Identity-map the kernel and device 1 GiB blocks into every space. The
+    // split is board-specific (see mmu_init_identity_map): the kernel must stay
+    // executable (normal) while MMIO stays device after a TTBR0 switch.
+#ifdef BOARD_VIRTUALBOX
+    ((uint64_t *)l1)[0] = block_desc_1g(0x00000000ULL, ATTR_NORMAL);
+    ((uint64_t *)l1)[3] = block_desc_1g(0xC0000000ULL, ATTR_DEVICE);
+#else
     ((uint64_t *)l1)[0] = block_desc_1g(0x00000000ULL, ATTR_DEVICE);
     ((uint64_t *)l1)[1] = block_desc_1g(0x40000000ULL, ATTR_NORMAL);
+#endif
     return l0;
 }
 

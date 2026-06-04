@@ -112,9 +112,26 @@ to a PL011 at `0x0900_0000`, neither of which exists on this board.
 | PL031 RTC       | —                            | `0xFFDD_E000`                    |
 
 VBox ARM also brings up **no graphics console** (headless and GUI both report a 0x0 framebuffer),
-so its EFI console is serial-only via the PL011 at `0xFFDD_F000`. Booting swift-os here is the M10.5
-adaptation: relink for RAM `0x0800_0000`, retarget `platform.swift` (`ramBase`/`uartBase`/GIC), and
-fix the early page tables in `kernel/mm/vm.c`.
+so its EFI console is serial-only via the PL011 at `0xFFDD_F000`.
+
+### M10.5 build (done)
+
+The kernel is now buildable for this board: `make BOARD=virtualbox disk` (the default `BOARD=qemu`
+is unchanged). The board switch relinks the kernel at `0x0808_0000`, compiles in the VBox HAL
+defaults (`platform.swift`), maps the VBox RAM/MMIO split in `kernel/mm/vm.c`, and — because VBox
+leaves the PL011 disabled (it is not the EFI console) — explicitly enables it (`uartInit`) before
+the banner. `run_in_virtual_box.sh` builds this variant. Verified end-to-end under **QEMU UEFI**
+(`make disk-run`): loader → `Hello from Swift kernel` → `M9 platform`, proving the ESP/loader/kernel
+chain is correct.
+
+### Open: VBox EFI does not launch our bootloader
+
+The same disk image boots cleanly under QEMU's EDK2/AAVMF firmware but produces **no** output under
+VirtualBox — not even the loader's first line written directly to the (now-enabled) PL011. So VBox's
+ARM EFI is not starting `\EFI\BOOT\BOOTAA64.EFI` from our GPT/ESP. Suspected cause: the removable-media
+fallback boot policy combined with the NVRAM-corruption workaround (deleting the NVRAM to boot also
+clears any boot entry). Next step is a VBox-side boot investigation (persisted boot entry / controller
+/ ESP layout), independent of the kernel port.
 
 ## Troubleshooting
 

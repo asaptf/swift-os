@@ -253,8 +253,10 @@ if [[ "$NEED_BUSYBOX" -eq 1 ]]; then
 fi
 
 # ---- build the image + convert to VDI --------------------------------------
-say "Building the bootable disk image (make disk)"
-make disk
+# Build the VirtualBox-targeted kernel (RAM 0x0800_0000, PL011 0xFFDD_F000); the
+# Makefile rebuilds the kernel/loader/disk when BOARD changes (see docs/VIRTUALBOX.md).
+say "Building the bootable disk image (make BOARD=virtualbox disk)"
+make BOARD=virtualbox disk
 
 IMG="build/swift-os.img"
 VDI="build/swift-os.vdi"

@@ -1,14 +1,16 @@
-/* kernel.ld — link map for the QEMU `virt` kernel image.
+/* kernel.ld — link map for the kernel image.
  *
- * QEMU loads a `-kernel` raw image at RAM_BASE + 0x80000 = 0x40080000 on the
- * aarch64 `virt` board. We link at that address and keep `.text.boot` first so
- * `_start` is the very first instruction. The image is position-dependent;
- * the MMU is off until M3.
+ * The image is position-dependent (the boot stub runs with the MMU off and uses
+ * absolute addresses), so it must be linked at the physical address the loader
+ * places it. The base is board-specific and supplied by the Makefile via
+ * `--defsym __kernel_phys_base=…` (RAM_BASE + 0x80000): 0x40080000 on the QEMU
+ * `virt` board, 0x08080000 on VirtualBox ARM (see docs/VIRTUALBOX.md). We keep
+ * `.text.boot` first so `_start` is the very first instruction.
  */
 
 ENTRY(_start)
 
-PHYS_BASE = 0x40080000;
+PHYS_BASE = DEFINED(__kernel_phys_base) ? __kernel_phys_base : 0x40080000;
 STACK_SIZE = 0x10000; /* 64 KiB boot stack */
 HEAP_SIZE = 0x40000;  /* 256 KiB early bump heap */
 

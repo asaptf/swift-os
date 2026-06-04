@@ -12,6 +12,10 @@ private var uart0Base: UInt { platform.uartBase }
 // Register offsets (ARM PrimeCell PL011, DDI0183).
 private let uartDR: UInt = 0x00     // Data register.
 private let uartFR: UInt = 0x18     // Flag register.
+private let uartIBRD: UInt = 0x24   // Integer baud rate divisor.
+private let uartFBRD: UInt = 0x28   // Fractional baud rate divisor.
+private let uartLCRH: UInt = 0x2C   // Line control.
+private let uartCR: UInt = 0x30     // Control.
 private let uartIMSC: UInt = 0x38   // Interrupt mask set/clear.
 private let uartICR: UInt = 0x44    // Interrupt clear.
 
@@ -26,6 +30,24 @@ private let intRT: UInt32 = 1 << 6  // Receive timeout interrupt.
 /// PL011 GIC interrupt id, discovered into the HAL (QEMU `virt`: SPI 1 →
 /// INTID 33). Computed so it tracks `platformInit` overriding it.
 var uartIrqId: UInt32 { platform.uartIrq }
+
+/// Bring the PL011 into a usable transmit/receive state.
+///
+/// On QEMU `virt` the firmware leaves the UART enabled, so this is a no-op and
+/// is not compiled in. On VirtualBox ARM the EFI console is not the PL011, so
+/// the UART is left disabled (CR.UARTEN/TXE clear) and our writes to DR are
+/// dropped until we enable it. Done before the boot banner so it is the first
+/// thing the kernel does.
+func uartInit() {
+#if BOARD_VIRTUALBOX
+    mmio_write32(uart0Base + uartCR, 0)                 // disable while reconfiguring
+    mmio_write32(uart0Base + uartICR, 0x7FF)            // clear pending interrupts
+    mmio_write32(uart0Base + uartIBRD, 13)              // ~115200 @ 24MHz UARTCLK
+    mmio_write32(uart0Base + uartFBRD, 1)
+    mmio_write32(uart0Base + uartLCRH, (3 << 5) | (1 << 4)) // 8-bit words, FIFO on
+    mmio_write32(uart0Base + uartCR, (1 << 0) | (1 << 8) | (1 << 9)) // UARTEN|TXE|RXE
+#endif
+}
 
 /// Write one byte to the UART, blocking until the TX FIFO has room.
 @inline(__always)

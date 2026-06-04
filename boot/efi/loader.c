@@ -21,13 +21,54 @@
 #include "efi.h"
 
 // Kernel link/load base (kernel.ld). The embedded flat image's byte 0 maps here.
+// Supplied by the Makefile per board (-DKERNEL_LOAD_ADDR=…); the default matches
+// the QEMU `virt` link base. VirtualBox ARM uses 0x08080000 (see docs/VIRTUALBOX.md).
+#ifndef KERNEL_LOAD_ADDR
 #define KERNEL_LOAD_ADDR 0x40080000ULL
+#endif
 
 // Embedded flat kernel image (boot/efi/kernel_blob.S -> build/kernel.bin).
 extern const unsigned char kernel_blob[];
 extern const unsigned char kernel_blob_end[];
 
+#ifdef BOARD_VIRTUALBOX
+// On VirtualBox ARM the firmware's ConOut does not reach our serial capture
+// (no graphics console, and EFI's console is not the PL011 we record). Mirror
+// loader output straight to the PL011 at 0xFFDD_F000 so the boot trace — and
+// especially an AllocatePages failure — is visible before the kernel runs.
+#define PL011 0xFFDDF000ULL
+static void pl011_init(void) {
+    volatile unsigned int *cr   = (volatile unsigned int *)(PL011 + 0x30);
+    volatile unsigned int *icr  = (volatile unsigned int *)(PL011 + 0x44);
+    volatile unsigned int *ibrd = (volatile unsigned int *)(PL011 + 0x24);
+    volatile unsigned int *fbrd = (volatile unsigned int *)(PL011 + 0x28);
+    volatile unsigned int *lcrh = (volatile unsigned int *)(PL011 + 0x2C);
+    *cr = 0;            // disable while reconfiguring
+    *icr = 0x7FF;       // clear pending interrupts
+    *ibrd = 13;         // ~115200 @ 24MHz UARTCLK (emulation tolerates this)
+    *fbrd = 1;
+    *lcrh = (3u << 5) | (1u << 4); // 8-bit words, FIFO enable
+    *cr = (1u << 0) | (1u << 8) | (1u << 9); // UARTEN | TXE | RXE
+}
+static void pl011_putc(char c) {
+    volatile unsigned int *dr = (volatile unsigned int *)PL011;
+    volatile unsigned int *fr = (volatile unsigned int *)(PL011 + 0x18);
+    while (*fr & (1u << 5)) { } // FR.TXFF: wait while the TX FIFO is full.
+    *dr = (unsigned int)(unsigned char)c;
+}
+static void pl011_puts(const char *s) {
+    while (*s) {
+        if (*s == '\n') pl011_putc('\r');
+        pl011_putc(*s++);
+    }
+}
+#define DBG_PUTS(s) pl011_puts(s)
+#else
+#define DBG_PUTS(s) ((void)0)
+#endif
+
 static void puts16(EFI_SYSTEM_TABLE *st, const char *s) {
+    DBG_PUTS(s);
     CHAR16 buf[160];
     int i = 0;
     while (*s && i < 159) {
@@ -47,6 +88,12 @@ static void puthex(EFI_SYSTEM_TABLE *st, UINT64 v) {
     }
     buf[18] = 0;
     st->ConOut->OutputString(st->ConOut, buf);
+#ifdef BOARD_VIRTUALBOX
+    char a[19];
+    for (int i = 0; i < 18; i++) a[i] = (char)buf[i];
+    a[18] = 0;
+    pl011_puts(a);
+#endif
 }
 
 static int guid_eq(const EFI_GUID *a, const EFI_GUID *b) {
@@ -94,6 +141,9 @@ static UINT8 mmap_buf[16384];
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     EFI_BOOT_SERVICES *bs = st->BootServices;
 
+#ifdef BOARD_VIRTUALBOX
+    pl011_init(); // VBox does not use the PL011 as its EFI console; enable TX.
+#endif
     puts16(st, "\r\nswift-os UEFI loader (M10)\r\n");
 
     void *dtb = find_device_tree(st);

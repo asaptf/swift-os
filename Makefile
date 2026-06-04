@@ -36,6 +36,36 @@ QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
 
+# ---- Board selection (M10.5) ----------------------------------------------
+# BOARD=qemu (default) targets the QEMU `virt` board; BOARD=virtualbox targets
+# VirtualBox's ARM machine, whose RAM/UART/GIC live at different addresses
+# (RAM 0x0800_0000, PL011 0xFFDD_F000 — see docs/VIRTUALBOX.md). The board sets
+# the kernel link/load base and a compile define the kernel/loader branch on.
+BOARD ?= qemu
+ifeq ($(BOARD),virtualbox)
+  KPHYS_BASE  := 0x08080000
+  BOARD_CDEF  := -DBOARD_VIRTUALBOX
+  BOARD_SWDEF := -D BOARD_VIRTUALBOX
+else ifeq ($(BOARD),qemu)
+  KPHYS_BASE  := 0x40080000
+  BOARD_CDEF  :=
+  BOARD_SWDEF :=
+else
+  $(error unknown BOARD '$(BOARD)' — use qemu or virtualbox)
+endif
+
+# Switching boards changes the link base and compiled-in addresses, so the
+# kernel/loader/disk must be rebuilt. Track the active board in a stamp and,
+# when it changes, drop just those artifacts — the slow busybox.elf / base.img
+# / newlib sysroot are board-independent and kept.
+$(shell mkdir -p $(BUILD); \
+        [ "$$(cat $(BUILD)/.board 2>/dev/null)" = "$(BOARD)" ] || { \
+            rm -f $(BUILD)/kernel.o $(BUILD)/kernel.elf $(BUILD)/kernel.bin \
+                  $(BUILD)/vm.o $(BUILD)/loader.obj $(BUILD)/kernel_blob.obj \
+                  $(BUILD)/BOOTAA64.EFI $(BUILD)/swift-os.img $(BUILD)/swift-os.vdi; \
+            rm -rf $(BUILD)/esp; \
+            echo "$(BOARD)" > $(BUILD)/.board; })
+
 # Swift sources (kernel). Whole-module optimization compiles them together.
 SWIFT_SRCS := \
 	kernel/main.swift \
@@ -65,10 +95,11 @@ SWIFT_FLAGS := \
 	-wmo -parse-as-library -Osize \
 	-Xllvm -mattr=+strict-align,-neon \
 	-Xfrontend -function-sections \
+	$(BOARD_SWDEF) \
 	-import-objc-header $(BRIDGE)
 
 ASM_FLAGS := --target=$(TRIPLE) -ffreestanding -c
-C_FLAGS   := --target=$(TRIPLE) -ffreestanding -O2 -Wall -Wextra -c
+C_FLAGS   := --target=$(TRIPLE) -ffreestanding -O2 -Wall -Wextra $(BOARD_CDEF) -c
 # -fno-builtin so mem* implementations are not turned into calls to themselves.
 C_FLAGS_NB := --target=$(TRIPLE) -ffreestanding -fno-builtin -O2 -Wall -Wextra -c
 # Userland (EL0) build: freestanding, static, our own libc/crt0, no host libc.
@@ -89,7 +120,7 @@ NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
 NEWLIB_LDFLAGS := -nostartfiles -nostdlib -static -T userland/user_newlib.ld -Wl,-z,max-page-size=4096 -L $(SYSROOT)/lib
 NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 # Garbage-collect unused sections; entry is _start from the boot stub.
-LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER)
+LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER) --defsym __kernel_phys_base=$(KPHYS_BASE)
 
 # ---- QEMU ------------------------------------------------------------------
 QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -102,7 +133,7 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
 LLDLINK    ?= /opt/homebrew/opt/lld/bin/lld-link
 AAVMF_CODE ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
 EFI_CFLAGS := --target=aarch64-unknown-windows -ffreestanding -fno-stack-protector \
-	-mcmodel=small -Os -Wall -Wextra -c
+	-mcmodel=small -Os -Wall -Wextra $(BOARD_CDEF) -DKERNEL_LOAD_ADDR=$(KPHYS_BASE)ULL -c
 EFI_APP    := $(BUILD)/BOOTAA64.EFI
 ESP_DIR    := $(BUILD)/esp
 # Boot from the EFI System Partition (a directory served as virtual FAT), not

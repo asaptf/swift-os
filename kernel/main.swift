@@ -361,6 +361,7 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 /// `dtbPhys` is the device-tree pointer the boot stub preserved from x0.
 @_cdecl("kernel_main")
 func kernelMain(_ dtbPhys: UInt) {
+    uartInit()  // no-op on QEMU; enables the PL011 on VirtualBox before any output
     uartPuts("Hello from Swift kernel\n")
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")
@@ -401,6 +402,17 @@ func kernelMain(_ dtbPhys: UInt) {
 
     runVirtualMemoryProbe()
     runAddressSpaceProbe()
+
+#if BOARD_VIRTUALBOX
+    // M10.5: this proves swift-os runs on VirtualBox ARM — the UEFI loader staged
+    // the kernel into VBox RAM (0x0800_0000), the boot stub ran, the PL011 at
+    // 0xFFDD_F000 carries output, and the MMU is on with a VBox-correct map.
+    // Interrupt-driven subsystems are deferred: VBox exposes a GICv3, which the
+    // current GICv2 driver cannot drive. Park here rather than fault on GIC init.
+    uartPuts("swift-os M10.5: VirtualBox bring-up OK — kernel, UART, RAM, MMU\n")
+    uartPuts("swift-os M10.5: GIC/timer/scheduler deferred (VBox is GICv3; see docs/VIRTUALBOX.md)\n")
+    while true {}
+#endif
 
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()

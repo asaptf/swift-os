@@ -8,6 +8,24 @@
 // which is what lets the same kernel boot under UEFI / a different board.
 
 @_alignment(16) struct Platform {
+#if BOARD_VIRTUALBOX
+    // VirtualBox ARM machine model (observed from its device tree; see
+    // docs/VIRTUALBOX.md). These compiled-in defaults make early boot — the
+    // banner, the panic path — reach the real UART before any DTB discovery,
+    // since VBox is not guaranteed to hand us a device tree.
+    var ramBase: UInt = 0x0800_0000
+    var ramSize: UInt = 0x1000_0000   // 256 MiB (RAM 0x0800_0000..0x1800_0000).
+    // GIC: VBox exposes a GICv3 block at 0xFCD3_0000 (large redistributor range).
+    // The GICv2 driver does not drive it yet, so these are informational until
+    // GICv3 support lands; the VBox boot path parks before GIC init.
+    var gicDist: UInt = 0xFCD3_0000
+    var gicCpu: UInt = 0xFCD4_0000
+    // PL011 UART.
+    var uartBase: UInt = 0xFFDD_F000
+    var uartIrq: UInt32 = 33
+    // EL1 physical timer PPI - architectural, not board-specific.
+    var timerIrq: UInt32 = 30
+#else
     // Main RAM.
     var ramBase: UInt = 0x4000_0000
     var ramSize: UInt = 0x1000_0000   // 256 MiB (matches `-m 256M`).
@@ -19,6 +37,7 @@
     var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
     // EL1 physical timer PPI - architectural, not board-specific.
     var timerIrq: UInt32 = 30
+#endif
 }
 
 var platform = Platform()
