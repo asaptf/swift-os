@@ -210,6 +210,15 @@ private func runFsDemo() {
     uartPuts("\n")
 }
 
+private func runSecurityDemo() {
+    uartPuts("swift-os security: adversarial syscall smoke tests\n")
+    let (p, n, argc) = packArgs(["securitydemo"])
+    let code = processRunElf(securitydemo_elf_addr(), UInt(securitydemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("security OK: syscall abuse demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
     let (p, n, argc) = packArgs(["ttydemo"])
@@ -354,6 +363,8 @@ func kernelMain() {
     runConcurrentDemo()
 
     runFsDemo()
+
+    runSecurityDemo()
 
     runTtyDemo()
 

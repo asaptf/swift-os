@@ -44,6 +44,36 @@ struct PageAllocatorTest {
             expect(allocator.allocateContiguous(97) == nil, "oversized contiguous allocation rejected")
         }
 
-        print("PASS: page allocator unit tests")
+        var fragmentedBitmap = [UInt64](repeating: 0, count: 1)
+        fragmentedBitmap.withUnsafeMutableBufferPointer { buffer in
+            var allocator = PageAllocator(
+                base: 0x2000_0000,
+                pageCount: 8,
+                bitmap: buffer.baseAddress!
+            )
+
+            allocator.reserve(base: 0x2000_1000, count: 2)
+            allocator.reserve(base: 0x2000_1000, count: 2)
+            expect(allocator.freePages == 6, "reserve is idempotent")
+
+            let a = allocator.allocate()
+            let b = allocator.allocate()
+            let c = allocator.allocate()
+            let d = allocator.allocate()
+            expect(a == 0x2000_0000, "fragmentation setup first frame")
+            expect(b == 0x2000_3000 && c == 0x2000_4000 && d == 0x2000_5000, "allocation skips reserved run")
+
+            allocator.free(b!)
+            expect(allocator.allocateContiguous(2) == 0x2000_6000, "contiguous scan skips fragmented holes")
+
+            expect(allocator.allocate() == b, "hint rewinds to the lowest freed frame")
+            expect(allocator.allocate() == nil, "allocator reports exhaustion")
+
+            allocator.free(c!)
+            allocator.free(c!)
+            expect(allocator.freePages == 1, "double free ignored")
+        }
+
+        print("PASS: page allocator unit + adversarial tests")
     }
 }

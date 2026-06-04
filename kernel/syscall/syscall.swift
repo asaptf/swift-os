@@ -33,12 +33,12 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         if Int(bitPattern: frame[0]) == 0 {
             result = ttyRead(buffer: frame[1], count: frame[2]) // stdin → tty
         } else {
-            result = vfsRead(fd: Int(frame[0]), buffer: frame[1], count: frame[2])
+            result = vfsRead(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
         }
     } else if number == sysWrite {
-        result = vfsWrite(fd: Int(frame[0]), buffer: frame[1], count: frame[2])
+        result = vfsWrite(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
     } else if number == sysClose {
-        result = vfsClose(fd: Int(frame[0]))
+        result = vfsClose(fd: Int(bitPattern: frame[0]))
     } else if number == sysExit {
         // A process launched via processRunElf (M6) unwinds back to the kernel;
         // the standalone M5 EL0 probe (no active process) keeps its old banner.
@@ -48,7 +48,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = 0
         uartPuts("M5 OK: user open/read/write/close completed\n")
     } else if number == sysLseek {
-        result = vfsLseek(fd: Int(frame[0]), offset: Int(frame[1]), whence: Int(frame[2]))
+        result = vfsLseek(fd: Int(bitPattern: frame[0]),
+                          offset: Int(bitPattern: frame[1]),
+                          whence: Int(bitPattern: frame[2]))
     } else if number == sysTcGetAttr {
         result = syscallTcGetAttr(termios: frame[1])
     } else if number == sysTcSetAttr {
@@ -78,9 +80,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysStat {
         result = vfsStat(path: frame[0], statbuf: frame[1])
     } else if number == sysFstat {
-        result = vfsFstat(fd: Int(frame[0]), statbuf: frame[1])
+        result = vfsFstat(fd: Int(bitPattern: frame[0]), statbuf: frame[1])
     } else if number == sysGetdents {
-        result = vfsGetdents(fd: Int(frame[0]), buffer: frame[1], count: frame[2])
+        result = vfsGetdents(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
     } else if number == sysChdir {
         result = vfsChdir(path: frame[0])
     } else if number == sysGetcwd {

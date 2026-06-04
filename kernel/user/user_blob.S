@@ -62,3 +62,10 @@ newlibtest_elf_end:
 coproc_elf_start:
 .incbin "build/coproc.elf"
 coproc_elf_end:
+
+.balign 8
+.global securitydemo_elf_start
+.global securitydemo_elf_end
+securitydemo_elf_start:
+.incbin "build/securitydemo.elf"
+securitydemo_elf_end:

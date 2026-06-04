@@ -31,7 +31,9 @@ newlib motd: Welcome to swift-os.
 M8c OK: newlib program exited, code 0
 coproc A done
 coproc B done
-M8d OK: two EL0 processes ran concurrently}"
+M8d OK: two EL0 processes ran concurrently
+securitydemo: syscall abuse checks OK
+security OK: syscall abuse demo exited, code 0}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
