@@ -324,18 +324,38 @@ because `fork` needs parent and child alive at once. Staged:
 
 Downloaded busybox 1.38.0; configured `allnoconfig` + ash/ls/cat/echo + static; cross-built with
 `aarch64-elf-gcc` against `./sysroot` (newlib). busybox is **Linux-oriented**; newlib is bare-metal, so
-the build hits a wall of missing glibc/Linux headers and unimplemented POSIX surface:
+the bring-up needed a small `userland/compat` header surface for POSIX/Linux-ish declarations that newlib
+does not ship.
 
-- Header shims already added (`userland/compat/`): `byteswap.h`, `endian.h`, `features.h`.
-- Still missing for `include/libbb.h` alone (~13 real): `sys/socket.h`, `netdb.h`, `netinet/in.h`,
-  `arpa/inet.h`, `mntent.h`, `poll.h`, `sys/ioctl.h`, `sys/mman.h`, `sys/statfs.h`, `sys/sysinfo.h`,
-  `sys/sysmacros.h`, `utmpx.h`, `shadow.h` (most are stub-able since ash/ls/cat/echo don't call them).
-- **newlib has no `dirent.h` support** ("`<dirent.h>` not supported") — `opendir/readdir/closedir` must
-  be implemented in our libc layer over the existing `getdents` syscall (needed by `ls`).
-- Expect a further tail of function stubs (`getuid/geteuid/getpwuid/getgrgid`, `ioctl`/`TCGETS` for ash's
-  terminal probing, `sysconf`, `poll`, `sigprocmask`, …) and iterations across compile → link → runtime.
+- Header shims added under `userland/compat/` for the minimal BusyBox build surface: endian/feature
+  helpers, directory APIs, termios, sockets/netdb, mount/shadow/utmp placeholders, poll, mmap, statfs,
+  sysinfo, sysmacros, utsname, wait/status, stdio/stdlib extensions, and related network headers.
+- Repro target added: `make busybox-check` downloads pinned busybox 1.38.0, applies the minimal
+  ash/ls/cat/echo/static config, includes `userland/compat`, and passes only if it produces a static
+  AArch64 busybox binary. Current log: `build/busybox-check.log`.
 
-Conclusion: busybox-on-newlib is achievable but needs a real ~POSIX compat layer (≈15–20 stub headers +
-a dirent implementation + ~10–15 function stubs), i.e. several more focused iterations. This is a genuine
-fork; options recorded for review (full compat layer vs. a small native shell that reaches the same
-user-visible goal of an interactive sh running ls/cat/echo).
+Conclusion: busybox-on-newlib is viable for the minimal ash + ls/cat/echo configuration. The binary now
+cross-builds statically; the next milestone is launching that image under the OS and filling runtime
+syscall gaps (`dup`, `pipe`, `ioctl`/termios variants, uid/gid, process helpers, directory backing, etc.)
+over our own syscall surface, not Linux syscall numbers.
+
+### d5 progress — busybox now COMPILES against newlib + compat (2026-06-04)
+
+A `userland/compat/` POSIX/Linux shim layer (≈30 headers, passed via `-isystem` before the newlib
+sysroot) now lets busybox 1.38.0 (ash + ls/cat/echo, static) **compile cleanly** with `aarch64-elf-gcc`.
+Key gaps filled: `byteswap/endian/features`, full `termios.h` (newlib aarch64 ships none — struct +
+flags `ICANON=1/ECHO=2/ISIG=4` matching the kernel ABI + baud table), `dirent.h` (newlib's is
+"unsupported"), `sys/{ioctl,mman,statfs,sysinfo,sysmacros,resource,wait,un,termios}.h`,
+`netdb/sys/socket/netinet/arpa/net/if` network stubs, `poll/sched/mntent/utmpx/shadow`, and
+`include_next` shims for `stdlib.h` (rename newlib's nonstandard itoa/utoa), `stdio.h` (getline),
+`signal.h` (SA_RESTART). busybox `.config` saved at `userland/busybox/config-minimal`.
+
+Remaining for d5:
+1. **Link-time stub layer** (`userland/compat/*.c`): real `opendir/readdir/closedir` over `getdents`;
+   `tcgetattr/tcsetattr` over syscalls 7/8 (+ `tcflush/cf*` stubs); `lstat`→`stat`, `getuid/...`→0,
+   `getpwuid/...`→minimal, `ioctl` (TIOCGWINSZ/TCGETS), `fork/execve/waitpid` wrappers, and ENOSYS
+   stubs for the networking/mount/utmp surface libbb references.
+2. **Custom final link**: busybox's default `gcc` link can't find `-lc`/`crt0.o`; relink the busybox
+   objects with our `crt0_newlib.o` + stub lib + `-T user_newlib.ld` + newlib (`--start-group`).
+3. **Runtime bring-up**: get the ash prompt, then run ls/cat/echo (likely a few iterations: applet
+   re-exec path, tty modes, missing syscalls surfaced at runtime).
