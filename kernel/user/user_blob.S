@@ -41,3 +41,10 @@ spawndemo_elf_end:
 fsdemo_elf_start:
 .incbin "build/fsdemo.elf"
 fsdemo_elf_end:
+
+.balign 8
+.global brkdemo_elf_start
+.global brkdemo_elf_end
+brkdemo_elf_start:
+.incbin "build/brkdemo.elf"
+brkdemo_elf_end:

@@ -177,6 +177,12 @@ private func runSpawnDemo() {
     uartPuts("\n")
 }
 
+private func runBrkDemo() {
+    uartPuts("swift-os M8c: user heap via sbrk\n")
+    let (p, n, argc) = packArgs(["brkdemo"])
+    _ = processRunElf(brkdemo_elf_addr(), UInt(brkdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -321,6 +327,8 @@ func kernelMain() {
     runArgvDemo()
 
     runSpawnDemo()
+
+    runBrkDemo()
 
     runFsDemo()
 

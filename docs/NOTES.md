@@ -142,9 +142,14 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     (18); path resolution handles absolute/relative, `.`/`..`. Userland `lib/fs.h` mirrors the
     `stat`/`dirent` layouts. Demo `fsdemo` lists `/`, cats `/etc/motd`, stats, `chdir /etc`+`getcwd`,
     and round-trips a `/tmp/note` file — all asserted in `boot_test.sh`.
-  - Remaining: (c) cross-build newlib; (d) cross-build busybox; (e) run `sh`. Note: real busybox `sh`
-    uses fork+execve+waitpid; whether our synchronous spawn suffices or we need an eager-copy fork
-    (no COW) will be decided at step (d).
+  - **(c1) User heap via sbrk — DONE.** Per-process heap region at `0xA000_0000`; `sbrk(incr)` syscall
+    (19) grows it on demand, mapping pages from the PMM into the process address space (tracked per
+    nesting level in `process.swift`). `brkdemo` writes/reads across a page boundary → OK. This is the
+    foundation newlib's malloc/_sbrk will use.
+  - Remaining: (c2) cross-build newlib (needs an `aarch64-elf-gcc` cross toolchain — not yet installed;
+    decide install vs build-from-source at that step) + syscall stubs (`_read/_write/_sbrk/...`);
+    (d) cross-build busybox; (e) run `sh`. Note: real busybox `sh` uses fork+execve+waitpid; whether
+    our synchronous spawn suffices or we need an eager-copy fork (no COW) will be decided at step (d).
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed

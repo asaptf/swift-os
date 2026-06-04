@@ -18,6 +18,7 @@ private let sysFstat: UInt = 15     // fstat(fd, statbuf)
 private let sysGetdents: UInt = 16  // getdents(fd, buf, count)
 private let sysChdir: UInt = 17     // chdir(path)
 private let sysGetcwd: UInt = 18    // getcwd(buf, size)
+private let sysSbrk: UInt = 19      // sbrk(incr) -> previous break
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -84,6 +85,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsChdir(path: frame[0])
     } else if number == sysGetcwd {
         result = vfsGetcwd(buffer: frame[0], size: frame[1])
+    } else if number == sysSbrk {
+        frame[0] = processSbrk(Int(bitPattern: frame[0]))
+        return // result already written (sbrk returns an address, not errno)
     } else {
         result = -38 // ENOSYS
     }

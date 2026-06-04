@@ -25,6 +25,7 @@
 #define SYS_GETDENTS  16
 #define SYS_CHDIR     17
 #define SYS_GETCWD    18
+#define SYS_SBRK      19
 
 #ifndef __ASSEMBLER__
 
@@ -77,6 +78,11 @@ static inline long spawn(const char *path, char *const argv[]) {
 
 static inline int getpid(void) {
     return (int)__syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+// Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.
+static inline void *sbrk(long incr) {
+    return (void *)__syscall3(SYS_SBRK, incr, 0, 0);
 }
 
 #endif // __ASSEMBLER__

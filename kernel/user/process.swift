@@ -13,6 +13,7 @@
 
 private let userStackTop: UInt = 0x9000_0000
 private let userStackPages = 4
+private let userHeapBase: UInt = 0xA000_0000 // brk/sbrk region, clear of code/stack
 private let maxDepth = 8
 
 private var returnCtxs: UnsafeMutablePointer<CPUContext>! = nil // [maxDepth]
@@ -22,6 +23,7 @@ private var scratchCtx: UnsafeMutablePointer<CPUContext>! = nil
 private var levelTtbr0 = [UInt](repeating: 0, count: maxDepth)
 private var levelExitCode = [Int](repeating: 0, count: maxDepth)
 private var levelKilled = [Bool](repeating: false, count: maxDepth)
+private var levelHeapBreak = [UInt](repeating: 0, count: maxDepth)
 
 private var depth = 0          // number of active nested EL0 processes
 private var lastKilled = false // signal-kill flag of the most recent run
@@ -116,6 +118,7 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
 
     levelTtbr0[level] = ttbr0
     levelKilled[level] = false
+    levelHeapBreak[level] = userHeapBase
     depth = level + 1
 
     cpu_switch_context(UnsafeMutableRawPointer(returnCtxs.advanced(by: level)),
@@ -148,4 +151,33 @@ func processExit(_ code: Int) {
 /// Fatal-signal termination of the foreground process (status 128+signo).
 func processTerminateBySignal(_ sig: Int) {
     processUnwind(128 + sig, killed: true)
+}
+
+/// sbrk(incr): grow/shrink the current process's heap, mapping new pages from
+/// the PMM into its address space. Returns the previous break, or ~0 on error.
+func processSbrk(_ incr: Int) -> UInt {
+    let fail = UInt(bitPattern: -1)
+    guard depth > 0 else { return fail }
+    let level = depth - 1
+    let old = levelHeapBreak[level]
+    if incr == 0 { return old }
+
+    let newBreak = UInt(bitPattern: Int(bitPattern: old) + incr)
+    if newBreak < userHeapBase { return fail }
+
+    let pageMask = PageAllocator.pageSize - 1
+    let oldTop = (old + pageMask) & ~pageMask
+    let newTop = (newBreak + pageMask) & ~pageMask
+    if newTop > oldTop {
+        var va = oldTop
+        while va < newTop {
+            let pa = pmmAllocZeroedPage()
+            if pa == 0 || address_space_map(levelTtbr0[level], va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+                return fail
+            }
+            va += PageAllocator.pageSize
+        }
+    }
+    levelHeapBreak[level] = newBreak
+    return old
 }

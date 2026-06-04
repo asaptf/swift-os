@@ -24,7 +24,8 @@ M8a OK: spawn parent exited, code 0
 cat /etc/motd: Welcome to swift-os.
 cwd2=/etc
 tmp/note: hi-tmpfs
-M8b OK: VFS demo exited, code 0}"
+M8b OK: VFS demo exited, code 0
+M8c brk: heap read/write OK}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
