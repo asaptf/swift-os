@@ -649,6 +649,36 @@ Constraints to keep open now (mostly already satisfied): an event/poll syscall, 
 virtio, capability strings for network rights, and not baking any networking assumptions into the
 kernel core.
 
+### Performance model — non-negotiables
+
+Efficiency is decided by buffer/IPC design, NOT by sans-IO or the choice of Swift (both are ~free in
+the hot path when the stack stays value-typed with no ARC). A userland stack done naively (synchronous
+IPC + a copy per packet) can be multiples slower than an in-kernel monolith; done with the levers below
+it matches or beats one (cf. Arrakis, IX, mTCP, Google Snap). The following are **requirements** for
+N0–N4, not optimizations to add later — retrofitting them means rewriting the data path:
+
+1. **Zero-copy, end to end.** One set of packet buffers flows by reference from the virtio DMA ring →
+   driver service → stack service → application via shared memory. Only descriptors cross address
+   spaces; payload is never copied. App-facing socket buffers map the same pages where possible.
+2. **Batching everywhere.** Process N packets per address-space crossing and per notification. The
+   per-crossing cost must amortize over many packets, never one.
+3. **Async notification + poll rings, never sync IPC per packet.** Use virtio/io_uring-style shared
+   rings with doorbells; wake rarely, drain in bulk. No rendezvous on the packet path. This is the
+   single biggest throughput lever and must integrate with the event/poll syscall.
+4. **Exploit host offloads via virtio-net.** Checksum offload, TSO/GSO, and mergeable RX buffers, so
+   the stack handles large segments instead of many MTU-sized packets. Decisive for our profile.
+5. **Value-typed hot path, no ARC, no allocation per packet.** Preallocated buffer pools; `~Copyable`
+   ownership for buffer handles; classes/ARC stay out of per-packet code.
+
+Single core is a deliberate constraint, not a bug: it removes `NET_EPOCH`/lock contention/cache-line
+bouncing and keeps the hot path linear. We trade multi-core pps scaling (not our workload) for
+simplicity. Our target profile is AI/server traffic — few long-lived connections, large bandwidth-bound
+streams — where these levers let a single core sustain multi-gigabit TCP and the bottleneck is
+inference, not the network. High-pps small-packet workloads are explicitly not optimized for.
+
+Each N-milestone must ship a throughput/latency check (host-side where the sans-IO core allows, in-QEMU
+for the integrated path) so regressions in the data path are caught, per priority #3.
+
 ## Future cloud elasticity model (record, don't build yet)
 
 swift-os should keep a path open for cloud VM resize without rebooting the guest, but this is a long-horizon
