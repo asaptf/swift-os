@@ -100,6 +100,15 @@ static inline unsigned long spawndemo_elf_len(void) {
     return (unsigned long)(spawndemo_elf_end - spawndemo_elf_start);
 }
 
+extern const unsigned char fsdemo_elf_start[];
+extern const unsigned char fsdemo_elf_end[];
+static inline uintptr_t fsdemo_elf_addr(void) {
+    return (uintptr_t)fsdemo_elf_start;
+}
+static inline unsigned long fsdemo_elf_len(void) {
+    return (unsigned long)(fsdemo_elf_end - fsdemo_elf_start);
+}
+
 enum {
     VM_ATTR_NORMAL = 0,
     VM_ATTR_DEVICE = 1

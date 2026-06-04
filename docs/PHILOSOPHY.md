@@ -75,7 +75,8 @@ Compatibility is rejected when it imports legacy complexity:
 - dynamic linking in the early system;
 - broad kernel-module ABI;
 - Docker/OCI compatibility as a core OS goal;
-- filesystem crash-consistency machinery before the project needs persistent writable storage.
+- filesystem crash-consistency machinery before the project needs persistent writable storage;
+- mutable root filesystem updates instead of signed immutable image updates.
 
 ## Modularity model
 

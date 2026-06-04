@@ -177,6 +177,15 @@ private func runSpawnDemo() {
     uartPuts("\n")
 }
 
+private func runFsDemo() {
+    uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
+    let (p, n, argc) = packArgs(["fsdemo"])
+    let code = processRunElf(fsdemo_elf_addr(), UInt(fsdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8b OK: VFS demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
     let (p, n, argc) = packArgs(["ttydemo"])
@@ -299,6 +308,7 @@ func kernelMain() {
     timerInit(ticksPerSecond: 4)
     schedulerInit()
     processInit()
+    vfsInit()
     ttyInit()
     signalReset()
     uartRxInit()
@@ -311,6 +321,8 @@ func kernelMain() {
     runArgvDemo()
 
     runSpawnDemo()
+
+    runFsDemo()
 
     runTtyDemo()
 

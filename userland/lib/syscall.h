@@ -20,6 +20,11 @@
 #define SYS_GETPID    11
 #define SYS_SPAWN     12
 #define SYS_WAITPID   13
+#define SYS_STAT      14
+#define SYS_FSTAT     15
+#define SYS_GETDENTS  16
+#define SYS_CHDIR     17
+#define SYS_GETCWD    18
 
 #ifndef __ASSEMBLER__
 

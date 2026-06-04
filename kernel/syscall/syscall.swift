@@ -13,6 +13,11 @@ private let sysKill: UInt = 10      // kill(pid, sig)
 private let sysGetpid: UInt = 11    // getpid()
 private let sysSpawn: UInt = 12     // spawn(path, argv) -> child exit status
 private let sysWaitpid: UInt = 13   // waitpid(pid, status*, options)
+private let sysStat: UInt = 14      // stat(path, statbuf)
+private let sysFstat: UInt = 15     // fstat(fd, statbuf)
+private let sysGetdents: UInt = 16  // getdents(fd, buf, count)
+private let sysChdir: UInt = 17     // chdir(path)
+private let sysGetcwd: UInt = 18    // getcwd(buf, size)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -69,6 +74,16 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysWaitpid {
         // spawn() is synchronous, so there are no outstanding children to reap.
         result = -10 // ECHILD
+    } else if number == sysStat {
+        result = vfsStat(path: frame[0], statbuf: frame[1])
+    } else if number == sysFstat {
+        result = vfsFstat(fd: Int(frame[0]), statbuf: frame[1])
+    } else if number == sysGetdents {
+        result = vfsGetdents(fd: Int(frame[0]), buffer: frame[1], count: frame[2])
+    } else if number == sysChdir {
+        result = vfsChdir(path: frame[0])
+    } else if number == sysGetcwd {
+        result = vfsGetcwd(buffer: frame[0], size: frame[1])
     } else {
         result = -38 // ENOSYS
     }

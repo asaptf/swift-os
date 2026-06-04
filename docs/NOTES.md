@@ -135,9 +135,16 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     (= fork+exec+wait, since we have no COW), returning the child's exit status; `waitpid` (13) is a
     stub (ECHILD) because spawn is synchronous. Demo: `spawndemo` (EL0) spawns `/bin/argvdemo`
     (own address space), gets status 2, continues — proving the shell-launches-command model.
-  - Remaining: (b) VFS dirs/stat/getdents/tmpfs; (c) cross-build newlib; (d) cross-build busybox;
-    (e) run `sh`. Note: real busybox `sh` uses fork+execve+waitpid; whether our synchronous spawn
-    suffices or we need an eager-copy fork (no COW) will be decided at step (d).
+  - **(b) Real VFS — DONE.** `vfs.swift` rewritten as a fixed vnode table (parent/child/sibling inode
+    tree) with a read-only base (`/`, `/bin`, `/etc/{motd,hostname}`, `/readme.txt`, `/hello.txt`) and a
+    writable tmpfs at `/tmp`. Implements `open` (incl. `O_CREAT` in tmpfs), `read`, `write` (tmpfs +
+    stdout/stderr), `close`, `lseek`, `stat`/`fstat` (14/15), `getdents` (16), `chdir` (17), `getcwd`
+    (18); path resolution handles absolute/relative, `.`/`..`. Userland `lib/fs.h` mirrors the
+    `stat`/`dirent` layouts. Demo `fsdemo` lists `/`, cats `/etc/motd`, stats, `chdir /etc`+`getcwd`,
+    and round-trips a `/tmp/note` file — all asserted in `boot_test.sh`.
+  - Remaining: (c) cross-build newlib; (d) cross-build busybox; (e) run `sh`. Note: real busybox `sh`
+    uses fork+execve+waitpid; whether our synchronous spawn suffices or we need an eager-copy fork
+    (no COW) will be decided at step (d).
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed

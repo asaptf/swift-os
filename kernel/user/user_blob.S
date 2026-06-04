@@ -34,3 +34,10 @@ argvdemo_elf_end:
 spawndemo_elf_start:
 .incbin "build/spawndemo.elf"
 spawndemo_elf_end:
+
+.balign 8
+.global fsdemo_elf_start
+.global fsdemo_elf_end
+fsdemo_elf_start:
+.incbin "build/fsdemo.elf"
+fsdemo_elf_end:

@@ -78,6 +78,111 @@ without making arbitrary binary code part of the permanent kernel ABI.
   minimal early initialization, deterministic device discovery, lazy service startup, and measured boot-time
   budgets over broad "initialize everything before init" designs.
 
+## Filesystem and update storage model
+
+swift-os uses specialized filesystems instead of a single general-purpose mutable disk filesystem.
+
+Runtime layout:
+
+```
+active read-only base FS
+  + RAM tmpfs scratch
+  + VFS namespace
+```
+
+Update layout:
+
+```
+persistent update store
+  + signed immutable image slots
+  + signed patch bundles
+  + atomic boot manifest
+```
+
+The active root is never modified in place. Normal system updates are staged as complete immutable images or
+bundles in an inactive slot, verified, and then selected atomically through a small boot manifest. Rollback is
+performed by selecting the previous known-good slot.
+
+### Read-only base FS
+
+The base filesystem should be a custom packed image optimized for swift-os:
+
+- read-only and immutable while mounted;
+- deterministic image layout;
+- packed metadata and file data;
+- extent-based reads;
+- precomputed directory metadata;
+- mmap- and page-cache-friendly data placement;
+- shareable across future cells;
+- no free-space management;
+- no journaling or crash-recovery machinery;
+- built by a host-side image tool and parsed by small kernel/VFS code.
+
+The base FS exists to hold `/bin`, `/etc`, service manifests, driver manifests, identity policy, and other
+boot/runtime files that should be versioned with the system image. It is not a mutable user data store.
+
+### tmpfs scratch
+
+Writable runtime state lives in tmpfs:
+
+- `/tmp`;
+- shell temporary files;
+- logs and transient service state;
+- per-cell private scratch later.
+
+tmpfs is intentionally ephemeral. Data loss on reboot is acceptable by design.
+
+### Persistent update store
+
+Self-update requires persistence, but it does not require a traditional mutable root filesystem. The persistent
+update store is a narrow storage layer for whole-system images, kernel images, driver/service bundles, patch
+bundles, and boot manifests.
+
+Expected structure:
+
+```text
+slot A:
+  kernel image
+  base FS image
+  manifest.toml
+
+slot B:
+  kernel image
+  base FS image
+  manifest.toml
+
+boot manifest:
+  active slot
+  fallback slot
+  generation
+  verified boot state
+```
+
+Normal update flow:
+
+1. Receive or build an update bundle.
+2. Verify signatures and hashes.
+3. Write the new kernel/base images to an inactive slot.
+4. Verify the written slot.
+5. Atomically update the boot manifest.
+6. Boot, reboot, or perform a future kernel handoff into the new generation.
+7. Roll back to the previous slot if the new generation fails its health checks.
+
+Live kernel patches are stored as signed patch bundles targeted to a specific kernel version or hash. The
+filesystem stores and verifies those bundles; the kernel patch manager decides whether they are safe to apply
+at a quiescent point. Full kernel handoff uses staged kernel images from the update store, but the state
+transfer mechanism is a kernel responsibility, not a filesystem feature.
+
+Explicit non-goals for the bring-up filesystem:
+
+- ext2/ext4/FAT/UFS/ZFS compatibility;
+- a general persistent writable POSIX filesystem;
+- journaling;
+- fsck;
+- POSIX ACLs and extended attributes;
+- mutable root updates;
+- making `/etc/passwd` or other compatibility files the source of security policy.
+
 ## Boot-time requirements
 
 Boot speed is a primary system quality, not a cosmetic optimization. Each milestone should avoid adding
