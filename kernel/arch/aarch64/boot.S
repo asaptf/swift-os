@@ -18,6 +18,29 @@ _start:
     ldr     x0, =__stack_top
     mov     sp, x0
 
+    // QEMU may enter with strict alignment checks enabled. Swift codegen can
+    // use unaligned vector accesses for value copies, so leave alignment and
+    // SP-alignment checks off until we define our own trap policy.
+    mrs     x0, sctlr_el1
+    bic     x0, x0, #(1 << 1)
+    bic     x0, x0, #(1 << 3)
+    bic     x0, x0, #(1 << 4)
+    msr     sctlr_el1, x0
+    isb
+
+    // Allow FP/SIMD instructions at EL1. Swift codegen may use vector loads
+    // for ordinary value manipulation even before we have a scheduler.
+    mrs     x0, cpacr_el1
+    mov     x1, #(3 << 20)
+    orr     x0, x0, x1
+    msr     cpacr_el1, x0
+    isb
+
+    // Install a minimal EL1 vector table before entering Swift.
+    ldr     x0, =el1_vector_table
+    msr     vbar_el1, x0
+    isb
+
     // Zero the BSS: [__bss_start, __bss_end), 8 bytes at a time.
     ldr     x0, =__bss_start
     ldr     x1, =__bss_end

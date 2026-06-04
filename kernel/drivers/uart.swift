@@ -33,3 +33,14 @@ func uartPuts(_ string: StaticString) {
         }
     }
 }
+
+func uartPutHex(_ value: UInt) {
+    uartPuts("0x")
+    var shift = (MemoryLayout<UInt>.size * 8) - 4
+    while shift >= 0 {
+        let nibble = UInt8((value >> UInt(shift)) & 0xF)
+        uartPutc(nibble < 10 ? 0x30 + nibble : 0x41 + (nibble - 10))
+        if shift == 0 { break }
+        shift -= 4
+    }
+}

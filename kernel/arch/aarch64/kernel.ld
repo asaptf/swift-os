@@ -10,6 +10,7 @@ ENTRY(_start)
 
 PHYS_BASE = 0x40080000;
 STACK_SIZE = 0x10000; /* 64 KiB boot stack */
+HEAP_SIZE = 0x40000;  /* 256 KiB early bump heap */
 
 SECTIONS
 {
@@ -40,6 +41,11 @@ SECTIONS
     . = ALIGN(16);
     . += STACK_SIZE;
     __stack_top = .;
+
+    . = ALIGN(16);
+    __heap_start = .;
+    . += HEAP_SIZE;
+    __heap_end = .;
 
     __image_end = .;
 

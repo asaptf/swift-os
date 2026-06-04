@@ -29,7 +29,9 @@ Host: macOS (Darwin 25.5.0), Apple Silicon (arm64, T6050).
   **`aarch64-none-none-elf`** target — exactly what we build for.
 - **Pinned target triple:** `aarch64-none-none-elf`.
 - **Pinned Embedded Swift flags:**
-  `-target aarch64-none-none-elf -enable-experimental-feature Embedded -wmo -parse-as-library -Osize -Xfrontend -function-sections -import-objc-header kernel/arch/aarch64/io.h`
+  `-target aarch64-none-none-elf -enable-experimental-feature Embedded -wmo -parse-as-library -Osize -Xllvm -mattr=+strict-align,-neon -Xfrontend -function-sections -import-objc-header kernel/arch/aarch64/io.h`
+  - `+strict-align,-neon` is an early-boot guardrail: with the MMU off, QEMU can fault on
+    unaligned SIMD accesses that Swift may otherwise generate for ordinary value copies.
 - **Linker:** GNU `aarch64-elf-ld` (`--gc-sections -nostdlib -T kernel.ld`). `ld.lld` is keg-only
   under a separate prefix; binutils `ld` is simpler for a custom script.
 - **MMIO:** volatile access via C inlines in `kernel/arch/aarch64/io.h` (bridging header).
@@ -66,18 +68,27 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 > These are reference values. Always re-confirm with `qemu-system-aarch64 -M virt,dumpdtb=...` +
 > `dtc`, or the QEMU `hw/arm/virt.c` memory map, for the installed QEMU version.
 
-## Build / run commands (verified at M0)
+## Build / run commands (verified at M1)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
 - `make run`   — `qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -kernel build/kernel.elf`.
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
-- `make test`  — builds, then `tests/boot_test.sh` asserts the banner appears on serial within 10 s.
+- `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
+  `M1 OK: heap, ARC class, exception vectors` appears on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
 
+- **M1 (2026-06-04) — DONE.** Runtime/memory bring-up:
+  - EL1 vector table installed in `boot.S`; unexpected exceptions dump `ESR_EL1`, `ELR_EL1`,
+    `FAR_EL1`, `SCTLR_EL1`, and `CPACR_EL1`.
+  - Early 256 KiB linker-reserved bump heap, Swift raw allocation hook (`swift_slowAlloc` /
+    `swift_slowDealloc`), class allocation support (`posix_memalign` / `free`), and stack
+    protector stubs.
+  - Physical page allocator added as a Swift bitmap allocator with host unit coverage.
+  - Boot probe instantiates and retains a Swift class; `make test` passes.
 - **M0 (2026-06-04) — DONE.** Boot skeleton boots on QEMU `virt`; serial prints
   `Hello from Swift kernel`. `make test` passes. Files: `kernel/arch/aarch64/{boot.S,kernel.ld,io.h}`,
   `kernel/drivers/uart.swift`, `kernel/main.swift`, `Makefile`, `tests/boot_test.sh`.

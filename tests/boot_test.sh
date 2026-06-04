@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# boot_test.sh — M0 acceptance test.
+# boot_test.sh — boot acceptance test.
 #
 # Boots the kernel in QEMU (headless), captures the serial console, and asserts
 # the expected banner appears within a timeout. The kernel halts in an infinite
@@ -12,7 +12,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 QEMU="${QEMU:-qemu-system-aarch64}"
-EXPECT="${EXPECT:-Hello from Swift kernel}"
+EXPECT="${EXPECT:-M1 OK: heap, ARC class, exception vectors}"
 TIMEOUT="${TIMEOUT:-10}"
 
 if [[ ! -f "$KERNEL" ]]; then
