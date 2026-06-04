@@ -1,0 +1,60 @@
+// syscall.h — swift-os userland syscall ABI.
+//
+// Our own POSIX-like ABI (NOT Linux): the syscall number goes in x8, arguments
+// in x0..x5, the return value comes back in x0, via `svc #0`. Numbers must match
+// kernel/syscall/syscall.swift.
+
+#ifndef SWIFTOS_USER_SYSCALL_H
+#define SWIFTOS_USER_SYSCALL_H
+
+#define SYS_OPEN  1
+#define SYS_READ  2
+#define SYS_WRITE 3
+#define SYS_CLOSE 4
+#define SYS_EXIT  5
+#define SYS_LSEEK 6
+
+#ifndef __ASSEMBLER__
+
+typedef unsigned long size_t;
+typedef long ssize_t;
+
+static inline long __syscall3(long n, long a0, long a1, long a2) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x8), "r"(x1), "r"(x2)
+                     : "memory");
+    return x0;
+}
+
+static inline ssize_t write(int fd, const void *buf, size_t count) {
+    return __syscall3(SYS_WRITE, fd, (long)buf, (long)count);
+}
+
+static inline ssize_t read(int fd, void *buf, size_t count) {
+    return __syscall3(SYS_READ, fd, (long)buf, (long)count);
+}
+
+static inline int open(const char *path, int flags) {
+    return (int)__syscall3(SYS_OPEN, (long)path, flags, 0);
+}
+
+static inline int close(int fd) {
+    return (int)__syscall3(SYS_CLOSE, fd, 0, 0);
+}
+
+static inline long lseek(int fd, long offset, int whence) {
+    return __syscall3(SYS_LSEEK, fd, offset, whence);
+}
+
+static inline void _exit(int code) {
+    __syscall3(SYS_EXIT, code, 0, 0);
+    __builtin_unreachable();
+}
+
+#endif // __ASSEMBLER__
+#endif // SWIFTOS_USER_SYSCALL_H

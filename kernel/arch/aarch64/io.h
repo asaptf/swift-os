@@ -55,6 +55,20 @@ void cpu_switch_context(void *prev, void *next);
 uintptr_t thread_trampoline_addr(void);
 void thread_exit(void); // provided by kernel/sched/scheduler.swift
 
+// ELF64 loader (kernel/user/elf.c) and EL0 entry trampoline (user_entry.S).
+uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
+uintptr_t user_thread_launch_addr(void);
+
+// Userland ELF embedded in the kernel image (kernel/user/user_blob.S).
+extern const unsigned char hello_elf_start[];
+extern const unsigned char hello_elf_end[];
+static inline uintptr_t hello_elf_addr(void) {
+    return (uintptr_t)hello_elf_start;
+}
+static inline unsigned long hello_elf_len(void) {
+    return (unsigned long)(hello_elf_end - hello_elf_start);
+}
+
 enum {
     VM_ATTR_NORMAL = 0,
     VM_ATTR_DEVICE = 1

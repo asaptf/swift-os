@@ -150,6 +150,14 @@ private func runSchedulerDemo() {
     }
 }
 
+private func runProcessDemo() {
+    uartPuts("swift-os M6: load + run static ELF at EL0\n")
+    let code = processRunElf(hello_elf_addr(), UInt(hello_elf_len()))
+    uartPuts("M6 OK: ELF process exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 @_cdecl("exception_handler")
 func exceptionHandler() {
     uartPuts("panic: unexpected EL1 exception\n")
@@ -254,9 +262,12 @@ func kernelMain() {
     gicInit()
     timerInit(ticksPerSecond: 4)
     schedulerInit()
+    processInit()
     enable_irq()
 
     runSchedulerDemo()
+
+    runProcessDemo()
 
     userProcessStart()
 

@@ -41,6 +41,7 @@ SWIFT_SRCS := \
 	kernel/sched/scheduler.swift \
 	kernel/syscall/syscall.swift \
 	kernel/user/user_process.swift \
+	kernel/user/process.swift \
 	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift
@@ -60,6 +61,10 @@ ASM_FLAGS := --target=$(TRIPLE) -ffreestanding -c
 C_FLAGS   := --target=$(TRIPLE) -ffreestanding -O2 -Wall -Wextra -c
 # -fno-builtin so mem* implementations are not turned into calls to themselves.
 C_FLAGS_NB := --target=$(TRIPLE) -ffreestanding -fno-builtin -O2 -Wall -Wextra -c
+# Userland (EL0) build: freestanding, static, our own libc/crt0, no host libc.
+USER_CFLAGS  := --target=$(TRIPLE) -ffreestanding -fno-builtin -nostdlib -Os -Wall -Wextra \
+	-Iuserland -Iuserland/lib -c
+USER_LDFLAGS := -nostdlib -static -T userland/user.ld -z max-page-size=4096
 # Garbage-collect unused sections; entry is _start from the boot stub.
 LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER)
 
@@ -74,9 +79,15 @@ HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
+ELF_OBJ    := $(BUILD)/elf.o
+USER_ENTRY_OBJ := $(BUILD)/user_entry.o
+USER_BLOB_OBJ  := $(BUILD)/user_blob.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
+
+# Userland artifacts (a static C hello-world, embedded into the kernel image).
+USER_HELLO_ELF := $(BUILD)/hello.elf
 
 .PHONY: build run debug gdb test clean tools-check
 
@@ -109,12 +120,38 @@ $(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
+$(ELF_OBJ): kernel/user/elf.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(USER_ENTRY_OBJ): $(ARCH_DIR)/user_entry.S Makefile | $(BUILD)/.dir
+	$(CLANG) $(ASM_FLAGS) $< -o $@
+
+# --- Userland (EL0) -------------------------------------------------------
+$(BUILD)/user_crt0.o: userland/lib/crt0.S userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/lib/crt0.S -o $@
+
+$(BUILD)/user_libc.o: userland/lib/libc.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/lib/libc.c -o $@
+
+$(BUILD)/user_hello.o: userland/hello.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/hello.c -o $@
+
+$(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
+
+# Embed the userland ELF into the kernel image (no block device yet).
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) Makefile | $(BUILD)/.dir
+	$(CLANG) $(ASM_FLAGS) $< -o $@
+
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(SWIFT_FLAGS) -c $(SWIFT_SRCS) -o $@
 
 # Link the freestanding image.
-$(KERNEL_ELF): $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(HEAP_OBJ) $(STRING_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) $(LINKER)
-	$(LDBIN) $(LD_FLAGS) $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(HEAP_OBJ) $(STRING_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) -o $@
+KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
+	$(VM_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+
+$(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
+	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
@@ -131,6 +168,7 @@ gdb:
 test: build
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
+	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 
 clean:

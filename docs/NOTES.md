@@ -102,7 +102,7 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   - `5 exit(status)` — records M5 success.
   - `6 lseek(fd, offset, whence)` — implemented for fd 3.
 
-## Build / run commands (verified at M4.5)
+## Build / run commands (verified at M6)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -110,11 +110,29 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  both `M4.5 sched: real context switch OK` and
-  `M5 OK: user open/read/write/close completed` appear on serial within 10 s.
+  both `hello from ELF userland` and
+  `M6 OK: ELF process exited, code 7` appear on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
+
+- **M6 (2026-06-04) — DONE.** libc subset, ELF64 loader, process spawn:
+  - **Userland toolchain.** Hand-written minimal libc (`userland/lib/`): `crt0.S`, syscall wrappers
+    (`syscall.h`), `strlen`/`puts_raw` (`libc.c`). `userland/hello.c` cross-built static and linked at
+    `0x8000_0000` (`user.ld`) — our userland ABI lives high so it never collides with the kernel/device
+    identity blocks. Built with `ld.lld -z max-page-size=4096`.
+  - **ELF64 loader** (`kernel/user/elf.c`): validates an `ET_EXEC`/AArch64 image and maps `PT_LOAD`
+    segments **page-by-page** (two segments may share a page — ours pack text+rodata into one),
+    allocating frames from the PMM, per-page perms = "executable wins". Returns `e_entry`.
+  - **Spawn primitive** (`kernel/user/process.swift`): `posix_spawn`-style (fresh address space + load +
+    enter EL0), chosen over `fork` because we have no COW and build fresh spaces anyway. Runs
+    synchronously — `SYS_exit` switches back (via `cpu_switch_context`) to the kernel context that
+    launched it (`user_entry.S` trampoline installs TTBR0/SP_EL0/ELR/SPSR and `eret`s). The exit code
+    round-trips to the kernel. Nests naturally for a future shell.
+  - The ELF is embedded in the kernel image (`kernel/user/user_blob.S` `.incbin`) until M8's packed FS.
+  - Acceptance: a static C `hello` loads, prints `hello from ELF userland` via our libc/syscalls, and
+    exits with code 7 — kernel logs `M6 OK: ELF process exited, code 7`. `make test` passes (host PMM
+    unit + userland ELF sanity + QEMU asserts).
 
 - **M4.5 (2026-06-04) — DONE.** Foundation hardening before the libc/ELF work of M6:
   - **PMM wired in.** The host-tested `PageAllocator` bitmap now manages all RAM past the kernel

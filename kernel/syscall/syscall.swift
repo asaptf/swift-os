@@ -19,6 +19,11 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysClose {
         result = vfsClose(fd: Int(frame[0]))
     } else if number == sysExit {
+        // A process launched via processRunElf (M6) unwinds back to the kernel;
+        // the standalone M5 EL0 probe (no active process) keeps its old banner.
+        if processIsActive() {
+            processExit(Int(bitPattern: frame[0])) // never returns
+        }
         result = 0
         uartPuts("M5 OK: user open/read/write/close completed\n")
     } else if number == sysLseek {

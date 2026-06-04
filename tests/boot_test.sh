@@ -12,8 +12,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 QEMU="${QEMU:-qemu-system-aarch64}"
-EXPECT="${EXPECT:-M4.5 sched: real context switch OK}"
-EXPECT2="${EXPECT2:-M5 OK: user open/read/write/close completed}"
+EXPECT="${EXPECT:-hello from ELF userland}"
+EXPECT2="${EXPECT2:-M6 OK: ELF process exited, code 7}"
 TIMEOUT="${TIMEOUT:-10}"
 
 if [[ ! -f "$KERNEL" ]]; then
