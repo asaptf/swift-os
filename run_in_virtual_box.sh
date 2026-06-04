@@ -258,11 +258,18 @@ make disk
 
 IMG="build/swift-os.img"
 VDI="build/swift-os.vdi"
+# Fixed UUID for the VDI. `convertfromraw` stamps a fresh random UUID into every
+# new VDI; if the disk is already attached to a VM, that breaks the VM's media
+# registry ("UUID ... does not match"). Pinning a stable UUID across rebuilds
+# keeps an attached VM valid, so re-running this script never detaches the disk.
+VDI_UUID="32cf5eed-e323-4881-925f-ead20788d233"
 [[ -f "$IMG" ]] || { err "$IMG was not produced by 'make disk'."; exit 1; }
 
 say "Converting $IMG -> $VDI (VirtualBox VDI)"
 rm -f "$VDI"
 "$VBOXMANAGE" convertfromraw "$IMG" "$VDI" --format VDI
+"$VBOXMANAGE" internalcommands sethduuid "$VDI" "$VDI_UUID" >/dev/null
+ok "pinned VDI UUID $VDI_UUID (stable across rebuilds)"
 
 echo
 say "${G}Done.${N} VirtualBox disk: $ROOT/$VDI"
