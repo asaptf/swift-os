@@ -10,6 +10,15 @@ confirm the firmware launches our loader and capture what hardware it exposes. T
 after handoff if VirtualBox's UART differs from QEMU's — that is expected, and the loader prints the
 information we need *before* it hands off.
 
+## 0. One command (recommended)
+
+`./run_in_virtual_box.sh` checks every dependency (Homebrew, llvm/clang, lld, mtools, gptfdisk, the Swift
+Embedded toolchain, and VirtualBox), offers to install anything missing, then builds the image and
+converts it to `build/swift-os.vdi`. Use `./run_in_virtual_box.sh --check` to only report what is
+missing, or `-y` to auto-accept installs. After it finishes, jump to step 3 (create the VM).
+
+The manual steps below are what that script automates.
+
 ## 1. Build the bootable disk image
 
 On the dev host (this repo):
