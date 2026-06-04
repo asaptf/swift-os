@@ -51,6 +51,74 @@ typedef struct {
     void    *VendorTable;
 } EFI_CONFIGURATION_TABLE;
 
+typedef UINT64 EFI_PHYSICAL_ADDRESS;
+
+typedef enum {
+    AllocateAnyPages,
+    AllocateMaxAddress,
+    AllocateAddress,
+    MaxAllocateType
+} EFI_ALLOCATE_TYPE;
+
+typedef enum {
+    EfiReservedMemoryType,
+    EfiLoaderCode,
+    EfiLoaderData,
+    EfiBootServicesCode,
+    EfiBootServicesData,
+    EfiRuntimeServicesCode,
+    EfiRuntimeServicesData,
+    EfiConventionalMemory,
+    EfiUnusableMemory,
+    EfiACPIReclaimMemory,
+    EfiACPIMemoryNVS,
+    EfiMemoryMappedIO,
+    EfiMemoryMappedIOPortSpace,
+    EfiPalCode,
+    EfiPersistentMemory,
+    EfiMaxMemoryType
+} EFI_MEMORY_TYPE;
+
+typedef EFI_STATUS (*EFI_ALLOCATE_PAGES)(EFI_ALLOCATE_TYPE, EFI_MEMORY_TYPE,
+                                         UINTN pages, EFI_PHYSICAL_ADDRESS *memory);
+typedef EFI_STATUS (*EFI_GET_MEMORY_MAP)(UINTN *map_size, void *map, UINTN *map_key,
+                                         UINTN *desc_size, UINT32 *desc_version);
+typedef EFI_STATUS (*EFI_EXIT_BOOT_SERVICES)(EFI_HANDLE image, UINTN map_key);
+
+// Boot services. Only the members the loader calls are typed; everything else
+// is a `void *` kept at its spec offset so the typed members land correctly.
+typedef struct {
+    EFI_TABLE_HEADER       Hdr;
+    void                  *RaiseTPL;
+    void                  *RestoreTPL;
+    EFI_ALLOCATE_PAGES     AllocatePages;
+    void                  *FreePages;
+    EFI_GET_MEMORY_MAP     GetMemoryMap;
+    void                  *AllocatePool;
+    void                  *FreePool;
+    void                  *CreateEvent;
+    void                  *SetTimer;
+    void                  *WaitForEvent;
+    void                  *SignalEvent;
+    void                  *CloseEvent;
+    void                  *CheckEvent;
+    void                  *InstallProtocolInterface;
+    void                  *ReinstallProtocolInterface;
+    void                  *UninstallProtocolInterface;
+    void                  *HandleProtocol;
+    void                  *Reserved;
+    void                  *RegisterProtocolNotify;
+    void                  *LocateHandle;
+    void                  *LocateDevicePath;
+    void                  *InstallConfigurationTable;
+    void                  *LoadImage;
+    void                  *StartImage;
+    void                  *Exit;
+    void                  *UnloadImage;
+    EFI_EXIT_BOOT_SERVICES ExitBootServices;
+    // Remaining members (GetNextMonotonicCount ... CopyMem/SetMem/...) are unused.
+} EFI_BOOT_SERVICES;
+
 typedef struct {
     EFI_TABLE_HEADER                 Hdr;
     CHAR16                          *FirmwareVendor;
@@ -62,7 +130,7 @@ typedef struct {
     EFI_HANDLE                       StandardErrorHandle;
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *StdErr;
     void                            *RuntimeServices;
-    void                            *BootServices;
+    EFI_BOOT_SERVICES               *BootServices;
     UINTN                            NumberOfTableEntries;
     EFI_CONFIGURATION_TABLE         *ConfigurationTable;
 } EFI_SYSTEM_TABLE;

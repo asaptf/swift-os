@@ -392,7 +392,8 @@ is stable.
 ## UEFI boot (M10)
 
 M10 moves the boot path off QEMU's `-kernel` shortcut to a real firmware booting a disk image. It is
-staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point proven).
+staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point proven), and
+**M10b-prep is DONE** (firmware CPU state + fixed kernel load address reservation proven).
 
 ### M10a — UEFI loader bring-up (DONE, 2026-06-04)
 
@@ -416,15 +417,28 @@ staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point
 - Build/run: `make uefi` (build `BOOTAA64.EFI` + stage `build/esp`), `make uefi-run` (boot under AAVMF).
   Test: `tests/uefi_boot_test.sh` asserts the loader banner + `device tree found at 0x…` on serial.
 
+### M10b-prep — firmware state + load-address reservation (DONE, 2026-06-04)
+
+- `boot/efi/efi.h` now types the slice of `EFI_BOOT_SERVICES` needed for the handoff path:
+  `AllocatePages`, `GetMemoryMap`, and `ExitBootServices`, keeping unused members as placeholders at
+  spec offsets.
+- Under QEMU+AAVMF with `-M virt,acpi=off`, the loader observes `CurrentEL == EL1` and reports
+  `sctlr_el1` (MMU currently on under firmware). This removes the immediate EL2-drop concern for the
+  reference boot path, though other firmware can still differ.
+- The loader successfully reserves the direct-boot kernel load address `0x4008_0000` using
+  `AllocatePages(AllocateAddress, EfiLoaderData, 16 pages, ...)`. This proves the next step can copy/load
+  the Swift kernel at the address it is currently linked for before calling `ExitBootServices`.
+- `tests/uefi_boot_test.sh` now asserts the EL1 observation, successful fixed-address reservation, and
+  `M10b-prep OK`.
+
 ### M10b — ExitBootServices + kernel handoff (next)
 
-Remaining for M10: extend `boot/efi/efi.h` with `EFI_BOOT_SERVICES` (`GetMemoryMap`, `ExitBootServices`),
-have the loader load/relocate the Swift kernel to its load address, `ExitBootServices`, and jump to the
-kernel entry with the DTB pointer in x0 (the M9 HAL then parses it). Watch points: the firmware may run
-at EL2 (drop to EL1 before entering the kernel), the MMU is still on after ExitBootServices (the kernel
-expects to set up its own translation), and cache/TLB maintenance across the handoff. Then a real GPT
-disk image once `mtools` is available, replacing virtual FAT, toward the M10 acceptance (boots to busybox
-from disk, no `-kernel`).
+Remaining for M10: have the loader obtain the final memory map, copy/load the Swift kernel to its load
+address, call `ExitBootServices`, disable or replace the firmware MMU state as needed, and jump to the
+kernel entry with the DTB pointer in x0 (the M9 HAL then parses it). Watch points: the firmware MMU is
+on before handoff, cache/TLB maintenance across the handoff, and making `ExitBootServices` robust against
+the required retry if the memory-map key changes. Then a real GPT disk image once `mtools` is available,
+replacing virtual FAT, toward the M10 acceptance (boots to busybox from disk, no `-kernel`).
 
 ## Open decisions / resolved
 

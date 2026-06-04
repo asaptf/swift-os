@@ -8,8 +8,8 @@
 // M10a scope: come up under firmware, print to the UEFI console (which is the
 // serial line under `-nographic`), and locate the flattened device tree the
 // firmware passes via its configuration table - the same hardware map the M9
-// HAL parses. M10b will add GetMemoryMap + ExitBootServices and hand off to the
-// Swift kernel.
+// HAL parses. M10b-prep additionally proves the CPU state and fixed kernel load
+// address reservation needed before GetMemoryMap + ExitBootServices.
 //
 // The loader must NOT return: returning hands control back to the firmware Boot
 // Manager, which then runs its setup UI. We halt after reporting instead.
@@ -75,8 +75,28 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
 
     puts16(st, "UEFI: M10a OK loader reached firmware handoff point\r\n");
 
-    // Do not return to the Boot Manager; M10b will ExitBootServices and jump
-    // into the kernel from here instead.
+    // M10b-prep: report the CPU state firmware hands us, and prove we can
+    // reserve the Swift kernel's fixed direct-boot load address.
+    UINT64 current_el, sctlr;
+    __asm__ volatile("mrs %0, CurrentEL" : "=r"(current_el));
+    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+    puts16(st, "UEFI: CurrentEL ");
+    puthex(st, (current_el >> 2) & 0x3);
+    puts16(st, " sctlr_el1 ");
+    puthex(st, sctlr);
+    puts16(st, " (MMU=");
+    puthex(st, sctlr & 1);
+    puts16(st, ")\r\n");
+
+    EFI_PHYSICAL_ADDRESS kaddr = 0x40080000;
+    EFI_STATUS as = st->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, 16, &kaddr);
+    puts16(st, "UEFI: AllocatePages(0x40080000) status ");
+    puthex(st, (UINT64)as);
+    puts16(st, "\r\n");
+    if (as == EFI_SUCCESS) {
+        puts16(st, "UEFI: M10b-prep OK fixed kernel load address reserved\r\n");
+    }
+
     for (;;) {
     }
     return EFI_SUCCESS;
