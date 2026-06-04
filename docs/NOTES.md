@@ -198,7 +198,9 @@ because `fork` needs parent and child alive at once. Staged:
   and parent wake/reap.
 - **d3 — `execve(path, argv, envp)`**: replace the image in the current process (new AS, load ELF, build
   argv stack, jump to entry).
-- **d4 — `waitpid`/`exit`/SIGCHLD**: real reaping of zombie children; parent blocks/wakes.
+- **d4 — `waitpid`/`exit`/SIGCHLD** — mostly DONE with d2: `waitpid(pid|-1, *status)` blocks, reaps a
+  matching zombie, returns the pid (ECHILD with no children). Remaining: SIGCHLD delivery and
+  per-process fd/cwd inheritance across fork (needed once busybox keeps fds open across fork/exec).
 - **d5 — busybox**: fetch busybox.net release, minimal `.config` (ash + ls/cat/echo), cross-build with
   `aarch64-elf-gcc` against `./sysroot` + our stubs; add whatever syscalls it needs (`dup`, `pipe`,
   `ioctl`/`TCGETS`, `wait4`, `getuid`, …); run `sh` and execute ls/cat/echo → M8 acceptance.

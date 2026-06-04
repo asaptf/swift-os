@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
         write(1, " iter ", 6);
         write(1, &c, 1);
         write(1, "\n", 1);
-        for (volatile long j = 0; j < 8000000; j += 1) {
+        for (volatile long j = 0; j < 3000000; j += 1) {
             // Burn time so the 100 Hz timer preempts us mid-loop.
         }
     }
