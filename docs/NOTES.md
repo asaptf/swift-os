@@ -319,3 +319,23 @@ because `fork` needs parent and child alive at once. Staged:
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).
 - [x] Embedded Swift flags & triple → pinned above (`aarch64-none-none-elf`).
 - [x] Linker → `aarch64-elf-ld`.
+
+### d5 — busybox cross-build: feasibility findings (2026-06-04)
+
+Downloaded busybox 1.38.0; configured `allnoconfig` + ash/ls/cat/echo + static; cross-built with
+`aarch64-elf-gcc` against `./sysroot` (newlib). busybox is **Linux-oriented**; newlib is bare-metal, so
+the build hits a wall of missing glibc/Linux headers and unimplemented POSIX surface:
+
+- Header shims already added (`userland/compat/`): `byteswap.h`, `endian.h`, `features.h`.
+- Still missing for `include/libbb.h` alone (~13 real): `sys/socket.h`, `netdb.h`, `netinet/in.h`,
+  `arpa/inet.h`, `mntent.h`, `poll.h`, `sys/ioctl.h`, `sys/mman.h`, `sys/statfs.h`, `sys/sysinfo.h`,
+  `sys/sysmacros.h`, `utmpx.h`, `shadow.h` (most are stub-able since ash/ls/cat/echo don't call them).
+- **newlib has no `dirent.h` support** ("`<dirent.h>` not supported") — `opendir/readdir/closedir` must
+  be implemented in our libc layer over the existing `getdents` syscall (needed by `ls`).
+- Expect a further tail of function stubs (`getuid/geteuid/getpwuid/getgrgid`, `ioctl`/`TCGETS` for ash's
+  terminal probing, `sysconf`, `poll`, `sigprocmask`, …) and iterations across compile → link → runtime.
+
+Conclusion: busybox-on-newlib is achievable but needs a real ~POSIX compat layer (≈15–20 stub headers +
+a dirent implementation + ~10–15 function stubs), i.e. several more focused iterations. This is a genuine
+fork; options recorded for review (full compat layer vs. a small native shell that reaches the same
+user-visible goal of an interactive sh running ls/cat/echo).
