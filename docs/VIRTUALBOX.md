@@ -95,6 +95,27 @@ Paste the captured `UEFI:` lines (and any later output) back into the session. T
 uses to adjust `kernel/arch/aarch64/platform.swift` (and, if VBox is ACPI-only, to add minimal ACPI
 table discovery alongside the M9 device-tree path).
 
+## Observed VirtualBox ARM machine model (7.2.x preview)
+
+Captured from the VM's `Logs/VBox.log` device tree. These differ fundamentally from the QEMU
+`virt` board the kernel currently targets, which is why an unmodified swift-os produces **no**
+output here (serial or graphics): the kernel is linked/located for RAM at `0x4000_0000` and talks
+to a PL011 at `0x0900_0000`, neither of which exists on this board.
+
+| Resource        | QEMU `virt` (current kernel) | VirtualBox ARM (observed)        |
+|-----------------|------------------------------|----------------------------------|
+| RAM base        | `0x4000_0000`                | `0x0800_0000` (–`0x17ff_ffff`)   |
+| PL011 UART MMIO | `0x0900_0000`                | `0xFFDD_F000`                    |
+| GIC             | QEMU layout                  | `0xFCD3_0000`                    |
+| Flash (EFI ROM) | n/a (`-kernel`)              | `0x0400_0000`–`0x07ff_ffff`      |
+| PL061 GPIO      | —                            | `0xFFDD_D000`                    |
+| PL031 RTC       | —                            | `0xFFDD_E000`                    |
+
+VBox ARM also brings up **no graphics console** (headless and GUI both report a 0x0 framebuffer),
+so its EFI console is serial-only via the PL011 at `0xFFDD_F000`. Booting swift-os here is the M10.5
+adaptation: relink for RAM `0x0800_0000`, retarget `platform.swift` (`ramBase`/`uartBase`/GIC), and
+fix the early page tables in `kernel/mm/vm.c`.
+
 ## Troubleshooting
 
 - **VM shows the firmware setup/Boot Manager, no loader text:** the firmware did not find
@@ -103,3 +124,12 @@ table discovery alongside the M9 device-tree path).
 - **`VBoxManage` not found:** it is inside the VirtualBox app bundle
   (`/Applications/VirtualBox.app/Contents/MacOS/VBoxManage`).
 - **No serial output but a screen:** the firmware is using the graphics console; screenshot it.
+- **`Failed to load the NVRAM store ... VERR_TAR_BAD_CHKSUM_FIELD`:** the VBox 7.2 ARM preview
+  sometimes persists a corrupt EFI NVRAM on power-off, which then blocks the next start. Delete the
+  VM's NVRAM file before booting — VirtualBox re-initialises a clean one:
+  `rm -f "$HOME/VirtualBox VMs/SwiftOS/SwiftOS.nvram"`. Boot entries are not needed; the disk boots
+  via the removable-media fallback path `\EFI\BOOT\BOOTAA64.EFI`.
+- **Capturing the PL011 console:** on the ARM board, `--uart1 0x3f8 4` (the legacy 16550) is **not**
+  the PL011 and captures nothing. The PL011 (`0xFFDD_F000`) is wired to VBox serial port 1; enable it
+  in Settings → Serial Ports → Port 1 → Raw File. (No output will appear until the kernel HAL targets
+  that address — see the machine-model note above.)
