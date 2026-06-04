@@ -33,6 +33,8 @@ LINKER    := $(ARCH_DIR)/kernel.ld
 BUILD     := build
 QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_ADDR := 0x4FF00000
+BASE_IMG  := $(BUILD)/base.img
+BASEPACK  := $(BUILD)/basepack
 
 # Swift sources (kernel). Whole-module optimization compiles them together.
 SWIFT_SRCS := \
@@ -143,7 +145,7 @@ USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run
+.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image
 
 build: $(KERNEL_ELF)
 
@@ -310,9 +312,11 @@ debug: build $(QEMU_DTB)
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build $(QEMU_DTB) disk
+test: build $(QEMU_DTB) disk base-image
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
+	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
+	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
 	./tests/userland_elf_test.sh
@@ -355,6 +359,14 @@ disk-run: disk
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
 		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio
 
+$(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/basepack.swift -o $@
+
+$(BASE_IMG): $(BASEPACK) $(shell find base -type f | sort) Makefile
+	$(BASEPACK) base $@
+
+base-image: $(BASE_IMG)
+
 newlib:
 	./scripts/build-newlib.sh
 
@@ -369,7 +381,8 @@ busybox-check:
 	./scripts/busybox-check.sh
 
 clean:
-	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img $(ESP_DIR)
+	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
+		$(BUILD)/basepack $(BUILD)/base_image_test $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

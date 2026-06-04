@@ -487,6 +487,21 @@ Silicon Mac with VirtualBox installed. Prepared for that:
   is the signal to extend `platform.swift` (and, if VBox is ACPI-only with no DTB, add minimal ACPI
   table discovery — likely the SPCR table for the console UART — alongside the M9 device-tree path).
 
+## Disk-backed base filesystem (M11)
+
+### M11a — packed base image format + host packer (DONE, 2026-06-04)
+
+- Added a deterministic packed read-only base image format (`SWOSBASE`, version 1): 64-byte header,
+  fixed 40-byte entries, UTF-8 path string table, and concatenated file data. All integer fields are
+  little-endian so the kernel reader can stay tiny on AArch64.
+- Added `base/` as the host seed tree mirroring today's in-kernel read-only VFS files:
+  `/etc/motd`, `/etc/hostname`, `/readme.txt`, `/hello.txt`, and `/bin/ps` placeholder.
+- Added `tools/basepack.swift` and `make base-image`, producing `build/base.img`.
+- Added `tests/base_image_test.swift`, wired into `make test`, which parses `build/base.img` and verifies
+  the expected directories, file contents, and binary layout.
+- Remaining M11 work: virtio-blk discovery/driver, attach `build/base.img` (or a partition/file inside
+  the GPT image) as the read-only base source, and replace the static Swift VFS literals.
+
 ## Open decisions / resolved
 
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).

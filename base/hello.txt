@@ -1,0 +1,1 @@
+M5 file: hello from VFS read()
