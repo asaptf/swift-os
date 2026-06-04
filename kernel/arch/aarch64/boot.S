@@ -24,14 +24,25 @@ _start:
     ldr     x0, =__stack_top
     mov     sp, x0
 
-    // QEMU may enter with strict alignment checks enabled. Swift codegen can
-    // use unaligned vector accesses for value copies, so leave alignment and
-    // SP-alignment checks off until we define our own trap policy.
+    // Normalize CPU state for the early MMU-off bring-up path. We may be entered
+    // with the MMU and caches ON (a UEFI loader hands off that way) or OFF (QEMU
+    // `-kernel`). Force MMU/caches off and clear alignment checks so both paths
+    // converge: Swift codegen can emit unaligned vector accesses for value
+    // copies, so alignment/SP-alignment checks stay off until we set a policy.
     mrs     x0, sctlr_el1
-    bic     x0, x0, #(1 << 1)
-    bic     x0, x0, #(1 << 3)
-    bic     x0, x0, #(1 << 4)
+    bic     x0, x0, #(1 << 0)   // M:  MMU off
+    bic     x0, x0, #(1 << 1)   // A:  alignment check off
+    bic     x0, x0, #(1 << 2)   // C:  data cache off
+    bic     x0, x0, #(1 << 3)   // SA: SP alignment check off
+    bic     x0, x0, #(1 << 4)   // SA0
+    bic     x0, x0, #(1 << 12)  // I:  instruction cache off
     msr     sctlr_el1, x0
+    isb
+    // Drop any TLB/I-cache state inherited from the firmware's translation
+    // regime before we run with translation disabled.
+    tlbi    vmalle1
+    ic      iallu
+    dsb     sy
     isb
 
     // Allow FP/SIMD instructions at EL1. Swift codegen may use vector loads

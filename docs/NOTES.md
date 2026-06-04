@@ -391,9 +391,10 @@ is stable.
 
 ## UEFI boot (M10)
 
-M10 moves the boot path off QEMU's `-kernel` shortcut to a real firmware booting a disk image. It is
-staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point proven), and
-**M10b-prep is DONE** (firmware CPU state + fixed kernel load address reservation proven).
+M10 moves the boot path off QEMU's `-kernel` shortcut to a real firmware booting a disk image.
+**M10 is DONE** — the OS boots to busybox under QEMU+AAVMF from an EFI System Partition with no
+`-kernel`. Staged as M10a (loader bring-up), M10b-prep (firmware state + load-address reservation), and
+M10b (ExitBootServices + kernel handoff); details below.
 
 ### M10a — UEFI loader bring-up (DONE, 2026-06-04)
 
@@ -431,14 +432,34 @@ staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point
 - `tests/uefi_boot_test.sh` now asserts the EL1 observation, successful fixed-address reservation, and
   `M10b-prep OK`.
 
-### M10b — ExitBootServices + kernel handoff (next)
+### M10b — ExitBootServices + kernel handoff (DONE, 2026-06-04) — M10 ACCEPTANCE MET
 
-Remaining for M10: have the loader obtain the final memory map, copy/load the Swift kernel to its load
-address, call `ExitBootServices`, disable or replace the firmware MMU state as needed, and jump to the
-kernel entry with the DTB pointer in x0 (the M9 HAL then parses it). Watch points: the firmware MMU is
-on before handoff, cache/TLB maintenance across the handoff, and making `ExitBootServices` robust against
-the required retry if the memory-map key changes. Then a real GPT disk image once `mtools` is available,
-replacing virtual FAT, toward the M10 acceptance (boots to busybox from disk, no `-kernel`).
+The loader now hands off to the Swift kernel and the OS boots to busybox **from disk under UEFI, with no
+`-kernel`** — the M10 acceptance.
+
+- **Embedded kernel.** The loader has no filesystem driver, so it carries the flat kernel image inside
+  its own PE: `boot/efi/kernel_blob.S` `.incbin`s `build/kernel.bin` (byte 0 = link base `0x4008_0000`)
+  and is linked into `BOOTAA64.EFI`. `make uefi` therefore depends on the built kernel.
+- **Handoff sequence** (`efi_main`): locate the DTB; `AllocatePages(AllocateAddress, 0x4008_0000)`;
+  copy the kernel there; `dc cvac` clean the region to the point of coherency (the kernel will run with
+  the data cache off); `GetMemoryMap` into a static buffer (so no allocation perturbs the map key) →
+  `ExitBootServices` (one retry if the key is stale); `msr daifset, #0xf` to mask the firmware's still-
+  armed timer; then jump to `0x4008_0000` with the DTB pointer in x0. No firmware calls after exit.
+- **Kernel entry hardened** (`boot.S`): the firmware hands us **EL1 with the MMU/caches ON**, so `_start`
+  now force-disables MMU + D/I caches + alignment checks in `SCTLR_EL1` and runs `tlbi vmalle1; ic iallu;
+  dsb; isb`. This normalizes both entry paths — UEFI (MMU on) and QEMU `-kernel` (MMU off) — to the same
+  MMU-off bring-up, so the rest of boot is unchanged. The DTB pointer in x0 flows straight into the M9
+  HAL (`platformInit`), which parses it (no scan needed).
+- **Verified:** under QEMU+AAVMF (`-M virt,acpi=off`, `-bios`, virtual-FAT ESP) the kernel runs every
+  milestone demo M1→M8 identically to `-kernel`, reaches the busybox shell, and `tests/uefi_boot_test.sh`
+  drives `echo`/`ls`/`cat` (`M10-UEFI-OK`, dir listing, `Welcome to swift-os.`). Wired into `make test`
+  alongside the `-kernel` path (both green).
+- **Remaining (deferred, not blocking M10):** a real **GPT disk image** instead of QEMU virtual FAT
+  (needs `mtools`); pairs naturally with M11's on-disk base image. Also note the loader embeds the kernel
+  rather than reading it from the ESP — fine for now, revisit if the image grows.
+
+Next: **M10.5** — validate this image under VirtualBox ARM on Apple Silicon (research its device model:
+UART, GICv2/v3, storage, ACPI vs DT), adapting the HAL where it differs from QEMU `virt`.
 
 ## Open decisions / resolved
 

@@ -315,9 +315,15 @@ test: build $(QEMU_DTB) uefi
 	./tests/uefi_boot_test.sh
 
 # ---- UEFI loader build + boot ----------------------------------------------
-$(EFI_APP): boot/efi/loader.c boot/efi/efi.h Makefile | $(BUILD)/.dir
+# The loader embeds the flat kernel image (no FS driver) and copies it to the
+# kernel load address after ExitBootServices, so it depends on the built kernel.
+$(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_ELF) Makefile | $(BUILD)/.dir
+	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/kernel_blob.S -o $@
+
+$(EFI_APP): boot/efi/loader.c boot/efi/efi.h $(BUILD)/kernel_blob.obj Makefile | $(BUILD)/.dir
 	$(CLANG) $(EFI_CFLAGS) boot/efi/loader.c -o $(BUILD)/loader.obj
-	$(LLDLINK) -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ $(BUILD)/loader.obj
+	$(LLDLINK) -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ \
+		$(BUILD)/loader.obj $(BUILD)/kernel_blob.obj
 	@echo "Built $(EFI_APP)"
 
 # Stage the EFI System Partition firmware boots from.
