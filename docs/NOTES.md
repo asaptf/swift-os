@@ -389,6 +389,43 @@ is stable.
   `-M virt,dumpdtb=...`) and asserts the extracted map; the in-QEMU boot test asserts
   `M9 OK: hardware discovered from device tree`, proving the DTB→`Platform` path end to end.
 
+## UEFI boot (M10)
+
+M10 moves the boot path off QEMU's `-kernel` shortcut to a real firmware booting a disk image. It is
+staged; **M10a is DONE** (toolchain + firmware + ESP + device-tree handoff point proven).
+
+### M10a — UEFI loader bring-up (DONE, 2026-06-04)
+
+- **Toolchain (verified):** the EFI loader is an AArch64 **PE32+** application. clang targets
+  `aarch64-unknown-windows` (COFF) and **`lld-link -subsystem:efi_application -entry:efi_main
+  -nodefaultlib`** emits the EFI image. AArch64 UEFI uses ordinary AAPCS64, so firmware function
+  pointers are called like normal C — no special calling convention (unlike x86_64 EFIAPI). No gnu-efi
+  or EDK2 headers: `boot/efi/efi.h` declares only the structures used, at spec-correct offsets.
+- **Firmware:** QEMU's prebuilt **AAVMF/edk2** at `/opt/homebrew/share/qemu/edk2-aarch64-code.fd`,
+  loaded with `-bios` (no separate NVRAM vars store needed — AAVMF's default boot order scans removable
+  media for `\EFI\BOOT\BOOTAA64.EFI`).
+- **ESP without mkfs:** the host has no `mkfs.fat`/`mtools`, so the EFI System Partition is served as
+  **virtual FAT** from a directory (`-drive file=fat:rw:build/esp,format=raw,if=virtio`). A real GPT
+  image is deferred (needs `mtools`, comes with M10b/M11).
+- **Device tree handoff:** AAVMF defaults to **ACPI**, which does NOT publish an FDT table. Booting
+  `-M virt,acpi=off` makes the firmware run in device-tree mode and install the FDT configuration table
+  (vendor GUID `b1b621d5-f19c-41a5-830b-d9152c69aae0`, EDK2 `gFdtTableGuid`). The loader walks
+  `SystemTable->ConfigurationTable` for that GUID and finds the DTB (observed at `0x47EF2000`). This is
+  the right mode for swift-os since it is a device-tree OS (M9 HAL). The loader must **not return** —
+  returning hands control to the Boot Manager's setup UI — so it halts after reporting.
+- Build/run: `make uefi` (build `BOOTAA64.EFI` + stage `build/esp`), `make uefi-run` (boot under AAVMF).
+  Test: `tests/uefi_boot_test.sh` asserts the loader banner + `device tree found at 0x…` on serial.
+
+### M10b — ExitBootServices + kernel handoff (next)
+
+Remaining for M10: extend `boot/efi/efi.h` with `EFI_BOOT_SERVICES` (`GetMemoryMap`, `ExitBootServices`),
+have the loader load/relocate the Swift kernel to its load address, `ExitBootServices`, and jump to the
+kernel entry with the DTB pointer in x0 (the M9 HAL then parses it). Watch points: the firmware may run
+at EL2 (drop to EL1 before entering the kernel), the MMU is still on after ExitBootServices (the kernel
+expects to set up its own translation), and cache/TLB maintenance across the handoff. Then a real GPT
+disk image once `mtools` is available, replacing virtual FAT, toward the M10 acceptance (boots to busybox
+from disk, no `-kernel`).
+
 ## Open decisions / resolved
 
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).

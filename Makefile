@@ -94,6 +94,24 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
 	-device loader,file=$(QEMU_DTB),addr=$(QEMU_DTB_ADDR),force-raw=on \
 	-kernel $(BUILD)/kernel.elf
 
+# ---- UEFI loader (M10) -----------------------------------------------------
+# The loader is an AArch64 PE32+ EFI application; clang targets Windows/COFF and
+# lld-link emits the EFI subsystem image. Firmware is QEMU's prebuilt AAVMF/edk2.
+LLDLINK    ?= /opt/homebrew/opt/lld/bin/lld-link
+AAVMF_CODE ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
+EFI_CFLAGS := --target=aarch64-unknown-windows -ffreestanding -fno-stack-protector \
+	-mcmodel=small -Os -Wall -Wextra -c
+EFI_APP    := $(BUILD)/BOOTAA64.EFI
+ESP_DIR    := $(BUILD)/esp
+# Boot from the EFI System Partition (a directory served as virtual FAT), not
+# `-kernel`. No separate NVRAM vars store: AAVMF's default boot order scans
+# removable media for \EFI\BOOT\BOOTAA64.EFI. `acpi=off` makes the firmware boot
+# in device-tree mode and publish the FDT configuration table the loader reads
+# (swift-os is a device-tree OS; see the M9 HAL).
+UEFI_QEMU_FLAGS := -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
+	-bios $(AAVMF_CODE) \
+	-drive file=fat:rw:$(ESP_DIR),format=raw,if=virtio
+
 # ---- Objects ---------------------------------------------------------------
 BOOT_OBJ   := $(BUILD)/boot.o
 EXC_OBJ    := $(BUILD)/exceptions.o
@@ -124,7 +142,7 @@ USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check
+.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run
 
 build: $(KERNEL_ELF)
 
@@ -285,7 +303,7 @@ debug: build $(QEMU_DTB)
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build $(QEMU_DTB)
+test: build $(QEMU_DTB) uefi
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
@@ -294,6 +312,24 @@ test: build $(QEMU_DTB)
 	./tests/boot_test.sh
 	./tests/tty_test.sh
 	./tests/busybox_test.sh
+	./tests/uefi_boot_test.sh
+
+# ---- UEFI loader build + boot ----------------------------------------------
+$(EFI_APP): boot/efi/loader.c boot/efi/efi.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(EFI_CFLAGS) boot/efi/loader.c -o $(BUILD)/loader.obj
+	$(LLDLINK) -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ $(BUILD)/loader.obj
+	@echo "Built $(EFI_APP)"
+
+# Stage the EFI System Partition firmware boots from.
+$(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
+	@mkdir -p $(ESP_DIR)/EFI/BOOT
+	cp $(EFI_APP) $@
+
+uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
+
+# Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
+uefi-run: uefi
+	$(QEMU) $(UEFI_QEMU_FLAGS)
 
 newlib:
 	./scripts/build-newlib.sh
@@ -309,7 +345,7 @@ busybox-check:
 	./scripts/busybox-check.sh
 
 clean:
-	rm -rf $(BUILD)/*.o $(BUILD)/*.elf $(BUILD)/*.bin
+	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:
