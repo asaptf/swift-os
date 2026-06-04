@@ -222,3 +222,105 @@ uintptr_t vm_translate(uintptr_t va) {
     }
     return (uintptr_t)((desc & PAGE_4K_MASK) | (va & (PAGE_SIZE - 1)));
 }
+
+// --- Per-process address spaces -------------------------------------------
+//
+// Frames for page tables come from the PMM (kernel/mm/pmm.swift). RAM is
+// identity-mapped, so a physical frame address doubles as its kernel pointer.
+
+extern uintptr_t pmm_alloc_page(void); // from pmm.swift
+
+uintptr_t mmu_kernel_ttbr0(void) {
+    return (uintptr_t)l0_table;
+}
+
+static uint64_t perm_page_desc(uintptr_t pa, int perm) {
+    int executable, user, read_only;
+    switch (perm) {
+    case 1: executable = 1; user = 1; read_only = 1; break; // USER_CODE
+    case 2: executable = 0; user = 1; read_only = 0; break; // USER_DATA
+    default: executable = 1; user = 0; read_only = 0; break; // KERNEL_RW
+    }
+    return (pa & PAGE_4K_MASK)
+         | mem_attrs(ATTR_NORMAL, executable, user, read_only)
+         | DESC_TABLE | DESC_VALID;
+}
+
+// Return the next-level table for `idx`, allocating+linking it if absent.
+static uint64_t *next_table(uint64_t *table, unsigned idx) {
+    uint64_t desc = table[idx];
+    if (desc & DESC_VALID) {
+        return (uint64_t *)(uintptr_t)(desc & PAGE_4K_MASK);
+    }
+    uintptr_t frame = pmm_alloc_page();
+    if (frame == 0) {
+        return 0;
+    }
+    zero_table((uint64_t *)frame);
+    table[idx] = table_desc((uint64_t)frame);
+    return (uint64_t *)frame;
+}
+
+uintptr_t address_space_create(void) {
+    uintptr_t l0 = pmm_alloc_page();
+    uintptr_t l1 = pmm_alloc_page();
+    if (l0 == 0 || l1 == 0) {
+        return 0;
+    }
+    zero_table((uint64_t *)l0);
+    zero_table((uint64_t *)l1);
+
+    ((uint64_t *)l0)[0] = table_desc((uint64_t)l1);
+    // Identity-map the kernel and device 1 GiB blocks into every space.
+    ((uint64_t *)l1)[0] = block_desc_1g(0x00000000ULL, ATTR_DEVICE);
+    ((uint64_t *)l1)[1] = block_desc_1g(0x40000000ULL, ATTR_NORMAL);
+    return l0;
+}
+
+int address_space_map(uintptr_t ttbr0, uintptr_t va, uintptr_t pa, int perm) {
+    if ((va & (PAGE_SIZE - 1)) != 0 || (pa & (PAGE_SIZE - 1)) != 0) {
+        return -1;
+    }
+    uint64_t *l0 = (uint64_t *)ttbr0;
+    uint64_t *l1 = next_table(l0, (unsigned)((va >> 39) & 0x1ffU));
+    if (!l1) return -2;
+    uint64_t *l2 = next_table(l1, (unsigned)((va >> 30) & 0x1ffU));
+    if (!l2) return -2;
+    uint64_t *l3 = next_table(l2, (unsigned)((va >> 21) & 0x1ffU));
+    if (!l3) return -2;
+
+    l3[(unsigned)((va >> 12) & 0x1ffU)] = perm_page_desc(pa, perm);
+    dsb_sy();
+    tlbi_va(va);
+    return 0;
+}
+
+void address_space_switch(uintptr_t ttbr0) {
+    __asm__ volatile("msr ttbr0_el1, %0" :: "r"((uint64_t)ttbr0) : "memory");
+    dsb_sy();
+    isb();
+    tlbi_all();
+}
+
+uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va) {
+    uint64_t *table = (uint64_t *)ttbr0;
+    unsigned shifts[4] = {39, 30, 21, 12};
+    for (int level = 0; level < 4; level += 1) {
+        unsigned idx = (unsigned)((va >> shifts[level]) & 0x1ffU);
+        uint64_t desc = table[idx];
+        if (!(desc & DESC_VALID)) {
+            return 0;
+        }
+        if (level < 3 && !(desc & DESC_TABLE)) {
+            // 1 GiB or 2 MiB block: combine block base with the low offset.
+            uint64_t mask = (level == 1) ? BLOCK_1G_MASK : BLOCK_2M_MASK;
+            uint64_t block_size = (level == 1) ? 0x40000000ULL : 0x200000ULL;
+            return (uintptr_t)((desc & mask) | (va & (block_size - 1)));
+        }
+        if (level == 3) {
+            return (uintptr_t)((desc & PAGE_4K_MASK) | (va & (PAGE_SIZE - 1)));
+        }
+        table = (uint64_t *)(uintptr_t)(desc & PAGE_4K_MASK);
+    }
+    return 0;
+}

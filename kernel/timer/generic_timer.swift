@@ -28,6 +28,7 @@ func timerHandleTick() {
     uartPutUInt(systemTicks)
     uartPuts("\n")
 
-    schedulerOnTick()
+    // Rearm the timer. Rescheduling is driven from irqHandler AFTER the GIC EOI,
+    // so a context switch never strands an active interrupt at the controller.
     timerScheduleNext()
 }

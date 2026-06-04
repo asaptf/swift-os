@@ -36,12 +36,12 @@ private func runVirtualMemoryProbe() {
         while true {}
     }
 
-    guard let rawPage = swiftos_kernel_alloc(4096, 4096) else {
+    let physicalPage = pmmAllocZeroedPage()
+    if physicalPage == 0 {
         uartPuts("panic: VM probe page allocation failed\n")
         while true {}
     }
-
-    let physicalPage = UInt(bitPattern: rawPage)
+    let rawPage = UnsafeMutableRawPointer(bitPattern: physicalPage)!
     let testVA: UInt = 0x8000_0000
     if vm_map_page(testVA, physicalPage, UInt32(VM_ATTR_NORMAL)) != 0 {
         uartPuts("panic: vm_map_page failed\n")
@@ -67,6 +67,87 @@ private func runVirtualMemoryProbe() {
     }
 
     uartPuts("M3 OK: MMU enabled and page map/unmap works\n")
+}
+
+private func runAddressSpaceProbe() {
+    uartPuts("swift-os M4.5: per-process address spaces\n")
+
+    let as1 = address_space_create()
+    let as2 = address_space_create()
+    if as1 == 0 || as2 == 0 {
+        uartPuts("panic: address_space_create failed\n")
+        while true {}
+    }
+
+    let p1 = pmmAllocZeroedPage()
+    let p2 = pmmAllocZeroedPage()
+    if p1 == 0 || p2 == 0 {
+        uartPuts("panic: AS probe page allocation failed\n")
+        while true {}
+    }
+
+    // Same virtual address, two address spaces, two physical frames.
+    let va: UInt = 0x9000_0000
+    if address_space_map(as1, va, p1, Int32(VM_PERM_USER_DATA)) != 0 ||
+        address_space_map(as2, va, p2, Int32(VM_PERM_USER_DATA)) != 0 {
+        uartPuts("panic: address_space_map failed\n")
+        while true {}
+    }
+
+    UnsafeMutableRawPointer(bitPattern: p1)!.storeBytes(of: UInt64(0xA5A5_0001), as: UInt64.self)
+    UnsafeMutableRawPointer(bitPattern: p2)!.storeBytes(of: UInt64(0xB6B6_0002), as: UInt64.self)
+
+    address_space_switch(as1)
+    let seenIn1 = UnsafeMutableRawPointer(bitPattern: va)!.load(as: UInt64.self)
+    address_space_switch(as2)
+    let seenIn2 = UnsafeMutableRawPointer(bitPattern: va)!.load(as: UInt64.self)
+    address_space_switch(mmu_kernel_ttbr0())
+
+    if seenIn1 != 0xA5A5_0001 || seenIn2 != 0xB6B6_0002 {
+        uartPuts("panic: address space isolation broken\n")
+        while true {}
+    }
+    if address_space_translate(as1, va) != p1 || address_space_translate(as2, va) != p2 {
+        uartPuts("panic: address_space_translate mismatch\n")
+        while true {}
+    }
+
+    uartPuts("M4.5 AS: per-process isolation OK\n")
+}
+
+private func kernelThreadBody(_ arg: UInt) {
+    var i: UInt64 = 0
+    while i < 3 {
+        uartPuts("M4.5 thread ")
+        uartPutUInt(UInt64(arg))
+        uartPuts(" iter ")
+        uartPutUInt(i)
+        uartPuts("\n")
+        schedYield()
+        i += 1
+    }
+}
+
+private let kernelThreadEntry: @convention(c) (UInt) -> Void = kernelThreadBody
+
+private func runSchedulerDemo() {
+    uartPuts("swift-os M4.5: real kernel threads\n")
+    let a = threadCreate(kernelThreadEntry, 1)
+    let b = threadCreate(kernelThreadEntry, 2)
+    if a < 0 || b < 0 {
+        uartPuts("panic: threadCreate failed\n")
+        while true {}
+    }
+
+    // Hand the CPU to the new threads; control returns here once both finish.
+    schedYield()
+
+    if schedAllThreadsDone() {
+        uartPuts("M4.5 sched: real context switch OK\n")
+    } else {
+        uartPuts("panic: scheduler demo did not complete\n")
+        while true {}
+    }
 }
 
 @_cdecl("exception_handler")
@@ -102,6 +183,12 @@ func irqHandler() {
     if interruptId != gicSpuriousInterrupt {
         gicEndInterrupt(iar)
     }
+
+    // Preempt only after the EOI so the switched-away context doesn't leave an
+    // interrupt active at the GIC.
+    if interruptId == physicalTimerIrq {
+        schedulerTick()
+    }
 }
 
 @_cdecl("sync_lower_el_aarch64_handler")
@@ -133,6 +220,7 @@ func kernelMain() {
     uartPuts("swift-os M1: runtime and memory init\n")
 
     swiftos_heap_init()
+    pmmInit()
     if let raw = swiftos_kernel_alloc(32, 16) {
         raw.storeBytes(of: UInt64(0xC0DEFACE_CAFEBEEF), as: UInt64.self)
     } else {
@@ -160,12 +248,15 @@ func kernelMain() {
     uartPuts("\n")
 
     runVirtualMemoryProbe()
+    runAddressSpaceProbe()
 
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()
     timerInit(ticksPerSecond: 4)
     schedulerInit()
     enable_irq()
+
+    runSchedulerDemo()
 
     userProcessStart()
 

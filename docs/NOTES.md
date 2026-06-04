@@ -32,8 +32,12 @@ Host: macOS (Darwin 25.5.0), Apple Silicon (arm64, T6050).
   `-target aarch64-none-none-elf -enable-experimental-feature Embedded -wmo -parse-as-library -Osize -Xllvm -mattr=+strict-align,-neon -Xfrontend -function-sections -import-objc-header kernel/arch/aarch64/io.h`
   - `+strict-align,-neon` is an early-boot guardrail: with the MMU off, QEMU can fault on
     unaligned SIMD accesses that Swift may otherwise generate for ordinary value copies.
-- **Linker:** GNU `aarch64-elf-ld` (`--gc-sections -nostdlib -T kernel.ld`). `ld.lld` is keg-only
-  under a separate prefix; binutils `ld` is simpler for a custom script.
+- **Linker:** `ld.lld` (`/opt/homebrew/opt/lld/bin/ld.lld`, `--gc-sections -nostdlib -T kernel.ld`).
+  **Switched from GNU `aarch64-elf-ld` at M4.5:** as soon as kernel code uses a Swift `Array`/`String`,
+  the compiler emits references to protected-visibility runtime singletons
+  (`$es23_swiftEmptyArrayStorage...`). GNU ld rejects these with
+  *"copy relocation against non-copyable protected symbol"*; `ld.lld` resolves them directly. lld is
+  the linker the Embedded Swift toolchain expects, so this also removes the spurious RWX-segment warning.
 - **MMIO:** volatile access via C inlines in `kernel/arch/aarch64/io.h` (bridging header).
   The toolchain also ships a `_Volatile` embedded module — a possible modern refinement later.
 
@@ -98,7 +102,7 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   - `5 exit(status)` — records M5 success.
   - `6 lseek(fd, offset, whence)` — implemented for fd 3.
 
-## Build / run commands (verified at M5)
+## Build / run commands (verified at M4.5)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -106,11 +110,28 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
 - `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  both `M5 OK: user open/read/write/close completed` and
-  `M5 file: hello from VFS read()` appear on serial within 10 s.
+  both `M4.5 sched: real context switch OK` and
+  `M5 OK: user open/read/write/close completed` appear on serial within 10 s.
 - `make clean` — remove build artifacts.
 
 ## Milestone log
+
+- **M4.5 (2026-06-04) — DONE.** Foundation hardening before the libc/ELF work of M6:
+  - **PMM wired in.** The host-tested `PageAllocator` bitmap now manages all RAM past the kernel
+    image (`__image_end .. 0x5000_0000`, ~65k frames) via `kernel/mm/pmm.swift`, exposed to C as
+    `pmm_alloc_page` / `pmm_alloc_pages` / `pmm_free_page` / `pmm_free_count`. Page tables, process
+    stacks, and user pages now come from the PMM; the bump heap (`heap.c`) is only for small Swift
+    objects. Added `kernel/runtime/string.c` (mem* with `-fno-builtin`).
+  - **Per-process address spaces.** `vm.c` gained a general 4-level page-table walker
+    (`address_space_create/map/switch/translate`) that allocates intermediate tables from the PMM and
+    identity-maps the kernel/device 1 GiB blocks into every space. Probe maps one VA to two distinct
+    frames in two spaces and reads back distinct values after switching `TTBR0_EL1` → isolation proven.
+  - **Real context switch.** `kernel/arch/aarch64/switch.S` `cpu_switch_context` (callee-saved + sp +
+    lr, xv6-style) + `thread_trampoline`. `scheduler.swift` rewritten with real TCBs, per-thread
+    kernel stacks, cooperative `schedYield` and timer-driven preemption (`schedulerTick` after the GIC
+    EOI). Two kernel threads interleave through genuine switches (`thread 1/2 iter 0..2`) and finish.
+  - **Linker switched to `ld.lld`** (see above) to support Embedded Swift `Array`/`String`.
+  - `make test` passes (host PMM unit test + QEMU asserts the context-switch and M5 lines).
 
 - **M5 (2026-06-04) — DONE.** Syscall entry and VFS skeleton:
   - Lower-EL SVC handling now receives a saved register frame, dispatches by `x8`, and writes

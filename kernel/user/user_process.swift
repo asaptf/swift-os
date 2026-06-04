@@ -6,16 +6,17 @@ private let userStackTopVA: UInt = 0x8010_2000
 func userProcessStart() {
     uartPuts("M5 user: preparing EL0 syscall test\n")
 
-    guard let codePage = swiftos_kernel_alloc(4096, 4096),
-          let stackPage = swiftos_kernel_alloc(4096, 4096) else {
+    let codePA = pmmAllocZeroedPage()
+    let stackPA = pmmAllocZeroedPage()
+    if codePA == 0 || stackPA == 0 {
         uartPuts("panic: user process page allocation failed\n")
         while true {}
     }
 
+    let codePage = UnsafeMutableRawPointer(bitPattern: codePA)!
+    let stackPage = UnsafeMutableRawPointer(bitPattern: stackPA)!
     user_program_install(codePage, stackPage)
 
-    let codePA = UInt(bitPattern: codePage)
-    let stackPA = UInt(bitPattern: stackPage)
     if vm_map_user_code_page(userTextVA, codePA) != 0 ||
         vm_map_user_data_page(userStackTopVA - 4096, stackPA) != 0 {
         uartPuts("panic: user process mapping failed\n")

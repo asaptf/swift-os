@@ -19,7 +19,9 @@ LLVM      ?= /opt/homebrew/opt/llvm/bin
 CLANG     ?= $(LLVM)/clang
 OBJCOPY   ?= $(LLVM)/llvm-objcopy
 # Note: LD is a Make built-in (defaults to `ld`), so we use LDBIN to stay overridable.
-LDBIN     ?= /opt/homebrew/bin/aarch64-elf-ld
+# ld.lld (not GNU ld) so Embedded Swift's protected empty-Array/String singletons
+# link without copy-relocation errors. See docs/NOTES.md.
+LDBIN     ?= /opt/homebrew/opt/lld/bin/ld.lld
 QEMU      ?= qemu-system-aarch64
 GDB       ?= aarch64-elf-gdb
 
@@ -40,7 +42,8 @@ SWIFT_SRCS := \
 	kernel/syscall/syscall.swift \
 	kernel/user/user_process.swift \
 	kernel/vfs/vfs.swift \
-	kernel/mm/page_allocator.swift
+	kernel/mm/page_allocator.swift \
+	kernel/mm/pmm.swift
 
 # ---- Flags -----------------------------------------------------------------
 # Embedded Swift: freestanding, no Foundation/stdlib, whole-module.
@@ -55,6 +58,8 @@ SWIFT_FLAGS := \
 
 ASM_FLAGS := --target=$(TRIPLE) -ffreestanding -c
 C_FLAGS   := --target=$(TRIPLE) -ffreestanding -O2 -Wall -Wextra -c
+# -fno-builtin so mem* implementations are not turned into calls to themselves.
+C_FLAGS_NB := --target=$(TRIPLE) -ffreestanding -fno-builtin -O2 -Wall -Wextra -c
 # Garbage-collect unused sections; entry is _start from the boot stub.
 LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER)
 
@@ -64,7 +69,9 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic -kernel $(BUILD)/kernel
 # ---- Objects ---------------------------------------------------------------
 BOOT_OBJ   := $(BUILD)/boot.o
 EXC_OBJ    := $(BUILD)/exceptions.o
+SWITCH_OBJ := $(BUILD)/switch.o
 HEAP_OBJ   := $(BUILD)/heap.o
+STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
 KERNEL_OBJ := $(BUILD)/kernel.o
@@ -87,8 +94,14 @@ $(BOOT_OBJ): $(ARCH_DIR)/boot.S Makefile | $(BUILD)/.dir
 $(EXC_OBJ): $(ARCH_DIR)/exceptions.S Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
+$(SWITCH_OBJ): $(ARCH_DIR)/switch.S Makefile | $(BUILD)/.dir
+	$(CLANG) $(ASM_FLAGS) $< -o $@
+
 $(HEAP_OBJ): kernel/runtime/heap.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(STRING_OBJ): kernel/runtime/string.c Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS_NB) $< -o $@
 
 $(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
@@ -100,8 +113,8 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(SWIFT_FLAGS) -c $(SWIFT_SRCS) -o $@
 
 # Link the freestanding image.
-$(KERNEL_ELF): $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) $(LINKER)
-	$(LDBIN) $(LD_FLAGS) $(BOOT_OBJ) $(EXC_OBJ) $(HEAP_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) -o $@
+$(KERNEL_ELF): $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(HEAP_OBJ) $(STRING_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) $(LINKER)
+	$(LDBIN) $(LD_FLAGS) $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(HEAP_OBJ) $(STRING_OBJ) $(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ) -o $@
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
