@@ -455,6 +455,41 @@ Future identity data should live in a simple structured store in the immutable b
 session state in tmpfs or a dedicated service. Compatibility files such as `/etc/passwd` should be generated
 from that store when needed, not treated as kernel security policy.
 
+## Future cloud elasticity model (record, don't build yet)
+
+swift-os should keep a path open for cloud VM resize without rebooting the guest, but this is a long-horizon
+goal and must not complicate the single-core bring-up path. Memory elasticity can arrive much earlier than CPU
+elasticity.
+
+Planned levels:
+
+1. **Memory ballooning.** A paravirtual balloon driver can return unused pages to the hypervisor or reclaim
+   them when capacity is restored. This is the first cloud-resize mechanism to target because it does not
+   require discovering new physical address ranges or SMP.
+2. **Memory hot-add and hot-remove.** The kernel can later accept new physical memory ranges, add them to the
+   allocator, update accounting, and expose the capacity to cells. Hot-remove requires draining allocations
+   from removable ranges, migrating movable pages, and rejecting removal when pinned kernel/DMA pages remain.
+3. **vCPU hotplug.** Adding or removing cores requires SMP first: per-CPU state, scheduler run queues,
+   interrupt routing, timer setup, locking, TLB shootdown, CPU startup, and CPU parking paths.
+
+Design constraints to keep this possible:
+
+- physical memory must be represented as a set of typed regions, not one baked-in contiguous range;
+- memory regions should have states such as `reserved`, `online`, `offline`, `removable`, and `hotplugPending`;
+- the page allocator should eventually add and remove regions at runtime;
+- resource accounting and cell limits must handle capacity changes;
+- drivers and services should receive resource-change events where needed;
+- pinned DMA/kernel pages must be tracked well enough to decide whether a range can be removed;
+- hypervisor-specific mechanisms should live behind small virtio/paravirtual drivers;
+- boot-time RAM assumptions must not leak into generic memory management.
+
+Bring-up policy:
+
+- M0-M8 stay single-core and do not implement cloud resize.
+- After M8, memory ballooning is the preferred first step.
+- Later, implement memory hot-add/hot-remove.
+- Much later, after SMP is stable, implement vCPU hotplug.
+
 ## Future hot update model (record, don't build yet)
 
 swift-os should keep a path open for updating drivers and the kernel without rebooting the whole OS, but this

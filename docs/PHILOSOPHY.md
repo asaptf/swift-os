@@ -120,6 +120,7 @@ When choosing between designs:
 - choose staged initialization and lazy services over a large early service manager;
 - choose simple, typed, validated configuration over flexible but surprising formats;
 - choose restartable services over privileged in-kernel code when practical;
+- choose dynamic resource accounting over baked-in boot-time capacity assumptions;
 - choose a typed kernel object over an unstructured integer or pointer;
 - choose one well-tested path over multiple partially working paths;
 - choose post-M8 documentation over premature implementation for long-horizon features.
