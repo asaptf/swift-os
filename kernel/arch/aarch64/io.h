@@ -118,6 +118,15 @@ static inline unsigned long brkdemo_elf_len(void) {
     return (unsigned long)(brkdemo_elf_end - brkdemo_elf_start);
 }
 
+extern const unsigned char newlibtest_elf_start[];
+extern const unsigned char newlibtest_elf_end[];
+static inline uintptr_t newlibtest_elf_addr(void) {
+    return (uintptr_t)newlibtest_elf_start;
+}
+static inline unsigned long newlibtest_elf_len(void) {
+    return (unsigned long)(newlibtest_elf_end - newlibtest_elf_start);
+}
+
 enum {
     VM_ATTR_NORMAL = 0,
     VM_ATTR_DEVICE = 1

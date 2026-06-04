@@ -183,6 +183,15 @@ private func runBrkDemo() {
     _ = processRunElf(brkdemo_elf_addr(), UInt(brkdemo_elf_len()), packed: p, packedLen: n, argc: argc)
 }
 
+private func runNewlibDemo() {
+    uartPuts("swift-os M8c: newlib libc (printf/malloc/fopen)\n")
+    let (p, n, argc) = packArgs(["newlibtest"])
+    let code = processRunElf(newlibtest_elf_addr(), UInt(newlibtest_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8c OK: newlib program exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (p, n, argc) = packArgs(["fsdemo"])
@@ -329,6 +338,8 @@ func kernelMain() {
     runSpawnDemo()
 
     runBrkDemo()
+
+    runNewlibDemo()
 
     runFsDemo()
 

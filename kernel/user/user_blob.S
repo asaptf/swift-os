@@ -48,3 +48,10 @@ fsdemo_elf_end:
 brkdemo_elf_start:
 .incbin "build/brkdemo.elf"
 brkdemo_elf_end:
+
+.balign 8
+.global newlibtest_elf_start
+.global newlibtest_elf_end
+newlibtest_elf_start:
+.incbin "build/newlibtest.elf"
+newlibtest_elf_end:

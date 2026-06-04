@@ -146,10 +146,18 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
     (19) grows it on demand, mapping pages from the PMM into the process address space (tracked per
     nesting level in `process.swift`). `brkdemo` writes/reads across a page boundary → OK. This is the
     foundation newlib's malloc/_sbrk will use.
-  - Remaining: (c2) cross-build newlib (needs an `aarch64-elf-gcc` cross toolchain — not yet installed;
-    decide install vs build-from-source at that step) + syscall stubs (`_read/_write/_sbrk/...`);
-    (d) cross-build busybox; (e) run `sh`. Note: real busybox `sh` uses fork+execve+waitpid; whether
-    our synchronous spawn suffices or we need an eager-copy fork (no COW) will be decided at step (d).
+  - **(c2) newlib port — DONE.** Cross-built **newlib 4.6.0.20260123** for `aarch64-elf` with the
+    Homebrew `aarch64-elf-gcc` 16.1.0 toolchain (`--disable-newlib-supplied-syscalls`), installed under
+    `./sysroot` (gitignored; reproducible via `scripts/build-newlib.sh` / `make newlib`). libgloss is not
+    used. Our bottom end: `userland/lib/newlib_syscalls.c` implements `_read/_write/_open/_close/_lseek/`
+    `_fstat/_stat/_isatty/_sbrk/_exit/_kill/_getpid` + `environ` over the `svc` ABI; `crt0_newlib.S`
+    passes argv and calls newlib `exit()` (flushes stdio); `user_newlib.ld` uses PHDRS for separate
+    RX/RW segments (no RWX) so newlib's writable globals work. `newlibtest` (built with `aarch64-elf-gcc`)
+    runs `printf`, `malloc`/`free`, and `fopen`/`fgets` of `/etc/motd` on the OS — all pass.
+    **Prerequisite:** run `make newlib` once before `make build` (kernel embeds the newlib program).
+  - Remaining: (d) cross-build busybox against the sysroot; (e) run `sh`. Note: real busybox `sh` uses
+    fork+execve+waitpid; whether our synchronous spawn suffices or we need an eager-copy fork (no COW)
+    will be decided at step (d).
 
 - **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
   - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed

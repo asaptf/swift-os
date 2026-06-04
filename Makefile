@@ -68,6 +68,12 @@ C_FLAGS_NB := --target=$(TRIPLE) -ffreestanding -fno-builtin -O2 -Wall -Wextra -
 USER_CFLAGS  := --target=$(TRIPLE) -ffreestanding -fno-builtin -nostdlib -Os -Wall -Wextra \
 	-Iuserland -Iuserland/lib -c
 USER_LDFLAGS := -nostdlib -static -T userland/user.ld -z max-page-size=4096
+# Newlib-linked userland: aarch64-elf GNU toolchain + ./sysroot (run `make newlib`).
+SYSROOT        := sysroot/aarch64-elf
+NEWLIB_GCC     := aarch64-elf-gcc
+NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
+NEWLIB_LDFLAGS := -nostartfiles -nostdlib -static -T userland/user_newlib.ld -Wl,-z,max-page-size=4096 -L $(SYSROOT)/lib
+NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 # Garbage-collect unused sections; entry is _start from the boot stub.
 LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER)
 
@@ -97,8 +103,9 @@ USER_ARGVDEMO_ELF := $(BUILD)/argvdemo.elf
 USER_SPAWNDEMO_ELF := $(BUILD)/spawndemo.elf
 USER_FSDEMO_ELF := $(BUILD)/fsdemo.elf
 USER_BRKDEMO_ELF := $(BUILD)/brkdemo.elf
+USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
 
-.PHONY: build run debug gdb test clean tools-check
+.PHONY: build run debug gdb test clean tools-check newlib
 
 build: $(KERNEL_ELF)
 
@@ -181,8 +188,24 @@ $(USER_FSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fsde
 $(USER_BRKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_brkdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_brkdemo.o -o $@
 
+# Newlib-linked program (built with the aarch64-elf GNU toolchain).
+$(SYSROOT)/lib/libc.a:
+	@echo "newlib not built. Run: make newlib" >&2; exit 1
+
+$(BUILD)/n_crt0.o: userland/lib/crt0_newlib.S Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_CFLAGS) $< -o $@
+
+$(BUILD)/n_syscalls.o: userland/lib/newlib_syscalls.c Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_CFLAGS) $< -o $@
+
+$(BUILD)/n_newlibtest.o: userland/newlibtest.c Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_CFLAGS) $< -o $@
+
+$(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
+
 # Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) Makefile | $(BUILD)/.dir
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -213,6 +236,9 @@ test: build
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
+
+newlib:
+	./scripts/build-newlib.sh
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.elf $(BUILD)/*.bin

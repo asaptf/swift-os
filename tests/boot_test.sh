@@ -25,7 +25,10 @@ cat /etc/motd: Welcome to swift-os.
 cwd2=/etc
 tmp/note: hi-tmpfs
 M8b OK: VFS demo exited, code 0
-M8c brk: heap read/write OK}"
+M8c brk: heap read/write OK
+newlib: malloc works
+newlib motd: Welcome to swift-os.
+M8c OK: newlib program exited, code 0}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
