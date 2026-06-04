@@ -1,0 +1,19 @@
+# Build artifacts
+/build/*
+!/build/.gitkeep
+*.o
+*.elf
+*.bin
+*.img
+*.map
+
+# Toolchain / sysroot (large, reproducible)
+/toolchain/
+/sysroot/
+/userland/busybox/busybox-*/
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
