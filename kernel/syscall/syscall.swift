@@ -21,6 +21,7 @@ private let sysChdir: UInt = 17     // chdir(path)
 private let sysGetcwd: UInt = 18    // getcwd(buf, size)
 private let sysSbrk: UInt = 19      // sbrk(incr) -> previous break
 private let sysExecve: UInt = 21    // execve(path, argv, envp)
+private let sysPsInfo: UInt = 22    // psinfo(buffer, capacity) -> total processes
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -102,6 +103,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysSbrk {
         frame[0] = processSbrk(Int(bitPattern: frame[0]))
         return // result already written (sbrk returns an address, not errno)
+    } else if number == sysPsInfo {
+        result = processSnapshot(buffer: frame[0], capacity: frame[1])
     } else {
         result = -38 // ENOSYS
     }

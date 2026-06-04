@@ -69,6 +69,13 @@ C_FLAGS_NB := --target=$(TRIPLE) -ffreestanding -fno-builtin -O2 -Wall -Wextra -
 USER_CFLAGS  := --target=$(TRIPLE) -ffreestanding -fno-builtin -nostdlib -Os -Wall -Wextra \
 	-Iuserland -Iuserland/lib -c
 USER_LDFLAGS := -nostdlib -static -T userland/user.ld -z max-page-size=4096
+USER_SWIFT_FLAGS := \
+	-target $(TRIPLE) \
+	-enable-experimental-feature Embedded \
+	-wmo -parse-as-library -Osize \
+	-Xllvm -mattr=+strict-align,-neon \
+	-Xfrontend -function-sections \
+	-import-objc-header userland/lib/swift_user.h
 # Newlib-linked userland: aarch64-elf GNU toolchain + ./sysroot (run `make newlib`).
 SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
@@ -109,8 +116,9 @@ USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
+USER_PS_ELF := $(BUILD)/ps.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox-check
+.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check
 
 build: $(KERNEL_ELF)
 
@@ -157,6 +165,9 @@ $(BUILD)/user_crt0.o: userland/lib/crt0.S userland/lib/syscall.h Makefile | $(BU
 $(BUILD)/user_libc.o: userland/lib/libc.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/lib/libc.c -o $@
 
+$(BUILD)/user_swift_user.o: userland/lib/swift_user.c userland/lib/swift_user.h userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/lib/swift_user.c -o $@
+
 $(BUILD)/user_hello.o: userland/hello.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/hello.c -o $@
 
@@ -186,6 +197,9 @@ $(BUILD)/user_execdemo.o: userland/execdemo.c userland/lib/syscall.h Makefile | 
 
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
+
+$(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ps.swift -o $@
 
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
@@ -217,6 +231,9 @@ $(USER_EXECDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ex
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
 
+$(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -234,7 +251,7 @@ $(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_sys
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
 
 # Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) $(USER_COPROC_ELF) $(USER_FORKDEMO_ELF) $(USER_EXECDEMO_ELF) $(USER_SECURITYDEMO_ELF) Makefile | $(BUILD)/.dir
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) $(USER_COPROC_ELF) $(USER_FORKDEMO_ELF) $(USER_EXECDEMO_ELF) $(USER_SECURITYDEMO_ELF) $(USER_PS_ELF) $(BUILD)/busybox.elf Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -265,9 +282,17 @@ test: build
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
+	./tests/busybox_test.sh
 
 newlib:
 	./scripts/build-newlib.sh
+
+busybox:
+	./scripts/build-busybox.sh
+
+# busybox.elf is produced by `make busybox` (slow; needs newlib + network).
+$(BUILD)/busybox.elf:
+	@echo "busybox not built. Run: make busybox" >&2; exit 1
 
 busybox-check:
 	./scripts/busybox-check.sh

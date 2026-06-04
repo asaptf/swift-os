@@ -41,7 +41,11 @@ argv[1]=exec-alpha
 argv[2]=exec-beta
 M8d exec OK: exec demo exited, code 3
 securitydemo: syscall abuse checks OK
-security OK: syscall abuse demo exited, code 0}"
+security OK: syscall abuse demo exited, code 0
+swift-os userland: Swift ps
+ PID PPID STATE CMD
+   1    0 RUN   ps
+ps OK: Swift ps exited, code 0}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

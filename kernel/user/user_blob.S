@@ -83,3 +83,17 @@ execdemo_elf_end:
 securitydemo_elf_start:
 .incbin "build/securitydemo.elf"
 securitydemo_elf_end:
+
+.balign 8
+.global ps_elf_start
+.global ps_elf_end
+ps_elf_start:
+.incbin "build/ps.elf"
+ps_elf_end:
+
+.balign 8
+.global busybox_elf_start
+.global busybox_elf_end
+busybox_elf_start:
+.incbin "build/busybox.elf"
+busybox_elf_end:

@@ -165,6 +165,20 @@ static inline unsigned long securitydemo_elf_len(void) {
     return (unsigned long)(securitydemo_elf_end - securitydemo_elf_start);
 }
 
+extern const unsigned char ps_elf_start[];
+extern const unsigned char ps_elf_end[];
+static inline uintptr_t ps_elf_addr(void) {
+    return (uintptr_t)ps_elf_start;
+}
+static inline unsigned long ps_elf_len(void) {
+    return (unsigned long)(ps_elf_end - ps_elf_start);
+}
+
+extern const unsigned char busybox_elf_start[];
+extern const unsigned char busybox_elf_end[];
+static inline uintptr_t busybox_elf_addr(void) { return (uintptr_t)busybox_elf_start; }
+static inline unsigned long busybox_elf_len(void) { return (unsigned long)(busybox_elf_end - busybox_elf_start); }
+
 enum {
     VM_ATTR_NORMAL = 0,
     VM_ATTR_DEVICE = 1

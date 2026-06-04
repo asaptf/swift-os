@@ -208,7 +208,7 @@ because `fork` needs parent and child alive at once. Staged:
 - **d4 — `waitpid`/`exit`/SIGCHLD** — mostly DONE with d2: `waitpid(pid|-1, *status)` blocks, reaps a
   matching zombie, returns the pid (ECHILD with no children). Remaining: SIGCHLD delivery and
   per-process fd/cwd inheritance across fork (needed once busybox keeps fds open across fork/exec).
-- **d5 — busybox**: fetch busybox.net release, minimal `.config` (ash + ls/cat/echo), cross-build with
+- **d5 — busybox — DONE.** fetch busybox.net release, minimal `.config` (ash + ls/cat/echo), cross-build with
   `aarch64-elf-gcc` against `./sysroot` + our stubs; add whatever syscalls it needs (`dup`, `pipe`,
   `ioctl`/`TCGETS`, `wait4`, `getuid`, …); run `sh` and execute ls/cat/echo → M8 acceptance.
 
@@ -359,3 +359,27 @@ Remaining for d5:
    objects with our `crt0_newlib.o` + stub lib + `-T user_newlib.ld` + newlib (`--start-group`).
 3. **Runtime bring-up**: get the ash prompt, then run ls/cat/echo (likely a few iterations: applet
    re-exec path, tty modes, missing syscalls surfaced at runtime).
+
+### d5 — busybox runs. M8 COMPLETE (2026-06-04)
+
+`scripts/build-busybox.sh` (`make busybox`) cross-builds busybox 1.38.0 (ash standalone shell +
+ls/cat/echo/pwd, static) with `aarch64-elf-gcc` against `./sysroot` (newlib) + `userland/compat`, then
+links the busybox objects with our `crt0_newlib` + `newlib_syscalls` + `compat/stubs.c` (dirent over
+getdents, termios over syscalls 7/8, fork/execve/waitpid, uid/pwd/ioctl/getline/… ) using
+`user_newlib.ld` → `build/busybox.elf`, embedded in the kernel (`user_blob.S`).
+
+Standalone applet dispatch: the shell re-execs `bb_busybox_exec_path` (`/proc/self/exe`) with
+`argv[0]=<applet>`; `exec.swift` resolves `/proc/self/exe` (and `/bin/{busybox,sh,ls,cat,echo,pwd}`) to
+the embedded busybox image, so `execve` reloads busybox and it runs the named applet.
+
+**M8 acceptance MET:** the kernel boots, runs every milestone demo, then launches busybox `sh` as the
+init shell; `tests/busybox_test.sh` drives it and asserts:
+```
+BusyBox v1.38.0 ... built-in shell (ash)
+# echo M8-BUSYBOX-OK   -> M8-BUSYBOX-OK
+# ls /                 -> bin etc readme.txt hello.txt tmp
+# cat /etc/motd        -> Welcome to swift-os.
+# exit                 -> code 0
+```
+Prereqs: `make newlib && make busybox` once, then `make build` / `make test`. The full
+**M0 → M8 path is complete**: a static busybox sh runs ls/cat/echo on our read-only base + tmpfs in QEMU.

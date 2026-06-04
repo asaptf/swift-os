@@ -34,6 +34,21 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/spawndemo") {
         return (spawndemo_elf_addr(), UInt(spawndemo_elf_len()))
     }
+    if userPathEquals(pathVA, "/bin/ps") {
+        return (ps_elf_addr(), UInt(ps_elf_len()))
+    }
+    // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
+    // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
+    // named by argv[0]. This is how the standalone shell runs ls/cat/echo.
+    if userPathEquals(pathVA, "/proc/self/exe")
+        || userPathEquals(pathVA, "/bin/busybox")
+        || userPathEquals(pathVA, "/bin/sh")
+        || userPathEquals(pathVA, "/bin/ls")
+        || userPathEquals(pathVA, "/bin/cat")
+        || userPathEquals(pathVA, "/bin/echo")
+        || userPathEquals(pathVA, "/bin/pwd") {
+        return (busybox_elf_addr(), UInt(busybox_elf_len()))
+    }
     return (0, 0)
 }
 

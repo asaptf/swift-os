@@ -119,7 +119,8 @@ func vfsInit() {
     nodes[root].parent = root
 
     // Read-only base.
-    _ = addDir(root, "bin")
+    let bin = addDir(root, "bin")
+    addFile(bin, "ps", "")
     let etc = addDir(root, "etc")
     addFile(etc, "motd", "Welcome to swift-os.\n")
     addFile(etc, "hostname", "swiftos\n")

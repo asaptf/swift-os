@@ -237,6 +237,24 @@ private func runSecurityDemo() {
     uartPuts("\n")
 }
 
+private func runPsDemo() {
+    uartPuts("swift-os userland: Swift ps\n")
+    let (p, n, argc) = packArgs(["ps"])
+    let code = processRunElf(ps_elf_addr(), UInt(ps_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("ps OK: Swift ps exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+private func runBusybox() {
+    uartPuts("swift-os M8: launching busybox sh\n")
+    let (p, n, argc) = packArgs(["sh"])
+    let code = processRunElf(busybox_elf_addr(), UInt(busybox_elf_len()), packed: p, packedLen: n, argc: argc)
+    uartPuts("M8: busybox sh exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
     let (p, n, argc) = packArgs(["ttydemo"])
@@ -388,9 +406,11 @@ func kernelMain() {
 
     runSecurityDemo()
 
+    runPsDemo()
+
     runTtyDemo()
 
-    userProcessStart()
+    runBusybox() // init shell — interactive, last
 
     while true {
         // Wake on timer IRQ.

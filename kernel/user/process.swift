@@ -18,6 +18,8 @@ private let userStackTop: UInt = 0x9000_0000
 private let userStackPages = 4
 private let userHeapBase: UInt = 0xA000_0000
 private let maxProc = 16
+private let procNameMax = 16
+private let psInfoRecordSize = 32
 
 private let trapFrameSPIndex = 31
 private let trapFrameELRIndex = 32
@@ -45,6 +47,8 @@ private var pExit = [Int](repeating: 0, count: maxProc)
 private var pKilled = [Bool](repeating: false, count: maxProc)
 private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on / waitAny
 private var pBrk = [UInt](repeating: 0, count: maxProc)
+private var pNameLen = [Int](repeating: 0, count: maxProc)
+private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var rrCursor = 0     // round-robin hint
@@ -91,6 +95,39 @@ private func allocSlot() -> Int {
     return -1
 }
 
+private func setProcessName(slot: Int, packed: UInt, argc: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    let base = slot * procNameMax
+    for i in 0..<procNameMax { pName[base + i] = 0 }
+    pNameLen[slot] = 0
+
+    guard argc > 0, packed != 0, let src = UnsafePointer<UInt8>(bitPattern: packed) else {
+        pName[base] = 0x3F // "?"
+        pNameLen[slot] = 1
+        return
+    }
+
+    var n = 0
+    while n < procNameMax - 1 && src[n] != 0 {
+        pName[base + n] = src[n]
+        n += 1
+    }
+    if n == 0 {
+        pName[base] = 0x3F
+        pNameLen[slot] = 1
+    } else {
+        pNameLen[slot] = n
+    }
+}
+
+private func copyProcessName(from parent: Int, to child: Int) {
+    if parent < 0 || parent >= maxProc || child < 0 || child >= maxProc { return }
+    let src = parent * procNameMax
+    let dst = child * procNameMax
+    for i in 0..<procNameMax { pName[dst + i] = pName[src + i] }
+    pNameLen[child] = pNameLen[parent]
+}
+
 // Build a process from an ELF image. Returns its slot, or -1.
 private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
                            argc: Int, parent: Int) -> Int {
@@ -135,6 +172,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    setProcessName(slot: slot, packed: packed, argc: argc)
     vfsProcessInit(slot: slot, parent: parent)
     return slot
 }
@@ -285,6 +323,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
+    copyProcessName(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
     return child + 1 // pid
 }
@@ -336,11 +375,46 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
+    setProcessName(slot: me, packed: packed, argc: argc)
     frame[trapFrameSPIndex] = userSP
     frame[trapFrameELRIndex] = entry
     frame[trapFrameSPSRIndex] = 0
     address_space_switch(ttbr0)
     return 0
+}
+
+/// SYS_psinfo: copy fixed-size process records into a caller-provided buffer.
+/// Record layout (32 bytes): pid:u32, ppid:u32, state:u32, name[20].
+func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
+    var total = 0
+    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    if writable > 0 {
+        guard let dst = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
+            return -22
+        }
+        let raw = UnsafeMutableRawPointer(dst)
+        for i in 0..<maxProc where pState[i] != pUnused {
+            if total < writable {
+                let rec = raw.advanced(by: total * psInfoRecordSize)
+                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+
+                let nameDst = rec.advanced(by: 12).assumingMemoryBound(to: UInt8.self)
+                var j = 0
+                let nameBase = i * procNameMax
+                while j < 20 {
+                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                    j += 1
+                }
+            }
+            total += 1
+        }
+    } else {
+        for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
+    }
+    return total
 }
 
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).

@@ -28,6 +28,7 @@
 #define SYS_SBRK      19
 #define SYS_FORK      20
 #define SYS_EXECVE    21
+#define SYS_PSINFO    22
 
 #ifndef __ASSEMBLER__
 
