@@ -196,6 +196,10 @@ because `fork` needs parent and child alive at once. Staged:
   child and reap its zombie, writing a minimal status word. `forkdemo` proves parent/child split,
   private copied data (`marker` stays `7` in parent while child writes `42`), child exit status `42`,
   and parent wake/reap.
+- **Per-process VFS state — DONE.** `cwd` and fd tables are now keyed by process slot instead of global
+  kernel state. New processes start from `/` with empty user fds; forked children inherit a snapshot of
+  parent cwd and open fds. `forkdemo` now verifies inherited cwd (`/etc`) and inherited open fd
+  (`hostname`) in the child.
 - **d3 — `execve(path, argv, envp)` — DONE.** `SYS_execve` (21) resolves an embedded executable path,
   packs argv from the old address space, builds a fresh address space + stack, rewrites the current trap
   frame (`SP_EL0`/`ELR_EL1`/`SPSR_EL1`), switches `TTBR0`, and returns from the syscall directly into the

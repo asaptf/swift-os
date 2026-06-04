@@ -68,6 +68,7 @@ func processLastKilledBySignal() -> Bool { lastReapedKilled }
 func processCurrentAddressSpace() -> UInt {
     currentProc >= 0 ? pTtbr0[currentProc] : 0
 }
+func processCurrentSlot() -> Int { currentProc }
 
 /// Pack argv into a kernel buffer as NUL-separated strings ("a\0b\0c\0").
 /// Returns (buffer address, total length, argc). Heap-allocated; never freed.
@@ -134,6 +135,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    vfsProcessInit(slot: slot, parent: parent)
     return slot
 }
 
@@ -283,6 +285,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
+    vfsProcessInit(slot: child, parent: parent)
     return child + 1 // pid
 }
 

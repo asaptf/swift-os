@@ -1,13 +1,34 @@
 // forkdemo.c — M8d process demo: eager-copy fork + waitpid.
 
 #include "lib/syscall.h"
+#include "lib/fs.h"
 
 int puts_raw(const char *s);
 
 static volatile int marker = 7;
 
+static int streq(const char *a, const char *b) {
+    int i = 0;
+    while (a[i] != 0 && b[i] != 0) {
+        if (a[i] != b[i]) { return 0; }
+        i += 1;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
 int main(void) {
     puts_raw("forkdemo: before fork\n");
+
+    char buf[32];
+    if (chdir("/etc") != 0) {
+        puts_raw("forkdemo: chdir failed\n");
+        return 1;
+    }
+    int fd = open("hostname", O_RDONLY);
+    if (fd < 0) {
+        puts_raw("forkdemo: open inherited fd failed\n");
+        return 1;
+    }
 
     int status = 0;
     int pid = fork();
@@ -18,6 +39,22 @@ int main(void) {
 
     if (pid == 0) {
         marker = 42;
+        getcwd(buf, sizeof(buf));
+        if (!streq(buf, "/etc")) {
+            puts_raw("forkdemo: child cwd not inherited\n");
+            return 1;
+        }
+        long n = read(fd, buf, sizeof(buf) - 1);
+        if (n <= 0) {
+            puts_raw("forkdemo: child fd not inherited\n");
+            return 1;
+        }
+        buf[n] = 0;
+        if (!streq(buf, "swiftos\n")) {
+            puts_raw("forkdemo: child fd read mismatch\n");
+            return 1;
+        }
+        puts_raw("forkdemo: child inherited cwd/fd\n");
         puts_raw("forkdemo: child sees private marker\n");
         return 42;
     }

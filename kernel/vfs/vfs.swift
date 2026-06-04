@@ -49,7 +49,6 @@ private struct VNode {
 private let maxNodes = 64
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
-private var cwdNode = 0 // current working directory (vnode index)
 
 // ---- file descriptor table ------------------------------------------------
 
@@ -62,7 +61,9 @@ private struct OpenFile {
 }
 
 private let maxFDs = 32
-private var fds = [OpenFile](repeating: OpenFile(), count: maxFDs)
+private let maxVFSProcesses = 16
+private var fds = [OpenFile](repeating: OpenFile(), count: maxFDs * maxVFSProcesses)
+private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 
 // ---- construction ---------------------------------------------------------
 
@@ -128,10 +129,47 @@ func vfsInit() {
     // tmpfs (writable).
     _ = addDir(root, "tmp", readOnly: false)
 
-    cwdNode = root
+    for p in 0..<maxVFSProcesses {
+        cwdNodes[p] = root
+        for fd in 0..<maxFDs { fds[fdIndex(p, fd)] = OpenFile() }
+    }
+}
+
+func vfsProcessInit(slot: Int, parent: Int) {
+    if slot < 0 || slot >= maxVFSProcesses { return }
+    if parent >= 0 && parent < maxVFSProcesses {
+        cwdNodes[slot] = cwdNodes[parent]
+        for fd in 0..<maxFDs {
+            fds[fdIndex(slot, fd)] = fds[fdIndex(parent, fd)]
+        }
+        return
+    }
+    cwdNodes[slot] = 0
+    for fd in 0..<maxFDs { fds[fdIndex(slot, fd)] = OpenFile() }
 }
 
 // ---- name / path helpers --------------------------------------------------
+
+private func currentVFSProcess() -> Int {
+    let slot = processCurrentSlot()
+    return (slot >= 0 && slot < maxVFSProcesses) ? slot : 0
+}
+
+private func fdIndex(_ proc: Int, _ fd: Int) -> Int {
+    proc * maxFDs + fd
+}
+
+private func cwdNodeForCurrentProcess() -> Int {
+    cwdNodes[currentVFSProcess()]
+}
+
+private func openFile(_ proc: Int, _ fd: Int) -> OpenFile {
+    fds[fdIndex(proc, fd)]
+}
+
+private func setOpenFile(_ proc: Int, _ fd: Int, _ value: OpenFile) {
+    fds[fdIndex(proc, fd)] = value
+}
 
 private func nameEquals(_ node: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> Bool {
     if nodes[node].nameLen != len { return false }
@@ -156,7 +194,7 @@ private func findChild(_ dir: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> I
 // Resolve a NUL-terminated path (kernel pointer). Returns vnode index or -1.
 private func resolve(_ path: UnsafePointer<UInt8>) -> Int {
     var i = 0
-    var cur = path[0] == 0x2F ? 0 : cwdNode   // leading '/' → root
+    var cur = path[0] == 0x2F ? 0 : cwdNodeForCurrentProcess()   // leading '/' → root
     while path[i] == 0x2F { i += 1 }          // skip leading slashes
 
     while path[i] != 0 {
@@ -179,7 +217,7 @@ private func resolve(_ path: UnsafePointer<UInt8>) -> Int {
 private func resolveParent(_ path: UnsafePointer<UInt8>,
                            _ leafStart: inout Int, _ leafLen: inout Int) -> Int {
     var i = 0
-    var cur = path[0] == 0x2F ? 0 : cwdNode
+    var cur = path[0] == 0x2F ? 0 : cwdNodeForCurrentProcess()
     while path[i] == 0x2F { i += 1 }
     var lastStart = i
     var lastLen = 0
@@ -210,7 +248,8 @@ private func resolveParent(_ path: UnsafePointer<UInt8>,
 // ---- fd helpers -----------------------------------------------------------
 
 private func allocFD() -> Int {
-    for i in 3..<maxFDs where !fds[i].inUse { return i }
+    let proc = currentVFSProcess()
+    for i in 3..<maxFDs where !openFile(proc, i).inUse { return i }
     return -1
 }
 
@@ -234,9 +273,10 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
         }
     }
 
+    let proc = currentVFSProcess()
     let fd = allocFD()
     if fd == -1 { return errNoSpace }
-    fds[fd] = OpenFile(inUse: true, node: node, offset: 0, dirCursor: 0, flags: f)
+    setOpenFile(proc, fd, OpenFile(inUse: true, node: node, offset: 0, dirCursor: 0, flags: f))
     return fd
 }
 
@@ -261,18 +301,22 @@ private func createTmpFile(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
 
 func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs else { return errBadFD }
+    var file = openFile(proc, fd)
+    guard file.inUse else { return errBadFD }
     guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
-    let node = fds[fd].node
+    let node = file.node
     if nodes[node].isDir { return errIsDir }
 
     let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     var copied = 0
-    while copied < Int(count) && fds[fd].offset < nodes[node].dataLen {
-        dst[copied] = src[fds[fd].offset]
+    while copied < Int(count) && file.offset < nodes[node].dataLen {
+        dst[copied] = src[file.offset]
         copied += 1
-        fds[fd].offset += 1
+        file.offset += 1
     }
+    setOpenFile(proc, fd, file)
     return copied
 }
 
@@ -286,38 +330,47 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         return Int(count)
     }
 
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    let node = fds[fd].node
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs else { return errBadFD }
+    var file = openFile(proc, fd)
+    guard file.inUse else { return errBadFD }
+    let node = file.node
     if nodes[node].isDir { return errIsDir }
     if nodes[node].readOnly { return errReadOnly }
     guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
 
     let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     var w = 0
-    while w < Int(count) && fds[fd].offset < nodes[node].dataCap {
-        dst[fds[fd].offset] = src[w]
-        fds[fd].offset += 1
-        if fds[fd].offset > nodes[node].dataLen { nodes[node].dataLen = fds[fd].offset }
+    while w < Int(count) && file.offset < nodes[node].dataCap {
+        dst[file.offset] = src[w]
+        file.offset += 1
+        if file.offset > nodes[node].dataLen { nodes[node].dataLen = file.offset }
         w += 1
     }
+    setOpenFile(proc, fd, file)
     return w
 }
 
 func vfsClose(fd: Int) -> Int {
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    fds[fd] = OpenFile()
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs && openFile(proc, fd).inUse else { return errBadFD }
+    setOpenFile(proc, fd, OpenFile())
     return 0
 }
 
 func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    let node = fds[fd].node
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs else { return errBadFD }
+    var file = openFile(proc, fd)
+    guard file.inUse else { return errBadFD }
+    let node = file.node
     var base = 0
-    if whence == 1 { base = fds[fd].offset }
+    if whence == 1 { base = file.offset }
     else if whence == 2 { base = nodes[node].dataLen }
     let next = base + offset
     if next < 0 { return errInvalid }
-    fds[fd].offset = next
+    file.offset = next
+    setOpenFile(proc, fd, file)
     return next
 }
 
@@ -339,22 +392,28 @@ func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
 }
 
 func vfsFstat(fd: Int, statbuf: UInt) -> Int {
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    return writeStat(statbuf, fds[fd].node)
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs else { return errBadFD }
+    let file = openFile(proc, fd)
+    guard file.inUse else { return errBadFD }
+    return writeStat(statbuf, file.node)
 }
 
 // dirent: d_ino(8) d_off(8) d_reclen(2) d_type(1) d_name[](NUL-terminated).
 func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
-    guard fd >= 3 && fd < maxFDs && fds[fd].inUse else { return errBadFD }
-    let dir = fds[fd].node
+    let proc = currentVFSProcess()
+    guard fd >= 3 && fd < maxFDs else { return errBadFD }
+    var file = openFile(proc, fd)
+    guard file.inUse else { return errBadFD }
+    let dir = file.node
     if !nodes[dir].isDir { return errInvalid }
     guard let b = userWritableBuffer(buffer, count) else { return errInvalid }
     let buf = UnsafeMutableRawPointer(mutating: b)
 
     // Walk to the child at dirCursor.
     var child = nodes[dir].firstChild
-    var skip = fds[fd].dirCursor
+    var skip = file.dirCursor
     while skip > 0 && child != -1 { child = nodes[child].nextSibling; skip -= 1 }
 
     var used = 0
@@ -365,7 +424,7 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
 
         let rec = buf.advanced(by: used)
         rec.storeBytes(of: UInt64(child + 1), toByteOffset: 0, as: UInt64.self)
-        rec.storeBytes(of: UInt64(fds[fd].dirCursor + 1), toByteOffset: 8, as: UInt64.self)
+        rec.storeBytes(of: UInt64(file.dirCursor + 1), toByteOffset: 8, as: UInt64.self)
         rec.storeBytes(of: UInt16(reclen), toByteOffset: 16, as: UInt16.self)
         rec.storeBytes(of: nodes[child].isDir ? dtDir : dtReg, toByteOffset: 18, as: UInt8.self)
         let np = UnsafePointer<UInt8>(bitPattern: nodes[child].namePtr)!
@@ -374,9 +433,10 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
         nameDst[nameLen] = 0
 
         used += reclen
-        fds[fd].dirCursor += 1
+        file.dirCursor += 1
         child = nodes[child].nextSibling
     }
+    setOpenFile(proc, fd, file)
     return used
 }
 
@@ -385,7 +445,7 @@ func vfsChdir(path pathVA: UInt) -> Int {
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !nodes[node].isDir { return errInvalid }
-    cwdNode = node
+    cwdNodes[currentVFSProcess()] = node
     return 0
 }
 
@@ -395,6 +455,7 @@ func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
         return errInvalid
     }
 
+    let cwdNode = cwdNodeForCurrentProcess()
     if cwdNode == 0 { // root
         if size < 2 { return errNoSpace }
         buf[0] = 0x2F; buf[1] = 0
