@@ -327,6 +327,54 @@ These ideas guide interfaces and data model choices, but they do not expand the 
   pages, and a wake primitive. Keep it simple enough to use for driver services, logging, supervision, and
   future language runtime helpers.
 
+## Reliability and control-plane model (record, don't build yet)
+
+swift-os should borrow reliability discipline from mainframes, older operational systems, and spacecraft
+software without inheriting their heavyweight process or legacy interfaces. The goal is explicit recovery
+paths, not heroic debugging after an opaque failure.
+
+Ideas to keep:
+
+- **Controlled boot profiles.** Support explicit boot modes such as `normal`, `previous-good`, `safe`,
+  `diagnostics`, and `recovery`. These profiles should select a boot slot, service set, and capability policy.
+- **Safe mode.** Maintain a minimal configuration that should almost always boot: kernel, console, read-only
+  base image, tmpfs, diagnostics shell, and no optional services.
+- **A/B image discipline.** Treat the active system as one generation among signed slots. New generations must
+  be verified before activation and confirmed healthy before the fallback slot is retired.
+- **FDIR.** Build toward fault detection, isolation, and recovery: detect failed components, isolate the failed
+  driver/service/cell, and recover through restart, rollback, or safe-mode transition.
+- **Health states.** Critical objects should eventually expose lifecycle and health such as `starting`, `ready`,
+  `degraded`, `failed`, `restarting`, and `stopped`.
+- **Watchdogs with policy.** Use watchdogs for the kernel, init/supervisor, driver services, and cells, but tie
+  each watchdog to an explicit recovery policy instead of blindly resetting the whole system.
+- **Operator console.** Provide a small control plane for status, boot slots, cells, services, drivers, health,
+  and recent events. This is separate from an interactive Unix shell.
+- **Jobs/contracts.** Represent supervised work as jobs or contracts with processes, capabilities, resource
+  limits, logs, health, and restart policy.
+- **Command/telemetry split.** Keep control commands separate from telemetry streams. Commands change state;
+  telemetry reports counters, events, logs, and health.
+- **Typed update objects.** Treat kernel images, base images, patch bundles, driver bundles, manifests, and
+  boot profiles as versioned, signed system objects instead of arbitrary mutable files.
+
+Design constraints:
+
+- every critical component should have a health state;
+- every restartable component should have a supervisor;
+- every update should have rollback;
+- every boot path should have a safe-mode fallback;
+- every resource boundary should have accounting;
+- every privileged control action should require explicit authority;
+- every failure path should be testable.
+
+Things not to copy:
+
+- heavyweight mainframe management stacks;
+- batch-only operation models;
+- JCL-like configuration languages;
+- broad transactionality in every subsystem;
+- triple modular redundancy as the default software model;
+- certification bureaucracy in place of clear design and executable tests.
+
 ## Syscall ABI
 
 Our own POSIX-like surface (NOT Linux ABI). SVC entry → dispatch table. Kept deliberately small at first

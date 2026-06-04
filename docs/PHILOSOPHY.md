@@ -102,6 +102,7 @@ The system should grow:
 - kernel counters;
 - structured tracepoints;
 - per-process and per-cell accounting;
+- health states for critical services, drivers, cells, and update generations;
 - driver state and version reporting;
 - boot tests that catch accidental behavioral and timing regressions.
 
@@ -113,6 +114,7 @@ When choosing between designs:
 
 - choose the smaller trusted surface;
 - choose explicit ownership over implicit sharing;
+- choose explicit recovery paths over ad hoc failure handling;
 - choose measured behavior over assumptions;
 - choose static structure on boot-critical paths;
 - choose staged initialization and lazy services over a large early service manager;
