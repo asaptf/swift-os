@@ -7,6 +7,7 @@ private let gicdCtlr: UInt = 0x000
 private let gicdIcenabler: UInt = 0x180
 private let gicdIsenabler: UInt = 0x100
 private let gicdIpriorityr: UInt = 0x400
+private let gicdItargetsr: UInt = 0x800
 private let gicdIcfgr: UInt = 0xC00
 
 private let giccCtlr: UInt = 0x000
@@ -35,6 +36,15 @@ func gicEnableInterrupt(_ id: UInt32) {
     let shift = UInt((id % 16) * 2)
     let cfg = mmio_read32(cfgAddr) & ~(UInt32(0x3) << UInt32(shift))
     mmio_write32(cfgAddr, cfg)
+
+    // SPIs (id >= 32) are not banked: route them to CPU interface 0. ITARGETSR
+    // is byte-per-interrupt; do a read-modify-write on the containing word.
+    if id >= 32 {
+        let targetWord = gicdBase + gicdItargetsr + UInt((id / 4) * 4)
+        let byteShift = UInt32((id % 4) * 8)
+        let current = mmio_read32(targetWord) & ~(UInt32(0xFF) << byteShift)
+        mmio_write32(targetWord, current | (UInt32(0x01) << byteShift))
+    }
 
     let enableAddr = gicdBase + gicdIsenabler + UInt((id / 32) * 4)
     mmio_write32(enableAddr, UInt32(1) << UInt32(id % 32))

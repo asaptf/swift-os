@@ -18,6 +18,7 @@ private var launchCtx: UnsafeMutablePointer<CPUContext>! = nil
 private var scratchCtx: UnsafeMutablePointer<CPUContext>! = nil
 private var lastExitCode: Int = 0
 private var processActive = false
+private var killedBySignal = false
 
 private func allocContext() -> UnsafeMutablePointer<CPUContext> {
     guard let raw = swiftos_kernel_alloc(UInt(MemoryLayout<CPUContext>.stride), 16) else {
@@ -37,6 +38,10 @@ func processInit() {
 
 func processIsActive() -> Bool {
     return processActive
+}
+
+func processLastKilledBySignal() -> Bool {
+    return killedBySignal
 }
 
 /// Load the ELF at [image, image+size) into a fresh address space and run it at
@@ -81,11 +86,25 @@ func processRunElf(_ image: UInt, _ size: UInt) -> Int {
     launchCtx.pointee.sp = UInt64(kstackTop)
 
     processActive = true
+    killedBySignal = false
     cpu_switch_context(UnsafeMutableRawPointer(kernelReturnCtx),
                        UnsafeMutableRawPointer(launchCtx))
-    // Resumes here once SYS_exit switches back into kernelReturnCtx.
+    // Resumes here once SYS_exit (or a fatal signal) switches back.
     processActive = false
     return lastExitCode
+}
+
+/// Terminate the foreground process because of a fatal signal. Records exit
+/// status 128+signo and switches back to the launching kernel context, exactly
+/// like processExit. Called from signal delivery; never returns.
+func processTerminateBySignal(_ sig: Int) {
+    killedBySignal = true
+    lastExitCode = 128 + sig
+    processActive = false
+    address_space_switch(mmu_kernel_ttbr0())
+    cpu_switch_context(UnsafeMutableRawPointer(scratchCtx),
+                       UnsafeMutableRawPointer(kernelReturnCtx))
+    while true { wfi() }
 }
 
 /// SYS_exit handler: record the code, restore the kernel address space, and

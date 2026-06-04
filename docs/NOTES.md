@@ -101,20 +101,43 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   - `4 close(fd)` — closes fd 3.
   - `5 exit(status)` — records M5 success.
   - `6 lseek(fd, offset, whence)` — implemented for fd 3.
+- M7 additions: `2 read` from fd 0 is served by the tty; `5 exit` unwinds an active process to the
+  kernel; `7 tcgetattr` / `8 tcsetattr`; `9 sigaction`; `10 kill`; `11 getpid`.
 
-## Build / run commands (verified at M6)
+## Build / run commands (verified at M7)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
 - `make run`   — `qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -kernel build/kernel.elf`.
   Exit QEMU serial with `Ctrl-A X`.
 - `make debug` — same + `-s -S` (paused, gdbstub on `:1234`). Then `make gdb` (or lldb) in another shell.
-- `make test`  — builds, runs the host page-allocator unit test, then boots QEMU and asserts
-  both `hello from ELF userland` and
-  `M6 OK: ELF process exited, code 7` appear on serial within 10 s.
+- `make test`  — host page-allocator unit test, userland ELF sanity check, then QEMU boot asserts
+  (M6: `hello from ELF userland` + exit code 7) and a scripted interactive tty test (M7: echo +
+  Ctrl-C/SIGINT interruption).
 - `make clean` — remove build artifacts.
 
 ## Milestone log
+
+- **M7 (2026-06-04) — DONE.** TTY line discipline, termios, signals:
+  - **UART RX + IRQ.** PL011 receive path added (`uartRxInit`/`uartHandleRx`/`uartTryReadByte`); routed
+    through the GIC as SPI 1 → INTID 33. `gicEnableInterrupt` now programs `GICD_ITARGETSR` for SPIs
+    (PPIs are banked, SPIs are not) — without it the line is never delivered.
+  - **TTY line discipline** (`kernel/tty/tty.swift`): canonical mode (line buffering, echo, backspace
+    editing) and raw mode, selected by termios `c_lflag` (`ICANON`/`ECHO`/`ISIG`). Backing for `read(0)`.
+  - **termios** syscalls `tcgetattr`/`tcsetattr` (7/8); userland `lib/termios.h` mirrors the ABI.
+  - **Signals** (`kernel/signal/signal.swift`): pending mask + dispositions for the foreground process.
+    Ctrl-C (ETX, with `ISIG`) raises SIGINT; delivered from the IRQ handler after the GIC EOI. Default
+    action terminates the process (status 128+signo); `SIG_IGN` honored. `sigaction`/`kill`/`getpid`
+    (9/10/11) present. **Caveat:** custom (catch) handlers are recorded but not yet *delivered* — that
+    needs signal frames/sigreturn (future work); today a custom handler falls back to terminate.
+  - **Important constraint discovered:** a blocking syscall must NOT unmask IRQs, because an interrupt
+    taken at EL1 overwrites `ELR_EL1`/`SPSR_EL1` (no save/restore in the sync vector yet), corrupting the
+    pending return to EL0. `read(0)` therefore *polls* the UART with IRQs masked; the UART IRQ still
+    drives Ctrl-C while the program runs at EL0. A full trap-frame (save/restore ELR/SPSR/SP_EL0) is the
+    proper fix and is the prerequisite for preemptively scheduling EL0 processes — deferred.
+  - Acceptance: typed input is echoed and returned by `read(0)`; Ctrl-C interrupts the running command
+    (`M7 OK: foreground interrupted by Ctrl-C (SIGINT), status 130`). `make test` adds `tty_test.sh`
+    (scripted serial input) and passes.
 
 - **M6 (2026-06-04) — DONE.** libc subset, ELF64 loader, process spawn:
   - **Userland toolchain.** Hand-written minimal libc (`userland/lib/`): `crt0.S`, syscall wrappers

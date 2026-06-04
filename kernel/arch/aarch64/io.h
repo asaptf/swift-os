@@ -69,6 +69,15 @@ static inline unsigned long hello_elf_len(void) {
     return (unsigned long)(hello_elf_end - hello_elf_start);
 }
 
+extern const unsigned char ttydemo_elf_start[];
+extern const unsigned char ttydemo_elf_end[];
+static inline uintptr_t ttydemo_elf_addr(void) {
+    return (uintptr_t)ttydemo_elf_start;
+}
+static inline unsigned long ttydemo_elf_len(void) {
+    return (unsigned long)(ttydemo_elf_end - ttydemo_elf_start);
+}
+
 enum {
     VM_ATTR_NORMAL = 0,
     VM_ATTR_DEVICE = 1

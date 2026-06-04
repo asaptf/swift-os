@@ -158,6 +158,18 @@ private func runProcessDemo() {
     uartPuts("\n")
 }
 
+private func runTtyDemo() {
+    uartPuts("swift-os M7: interactive tty + signals\n")
+    let code = processRunElf(ttydemo_elf_addr(), UInt(ttydemo_elf_len()))
+    if processLastKilledBySignal() {
+        uartPuts("M7 OK: foreground interrupted by Ctrl-C (SIGINT), status ")
+    } else {
+        uartPuts("M7: tty process exited, code ")
+    }
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 @_cdecl("exception_handler")
 func exceptionHandler() {
     uartPuts("panic: unexpected EL1 exception\n")
@@ -182,6 +194,8 @@ func irqHandler() {
 
     if interruptId == physicalTimerIrq {
         timerHandleTick()
+    } else if interruptId == uartIrqId {
+        uartHandleRx()
     } else if interruptId != gicSpuriousInterrupt {
         uartPuts("unexpected IRQ ")
         uartPutUInt(UInt64(interruptId))
@@ -192,10 +206,12 @@ func irqHandler() {
         gicEndInterrupt(iar)
     }
 
-    // Preempt only after the EOI so the switched-away context doesn't leave an
-    // interrupt active at the GIC.
+    // Everything below runs after the EOI so a context switch / process
+    // termination never leaves an interrupt active at the GIC.
     if interruptId == physicalTimerIrq {
         schedulerTick()
+    } else if interruptId == uartIrqId {
+        signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
     }
 }
 
@@ -263,11 +279,16 @@ func kernelMain() {
     timerInit(ticksPerSecond: 4)
     schedulerInit()
     processInit()
+    ttyInit()
+    signalReset()
+    uartRxInit()
     enable_irq()
 
     runSchedulerDemo()
 
     runProcessDemo()
+
+    runTtyDemo()
 
     userProcessStart()
 

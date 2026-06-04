@@ -7,12 +7,17 @@
 #ifndef SWIFTOS_USER_SYSCALL_H
 #define SWIFTOS_USER_SYSCALL_H
 
-#define SYS_OPEN  1
-#define SYS_READ  2
-#define SYS_WRITE 3
-#define SYS_CLOSE 4
-#define SYS_EXIT  5
-#define SYS_LSEEK 6
+#define SYS_OPEN      1
+#define SYS_READ      2
+#define SYS_WRITE     3
+#define SYS_CLOSE     4
+#define SYS_EXIT      5
+#define SYS_LSEEK     6
+#define SYS_TCGETATTR 7
+#define SYS_TCSETATTR 8
+#define SYS_SIGACTION 9
+#define SYS_KILL      10
+#define SYS_GETPID    11
 
 #ifndef __ASSEMBLER__
 

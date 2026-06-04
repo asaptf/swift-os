@@ -9,11 +9,21 @@
 private let uart0Base: UInt = 0x0900_0000
 
 // Register offsets (ARM PrimeCell PL011, DDI0183).
-private let uartDR: UInt = 0x00   // Data register.
-private let uartFR: UInt = 0x18   // Flag register.
+private let uartDR: UInt = 0x00     // Data register.
+private let uartFR: UInt = 0x18     // Flag register.
+private let uartIMSC: UInt = 0x38   // Interrupt mask set/clear.
+private let uartICR: UInt = 0x44    // Interrupt clear.
 
 // Flag register bits.
+private let frRXFE: UInt32 = 1 << 4 // Receive FIFO empty.
 private let frTXFF: UInt32 = 1 << 5 // Transmit FIFO full.
+
+// Interrupt bits (IMSC/ICR/MIS).
+private let intRX: UInt32 = 1 << 4  // Receive interrupt.
+private let intRT: UInt32 = 1 << 6  // Receive timeout interrupt.
+
+/// QEMU `virt` routes PL011 to SPI 1 → GIC INTID 33 (verified from the DTB).
+let uartIrqId: UInt32 = 33
 
 /// Write one byte to the UART, blocking until the TX FIFO has room.
 @inline(__always)
@@ -43,6 +53,33 @@ func uartPutHex(_ value: UInt) {
         if shift == 0 { break }
         shift -= 4
     }
+}
+
+/// Enable receive interrupts (RX + receive-timeout) and route the line through
+/// the GIC. Call after gicInit(). TX stays polled.
+func uartRxInit() {
+    mmio_write32(uart0Base + uartICR, 0x7FF)          // clear any stale interrupts
+    mmio_write32(uart0Base + uartIMSC, intRX | intRT) // unmask RX + RX-timeout
+    gicEnableInterrupt(uartIrqId)
+}
+
+/// Non-blocking RX poll: returns the next received byte, or -1 if the FIFO is
+/// empty. Used by ttyRead to service a blocking read with IRQs masked, avoiding
+/// a nested EL1 interrupt that would clobber ELR_EL1/SPSR_EL1.
+func uartTryReadByte() -> Int {
+    if (mmio_read32(uart0Base + uartFR) & frRXFE) == 0 {
+        return Int(mmio_read32(uart0Base + uartDR) & 0xFF)
+    }
+    return -1
+}
+
+/// Drain the RX FIFO into the tty line discipline. Called from the IRQ handler.
+func uartHandleRx() {
+    while (mmio_read32(uart0Base + uartFR) & frRXFE) == 0 {
+        let byte = UInt8(mmio_read32(uart0Base + uartDR) & 0xFF)
+        ttyOnInput(byte)
+    }
+    mmio_write32(uart0Base + uartICR, intRX | intRT)  // acknowledge at the UART
 }
 
 func uartPutUInt(_ value: UInt64) {

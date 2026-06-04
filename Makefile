@@ -40,6 +40,8 @@ SWIFT_SRCS := \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
 	kernel/syscall/syscall.swift \
+	kernel/tty/tty.swift \
+	kernel/signal/signal.swift \
 	kernel/user/user_process.swift \
 	kernel/user/process.swift \
 	kernel/vfs/vfs.swift \
@@ -86,8 +88,9 @@ KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
 
-# Userland artifacts (a static C hello-world, embedded into the kernel image).
+# Userland artifacts (static C programs, embedded into the kernel image).
 USER_HELLO_ELF := $(BUILD)/hello.elf
+USER_TTYDEMO_ELF := $(BUILD)/ttydemo.elf
 
 .PHONY: build run debug gdb test clean tools-check
 
@@ -136,11 +139,17 @@ $(BUILD)/user_libc.o: userland/lib/libc.c userland/lib/syscall.h Makefile | $(BU
 $(BUILD)/user_hello.o: userland/hello.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/hello.c -o $@
 
+$(BUILD)/user_ttydemo.o: userland/ttydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/ttydemo.c -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
-# Embed the userland ELF into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) Makefile | $(BUILD)/.dir
+$(USER_TTYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o -o $@
+
+# Embed the userland ELFs into the kernel image (no block device yet).
+$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -170,6 +179,7 @@ test: build
 	$(BUILD)/page_allocator_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	./tests/tty_test.sh
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.elf $(BUILD)/*.bin
