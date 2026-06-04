@@ -73,7 +73,8 @@ Compatibility is acceptable when it is narrow, testable, and useful:
 - POSIX-like file and process concepts for porting;
 - statically linked C programs for bring-up;
 - newlib first, musl possible later;
-- future support for Swift apps, Node.js, and JVM requirements when they do not distort the core model.
+- future support for Swift apps, Node.js, JVM, and AI-hosting requirements when they do not distort the core
+  model.
 
 Compatibility is rejected when it imports legacy complexity:
 
@@ -109,6 +110,7 @@ The system should grow:
 - kernel counters;
 - structured tracepoints;
 - per-process and per-cell accounting;
+- AI-serving metrics such as latency, throughput, model load time, memory pressure, and cell restarts;
 - health states for critical services, drivers, cells, and update generations;
 - driver state and version reporting;
 - boot tests that catch accidental behavioral and timing regressions.
@@ -137,4 +139,5 @@ When choosing between designs:
 The current bring-up target is aarch64 QEMU `virt`. The minimum viable system is a statically linked busybox
 `sh` that can run `ls`, `cat`, and `echo` on the swift-os filesystem inside QEMU.
 
-Everything else is either support for that path or a recorded long-horizon constraint.
+Everything else is either support for that path or a recorded long-horizon constraint. AI-hosting is an
+important future product profile, but it starts after the base OS can run ordinary static userland reliably.

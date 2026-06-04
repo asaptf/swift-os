@@ -492,6 +492,114 @@ Future identity data should live in a simple structured store in the immutable b
 session state in tmpfs or a dedicated service. Compatibility files such as `/etc/passwd` should be generated
 from that store when needed, not treated as kernel security policy.
 
+## Future AI-hosting model (important; record, don't build yet)
+
+AI-hosting is an important long-horizon product profile for swift-os. The target is not to become a general
+Linux-compatible CUDA host early on. The target is a small, immutable, capability-based inference appliance OS:
+model bundles, isolated serving cells, fast boot, strong observability, hot model reload, and explicit resource
+accounting.
+
+The practical first AI target should be CPU-only inference:
+
+```text
+static llama.cpp-style server
+GGUF-like model files
+mmap-backed weights
+HTTP or local RPC serving
+one model server per cell
+```
+
+GPU/NPU acceleration is future work and depends on a mature device model, DMA safety, and accelerator drivers.
+CUDA/ROCm compatibility should not be assumed as a core OS goal.
+
+Required primitives to keep on the roadmap:
+
+- large `mmap` support for model weights;
+- huge pages or large mappings for model memory and runtime heaps;
+- efficient page cache behavior for immutable model bundles;
+- threads and futex-like synchronization;
+- event/poll syscalls for serving loops;
+- TLS and fast timers;
+- W^X and executable mappings for JIT-capable runtimes;
+- memory pressure reporting and admission control hooks.
+
+Model storage should use signed immutable bundles:
+
+```text
+/models/<name>/<generation>/
+  manifest.toml
+  config
+  tokenizer
+  weights
+  checksums
+```
+
+Model bundles should support atomic activation, health confirmation, rollback, and hot reload:
+
+1. Stage model generation B.
+2. Verify signatures and hashes.
+3. Start or warm a new serving cell.
+4. Route new requests to B.
+5. Drain generation A.
+6. Unmap A when no longer in use.
+7. Roll back if B is unhealthy.
+
+Serving isolation should use cells and explicit capabilities:
+
+```text
+cell: model-llama-7b
+  caps:
+    fs:read:/models/llama-7b
+    net:listen:tcp:8080
+    clock:read
+    process:spawn
+    accel:use:gpu0      # future
+  limits:
+    memory
+    threads
+    file descriptors
+    accelerator quota   # future
+```
+
+Accelerator support should be designed as explicit device authority, not ambient access to all GPUs:
+
+- DMA-safe buffers;
+- pinned memory tracking;
+- IOMMU support when available;
+- command queues;
+- userland accelerator driver services where practical;
+- accelerator capabilities such as `accel:use`, `accel:memory`, and `accel:queue`.
+
+AI-hosting requires networking after the busybox milestone:
+
+- virtio-net or another minimal NIC path;
+- TCP/IP stack;
+- async accept/read/write;
+- backpressure;
+- graceful reload and drain;
+- TLS in userland;
+- metrics and health endpoints.
+
+Observability should include AI-serving metrics:
+
+- request counts;
+- latency percentiles;
+- tokens/sec or equivalent throughput;
+- model load and warmup time;
+- mmap/page-cache behavior;
+- memory pressure and OOM events;
+- cell restarts;
+- accelerator errors and utilization when accelerators exist.
+
+Post-M8 priority order:
+
+1. CPU-only static inference server with mmap-backed model files.
+2. Network serving and metrics.
+3. One model server per cell with resource limits.
+4. Hot model reload and rollback.
+5. Accelerator service model.
+6. GPU/NPU backend drivers.
+
 ## Future cloud elasticity model (record, don't build yet)
 
 swift-os should keep a path open for cloud VM resize without rebooting the guest, but this is a long-horizon
