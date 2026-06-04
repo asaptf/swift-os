@@ -600,6 +600,55 @@ Post-M8 priority order:
 5. Accelerator service model.
 6. GPU/NPU backend drivers.
 
+## Future network stack model (record, don't build yet)
+
+swift-os will need TCP/IP to host server and AI workloads (see the AI-hosting and metrics sections
+above). The implementation strategy is decided, but no networking code is built during the M9–M13 arc;
+networking is the next major arc only after identity/permissions land.
+
+**Decision: write our own stack in Embedded Swift. Do NOT fork the FreeBSD in-kernel stack.** netgraph
+is taken as *design inspiration* (a graph of typed nodes connected by hooks), not as code.
+
+Why not fork FreeBSD's stack:
+
+- it is not a separable module — it is fused to `mbuf`/`uma(9)`, SMP locking (`mtx`, `rwlock`,
+  `NET_EPOCH`), `kobj`, `sysctl`, `callout`, kernel threads, and the socket↔VFS layer; compiling
+  `tcp_input.c` effectively pulls in the FreeBSD kernel;
+- it assumes SMP and decades of RCU-style concurrency we deliberately do not have (single core at the
+  start) and cannot remove without rewriting the stack;
+- it is C with large global mutable state, which defeats our Swift value-type / `~Copyable` /
+  capability ownership model — "kernel in Swift" would become a fiction;
+- it carries legacy ABI/options weight, conflicting with priority #1 (modern over legacy).
+
+Architecture (matches restartable driver services + capabilities already in this doc):
+
+- **virtio-net as a driver service**, not in the kernel — MMIO range, IRQ endpoint, DMA window
+  capabilities, like other restartable drivers.
+- **TCP/IP as a userland service**, reachable only through capabilities (e.g. `net:listen:tcp:8080`,
+  already in the capability examples). This *is* netgraph re-imagined for a microkernel: a graph of
+  services with typed hooks.
+- **sans-IO core**: the protocol engine is a pure function `(bytes in, time) → (bytes out, events)`
+  with no direct I/O — the driver and socket API live outside it. This is what makes it host-testable
+  (priority #3, TDD) and portable, and it maps cleanly onto our event/poll syscall.
+- Single core removes ~80% of FreeBSD-stack complexity (no `NET_EPOCH`, no mbuf-zone races), which is
+  precisely why a from-scratch stack is *less* work than porting and fits our model.
+- Layer scope: Ethernet / ARP / IPv4 (IPv6 later) / ICMP / UDP / TCP. **TLS in userland.**
+
+Indicative future milestone sequence (N-series, after M13; one at a time, each builds/boots/tests):
+
+- **N0 — virtio-net driver service.** Discovered via the M9 HAL; raw frame TX/RX; loopback/host test.
+- **N1 — sans-IO L2/L3.** Ethernet/ARP/IPv4/ICMP as a pure engine; acceptance: `ping` replies.
+- **N2 — UDP + socket syscall surface.** Datagram send/recv wired to the capability-gated service.
+- **N3 — TCP.** sans-IO state machine: handshake, RTO, windows, basic congestion control; host unit
+  tests for the state machine before any in-QEMU run.
+- **N4 — socket API + capability gating + poll.** BSD-like sockets recompiled against our libc;
+  `net:listen:*` / `net:connect:*` enforcement; integration with the event/poll mechanism.
+- **N5 — TLS in userland.**
+
+Constraints to keep open now (mostly already satisfied): an event/poll syscall, DMA-safe buffers for
+virtio, capability strings for network rights, and not baking any networking assumptions into the
+kernel core.
+
 ## Future cloud elasticity model (record, don't build yet)
 
 swift-os should keep a path open for cloud VM resize without rebooting the guest, but this is a long-horizon
