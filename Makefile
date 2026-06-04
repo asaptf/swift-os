@@ -110,7 +110,7 @@ USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib
+.PHONY: build run debug gdb test clean tools-check newlib busybox-check
 
 build: $(KERNEL_ELF)
 
@@ -268,6 +268,9 @@ test: build
 
 newlib:
 	./scripts/build-newlib.sh
+
+busybox-check:
+	./scripts/busybox-check.sh
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.elf $(BUILD)/*.bin

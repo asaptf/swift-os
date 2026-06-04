@@ -11,6 +11,7 @@
 /toolchain/
 /sysroot/
 /userland/busybox/busybox-*/
+/userland/busybox/*.tar.*
 
 # Editor / OS cruft
 .DS_Store
