@@ -185,6 +185,12 @@ Explicit non-goals for the bring-up filesystem:
 
 ## Boot-time requirements
 
+> **Decision (2026-06-04):** after M8, the boot path gains a UEFI route so the OS can boot from a real
+> disk image under firmware (target: VirtualBox ARM on Apple Silicon, validated on QEMU+AAVMF), while
+> staying aarch64-only — amd64 remains a non-goal. The `-kernel` direct-boot path stays as a fallback.
+> Runtime hardware discovery (device tree, then UEFI config tables) replaces hardcoded constants
+> starting at M9. See the M9–M13 roadmap in `docs/NOTES.md`.
+
 Boot speed is a primary system quality, not a cosmetic optimization. Each milestone should avoid adding
 unbounded work to the path between kernel entry and the first runnable user process.
 
@@ -418,7 +424,11 @@ Explicitly postponed until after the busybox milestone: network isolation, OCI i
 registries, overlay layers, seccomp-like policy VMs, multi-user accounting, nested cells, live migration, and
 SMP-aware resource scheduling.
 
-## Future identity and login model (record, don't build yet)
+## Identity and login model
+
+> **Decision (2026-06-04):** this capability/principal model is the chosen path for the post-M8 login
+> milestone (M12). Traditional Unix `uid==0` authority was explicitly rejected; `/etc/passwd`/`/etc/group`
+> are generated compatibility views only. See the M9–M13 roadmap in `docs/NOTES.md`.
 
 swift-os should not build its security architecture around Unix `/etc/passwd`, `/etc/group`, numeric UIDs,
 or a privileged `root` identity. Those concepts may be exposed later as compatibility views for ported tools,

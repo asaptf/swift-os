@@ -22,7 +22,10 @@ final class HeapProbe {
 
 private var retainedProbe: HeapProbe? = nil
 
-private func runVirtualMemoryProbe() {
+/// Enable the MMU using the static boot page tables (kernel/mm/vm.c — these do
+/// not draw from the PMM). DTB parsing runs before this, so the parser avoids
+/// large value-copy layouts that would make Swift emit unaligned wide loads.
+private func enableMMU() {
     uartPuts("swift-os M3: enabling MMU\n")
     mmu_init_identity_map()
     uartPuts("M3 probe: page tables initialized\n")
@@ -35,7 +38,11 @@ private func runVirtualMemoryProbe() {
         uartPuts("panic: MMU did not enable\n")
         while true {}
     }
+}
 
+/// Exercise the page map/translate/unmap path. Requires the PMM (allocates a
+/// scratch frame), so it runs after pmmInit; the MMU is already enabled.
+private func runVirtualMemoryProbe() {
     let physicalPage = pmmAllocZeroedPage()
     if physicalPage == 0 {
         uartPuts("panic: VM probe page allocation failed\n")
@@ -342,13 +349,20 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 }
 
 /// Kernel entry point, called from the boot stub. Must never return.
+/// `dtbPhys` is the device-tree pointer the boot stub preserved from x0.
 @_cdecl("kernel_main")
-func kernelMain() {
+func kernelMain(_ dtbPhys: UInt) {
     uartPuts("Hello from Swift kernel\n")
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")
 
+    // M9: discover the hardware map from the device tree before any subsystem
+    // (PMM, GIC, timer) relies on it. Discovery falls back to QEMU virt defaults.
+    platformInit(dtbPhys)
+
     swiftos_heap_init()
+    enableMMU()
+
     pmmInit()
     if let raw = swiftos_kernel_alloc(32, 16) {
         raw.storeBytes(of: UInt64(0xC0DEFACE_CAFEBEEF), as: UInt64.self)

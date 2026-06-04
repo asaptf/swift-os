@@ -106,7 +106,7 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 - M8d additions include process control plus `22 psinfo(buffer, capacity)`: copies fixed 32-byte
   process records (`pid`, `ppid`, state, short command name) for userland tools such as `/bin/ps`.
 
-## Build / run commands (verified at M7)
+## Build / run commands (verified at M9)
 
 - `make build` — assemble `boot.S`, compile Swift (WMO) to one object, link with the script,
   emit `build/kernel.elf` (+ `kernel.bin`).
@@ -120,7 +120,14 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 
 ## Milestone log
 
-- **M8 (in progress) — toward busybox.** Staged sub-milestones; libc strategy = cross-build newlib.
+- **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
+  pure Swift FDT reader with host coverage, a global `Platform` populated at boot, and driver/PMM use of
+  discovered UART/GIC/RAM values. `make run`/`make test` now dump QEMU's actual `virt` DTB and load it
+  into the direct-boot fallback address (`0x4FF0_0000` for `-m 256M`); boot asserts
+  `M9 OK: hardware discovered from device tree`. The parser avoids large unaligned value-copy layouts in
+  the early boot path because strict alignment checks are active.
+
+- **M8 (2026-06-04) — DONE: toward busybox.** Staged sub-milestones; libc strategy = cross-build newlib.
   - **Swift `/bin/ps` utility — DONE.** Added `SYS_PSINFO` (22), short process names captured from
     `argv[0]`, and an Embedded Swift EL0 utility (`userland/ps.swift`) linked through a tiny C
     syscall/runtime bridge. `/bin/ps` is embedded in the kernel image and asserted in `boot_test.sh`.
@@ -322,11 +329,73 @@ because `fork` needs parent and child alive at once. Staged:
   `Hello from Swift kernel`. `make test` passes. Files: `kernel/arch/aarch64/{boot.S,kernel.ld,io.h}`,
   `kernel/drivers/uart.swift`, `kernel/main.swift`, `Makefile`, `tests/boot_test.sh`.
 
+## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
+
+M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
+Three forks were raised and decided with the maintainer (each touched a previously-locked decision):
+
+- **Boot/portability → keep aarch64, add UEFI boot.** "Run in VirtualBox" does NOT mean an amd64
+  port (amd64 stays a non-goal). We make the kernel boot from a real disk via UEFI firmware and
+  discover hardware at runtime instead of hardcoding the QEMU `virt` map. Reference validation is
+  **QEMU + AAVMF (edk2 aarch64 UEFI)**; the end target is VirtualBox ARM on Apple Silicon, treated as
+  best-effort because that machine model is experimental and differs from QEMU `virt`.
+- **Identity → capability/principal model** (as already described in ARCHITECTURE.md). Kernel
+  authorization is capability-based, not `uid==0`. `/etc/passwd`/`/etc/group` are generated compat
+  views for busybox/newlib, never the source of policy.
+- **Filesystem → virtio-blk + packed read-only base image.** Load `/bin`, `/etc`, busybox from a disk
+  image instead of embedding ELFs in the kernel. tmpfs stays; persistent writable storage is NOT
+  introduced (data loss on reboot remains by design).
+
+Milestone sequence (one at a time, each builds/boots/tests/commits, then stop for review):
+
+- **M9 — HAL + runtime hardware discovery (DTB).** Replace hardcoded UART/GIC/RAM constants with a
+  `Platform` struct populated from a flattened device tree. Prerequisite for both UEFI and any non-QEMU
+  host. Low risk: falls back to QEMU `virt` defaults if no valid DTB.
+- **M10 — UEFI boot + bootable disk image.** Build the kernel as an EFI-loadable image (or a small
+  UEFI loader): get the memory map + ACPI/DTB config table, `ExitBootServices`, hand off. Produce a GPT
+  image with an ESP. Acceptance: boots under QEMU+AAVMF from disk (no `-kernel`) to busybox.
+- **M10.5 — VirtualBox ARM validation (spike + milestone).** Research VBox ARM device model (UART,
+  GICv2/v3, storage backend, ACPI), adapt the HAL/drivers, boot the M10 image in VirtualBox on Apple
+  Silicon. If too immature, record findings and keep QEMU+AAVMF as the reference.
+- **M11 — virtio-blk + packed base FS from disk.** virtio-blk driver (discovered via HAL); host-side
+  image packer; VFS serves the RO base from disk; drop the embedded `user_blob`.
+- **M12 — capability/principal core + login.** Typed `Principal`/`Session`/`Capability`; process
+  security context; `console-login` authenticates a principal from a base-image identity store, opens a
+  session, grants capabilities, spawns the shell. Generated `/etc/passwd` compat view.
+- **M13 — permission enforcement on the VFS.** File access checked against capabilities; `ls -l` shows
+  ownership/mode from generated views; unprivileged session denied writes to the RO base.
+
+Critical path M9 → M10 → M11 → M12 → M13, with M10.5 a parallel validation after M10. Highest risk is
+the UEFI handoff (M10) and VBox ARM immaturity (M10.5); the `-kernel` path stays as a fallback until UEFI
+is stable.
+
+## Hardware abstraction (M9)
+
+- The boot stub (`boot.S`) preserves an optional DTB pointer from `x0` and passes it to
+  `kernel_main(dtbPhys:)`. QEMU's direct ELF `-kernel` path does **not** reliably provide that pointer,
+  so `make run`/`make test` dump QEMU's real `virt` DTB and load it into the last MiB of RAM
+  (`0x4FF0_0000` for `-m 256M`) with `-device loader,...,force-raw=on`; `platformInit` tries `x0` first
+  and then this direct-boot fallback address.
+- `kernel/arch/aarch64/fdt.swift` is a small, pure, host-testable flattened-device-tree reader (no UART,
+  no MMIO, no heap). It extracts the `/memory` reg (RAM base/size), the `arm,pl011` UART reg + IRQ
+  (SPI/PPI decode), and the `arm,cortex-a15-gic` distributor/CPU-interface regs.
+- `kernel/arch/aarch64/platform.swift` holds a global `Platform` struct initialised to QEMU `virt`
+  defaults, then overridden by `platformInit(dtbPhys:)`. If neither `x0` nor the direct-boot fallback
+  address contains a valid DTB it keeps the defaults and logs a warning, so the kernel never regresses.
+- Drivers read their bases/IRQs from `platform`: `uart.swift` (`platform.uartBase`/`uartIrq`),
+  `gic.swift` (`platform.gicDist`/`gicCpu`), `pmm.swift` (RAM end = `ramBase + ramSize`). The EL1
+  physical timer PPI (INTID 30) stays an architectural constant, not board-specific.
+- Tests: a host unit test (`tests/fdt_test.swift`) parses a real QEMU DTB (dumped via
+  `-M virt,dumpdtb=...`) and asserts the extracted map; the in-QEMU boot test asserts
+  `M9 OK: hardware discovered from device tree`, proving the DTB→`Platform` path end to end.
+
 ## Open decisions / resolved
 
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).
 - [x] Embedded Swift flags & triple → pinned above (`aarch64-none-none-elf`).
 - [x] Linker → `aarch64-elf-ld`.
+- [x] Post-M8 direction (2026-06-04): keep aarch64 + UEFI boot (no amd64 port), capability/principal
+  identity, virtio-blk packed RO base FS (no persistent writable FS). See "Post-M8 roadmap" above.
 
 ### d5 — busybox cross-build: feasibility findings (2026-06-04)
 

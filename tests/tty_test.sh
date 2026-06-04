@@ -10,6 +10,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
+DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -20,9 +21,14 @@ fi
 LOG="$(mktemp -t swiftos-tty.XXXXXX)"
 trap 'rm -f "$LOG"' EXIT
 
+dtb_args=()
+if [[ -f "$DTB" ]]; then
+    dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+
 # Boot → (tty demo blocks on read) → type "ping" → (loop) → Ctrl-C.
 ( sleep 1.5; printf 'ping\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
-    "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot -kernel "$KERNEL" \
+    "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" \
     >"$LOG" 2>&1 &
 QEMU_PID=$!
 

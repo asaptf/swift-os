@@ -1,7 +1,9 @@
 // gic.swift — minimal GICv2 driver for QEMU `virt`.
 
-private let gicdBase: UInt = 0x0800_0000
-private let giccBase: UInt = 0x0801_0000
+// Distributor and CPU-interface bases, discovered into the HAL (QEMU `virt`
+// defaults 0x0800_0000 / 0x0801_0000). Computed so they track platformInit.
+private var gicdBase: UInt { platform.gicDist }
+private var giccBase: UInt { platform.gicCpu }
 
 private let gicdCtlr: UInt = 0x000
 private let gicdIcenabler: UInt = 0x180

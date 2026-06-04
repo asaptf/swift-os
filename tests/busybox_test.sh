@@ -8,11 +8,17 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
+DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-bb.XXXXXX)"
 trap 'rm -f "$LOG"' EXIT
+
+dtb_args=()
+if [[ -f "$DTB" ]]; then
+  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
 
 (
   sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
@@ -22,7 +28,7 @@ trap 'rm -f "$LOG"' EXIT
   sleep 1;  printf 'cat /etc/motd\n'
   sleep 1;  printf 'exit\n'
   sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot -kernel "$KERNEL" >"$LOG" 2>&1 &
+) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
 sleep 18
 kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null

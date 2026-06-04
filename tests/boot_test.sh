@@ -12,10 +12,12 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
+DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
 TIMEOUT="${TIMEOUT:-20}"
 
-EXPECTS="${EXPECTS:-hello from ELF userland
+EXPECTS="${EXPECTS:-M9 OK: hardware discovered from device tree
+hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha
 M8a OK: argv delivered, argc=3
@@ -61,8 +63,13 @@ fi
 LOG="$(mktemp -t swiftos-boot.XXXXXX)"
 trap 'rm -f "$LOG"' EXIT
 
+dtb_args=()
+if [[ -f "$DTB" ]]; then
+    dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-        -kernel "$KERNEL" >"$LOG" 2>&1 &
+        "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QEMU_PID=$!
 
 all_found() {

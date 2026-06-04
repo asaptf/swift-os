@@ -5,8 +5,9 @@
 // characters onto the serial console. MMIO goes through the volatile accessors
 // in io.h (imported via the bridging header).
 
-/// Base address of UART0 on the QEMU `virt` board.
-private let uart0Base: UInt = 0x0900_0000
+/// Base address of UART0, discovered into the HAL (QEMU `virt` default
+/// 0x0900_0000). Computed so it tracks `platformInit` overriding it.
+private var uart0Base: UInt { platform.uartBase }
 
 // Register offsets (ARM PrimeCell PL011, DDI0183).
 private let uartDR: UInt = 0x00     // Data register.
@@ -22,8 +23,9 @@ private let frTXFF: UInt32 = 1 << 5 // Transmit FIFO full.
 private let intRX: UInt32 = 1 << 4  // Receive interrupt.
 private let intRT: UInt32 = 1 << 6  // Receive timeout interrupt.
 
-/// QEMU `virt` routes PL011 to SPI 1 → GIC INTID 33 (verified from the DTB).
-let uartIrqId: UInt32 = 33
+/// PL011 GIC interrupt id, discovered into the HAL (QEMU `virt`: SPI 1 →
+/// INTID 33). Computed so it tracks `platformInit` overriding it.
+var uartIrqId: UInt32 { platform.uartIrq }
 
 /// Write one byte to the UART, blocking until the TX FIFO has room.
 @inline(__always)

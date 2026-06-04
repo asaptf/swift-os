@@ -31,10 +31,14 @@ ARCH_DIR  := kernel/arch/aarch64
 BRIDGE    := $(ARCH_DIR)/io.h
 LINKER    := $(ARCH_DIR)/kernel.ld
 BUILD     := build
+QEMU_DTB  := $(BUILD)/virt.dtb
+QEMU_DTB_ADDR := 0x4FF00000
 
 # Swift sources (kernel). Whole-module optimization compiles them together.
 SWIFT_SRCS := \
 	kernel/main.swift \
+	kernel/arch/aarch64/platform.swift \
+	kernel/arch/aarch64/fdt.swift \
 	kernel/drivers/uart.swift \
 	kernel/drivers/gic.swift \
 	kernel/timer/generic_timer.swift \
@@ -86,7 +90,9 @@ NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER)
 
 # ---- QEMU ------------------------------------------------------------------
-QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic -kernel $(BUILD)/kernel.elf
+QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
+	-device loader,file=$(QEMU_DTB),addr=$(QEMU_DTB_ADDR),force-raw=on \
+	-kernel $(BUILD)/kernel.elf
 
 # ---- Objects ---------------------------------------------------------------
 BOOT_OBJ   := $(BUILD)/boot.o
@@ -121,6 +127,9 @@ USER_PS_ELF := $(BUILD)/ps.elf
 .PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check
 
 build: $(KERNEL_ELF)
+
+$(QEMU_DTB): | $(BUILD)/.dir
+	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -m 256M -nographic
 
 $(BUILD)/.dir:
 	@mkdir -p $(BUILD)
@@ -266,19 +275,21 @@ $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
-run: build
+run: build $(QEMU_DTB)
 	$(QEMU) $(QEMU_FLAGS)
 
 # Paused under the gdbstub on tcp::1234. Attach with `make gdb` in another shell.
-debug: build
+debug: build $(QEMU_DTB)
 	$(QEMU) $(QEMU_FLAGS) -s -S
 
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build
+test: build $(QEMU_DTB)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
+	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
+	$(BUILD)/fdt_test $(BUILD)/virt.dtb
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh

@@ -8,15 +8,17 @@
 //
 // Memory map (QEMU `virt`, -m 256M):
 //   [0x4008_0000 .. __image_end)   kernel image + boot stack + early heap
-//   [__image_end  .. 0x5000_0000)  managed by the PMM (bitmap lives at its head)
-
-private let ramEnd: UInt = 0x5000_0000   // RAM base 0x4000_0000 + 256 MiB.
+//   [__image_end  .. ramEnd)       managed by the PMM (bitmap lives at its head)
+// where ramEnd = platform.ramBase + platform.ramSize, discovered from the DTB
+// by platformInit (default RAM base 0x4000_0000 + 256 MiB = 0x5000_0000).
 
 private var pmm: PageAllocator? = nil
 
-/// Initialise the PMM over all RAM past the kernel image. Must run once, early.
+/// Initialise the PMM over all RAM past the kernel image. Must run once, early
+/// (after platformInit so the RAM size is known).
 @_cdecl("pmm_init")
 func pmmInit() {
+    let ramEnd = platform.ramBase + platform.ramSize
     let regionStart = (swiftos_image_end() + 4095) & ~UInt(4095)
     guard regionStart < ramEnd else {
         uartPuts("panic: pmm_init found no free RAM\n")
