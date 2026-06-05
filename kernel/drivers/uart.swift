@@ -56,6 +56,7 @@ func uartPutc(_ byte: UInt8) {
         // Spin: FIFO full.
     }
     mmio_write32(uart0Base + uartDR, UInt32(byte))
+    fb_putc(byte)  // mirror to the screen console (no-op if no framebuffer)
 }
 
 /// Write a static string, translating LF into CR+LF for terminal sanity.

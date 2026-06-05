@@ -35,6 +35,20 @@ func pmmInit() {
     let bitmapPages = Int((bitmapBytes + (PageAllocator.pageSize - 1)) / PageAllocator.pageSize)
     allocator.reserve(base: regionStart, count: bitmapPages)
 
+    // Protect the GOP framebuffer (if any) — it sits in this RAM block, and the
+    // display scans it directly, so the PMM must not hand its frames out.
+    let fbBase = UInt(fb_phys_base())
+    let fbSize = UInt(fb_phys_size())
+    if fbBase != 0 && fbSize != 0 {
+        let fbStart = fbBase & ~UInt(4095)
+        let fbEnd = (fbBase + fbSize + 4095) & ~UInt(4095)
+        let s = fbStart < regionStart ? regionStart : fbStart
+        let e = fbEnd > ramEnd ? ramEnd : fbEnd
+        if e > s {
+            allocator.reserve(base: s, count: Int((e - s) / PageAllocator.pageSize))
+        }
+    }
+
     pmm = allocator
 
     uartPuts("M4.5 pmm: ")

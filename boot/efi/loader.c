@@ -198,6 +198,27 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         }
     }
 
+    // Query the Graphics Output Protocol for a linear framebuffer to hand the
+    // kernel for an on-screen console. Absent (headless firmware) leaves it 0,
+    // and the kernel stays serial-only.
+    UINT64 fb_base = 0, fb_dims = 0, fb_strfmt = 0;
+    {
+        EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+        EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = 0;
+        if (bs->LocateProtocol(&gop_guid, 0, (void **)&gop) == EFI_SUCCESS &&
+            gop && gop->Mode && gop->Mode->Info) {
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mi = gop->Mode->Info;
+            fb_base = gop->Mode->FrameBufferBase;
+            fb_dims = ((UINT64)mi->HorizontalResolution << 32) | mi->VerticalResolution;
+            fb_strfmt = ((UINT64)mi->PixelsPerScanLine << 32) | mi->PixelFormat;
+            puts16(st, "UEFI: GOP framebuffer at ");
+            puthex(st, fb_base);
+            puts16(st, "\r\n");
+        } else {
+            puts16(st, "UEFI: no GOP framebuffer (serial console only)\r\n");
+        }
+    }
+
     // Reserve the kernel's fixed load address and stage the embedded image.
     UINTN ksize = (UINTN)(kernel_blob_end - kernel_blob);
     UINTN npages = (ksize + 0xFFF) / 0x1000;
@@ -229,9 +250,10 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     // and enter the kernel with the device-tree pointer in x0.
     __asm__ volatile("msr daifset, #0xf" ::: "memory");
 
-    typedef void (*kernel_entry_t)(UINT64);
+    // x0=dtb, x1=framebuffer base, x2=(width<<32|height), x3=(stride<<32|format).
+    typedef void (*kernel_entry_t)(UINT64, UINT64, UINT64, UINT64);
     kernel_entry_t enter = (kernel_entry_t)(UINTN)KERNEL_LOAD_ADDR;
-    enter((UINT64)(UINTN)dtb);
+    enter((UINT64)(UINTN)dtb, fb_base, fb_dims, fb_strfmt);
 
     for (;;) {}
     return EFI_SUCCESS;

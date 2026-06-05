@@ -27,6 +27,15 @@ uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
 long pmm_free_count(void);
 
+// Framebuffer text console (kernel/drivers/fb.c). The loader passes a GOP
+// framebuffer; fb_init(0,...) leaves it disabled (serial-only, e.g. QEMU
+// -nographic). uartPutc mirrors output through fb_putc.
+void fb_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride_px);
+void fb_putc(uint8_t c);
+int fb_available(void);
+uint64_t fb_phys_base(void);
+uint64_t fb_phys_size(void);
+
 void mmu_init_identity_map(void);
 void mmu_configure_translation(void);
 void mmu_enable_sctlr(void);

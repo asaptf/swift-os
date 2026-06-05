@@ -3,6 +3,7 @@
 # Targets:
 #   make build   Build the kernel image (build/kernel.elf).
 #   make run     Boot the kernel in QEMU on the serial console.
+#   make run-gfx Boot the UEFI disk in a graphical window (ramfb framebuffer).
 #   make debug   Boot under QEMU's gdbstub (paused), for `make gdb` / lldb.
 #   make test    Build, then run the boot acceptance test(s).
 #   make clean   Remove build artifacts.
@@ -152,6 +153,7 @@ SWITCH_OBJ := $(BUILD)/switch.o
 HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
+FB_OBJ     := $(BUILD)/fb.o
 EL0_OBJ    := $(BUILD)/el0.o
 ELF_OBJ    := $(BUILD)/elf.o
 USTACK_OBJ := $(BUILD)/ustack.o
@@ -205,6 +207,9 @@ $(STRING_OBJ): kernel/runtime/string.c Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS_NB) $< -o $@
 
 $(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -326,7 +331,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(FB_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -389,6 +394,15 @@ disk: uefi
 disk-run: disk
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
 		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio
+
+# Boot the UEFI disk in a graphical window. `ramfb` gives the firmware a linear
+# framebuffer (EFI GOP); the loader hands it to the kernel, which renders the
+# boot log on screen. Serial is mirrored to this terminal. Close the window or
+# Ctrl-C to stop.
+run-gfx: disk
+	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
+		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-device ramfb -display cocoa -serial stdio
 
 $(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/basepack.swift -o $@

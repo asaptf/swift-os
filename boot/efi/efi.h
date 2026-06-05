@@ -116,7 +116,18 @@ typedef struct {
     void                  *Exit;
     void                  *UnloadImage;
     EFI_EXIT_BOOT_SERVICES ExitBootServices;
-    // Remaining members (GetNextMonotonicCount ... CopyMem/SetMem/...) are unused.
+    void                  *GetNextMonotonicCount;
+    void                  *Stall;
+    void                  *SetWatchdogTimer;
+    void                  *ConnectController;
+    void                  *DisconnectController;
+    void                  *OpenProtocol;
+    void                  *CloseProtocol;
+    void                  *OpenProtocolInformation;
+    void                  *ProtocolsPerHandle;
+    void                  *LocateHandleBuffer;
+    EFI_STATUS (*LocateProtocol)(EFI_GUID *Protocol, void *Registration, void **Interface);
+    // Remaining members (InstallMultipleProtocolInterfaces ...) are unused.
 } EFI_BOOT_SERVICES;
 
 typedef struct {
@@ -153,5 +164,35 @@ typedef struct {
 // ACPI-based (e.g. VirtualBox) vs device-tree based (QEMU virt, acpi=off).
 #define EFI_ACPI_20_TABLE_GUID \
     { 0x8868e871, 0xe4f1, 0x11d3, { 0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81 } }
+
+// Graphics Output Protocol — the loader queries it (before ExitBootServices) for
+// the linear framebuffer it hands to the kernel for an on-screen console.
+#define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID \
+    { 0x9042a9de, 0x23dc, 0x4a38, { 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a } }
+
+typedef struct {
+    UINT32 Version;
+    UINT32 HorizontalResolution;
+    UINT32 VerticalResolution;
+    UINT32 PixelFormat;          // 0=RGBX8, 1=BGRX8, 2=BitMask, 3=BltOnly
+    UINT32 PixelInformation[4];  // EFI_PIXEL_BITMASK (red/green/blue/reserved)
+    UINT32 PixelsPerScanLine;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+typedef struct {
+    UINT32                                MaxMode;
+    UINT32                                Mode;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+    UINTN                                 SizeOfInfo;
+    EFI_PHYSICAL_ADDRESS                  FrameBufferBase;
+    UINTN                                 FrameBufferSize;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+typedef struct {
+    void                             *QueryMode;
+    void                             *SetMode;
+    void                             *Blt;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 #endif // SWIFT_OS_EFI_H

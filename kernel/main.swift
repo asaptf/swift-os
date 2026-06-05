@@ -360,8 +360,16 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 /// Kernel entry point, called from the boot stub. Must never return.
 /// `dtbPhys` is the device-tree pointer the boot stub preserved from x0.
 @_cdecl("kernel_main")
-func kernelMain(_ dtbPhys: UInt) {
+func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt) {
     uartInit()  // no-op on QEMU; enables the PL011 on VirtualBox before any output
+    // The UEFI loader may hand us a GOP framebuffer (x1=base, x2=w<<32|h,
+    // x3=stride<<32|format). When present, mirror the boot log to the screen.
+    if fbBase != 0 {
+        let w = UInt32(truncatingIfNeeded: fbDims >> 32)
+        let h = UInt32(truncatingIfNeeded: fbDims & 0xFFFF_FFFF)
+        let stride = UInt32(truncatingIfNeeded: fbStrFmt >> 32)
+        fb_init(UInt64(fbBase), w, h, stride)
+    }
     uartPuts("Hello from Swift kernel\n")
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")

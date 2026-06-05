@@ -12,8 +12,12 @@ _start:
     // Firmware/bootloaders may hand us a pointer to the flattened device tree
     // in x0. Preserve it in a callee-saved register before we clobber x0; the
     // direct QEMU ELF path may leave it zero, in which case platformInit uses
-    // its direct-boot fallback.
+    // its direct-boot fallback. x1-x3 carry the loader's framebuffer handoff
+    // (base / width:height / stride:format), zero on the QEMU -kernel path.
     mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x22, x3
 
     // Single-core bring-up: park every CPU whose affinity != 0.
     mrs     x0, mpidr_el1
@@ -69,8 +73,11 @@ _start:
 .Lbss_done:
 
     // Enter Swift. kernel_main is `@_cdecl` and must not return; if it does,
-    // fall through into the parking loop. x0 = saved device-tree pointer.
+    // fall through into the parking loop. x0 = dtb, x1-x3 = framebuffer handoff.
     mov     x0, x19
+    mov     x1, x20
+    mov     x2, x21
+    mov     x3, x22
     bl      kernel_main
 
 .Lhang:
