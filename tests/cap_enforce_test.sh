@@ -43,6 +43,7 @@ dtb_args=()
   sleep 2;  printf 'echo GUEST-ECHO-OK\n'   # builtin: no FS access, allowed
   sleep 1;  printf 'cat /etc/motd\n'        # open for read: denied
   sleep 1;  printf 'ls /\n'                 # open dir for read: denied
+  sleep 1;  printf '/bin/id\n'              # Swift id: numeric ctx, no name (no fsread)
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -62,6 +63,8 @@ grep -qF "session: principal=3 session=3 caps=2" "$LOG" || { echo "FAIL: guest d
 grep -qF "GUEST-ECHO-OK" "$LOG"        || { echo "FAIL: echo builtin should still work" >&2; ok=0; }
 grep -qF "can't open '/etc/motd'" "$LOG" || { echo "FAIL: reading /etc/motd was not denied" >&2; ok=0; }
 grep -qF "can't open '/'" "$LOG"      || { echo "FAIL: listing / was not denied" >&2; ok=0; }
+# /bin/id (Swift) reports the numeric context even without capFsRead (no name lookup).
+grep -qF "principal=3 session=3 caps=0x2" "$LOG" || { echo "FAIL: /bin/id did not report the guest context" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: VFS enforced capabilities — capless guest denied FS reads (M13 acceptance)"

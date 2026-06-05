@@ -59,12 +59,13 @@ fi
   sleep 1;  printf 'ls /\n'
   sleep 1;  printf 'cat /etc/motd\n'
   sleep 1;  printf 'ps\n'                # native /bin/ps (not a busybox applet)
+  sleep 1;  printf '/bin/id\n'           # native Swift /bin/id (explicit path)
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 23
+sleep 25
 stop_qemu
 QP=""
 
@@ -75,6 +76,7 @@ grep -qF "readme.txt" "$LOG"           || { echo "FAIL: ls applet (dir listing)"
 grep -qF "Welcome to swift-os." "$LOG" | true
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 grep -qE "PID +PPID +STATE +CMD" "$LOG" || { echo "FAIL: ps (PATH exec of /bin/ps)" >&2; ok=0; }
+grep -qF "principal=1(root) session=1 caps=0x1f" "$LOG" || { echo "FAIL: /bin/id (Swift) context + name" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: busybox ash ran echo/ls/cat on swift-os (M8 acceptance)"

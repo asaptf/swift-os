@@ -126,9 +126,22 @@ M12 is now underway.
   directory to read/list it without `capFsRead`). A `guest` principal (caps = `capSpawn` only) was added
   to the identity store; `tests/cap_enforce_test.sh` logs in as guest and asserts `echo` (a builtin) works
   while `cat /etc/motd` and `ls /` are denied. root/user (which hold `capFsRead`) are unaffected.
+- **M13b — DONE (2026-06-05):** the path-based tmpfs mutations (`unlink`/`mkdir`/`rmdir`/`rename`) now also
+  require `capTmpWrite` (they bypass `vfsOpen`); `ftruncate`/`write` were already covered via the
+  writable-fd check. Closes the namespace-mutation gap left by M13a.
 - **Next (M13 follow-ups):** per-file ownership/ACLs and an `ls -l`-style view; enforce on the
   write/read syscalls (not just open) once contexts can change mid-fd; richer principals.
   (A stronger password KDF with iteration/memory hardening also remains a later refinement.)
+
+## Post-roadmap (M0–M13 done) — going down the list
+
+- **`/bin/id` — DONE (2026-06-05):** Swift userland tool printing the kernel security context
+  (`principal=N(name) session=M caps=0xHEX`) via `security_info`; resolves the name from
+  `/etc/swos/passwd` when `capFsRead` is held, else prints just the numbers (graceful under enforcement).
+  Asserted in `busybox_test` (root → `principal=1(root) … caps=0x1f`) and `cap_enforce_test`
+  (guest → `principal=3 … caps=0x2`, no name).
+- Remaining list to work through in order: (1) M13 follow-ups (ownership/ACL + `ls -l`); (2) own-Swift
+  sans-IO network stack; (3) native Swift apps on swift-os; (4) more Swift userland utilities.
 
 ## Watch-outs / loose ends
 
