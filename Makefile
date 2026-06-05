@@ -417,6 +417,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+	./tests/fb_vi_test.sh
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the

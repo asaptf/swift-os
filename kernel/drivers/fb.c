@@ -232,10 +232,158 @@ static void fb_scroll(void) {
     fb_clean(g_fb_base, g_fb_size);
 }
 
+// ---- ANSI / VT100 escape-sequence interpreter -----------------------------
+//
+// fb_putc mirrors every byte written to the console (uartPutc), so a full-screen
+// program like vi drives it with VT100 control sequences, not just printable
+// text. We parse the subset those programs use: cursor positioning (CUP),
+// relative cursor moves (CUU/CUD/CUF/CUB, CHA, VPA), erase-in-display (ED) and
+// erase-in-line (EL), and the alternate-screen private modes. SGR (colour /
+// standout) is consumed and ignored. Anything unrecognised is swallowed, never
+// printed, so a stray escape can't turn into garbage glyphs. A real serial
+// terminal still sees the raw bytes via the UART unchanged.
+
+enum { ST_NORMAL = 0, ST_ESC, ST_CSI, ST_ESC_INTER };
+
+#define MAX_PARAMS 8
+static int g_state = ST_NORMAL;
+static int g_params[MAX_PARAMS];
+static int g_pidx;          // index of the parameter currently being collected
+static int g_any;           // any parameter char (digit or ';') seen
+static int g_csi_private;   // a '?' prefixed the parameters (DEC private mode)
+
+// CSI parameter i, with `dflt` substituted when it is absent or zero. Cursor
+// commands default to 1; erase modes default to 0 (and 0 is a real mode).
+static int csi_param(int i, int dflt) {
+    int count = g_any ? (g_pidx + 1) : 0;
+    int v = (i < count) ? g_params[i] : 0;
+    return v == 0 ? dflt : v;
+}
+
+// Lift the blinking cursor off the screen before an op that moves it or rewrites
+// the cell under it, so no stale reverse-video block is left behind; the
+// timer-driven blink repaints it at the new position.
+static void fb_lift_cursor(void) {
+    if (g_cur_drawn) {
+        fb_restore_cell(g_cur_col, g_cur_row);
+        g_cur_drawn = 0;
+    }
+}
+
+// Clear cells [c0, c1) on row r in both the shadow buffer and the framebuffer.
+static void fb_clear_row_span(uint32_t r, uint32_t c0, uint32_t c1) {
+    if (r >= g_rows) return;
+    if (c1 > g_cols) c1 = g_cols;
+    for (uint32_t c = c0; c < c1; c++) {
+        if (r < MAX_ROWS && c < MAX_COLS) g_cells[r][c] = ' ';
+        fb_render(' ', c, r, 0);
+    }
+}
+
+// Erase in line (CSI K): 0 = cursor..eol, 1 = bol..cursor, 2 = whole line.
+static void fb_erase_line(int mode) {
+    if (mode == 1) fb_clear_row_span(g_cy, 0, g_cx + 1);
+    else if (mode == 2) fb_clear_row_span(g_cy, 0, g_cols);
+    else fb_clear_row_span(g_cy, g_cx, g_cols);
+}
+
+// Erase in display (CSI J): 0 = cursor..end, 1 = start..cursor, 2 = all.
+static void fb_erase_display(int mode) {
+    if (mode == 2) {
+        for (uint32_t r = 0; r < g_rows; r++) fb_clear_row_span(r, 0, g_cols);
+    } else if (mode == 1) {
+        for (uint32_t r = 0; r < g_cy; r++) fb_clear_row_span(r, 0, g_cols);
+        fb_clear_row_span(g_cy, 0, g_cx + 1);
+    } else {
+        fb_clear_row_span(g_cy, g_cx, g_cols);
+        for (uint32_t r = g_cy + 1; r < g_rows; r++) fb_clear_row_span(r, 0, g_cols);
+    }
+}
+
+// Act on a complete CSI sequence whose final byte is `final`.
+static void fb_csi_dispatch(uint8_t final) {
+    switch (final) {
+    case 'H': case 'f': {                       // CUP — cursor position (1-based)
+        uint32_t row = (uint32_t)csi_param(0, 1);
+        uint32_t col = (uint32_t)csi_param(1, 1);
+        fb_lift_cursor();
+        g_cy = row - 1; if (g_cy >= g_rows) g_cy = g_rows ? g_rows - 1 : 0;
+        g_cx = col - 1; if (g_cx >= g_cols) g_cx = g_cols ? g_cols - 1 : 0;
+        break;
+    }
+    case 'A': { uint32_t n = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cy = (n > g_cy) ? 0 : g_cy - n; break; }                  // CUU
+    case 'B': { uint32_t n = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cy += n; if (g_cy >= g_rows) g_cy = g_rows - 1; break; }  // CUD
+    case 'C': { uint32_t n = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cx += n; if (g_cx >= g_cols) g_cx = g_cols - 1; break; }  // CUF
+    case 'D': { uint32_t n = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cx = (n > g_cx) ? 0 : g_cx - n; break; }                  // CUB
+    case 'G': { uint32_t col = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cx = col - 1; if (g_cx >= g_cols) g_cx = g_cols - 1; break; } // CHA
+    case 'd': { uint32_t row = (uint32_t)csi_param(0, 1); fb_lift_cursor();
+                g_cy = row - 1; if (g_cy >= g_rows) g_cy = g_rows - 1; break; } // VPA
+    case 'J': fb_lift_cursor(); fb_erase_display(csi_param(0, 0)); break;   // ED
+    case 'K': fb_lift_cursor(); fb_erase_line(csi_param(0, 0)); break;      // EL
+    case 'h': case 'l':
+        if (g_csi_private) {
+            int mode = csi_param(0, 0);
+            // Alternate screen buffer (xterm 1049/1047, DEC 47): vi repaints in
+            // full, so clear + home on both enter and leave is enough.
+            if (mode == 1049 || mode == 1047 || mode == 47) {
+                fb_lift_cursor(); fb_erase_display(2); g_cx = 0; g_cy = 0;
+            }
+            // ?25 (cursor show/hide) and other private modes: ignored.
+        }
+        break;
+    default: break;   // SGR ('m') and any other final byte: consumed, ignored
+    }
+}
+
 void fb_putc(uint8_t c) {
     if (!g_fb) {
         return;
     }
+
+    switch (g_state) {
+    case ST_ESC:
+        if (c == '[') {                       // CSI — collect parameters
+            g_state = ST_CSI;
+            for (int i = 0; i < MAX_PARAMS; i++) g_params[i] = 0;
+            g_pidx = 0; g_any = 0; g_csi_private = 0;
+        } else if (c == '(' || c == ')' || c == '#') {
+            g_state = ST_ESC_INTER;           // charset/select: swallow next byte
+        } else {
+            g_state = ST_NORMAL;              // ESC c, ESC =, ... : ignore
+        }
+        return;
+    case ST_ESC_INTER:
+        g_state = ST_NORMAL;                  // swallow the one designator byte
+        return;
+    case ST_CSI:
+        if (c == '?') { if (!g_any) g_csi_private = 1; return; }
+        if (c >= '0' && c <= '9') {
+            g_params[g_pidx] = g_params[g_pidx] * 10 + (c - '0');
+            g_any = 1;
+            return;
+        }
+        if (c == ';') {
+            g_any = 1;
+            if (g_pidx < MAX_PARAMS - 1) g_pidx++;
+            return;
+        }
+        if (c >= 0x40 && c <= 0x7E) {          // final byte
+            fb_csi_dispatch(c);
+            g_state = ST_NORMAL;
+            return;
+        }
+        return;                                // intermediate/stray: stay, ignore
+    default:
+        break;
+    }
+
+    if (c == 0x1b) { g_state = ST_ESC; return; }
+
     if (c == '\n') {
         g_cx = 0;
         g_cy++;

@@ -677,6 +677,23 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
   the parent `poll()`s the pipe with a timeout — crossing `cpu_switch_context` dozens of times under active
   preemption (the exact interleaving that used to panic). The byte counter also catches a dropped/reordered
   wakeup, not just a crash. 13 suites green.
+- **Framebuffer console VT100 support.** vi worked on the serial console but was garbage on the graphical
+  (ramfb/UEFI-GOP) display: `fb.c` was a line printer that drew `\n \r \b \t` and printable bytes but echoed
+  ANSI escapes literally, so vi's cursor-positioning/erase sequences became junk glyphs. Added a small
+  VT100/ANSI interpreter to `fb_putc` (a CSI state machine): CUP (`H`/`f`), relative moves (`A/B/C/D`, `G`,
+  `d`), erase-in-display (`J`) and erase-in-line (`K`), the alternate-screen private modes
+  (`?1049`/`1047`/`47` → clear+home, since vi repaints in full), with SGR (`m`) and other sequences consumed
+  and ignored so a stray escape never prints. The erase/move helpers update both the pixel framebuffer and
+  the shadow cell buffer (and lift the blinking block cursor first). Keyboard input already worked
+  (`virtio_input.c` maps arrows/Home/End/Del to the matching escapes). vi now renders correctly on the
+  graphical window. Geometry note: `TIOCGWINSZ` still reports a fixed 80×24, so vi uses the top-left 80×24 of
+  the (e.g. 100×37 at 800×600) display; reporting the real framebuffer size is a possible enhancement but
+  would also affect serial terminals that share the one tty.
+- **Tests (fb).** `tests/fb_vi_test.sh` (wired into `make test`) boots the graphical path headless
+  (`-device ramfb -display none`), drives vi over the serial console, screendumps the framebuffer via QMP to
+  a PPM, and parses the pixels: it asserts a column of `~` down the left over otherwise-blank lines (proving
+  CUP/erase were interpreted, not printed), a non-empty status line near the bottom of the 80×24 editor, and
+  no kernel panic.
 - **nano:** not done — it needs an ncurses/terminfo port plus locale/regex, a separate multi-step effort.
 
 ## Open decisions / resolved
