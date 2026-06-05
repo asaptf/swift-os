@@ -157,10 +157,24 @@ private func runSchedulerDemo() {
     }
 }
 
+/// Common helper: load a demo program from the packed base image. Returns
+/// (0, 0) and logs if it is missing (so a demo degrades to a skip, not a fault).
+private func demoImage(_ path: StaticString) -> (UInt, UInt) {
+    let (img, sz) = loadProgramImage(path)
+    if img == 0 {
+        uartPuts("demo: missing on disk ")
+        uartPuts(path)
+        uartPuts("\n")
+    }
+    return (img, sz)
+}
+
 private func runProcessDemo() {
     uartPuts("swift-os M6: load + run static ELF at EL0\n")
+    let (img, sz) = demoImage("/bin/hello")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["hello"])
-    let code = processRunElf(hello_elf_addr(), UInt(hello_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M6 OK: ELF process exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -168,8 +182,10 @@ private func runProcessDemo() {
 
 private func runArgvDemo() {
     uartPuts("swift-os M8a: argv/argc to EL0\n")
+    let (img, sz) = demoImage("/bin/argvdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["argvdemo", "alpha", "beta"])
-    let code = processRunElf(argvdemo_elf_addr(), UInt(argvdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8a OK: argv delivered, argc=")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -177,8 +193,10 @@ private func runArgvDemo() {
 
 private func runSpawnDemo() {
     uartPuts("swift-os M8a: spawn a child from EL0\n")
+    let (img, sz) = demoImage("/bin/spawndemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["spawndemo"])
-    let code = processRunElf(spawndemo_elf_addr(), UInt(spawndemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8a OK: spawn parent exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -186,14 +204,18 @@ private func runSpawnDemo() {
 
 private func runBrkDemo() {
     uartPuts("swift-os M8c: user heap via sbrk\n")
+    let (img, sz) = demoImage("/bin/brkdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["brkdemo"])
-    _ = processRunElf(brkdemo_elf_addr(), UInt(brkdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    _ = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
 }
 
 private func runNewlibDemo() {
     uartPuts("swift-os M8c: newlib libc (printf/malloc/fopen)\n")
+    let (img, sz) = demoImage("/bin/newlibtest")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["newlibtest"])
-    let code = processRunElf(newlibtest_elf_addr(), UInt(newlibtest_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8c OK: newlib program exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -201,17 +223,21 @@ private func runNewlibDemo() {
 
 private func runConcurrentDemo() {
     uartPuts("swift-os M8d: preemptive EL0 multitasking\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return }
     let (pa, na, ca) = packArgs(["coproc", "A"])
     let (pb, nb, cb) = packArgs(["coproc", "B"])
-    processRunPair(coproc_elf_addr(), UInt(coproc_elf_len()), pa, na, ca,
-                   coproc_elf_addr(), UInt(coproc_elf_len()), pb, nb, cb)
+    processRunPair(img, sz, pa, na, ca,
+                   img, sz, pb, nb, cb)
     uartPuts("M8d OK: two EL0 processes ran concurrently\n")
 }
 
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
+    let (img, sz) = demoImage("/bin/forkdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["forkdemo"])
-    let code = processRunElf(forkdemo_elf_addr(), UInt(forkdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8d OK: fork demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -219,8 +245,10 @@ private func runForkDemo() {
 
 private func runExecDemo() {
     uartPuts("swift-os M8d: execve image replacement\n")
+    let (img, sz) = demoImage("/bin/execdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["execdemo"])
-    let code = processRunElf(execdemo_elf_addr(), UInt(execdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8d exec OK: exec demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -228,8 +256,10 @@ private func runExecDemo() {
 
 private func runFdOpsDemo() {
     uartPuts("swift-os M8e: fd sharing, pipes, poll, tmpfs mutations\n")
+    let (img, sz) = demoImage("/bin/fdopsdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["fdopsdemo"])
-    let code = processRunElf(fdopsdemo_elf_addr(), UInt(fdopsdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8e OK: fdops demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -237,8 +267,10 @@ private func runFdOpsDemo() {
 
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
+    let (img, sz) = demoImage("/bin/fsdemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["fsdemo"])
-    let code = processRunElf(fsdemo_elf_addr(), UInt(fsdemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("M8b OK: VFS demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -246,8 +278,10 @@ private func runFsDemo() {
 
 private func runSecurityDemo() {
     uartPuts("swift-os security: adversarial syscall smoke tests\n")
+    let (img, sz) = demoImage("/bin/securitydemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["securitydemo"])
-    let code = processRunElf(securitydemo_elf_addr(), UInt(securitydemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     uartPuts("security OK: syscall abuse demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -255,14 +289,16 @@ private func runSecurityDemo() {
 
 private func runPsDemo() {
     uartPuts("swift-os userland: Swift ps\n")
+    let (img, sz) = demoImage("/bin/ps")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["ps"])
-    var code = processRunElf(ps_elf_addr(), UInt(ps_elf_len()), packed: p, packedLen: n, argc: argc)
+    var code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     let (pf, nf, argcf) = packArgs(["ps", "-ef"])
-    code = processRunElf(ps_elf_addr(), UInt(ps_elf_len()), packed: pf, packedLen: nf, argc: argcf)
+    code = processRunElf(img, sz, packed: pf, packedLen: nf, argc: argcf)
     let (pa, na, argca) = packArgs(["ps", "aux"])
-    code = processRunElf(ps_elf_addr(), UInt(ps_elf_len()), packed: pa, packedLen: na, argc: argca)
+    code = processRunElf(img, sz, packed: pa, packedLen: na, argc: argca)
     let (po, no, argco) = packArgs(["ps", "-o", "pid,ppid,stat,comm"])
-    code = processRunElf(ps_elf_addr(), UInt(ps_elf_len()), packed: po, packedLen: no, argc: argco)
+    code = processRunElf(img, sz, packed: po, packedLen: no, argc: argco)
     uartPuts("ps OK: Swift ps exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
@@ -330,8 +366,10 @@ private func runShell() {
 
 private func runTtyDemo() {
     uartPuts("swift-os M7: interactive tty + signals\n")
+    let (img, sz) = demoImage("/bin/ttydemo")
+    if img == 0 { return }
     let (p, n, argc) = packArgs(["ttydemo"])
-    let code = processRunElf(ttydemo_elf_addr(), UInt(ttydemo_elf_len()), packed: p, packedLen: n, argc: argc)
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
     if processLastKilledBySignal() {
         uartPuts("M7 OK: foreground interrupted by Ctrl-C (SIGINT), status ")
     } else {

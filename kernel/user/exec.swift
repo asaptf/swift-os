@@ -35,28 +35,27 @@ private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
     return (elfBuf, UInt(len))
 }
 
-/// Disk-first resolution: try the packed image at `diskPath`, else the embedded
-/// blob at (`embAddr`, `embLen`).
-private func diskOrEmbedded(_ diskPath: StaticString, _ embAddr: UInt, _ embLen: UInt) -> (UInt, UInt) {
-    let (a, l) = loadElfFromDisk(diskPath)
+/// Load a program ELF from the packed base image, logging the source. Returns
+/// (0, 0) if the path is not present on disk. This is the only program source
+/// now that the embedded blob is gone — every boot medium supplies a base image.
+func loadProgramImage(_ path: StaticString) -> (UInt, UInt) {
+    let (a, l) = loadElfFromDisk(path)
     if a != 0 {
         uartPuts("M11d: exec loaded from disk ")
-        uartPuts(diskPath)
+        uartPuts(path)
         uartPuts("\n")
-        return (a, l)
     }
-    return (embAddr, embLen)
+    return (a, l)
 }
 
-/// Load the busybox image, preferring the packed disk copy. Used by the kernel's
-/// own shell launcher (main.swift). Logs once which source served it.
+/// Load the busybox image from the packed disk. Used by the kernel's own shell
+/// launcher (main.swift).
 func resolveBusyboxImage() -> (UInt, UInt) {
     let (a, l) = loadElfFromDisk("/bin/busybox")
     if a != 0 {
         uartPuts("M11d: busybox loaded from disk (/bin/busybox)\n")
-        return (a, l)
     }
-    return (busybox_elf_addr(), UInt(busybox_elf_len()))
+    return (a, l)
 }
 
 /// Compare the NUL-terminated C string at user VA `va` to `expected`.
@@ -75,47 +74,21 @@ private func userPathEquals(_ va: UInt, _ expected: StaticString) -> Bool {
 }
 
 /// Resolve a program path to (ELF address, length), or (0, 0) if unknown.
-/// Each program prefers its packed disk copy and falls back to the embedded blob.
+/// Every program is read from the packed base image on disk.
 func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
-    if userPathEquals(pathVA, "/bin/hello") {
-        return diskOrEmbedded("/bin/hello", hello_elf_addr(), UInt(hello_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/argvdemo") {
-        return diskOrEmbedded("/bin/argvdemo", argvdemo_elf_addr(), UInt(argvdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/ttydemo") {
-        return diskOrEmbedded("/bin/ttydemo", ttydemo_elf_addr(), UInt(ttydemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/spawndemo") {
-        return diskOrEmbedded("/bin/spawndemo", spawndemo_elf_addr(), UInt(spawndemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/fsdemo") {
-        return diskOrEmbedded("/bin/fsdemo", fsdemo_elf_addr(), UInt(fsdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/brkdemo") {
-        return diskOrEmbedded("/bin/brkdemo", brkdemo_elf_addr(), UInt(brkdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/newlibtest") {
-        return diskOrEmbedded("/bin/newlibtest", newlibtest_elf_addr(), UInt(newlibtest_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/coproc") {
-        return diskOrEmbedded("/bin/coproc", coproc_elf_addr(), UInt(coproc_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/forkdemo") {
-        return diskOrEmbedded("/bin/forkdemo", forkdemo_elf_addr(), UInt(forkdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/execdemo") {
-        return diskOrEmbedded("/bin/execdemo", execdemo_elf_addr(), UInt(execdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/fdopsdemo") {
-        return diskOrEmbedded("/bin/fdopsdemo", fdopsdemo_elf_addr(), UInt(fdopsdemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/securitydemo") {
-        return diskOrEmbedded("/bin/securitydemo", securitydemo_elf_addr(), UInt(securitydemo_elf_len()))
-    }
-    if userPathEquals(pathVA, "/bin/ps") {
-        return diskOrEmbedded("/bin/ps", ps_elf_addr(), UInt(ps_elf_len()))
-    }
+    if userPathEquals(pathVA, "/bin/hello") { return loadProgramImage("/bin/hello") }
+    if userPathEquals(pathVA, "/bin/argvdemo") { return loadProgramImage("/bin/argvdemo") }
+    if userPathEquals(pathVA, "/bin/ttydemo") { return loadProgramImage("/bin/ttydemo") }
+    if userPathEquals(pathVA, "/bin/spawndemo") { return loadProgramImage("/bin/spawndemo") }
+    if userPathEquals(pathVA, "/bin/fsdemo") { return loadProgramImage("/bin/fsdemo") }
+    if userPathEquals(pathVA, "/bin/brkdemo") { return loadProgramImage("/bin/brkdemo") }
+    if userPathEquals(pathVA, "/bin/newlibtest") { return loadProgramImage("/bin/newlibtest") }
+    if userPathEquals(pathVA, "/bin/coproc") { return loadProgramImage("/bin/coproc") }
+    if userPathEquals(pathVA, "/bin/forkdemo") { return loadProgramImage("/bin/forkdemo") }
+    if userPathEquals(pathVA, "/bin/execdemo") { return loadProgramImage("/bin/execdemo") }
+    if userPathEquals(pathVA, "/bin/fdopsdemo") { return loadProgramImage("/bin/fdopsdemo") }
+    if userPathEquals(pathVA, "/bin/securitydemo") { return loadProgramImage("/bin/securitydemo") }
+    if userPathEquals(pathVA, "/bin/ps") { return loadProgramImage("/bin/ps") }
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
     // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
     // named by argv[0]. This is how the standalone shell runs ls/cat/echo.
@@ -126,7 +99,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
         || userPathEquals(pathVA, "/bin/cat")
         || userPathEquals(pathVA, "/bin/echo")
         || userPathEquals(pathVA, "/bin/pwd") {
-        return diskOrEmbedded("/bin/busybox", busybox_elf_addr(), UInt(busybox_elf_len()))
+        return loadProgramImage("/bin/busybox")
     }
     return (0, 0)
 }

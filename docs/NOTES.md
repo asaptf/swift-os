@@ -550,8 +550,22 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Tests: `tests/base_image_test.swift` verifies that `/bin/busybox` and `/bin/ps` in `build/base.img` are
   real ELF files, and `tests/disk_exec_test.sh` boots with `build/base.img`, asserts the M11d disk-load
   log lines, and runs `ps` from disk. Wired into `make test`.
-- Remaining cleanup: remove `kernel/user/user_blob.S` only after every boot path supplies a packed base
-  image (or the UEFI disk grows a base partition/file) so the fallback is no longer needed.
+
+#### Embedded blob removed (2026-06-05) — M11 complete
+
+- `kernel/user/user_blob.S` and the `*_elf_*` symbols in `io.h` are **gone**; the kernel no longer carries
+  any userland code. The image shrank from ~1.4 MiB to ~208 KiB. The packed base image on disk is the sole
+  source of busybox, `/bin/ps`, and every demo (loaded into a 2 MiB physically-contiguous PMM buffer, not
+  the 256 KiB bump heap).
+- `virtio_blk_init` now brings up each block device, reads sector 0, and **selects the disk whose magic is
+  `SWOSBASE`** (falling back to the first block device). This lets a medium carry both a boot disk and the
+  base image — needed for UEFI/gfx, where the firmware boots a GPT/ESP disk and the base image rides along
+  as a second modern virtio-blk device.
+- Every QEMU launch attaches `build/base.img` with `-global virtio-mmio.force-legacy=false`: `make run`,
+  the `-kernel` tests (`boot`/`tty`/`busybox`), UEFI (`disk-run`, `uefi_boot_test`), and `run-gfx`. The
+  `-kernel` test scripts gained a `blk_args` block; `tty_test` timings were relaxed for disk-loaded demos.
+- All 11 `make test` suites green; `BOARD=virtualbox` still builds (its boot path parks before `vfsInit`,
+  so it does not load programs).
 
 ## Open decisions / resolved
 

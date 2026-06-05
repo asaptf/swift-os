@@ -40,6 +40,16 @@ if [[ -f "$DTB" ]]; then
   dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
+# Attach the packed base image (modern virtio-mmio) so the shell and /bin/*
+# come off disk.
+DISK="$ROOT/build/base.img"
+blk_args=()
+if [[ -f "$DISK" ]]; then
+  blk_args=(-global virtio-mmio.force-legacy=false \
+            -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+            -device virtio-blk-device,drive=swosbase)
+fi
+
 (
   sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
   sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, busybox starts
@@ -50,7 +60,7 @@ fi
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
 sleep 18
 stop_qemu

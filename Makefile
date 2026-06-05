@@ -126,8 +126,14 @@ NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 LD_FLAGS  := --gc-sections -nostdlib -T $(LINKER) --defsym __kernel_phys_base=$(KPHYS_BASE)
 
 # ---- QEMU ------------------------------------------------------------------
+# Attach the packed base image as a modern (v2) virtio-blk disk so the kernel
+# serves the read-only base and /bin/* from disk (M11). force-legacy=false
+# selects the v2 transport our driver speaks.
 QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
+	-global virtio-mmio.force-legacy=false \
 	-device loader,file=$(QEMU_DTB),addr=$(QEMU_DTB_ADDR),force-raw=on \
+	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
+	-device virtio-blk-device,drive=swosbase \
 	-kernel $(BUILD)/kernel.elf
 
 # ---- UEFI loader (M10) -----------------------------------------------------
@@ -144,9 +150,15 @@ ESP_DIR    := $(BUILD)/esp
 # removable media for \EFI\BOOT\BOOTAA64.EFI. `acpi=off` makes the firmware boot
 # in device-tree mode and publish the FDT configuration table the loader reads
 # (swift-os is a device-tree OS; see the M9 HAL).
+# The packed base image rides along as a second, modern virtio-blk disk; the
+# firmware boots off the ESP while the kernel serves the base FS / /bin from it.
+UEFI_BASE_DISK := -global virtio-mmio.force-legacy=false \
+	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
+	-device virtio-blk-device,drive=swosbase
 UEFI_QEMU_FLAGS := -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
 	-bios $(AAVMF_CODE) \
-	-drive file=fat:rw:$(ESP_DIR),format=raw,if=virtio
+	-drive file=fat:rw:$(ESP_DIR),format=raw,if=virtio \
+	$(UEFI_BASE_DISK)
 
 # ---- Objects ---------------------------------------------------------------
 BOOT_OBJ   := $(BUILD)/boot.o
@@ -162,7 +174,6 @@ EL0_OBJ    := $(BUILD)/el0.o
 ELF_OBJ    := $(BUILD)/elf.o
 USTACK_OBJ := $(BUILD)/ustack.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
-USER_BLOB_OBJ  := $(BUILD)/user_blob.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
@@ -347,27 +358,26 @@ $(BUILD)/n_newlibtest.o: userland/newlibtest.c Makefile | $(BUILD)/.dir
 $(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
 
-# Embed the userland ELFs into the kernel image (no block device yet).
-$(USER_BLOB_OBJ): kernel/user/user_blob.S $(USER_HELLO_ELF) $(USER_TTYDEMO_ELF) $(USER_ARGVDEMO_ELF) $(USER_SPAWNDEMO_ELF) $(USER_FSDEMO_ELF) $(USER_BRKDEMO_ELF) $(USER_NEWLIBTEST_ELF) $(USER_COPROC_ELF) $(USER_FORKDEMO_ELF) $(USER_EXECDEMO_ELF) $(USER_FDOPSDEMO_ELF) $(USER_SECURITYDEMO_ELF) $(USER_PS_ELF) $(BUILD)/busybox.elf Makefile | $(BUILD)/.dir
-	$(CLANG) $(ASM_FLAGS) $< -o $@
+# The userland ELFs are no longer embedded (M11d): they ship in the packed base
+# image (see the $(BASE_IMG) rule) and the kernel loads them from disk.
 
 $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(SWIFT_FLAGS) -c $(SWIFT_SRCS) -o $@
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(VIRTIO_BLK_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(VIRTIO_BLK_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
-run: build $(QEMU_DTB)
+run: build $(QEMU_DTB) base-image
 	$(QEMU) $(QEMU_FLAGS)
 
 # Paused under the gdbstub on tcp::1234. Attach with `make gdb` in another shell.
-debug: build $(QEMU_DTB)
+debug: build $(QEMU_DTB) base-image
 	$(QEMU) $(QEMU_FLAGS) -s -S
 
 gdb:
@@ -409,7 +419,7 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
-uefi-run: uefi
+uefi-run: uefi base-image
 	$(QEMU) $(UEFI_QEMU_FLAGS)
 
 # Build a real bootable GPT disk image (ESP + BOOTAA64.EFI). Bootable under
@@ -419,9 +429,10 @@ disk: uefi
 	./scripts/make-disk.sh $(DISK_IMG)
 
 # Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT).
-disk-run: disk
+disk-run: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
-		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio
+		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		$(UEFI_BASE_DISK)
 
 # Boot the UEFI disk in a graphical window. `ramfb` gives the firmware a linear
 # framebuffer (EFI GOP); the loader hands it to the kernel, which renders the
@@ -429,10 +440,12 @@ disk-run: disk
 # Ctrl-C to stop.
 # force-legacy=false makes the virtio-mmio devices use the modern (v2) interface
 # our virtio-input driver speaks; the firmware still boots the disk over it.
-run-gfx: disk
+run-gfx: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
+		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
 $(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir

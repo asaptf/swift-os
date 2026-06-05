@@ -46,17 +46,27 @@ if [[ -f "$DTB" ]]; then
     dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
+# Attach the packed base image (modern virtio-mmio) — the demos and tty demo run
+# from disk once the embedded blob is gone.
+DISK="$ROOT/build/base.img"
+blk_args=()
+if [[ -f "$DISK" ]]; then
+    blk_args=(-global virtio-mmio.force-legacy=false \
+              -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+              -device virtio-blk-device,drive=swosbase)
+fi
+
 # Boot → (tty demo blocks on read) → type "pinXg", then move the cursor left
 # (ESC[D) and backspace to delete the stray 'X', committing "ping" → (loop) →
 # Ctrl-C. Asserting read(0) returns "ping" exercises the cooked line editor's
 # movable cursor and mid-line delete, not just plain appending.
-( sleep 1.5; printf 'pinXg\033[D\177\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
+( sleep 4; printf 'pinXg\033[D\177\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
     "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-    -pidfile "$PIDFILE" "${dtb_args[@]}" -kernel "$KERNEL" \
+    -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" \
     >"$LOG" 2>&1 &
 QEMU_PID=$!
 
-sleep 6
+sleep 10
 stop_qemu
 QEMU_PID=""
 

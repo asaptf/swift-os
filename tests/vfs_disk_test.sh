@@ -45,9 +45,13 @@ cleanup() {
 trap cleanup EXIT
 
 # Seed tree with a marker motd and an extra file absent from the static tree.
-mkdir -p "$WORK/seed/etc"
+# busybox must be on this disk too: it is the shell, and since M11d the kernel
+# loads /bin/busybox only from the packed image (no embedded blob).
+mkdir -p "$WORK/seed/etc" "$WORK/seed/bin"
 printf '%s\n' "$MARKER" > "$WORK/seed/etc/motd"
 printf 'only-on-disk\n'  > "$WORK/seed/diskonly.txt"
+[[ -f "$ROOT/build/busybox.elf" ]] || { echo "FAIL: build/busybox.elf missing (make busybox)" >&2; exit 2; }
+cp "$ROOT/build/busybox.elf" "$WORK/seed/bin/busybox"
 IMG="$WORK/disk.img"
 "$PACKER" "$WORK/seed" "$IMG" >/dev/null || { echo "FAIL: basepack failed" >&2; exit 2; }
 

@@ -96,20 +96,13 @@ static void invalidate(void *p, uint64_t n) {
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
-// Scan the virtio-mmio window (base/stride/count from the HAL) for a block
-// device and bring up its request queue. Returns the capacity in 512-byte
-// sectors, or 0 if no usable block device was found.
-uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count) {
-    g_mmio = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        volatile uint8_t *m = (volatile uint8_t *)(uintptr_t)(base + (uint64_t)i * stride);
-        if (*(volatile uint32_t *)(m + R_MAGIC) != VIRTIO_MAGIC) continue;
-        if (*(volatile uint32_t *)(m + R_VERSION) != 2) continue; // modern only
-        if (*(volatile uint32_t *)(m + R_DEVID) != VIRTIO_ID_BLOCK) continue;
-        g_mmio = m;
-        break;
-    }
-    if (!g_mmio) return 0;
+static int blk_do_read(uint64_t sector); // defined below
+
+// Bring up a single virtio-blk transport at `m`: reset, negotiate, set up the
+// request virtqueue, and read the capacity. Sets g_mmio/g_qn/g_capacity and
+// returns the capacity in sectors, or 0 on failure (g_mmio cleared).
+static uint64_t bring_up(volatile uint8_t *m) {
+    g_mmio = m;
 
     w32(R_STATUS, 0);                  // reset
     w32(R_STATUS, S_ACK);
@@ -146,6 +139,40 @@ uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count) {
     uint32_t hi = r32(R_CONFIG + 4);
     g_capacity = ((uint64_t)hi << 32) | lo;
     return g_capacity;
+}
+
+// True if the bounce buffer currently starts with the packed-base "SWOSBASE"
+// magic (so we can pick the base-image disk out of several block devices).
+static int bounce_is_swosbase(void) {
+    static const char magic[8] = { 'S','W','O','S','B','A','S','E' };
+    for (int i = 0; i < 8; i++) if (g_bounce[i] != (uint8_t)magic[i]) return 0;
+    return 1;
+}
+
+// Scan the virtio-mmio window (base/stride/count from the HAL) for block
+// devices and select the packed base image: a boot medium may carry several
+// disks (e.g. a GPT boot disk plus the SWOSBASE base image), so we prefer the
+// one whose sector 0 holds the SWOSBASE magic, falling back to the first block
+// device otherwise. Returns the selected disk's capacity in sectors, or 0.
+uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count) {
+    g_mmio = 0;
+    volatile uint8_t *first = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        volatile uint8_t *m = (volatile uint8_t *)(uintptr_t)(base + (uint64_t)i * stride);
+        if (*(volatile uint32_t *)(m + R_MAGIC) != VIRTIO_MAGIC) continue;
+        if (*(volatile uint32_t *)(m + R_VERSION) != 2) continue; // modern only
+        if (*(volatile uint32_t *)(m + R_DEVID) != VIRTIO_ID_BLOCK) continue;
+        if (first == 0) first = m;
+        if (bring_up(m) == 0) continue;
+        if (blk_do_read(0) == 0 && bounce_is_swosbase()) {
+            return g_capacity; // packed base image — this is the one we want
+        }
+    }
+    // No SWOSBASE disk; fall back to the first block device (if any) so the
+    // M11b probe still has something to read.
+    if (first) return bring_up(first);
+    g_mmio = 0;
+    return 0;
 }
 
 int virtio_blk_available(void) { return g_mmio != 0; }

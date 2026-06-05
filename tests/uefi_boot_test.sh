@@ -31,6 +31,16 @@ else
     exit 2
 fi
 
+# Attach the packed base image as a second, modern virtio-blk disk: the firmware
+# still boots off the first (ESP/GPT) disk, while the kernel serves the
+# read-only base and /bin/* from this one (it picks the SWOSBASE disk).
+DISK="$ROOT/build/base.img"
+if [[ -f "$DISK" ]]; then
+    drive_args+=(-global virtio-mmio.force-legacy=false \
+                 -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+                 -device virtio-blk-device,drive=swosbase)
+fi
+
 LOG="$(mktemp -t swiftos-uefi.XXXXXX)"
 IN="$(mktemp -u -t swiftos-uefi-in.XXXXXX)"
 mkfifo "$IN"

@@ -26,9 +26,10 @@ Working notes for picking up swift-os development. Authoritative milestone histo
   **M11c — DONE (2026-06-05):** the read-only VFS is backed by extents into the disk image (parses
   `SWOSBASE` at `vfsInit`, reads file spans via `virtio_blk_read_range`), with the static literals kept as
   a fallback when no packed disk is attached. `tests/vfs_disk_test.sh` (unique-marker image) in `make test`.
-  **M11d — DONE (2026-06-05):** `make base-image` stages real ELFs under `/bin`; `exec.swift` prefers
-  disk-backed `/bin/*` extents and falls back to embedded blobs for no-disk boot paths. `tests/disk_exec_test.sh`
-  proves busybox and `/bin/ps` execute from the packed base image.
+  **M11d — DONE (2026-06-05):** `make base-image` stages real ELFs under `/bin`; `exec.swift` loads
+  `/bin/*` from the packed image. **`user_blob.S` removed** (kernel image ~1.4 MiB → ~208 KiB); every boot
+  medium now attaches `build/base.img` and `virtio_blk_init` picks the `SWOSBASE` disk. `tests/disk_exec_test.sh`
+  proves busybox and `/bin/ps` execute from disk. **M11 fully complete (a–d).**
 - **Off critical path (done opportunistically):** EFI GOP framebuffer console + virtio-input keyboard +
   graphical QEMU target; a blinking block cursor with arrow-key/Home/End/Delete line editing in the tty
   (kernel-side, since busybox editing is off); documented direction for an own-Swift sans-IO network stack.
@@ -60,14 +61,17 @@ here and advances the roadmap. **Prioritize M11.**
 - Acceptance met: `ls /`, `cat /etc/motd`, `echo` read **from disk** — `tests/vfs_disk_test.sh` proves it
   with a unique marker image. The driver needs the modern transport (`virtio-mmio.force-legacy=false`).
 
-### M11d — disk-first executable lookup — DONE (2026-06-05)
+### M11d — disk-first executable lookup + drop the embedded blob — DONE (2026-06-05)
 - `make base-image` stages busybox, Swift `ps`, and the demo ELFs into `/bin` in the packed base image.
-- `exec.swift` resolves known `/bin/*` paths through the mounted `SWOSBASE` tree first, reads the ELF into
-  a reusable kernel buffer, and falls back to embedded blobs when no packed disk is attached.
-- `tests/disk_exec_test.sh` attaches `build/base.img` and proves the shell's busybox plus native `/bin/ps`
-  execute from disk.
-- Cleanup left for a later milestone: drop `kernel/user/user_blob.S` once every boot path supplies a packed
-  base image.
+- `exec.swift` resolves `/bin/*` through the mounted `SWOSBASE` tree, reading each ELF into a reusable PMM
+  buffer (2 MiB, physically contiguous). `main.swift` demos + the shell launcher load from disk too.
+- **`kernel/user/user_blob.S` removed** along with the embedded ELF symbols in `io.h`: the kernel image
+  dropped from ~1.4 MiB to ~208 KiB. Every boot medium now ships a packed base image:
+  - `virtio_blk_init` scans all block devices and **selects the one whose sector 0 is `SWOSBASE`**, so a
+    medium can carry both a boot disk (GPT/ESP) and the base image.
+  - All QEMU launches (`make run`, the `-kernel` tests, UEFI `disk-run`/`uefi_boot_test`, `run-gfx`) attach
+    `build/base.img` as a second modern virtio-blk disk (`virtio-mmio.force-legacy=false`).
+- `tests/disk_exec_test.sh` proves busybox + `/bin/ps` execute from disk; all 11 suites green.
 
 ## Track A: unblock M10.5 (when VirtualBox is available)
 
