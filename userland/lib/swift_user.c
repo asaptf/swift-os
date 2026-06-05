@@ -64,6 +64,32 @@ int swiftos_close(int fd) {
     return close(fd);
 }
 
+long swiftos_getdents(int fd, void *buf, unsigned long count) {
+    return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
+}
+
+// Kernel stat record (kernel/vfs/vfs.swift writeStatMode), 24 bytes.
+struct swiftos_kstat {
+    unsigned int mode;
+    unsigned int uid;
+    unsigned long size;
+    unsigned int gid;
+    unsigned int nlink;
+};
+
+int swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
+                 unsigned int *gid, unsigned int *nlink, unsigned long *size) {
+    struct swiftos_kstat k;
+    long rc = __syscall3(SYS_STAT, (long)path, (long)&k, 0);
+    if (rc != 0) return (int)rc;
+    if (mode)  *mode = k.mode;
+    if (uid)   *uid = k.uid;
+    if (gid)   *gid = k.gid;
+    if (nlink) *nlink = k.nlink;
+    if (size)  *size = k.size;
+    return 0;
+}
+
 int swiftos_login(unsigned int principal, unsigned int session, unsigned long caps) {
     return login(principal, session, caps);
 }

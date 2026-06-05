@@ -25,6 +25,11 @@ void swiftos_puts(const char *s);
 int  swiftos_open(const char *path, int flags);
 long swiftos_read(int fd, void *buf, unsigned long count);
 int  swiftos_close(int fd);
+// Read directory entries (kernel dirent layout) into buf; returns bytes used.
+long swiftos_getdents(int fd, void *buf, unsigned long count);
+// Stat a path. Fills the provided fields (any may be NULL). Returns 0 on success.
+int  swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
+                  unsigned int *gid, unsigned int *nlink, unsigned long *size);
 int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);

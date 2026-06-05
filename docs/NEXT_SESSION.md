@@ -150,7 +150,12 @@ M12 is now underway.
 - **Next (M13 follow-ups):** enforce on the write/read syscalls (not just open) once contexts can
   change mid-fd; a host-side ownership manifest for non-root *base* files; real mtimes/clock;
   `chown`/`chmod`; richer principals. (A stronger password KDF also remains a later refinement.)
-- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os; more Swift utilities.
+- **Native Swift `/bin/ls` — DONE (2026-06-05):** pure-Swift `ls`/`ls -l` (`userland/ls.swift`) over a
+  new getdents/stat bridge, resolving owner/group names from `/etc/passwd`+`/etc/group`. Invoked by
+  absolute path (`/bin/ls`) so the busybox standalone shell execs it; bare `ls` stays busybox.
+  `tests/swift_ls_test.sh`. First step of "more Swift userland utilities".
+- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os; more Swift utilities
+  (e.g. `cat`/`echo`/`pwd` in Swift, then retire those busybox applets).
 
 ## Post-roadmap (M0–M13 done) — going down the list
 

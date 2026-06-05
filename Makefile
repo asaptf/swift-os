@@ -196,9 +196,11 @@ USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
+USER_LS_ELF := $(BUILD)/ls.elf
 BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
+	$(USER_LS_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
@@ -322,6 +324,9 @@ $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
 
+$(BUILD)/user_ls.o: userland/ls.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ls.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -366,6 +371,9 @@ $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
+
+$(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
 
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
@@ -425,6 +433,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
 	./tests/redirect_test.sh
+	./tests/swift_ls_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -503,6 +512,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
+	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

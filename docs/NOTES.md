@@ -727,6 +727,29 @@ newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
   echo, since the M13c `_open` fix made vi genuinely save (previously a false positive).
 - Out of scope: `dup3`, `O_NONBLOCK` toggling via `F_SETFL`, file locking (`F_GETLK`/`F_SETLK`).
 
+## Native Swift `/bin/ls` (DONE, 2026-06-05)
+
+A pure-Embedded-Swift `/bin/ls` with `-l` (`userland/ls.swift`), advancing the "Swift everywhere"
+first principle and the "more Swift userland utilities" roadmap item. It dogfoods the M13c per-file
+ownership work entirely in Swift instead of relying on busybox.
+
+- **What it does.** Lists a directory (or a single file). `-l` formats `mode nlink owner group size
+  name`: the mode string from the stat type/permission bits, and owner/group resolved by name from
+  `/etc/passwd`/`/etc/group` (numeric fallback when unreadable), reusing the colon-table scan pattern
+  from `/bin/id`.
+- **Bridge.** `userland/lib/swift_user.{h,c}` gained `swiftos_getdents` (over `SYS_GETDENTS`) and
+  `swiftos_stat` (over `SYS_STAT`, unpacking the 24-byte kstat into mode/uid/gid/nlink/size). It walks
+  the kernel dirent records (`d_reclen`@16, `d_name`@19) and stats each entry by `dir/name`.
+- **Applet shadowing.** The busybox standalone shell runs a bare `ls` as its own applet, so `/bin/ls`
+  is invoked by **absolute path** to exec our binary (a command with a `/` is exec'd directly, not
+  applet-dispatched — verified). `exec.swift` now routes `/bin/ls` to the packed disk ELF (removed
+  from the busybox-applet fallback list); bare `ls` is unchanged (still busybox), so `busybox_test`
+  and `ls_l_test` are unaffected.
+- **Test.** `tests/swift_ls_test.sh` (wired into `make test`): `/bin/ls /etc` lists entries, and
+  `/bin/ls -l` shows `drwxr-xr-x … root root … swos`, `-rw-r--r-- … root root 21 motd`, and a
+  single-file `-rwxr-xr-x … /bin/busybox`.
+- Out of scope: multi-path args, column/wide output, sorting, `-a`/`-h`/time columns.
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
