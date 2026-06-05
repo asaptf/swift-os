@@ -22,7 +22,11 @@ Working notes for picking up swift-os development. Authoritative milestone histo
   (`tools/basepack.swift`, `make base-image` → `build/base.img`), `tests/base_image_test.swift`.
   **M11b — DONE (2026-06-05):** HAL discovers the virtio-mmio bank from the DTB; a polled virtio 1.0 MMIO
   block driver (`kernel/drivers/virtio_blk.c`) reads 512-byte sectors. Boot probe reads sector 0 and
-  verifies the `SWOSBASE` magic; `tests/virtio_blk_test.sh` in `make test`. **Next: M11c.**
+  verifies the `SWOSBASE` magic; `tests/virtio_blk_test.sh` in `make test`.
+  **M11c — DONE (2026-06-05):** the read-only VFS is backed by extents into the disk image (parses
+  `SWOSBASE` at `vfsInit`, reads file spans via `virtio_blk_read_range`), with the static literals kept as
+  a fallback when no packed disk is attached. `tests/vfs_disk_test.sh` (unique-marker image) in `make test`.
+  **Next: M11d (stretch)** — move busybox + demo ELFs off the embedded blob, resolve `/bin/*` from disk.
 - **Off critical path (done opportunistically):** EFI GOP framebuffer console + virtio-input keyboard +
   graphical QEMU target; a blinking block cursor with arrow-key/Home/End/Delete line editing in the tty
   (kernel-side, since busybox editing is off); documented direction for an own-Swift sans-IO network stack.
@@ -46,14 +50,13 @@ here and advances the roadmap. **Prioritize M11.**
 - Watch for M11c: the test (and any disk-backed boot) needs the **modern** virtio-mmio transport —
   pass `-global virtio-mmio.force-legacy=false`; the driver only speaks v2 (version register == 2).
 
-### M11c — serve the read-only base FS from disk
-- Attach `build/base.img` to QEMU as a second virtio-blk disk (simplest), or place it in a partition of
-  the GPT image and read by LBA offset. Decide and record (a dedicated disk is simplest first).
-- Parse the `SWOSBASE` header/entries in the kernel (mirror `tools/basepack.swift`, keep it tiny — the
-  format is little-endian by design). Back the read-only VFS vnodes with extents into the disk image
-  instead of the static Swift literals in `kernel/vfs/vfs.swift`.
-- Keep `/tmp` tmpfs unchanged.
-- Acceptance: `ls /`, `cat /etc/motd`, `echo` work with files read **from disk**, not kernel literals.
+### M11c — serve the read-only base FS from disk — DONE (2026-06-05)
+- Dedicated disk: attach the packed image as its own virtio-blk device (a `SWOSBASE` magic at sector 0
+  selects the disk path; a non-packed disk, e.g. the UEFI GPT, falls back to literals).
+- `vfsInit` parses the `SWOSBASE` header/entries off disk and backs the read-only vnodes with extents
+  (`diskOffset`/`dataLen`); `vfsRead` reads spans via `virtio_blk_read_range`. `/tmp` tmpfs unchanged.
+- Acceptance met: `ls /`, `cat /etc/motd`, `echo` read **from disk** — `tests/vfs_disk_test.sh` proves it
+  with a unique marker image. The driver needs the modern transport (`virtio-mmio.force-legacy=false`).
 
 ### M11d — move busybox + demos off the embedded blob (stretch)
 - Pack `build/busybox.elf` and the demo ELFs into the base image; have `exec.swift` resolve `/bin/*` from

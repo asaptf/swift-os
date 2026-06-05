@@ -488,7 +488,8 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     schedulerInit()
     processInit()
-    vfsInit()
+    runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    vfsInit()           // M11c: serves the read-only base from disk when present
     ttyInit()
     signalReset()
     uartRxInit()
@@ -496,7 +497,6 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     if windowKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }
-    runVirtioBlkProbe() // M11b: read sector 0 from the virtio-blk disk, if any
     enable_irq()
 
     if windowKeyboard {

@@ -50,11 +50,13 @@ private struct VNode {
     var inUse = false
     var isDir = false
     var readOnly = true
+    var onDisk = false      // contents live on the virtio-blk disk (M11c)
     var namePtr: UInt = 0   // bytes of the name (not NUL-terminated)
     var nameLen = 0
-    var dataPtr: UInt = 0   // file contents
+    var dataPtr: UInt = 0   // file contents (in RAM: static literal or tmpfs)
     var dataLen = 0
     var dataCap = 0         // tmpfs growth capacity
+    var diskOffset = 0      // byte offset of contents within the disk image
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
@@ -185,6 +187,132 @@ private func addFile(_ parent: Int, _ name: StaticString, _ content: StaticStrin
     linkChild(parent, n)
 }
 
+// ---- disk-backed read-only base (M11c) ------------------------------------
+
+private func le32(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt32 {
+    UInt32(p[off]) | (UInt32(p[off + 1]) << 8) |
+    (UInt32(p[off + 2]) << 16) | (UInt32(p[off + 3]) << 24)
+}
+
+private func le64(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt64 {
+    var v: UInt64 = 0
+    var i = 7
+    while i >= 0 { v = (v << 8) | UInt64(p[off + i]); i -= 1 }
+    return v
+}
+
+private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int) -> Int {
+    let n = allocNode()
+    if n < 0 { return -1 }
+    nodes[n].namePtr = namePtr
+    nodes[n].nameLen = nameLen
+    nodes[n].isDir = true
+    nodes[n].readOnly = true
+    linkChild(parent, n)
+    return n
+}
+
+private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
+                         _ diskOffset: Int, _ dataLen: Int) {
+    let n = allocNode()
+    if n < 0 { return }
+    nodes[n].namePtr = namePtr
+    nodes[n].nameLen = nameLen
+    nodes[n].readOnly = true
+    nodes[n].onDisk = true
+    nodes[n].diskOffset = diskOffset
+    nodes[n].dataLen = dataLen
+    linkChild(parent, n)
+}
+
+/// Resolve the parent directory for an image path like "etc/motd": walk the
+/// already-created directory nodes (entries are sorted, so parents precede
+/// their children) and return the parent plus the leaf name slice. Returns -1
+/// if an intermediate directory is missing.
+private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ pathLen: Int)
+    -> (parent: Int, leafPtr: UInt, leafLen: Int) {
+    var slash = -1
+    var i = pathLen - 1
+    while i >= 0 { if pathPtr[i] == 0x2F { slash = i; break }; i -= 1 }
+    if slash < 0 {
+        return (root, UInt(bitPattern: pathPtr), pathLen)
+    }
+    var cur = root
+    var p = 0
+    while p < slash {
+        let start = p
+        while p < slash && pathPtr[p] != 0x2F { p += 1 }
+        let comp = findChild(cur, pathPtr + start, p - start)
+        if comp == -1 || !nodes[comp].isDir { return (-1, 0, 0) }
+        cur = comp
+        while p < slash && pathPtr[p] == 0x2F { p += 1 }
+    }
+    let leafStart = slash + 1
+    return (cur, UInt(bitPattern: pathPtr + leafStart), pathLen - leafStart)
+}
+
+/// Build the read-only base tree from a packed SWOSBASE image on the virtio-blk
+/// disk. Returns false (leaving the tree untouched) if there is no disk, the
+/// magic does not match, or the image is malformed, so the caller can fall back
+/// to the compiled-in literals. The metadata buffer (entries + string table) is
+/// kept permanently: vnode names point straight into it.
+private func buildBaseFromDisk(_ root: Int) -> Bool {
+    if virtio_blk_available() == 0 { return false }
+
+    var hdr = [UInt8](repeating: 0, count: 64)
+    let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
+        virtio_blk_read_range(0, raw.baseAddress, 64) == 0
+    }
+    if !hok { return false }
+
+    return hdr.withUnsafeBufferPointer { hp -> Bool in
+        let h = hp.baseAddress!
+        let magic: StaticString = "SWOSBASE"
+        var magicOk = true
+        magic.withUTF8Buffer { m in
+            for i in 0..<m.count where h[i] != m[i] { magicOk = false }
+        }
+        if !magicOk { return false }
+        if le32(h, 8) != 1 { return false }   // version
+        if le32(h, 16) != 40 { return false } // entry size
+
+        let entryCount = Int(le32(h, 20))
+        let entriesOffset = le64(h, 24)
+        let stringsOffset = le64(h, 32)
+        let stringsSize = le64(h, 40)
+        let dataOffset = le64(h, 48)
+
+        if entryCount <= 0 || entryCount > maxNodes { return false }
+        if stringsOffset < entriesOffset { return false }
+        let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
+        if metaLen <= 0 || metaLen > 1 << 20 { return false } // 1 MiB ceiling
+
+        guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
+        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
+        if virtio_blk_read_range(entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+
+        let stringsBase = Int(stringsOffset - entriesOffset)
+        for k in 0..<entryCount {
+            let e = meta + k * 40
+            let pathOff = Int(le32(e, 0))
+            let pathLen = Int(le32(e, 4))
+            let kind = le32(e, 8)
+            let dOff = Int(le64(e, 16))
+            let dLen = Int(le64(e, 24))
+            if pathLen <= 0 || stringsBase + pathOff + pathLen > metaLen { continue }
+            let pathPtr = meta + stringsBase + pathOff
+            let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
+            if parent < 0 || leafLen <= 0 { continue }
+            if kind == 1 {
+                _ = addDiskDir(parent, leafPtr, leafLen)
+            } else if kind == 2 {
+                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen)
+            }
+        }
+        return true
+    }
+}
+
 func vfsInit() {
     guard let raw = swiftos_kernel_alloc(UInt(MemoryLayout<VNode>.stride * maxNodes), 16) else {
         uartPuts("panic: vfs node table allocation failed\n")
@@ -198,13 +326,20 @@ func vfsInit() {
     nodes[root].isDir = true
     nodes[root].parent = root
 
-    let bin = addDir(root, "bin")
-    addFile(bin, "ps", "")
-    let etc = addDir(root, "etc")
-    addFile(etc, "motd", "Welcome to swift-os.\n")
-    addFile(etc, "hostname", "swiftos\n")
-    addFile(root, "readme.txt", "swift-os read-only base fs\n")
-    addFile(root, "hello.txt", "M5 file: hello from VFS read()\n")
+    // M11c: serve the read-only base from the packed disk image when one is
+    // attached; otherwise fall back to the compiled-in literals (the -kernel
+    // test paths and UEFI GPT boot, where the disk is not a SWOSBASE image).
+    if buildBaseFromDisk(root) {
+        uartPuts("M11c: read-only base mounted from disk\n")
+    } else {
+        let bin = addDir(root, "bin")
+        addFile(bin, "ps", "")
+        let etc = addDir(root, "etc")
+        addFile(etc, "motd", "Welcome to swift-os.\n")
+        addFile(etc, "hostname", "swiftos\n")
+        addFile(root, "readme.txt", "swift-os read-only base fs\n")
+        addFile(root, "hello.txt", "M5 file: hello from VFS read()\n")
+    }
     _ = addDir(root, "tmp", readOnly: false)
 
     for p in 0..<maxVFSProcesses {
@@ -528,6 +663,20 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     guard file.kind == fdKindVNode else { return errBadFD }
     let node = file.node
     if nodes[node].isDir { return errIsDir }
+
+    // Disk-backed read-only file (M11c): pull the requested span off the disk.
+    if nodes[node].onDisk {
+        let avail = nodes[node].dataLen - file.offset
+        if avail <= 0 { return 0 }
+        let want = min(Int(count), avail)
+        let off = UInt64(nodes[node].diskOffset + file.offset)
+        let rc = virtio_blk_read_range(off, UnsafeMutableRawPointer(dst), UInt32(want))
+        if rc != 0 { return errInvalid }
+        file.offset += want
+        openDescriptions[d] = file
+        return want
+    }
+
     let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     var copied = 0
     while copied < Int(count) && file.offset < nodes[node].dataLen {

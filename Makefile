@@ -367,6 +367,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/boot_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
+	./tests/vfs_disk_test.sh
 	./tests/busybox_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 

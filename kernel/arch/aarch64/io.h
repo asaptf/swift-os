@@ -50,6 +50,7 @@ uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count);
 int virtio_blk_available(void);
 uint64_t virtio_blk_capacity(void);
 int virtio_blk_read(uint64_t sector, void *buf);
+int virtio_blk_read_range(uint64_t byte_off, void *buf, uint32_t len);
 
 void mmu_init_identity_map(void);
 void mmu_configure_translation(void);

@@ -151,9 +151,8 @@ uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count) {
 int virtio_blk_available(void) { return g_mmio != 0; }
 uint64_t virtio_blk_capacity(void) { return g_capacity; }
 
-// Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.
-// Blocking: issues the request and spins on the used ring until it completes.
-int virtio_blk_read(uint64_t sector, void *buf) {
+// Read one sector into the internal bounce buffer. Returns 0 on success.
+static int blk_do_read(uint64_t sector) {
     if (!g_mmio) return -1;
     if (g_capacity != 0 && sector >= g_capacity) return -2;
 
@@ -202,7 +201,36 @@ int virtio_blk_read(uint64_t sector, void *buf) {
     if (g_status != VIRTIO_BLK_S_OK) return -3;
 
     invalidate(g_bounce, sizeof(g_bounce));
+    return 0;
+}
+
+// Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.
+// Blocking: issues the request and spins on the used ring until it completes.
+int virtio_blk_read(uint64_t sector, void *buf) {
+    int rc = blk_do_read(sector);
+    if (rc != 0) return rc;
     uint8_t *dst = (uint8_t *)buf;
     for (int i = 0; i < SECTOR_SIZE; i++) dst[i] = g_bounce[i];
+    return 0;
+}
+
+// Read an arbitrary byte range [byte_off, byte_off+len) into `buf`, spanning
+// sectors as needed. Returns 0 on success, negative on error. Used to back the
+// read-only VFS with extents into the disk image (M11c).
+int virtio_blk_read_range(uint64_t byte_off, void *buf, uint32_t len) {
+    if (!g_mmio) return -1;
+    uint8_t *out = (uint8_t *)buf;
+    uint32_t done = 0;
+    while (done < len) {
+        uint64_t pos = byte_off + done;
+        uint64_t sec = pos / SECTOR_SIZE;
+        uint32_t within = (uint32_t)(pos % SECTOR_SIZE);
+        int rc = blk_do_read(sec);
+        if (rc != 0) return rc;
+        uint32_t chunk = SECTOR_SIZE - within;
+        if (chunk > len - done) chunk = len - done;
+        for (uint32_t i = 0; i < chunk; i++) out[done + i] = g_bounce[within + i];
+        done += chunk;
+    }
     return 0;
 }

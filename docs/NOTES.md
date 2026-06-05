@@ -519,9 +519,24 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Test: `tests/virtio_blk_test.sh` attaches `build/base.img` as a virtio-blk disk (modern transport via
   `virtio-mmio.force-legacy=false`) and asserts sector 0 is read with its magic verified. Wired into
   `make test`.
-- Remaining M11 work: M11c — back the read-only VFS vnodes with extents into the disk image (parse the
-  `SWOSBASE` header/entries in the kernel) and drop the static Swift VFS literals; M11d (stretch) — move
-  busybox + demos off the embedded blob.
+### M11c — serve the read-only base FS from disk (DONE, 2026-06-05)
+
+- `kernel/vfs/vfs.swift` now parses the `SWOSBASE` header/entries off the virtio-blk disk at `vfsInit`
+  and backs the read-only vnodes with **extents into the disk image** (a `diskOffset`/`dataLen` pair per
+  file); `vfsRead` pulls the requested span via `virtio_blk_read_range`. Directory entries are sorted so
+  parents precede children — the builder resolves each path's parent against already-created nodes.
+- The metadata block (entries + string table) is read once into a kept heap buffer; vnode names point
+  straight into it, so no per-name copies. File data is read lazily from disk on each `read()`.
+- Fallback: when no disk / no `SWOSBASE` magic (the `-kernel` test paths and the UEFI GPT boot, whose
+  disk is not a packed image), `vfsInit` keeps the compiled-in literals, so every existing path is
+  unaffected. `/tmp` tmpfs is added in both cases.
+- `runVirtioBlkProbe` now runs before `vfsInit` so the disk is up when the VFS may mount from it.
+- Added `virtio_blk_read_range(byte_off, buf, len)` (spans sectors via the bounce buffer).
+- Test: `tests/vfs_disk_test.sh` packs a throwaway image whose `/etc/motd` holds a unique marker absent
+  from the kernel literals (plus a disk-only file), boots with it attached, and asserts busybox reads the
+  marker and the extra file — proving the bytes came off disk, not the fallback. Wired into `make test`.
+- Remaining M11 work: M11d (stretch) — move busybox + the demo ELFs off the embedded `user_blob.S` and
+  resolve `/bin/*` from the packed base on disk.
 
 ## Open decisions / resolved
 
