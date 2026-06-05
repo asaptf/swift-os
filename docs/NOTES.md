@@ -647,8 +647,85 @@ Silicon Mac with VirtualBox installed. Prepared for that:
   `mkdir`/`touch` applet; the check is the same `mayWriteTmp` used by the open path, which
   `cap_enforce_test` already exercises for `guest`.
 
-- Follow-ups: per-file ownership/ACLs and an `ls -l` view, enforcement on the read/write syscalls (for
-  contexts that change while an fd is open), and richer principals.
+### M13c — file ownership + `ls -l` (DONE, 2026-06-05)
+
+- **Per-vnode owner + mode.** `VNode` (kernel/vfs/vfs.swift) gained `owner: UInt32` (principal; 1 =
+  root) and `mode: UInt32` (permission bits; 0 = unset → fall back to the old heuristic, so the
+  compiled-in literal tree is unchanged). Disk-backed nodes take owner/mode from the image; a tmpfs
+  node is stamped with `processCurrentPrincipal()` at creation, so `ls -l /tmp` reflects who wrote the
+  file (the live login context, not always root). New `processCurrentPrincipal()` in
+  kernel/user/process.swift mirrors `processCurrentCaps()`.
+- **Widened kstat (the ABI was never the risk).** The kernel writes a private `kstat` record, not
+  newlib's `struct stat`; `userland/lib/newlib_syscalls.c` translates it, so the C compiler computes
+  newlib's offsets from the sysroot header. `writeStatMode` grew from 16 to 24 bytes — `u32 mode,
+  u32 uid, u64 size, u32 gid, u32 nlink` (first 16 bytes unchanged, so older readers stay valid) —
+  and reports `st_uid = st_gid = owner`, `st_nlink = 1` (no group model; gid mirrors the owner
+  principal). `_stat`/`_fstat` copy uid/gid/nlink into newlib's struct; `userland/lib/fs.h` mirrors
+  the 24-byte layout. The Swift userland tools (`/bin/ps`, `/bin/id`) don't call stat, so widening is
+  safe.
+- **SWOSBASE format v2.** The 40-byte entry already reserved a `mode` u32 (off 32) and a spare (off
+  36); `tools/basepack.swift` now writes the real mode (dir/exec 0o755, text 0o644 — from the host
+  execute bit) and `owner = 1` (root) into off 36, and bumps the version 1 → 2. The kernel parser
+  (`buildBaseFromDisk`) requires v2 and reads both fields. Base files are all root-owned; non-root
+  ownership is demonstrated at runtime via tmpfs. (A host-side manifest for non-root *base* owners is
+  recorded as future work.)
+- **busybox `ls -l` shows names.** `scripts/build-busybox.sh` enables `FEATURE_LS_USERNAME` (resolve
+  uid/gid → name), `FEATURE_LS_SORTFILES` (alphabetical → deterministic tests), and the `MKDIR`
+  applet (so a logged-in principal can create a tmpfs node without shell redirection). The compat
+  `getpwuid`/`getpwnam`/`getgrgid`/`getgrnam` (userland/compat/stubs.c) — previously hardcoded to
+  "root" — now parse `/etc/passwd` and the new `base/etc/group`; an unknown id returns NULL and
+  busybox prints the number. New compat stubs: `getpagesize` (libbb/procps + dd reference it) and a
+  no-op `chmod`/`fchmod` (mkdir chmod()s the new dir; the kernel already created it 0o755).
+  (Timestamps stay off; the date column shows the 1970 epoch since we have no clock — cosmetic.)
+- **Open-flag ABI fix (found while testing).** newlib's `<fcntl.h>` uses BSD values (`O_CREAT 0x200`,
+  `O_TRUNC 0x400`) but the kernel ABI is Linux-style (`O_CREAT 0x40`). `newlib_syscalls.c::_open` now
+  translates the create/truncate/append bits into the kernel ABI (the access-mode bits already match)
+  and sets `errno` on a negative return. The kernel honors `O_TRUNC`/`O_APPEND` on writable tmpfs
+  files. This fixes a latent bug: busybox file creation via newlib `open(O_CREAT)` never reached the
+  create path before — `vi`'s `:wq` only *appeared* to work because `vi_test` greps the on-screen echo
+  of the inserted text. With the fix `vi` genuinely saves.
+- **Redirection limitation — RESOLVED in the next milestone** (see "Shell redirection + fcntl" below).
+  M13c shipped with `echo > file` non-functional (the demo used `mkdir`); the follow-up implements
+  `fcntl` and makes redirection work.
+- **Tests.** `tests/base_image_test.swift` asserts version 2, owner 1 on every entry, and the
+  expected modes (busybox/ps 0o755, motd 0o644, dirs 0o755). New `tests/ls_l_test.sh` (wired into
+  `make test`) logs in as root and asserts `ls -l` shows root-owned `drwxr-xr-x` dirs, `-rwxr-xr-x`
+  `/bin/*`, and `-rw-r--r--` text files; then logs in as `user`, runs `mkdir /tmp/d`, and asserts
+  `ls -l /tmp` shows `d` owned by `user` — proving a tmpfs node is stamped with the creating principal.
+
+- Follow-ups: enforcement on the read/write syscalls (for contexts that change while an fd is open);
+  a host-side ownership manifest for non-root base files; real mtimes/clock; `chown`/`chmod`; and
+  richer principals.
+
+## Shell redirection + `fcntl` (DONE, 2026-06-05)
+
+Made busybox shell I/O redirection work (`echo > file`, `>>`, pipe-into-redirect), the top M13
+follow-up. ash saves/restores descriptors around every redirect with `fcntl(F_DUPFD_CLOEXEC, 10)`;
+newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
+
+- **Root cause of the M13c revert, now fixed.** `F_DUPFD_CLOEXEC` is a *distinct* command number
+  (newlib value **14**, not `F_DUPFD`=0). The M13c prototype's `switch` only handled `F_DUPFD`; `14`
+  fell to `default: return 0`, so ash read **0 as the duplicated fd** and on restore did
+  `dup2(0,1); close(0)` — closing stdin → the shell read EOF and exited. The fix handles
+  `F_DUPFD_CLOEXEC`, and crucially makes the `default` case return a **negative error** so an
+  unhandled command can never be misread as "fd N".
+- **Kernel.** `SYS_FCNTL` (34) → `vfsFcntl` (kernel/vfs/vfs.swift): `F_DUPFD`/`F_DUPFD_CLOEXEC`
+  duplicate to the lowest free fd ≥ arg (sharing the open description, like `dup`); `F_GETFD`/`F_SETFD`
+  read/write a per-fd close-on-exec flag (`FDEntry.cloexec`); `F_GETFL` returns the stored open flags;
+  `F_SETFL` is a no-op; anything else is `EINVAL`. A plain `dup`/`dup2` clears cloexec; fork copies it.
+- **close-on-exec honored.** `vfsCloseCloexec(slot:)` drops cloexec fds, called from `processExec`
+  (kernel/user/process.swift) — POSIX exec semantics, so ash's relocated/redirect-saved fds (it uses
+  `F_DUPFD_CLOEXEC`) don't leak into exec'd applets. `O_CLOEXEC` (newlib 0x40000 → kernel `oCloexec`
+  0x200, translated in `_open`) marks an fd cloexec at open time.
+- **Userland.** newlib's `fcntl` (sysfcntl.o) is a hard ENOSYS stub that never calls a syscall stub,
+  so a **strong** variadic `fcntl` in `userland/compat/stubs.c` (pulled before `-lc`) routes to
+  `SYS_FCNTL`.
+- **Tests.** New `tests/redirect_test.sh` (wired into `make test`): asserts `> file` writes content,
+  `>>` appends, `cmd | cat > file` works, and a later `echo` still runs — proving the interactive
+  shell **survives** the redirects (the exact regression that caused the M13c revert). `tests/vi_test.sh`
+  hardened to match the saved content as a clean line (`^hello-from-vi$`) rather than vi's on-screen
+  echo, since the M13c `_open` fix made vi genuinely save (previously a false positive).
+- Out of scope: `dup3`, `O_NONBLOCK` toggling via `F_SETFL`, file locking (`F_GETLK`/`F_SETLK`).
 
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 

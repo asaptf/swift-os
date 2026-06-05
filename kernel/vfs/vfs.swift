@@ -22,10 +22,15 @@ private let errReadOnly = -30
 private let errPipe = -32
 private let errNotEmpty = -39
 
-// Open flags (our ABI; userland lib/fs.h must match).
+// Open flags (our ABI; userland lib/fs.h must match). The newlib bottom end
+// (userland/lib/newlib_syscalls.c) translates newlib's BSD-style O_* values
+// into these before the SYS_OPEN trap.
 let oWrOnly = 1
 let oRdWr = 2
 let oCreat = 0x40
+let oTrunc = 0x80
+let oAppend = 0x100
+let oCloexec = 0x200
 
 // stat st_mode type bits.
 private let sIFIFO: UInt32 = 0x1000
@@ -58,6 +63,8 @@ private struct VNode {
     var dataLen = 0
     var dataCap = 0         // tmpfs growth capacity
     var diskOffset = 0      // byte offset of contents within the disk image
+    var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
+    var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
@@ -80,6 +87,7 @@ private let pipeWriteEnd = 1
 private struct FDEntry {
     var inUse = false
     var file = -1
+    var cloexec = false   // close-on-exec (F_SETFD FD_CLOEXEC / O_CLOEXEC / F_DUPFD_CLOEXEC)
 }
 
 private struct OpenDescription {
@@ -202,19 +210,23 @@ private func le64(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt64 {
     return v
 }
 
-private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int) -> Int {
+private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
+                        _ owner: UInt32, _ mode: UInt32) -> Int {
     let n = allocNode()
     if n < 0 { return -1 }
     nodes[n].namePtr = namePtr
     nodes[n].nameLen = nameLen
     nodes[n].isDir = true
     nodes[n].readOnly = true
+    nodes[n].owner = owner
+    nodes[n].mode = mode
     linkChild(parent, n)
     return n
 }
 
 private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
-                         _ diskOffset: Int, _ dataLen: Int) {
+                         _ diskOffset: Int, _ dataLen: Int,
+                         _ owner: UInt32, _ mode: UInt32) {
     let n = allocNode()
     if n < 0 { return }
     nodes[n].namePtr = namePtr
@@ -223,6 +235,8 @@ private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
     nodes[n].onDisk = true
     nodes[n].diskOffset = diskOffset
     nodes[n].dataLen = dataLen
+    nodes[n].owner = owner
+    nodes[n].mode = mode
     linkChild(parent, n)
 }
 
@@ -274,7 +288,7 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             for i in 0..<m.count where h[i] != m[i] { magicOk = false }
         }
         if !magicOk { return false }
-        if le32(h, 8) != 1 { return false }   // version
+        if le32(h, 8) != 2 { return false }   // version (M13c: v2 adds mode+owner)
         if le32(h, 16) != 40 { return false } // entry size
 
         let entryCount = Int(le32(h, 20))
@@ -300,14 +314,16 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             let kind = le32(e, 8)
             let dOff = Int(le64(e, 16))
             let dLen = Int(le64(e, 24))
+            let mode = le32(e, 32)
+            let owner = le32(e, 36)
             if pathLen <= 0 || stringsBase + pathOff + pathLen > metaLen { continue }
             let pathPtr = meta + stringsBase + pathOff
             let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
             if parent < 0 || leafLen <= 0 { continue }
             if kind == 1 {
-                _ = addDiskDir(parent, leafPtr, leafLen)
+                _ = addDiskDir(parent, leafPtr, leafLen, owner, mode)
             } else if kind == 2 {
-                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen)
+                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen, owner, mode)
             }
         }
         return true
@@ -375,6 +391,20 @@ func vfsProcessCloseAll(slot: Int) {
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
         if fds[idx].inUse {
+            releaseDescription(fds[idx].file)
+            fds[idx] = FDEntry()
+        }
+    }
+}
+
+/// Close the slot's close-on-exec descriptors. Called from execve: POSIX closes
+/// FD_CLOEXEC fds across exec, so the shell's relocated/redirect-saved fds (ash
+/// duplicates them above 10 with F_DUPFD_CLOEXEC) do not leak into the new image.
+func vfsCloseCloexec(slot: Int) {
+    if slot < 0 || slot >= maxVFSProcesses { return }
+    for fd in 0..<maxFDs {
+        let idx = fdIndex(slot, fd)
+        if fds[idx].inUse && fds[idx].cloexec {
             releaseDescription(fds[idx].file)
             fds[idx] = FDEntry()
         }
@@ -552,6 +582,10 @@ private func createTmpNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
     if !setNameCopy(n, namePtr, nameLen) { return -1 }
     nodes[n].isDir = isDir
     nodes[n].readOnly = false
+    // M13c: a tmpfs node is owned by the principal that created it, so `ls -l`
+    // reflects who wrote the file (the live login context, not always root).
+    nodes[n].owner = processCurrentPrincipal()
+    nodes[n].mode = isDir ? 0o755 : 0o644
     if !isDir {
         let cap = 4096
         guard let dataBuf = swiftos_kernel_alloc(UInt(cap), 16) else { return -1 }
@@ -624,6 +658,12 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
         }
     }
 
+    // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
+    // Base/disk files are read-only, so truncation never applies to them.
+    if (f & oTrunc) != 0 && !nodes[node].isDir && !nodes[node].readOnly {
+        nodes[node].dataLen = 0
+    }
+
     let proc = currentVFSProcess()
     let fd = allocFDInProcess(proc)
     if fd == -1 { return errNoSpace }
@@ -632,12 +672,14 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
 
     openDescriptions[d].kind = fdKindVNode
     openDescriptions[d].node = node
-    openDescriptions[d].offset = 0
+    // O_APPEND starts the offset at end-of-file (shell `>>` redirects).
+    openDescriptions[d].offset = (f & oAppend) != 0 ? nodes[node].dataLen : 0
     openDescriptions[d].dirCursor = 0
     openDescriptions[d].flags = f
     openDescriptions[d].readable = (f & oWrOnly) == 0 || (f & oRdWr) != 0
     openDescriptions[d].writable = (f & oWrOnly) != 0 || (f & oRdWr) != 0
     installDescription(proc, fd, d)
+    if (f & oCloexec) != 0 { fds[fdIndex(proc, fd)].cloexec = true }
     return fd
 }
 
@@ -803,6 +845,50 @@ func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     return newfd
 }
 
+// fcntl(fd, cmd, arg). Command numbers match newlib's <fcntl.h>. The busybox
+// shell needs F_DUPFD_CLOEXEC to save/restore descriptors around every redirect
+// (ash duplicates the fd above 10, then restores with dup2 + close). An unknown
+// command MUST return a negative error: ash treats a non-negative result as the
+// duplicated fd, so returning 0 for an unhandled command makes it close fd 0
+// (stdin) on restore — that is exactly what broke the shell after a redirect.
+private let fDupFD = 0
+private let fGetFD = 1
+private let fSetFD = 2
+private let fGetFL = 3
+private let fSetFL = 4
+private let fDupFDCloexec = 14
+private let fdCloexecFlag = 1
+
+func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    switch cmd {
+    case fDupFD, fDupFDCloexec:
+        // Duplicate to the lowest free descriptor >= arg (shares the open
+        // description, like dup). F_DUPFD_CLOEXEC additionally marks the new fd
+        // close-on-exec.
+        let start = arg < 0 ? 0 : arg
+        let newfd = allocFDInProcess(proc, from: start)
+        if newfd == -1 { return errNoSpace }
+        let d = fdEntry(proc, fd).file
+        retainDescription(d)
+        installDescription(proc, newfd, d)
+        if cmd == fDupFDCloexec { fds[fdIndex(proc, newfd)].cloexec = true }
+        return newfd
+    case fGetFD:
+        return fdEntry(proc, fd).cloexec ? fdCloexecFlag : 0
+    case fSetFD:
+        fds[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
+        return 0
+    case fGetFL:
+        return openDescriptions[fdEntry(proc, fd).file].flags
+    case fSetFL:
+        return 0
+    default:
+        return errInvalid
+    }
+}
+
 func vfsPipe(fdsVA: UInt) -> Int {
     guard let out = userWritableBuffer(fdsVA, 8) else { return errInvalid }
     let proc = currentVFSProcess()
@@ -857,12 +943,20 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     return next
 }
 
-private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int) -> Int {
-    guard let p8 = userWritableBuffer(va, 16) else { return errInvalid }
+// Kernel stat record (kstat) the newlib/Swift bottom ends translate into their
+// own struct stat. 24-byte little-endian layout (M13c widened it from 16):
+//   off 0  u32 mode    off 4  u32 uid    off 8  u64 size
+//   off 16 u32 gid     off 20 u32 nlink
+// The first 16 bytes are unchanged, so older 16-byte readers stay valid.
+private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int,
+                           uid: UInt32 = 1, gid: UInt32 = 1, nlink: UInt32 = 1) -> Int {
+    guard let p8 = userWritableBuffer(va, 24) else { return errInvalid }
     let p = UnsafeMutableRawPointer(p8)
     p.storeBytes(of: mode, toByteOffset: 0, as: UInt32.self)
-    p.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
+    p.storeBytes(of: uid, toByteOffset: 4, as: UInt32.self)
     p.storeBytes(of: UInt64(size), toByteOffset: 8, as: UInt64.self)
+    p.storeBytes(of: gid, toByteOffset: 16, as: UInt32.self)
+    p.storeBytes(of: nlink, toByteOffset: 20, as: UInt32.self)
     return 0
 }
 
@@ -879,9 +973,14 @@ private func nodeIsExecutable(_ node: Int) -> Bool {
 }
 
 private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
-    let perms: UInt32 = nodes[node].isDir ? 0o755 : (nodeIsExecutable(node) ? 0o755 : 0o644)
+    // Prefer the node's stored permission bits (disk image / tmpfs); fall back
+    // to the heuristic for compiled-in literals, which carry no mode (0).
+    let perms: UInt32 = nodes[node].mode != 0
+        ? nodes[node].mode
+        : (nodes[node].isDir ? 0o755 : (nodeIsExecutable(node) ? 0o755 : 0o644))
     let mode: UInt32 = (nodes[node].isDir ? sIFDIR : sIFREG) | perms
-    return writeStatMode(va, mode, nodes[node].dataLen)
+    let owner = nodes[node].owner
+    return writeStatMode(va, mode, nodes[node].dataLen, uid: owner, gid: owner)
 }
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
@@ -895,8 +994,9 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
     let file = openDescriptions[fdEntry(proc, fd).file]
-    if file.kind == fdKindTTY { return writeStatMode(statbuf, sIFCHR | 0o666, 0) }
-    if file.kind == fdKindPipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0) }
+    let me = processCurrentPrincipal()
+    if file.kind == fdKindTTY { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me) }
+    if file.kind == fdKindPipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me) }
     if file.kind == fdKindVNode { return writeStatNode(statbuf, file.node) }
     return errBadFD
 }

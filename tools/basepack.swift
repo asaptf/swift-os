@@ -11,7 +11,7 @@
 import Foundation
 
 private let magic = Array("SWOSBASE".utf8)
-private let version: UInt32 = 1
+private let version: UInt32 = 2   // v2 (M13c): per-entry mode + owner are meaningful
 private let headerSize: UInt32 = 64
 private let entrySize: UInt32 = 40
 private let kindDir: UInt32 = 1
@@ -20,9 +20,15 @@ private let kindFile: UInt32 = 2
 private struct Entry {
     let path: String
     let kind: UInt32
-    let mode: UInt32
+    let mode: UInt32   // permission bits (e.g. 0o755 / 0o644)
+    let owner: UInt32  // owning principal id (1 = root)
     let data: Data
 }
+
+// Every base-image file is owned by the root principal. Non-root ownership is
+// demonstrated at runtime by tmpfs files, which the kernel stamps with the
+// creating principal (see kernel/vfs/vfs.swift createTmpNode).
+private let rootOwner: UInt32 = 1
 
 private func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("basepack: \(message)\n".utf8))
@@ -66,10 +72,15 @@ private func collectEntries(root: URL) -> [Entry] {
 
         let values = try! url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
         if values.isDirectory == true {
-            entries.append(Entry(path: rel, kind: kindDir, mode: 0o555, data: Data()))
+            entries.append(Entry(path: rel, kind: kindDir, mode: 0o755, owner: rootOwner, data: Data()))
         } else if values.isRegularFile == true {
             let data = try! Data(contentsOf: url)
-            entries.append(Entry(path: rel, kind: kindFile, mode: 0o444, data: data))
+            // `/bin/*` are programs (rwxr-xr-x); everything else is rw-r--r--.
+            // Keyed on the path rather than the host execute bit, which cp/git
+            // do not reliably preserve for the staged ELFs.
+            let isExec = rel.hasPrefix("bin/")
+            entries.append(Entry(path: rel, kind: kindFile, mode: isExec ? 0o755 : 0o644,
+                                 owner: rootOwner, data: data))
         }
     }
 
@@ -126,7 +137,7 @@ private func pack(root: URL, output: URL) {
         appendLE64(&out, dataOffsets[i])
         appendLE64(&out, UInt64(entry.data.count))
         appendLE32(&out, entry.mode)
-        appendLE32(&out, 0)
+        appendLE32(&out, entry.owner)
     }
     out.append(strings)
     out.append(payload)

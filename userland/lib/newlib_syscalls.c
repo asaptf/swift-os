@@ -34,8 +34,15 @@ static long sys3(long n, long a0, long a1, long a2) {
     return x0;
 }
 
-// Kernel stat layout (kernel/vfs/vfs.swift): u32 mode, u32 pad, u64 size.
-struct kstat { unsigned int mode; unsigned int pad; unsigned long size; };
+// Kernel stat layout (kernel/vfs/vfs.swift writeStatMode), 24 bytes:
+//   u32 mode, u32 uid, u64 size, u32 gid, u32 nlink.
+struct kstat {
+    unsigned int mode;
+    unsigned int uid;
+    unsigned long size;
+    unsigned int gid;
+    unsigned int nlink;
+};
 
 char *__env[1] = { 0 };
 char **environ = __env;
@@ -53,9 +60,28 @@ int _write(int fd, const char *buf, int len) { return (int)sys3(SYS_WRITE, fd, (
 
 _off_t _lseek(int fd, _off_t off, int whence) { return (_off_t)sys3(SYS_LSEEK, fd, off, whence); }
 
+// Translate newlib's BSD-style open flags into the kernel ABI (kernel/vfs/
+// vfs.swift). The access mode bits (O_RDONLY 0, O_WRONLY 1, O_RDWR 2) already
+// match; only the create/truncate/append bits differ.
+#define NL_O_CREAT 0x0200
+#define NL_O_TRUNC 0x0400
+#define NL_O_APPEND 0x0008
+#define NL_O_CLOEXEC 0x40000
+#define K_O_CREAT 0x40
+#define K_O_TRUNC 0x80
+#define K_O_APPEND 0x100
+#define K_O_CLOEXEC 0x200
+
 int _open(const char *path, int flags, int mode) {
     (void)mode;
-    return (int)sys3(SYS_OPEN, (long)path, flags, 0);
+    int k = flags & 0x3;                       // RDONLY/WRONLY/RDWR
+    if (flags & NL_O_CREAT)   k |= K_O_CREAT;
+    if (flags & NL_O_TRUNC)   k |= K_O_TRUNC;
+    if (flags & NL_O_APPEND)  k |= K_O_APPEND;
+    if (flags & NL_O_CLOEXEC) k |= K_O_CLOEXEC;
+    long r = sys3(SYS_OPEN, (long)path, k, 0);
+    if (r < 0) { errno = (int)-r; return -1; }
+    return (int)r;
 }
 
 int _isatty(int fd) { return fd < 3 ? 1 : 0; }
@@ -69,12 +95,18 @@ void *_sbrk(int incr) { return (void *)sys3(SYS_SBRK, incr, 0, 0); }
 int _fstat(int fd, struct stat *st) {
     if (fd < 3) {            // stdin/out/err are the console (a char device)
         st->st_mode = S_IFCHR;
+        st->st_uid = 0;
+        st->st_gid = 0;
+        st->st_nlink = 1;
         return 0;
     }
     struct kstat k;
     if (sys3(SYS_FSTAT, fd, (long)&k, 0) != 0) { errno = EBADF; return -1; }
     st->st_mode = k.mode ? k.mode : S_IFREG;
     st->st_size = (off_t)k.size;
+    st->st_uid = k.uid;
+    st->st_gid = k.gid;
+    st->st_nlink = k.nlink ? k.nlink : 1;
     return 0;
 }
 
@@ -83,6 +115,9 @@ int _stat(const char *path, struct stat *st) {
     if (sys3(SYS_STAT, (long)path, (long)&k, 0) != 0) { errno = ENOENT; return -1; }
     st->st_mode = k.mode;
     st->st_size = (off_t)k.size;
+    st->st_uid = k.uid;
+    st->st_gid = k.gid;
+    st->st_nlink = k.nlink ? k.nlink : 1;
     return 0;
 }
 

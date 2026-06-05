@@ -129,9 +129,28 @@ M12 is now underway.
 - **M13b — DONE (2026-06-05):** the path-based tmpfs mutations (`unlink`/`mkdir`/`rmdir`/`rename`) now also
   require `capTmpWrite` (they bypass `vfsOpen`); `ftruncate`/`write` were already covered via the
   writable-fd check. Closes the namespace-mutation gap left by M13a.
-- **Next (M13 follow-ups):** per-file ownership/ACLs and an `ls -l`-style view; enforce on the
-  write/read syscalls (not just open) once contexts can change mid-fd; richer principals.
-  (A stronger password KDF with iteration/memory hardening also remains a later refinement.)
+- **M13c — DONE (2026-06-05):** per-file ownership + a real `ls -l` view. Each vnode carries an
+  `owner` principal and `mode`; disk nodes take them from the SWOSBASE image (bumped to **format v2**,
+  which now uses the entry's mode + a new owner field), and tmpfs nodes are stamped with the creating
+  principal. The kernel `kstat` widened 16→24 bytes (mode/uid/size/gid/nlink); `newlib_syscalls.c`
+  translates into newlib's `struct stat` (so the kernel never hardcodes that ABI). busybox `ls -l`
+  resolves owner/group names via compat `getpwuid`/`getgrgid` reading `/etc/passwd` + the new
+  `/etc/group` (`FEATURE_LS_USERNAME`/`FEATURE_LS_SORTFILES`/`MKDIR` enabled — **busybox rebuild
+  required**). Also fixed a latent open-flag ABI bug: `_open` now translates newlib's BSD `O_CREAT`/
+  `O_TRUNC` into the kernel ABI, so busybox file creation (and `vi`'s save) actually works.
+  `tests/ls_l_test.sh`: root sees root-owned base files; a `user` session's `mkdir /tmp/d` is owned by
+  user.
+- **Shell redirection + `fcntl` — DONE (2026-06-05):** `echo > file`, `>>`, and pipe-into-redirect now
+  work and the interactive shell survives them. `SYS_FCNTL` (34) → `vfsFcntl` handles
+  `F_DUPFD`/`F_DUPFD_CLOEXEC`/`F_GETFD`/`F_SETFD`/`F_GETFL` with a per-fd close-on-exec flag honored at
+  `execve`; a strong `fcntl` in compat/stubs.c overrides newlib's ENOSYS stub. The M13c revert's root
+  cause was that `F_DUPFD_CLOEXEC`=14 (≠ `F_DUPFD`=0) fell through to a `return 0`, so ash closed stdin;
+  the `default` case now returns an error. `tests/redirect_test.sh` proves it; `vi_test` hardened to a
+  clean-line check.
+- **Next (M13 follow-ups):** enforce on the write/read syscalls (not just open) once contexts can
+  change mid-fd; a host-side ownership manifest for non-root *base* files; real mtimes/clock;
+  `chown`/`chmod`; richer principals. (A stronger password KDF also remains a later refinement.)
+- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os; more Swift utilities.
 
 ## Post-roadmap (M0–M13 done) — going down the list
 
@@ -140,8 +159,10 @@ M12 is now underway.
   `/etc/swos/passwd` when `capFsRead` is held, else prints just the numbers (graceful under enforcement).
   Asserted in `busybox_test` (root → `principal=1(root) … caps=0x1f`) and `cap_enforce_test`
   (guest → `principal=3 … caps=0x2`, no name).
-- Remaining list to work through in order: (1) M13 follow-ups (ownership/ACL + `ls -l`); (2) own-Swift
-  sans-IO network stack; (3) native Swift apps on swift-os; (4) more Swift userland utilities.
+- Remaining list to work through in order: (1) own-Swift sans-IO network stack; (2) native Swift apps
+  on swift-os; (3) more Swift userland utilities. (M13c finished file ownership + `ls -l`; the only
+  M13 follow-ups left are write/read-time enforcement, a base-owner manifest, clock/mtimes, and
+  chown/chmod.)
 
 ## Watch-outs / loose ends
 

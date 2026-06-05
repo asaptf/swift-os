@@ -62,8 +62,12 @@ stop_qemu
 QP=""
 
 ok=1
+clean="$(sed 's/\r//' "$LOG")"
 grep -qaF $'\x1b[?1049h' "$LOG"     || { echo "FAIL: vi did not enter the alternate screen" >&2; ok=0; }
-grep -qa "hello-from-vi" "$LOG"     || { echo "FAIL: saved file content not read back (vi :wq / ftruncate)" >&2; ok=0; }
+# Match the cat output as a CLEAN line (^...$), not vi's on-screen echo of the
+# inserted text (which is embedded in cursor-positioning escapes) — so this
+# truly asserts the file was saved, not merely typed.
+grep -qE '^hello-from-vi$' <<<"$clean" || { echo "FAIL: saved file content not read back (vi :wq / ftruncate)" >&2; ok=0; }
 grep -qa "VI-DONE-MARKER" "$LOG"    || { echo "FAIL: shell did not survive vi (kernel panic in poll?)" >&2; ok=0; }
 grep -qa "panic" "$LOG"             && { echo "FAIL: kernel panic during vi" >&2; ok=0; }
 

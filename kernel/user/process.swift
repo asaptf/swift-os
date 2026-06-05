@@ -430,6 +430,9 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
+    // POSIX: close-on-exec descriptors are dropped across exec. ash relocates
+    // its saved fds above 10 with F_DUPFD_CLOEXEC and relies on this.
+    vfsCloseCloexec(slot: me)
     setProcessName(slot: me, packed: packed, argc: argc)
     frame[trapFrameSPIndex] = userSP
     frame[trapFrameELRIndex] = entry
@@ -479,6 +482,13 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
 /// (no active process) is fully privileged.
 func processCurrentCaps() -> UInt64 {
     currentProc >= 0 ? pCaps[currentProc] : ~UInt64(0)
+}
+
+/// The principal id of the running process (M13c). Used by the VFS to stamp the
+/// owner on tmpfs nodes it creates. The kernel itself (no active process) acts
+/// as the boot/root principal 1.
+func processCurrentPrincipal() -> UInt32 {
+    currentProc >= 0 ? pPrincipal[currentProc] : 1
 }
 
 func processSecurityInfo(buffer: UInt) -> Int {

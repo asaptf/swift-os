@@ -423,6 +423,8 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
+	./tests/ls_l_test.sh
+	./tests/redirect_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh

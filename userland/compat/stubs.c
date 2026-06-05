@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -50,10 +51,23 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_MKDIR 29
 #define SYS_RMDIR 30
 #define SYS_FTRUNCATE 33
+#define SYS_FCNTL 34
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
     return (int)r;
+}
+
+// newlib's fcntl (sysfcntl.o) is a hard ENOSYS stub that never reaches a syscall
+// stub, so override the symbol here (strong, pulled before libc). The busybox
+// shell saves/restores descriptors around redirects with F_DUPFD_CLOEXEC; the
+// kernel handles the command set (kernel/vfs/vfs.swift vfsFcntl).
+int fcntl(int fd, int cmd, ...) {
+    va_list ap;
+    va_start(ap, cmd);
+    int arg = va_arg(ap, int);
+    va_end(ap);
+    return sysret(sys3(SYS_FCNTL, fd, cmd, arg));
 }
 
 // ---- process ---------------------------------------------------------------
@@ -99,17 +113,116 @@ W pid_t getpgrp(void) { return 1; }
 W pid_t getpgid(pid_t p) { (void)p; return 1; }
 W pid_t tcgetpgrp(int fd) { (void)fd; return 1; }
 W int tcsetpgrp(int fd, pid_t pgrp) { (void)fd; (void)pgrp; return 0; }
+// newlib has no getpagesize; libbb/procps.c and coreutils/dd.c reference it.
+W int getpagesize(void) { return 4096; }
+// No on-disk mode bits to change: base files are read-only and tmpfs nodes get
+// their mode at creation (kernel/vfs/vfs.swift). busybox mkdir chmod()s the new
+// directory to the requested mode; accepting it as a no-op leaves the kernel's
+// 0755 default, which is what mkdir wants anyway.
+W int chmod(const char *path, mode_t m) { (void)path; (void)m; return 0; }
+W int fchmod(int fd, mode_t m) { (void)fd; (void)m; return 0; }
 
-// ---- passwd / group (minimal "root") --------------------------------------
-static struct passwd g_root_pw = { (char *)"root", (char *)"x", 0, 0, (char *)"root", (char *)"/", (char *)"/bin/sh" };
-W struct passwd *getpwuid(uid_t uid) { (void)uid; return &g_root_pw; }
-W struct passwd *getpwnam(const char *name) { (void)name; return &g_root_pw; }
+// ---- passwd / group (resolved from /etc/passwd + /etc/group) ---------------
+// busybox `ls -l` (FEATURE_LS_USERNAME) maps st_uid/st_gid to names via these.
+// We parse the generated compat views so owners show as "root"/"user"/… ; an
+// unknown id returns NULL and busybox falls back to printing the number.
+
+// Copy at most cap-1 bytes of [s, end) into dst and NUL-terminate.
+static void copy_field(char *dst, size_t cap, const char *s, const char *end) {
+    size_t n = (size_t)(end - s);
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, s, n);
+    dst[n] = 0;
+}
+
+// Split a colon-delimited line in place into up to max fields (pointers into
+// the line buffer); returns the field count. Trailing newline is trimmed.
+static int split_colon(char *line, char **fields, int max) {
+    int n = 0;
+    char *p = line;
+    fields[n++] = p;
+    while (*p && n < max) {
+        if (*p == ':') { *p = 0; fields[n++] = p + 1; }
+        p++;
+    }
+    // Trim newline from the last field.
+    for (char *q = fields[n - 1]; *q; q++) {
+        if (*q == '\n' || *q == '\r') { *q = 0; break; }
+    }
+    return n;
+}
+
+static struct passwd g_pw;
+static char g_pw_name[64], g_pw_dir[64], g_pw_shell[64];
+
+// Find a /etc/passwd line by uid (byUid != 0) or by name. Returns &g_pw or NULL.
+static struct passwd *pw_lookup(int byUid, uid_t uid, const char *name) {
+    FILE *f = fopen("/etc/passwd", "r");
+    if (!f) return 0;
+    char line[256];
+    struct passwd *res = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *fl[7];
+        if (split_colon(line, fl, 7) < 4) continue;   // name:passwd:uid:gid:...
+        char *endp;
+        long fuid = strtol(fl[2], &endp, 10);
+        int match = byUid ? (fuid == (long)uid) : (strcmp(fl[0], name) == 0);
+        if (!match) continue;
+        copy_field(g_pw_name, sizeof(g_pw_name), fl[0], fl[0] + strlen(fl[0]));
+        g_pw.pw_name = g_pw_name;
+        g_pw.pw_passwd = (char *)"x";
+        g_pw.pw_uid = (uid_t)fuid;
+        g_pw.pw_gid = (gid_t)strtol(fl[3], &endp, 10);
+        g_pw.pw_comment = (char *)"";
+        g_pw.pw_gecos = (char *)"";
+        g_pw.pw_dir = g_pw_dir; g_pw_dir[0] = 0;
+        g_pw.pw_shell = g_pw_shell; g_pw_shell[0] = 0;
+        res = &g_pw;
+        break;
+    }
+    fclose(f);
+    return res;
+}
+
+W struct passwd *getpwuid(uid_t uid) { return pw_lookup(1, uid, 0); }
+W struct passwd *getpwnam(const char *name) { return pw_lookup(0, 0, name); }
 W struct passwd *getpwent(void) { return 0; }
 W void setpwent(void) {}
 W void endpwent(void) {}
-static struct group g_root_gr = { (char *)"root", (char *)"x", 0, 0 };
-W struct group *getgrgid(gid_t gid) { (void)gid; return &g_root_gr; }
-W struct group *getgrnam(const char *name) { (void)name; return &g_root_gr; }
+
+static struct group g_gr;
+static char g_gr_name[64];
+static char *g_gr_mem[1] = { 0 };
+
+// Find an /etc/group line by gid (byGid != 0) or by name. Returns &g_gr or NULL.
+static struct group *gr_lookup(int byGid, gid_t gid, const char *name) {
+    FILE *f = fopen("/etc/group", "r");
+    if (!f) return 0;
+    char line[256];
+    struct group *res = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *fl[4];
+        if (split_colon(line, fl, 4) < 3) continue;    // name:passwd:gid:members
+        char *endp;
+        long fgid = strtol(fl[2], &endp, 10);
+        int match = byGid ? (fgid == (long)gid) : (strcmp(fl[0], name) == 0);
+        if (!match) continue;
+        copy_field(g_gr_name, sizeof(g_gr_name), fl[0], fl[0] + strlen(fl[0]));
+        g_gr.gr_name = g_gr_name;
+        g_gr.gr_passwd = (char *)"x";
+        g_gr.gr_gid = (gid_t)fgid;
+        g_gr.gr_mem = g_gr_mem;
+        res = &g_gr;
+        break;
+    }
+    fclose(f);
+    return res;
+}
+
+W struct group *getgrgid(gid_t gid) { return gr_lookup(1, gid, 0); }
+W struct group *getgrnam(const char *name) { return gr_lookup(0, 0, name); }
 W struct group *getgrent(void) { return 0; }
 W void setgrent(void) {}
 W void endgrent(void) {}

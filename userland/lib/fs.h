@@ -18,10 +18,13 @@
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 
+// Mirrors the kernel kstat record (kernel/vfs/vfs.swift writeStatMode), 24 bytes.
 struct stat {
     unsigned int st_mode;
-    unsigned int st_pad;
+    unsigned int st_uid;
     unsigned long st_size;
+    unsigned int st_gid;
+    unsigned int st_nlink;
 };
 
 struct dirent {

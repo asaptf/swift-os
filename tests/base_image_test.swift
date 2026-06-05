@@ -8,6 +8,8 @@ private let kindFile: UInt32 = 2
 struct ParsedEntry {
     let path: String
     let kind: UInt32
+    let mode: UInt32
+    let owner: UInt32
     let data: Data
 }
 
@@ -35,7 +37,7 @@ private func parse(_ data: Data) -> [ParsedEntry] {
     guard data.count >= 64 else { fail("image shorter than header") }
     let magic = String(decoding: data[0..<8], as: UTF8.self)
     guard magic == "SWOSBASE" else { fail("bad magic \(magic)") }
-    guard le32(data, 8) == 1 else { fail("bad version") }
+    guard le32(data, 8) == 2 else { fail("bad version") }
     let headerSize = Int(le32(data, 12))
     let entrySize = Int(le32(data, 16))
     let entryCount = Int(le32(data, 20))
@@ -55,13 +57,15 @@ private func parse(_ data: Data) -> [ParsedEntry] {
         let kind = le32(data, off + 8)
         let fileOff = Int(le64(data, off + 16))
         let fileLen = Int(le64(data, off + 24))
+        let mode = le32(data, off + 32)
+        let owner = le32(data, off + 36)
         guard pathOff + pathLen < stringsSize else { fail("path out of bounds") }
         guard fileOff + fileLen <= dataSize else { fail("file out of bounds") }
 
         let pathStart = stringsOffset + pathOff
         let path = String(decoding: data[pathStart..<(pathStart + pathLen)], as: UTF8.self)
         let bytes = data[(dataOffset + fileOff)..<(dataOffset + fileOff + fileLen)]
-        entries.append(ParsedEntry(path: path, kind: kind, data: Data(bytes)))
+        entries.append(ParsedEntry(path: path, kind: kind, mode: mode, owner: owner, data: Data(bytes)))
     }
     return entries
 }
@@ -99,5 +103,15 @@ for exe in [busybox, identitydemo, ps] {
         fail("\(exe.path) is not an ELF")
     }
 }
+
+// M13c: per-entry mode + owner. Base files are root-owned; /bin/* are
+// executable (0o755) and text files are 0o644; directories are 0o755.
+for e in entries {
+    guard e.owner == 1 else { fail("\(e.path) owner \(e.owner), expected 1 (root)") }
+}
+guard busybox.mode == 0o755 else { fail("busybox mode \(String(busybox.mode, radix: 8)), expected 755") }
+guard ps.mode == 0o755 else { fail("ps mode \(String(ps.mode, radix: 8)), expected 755") }
+guard motd.mode == 0o644 else { fail("motd mode \(String(motd.mode, radix: 8)), expected 644") }
+guard require("bin", kindDir).mode == 0o755 else { fail("bin dir mode, expected 755") }
 
 print("PASS: packed base image format is readable and deterministic")
