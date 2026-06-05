@@ -268,6 +268,50 @@ private func runPsDemo() {
     uartPuts("\n")
 }
 
+/// M11b: probe the virtio-blk disk. Bring up the block device discovered in the
+/// virtio-mmio window, read sector 0, and report it. When the attached disk is a
+/// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
+/// recognise here — the M11c on-disk filesystem will build on this read path.
+private func runVirtioBlkProbe() {
+    let cap = virtio_blk_init(UInt64(platform.virtioMmioBase),
+                              UInt64(platform.virtioMmioStride),
+                              platform.virtioMmioCount)
+    if cap == 0 {
+        uartPuts("M11b: no virtio-blk disk attached\n")
+        return
+    }
+    uartPuts("M11b: virtio-blk disk, capacity ")
+    uartPutUInt(cap)
+    uartPuts(" sectors\n")
+
+    var sector = [UInt8](repeating: 0, count: 512)
+    let rc = sector.withUnsafeMutableBytes { raw -> Int32 in
+        virtio_blk_read(0, raw.baseAddress)
+    }
+    if rc != 0 {
+        uartPuts("M11b: sector 0 read failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rc)))
+        uartPuts("\n")
+        return
+    }
+
+    let magic: StaticString = "SWOSBASE"
+    var isBase = true
+    magic.withUTF8Buffer { m in
+        for i in 0..<m.count where sector[i] != m[i] { isBase = false }
+    }
+    if isBase {
+        uartPuts("M11b OK: sector 0 read from disk, SWOSBASE magic verified\n")
+    } else {
+        uartPuts("M11b: sector 0 read from disk, first bytes ")
+        for i in 0..<8 {
+            uartPutHex(UInt(sector[i]))
+            uartPutc(0x20)
+        }
+        uartPuts("\n")
+    }
+}
+
 private func runShell() {
     uartPuts("swift-os M8: launching busybox sh\n")
     // Keep the system usable: if the shell exits (Ctrl-D / `exit`), start a
@@ -452,6 +496,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     if windowKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }
+    runVirtioBlkProbe() // M11b: read sector 0 from the virtio-blk disk, if any
     enable_irq()
 
     if windowKeyboard {

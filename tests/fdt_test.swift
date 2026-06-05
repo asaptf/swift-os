@@ -43,6 +43,11 @@ struct FdtTest {
             check(info.gicDist == 0x0800_0000, "gic dist 0x8000000, got 0x\(String(info.gicDist, radix: 16))")
             check(info.gicCpu == 0x0801_0000, "gic cpu 0x8010000, got 0x\(String(info.gicCpu, radix: 16))")
 
+            check(info.haveVirtio, "should find virtio-mmio transport slots")
+            check(info.virtioBase == 0x0A00_0000, "virtio base 0xa000000, got 0x\(String(info.virtioBase, radix: 16))")
+            check(info.virtioStride == 0x200, "virtio stride 0x200, got 0x\(String(info.virtioStride, radix: 16))")
+            check(info.virtioCount == 32, "virtio slot count 32, got \(info.virtioCount)")
+
             print("PASS: fdt parser extracted the QEMU virt hardware map")
         }
     }

@@ -18,10 +18,14 @@ Working notes for picking up swift-os development. Authoritative milestone histo
   - **Blocker:** VirtualBox's ARM EFI does not launch `\EFI\BOOT\BOOTAA64.EFI` from our GPT/ESP — no
     output at all on real VBox, so the port is unconfirmed there. This is a VBox-side boot problem,
     independent of the kernel.
-- **M11 — STARTED.** M11a done: packed base-image format (`SWOSBASE`), host packer (`tools/basepack.swift`,
-  `make base-image` → `build/base.img`), and `tests/base_image_test.swift`. No kernel-side disk reading yet.
+- **M11 — IN PROGRESS.** M11a done: packed base-image format (`SWOSBASE`), host packer
+  (`tools/basepack.swift`, `make base-image` → `build/base.img`), `tests/base_image_test.swift`.
+  **M11b — DONE (2026-06-05):** HAL discovers the virtio-mmio bank from the DTB; a polled virtio 1.0 MMIO
+  block driver (`kernel/drivers/virtio_blk.c`) reads 512-byte sectors. Boot probe reads sector 0 and
+  verifies the `SWOSBASE` magic; `tests/virtio_blk_test.sh` in `make test`. **Next: M11c.**
 - **Off critical path (done opportunistically):** EFI GOP framebuffer console + virtio-input keyboard +
-  graphical QEMU target; documented direction for an own-Swift sans-IO network stack (future).
+  graphical QEMU target; a blinking block cursor with arrow-key/Home/End/Delete line editing in the tty
+  (kernel-side, since busybox editing is off); documented direction for an own-Swift sans-IO network stack.
 
 Sanity check at session start:
 ```sh
@@ -34,12 +38,13 @@ make BOARD=virtualbox disk-run     # VBox-variant kernel boots under QEMU UEFI
 Track A (VirtualBox) needs a GUI hypervisor and the user's machine; Track B (M11) can be done entirely
 here and advances the roadmap. **Prioritize M11.**
 
-### M11b — virtio-blk driver
-- Discover the virtio-mmio block device via the M9 HAL (parse `virtio,mmio` nodes from the DTB; QEMU
-  `virt` exposes them — add their reg/IRQ to `Platform`).
-- Minimal virtio 1.0 MMIO block driver: feature negotiation, one virtqueue, synchronous read of 512-byte
-  sectors. Single-threaded blocking reads are fine for a read-only base.
-- Test: read sector 0 of an attached disk and verify known bytes.
+### M11b — virtio-blk driver — DONE (2026-06-05)
+- HAL parses the `virtio,mmio` bank from the DTB (base/stride/count → `platform.virtioMmio*`).
+- `kernel/drivers/virtio_blk.c`: polled virtio 1.0 MMIO driver, feature negotiation, one request
+  virtqueue, synchronous 512-byte sector reads via a header/data/status descriptor chain.
+- `tests/virtio_blk_test.sh`: attaches `build/base.img`, reads sector 0, verifies the `SWOSBASE` magic.
+- Watch for M11c: the test (and any disk-backed boot) needs the **modern** virtio-mmio transport —
+  pass `-global virtio-mmio.force-legacy=false`; the driver only speaks v2 (version register == 2).
 
 ### M11c — serve the read-only base FS from disk
 - Attach `build/base.img` to QEMU as a second virtio-blk disk (simplest), or place it in a partition of

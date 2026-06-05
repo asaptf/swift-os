@@ -25,6 +25,10 @@
     var uartIrq: UInt32 = 33
     // EL1 physical timer PPI - architectural, not board-specific.
     var timerIrq: UInt32 = 30
+    // virtio-mmio transport window (QEMU-style layout; informational on VBox).
+    var virtioMmioBase: UInt = 0x0A00_0000
+    var virtioMmioStride: UInt = 0x200
+    var virtioMmioCount: UInt32 = 32
 #else
     // Main RAM.
     var ramBase: UInt = 0x4000_0000
@@ -37,6 +41,10 @@
     var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
     // EL1 physical timer PPI - architectural, not board-specific.
     var timerIrq: UInt32 = 30
+    // virtio-mmio transport window (QEMU virt: 32 slots of 0x200 at 0x0A000000).
+    var virtioMmioBase: UInt = 0x0A00_0000
+    var virtioMmioStride: UInt = 0x200
+    var virtioMmioCount: UInt32 = 32
 #endif
 }
 
@@ -85,6 +93,11 @@ func platformInit(_ dtbPhys: UInt) {
         platform.gicDist = info.gicDist
         platform.gicCpu = info.gicCpu
     }
+    if info.haveVirtio && info.virtioCount > 0 {
+        platform.virtioMmioBase = info.virtioBase
+        if info.virtioStride != 0 { platform.virtioMmioStride = info.virtioStride }
+        platform.virtioMmioCount = info.virtioCount
+    }
 
     uartPuts("M9 platform: ram ")
     uartPutHex(platform.ramBase)
@@ -98,6 +111,12 @@ func platformInit(_ dtbPhys: UInt) {
     uartPutHex(platform.gicDist)
     uartPuts(" / ")
     uartPutHex(platform.gicCpu)
+    if info.haveVirtio {
+        uartPuts("\nM9 platform: virtio-mmio ")
+        uartPutHex(platform.virtioMmioBase)
+        uartPuts(" x")
+        uartPutUInt(UInt64(platform.virtioMmioCount))
+    }
     uartPuts("\n")
 
     if info.haveRam && info.haveUart && info.haveGic {

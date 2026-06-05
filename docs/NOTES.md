@@ -502,6 +502,27 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Remaining M11 work: virtio-blk discovery/driver, attach `build/base.img` (or a partition/file inside
   the GPT image) as the read-only base source, and replace the static Swift VFS literals.
 
+### M11b — virtio-blk driver (DONE, 2026-06-05)
+
+- Extended the M9 HAL: the FDT reader now collects the `virtio,mmio` transport bank (lowest base,
+  per-slot stride, slot count) and `platformInit` publishes it as `platform.virtioMmio{Base,Stride,Count}`.
+  On QEMU virt that is `0x0A00_0000`, stride `0x200`, 32 slots — verified in `tests/fdt_test.swift`.
+  Note: `PlatformInfo`'s new 64-bit fields are grouped with the other pointers (32-bit fields last) so
+  the struct stays naturally aligned — the parser runs before the MMU, where a wide unaligned load faults.
+- Added `kernel/drivers/virtio_blk.c`: a minimal polled virtio 1.0 (modern, MMIO) block driver. It scans
+  the HAL window for device id 2, negotiates `VIRTIO_F_VERSION_1`, brings up one request virtqueue, reads
+  the capacity from config space, and reads 512-byte sectors via a 3-descriptor chain (header / data /
+  status), polling the used ring. Synchronous and blocking — fine for a read-only base. Cache clean/
+  invalidate around every DMA region, mirroring the virtio-input driver.
+- `runVirtioBlkProbe` (kernel/main.swift) reads sector 0 at boot and recognises the `SWOSBASE` magic; a
+  no-op (just a log line) when no block device is attached, so the `-kernel` test paths are unaffected.
+- Test: `tests/virtio_blk_test.sh` attaches `build/base.img` as a virtio-blk disk (modern transport via
+  `virtio-mmio.force-legacy=false`) and asserts sector 0 is read with its magic verified. Wired into
+  `make test`.
+- Remaining M11 work: M11c — back the read-only VFS vnodes with extents into the disk image (parse the
+  `SWOSBASE` header/entries in the kernel) and drop the static Swift VFS literals; M11d (stretch) — move
+  busybox + demos off the embedded blob.
+
 ## Open decisions / resolved
 
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).

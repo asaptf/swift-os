@@ -43,6 +43,14 @@ uint64_t fb_phys_size(void);
 int virtio_kbd_init(void);
 int virtio_kbd_getchar(void);
 
+// virtio-blk block device (kernel/drivers/virtio_blk.c). Polled, read-only,
+// 512-byte sectors. init scans the virtio-mmio window for a block device and
+// returns its capacity in sectors (0 if none). No-op without the device.
+uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count);
+int virtio_blk_available(void);
+uint64_t virtio_blk_capacity(void);
+int virtio_blk_read(uint64_t sector, void *buf);
+
 void mmu_init_identity_map(void);
 void mmu_configure_translation(void);
 void mmu_enable_sctlr(void);

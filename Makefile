@@ -155,6 +155,7 @@ STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 FB_OBJ     := $(BUILD)/fb.o
 VIRTIO_OBJ := $(BUILD)/virtio_input.o
+VIRTIO_BLK_OBJ := $(BUILD)/virtio_blk.o
 EL0_OBJ    := $(BUILD)/el0.o
 ELF_OBJ    := $(BUILD)/elf.o
 USTACK_OBJ := $(BUILD)/ustack.o
@@ -214,6 +215,9 @@ $(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(VIRTIO_OBJ): kernel/drivers/virtio_input.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(VIRTIO_BLK_OBJ): kernel/drivers/virtio_blk.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -335,7 +339,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(VIRTIO_BLK_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -362,6 +366,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
+	./tests/virtio_blk_test.sh
 	./tests/busybox_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 

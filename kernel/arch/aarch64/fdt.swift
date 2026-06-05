@@ -27,6 +27,7 @@ private let platformInfoHaveRam: UInt32 = 1 << 1
 private let platformInfoHaveUart: UInt32 = 1 << 2
 private let platformInfoHaveUartIrq: UInt32 = 1 << 3
 private let platformInfoHaveGic: UInt32 = 1 << 4
+private let platformInfoHaveVirtio: UInt32 = 1 << 5
 
 /// Hardware constants discovered from the device tree. Fields are only valid
 /// when their matching `have*` flag is set; the caller keeps its defaults
@@ -41,7 +42,17 @@ struct PlatformInfo {
     var gicDist: UInt = 0
     var gicCpu: UInt = 0
     var uartBase: UInt = 0
+    // virtio-mmio device window. QEMU virt exposes a contiguous bank of
+    // identical "virtio,mmio" transport slots; we capture the lowest base, the
+    // per-slot stride (each reg size), and how many slots there are so the
+    // block driver can scan the bank for the device it wants.
+    var virtioBase: UInt = 0
+    var virtioStride: UInt = 0
+    // 32-bit fields grouped after the pointers: the parser runs before the MMU
+    // is enabled (RAM is Device-typed then), so the layout must stay naturally
+    // aligned or a wide unaligned load would fault.
     var uartIrq: UInt32 = 0
+    var virtioCount: UInt32 = 0
     private var flags: UInt32 = 0
 
     var valid: Bool {
@@ -64,6 +75,10 @@ struct PlatformInfo {
         get { (flags & platformInfoHaveGic) != 0 }
         set { setFlag(platformInfoHaveGic, newValue) }
     }
+    var haveVirtio: Bool {
+        get { (flags & platformInfoHaveVirtio) != 0 }
+        set { setFlag(platformInfoHaveVirtio, newValue) }
+    }
 
     private mutating func setFlag(_ flag: UInt32, _ enabled: Bool) {
         if enabled {
@@ -80,6 +95,9 @@ struct PlatformInfo {
         gicDist = 0
         gicCpu = 0
         uartIrq = 0
+        virtioBase = 0
+        virtioStride = 0
+        virtioCount = 0
         flags = 0
     }
 }
@@ -217,6 +235,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     var devIsMemory = false
     var devIsPl011 = false
     var devIsGic = false
+    var devIsVirtio = false
     var devRegPtr: UnsafePointer<UInt8>? = nil
     var devIrqPtr: UnsafePointer<UInt8>? = nil
     var devIrqLen = 0
@@ -238,6 +257,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                 devIsMemory = nameStartsWith(namePtr, "memory")
                 devIsPl011 = false
                 devIsGic = false
+                devIsVirtio = false
                 devRegPtr = nil
                 devIrqPtr = nil
                 devIrqLen = 0
@@ -249,7 +269,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
         if token == fdtEndNode {
             if depth == 2 && inDevice {
                 finalizeDevice(&info, addrCells, sizeCells,
-                               devIsMemory, devIsPl011, devIsGic,
+                               devIsMemory, devIsPl011, devIsGic, devIsVirtio,
                                devRegPtr, devIrqPtr, devIrqLen)
                 inDevice = false
             }
@@ -281,6 +301,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                         if compatibleHas(valPtr, len, "arm,pl011") { devIsPl011 = true }
                         if compatibleHas(valPtr, len, "arm,cortex-a15-gic") ||
                            compatibleHas(valPtr, len, "arm,gic-400") { devIsGic = true }
+                        if compatibleHas(valPtr, len, "virtio,mmio") { devIsVirtio = true }
                     } else if cstrEquals(propName, "interrupts") {
                         devIrqPtr = valPtr
                         devIrqLen = len
@@ -300,6 +321,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
 private func finalizeDevice(_ info: inout PlatformInfo,
                             _ addrCells: Int, _ sizeCells: Int,
                             _ isMemory: Bool, _ isPl011: Bool, _ isGic: Bool,
+                            _ isVirtio: Bool,
                             _ regPtr: UnsafePointer<UInt8>?,
                             _ irqPtr: UnsafePointer<UInt8>?, _ irqLen: Int) {
     if isMemory, let rp = regPtr {
@@ -327,5 +349,14 @@ private func finalizeDevice(_ info: inout PlatformInfo,
         info.haveGic = true
         info.gicDist = dist
         info.gicCpu = cpu
+    }
+    if isVirtio, let rp = regPtr {
+        // The transport slots are identical and contiguous; record the lowest
+        // base, the per-slot stride, and the slot count.
+        let (b, sz) = regPair(rp, 0, addrCells, sizeCells)
+        if !info.haveVirtio || b < info.virtioBase { info.virtioBase = b }
+        info.virtioStride = sz
+        info.virtioCount += 1
+        info.haveVirtio = true
     }
 }
