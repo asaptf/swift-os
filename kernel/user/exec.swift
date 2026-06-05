@@ -92,6 +92,9 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/ps") { return loadProgramImage("/bin/ps") }
     if userPathEquals(pathVA, "/bin/id") { return loadProgramImage("/bin/id") }
     if userPathEquals(pathVA, "/bin/ls") { return loadProgramImage("/bin/ls") }
+    if userPathEquals(pathVA, "/bin/cat") { return loadProgramImage("/bin/cat") }
+    if userPathEquals(pathVA, "/bin/echo") { return loadProgramImage("/bin/echo") }
+    if userPathEquals(pathVA, "/bin/pwd") { return loadProgramImage("/bin/pwd") }
     if userPathEquals(pathVA, "/bin/console-login") { return loadProgramImage("/bin/console-login") }
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
     // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
@@ -99,9 +102,6 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/proc/self/exe")
         || userPathEquals(pathVA, "/bin/busybox")
         || userPathEquals(pathVA, "/bin/sh")
-        || userPathEquals(pathVA, "/bin/cat")
-        || userPathEquals(pathVA, "/bin/echo")
-        || userPathEquals(pathVA, "/bin/pwd")
         || userPathEquals(pathVA, "/bin/vi") {
         return loadProgramImage("/bin/busybox")
     }

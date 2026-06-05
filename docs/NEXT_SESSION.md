@@ -154,8 +154,12 @@ M12 is now underway.
   new getdents/stat bridge, resolving owner/group names from `/etc/passwd`+`/etc/group`. Invoked by
   absolute path (`/bin/ls`) so the busybox standalone shell execs it; bare `ls` stays busybox.
   `tests/swift_ls_test.sh`. First step of "more Swift userland utilities".
-- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os; more Swift utilities
-  (e.g. `cat`/`echo`/`pwd` in Swift, then retire those busybox applets).
+- **Native Swift `cat`/`echo`/`pwd` — DONE (2026-06-05):** `userland/{cat,echo,pwd}.swift` over the
+  bridge (added `swiftos_write`/`swiftos_getcwd`); reached by absolute path, bare names stay busybox.
+  `tests/swift_coreutils_test.sh`. swift-os now has `ls`/`cat`/`echo`/`pwd`/`ps`/`id` in native Swift.
+- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os. Smaller next steps:
+  make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them);
+  more utilities (`mkdir`/`rm`/`mv` in Swift); the remaining M13 follow-ups.
 
 ## Post-roadmap (M0–M13 done) — going down the list
 

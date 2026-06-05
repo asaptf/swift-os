@@ -20,6 +20,10 @@ const char *swiftos_ps_name(int index);
 
 void swiftos_putc(unsigned char c);
 void swiftos_puts(const char *s);
+// Write count bytes to fd; returns bytes written (or negative errno).
+long swiftos_write(int fd, const void *buf, unsigned long count);
+// Current working directory into buf (size bytes); returns length or negative.
+long swiftos_getcwd(char *buf, unsigned long size);
 
 // Thin syscall bridges for Swift userland (e.g. console-login).
 int  swiftos_open(const char *path, int flags);

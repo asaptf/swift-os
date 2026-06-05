@@ -52,6 +52,14 @@ void swiftos_puts(const char *s) {
     (void)write(1, s, c_strlen(s));
 }
 
+long swiftos_write(int fd, const void *buf, unsigned long count) {
+    return write(fd, buf, count);
+}
+
+long swiftos_getcwd(char *buf, unsigned long size) {
+    return __syscall3(SYS_GETCWD, (long)buf, (long)size, 0);
+}
+
 int swiftos_open(const char *path, int flags) {
     return open(path, flags);
 }

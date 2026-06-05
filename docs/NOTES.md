@@ -750,6 +750,21 @@ ownership work entirely in Swift instead of relying on busybox.
   single-file `-rwxr-xr-x … /bin/busybox`.
 - Out of scope: multi-path args, column/wide output, sorting, `-a`/`-h`/time columns.
 
+## Native Swift `cat` / `echo` / `pwd` (DONE, 2026-06-05)
+
+Three more pure-Swift coreutils (`userland/{cat,echo,pwd}.swift`), continuing the move off busybox.
+
+- **cat** copies files (or stdin when given none) to stdout in 4 KiB chunks. **echo** prints its args
+  space-separated + newline, with `-n` to suppress the newline. **pwd** prints `getcwd()`.
+- **Bridge.** `swift_user.{h,c}` gained `swiftos_write` (over `SYS_WRITE`) and `swiftos_getcwd` (over
+  `SYS_GETCWD`).
+- **Invocation.** Like `/bin/ls`, they are reached by absolute path (`/bin/cat` …) — `exec.swift`
+  routes `/bin/{cat,echo,pwd}` to the packed disk ELFs (removed from the busybox-applet fallback). A
+  bare `cat`/`echo`/`pwd` stays the busybox applet/ash builtin, so existing tests are unaffected.
+- **Test.** `tests/swift_coreutils_test.sh` (wired into `make test`): `/bin/echo` prints args,
+  `/bin/cat /etc/motd` prints the motd, `cd /etc; /bin/pwd` → `/etc` (proves getcwd + cwd inheritance
+  across execve), and `/bin/echo -n` suppresses the newline.
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
