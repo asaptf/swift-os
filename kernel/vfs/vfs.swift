@@ -832,8 +832,21 @@ private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int) -> Int {
     return 0
 }
 
+// Files under /bin are programs: report the execute bit so a shell's PATH
+// lookup (newlib access(X_OK) → stat) treats them as runnable. Their contents
+// are placeholders — execResolve() maps the path to the real baked-in ELF — but
+// without an x bit busybox refuses to exec with "Permission denied".
+private func nodeIsExecutable(_ node: Int) -> Bool {
+    if nodes[node].isDir { return false }
+    let parent = nodes[node].parent
+    if parent < 0 { return false }
+    let bin: StaticString = "bin"
+    return bin.withUTF8Buffer { nameEquals(parent, $0.baseAddress!, $0.count) }
+}
+
 private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
-    let mode: UInt32 = nodes[node].isDir ? (sIFDIR | 0o755) : (sIFREG | 0o644)
+    let perms: UInt32 = nodes[node].isDir ? 0o755 : (nodeIsExecutable(node) ? 0o755 : 0o644)
+    let mode: UInt32 = (nodes[node].isDir ? sIFDIR : sIFREG) | perms
     return writeStatMode(va, mode, nodes[node].dataLen)
 }
 

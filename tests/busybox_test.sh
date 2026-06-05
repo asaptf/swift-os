@@ -26,6 +26,7 @@ fi
   sleep 2;  printf 'echo M8-BUSYBOX-OK\n'
   sleep 1;  printf 'ls /\n'
   sleep 1;  printf 'cat /etc/motd\n'
+  sleep 1;  printf 'ps\n'                # native /bin/ps (not a busybox applet)
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
@@ -39,6 +40,7 @@ grep -qF "M8-BUSYBOX-OK" "$LOG"        || { echo "FAIL: echo applet" >&2; ok=0; 
 grep -qF "readme.txt" "$LOG"           || { echo "FAIL: ls applet (dir listing)" >&2; ok=0; }
 grep -qF "Welcome to swift-os." "$LOG" | true
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
+grep -qE "PID +PPID +STATE +CMD" "$LOG" || { echo "FAIL: ps (PATH exec of /bin/ps)" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: busybox ash ran echo/ls/cat on swift-os (M8 acceptance)"
