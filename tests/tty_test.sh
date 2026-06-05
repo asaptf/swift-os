@@ -26,8 +26,11 @@ if [[ -f "$DTB" ]]; then
     dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
-# Boot → (tty demo blocks on read) → type "ping" → (loop) → Ctrl-C.
-( sleep 1.5; printf 'ping\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
+# Boot → (tty demo blocks on read) → type "pinXg", then move the cursor left
+# (ESC[D) and backspace to delete the stray 'X', committing "ping" → (loop) →
+# Ctrl-C. Asserting read(0) returns "ping" exercises the cooked line editor's
+# movable cursor and mid-line delete, not just plain appending.
+( sleep 1.5; printf 'pinXg\033[D\177\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
     "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" \
     >"$LOG" 2>&1 &
 QEMU_PID=$!

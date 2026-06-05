@@ -334,6 +334,7 @@ func irqHandler() {
     // termination never leaves an interrupt active at the GIC.
     if interruptId == physicalTimerIrq {
         virtioKbdDrain() // poll the graphical-window keyboard into the tty
+        fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
         processOnTick()  // preempt the current EL0 process
     } else if interruptId == uartIrqId {

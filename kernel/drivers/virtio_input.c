@@ -6,6 +6,9 @@
 // receive buffers, and POLL the used ring — no IRQ wiring. virtio_kbd_getchar()
 // decodes evdev key presses into ASCII; the kernel drains it on each timer tick
 // and feeds the tty (kernel/main.swift), so typing reaches the busybox shell.
+// Arrow and navigation keys (Left/Right/Up/Down/Home/End/Delete) are emitted as
+// the ANSI escape sequences the tty's cooked line editor decodes for cursor
+// movement and mid-line editing.
 //
 // The virtqueue rings live in cacheable RAM that QEMU's device reads/writes by
 // DMA, so we clean what we write and invalidate what the device writes. (Under
@@ -104,6 +107,15 @@ static const char km_shift[128] = {
     [57]=' ',
 };
 
+static void push_byte(uint8_t c) {
+    int nt = (g_ptail + 1) % 64;
+    if (nt != g_phead) { g_pending[g_ptail] = c; g_ptail = nt; }
+}
+
+static void push_seq(const char *s) {
+    for (; *s; s++) push_byte((uint8_t)*s);
+}
+
 static uint32_t g_dbg_version = 0;
 
 // Returns a small diagnostic code: 0 = no input device found, otherwise
@@ -176,10 +188,20 @@ static void pump(void) {
             if (code == 42 || code == 54) {        // L/R shift
                 g_shift = (value != 0);
             } else if (value == 1 || value == 2) { // press or auto-repeat
-                char c = g_shift ? km_shift[code & 0x7f] : km[code & 0x7f];
-                if (c) {
-                    int nt = (g_ptail + 1) % 64;
-                    if (nt != g_phead) { g_pending[g_ptail] = (uint8_t)c; g_ptail = nt; }
+                // Navigation keys become the ANSI escape sequences the tty line
+                // editor decodes; everything else is a single ASCII byte.
+                switch (code) {
+                case 103: push_seq("\x1b[A"); break;  // Up
+                case 108: push_seq("\x1b[B"); break;  // Down
+                case 106: push_seq("\x1b[C"); break;  // Right
+                case 105: push_seq("\x1b[D"); break;  // Left
+                case 102: push_seq("\x1b[H"); break;  // Home
+                case 107: push_seq("\x1b[F"); break;  // End
+                case 111: push_seq("\x1b[3~"); break; // Delete (forward)
+                default: {
+                    char c = g_shift ? km_shift[code & 0x7f] : km[code & 0x7f];
+                    if (c) push_byte((uint8_t)c);
+                }
                 }
             }
         }

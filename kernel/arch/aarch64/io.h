@@ -32,6 +32,7 @@ long pmm_free_count(void);
 // -nographic). uartPutc mirrors output through fb_putc.
 void fb_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride_px);
 void fb_putc(uint8_t c);
+void fb_cursor_blink(void); // blink the on-screen text cursor (timer-driven)
 int fb_available(void);
 uint64_t fb_phys_base(void);
 uint64_t fb_phys_size(void);

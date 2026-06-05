@@ -10,6 +10,11 @@
 // The framebuffer lives in normal cacheable RAM (it sits in the kernel's 1 GiB
 // RAM block), and QEMU's ramfb scans RAM directly, so every write is cleaned to
 // the point of coherency or the display would show stale pixels.
+//
+// A reverse-video block cursor blinks at the text position (fb_cursor_blink,
+// driven from the timer tick). A shadow buffer of the on-screen characters lets
+// the cursor lift off whatever glyph it covers, and fb_putc honours backspace as
+// a non-destructive cursor-left, so the tty line editor can move within a line.
 
 #include <stdint.h>
 
@@ -20,6 +25,23 @@ static volatile uint32_t *g_fb = 0;
 static uint32_t g_w, g_h, g_stride;     // pixels; stride = pixels per scanline
 static uint32_t g_cols, g_rows, g_cx, g_cy;
 static uint64_t g_fb_base, g_fb_size;   // for the PMM to reserve the region
+
+#define FG 0xFFFFFFFFu
+#define BG 0x00000000u
+
+// Shadow text buffer: the glyph drawn in every cell, so the blinking cursor can
+// restore whatever character it sits on rather than blanking it. Bounded so the
+// buffer is a fixed BSS array; larger framebuffers just use the top-left region.
+#define MAX_COLS 256
+#define MAX_ROWS 128
+static uint8_t g_cells[MAX_ROWS][MAX_COLS];
+
+// Reverse-video block cursor, blinked from the timer tick. g_cur_* records where
+// the cursor is currently painted so it can be lifted when it moves or blinks off.
+static uint32_t g_blink_ctr = 0;
+static int g_blink_on = 1;       // desired phase: 1 = show cursor, 0 = hide
+static int g_cur_drawn = 0;      // is an inverted cell currently on screen?
+static uint32_t g_cur_col, g_cur_row;
 
 // font8x8_basic — public domain 8x8 bitmap font (bit 0 = leftmost pixel).
 static const uint8_t font8x8[128][8] = {
@@ -141,6 +163,8 @@ void fb_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride_px)
     g_stride = stride_px;
     g_cols = width / GLYPH_W;
     g_rows = height / GLYPH_H;
+    if (g_cols > MAX_COLS) g_cols = MAX_COLS;  // text area is the top-left region
+    if (g_rows > MAX_ROWS) g_rows = MAX_ROWS;
     g_cx = 0;
     g_cy = 0;
     g_fb_base = base;
@@ -148,6 +172,9 @@ void fb_init(uint64_t base, uint32_t width, uint32_t height, uint32_t stride_px)
     for (uint32_t i = 0; i < (uint32_t)stride_px * height; i++) {
         g_fb[i] = 0x00000000;
     }
+    for (uint32_t r = 0; r < MAX_ROWS; r++)
+        for (uint32_t c = 0; c < MAX_COLS; c++) g_cells[r][c] = ' ';
+    g_cur_drawn = 0;
     fb_clean(g_fb_base, g_fb_size);
 }
 
@@ -155,18 +182,35 @@ int fb_available(void) { return g_fb != 0; }
 uint64_t fb_phys_base(void) { return g_fb_base; }
 uint64_t fb_phys_size(void) { return g_fb_size; }
 
-static void fb_draw_glyph(uint8_t c, uint32_t cx, uint32_t cy) {
+// Render a glyph at (cx,cy). When `inverted` the fg/bg swap, giving a solid
+// reverse-video block — that is how the text cursor is drawn over its cell.
+static void fb_render(uint8_t c, uint32_t cx, uint32_t cy, int inverted) {
     const uint8_t *g = font8x8[c & 0x7F];
     uint32_t px0 = cx * GLYPH_W;
     uint32_t py0 = cy * GLYPH_H;
+    uint32_t on = inverted ? BG : FG;
+    uint32_t off = inverted ? FG : BG;
     for (int row = 0; row < GLYPH_H; row++) {
         uint8_t bits = g[row];
         volatile uint32_t *line = g_fb + (uint64_t)(py0 + row) * g_stride + px0;
         for (int col = 0; col < GLYPH_W; col++) {
-            line[col] = (bits >> col) & 1 ? 0xFFFFFFFF : 0x00000000;
+            line[col] = (bits >> col) & 1 ? on : off;
         }
         fb_clean((uint64_t)(uintptr_t)line, GLYPH_W * 4);
     }
+}
+
+// Draw a printable glyph at the cursor cell and remember it in the shadow buffer.
+static void fb_draw_glyph(uint8_t c, uint32_t cx, uint32_t cy) {
+    if (cx < MAX_COLS && cy < MAX_ROWS) g_cells[cy][cx] = c;
+    fb_render(c, cx, cy, 0);
+}
+
+// Repaint a cell from the shadow buffer (used to lift the cursor off it).
+static void fb_restore_cell(uint32_t cx, uint32_t cy) {
+    uint8_t c = (cx < MAX_COLS && cy < MAX_ROWS) ? g_cells[cy][cx] : ' ';
+    if (c < 0x20) c = ' ';
+    fb_render(c, cx, cy, 0);
 }
 
 static void fb_scroll(void) {
@@ -178,6 +222,11 @@ static void fb_scroll(void) {
     for (uint64_t i = move; i < (uint64_t)g_h * g_stride; i++) {
         g_fb[i] = 0x00000000;
     }
+    // Mirror the scroll in the shadow buffer so the cursor restores correctly.
+    for (uint32_t r = 1; r < g_rows; r++)
+        for (uint32_t c = 0; c < g_cols; c++) g_cells[r - 1][c] = g_cells[r][c];
+    for (uint32_t c = 0; c < g_cols; c++) g_cells[g_rows - 1][c] = ' ';
+    g_cur_drawn = 0;  // its old painted cell scrolled away
     fb_clean(g_fb_base, g_fb_size);
 }
 
@@ -190,6 +239,9 @@ void fb_putc(uint8_t c) {
         g_cy++;
     } else if (c == '\r') {
         g_cx = 0;
+    } else if (c == '\b') {        // move left without erasing (line-edit cursor)
+        if (g_cx > 0) g_cx--;
+        return;
     } else if (c == '\t') {
         g_cx = (g_cx + 4) & ~3u;
     } else {
@@ -208,5 +260,30 @@ void fb_putc(uint8_t c) {
     if (g_cy >= g_rows) {
         fb_scroll();
         g_cy = g_rows - 1;
+    }
+}
+
+// Drive the blinking block cursor. Called every timer tick; toggles the visible
+// phase roughly once a second and reconciles the painted cell with where the
+// text cursor (g_cx,g_cy) now is. No-op without a framebuffer.
+void fb_cursor_blink(void) {
+    if (!g_fb) return;
+    if (++g_blink_ctr >= 50) {          // ~0.5 s at the 100 Hz tick → 1 Hz blink
+        g_blink_ctr = 0;
+        g_blink_on = !g_blink_on;
+    }
+    // Lift the cursor if it should hide or the text cursor has moved.
+    if (g_cur_drawn && (!g_blink_on || g_cur_col != g_cx || g_cur_row != g_cy)) {
+        fb_restore_cell(g_cur_col, g_cur_row);
+        g_cur_drawn = 0;
+    }
+    // Paint it at the current position while the phase is on.
+    if (g_blink_on && !g_cur_drawn && g_cx < g_cols && g_cy < g_rows) {
+        uint8_t c = g_cells[g_cy][g_cx];
+        if (c < 0x20) c = ' ';
+        fb_render(c, g_cx, g_cy, 1);
+        g_cur_col = g_cx;
+        g_cur_row = g_cy;
+        g_cur_drawn = 1;
     }
 }
