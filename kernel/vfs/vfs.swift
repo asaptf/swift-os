@@ -10,6 +10,7 @@
 // errno-ish returns (negative).
 private let errNoEntry = -2
 private let errBadFD = -9
+private let errAccess = -13
 private let errAgain = -11
 private let errNoMem = -12
 private let errExists = -17
@@ -600,6 +601,14 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
 
     var node = resolve(path)
     let f = Int(bitPattern: flags)
+
+    // M13: capability enforcement. Reading the filesystem needs capFsRead;
+    // writing/creating (only the tmpfs is writable) needs capTmpWrite.
+    let caps = processCurrentCaps()
+    let wantWrite = (f & oWrOnly) != 0 || (f & oRdWr) != 0 || (f & oCreat) != 0
+    let wantRead = (f & oWrOnly) == 0 // O_RDONLY or O_RDWR
+    if wantRead && (caps & capFsRead) == 0 { return errAccess }
+    if wantWrite && (caps & capTmpWrite) == 0 { return errAccess }
 
     if node == -1 {
         if (f & oCreat) != 0 {

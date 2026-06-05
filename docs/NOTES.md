@@ -620,7 +620,24 @@ Silicon Mac with VirtualBox installed. Prepared for that:
   buffers, no heap) and verifies by recomputing `SHA-256(salt + entered password)` and comparing the hex.
   Verified against the host `shasum -a 256` reference values baked into the store.
 - A stronger, iterated/memory-hard KDF (and password change tooling) is a later refinement; this milestone
-  removes plaintext storage. Next: M13 enforces capabilities on the VFS.
+  removes plaintext storage.
+
+## VFS capability enforcement (M13)
+
+### M13a — open-time capability checks (DONE, 2026-06-05)
+
+- `vfsOpen` now consults the running process's capability mask via `processCurrentCaps()`: a read
+  (`O_RDONLY`/`O_RDWR`) requires `capFsRead`, and a write/create (`O_WRONLY`/`O_RDWR`/`O_CREAT`, which only
+  the tmpfs accepts) requires `capTmpWrite`. Missing the capability returns `EACCES` (-13). The kernel
+  itself (no active process) is treated as fully privileged.
+- Checking at open time also gates `read`/`getdents`: a file or directory cannot be opened to read or list
+  it without `capFsRead`, so `cat`/`ls` fail up front for a capless principal.
+- Added a `guest` principal to `/etc/swos/passwd` with only `capSpawn` (caps = 2). `tests/cap_enforce_test.sh`
+  logs in as guest and asserts that `echo` (a shell builtin, no FS access) still works while
+  `cat /etc/motd` and `ls /` are denied. root/user keep `capFsRead`, so the existing flows and the
+  boot demos (which run under the fully-capable boot context) are unaffected.
+- Follow-ups: per-file ownership/ACLs and an `ls -l` view, enforcement on the read/write syscalls (for
+  contexts that change while an fd is open), and richer principals.
 
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
@@ -693,7 +710,7 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
   (`-device ramfb -display none`), drives vi over the serial console, screendumps the framebuffer via QMP to
   a PPM, and parses the pixels: it asserts a column of `~` down the left over otherwise-blank lines (proving
   CUP/erase were interpreted, not printed), a non-empty status line near the bottom of the 80×24 editor, and
-  no kernel panic.
+  no kernel panic. 14 suites green.
 - **nano:** not done — it needs an ncurses/terminfo port plus locale/regex, a separate multi-step effort.
 
 ## Open decisions / resolved

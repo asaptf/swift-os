@@ -118,10 +118,17 @@ M12 is now underway.
   `salt$sha256hex` (per-user salt; `hash = SHA-256(salt+password)`), and `console-login` carries a
   self-contained Swift SHA-256 (FIPS 180-4) to verify. `console_login_test` still rejects a wrong password
   and logs in with the real one.
-- **Next: M13** — permission enforcement on the VFS, checked against the capability mask now carried by
-  every process. (A stronger password KDF with iteration/memory hardening is a later refinement.)
+## M13 — VFS capability enforcement
 
-After M12, per `docs/NOTES.md`: **M13** starts permission enforcement on the VFS.
+- **M13a — DONE (2026-06-05):** `vfsOpen` now checks the running process's capability mask
+  (`processCurrentCaps`): reading needs `capFsRead`, writing/creating (tmpfs) needs `capTmpWrite`; a
+  capless principal gets `EACCES`. The open-time check covers read/getdents (you cannot open a file or
+  directory to read/list it without `capFsRead`). A `guest` principal (caps = `capSpawn` only) was added
+  to the identity store; `tests/cap_enforce_test.sh` logs in as guest and asserts `echo` (a builtin) works
+  while `cat /etc/motd` and `ls /` are denied. root/user (which hold `capFsRead`) are unaffected.
+- **Next (M13 follow-ups):** per-file ownership/ACLs and an `ls -l`-style view; enforce on the
+  write/read syscalls (not just open) once contexts can change mid-fd; richer principals.
+  (A stronger password KDF with iteration/memory hardening also remains a later refinement.)
 
 ## Watch-outs / loose ends
 

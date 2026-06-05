@@ -474,6 +474,13 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
 
 /// SYS_security_info: copy the current process security context.
 /// Record layout (16 bytes): principal:u32, session:u32, caps:u64.
+/// The capability mask of the running process (M13). Used by the VFS to check
+/// file access against the process's principal context. The kernel itself
+/// (no active process) is fully privileged.
+func processCurrentCaps() -> UInt64 {
+    currentProc >= 0 ? pCaps[currentProc] : ~UInt64(0)
+}
+
 func processSecurityInfo(buffer: UInt) -> Int {
     let me = currentProc
     guard me >= 0 else { return -22 }
