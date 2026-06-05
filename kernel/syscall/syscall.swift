@@ -32,6 +32,7 @@ private let sysMkdir: UInt = 29     // mkdir(path, mode)
 private let sysRmdir: UInt = 30     // rmdir(path)
 private let sysSecurityInfo: UInt = 31 // security_info(struct security_info*)
 private let sysLogin: UInt = 32        // login(principal, session, caps) — needs capConsole
+private let sysFtruncate: UInt = 33    // ftruncate(fd, length) — tmpfs file resize (busybox vi)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -133,6 +134,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processLogin(principal: UInt32(truncatingIfNeeded: frame[0]),
                               session: UInt32(truncatingIfNeeded: frame[1]),
                               caps: UInt64(frame[2]))
+    } else if number == sysFtruncate {
+        result = vfsFtruncate(fd: Int(bitPattern: frame[0]), length: Int(bitPattern: frame[1]))
     } else {
         result = -38 // ENOSYS
     }

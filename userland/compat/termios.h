@@ -48,11 +48,25 @@ struct termios {
 #define CS8    0x0030
 #define CREAD  0x0080
 #define CLOCAL 0x0800
-/* c_cc indices */
-#define VMIN  6
-#define VTIME 5
-#define VINTR 0
-#define VEOF  4
+/* c_cc indices (Linux c_cc layout; the few values already used by the kernel
+ * ABI — VINTR/VEOF/VTIME/VMIN — match it, so the rest follow the same table). */
+#define VINTR    0
+#define VQUIT    1
+#define VERASE   2
+#define VKILL    3
+#define VEOF     4
+#define VTIME    5
+#define VMIN     6
+#define VSWTC    7
+#define VSTART   8
+#define VSTOP    9
+#define VSUSP    10
+#define VEOL     11
+#define VREPRINT 12
+#define VDISCARD 13
+#define VWERASE  14
+#define VLNEXT   15
+#define VEOL2    16
 /* tcsetattr actions */
 #define TCSANOW   0
 #define TCSADRAIN 1

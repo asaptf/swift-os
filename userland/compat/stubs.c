@@ -49,6 +49,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_RENAME 28
 #define SYS_MKDIR 29
 #define SYS_RMDIR 30
+#define SYS_FTRUNCATE 33
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -170,6 +171,7 @@ W int ioctl(int fd, unsigned long req, ...) {
 }
 
 // ---- misc libc gaps --------------------------------------------------------
+W int ftruncate(int fd, off_t length) { return sysret(sys3(SYS_FTRUNCATE, fd, (long)length, 0)); }
 W int lstat(const char *path, struct stat *st) { return stat(path, st); }
 W int mknod(const char *p, mode_t m, dev_t d) { (void)p; (void)m; (void)d; errno = ENOSYS; return -1; }
 W int uname(struct utsname *u) {

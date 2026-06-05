@@ -39,6 +39,7 @@
 #define SYS_RMDIR     30
 #define SYS_SECURITY_INFO 31
 #define SYS_LOGIN         32
+#define SYS_FTRUNCATE     33
 
 #ifndef __ASSEMBLER__
 

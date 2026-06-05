@@ -105,6 +105,9 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   kernel; `7 tcgetattr` / `8 tcsetattr`; `9 sigaction`; `10 kill`; `11 getpid`.
 - M8d additions include process control plus `22 psinfo(buffer, capacity)`: copies fixed 32-byte
   process records (`pid`, `ppid`, state, short command name) for userland tools such as `/bin/ps`.
+- busybox vi addition: `33 ftruncate(fd, length)` — resize a writable tmpfs file (busybox vi writes
+  with `O_CREAT` without `O_TRUNC`, then `ftruncate`s to the exact length). Growth zero-fills up to
+  the node's capacity; shrink updates the length. Read-only/base files and directories are rejected.
 
 ## Build / run commands (verified at M9)
 
@@ -618,6 +621,45 @@ Silicon Mac with VirtualBox installed. Prepared for that:
   Verified against the host `shasum -a 256` reference values baked into the store.
 - A stronger, iterated/memory-hard KDF (and password change tooling) is a later refinement; this milestone
   removes plaintext storage. Next: M13 enforces capabilities on the VFS.
+
+## Userland editors — busybox vi (DONE, 2026-06-05)
+
+A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
+busybox already ships a self-contained `vi` applet (no terminfo/ncurses, draws with hardcoded ANSI escapes)
+— rather than porting GNU nano (which would need an ncurses/terminfo port + locale/regex; recorded as larger
+future work). The same porting pipeline as M8 busybox: cross-build against `./sysroot` (newlib) + the
+`userland/compat` shim layer, link with our crt0/syscall stubs, stage into the packed base image.
+
+- **Enable.** `scripts/build-busybox.sh` now sets `CONFIG_VI` + a curated feature set (COLON, YANKMARK,
+  SEARCH, DOT_CMD, SET/SETOPTS, UNDO). Three features are deliberately forced OFF because swift-os's headless
+  serial tty breaks their assumptions: `FEATURE_VI_USE_SIGNALS` (needs SIGWINCH/SIGINT delivered to a custom
+  handler — the kernel records but does not yet deliver custom handlers), `FEATURE_VI_WIN_RESIZE` (SIGWINCH;
+  our console is a fixed 80×24, which `ioctl(TIOCGWINSZ)` already reports), and `FEATURE_VI_ASK_TERMINAL`
+  (emits `ESC[6n` and blocks reading the cursor-position report, which our tty never sends back — vi would
+  hang at startup). Note: the int-valued config symbols `FEATURE_VI_MAX_LEN`/`FEATURE_VI_UNDO_QUEUE_MAX`
+  must be preset to a number before `oldconfig` (it errors on a NEW int symbol fed EOF).
+- **Compat fix.** `userland/compat/termios.h` was missing the `c_cc` index `VERASE` (and the rest of the
+  Linux `c_cc` table); vi's `isbackspace` macro needs it. Added the full Linux `c_cc` index set.
+- **New syscall.** `33 ftruncate(fd, length)` (see Syscall ABI) — vi saves by opening `O_CREAT` (no
+  `O_TRUNC`), `full_write`, then `ftruncate` to the exact length, so without it a save that shrinks a tmpfs
+  file would leave a stale tail. Architectural constraint kept: the base FS is read-only by design, so vi can
+  only save into `/tmp` (tmpfs); editing a base file and `:w`-ing it elsewhere works, overwriting the base
+  does not. This is the two-tier FS, not a bug.
+- **Root-cause kernel fix (the hard part).** Enabling vi exposed a latent kernel bug: vi crashed the kernel
+  (intermittent EL1 data abort in `trap_return` with a wild SP near RAM end, or a lower-EL sync with a wild
+  PC) right after drawing its screen. A syscall trace pinned the trigger to `poll()` (syscall 26): vi polls
+  stdin with a timeout to disambiguate `ESC` sequences. `vfsPoll` blocked by calling `processYieldForIO()`
+  (a cooperative scheduler switch) in a loop with IRQs enabled — and that cooperative-yield-from-inside-a-
+  blocking-syscall path is not robust under timer preemption (it can corrupt the resumed trap frame). The
+  working `ttyRead` path, by contrast, blocks with `enable_irq()` + `wfi()` and never yields. Fix: `vfsPoll`
+  now waits with `wfi()` for tty/vnode fds (input arrives via the UART RX IRQ; the timer wakes `wfi` for the
+  timeout) — exactly ttyRead's proven pattern. The cooperative-yield path is kept ONLY when the poll set
+  contains a pipe fd (a pipe becomes ready only when another process writes, so the CPU must be yielded); no
+  current program `poll()`s a pipe, and that yield path's preemption-safety is a separate follow-up.
+- **Test.** `tests/vi_test.sh` (wired into `make test`, 13 suites green) logs in, runs
+  `vi /tmp/vitest`, inserts text, `:wq`, then `cat`s the file back, asserting vi's alternate-screen banner,
+  the saved content (proves `:wq`/ftruncate), and a trailing shell marker (proves the kernel did not panic).
+- **nano:** not done — it needs an ncurses/terminfo port plus locale/regex, a separate multi-step effort.
 
 ## Open decisions / resolved
 

@@ -735,6 +735,31 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     return w
 }
 
+/// ftruncate(fd, length): resize a writable tmpfs file. Used by busybox vi,
+/// which writes the buffer with O_CREAT (no O_TRUNC) and then ftruncate()s to
+/// the exact length — so without this an overwrite that shrinks a file would
+/// leave a stale tail. Growth zero-fills up to the node's capacity.
+func vfsFtruncate(fd: Int, length: Int) -> Int {
+    if length < 0 { return errInvalid }
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let d = fdEntry(proc, fd).file
+    let file = openDescriptions[d]
+    guard file.writable else { return errBadFD }
+    guard file.kind == fdKindVNode else { return errInvalid }
+    let node = file.node
+    if nodes[node].isDir { return errIsDir }
+    if nodes[node].readOnly { return errReadOnly }
+    if length > nodes[node].dataCap { return errNoSpace }
+    if length > nodes[node].dataLen {
+        let base = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+        var i = nodes[node].dataLen
+        while i < length { base[i] = 0; i += 1 }
+    }
+    nodes[node].dataLen = length
+    return 0
+}
+
 func vfsClose(fd: Int) -> Int {
     let proc = currentVFSProcess()
     guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return errBadFD }
@@ -1073,12 +1098,29 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     let startTicks = systemTicks
     let timeoutTicks: UInt64 = timeout <= 0 ? 0 : UInt64((timeout + 9) / 10)
 
+    // How we wait when no fd is ready yet:
+    //   - tty/vnode fds become ready via the UART RX IRQ (or the timer for the
+    //     timeout), so we block with `wfi()` exactly like ttyRead — no scheduler
+    //     yield. This is the proven, safe blocking path.
+    //   - a pipe only becomes ready when *another* process writes to it, so we
+    //     must yield the CPU to let the writer run. That cooperative-yield path
+    //     from inside a blocking syscall is not yet robust under timer
+    //     preemption (it can corrupt the resumed trap frame); it stays here only
+    //     for pipe sets, which no current program poll()s. See docs/NOTES.md.
+    let proc = currentVFSProcess()
+    var hasPipe = false
+    for i in 0..<count {
+        let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
+        if fd >= 0 && validFD(proc, fd)
+            && openDescriptions[fdEntry(proc, fd).file].kind == fdKindPipe { hasPipe = true }
+    }
+
     enable_irq()
     while true {
         let ready = pollScan(base, count)
         if ready > 0 || timeout == 0 { return ready }
         if timeout > 0 && systemTicks - startTicks >= timeoutTicks { return 0 }
-        processYieldForIO()
+        if hasPipe { processYieldForIO() } else { wfi() }
     }
 }
 

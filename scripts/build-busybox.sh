@@ -44,12 +44,42 @@ set_sym() {
         echo "$s=y" >>.config
     fi
 }
+unset_sym() {
+    local s="CONFIG_$1"
+    sed -i.bak -E "s/^$s=.*/# $s is not set/" .config && rm -f .config.bak
+}
+# Integer-valued symbols: oldconfig errors on a NEW int symbol fed EOF, so they
+# must be preset to a concrete value (not =y) before oldconfig runs.
+set_val() {
+    local s="CONFIG_$1"
+    if grep -qE "^# $s is not set|^$s=" .config; then
+        sed -i.bak -E "s/^# $s is not set/$s=$2/; s/^$s=.*/$s=$2/" .config && rm -f .config.bak
+    else
+        echo "$s=$2" >>.config
+    fi
+}
 for sym in STATIC SHELL_ASH SH_IS_ASH FEATURE_SH_STANDALONE FEATURE_PREFER_APPLETS \
            ASH_BUILTIN_ECHO ASH_BUILTIN_TEST ASH_BUILTIN_PRINTF \
-           LS CAT ECHO PWD; do
+           LS CAT ECHO PWD \
+           VI FEATURE_VI_COLON FEATURE_VI_YANKMARK \
+           FEATURE_VI_SEARCH FEATURE_VI_DOT_CMD FEATURE_VI_SET FEATURE_VI_SETOPTS \
+           FEATURE_VI_UNDO FEATURE_VI_UNDO_QUEUE; do
     set_sym "$sym"
 done
+set_val FEATURE_VI_MAX_LEN 4096
+set_val FEATURE_VI_UNDO_QUEUE_MAX 256
 make oldconfig </dev/null >/dev/null 2>&1
+# vi features we deliberately force OFF *after* oldconfig (it would otherwise
+# default them on), because swift-os's headless serial tty breaks their
+# assumptions (see docs/NOTES.md, "M12c-vi"):
+#   USE_SIGNALS  — needs SIGWINCH/SIGINT delivered to a custom handler, which the
+#                  kernel records but does not yet deliver.
+#   WIN_RESIZE   — depends on SIGWINCH; our console is a fixed 80x24.
+#   ASK_TERMINAL — emits ESC[6n and blocks reading the cursor-position report,
+#                  which our tty never sends back (vi would hang at startup).
+for sym in FEATURE_VI_USE_SIGNALS FEATURE_VI_WIN_RESIZE FEATURE_VI_ASK_TERMINAL; do
+    unset_sym "$sym"
+done
 
 # --- compile busybox objects against newlib + compat -------------------------
 make -j"$JOBS" ARCH=arm64 CROSS_COMPILE=aarch64-elf- \

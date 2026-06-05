@@ -100,7 +100,8 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
         || userPathEquals(pathVA, "/bin/ls")
         || userPathEquals(pathVA, "/bin/cat")
         || userPathEquals(pathVA, "/bin/echo")
-        || userPathEquals(pathVA, "/bin/pwd") {
+        || userPathEquals(pathVA, "/bin/pwd")
+        || userPathEquals(pathVA, "/bin/vi") {
         return loadProgramImage("/bin/busybox")
     }
     return (0, 0)
