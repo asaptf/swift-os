@@ -268,13 +268,17 @@ private func runPsDemo() {
     uartPuts("\n")
 }
 
-private func runBusybox() {
+private func runShell() {
     uartPuts("swift-os M8: launching busybox sh\n")
-    let (p, n, argc) = packArgs(["sh"])
-    let code = processRunElf(busybox_elf_addr(), UInt(busybox_elf_len()), packed: p, packedLen: n, argc: argc)
-    uartPuts("M8: busybox sh exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    // Keep the system usable: if the shell exits (Ctrl-D / `exit`), start a
+    // fresh one rather than leaving the VM idle.
+    while true {
+        let (p, n, argc) = packArgs(["sh"])
+        let code = processRunElf(busybox_elf_addr(), UInt(busybox_elf_len()), packed: p, packedLen: n, argc: argc)
+        uartPuts("M8: busybox sh exited, code ")
+        uartPutUInt(UInt64(code))
+        uartPuts("; restarting\n")
+    }
 }
 
 private func runTtyDemo() {
@@ -443,40 +447,35 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
-    if virtio_kbd_init() > 0 {  // graphical-window keyboard (absent on the serial path)
+    let windowKeyboard = virtio_kbd_init() > 0  // graphical window has a keyboard
+    if windowKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }
     enable_irq()
 
-    runSchedulerDemo()
-
-    runProcessDemo()
-
-    runArgvDemo()
-
-    runSpawnDemo()
-
-    runBrkDemo()
-
-    runNewlibDemo()
-
-    runConcurrentDemo()
-
-    runForkDemo()
-
-    runExecDemo()
-
-    runFdOpsDemo()
-
-    runFsDemo()
-
-    runSecurityDemo()
-
-    runPsDemo()
-
-    runTtyDemo()
-
-    runBusybox() // init shell — interactive, last
+    if windowKeyboard {
+        // Interactive graphical session (make run-gfx): boot straight into the
+        // shell so the window is immediately usable. The milestone demos still
+        // run on the serial/test path below (and the acceptance tests depend on
+        // them, e.g. the M7 tty demo).
+        runShell()
+    } else {
+        runSchedulerDemo()
+        runProcessDemo()
+        runArgvDemo()
+        runSpawnDemo()
+        runBrkDemo()
+        runNewlibDemo()
+        runConcurrentDemo()
+        runForkDemo()
+        runExecDemo()
+        runFdOpsDemo()
+        runFsDemo()
+        runSecurityDemo()
+        runPsDemo()
+        runTtyDemo()
+        runShell() // busybox sh — interactive, last
+    }
 
     while true {
         // Wake on timer IRQ.
