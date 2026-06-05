@@ -988,8 +988,14 @@ func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
     return pos
 }
 
+// M13b: every namespace mutation lands in the tmpfs (the base is read-only), so
+// it needs capTmpWrite. open(O_CREAT) is gated in vfsOpen; these path-based
+// syscalls are gated here.
+private func mayWriteTmp() -> Bool { (processCurrentCaps() & capTmpWrite) != 0 }
+
 func vfsUnlink(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if nodes[node].isDir { return errIsDir }
@@ -1001,6 +1007,7 @@ func vfsUnlink(path pathVA: UInt) -> Int {
 
 func vfsMkdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    if !mayWriteTmp() { return errAccess }
     var ls = 0, ll = 0
     let parent = resolveParent(path, &ls, &ll)
     if parent == -1 { return errNoEntry }
@@ -1011,6 +1018,7 @@ func vfsMkdir(path pathVA: UInt) -> Int {
 
 func vfsRmdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node <= 0 { return errInvalid }
     if !nodes[node].isDir { return errNotDir }
@@ -1025,6 +1033,7 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     guard let oldPath = userCString(oldVA), let newPath = userCString(newVA) else {
         return errInvalid
     }
+    if !mayWriteTmp() { return errAccess }
     let src = resolve(oldPath)
     if src <= 0 { return errNoEntry }
 

@@ -636,6 +636,17 @@ Silicon Mac with VirtualBox installed. Prepared for that:
   logs in as guest and asserts that `echo` (a shell builtin, no FS access) still works while
   `cat /etc/motd` and `ls /` are denied. root/user keep `capFsRead`, so the existing flows and the
   boot demos (which run under the fully-capable boot context) are unaffected.
+### M13b — gate tmpfs namespace mutations (DONE, 2026-06-05)
+
+- `vfsUnlink`/`vfsMkdir`/`vfsRmdir`/`vfsRename` are path-based (they don't go through `vfsOpen`), so they
+  now require `capTmpWrite` up front (`mayWriteTmp`) — closing the gap where a capless principal could
+  still mutate the tmpfs namespace. `ftruncate`/`write` were already covered: they need a writable fd,
+  which `vfsOpen` only hands out with `capTmpWrite`.
+- Positive path stays green: `fdopsdemo` (mkdir/rename/unlink under the fully-capable boot context) still
+  passes in `boot_test`. There is no shell-level negative test because the busybox-min build ships no
+  `mkdir`/`touch` applet; the check is the same `mayWriteTmp` used by the open path, which
+  `cap_enforce_test` already exercises for `guest`.
+
 - Follow-ups: per-file ownership/ACLs and an `ls -l` view, enforcement on the read/write syscalls (for
   contexts that change while an fd is open), and richer principals.
 
