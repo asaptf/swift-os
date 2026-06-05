@@ -36,9 +36,8 @@ dtb_args=()
 
 (
   sleep 7;  printf 'tty-line\n'        # M7 ttydemo
-  sleep 1;  printf '\003'              # Ctrl-C -> busybox
-  sleep 2;  printf '/bin/console-login\n'
-  sleep 1;  printf 'user\n'            # wrong password first
+  sleep 1;  printf '\003'              # Ctrl-C -> console-login (init) prompt
+  sleep 2;  printf 'user\n'            # wrong password first
   sleep 1;  printf 'wrongpw\n'
   sleep 1;  printf 'user\n'            # then the real one
   sleep 1;  printf 'swordfish\n'

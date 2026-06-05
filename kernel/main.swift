@@ -359,19 +359,31 @@ private func runVirtioBlkProbe() {
     }
 }
 
-private func runShell() {
-    uartPuts("swift-os M8: launching busybox sh\n")
-    // Keep the system usable: if the shell exits (Ctrl-D / `exit`), start a
-    // fresh one rather than leaving the VM idle.
+private func runInit() {
+    uartPuts("swift-os M12c: starting console-login (init)\n")
+    // Keep the system usable: when a session ends, start a fresh login rather
+    // than leaving the VM idle. The image is (re)loaded each iteration because
+    // the shell exec inside the session overwrites the shared ELF buffer.
     while true {
-        // M11d: prefer the busybox packed on disk; fall back to the embedded
-        // blob when no packed disk is attached.
+        let (login, loginSize) = loadProgramImage("/bin/console-login")
+        if login != 0 {
+            let (p, n, argc) = packArgs(["console-login"])
+            let code = processRunElf(login, loginSize, packed: p, packedLen: n, argc: argc)
+            uartPuts("M12c: session ended, code ")
+            uartPutUInt(UInt64(code))
+            uartPuts("; restarting login\n")
+            continue
+        }
+        // No login program on disk: fall back to a raw shell so the system is
+        // still usable (e.g. a base image built without console-login).
+        uartPuts("M12c: /bin/console-login missing; starting raw shell\n")
         let (image, size) = resolveBusyboxImage()
+        if image == 0 {
+            uartPuts("panic: no shell or login program available\n")
+            while true { wfi() }
+        }
         let (p, n, argc) = packArgs(["sh"])
-        let code = processRunElf(image, size, packed: p, packedLen: n, argc: argc)
-        uartPuts("M8: busybox sh exited, code ")
-        uartPutUInt(UInt64(code))
-        uartPuts("; restarting\n")
+        _ = processRunElf(image, size, packed: p, packedLen: n, argc: argc)
     }
 }
 
@@ -557,7 +569,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         // shell so the window is immediately usable. The milestone demos still
         // run on the serial/test path below (and the acceptance tests depend on
         // them, e.g. the M7 tty demo).
-        runShell()
+        runInit()
     } else {
         runSchedulerDemo()
         runProcessDemo()
@@ -574,7 +586,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runPsDemo()
         runTtyDemo()
-        runShell() // busybox sh — interactive, last
+        runInit() // console-login (init) — interactive, last
     }
 
     while true {

@@ -14,7 +14,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
-TIMEOUT="${TIMEOUT:-20}"
+# 45s: every demo program is now loaded from disk (M11d), which is slower than
+# the old embedded blob — give the full demo sequence room to finish.
+TIMEOUT="${TIMEOUT:-45}"
 
 EXPECTS="${EXPECTS:-M9 OK: hardware discovered from device tree
 hello from ELF userland

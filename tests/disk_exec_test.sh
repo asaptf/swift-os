@@ -48,8 +48,10 @@ fi
 
 (
   sleep 7;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 2;  printf 'ps\n'
+  sleep 1;  printf '\003'              # Ctrl-C -> console-login (init)
+  sleep 2;  printf 'root\n'            # M12c: log in
+  sleep 1;  printf 'swordfish\n'
+  sleep 2;  printf 'ps\n'              # native /bin/ps from disk
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -60,13 +62,14 @@ fi
   -device virtio-blk-device,drive=disk0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 16
+sleep 21
 stop_qemu
 QP=""
 
 ok=1
 grep -qF "M11c: read-only base mounted from disk" "$LOG" || { echo "FAIL: base was not mounted from disk" >&2; ok=0; }
-grep -qF "M11d: busybox loaded from disk (/bin/busybox)" "$LOG" || { echo "FAIL: busybox was not loaded from disk" >&2; ok=0; }
+grep -qF "M11d: exec loaded from disk /bin/console-login" "$LOG" || { echo "FAIL: console-login was not loaded from disk" >&2; ok=0; }
+grep -qF "M11d: exec loaded from disk /bin/busybox" "$LOG" || { echo "FAIL: busybox was not loaded from disk" >&2; ok=0; }
 grep -qF "M11d: exec loaded from disk /bin/ps" "$LOG" || { echo "FAIL: /bin/ps was not exec'd from disk" >&2; ok=0; }
 grep -qE "PID +PPID +STATE +CMD" "$LOG" || { echo "FAIL: ps output missing" >&2; ok=0; }
 

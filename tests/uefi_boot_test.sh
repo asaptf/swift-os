@@ -74,6 +74,12 @@ if wait_for "M7 tty: type a line then Enter" 350; then
 fi
 sleep 0.5
 printf '\003' >&3
+# M12c: console-login is the init program — authenticate before the shell.
+if wait_for "swift-os login:" 120; then
+    printf 'root\n' >&3
+    wait_for "Password:" 60 || true
+    printf 'swordfish\n' >&3
+fi
 if wait_for "built-in shell (ash)" 120; then
     printf 'echo M10-UEFI-OK\n' >&3
     printf 'ls /\n' >&3

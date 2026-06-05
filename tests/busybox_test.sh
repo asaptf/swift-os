@@ -52,7 +52,9 @@ fi
 
 (
   sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
-  sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, busybox starts
+  sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, console-login starts
+  sleep 2;  printf 'root\n'            # M12c: log in at the init prompt
+  sleep 1;  printf 'swordfish\n'
   sleep 2;  printf 'echo M8-BUSYBOX-OK\n'
   sleep 1;  printf 'ls /\n'
   sleep 1;  printf 'cat /etc/motd\n'
@@ -62,7 +64,7 @@ fi
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 18
+sleep 23
 stop_qemu
 QP=""
 
