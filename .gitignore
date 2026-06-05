@@ -18,3 +18,7 @@
 *.swp
 .idea/
 .vscode/
+.claude/
+
+# Stray VirtualBox headless crash logs (dropped in cwd)
+*-VBoxHeadless-*.log
