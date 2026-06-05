@@ -329,10 +329,22 @@ func irqHandler() {
     // Everything below runs after the EOI so a context switch / process
     // termination never leaves an interrupt active at the GIC.
     if interruptId == physicalTimerIrq {
+        virtioKbdDrain() // poll the graphical-window keyboard into the tty
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
         processOnTick()  // preempt the current EL0 process
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
+    }
+}
+
+/// Drain any keystrokes from the virtio-input keyboard into the tty line
+/// discipline, exactly as the UART IRQ feeds serial input. No-op when there is
+/// no keyboard device (the getchar returns -1 immediately).
+private func virtioKbdDrain() {
+    while true {
+        let b = virtio_kbd_getchar()
+        if b < 0 { break }
+        ttyOnInput(UInt8(b & 0xFF))
     }
 }
 
@@ -431,6 +443,9 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
+    if virtio_kbd_init() > 0 {  // graphical-window keyboard (absent on the serial path)
+        uartPuts("virtio-kbd: window keyboard ready\n")
+    }
     enable_irq()
 
     runSchedulerDemo()

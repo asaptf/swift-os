@@ -154,6 +154,7 @@ HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 FB_OBJ     := $(BUILD)/fb.o
+VIRTIO_OBJ := $(BUILD)/virtio_input.o
 EL0_OBJ    := $(BUILD)/el0.o
 ELF_OBJ    := $(BUILD)/elf.o
 USTACK_OBJ := $(BUILD)/ustack.o
@@ -210,6 +211,9 @@ $(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(VIRTIO_OBJ): kernel/drivers/virtio_input.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -331,7 +335,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(FB_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(USER_BLOB_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -399,10 +403,13 @@ disk-run: disk
 # framebuffer (EFI GOP); the loader hands it to the kernel, which renders the
 # boot log on screen. Serial is mirrored to this terminal. Close the window or
 # Ctrl-C to stop.
+# force-legacy=false makes the virtio-mmio devices use the modern (v2) interface
+# our virtio-input driver speaks; the firmware still boots the disk over it.
 run-gfx: disk
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
+		-global virtio-mmio.force-legacy=false \
 		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
-		-device ramfb -display cocoa -serial stdio
+		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
 $(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/basepack.swift -o $@

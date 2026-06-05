@@ -36,6 +36,12 @@ int fb_available(void);
 uint64_t fb_phys_base(void);
 uint64_t fb_phys_size(void);
 
+// virtio-input keyboard (kernel/drivers/virtio_input.c). Polled: the kernel
+// drains it each timer tick and feeds the tty. No-op without the device (e.g.
+// the QEMU -kernel path), so getchar just returns -1.
+int virtio_kbd_init(void);
+int virtio_kbd_getchar(void);
+
 void mmu_init_identity_map(void);
 void mmu_configure_translation(void);
 void mmu_enable_sctlr(void);
