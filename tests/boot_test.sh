@@ -48,6 +48,11 @@ fdopsdemo: rename/unlink/mkdir/rmdir OK
 M8e OK: fdops demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
+M12a security: boot principal console session 1
+identitydemo: boot principal/session/caps OK
+identitydemo: child inherited security context
+identitydemo: parent observed inherited context
+M12a OK: identity demo exited, code 0
 swift-os userland: Swift ps
  PID PPID STATE CMD
    1    0 RUN   ps

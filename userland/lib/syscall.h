@@ -37,6 +37,7 @@
 #define SYS_RENAME    28
 #define SYS_MKDIR     29
 #define SYS_RMDIR     30
+#define SYS_SECURITY_INFO 31
 
 #ifndef __ASSEMBLER__
 
@@ -131,6 +132,16 @@ static inline int mkdir(const char *path, int mode) {
 
 static inline int rmdir(const char *path) {
     return (int)__syscall3(SYS_RMDIR, (long)path, 0, 0);
+}
+
+struct security_info {
+    unsigned int principal;
+    unsigned int session;
+    unsigned long caps;
+};
+
+static inline int security_info(struct security_info *info) {
+    return (int)__syscall3(SYS_SECURITY_INFO, (long)info, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

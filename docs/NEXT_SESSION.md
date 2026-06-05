@@ -96,11 +96,19 @@ was the original M10.5 stance). Do not let it block M11→M13.
 Needed from the user for Track A: the VM's `Logs/VBox.log`, and the result of the EFI-shell manual launch
 (step 1) — those determine whether this is solvable from our side at all.
 
-## After M11
+## M12
 
-Per `docs/NOTES.md` roadmap: **M12** (capability/principal core + login) → **M13** (permission enforcement
-on the VFS). M12 wants the identity store in the base image — which M11 makes available on disk, so the
-ordering is right.
+M12 is now underway.
+
+- **M12a — DONE (2026-06-05):** kernel process entries carry a `principal`/`session`/capability mask,
+  top-level processes get the boot console context, children inherit it through `spawn`/`fork`, and
+  `execve` preserves it. `SYS_SECURITY_INFO` (31) exposes the current context for EL0 introspection.
+  `/bin/identitydemo` validates boot context + fork inheritance during `boot_test.sh`.
+- **Next: M12b** — put a small identity store in the immutable base image and add a `console-login`
+  userland program (initially no real password, just selects/names the console principal/session) that
+  launches `/bin/sh`. Keep Unix `/etc/passwd` as a generated/compat view, not the security source.
+
+After M12, per `docs/NOTES.md`: **M13** starts permission enforcement on the VFS.
 
 ## Watch-outs / loose ends
 

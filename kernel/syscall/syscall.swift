@@ -30,6 +30,7 @@ private let sysUnlink: UInt = 27    // unlink(path)
 private let sysRename: UInt = 28    // rename(old, new)
 private let sysMkdir: UInt = 29     // mkdir(path, mode)
 private let sysRmdir: UInt = 30     // rmdir(path)
+private let sysSecurityInfo: UInt = 31 // security_info(struct security_info*)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -125,6 +126,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsMkdir(path: frame[0])
     } else if number == sysRmdir {
         result = vfsRmdir(path: frame[0])
+    } else if number == sysSecurityInfo {
+        result = processSecurityInfo(buffer: frame[0])
     } else {
         result = -38 // ENOSYS
     }

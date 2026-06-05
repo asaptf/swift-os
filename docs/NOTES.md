@@ -567,6 +567,24 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - All 11 `make test` suites green; `BOARD=virtualbox` still builds (its boot path parks before `vfsInit`,
   so it does not load programs).
 
+## Capability/principal core (M12)
+
+### M12a — process security context scaffold (DONE, 2026-06-05)
+
+- Added `kernel/security/security.swift` with the first kernel-native `ProcessSecurityContext`:
+  `principal`, `session`, and an explicit capability mask. The boot console context is principal `1`,
+  session `1`, with initial capabilities for console, spawn, read-only FS, tmpfs writes, and process
+  inspection. This is not Unix `uid==0`; it is the capability/principal model chosen in the roadmap.
+- Process table entries now carry that security context. Top-level kernel-launched processes receive the
+  boot console context; child processes inherit it through `spawn`/`fork`; `execve` preserves it.
+- Added `SYS_SECURITY_INFO` (31), returning the current process security record to EL0. It is introspection
+  only; M13 will start using capabilities for enforcement.
+- Added `/bin/identitydemo`, packed into the base image and run during boot. It validates the boot
+  principal/session/capability mask and forks a child to prove context inheritance. `boot_test.sh` asserts
+  the M12a lines; `base_image_test.swift` verifies the demo is present as an ELF.
+- Next M12 step: load a simple identity store from the immutable base image and introduce a console-login
+  userland program that creates/names the session before launching the shell.
+
 ## Open decisions / resolved
 
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).

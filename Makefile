@@ -81,6 +81,7 @@ SWIFT_SRCS := \
 	kernel/syscall/syscall.swift \
 	kernel/tty/tty.swift \
 	kernel/signal/signal.swift \
+	kernel/security/security.swift \
 	kernel/user/user_access.swift \
 	kernel/user/user_process.swift \
 	kernel/user/process.swift \
@@ -191,6 +192,7 @@ USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
+USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 BASE_EXEC_ELFS := \
 	$(USER_HELLO_ELF) \
@@ -205,6 +207,7 @@ BASE_EXEC_ELFS := \
 	$(USER_EXECDEMO_ELF) \
 	$(USER_FDOPSDEMO_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
+	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(BUILD)/busybox.elf
 
@@ -303,6 +306,9 @@ $(BUILD)/user_fdopsdemo.o: userland/fdopsdemo.c userland/lib/syscall.h userland/
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
 
+$(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
+
 $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ps.swift -o $@
 
@@ -338,6 +344,9 @@ $(USER_FDOPSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_f
 
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
+
+$(USER_IDENTITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o -o $@
 
 $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o -o $@
@@ -468,6 +477,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
+	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@

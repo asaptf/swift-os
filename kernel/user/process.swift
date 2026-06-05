@@ -49,6 +49,9 @@ private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on
 private var pBrk = [UInt](repeating: 0, count: maxProc)
 private var pNameLen = [Int](repeating: 0, count: maxProc)
 private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
+private var pPrincipal = [UInt32](repeating: 0, count: maxProc)
+private var pSession = [UInt32](repeating: 0, count: maxProc)
+private var pCaps = [UInt64](repeating: 0, count: maxProc)
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var rrCursor = 0     // round-robin hint
@@ -128,6 +131,27 @@ private func copyProcessName(from parent: Int, to child: Int) {
     pNameLen[child] = pNameLen[parent]
 }
 
+private func setProcessSecurity(slot: Int, parent: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    if parent >= 0 && parent < maxProc {
+        pPrincipal[slot] = pPrincipal[parent]
+        pSession[slot] = pSession[parent]
+        pCaps[slot] = pCaps[parent]
+        return
+    }
+    let ctx = securityBootContext()
+    pPrincipal[slot] = ctx.principal
+    pSession[slot] = ctx.session
+    pCaps[slot] = ctx.caps
+}
+
+private func copyProcessSecurity(from parent: Int, to child: Int) {
+    if parent < 0 || parent >= maxProc || child < 0 || child >= maxProc { return }
+    pPrincipal[child] = pPrincipal[parent]
+    pSession[child] = pSession[parent]
+    pCaps[child] = pCaps[parent]
+}
+
 // Build a process from an ELF image. Returns its slot, or -1.
 private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
                            argc: Int, parent: Int) -> Int {
@@ -173,6 +197,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
     setProcessName(slot: slot, packed: packed, argc: argc)
+    setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent)
     return slot
 }
@@ -330,6 +355,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
     copyProcessName(from: parent, to: child)
+    copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
     return child + 1 // pid
 }
@@ -421,6 +447,19 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
         for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
     }
     return total
+}
+
+/// SYS_security_info: copy the current process security context.
+/// Record layout (16 bytes): principal:u32, session:u32, caps:u64.
+func processSecurityInfo(buffer: UInt) -> Int {
+    let me = currentProc
+    guard me >= 0 else { return -22 }
+    guard let dst = userWritableBuffer(buffer, 16) else { return -22 }
+    let raw = UnsafeMutableRawPointer(dst)
+    raw.storeBytes(of: pPrincipal[me], toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: pSession[me], toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: pCaps[me], toByteOffset: 8, as: UInt64.self)
+    return 0
 }
 
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).

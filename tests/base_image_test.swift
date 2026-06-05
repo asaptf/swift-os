@@ -81,6 +81,7 @@ func require(_ path: String, _ kind: UInt32) -> ParsedEntry {
 _ = require("bin", kindDir)
 _ = require("etc", kindDir)
 let busybox = require("bin/busybox", kindFile)
+let identitydemo = require("bin/identitydemo", kindFile)
 let ps = require("bin/ps", kindFile)
 let motd = require("etc/motd", kindFile)
 let hostname = require("etc/hostname", kindFile)
@@ -92,7 +93,7 @@ guard String(decoding: hostname.data, as: UTF8.self) == "swiftos\n" else { fail(
 guard String(decoding: readme.data, as: UTF8.self) == "swift-os read-only base fs\n" else { fail("bad readme") }
 guard String(decoding: hello.data, as: UTF8.self) == "M5 file: hello from VFS read()\n" else { fail("bad hello") }
 
-for exe in [busybox, ps] {
+for exe in [busybox, identitydemo, ps] {
     guard exe.data.count > 4 else { fail("\(exe.path) too short") }
     guard exe.data[0] == 0x7f && exe.data[1] == 0x45 && exe.data[2] == 0x4c && exe.data[3] == 0x46 else {
         fail("\(exe.path) is not an ELF")

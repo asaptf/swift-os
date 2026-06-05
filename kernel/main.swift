@@ -287,6 +287,17 @@ private func runSecurityDemo() {
     uartPuts("\n")
 }
 
+private func runIdentityDemo() {
+    uartPuts("swift-os M12a: principal/session/capability context\n")
+    let (img, sz) = demoImage("/bin/identitydemo")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["identitydemo"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("M12a OK: identity demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runPsDemo() {
     uartPuts("swift-os userland: Swift ps\n")
     let (img, sz) = demoImage("/bin/ps")
@@ -529,6 +540,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     schedulerInit()
     processInit()
+    securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
     ttyInit()
@@ -559,6 +571,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runFdOpsDemo()
         runFsDemo()
         runSecurityDemo()
+        runIdentityDemo()
         runPsDemo()
         runTtyDemo()
         runShell() // busybox sh — interactive, last
