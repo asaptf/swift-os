@@ -26,7 +26,9 @@ Working notes for picking up swift-os development. Authoritative milestone histo
   **M11c — DONE (2026-06-05):** the read-only VFS is backed by extents into the disk image (parses
   `SWOSBASE` at `vfsInit`, reads file spans via `virtio_blk_read_range`), with the static literals kept as
   a fallback when no packed disk is attached. `tests/vfs_disk_test.sh` (unique-marker image) in `make test`.
-  **Next: M11d (stretch)** — move busybox + demo ELFs off the embedded blob, resolve `/bin/*` from disk.
+  **M11d — DONE (2026-06-05):** `make base-image` stages real ELFs under `/bin`; `exec.swift` prefers
+  disk-backed `/bin/*` extents and falls back to embedded blobs for no-disk boot paths. `tests/disk_exec_test.sh`
+  proves busybox and `/bin/ps` execute from the packed base image.
 - **Off critical path (done opportunistically):** EFI GOP framebuffer console + virtio-input keyboard +
   graphical QEMU target; a blinking block cursor with arrow-key/Home/End/Delete line editing in the tty
   (kernel-side, since busybox editing is off); documented direction for an own-Swift sans-IO network stack.
@@ -58,10 +60,14 @@ here and advances the roadmap. **Prioritize M11.**
 - Acceptance met: `ls /`, `cat /etc/motd`, `echo` read **from disk** — `tests/vfs_disk_test.sh` proves it
   with a unique marker image. The driver needs the modern transport (`virtio-mmio.force-legacy=false`).
 
-### M11d — move busybox + demos off the embedded blob (stretch)
-- Pack `build/busybox.elf` and the demo ELFs into the base image; have `exec.swift` resolve `/bin/*` from
-  disk. Drop `kernel/user/user_blob.S`. This is the real payoff (kernel image shrinks, FS is the source).
-- Watch: ELF loading currently reads from an in-memory blob; it must read from the packed base extents.
+### M11d — disk-first executable lookup — DONE (2026-06-05)
+- `make base-image` stages busybox, Swift `ps`, and the demo ELFs into `/bin` in the packed base image.
+- `exec.swift` resolves known `/bin/*` paths through the mounted `SWOSBASE` tree first, reads the ELF into
+  a reusable kernel buffer, and falls back to embedded blobs when no packed disk is attached.
+- `tests/disk_exec_test.sh` attaches `build/base.img` and proves the shell's busybox plus native `/bin/ps`
+  execute from disk.
+- Cleanup left for a later milestone: drop `kernel/user/user_blob.S` once every boot path supplies a packed
+  base image.
 
 ## Track A: unblock M10.5 (when VirtualBox is available)
 

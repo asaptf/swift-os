@@ -317,8 +317,11 @@ private func runShell() {
     // Keep the system usable: if the shell exits (Ctrl-D / `exit`), start a
     // fresh one rather than leaving the VM idle.
     while true {
+        // M11d: prefer the busybox packed on disk; fall back to the embedded
+        // blob when no packed disk is attached.
+        let (image, size) = resolveBusyboxImage()
         let (p, n, argc) = packArgs(["sh"])
-        let code = processRunElf(busybox_elf_addr(), UInt(busybox_elf_len()), packed: p, packedLen: n, argc: argc)
+        let code = processRunElf(image, size, packed: p, packedLen: n, argc: argc)
         uartPuts("M8: busybox sh exited, code ")
         uartPutUInt(UInt64(code))
         uartPuts("; restarting\n")

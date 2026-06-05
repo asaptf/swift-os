@@ -22,7 +22,27 @@ fi
 
 WORK="$(mktemp -d -t swiftos-vfs.XXXXXX)"
 LOG="$(mktemp -t swiftos-vfs.XXXXXX)"
-trap 'rm -rf "$WORK" "$LOG"' EXIT
+PIDFILE="$(mktemp -t swiftos-vfs-pid.XXXXXX)"
+QP=""
+stop_qemu() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid
+    pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      sleep 0.2
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -n "$QP" ]]; then
+    wait "$QP" 2>/dev/null || true
+  fi
+}
+cleanup() {
+  stop_qemu
+  rm -rf "$WORK" "$LOG" "$PIDFILE"
+}
+trap cleanup EXIT
 
 # Seed tree with a marker motd and an extra file absent from the static tree.
 mkdir -p "$WORK/seed/etc"
@@ -43,14 +63,16 @@ dtb_args=()
   sleep 1;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
-  -drive "file=$IMG,format=raw,if=none,id=disk0" \
+  -drive "file=$IMG,format=raw,if=none,id=disk0,readonly=on" \
   -device virtio-blk-device,drive=disk0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
 sleep 19
-kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null
+stop_qemu
+QP=""
 
 ok=1
 grep -qF "M11c: read-only base mounted from disk" "$LOG" || { echo "FAIL: base was not mounted from disk" >&2; ok=0; }

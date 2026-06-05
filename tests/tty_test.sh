@@ -19,7 +19,27 @@ if [[ ! -f "$KERNEL" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-tty.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+PIDFILE="$(mktemp -t swiftos-tty-pid.XXXXXX)"
+QEMU_PID=""
+stop_qemu() {
+    if [[ -f "$PIDFILE" ]]; then
+        local pid
+        pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null || true
+            sleep 0.2
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    fi
+    if [[ -n "$QEMU_PID" ]]; then
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+}
+cleanup() {
+    stop_qemu
+    rm -f "$LOG" "$PIDFILE"
+}
+trap cleanup EXIT
 
 dtb_args=()
 if [[ -f "$DTB" ]]; then
@@ -31,13 +51,14 @@ fi
 # Ctrl-C. Asserting read(0) returns "ping" exercises the cooked line editor's
 # movable cursor and mid-line delete, not just plain appending.
 ( sleep 1.5; printf 'pinXg\033[D\177\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
-    "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" \
+    "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+    -pidfile "$PIDFILE" "${dtb_args[@]}" -kernel "$KERNEL" \
     >"$LOG" 2>&1 &
 QEMU_PID=$!
 
 sleep 6
-kill "$QEMU_PID" 2>/dev/null
-wait "$QEMU_PID" 2>/dev/null
+stop_qemu
+QEMU_PID=""
 
 ok=1
 grep -qF "you typed: ping" "$LOG" || { echo "FAIL: typed line was not echoed back by read(0)" >&2; ok=0; }

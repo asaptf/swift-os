@@ -13,7 +13,27 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-bb.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+PIDFILE="$(mktemp -t swiftos-bb-pid.XXXXXX)"
+QP=""
+stop_qemu() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid
+    pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      sleep 0.2
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -n "$QP" ]]; then
+    wait "$QP" 2>/dev/null || true
+  fi
+}
+cleanup() {
+  stop_qemu
+  rm -f "$LOG" "$PIDFILE"
+}
+trap cleanup EXIT
 
 dtb_args=()
 if [[ -f "$DTB" ]]; then
@@ -29,10 +49,12 @@ fi
   sleep 1;  printf 'ps\n'                # native /bin/ps (not a busybox applet)
   sleep 1;  printf 'exit\n'
   sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
 sleep 18
-kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null
+stop_qemu
+QP=""
 
 ok=1
 grep -qF "built-in shell (ash)" "$LOG" || { echo "FAIL: no busybox ash banner" >&2; ok=0; }

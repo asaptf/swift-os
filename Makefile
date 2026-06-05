@@ -36,6 +36,8 @@ QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
+BASE_ROOT := $(BUILD)/base-root
+BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
 # BOARD=qemu (default) targets the QEMU `virt` board; BOARD=virtualbox targets
@@ -179,6 +181,21 @@ USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_PS_ELF := $(BUILD)/ps.elf
+BASE_EXEC_ELFS := \
+	$(USER_HELLO_ELF) \
+	$(USER_TTYDEMO_ELF) \
+	$(USER_ARGVDEMO_ELF) \
+	$(USER_SPAWNDEMO_ELF) \
+	$(USER_FSDEMO_ELF) \
+	$(USER_BRKDEMO_ELF) \
+	$(USER_NEWLIBTEST_ELF) \
+	$(USER_COPROC_ELF) \
+	$(USER_FORKDEMO_ELF) \
+	$(USER_EXECDEMO_ELF) \
+	$(USER_FDOPSDEMO_ELF) \
+	$(USER_SECURITYDEMO_ELF) \
+	$(USER_PS_ELF) \
+	$(BUILD)/busybox.elf
 
 .PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image
 
@@ -368,6 +385,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
 	./tests/vfs_disk_test.sh
+	./tests/disk_exec_test.sh
 	./tests/busybox_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
@@ -420,8 +438,26 @@ run-gfx: disk
 $(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/basepack.swift -o $@
 
-$(BASE_IMG): $(BASEPACK) $(shell find base -type f | sort) Makefile
-	$(BASEPACK) base $@
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
+	rm -rf $(BASE_ROOT)
+	mkdir -p $(BASE_ROOT)
+	cp -R base/. $(BASE_ROOT)/
+	mkdir -p $(BASE_ROOT)/bin
+	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
+	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
+	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
+	cp $(USER_SPAWNDEMO_ELF) $(BASE_ROOT)/bin/spawndemo
+	cp $(USER_FSDEMO_ELF) $(BASE_ROOT)/bin/fsdemo
+	cp $(USER_BRKDEMO_ELF) $(BASE_ROOT)/bin/brkdemo
+	cp $(USER_NEWLIBTEST_ELF) $(BASE_ROOT)/bin/newlibtest
+	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc
+	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo
+	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo
+	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
+	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
+	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
+	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
+	$(BASEPACK) $(BASE_ROOT) $@
 
 base-image: $(BASE_IMG)
 
@@ -440,7 +476,7 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/basepack $(BUILD)/base_image_test $(ESP_DIR)
+		$(BUILD)/basepack $(BUILD)/base_image_test $(BASE_ROOT) $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

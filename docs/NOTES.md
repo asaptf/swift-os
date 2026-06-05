@@ -535,8 +535,23 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Test: `tests/vfs_disk_test.sh` packs a throwaway image whose `/etc/motd` holds a unique marker absent
   from the kernel literals (plus a disk-only file), boots with it attached, and asserts busybox reads the
   marker and the extra file — proving the bytes came off disk, not the fallback. Wired into `make test`.
-- Remaining M11 work: M11d (stretch) — move busybox + the demo ELFs off the embedded `user_blob.S` and
-  resolve `/bin/*` from the packed base on disk.
+### M11d — disk-first executable lookup (DONE, 2026-06-05)
+
+- `make base-image` now stages real ELFs into the packed base image under `/bin`: busybox, Swift `ps`,
+  and the milestone demo programs. The static seed tree still supplies `/etc` and text files, while the
+  staging tree overwrites `/bin/ps` with the executable.
+- `exec.swift` now resolves known `/bin/*` programs through the VFS first. When a path is a disk-backed
+  file in the mounted `SWOSBASE` image, the kernel reads the ELF into a reusable staging buffer and runs
+  it from there; otherwise it falls back to the embedded blob. The fallback keeps the no-disk `-kernel`
+  tests and the UEFI GPT boot path working until the boot disk also carries/attaches a base image.
+- The final busybox shell launcher uses the same disk-first path, so an attached packed base image makes
+  `/bin/busybox` the source of the interactive shell. Busybox applets still re-exec through busybox as
+  before, while native `/bin/ps` is served from the packed base image.
+- Tests: `tests/base_image_test.swift` verifies that `/bin/busybox` and `/bin/ps` in `build/base.img` are
+  real ELF files, and `tests/disk_exec_test.sh` boots with `build/base.img`, asserts the M11d disk-load
+  log lines, and runs `ps` from disk. Wired into `make test`.
+- Remaining cleanup: remove `kernel/user/user_blob.S` only after every boot path supplies a packed base
+  image (or the UEFI disk grows a base partition/file) so the fallback is no longer needed.
 
 ## Open decisions / resolved
 

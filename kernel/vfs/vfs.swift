@@ -1081,3 +1081,16 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
         processYieldForIO()
     }
 }
+
+// ---- executable lookup (M11d) ---------------------------------------------
+
+/// Resolve an absolute kernel path to a disk-backed file's extent. Returns
+/// (found, diskByteOffset, length); found is false for a missing path, a
+/// directory, or a RAM-backed (non-disk) node. Lets the ELF loader pull a
+/// program straight off the packed base image instead of an embedded blob.
+func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int) {
+    let node = resolve(path)
+    if node < 0 { return (false, 0, 0) }
+    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0) }
+    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+}

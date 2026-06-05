@@ -20,7 +20,27 @@ if [[ ! -f "$DISK" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-blk.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+PIDFILE="$(mktemp -t swiftos-blk-pid.XXXXXX)"
+QP=""
+stop_qemu() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid
+    pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      sleep 0.2
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  if [[ -n "$QP" ]]; then
+    wait "$QP" 2>/dev/null || true
+  fi
+}
+cleanup() {
+  stop_qemu
+  rm -f "$LOG" "$PIDFILE"
+}
+trap cleanup EXIT
 
 dtb_args=()
 if [[ -f "$DTB" ]]; then
@@ -30,14 +50,16 @@ fi
 # force-legacy=false selects the modern (v2) virtio-mmio interface our driver
 # speaks. The probe runs early in boot, so a short Ctrl-C just stops the kernel.
 ( sleep 9; printf '\003'; sleep 1 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=disk0" \
+  -drive "file=$DISK,format=raw,if=none,id=disk0,readonly=on" \
   -device virtio-blk-device,drive=disk0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
 sleep 12
-kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null
+stop_qemu
+QP=""
 
 ok=1
 grep -qF "M9 platform: virtio-mmio" "$LOG" || { echo "FAIL: HAL did not discover the virtio-mmio window" >&2; ok=0; }
