@@ -582,8 +582,24 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Added `/bin/identitydemo`, packed into the base image and run during boot. It validates the boot
   principal/session/capability mask and forks a child to prove context inheritance. `boot_test.sh` asserts
   the M12a lines; `base_image_test.swift` verifies the demo is present as an ELF.
-- Next M12 step: load a simple identity store from the immutable base image and introduce a console-login
-  userland program that creates/names the session before launching the shell.
+### M12b — identity store + console-login (DONE, 2026-06-05)
+
+- Added the base-image identity store `/etc/swos/passwd`, one principal per line as
+  `name:principal:session:caps:password:shell` (caps a decimal capability bitmask; plaintext passwords for
+  bring-up). `root` gets all caps (31); `user` gets spawn|fsread|tmpwrite (14), no console/inspect. A
+  compat `/etc/passwd` view ships alongside for tools that expect the Unix file (it is not the security
+  source).
+- Added the privileged `SYS_LOGIN` (32): `login(principal, session, caps)` replaces the calling process's
+  security context, but only if the caller holds `capConsole` (the boot/login context), so an ordinary
+  program cannot escalate. The new context is inherited across the subsequent `execve` into the shell.
+- Added `/bin/console-login`: reads the store, prompts for login name + password on the console, matches a
+  store line, calls `login()` to adopt that context, prints the adopted `principal/session/caps`
+  (via `security_info`), and `execve`'s the shell from the store's last field.
+- Test: `tests/console_login_test.sh` boots with the base image, runs console-login, rejects a wrong
+  password, then logs in as `user` and asserts the adopted context (`principal=2 session=2 caps=14`) and
+  that the user shell starts. Wired into `make test` (12 suites green).
+- Next M12 step (M12c/d): make `console-login` the boot init program in place of the direct busybox
+  launch, and move passwords to a hash. Then M13 enforces capabilities on the VFS.
 
 ## Open decisions / resolved
 

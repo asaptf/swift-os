@@ -38,6 +38,7 @@
 #define SYS_MKDIR     29
 #define SYS_RMDIR     30
 #define SYS_SECURITY_INFO 31
+#define SYS_LOGIN         32
 
 #ifndef __ASSEMBLER__
 
@@ -142,6 +143,13 @@ struct security_info {
 
 static inline int security_info(struct security_info *info) {
     return (int)__syscall3(SYS_SECURITY_INFO, (long)info, 0, 0);
+}
+
+// Replace the caller's security context after authenticating a principal.
+// Privileged: only a process holding CAP_CONSOLE may call it. 0 on success,
+// negative on error (e.g. -1 EPERM). The new context survives execve.
+static inline int login(unsigned int principal, unsigned int session, unsigned long caps) {
+    return (int)__syscall3(SYS_LOGIN, (long)principal, (long)session, (long)caps);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

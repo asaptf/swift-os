@@ -104,9 +104,15 @@ M12 is now underway.
   top-level processes get the boot console context, children inherit it through `spawn`/`fork`, and
   `execve` preserves it. `SYS_SECURITY_INFO` (31) exposes the current context for EL0 introspection.
   `/bin/identitydemo` validates boot context + fork inheritance during `boot_test.sh`.
-- **Next: M12b** — put a small identity store in the immutable base image and add a `console-login`
-  userland program (initially no real password, just selects/names the console principal/session) that
-  launches `/bin/sh`. Keep Unix `/etc/passwd` as a generated/compat view, not the security source.
+- **M12b — DONE (2026-06-05):** identity store `/etc/swos/passwd` in the base image
+  (`name:principal:session:caps:password:shell`) with a compat `/etc/passwd` view. New privileged
+  `SYS_LOGIN` (32) replaces the caller's security context, gated on `capConsole` so only the boot/login
+  context can use it. `/bin/console-login` reads the store, prompts login/password, authenticates, calls
+  `login()` to adopt the principal/session/caps, and `execve`'s the shell (which inherits the context).
+  `tests/console_login_test.sh` rejects a wrong password and logs in as `user` (principal 2, caps 14).
+- **Next: M12c/d** — wire `console-login` into the boot path as the init program (replace the direct
+  busybox launch), and move toward password hashing. Then **M13**: permission enforcement on the VFS,
+  checked against the capability mask now carried by every process.
 
 After M12, per `docs/NOTES.md`: **M13** starts permission enforcement on the VFS.
 

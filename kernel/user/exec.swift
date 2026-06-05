@@ -90,6 +90,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/securitydemo") { return loadProgramImage("/bin/securitydemo") }
     if userPathEquals(pathVA, "/bin/identitydemo") { return loadProgramImage("/bin/identitydemo") }
     if userPathEquals(pathVA, "/bin/ps") { return loadProgramImage("/bin/ps") }
+    if userPathEquals(pathVA, "/bin/console-login") { return loadProgramImage("/bin/console-login") }
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
     // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
     // named by argv[0]. This is how the standalone shell runs ls/cat/echo.

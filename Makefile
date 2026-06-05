@@ -193,8 +193,10 @@ USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
+USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 BASE_EXEC_ELFS := \
+	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
@@ -309,6 +311,9 @@ $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h use
 $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
 
+$(BUILD)/user_console-login.o: userland/console-login.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/console-login.c -o $@
+
 $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ps.swift -o $@
 
@@ -347,6 +352,9 @@ $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/use
 
 $(USER_IDENTITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o -o $@
+
+$(USER_CONSOLELOGIN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_console-login.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_console-login.o -o $@
 
 $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o -o $@
@@ -405,6 +413,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/virtio_blk_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/console_login_test.sh
 	./tests/busybox_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
@@ -478,6 +487,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
+	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@

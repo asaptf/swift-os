@@ -31,6 +31,7 @@ private let sysRename: UInt = 28    // rename(old, new)
 private let sysMkdir: UInt = 29     // mkdir(path, mode)
 private let sysRmdir: UInt = 30     // rmdir(path)
 private let sysSecurityInfo: UInt = 31 // security_info(struct security_info*)
+private let sysLogin: UInt = 32        // login(principal, session, caps) — needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -128,6 +129,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsRmdir(path: frame[0])
     } else if number == sysSecurityInfo {
         result = processSecurityInfo(buffer: frame[0])
+    } else if number == sysLogin {
+        result = processLogin(principal: UInt32(truncatingIfNeeded: frame[0]),
+                              session: UInt32(truncatingIfNeeded: frame[1]),
+                              caps: UInt64(frame[2]))
     } else {
         result = -38 // ENOSYS
     }

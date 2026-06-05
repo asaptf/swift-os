@@ -462,6 +462,21 @@ func processSecurityInfo(buffer: UInt) -> Int {
     return 0
 }
 
+/// SYS_login: replace the current process's security context after the caller
+/// has authenticated a principal (M12b). Privileged: only a process holding
+/// capConsole (the boot/login context) may do this, so an ordinary program
+/// cannot grant itself a principal or capabilities. The new context is
+/// inherited across the subsequent execve into the user's shell.
+func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
+    let me = currentProc
+    guard me >= 0 else { return -22 }            // EINVAL
+    if (pCaps[me] & capConsole) == 0 { return -1 } // EPERM
+    pPrincipal[me] = principal
+    pSession[me] = session
+    pCaps[me] = caps
+    return 0
+}
+
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
 func processOnTick() {
     if currentProc >= 0 && pState[currentProc] == pRunning {
