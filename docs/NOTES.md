@@ -598,8 +598,26 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - Test: `tests/console_login_test.sh` boots with the base image, runs console-login, rejects a wrong
   password, then logs in as `user` and asserts the adopted context (`principal=2 session=2 caps=14`) and
   that the user shell starts. Wired into `make test` (12 suites green).
-- Next M12 step (M12c/d): make `console-login` the boot init program in place of the direct busybox
-  launch, and move passwords to a hash. Then M13 enforces capabilities on the VFS.
+### M12c — console-login as init (DONE, 2026-06-05)
+
+- `main.swift`'s shell launcher became `runInit`: it starts `/bin/console-login` (re-read from disk each
+  iteration, since the session's shell exec overwrites the shared ELF buffer) instead of launching busybox
+  directly. console-login authenticates, then `execve`'s the shell with the adopted context; when a session
+  exits, init loops back to a fresh login prompt. A raw-busybox fallback remains for a base image with no
+  login program.
+- Boot-flow tests updated: `busybox_test`, `disk_exec_test`, and `uefi_boot_test` log in (root/swordfish)
+  after the M7 Ctrl-C; `console_login_test` logs in at the init prompt directly; `boot_test` TIMEOUT 20→45s
+  because every demo now loads from disk.
+
+### M12d — SHA-256 password hashing (DONE, 2026-06-05)
+
+- The identity store no longer holds plaintext passwords. The password field is `salt$sha256hex`, with a
+  per-user salt and `hash = SHA-256(salt + password)` in lowercase hex (e.g. `swos-root$2e03ca04…`).
+- `console-login` carries a self-contained Swift SHA-256 (FIPS 180-4; constant table + temporary-allocation
+  buffers, no heap) and verifies by recomputing `SHA-256(salt + entered password)` and comparing the hex.
+  Verified against the host `shasum -a 256` reference values baked into the store.
+- A stronger, iterated/memory-hard KDF (and password change tooling) is a later refinement; this milestone
+  removes plaintext storage. Next: M13 enforces capabilities on the VFS.
 
 ## Open decisions / resolved
 

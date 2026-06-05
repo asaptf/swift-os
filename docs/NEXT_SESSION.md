@@ -110,9 +110,16 @@ M12 is now underway.
   context can use it. `/bin/console-login` reads the store, prompts login/password, authenticates, calls
   `login()` to adopt the principal/session/caps, and `execve`'s the shell (which inherits the context).
   `tests/console_login_test.sh` rejects a wrong password and logs in as `user` (principal 2, caps 14).
-- **Next: M12c/d** — wire `console-login` into the boot path as the init program (replace the direct
-  busybox launch), and move toward password hashing. Then **M13**: permission enforcement on the VFS,
-  checked against the capability mask now carried by every process.
+- **M12c — DONE (2026-06-05):** `console-login` is the boot **init** program. `main.swift`'s `runInit`
+  starts `/bin/console-login` instead of busybox; every session begins by authenticating, then `execve`'s
+  the shell with the adopted context; init restarts the prompt when a session exits. The `-kernel`/UEFI
+  tests authenticate (root/swordfish) after the M7 Ctrl-C; `boot_test` TIMEOUT raised to 45s.
+- **M12d — DONE (2026-06-05):** passwords are **SHA-256 hashed**, not plaintext. The store field is now
+  `salt$sha256hex` (per-user salt; `hash = SHA-256(salt+password)`), and `console-login` carries a
+  self-contained Swift SHA-256 (FIPS 180-4) to verify. `console_login_test` still rejects a wrong password
+  and logs in with the real one.
+- **Next: M13** — permission enforcement on the VFS, checked against the capability mask now carried by
+  every process. (A stronger password KDF with iteration/memory hardening is a later refinement.)
 
 After M12, per `docs/NOTES.md`: **M13** starts permission enforcement on the VFS.
 
