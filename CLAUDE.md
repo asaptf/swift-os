@@ -12,7 +12,17 @@ running `ls`/`cat`/`echo` on our filesystem inside QEMU.
 
 ## Hard architectural decisions (do not re-litigate without asking)
 
-- **Kernel language:** Embedded Swift — freestanding, no Foundation, no full stdlib.
+- **Language: Swift everywhere, by default.** swift-os is a Swift OS — kernel, userland utilities,
+  and host-side tooling are written in Embedded Swift (or host Swift for build tools). This is a
+  first principle, not a preference. Reaching for C or any other language requires a **strong,
+  documented justification**, limited to:
+  - third-party code we don't own (busybox, the newlib port);
+  - low-level bridges Swift cannot express directly (volatile MMIO, the syscall/runtime shims in
+    `kernel/arch/aarch64/io.h` and `userland/lib/swift_user.*`, boot/exception assembly);
+  - a measured, recorded reason (e.g. a toolchain limitation) — note it in `docs/NOTES.md`.
+  Default to writing Swift, and prefer rewriting existing C in Swift over extending it. New userland
+  programs use the `userland/lib/swift_user.*` bridge, like `/bin/ps` and `/bin/console-login`.
+- **Kernel Swift style:** freestanding, no Foundation, no full stdlib.
   - Value types + `Unsafe*` pointers at the low level.
   - `~Copyable` structs with `deinit` for resource ownership.
   - Classes only after the heap is up, and sparingly (ARC has a cost).
@@ -53,6 +63,5 @@ See `docs/ARCHITECTURE.md`.
 - All docs and comments in **English**.
 - Match surrounding code style; comment density matches neighbors.
 - No dead/half files. Clear commits per milestone.
-- **New userland utilities are written in Swift** (Embedded Swift on the `userland/lib/swift_user.*`
-  bridge, like `/bin/ps` and `/bin/console-login`). Use C only where it is genuinely required — third-party
-  code (busybox), the newlib port, and low-level syscall/runtime bridges.
+- **Write Swift by default** (see "Language" under hard decisions). C/asm only with a strong, documented
+  reason — third-party code, low-level bridges, or a recorded toolchain limitation.
