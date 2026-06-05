@@ -237,9 +237,19 @@ private func pickReady() -> Int {
 
 // Switch from the current process back into the scheduler. Returns when this
 // process is scheduled again.
+//
+// The switch plus the surrounding currentProc/pState bookkeeping is not atomic.
+// If a timer IRQ fired mid-switch it would run processOnTick → yieldToScheduler
+// re-entrantly and overwrite the very context being saved/restored, corrupting
+// the resumed trap frame (observed as a wild SP/PC panic). So mask IRQs across
+// the switch; restore the caller's prior IRQ state once this process is resumed
+// — preemptive callers (processOnTick) entered with IRQs already masked, while
+// cooperative callers in a blocking syscall entered with them enabled.
 private func yieldToScheduler() {
+    let daif = irq_save()
     cpu_switch_context(UnsafeMutableRawPointer(procCtx.advanced(by: currentProc)),
                        UnsafeMutableRawPointer(schedCtx))
+    irq_restore(daif)
 }
 
 private func wakeParent(of slot: Int) {
@@ -250,11 +260,23 @@ private func wakeParent(of slot: Int) {
 }
 
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
+//
+// The loop runs with IRQs masked so a timer tick can never preempt a switch-in
+// (currentProc/pState are already updated for the target, but the switch is not
+// yet complete). A process re-enables IRQs itself once it truly runs (eret to
+// EL0, or irq_restore in yieldToScheduler). Only the idle wait briefly unmasks.
 private func schedule(until done: () -> Bool) {
+    let daif = irq_save()
     while !done() {
         let s = pickReady()
         if s < 0 {
-            wfi() // nothing runnable yet (e.g. all blocked waiting on the timer)
+            // Nothing runnable yet: unmask so the timer/UART IRQ can be serviced
+            // (and possibly make something ready), then re-mask. Safe because
+            // currentProc == -1 here — processOnTick is a no-op and no switch is
+            // in flight.
+            enable_irq()
+            wfi()
+            disable_irq()
             continue
         }
         currentProc = s
@@ -266,6 +288,7 @@ private func schedule(until done: () -> Bool) {
                            UnsafeMutableRawPointer(procCtx.advanced(by: s)))
         currentProc = -1
     }
+    irq_restore(daif)
 }
 
 /// Launch an ELF as a top-level process (child of the kernel) and run the

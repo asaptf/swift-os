@@ -46,6 +46,7 @@ argv[2]=exec-beta
 M8d exec OK: exec demo exited, code 3
 fdopsdemo: dup/dup2 shared offsets OK
 fdopsdemo: pipe/poll/fork OK
+fdopsdemo: pipe-poll preemption stress OK
 fdopsdemo: rename/unlink/mkdir/rmdir OK
 M8e OK: fdops demo exited, code 0
 securitydemo: syscall abuse checks OK

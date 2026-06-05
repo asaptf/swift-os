@@ -96,6 +96,66 @@ int main(void) {
     close(p[0]);
     puts_raw("fdopsdemo: pipe/poll/fork OK\n");
 
+    // Preemption-stress the cooperative-yield path: a CPU-bound child streams a
+    // run of bytes, busy-burning between each so the 100 Hz timer preempts it
+    // mid-loop, while the parent repeatedly poll()s the pipe with a timeout.
+    // Each poll on an empty pipe yields to the scheduler (processYieldForIO), so
+    // the parent crosses cpu_switch_context dozens of times while the timer is
+    // actively preempting — the exact interleaving that used to corrupt the
+    // resumed trap frame (wild SP/PC panic) before yieldToScheduler masked IRQs
+    // across the switch. The bytes are a 0..N-1 counter so a dropped/reordered
+    // wakeup is caught, not just a crash.
+#define STRESS_BYTES 64
+    if (pipe(p) != 0) {
+        puts_raw("fdopsdemo: stress pipe failed\n");
+        return 1;
+    }
+    pid = fork();
+    if (pid < 0) {
+        puts_raw("fdopsdemo: stress fork failed\n");
+        return 1;
+    }
+    if (pid == 0) {
+        close(p[0]);
+        for (int i = 0; i < STRESS_BYTES; i += 1) {
+            for (volatile long j = 0; j < 200000; j += 1) {
+                // Burn time so the timer preempts us between writes.
+            }
+            char b = (char)i;
+            if (write(p[1], &b, 1) != 1) { return 3; }
+        }
+        close(p[1]);
+        return 0;
+    }
+    close(p[1]);
+    int got = 0;
+    while (got < STRESS_BYTES) {
+        pf.fd = p[0];
+        pf.events = POLLIN;
+        pf.revents = 0;
+        int r = poll(&pf, 1, 1000);
+        if (r <= 0) {
+            puts_raw("fdopsdemo: stress poll stalled\n");
+            return 1;
+        }
+        if ((pf.revents & POLLIN) == 0) { continue; }
+        char b;
+        long m = read(p[0], &b, 1);
+        if (m == 0) { break; } // writer closed
+        if (m != 1 || (unsigned char)b != (unsigned char)got) {
+            puts_raw("fdopsdemo: stress data mismatch\n");
+            return 1;
+        }
+        got += 1;
+    }
+    status = 0;
+    if (waitpid(pid, &status, 0) != pid || got != STRESS_BYTES) {
+        puts_raw("fdopsdemo: stress incomplete\n");
+        return 1;
+    }
+    close(p[0]);
+    puts_raw("fdopsdemo: pipe-poll preemption stress OK\n");
+
     if (rename("/tmp/fdops/a", "/tmp/fdops/b") != 0) {
         puts_raw("fdopsdemo: rename failed\n");
         return 1;

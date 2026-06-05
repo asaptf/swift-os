@@ -651,14 +651,32 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
   stdin with a timeout to disambiguate `ESC` sequences. `vfsPoll` blocked by calling `processYieldForIO()`
   (a cooperative scheduler switch) in a loop with IRQs enabled — and that cooperative-yield-from-inside-a-
   blocking-syscall path is not robust under timer preemption (it can corrupt the resumed trap frame). The
-  working `ttyRead` path, by contrast, blocks with `enable_irq()` + `wfi()` and never yields. Fix: `vfsPoll`
-  now waits with `wfi()` for tty/vnode fds (input arrives via the UART RX IRQ; the timer wakes `wfi` for the
-  timeout) — exactly ttyRead's proven pattern. The cooperative-yield path is kept ONLY when the poll set
-  contains a pipe fd (a pipe becomes ready only when another process writes, so the CPU must be yielded); no
-  current program `poll()`s a pipe, and that yield path's preemption-safety is a separate follow-up.
-- **Test.** `tests/vi_test.sh` (wired into `make test`, 13 suites green) logs in, runs
-  `vi /tmp/vitest`, inserts text, `:wq`, then `cat`s the file back, asserting vi's alternate-screen banner,
-  the saved content (proves `:wq`/ftruncate), and a trailing shell marker (proves the kernel did not panic).
+  working `ttyRead` path, by contrast, blocks with `enable_irq()` + `wfi()` and never yields. First fix:
+  `vfsPoll` waits with `wfi()` for tty/vnode fds (input arrives via the UART RX IRQ; the timer wakes `wfi`
+  for the timeout) — exactly ttyRead's proven pattern, and it avoids a busy-spin for a single foreground
+  reader. The cooperative-yield path stays only for pipe sets (a pipe becomes ready only when another
+  process writes, so the CPU must be yielded).
+- **Root-cause yield fix (the underlying bug).** The cooperative yield itself was unsafe, not just for poll:
+  `yieldToScheduler()` ran `cpu_switch_context` with the surrounding `currentProc`/`pState` bookkeeping
+  **non-atomically with IRQs enabled**. If a timer tick landed mid-switch it ran `processOnTick` →
+  `yieldToScheduler` re-entrantly and overwrote the very `CPUContext` being saved/restored (and the single
+  shared `schedCtx`), corrupting the resumed trap frame → the wild SP/PC panic. Why poll exposed it: it
+  yields in a tight loop for the whole timeout, so a tick lands in the switch window with high probability;
+  spawn/fork-wait yield once and rarely hit it, and the wfi paths never switch. Fix (process.swift):
+  `yieldToScheduler` brackets the switch with `irq_save()`/`irq_restore()` (mask across the switch, restore
+  the caller's prior IRQ state on resume — preemptive callers entered masked, cooperative ones enabled), and
+  the `schedule()` loop runs IRQ-masked end to end, unmasking only around its idle `wfi` (safe: `currentProc
+  == -1` there, so `processOnTick` is a no-op and no switch is in flight). Added `irq_save`/`irq_restore` to
+  `io.h`. Validated by temporarily forcing vi through the yield path: it crashed reliably before, survives
+  3/3 after. With the fix the yield path is preemption-safe, so `vfsPoll`'s pipe branch is sound.
+- **Tests.** `tests/vi_test.sh` (wired into `make test`) logs in, runs `vi /tmp/vitest`, inserts text, `:wq`,
+  then `cat`s the file back — asserting vi's alternate-screen banner, the saved content (proves
+  `:wq`/ftruncate), and a trailing shell marker (proves the kernel did not panic). `fdopsdemo` (run on every
+  boot, asserted by `boot_test.sh`) gained a **pipe-poll preemption stress**: a CPU-bound child streams a
+  0..63 counter through a pipe, busy-burning between writes so the 100 Hz timer preempts it mid-loop, while
+  the parent `poll()`s the pipe with a timeout — crossing `cpu_switch_context` dozens of times under active
+  preemption (the exact interleaving that used to panic). The byte counter also catches a dropped/reordered
+  wakeup, not just a crash. 13 suites green.
 - **nano:** not done — it needs an ncurses/terminfo port plus locale/regex, a separate multi-step effort.
 
 ## Open decisions / resolved

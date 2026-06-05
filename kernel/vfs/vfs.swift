@@ -1101,12 +1101,11 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     // How we wait when no fd is ready yet:
     //   - tty/vnode fds become ready via the UART RX IRQ (or the timer for the
     //     timeout), so we block with `wfi()` exactly like ttyRead — no scheduler
-    //     yield. This is the proven, safe blocking path.
+    //     yield, so a single foreground reader does not busy-spin.
     //   - a pipe only becomes ready when *another* process writes to it, so we
-    //     must yield the CPU to let the writer run. That cooperative-yield path
-    //     from inside a blocking syscall is not yet robust under timer
-    //     preemption (it can corrupt the resumed trap frame); it stays here only
-    //     for pipe sets, which no current program poll()s. See docs/NOTES.md.
+    //     must yield the CPU (processYieldForIO) to let the writer run. That
+    //     cooperative-yield-from-a-blocking-syscall path is now preemption-safe
+    //     (yieldToScheduler masks IRQs across the switch — see process.swift).
     let proc = currentVFSProcess()
     var hasPipe = false
     for i in 0..<count {

@@ -187,6 +187,21 @@ static inline void disable_irq(void) {
     __asm__ volatile("msr daifset, #2" ::: "memory");
 }
 
+// Save the current DAIF state and mask IRQs, returning the prior state so a
+// later irq_restore() can put it back. Use to bracket a critical section that
+// must not be re-entered by the timer IRQ (e.g. a context switch) without
+// unconditionally enabling IRQs on the way out.
+static inline uint64_t irq_save(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, daif" : "=r"(value));
+    __asm__ volatile("msr daifset, #2" ::: "memory");
+    return value;
+}
+
+static inline void irq_restore(uint64_t daif) {
+    __asm__ volatile("msr daif, %0" :: "r"(daif) : "memory");
+}
+
 static inline void wfi(void) {
     __asm__ volatile("wfi" ::: "memory");
 }
