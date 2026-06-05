@@ -30,5 +30,7 @@ int  swiftos_login(unsigned int principal, unsigned int session, unsigned long c
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
 int  swiftos_exec_shell(const char *path);
+// Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
+void swiftos_set_echo(int on);
 
 #endif // SWIFTOS_USER_SWIFT_USER_H

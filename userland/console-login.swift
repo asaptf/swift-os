@@ -278,11 +278,16 @@ func main(_ argc: Int32,
         return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: lineMax) { name in
             withUnsafeTemporaryAllocation(of: UInt8.self, capacity: lineMax) { pass in
                 while true {
+                    swiftos_set_echo(1) // ensure echo is on (a prior prompt may have left it off)
                     swiftos_puts("\nswift-os login: ")
                     if readLine(name) < 0 { return 0 }
                     if name[0] == 0 { continue }
                     swiftos_puts("Password: ")
-                    if readLine(pass) < 0 { return 0 }
+                    swiftos_set_echo(0)              // don't echo the password
+                    let pr = readLine(pass)
+                    swiftos_set_echo(1)
+                    swiftos_puts("\n")              // the Enter was not echoed
+                    if pr < 0 { return 0 }
                     let rc = tryAuthenticate(base, total, name.baseAddress!, pass.baseAddress!)
                     if rc >= 0 { return rc } // matched: success execs; non-zero only on error
                     swiftos_puts("Login incorrect\n")

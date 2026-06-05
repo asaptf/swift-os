@@ -84,6 +84,19 @@ int swiftos_exec_shell(const char *path) {
     return execve(path, argv, 0);
 }
 
+void swiftos_set_echo(int on) {
+    // termios is four 32-bit words; c_lflag is word 3 (offset 12). ECHO = 1<<1.
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, 0, (long)t, 0);
+    const unsigned int ECHO_BIT = 1u << 1;
+    if (on) {
+        t[3] |= ECHO_BIT;
+    } else {
+        t[3] &= ~ECHO_BIT;
+    }
+    (void)__syscall3(SYS_TCSETATTR, 0, 0, (long)t);
+}
+
 void *memset(void *dst, int value, size_t count) {
     unsigned char *p = (unsigned char *)dst;
     for (size_t i = 0; i < count; i += 1) {
