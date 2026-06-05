@@ -53,3 +53,6 @@ See `docs/ARCHITECTURE.md`.
 - All docs and comments in **English**.
 - Match surrounding code style; comment density matches neighbors.
 - No dead/half files. Clear commits per milestone.
+- **New userland utilities are written in Swift** (Embedded Swift on the `userland/lib/swift_user.*`
+  bridge, like `/bin/ps` and `/bin/console-login`). Use C only where it is genuinely required — third-party
+  code (busybox), the newlib port, and low-level syscall/runtime bridges.

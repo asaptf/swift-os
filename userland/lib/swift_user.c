@@ -52,6 +52,38 @@ void swiftos_puts(const char *s) {
     (void)write(1, s, c_strlen(s));
 }
 
+int swiftos_open(const char *path, int flags) {
+    return open(path, flags);
+}
+
+long swiftos_read(int fd, void *buf, unsigned long count) {
+    return read(fd, buf, count);
+}
+
+int swiftos_close(int fd) {
+    return close(fd);
+}
+
+int swiftos_login(unsigned int principal, unsigned int session, unsigned long caps) {
+    return login(principal, session, caps);
+}
+
+int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
+    struct security_info si;
+    int rc = security_info(&si);
+    if (rc != 0) return rc;
+    if (principal) *principal = si.principal;
+    if (session) *session = si.session;
+    if (caps) *caps = si.caps;
+    return 0;
+}
+
+int swiftos_exec_shell(const char *path) {
+    char arg0[] = "sh";
+    char *argv[] = { arg0, 0 };
+    return execve(path, argv, 0);
+}
+
 void *memset(void *dst, int value, size_t count) {
     unsigned char *p = (unsigned char *)dst;
     for (size_t i = 0; i < count; i += 1) {

@@ -21,4 +21,14 @@ const char *swiftos_ps_name(int index);
 void swiftos_putc(unsigned char c);
 void swiftos_puts(const char *s);
 
+// Thin syscall bridges for Swift userland (e.g. console-login).
+int  swiftos_open(const char *path, int flags);
+long swiftos_read(int fd, void *buf, unsigned long count);
+int  swiftos_close(int fd);
+int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
+// Fetch the current security context; returns 0 on success.
+int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+// Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
+int  swiftos_exec_shell(const char *path);
+
 #endif // SWIFTOS_USER_SWIFT_USER_H
