@@ -62,7 +62,7 @@ fi
   -device virtio-blk-device,drive=disk0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 21
+sleep 30
 stop_qemu
 QP=""
 
