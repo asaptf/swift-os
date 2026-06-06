@@ -507,3 +507,7 @@ int swiftos_listen(int fd, int backlog) {
 int swiftos_accept(int fd) {
     return (int)__syscall3(SYS_ACCEPT, fd, 0, 0);
 }
+
+int swiftos_connect(int fd, unsigned int ip, unsigned short port) {
+    return (int)__syscall3(SYS_CONNECT, fd, (long)ip, (long)port);
+}

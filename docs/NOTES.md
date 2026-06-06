@@ -1199,6 +1199,27 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
 - **Acceptance:** `tests/tcp_echo_test.sh` boots with `-netdev user,hostfwd=tcp::5555-:5555`, runs
   `/bin/tcpecho`, connects with `nc`, and asserts the guest's "got N bytes" line + that nc received the echo
   — the full SYN/data/echo/FIN round-trip. Wired into `make test`.
-- **Deferred:** `connect()` (active client), accept backlog > 1, graceful TIME_WAIT after close (the slot is
-  freed once the FIN is flushed), congestion control. The engine already supports active open; a `connect`
-  socket path is the natural next follow-up. **net-c (a+b+c1+c2) is complete.**
+- **Deferred:** accept backlog > 1, graceful TIME_WAIT after close (the slot is freed once the FIN is
+  flushed), congestion control. **net-c (a+b+c1+c2) is complete.**
+
+### net-d — TCP connect() (active client) + /bin/tcpget (DONE, 2026-06-06)
+
+- **`socketConnect`** (`kernel/net/socket.swift`): assigns an ephemeral local port, resolves the dest MAC
+  (ARP cache → slirp gateway), `activeOpen`s the `TCPConnection` (RTC-seeded ISS), drains the SYN, then
+  pumps the NIC until the established latch fires or a timeout — the 4-tuple demux already routes the
+  SYN-ACK back. `netPump` now also runs each live TCP connection's `tick` + drain (RTO retransmit), closing
+  a net-c2 gap.
+- **`connect(fd, ip, port)` = syscall 44** (fits the 3-arg ABI directly — no arg struct). `vfsConnect`
+  validates the fd/port; read/write/close on the connected fd reuse the net-c2 stream paths.
+- **Userland:** `swiftos_connect` bridge + `userland/tcpget.swift` → `/bin/tcpget [ip] [port]` (dotted-IP
+  parser; default `10.0.2.2:5555`): connect, send a request line, read the reply, print it, close.
+- **Acceptance:** `tests/tcp_connect_test.sh` runs a host `nc -l 5555` server (QEMU slirp maps `10.0.2.2`
+  to the host, so it is reachable with no hostfwd), boots, runs `/bin/tcpget`, and asserts the guest
+  received the server's `srv-reply` (host→guest) **and** the guest's request appears on the wire
+  (guest→host) via a QEMU `filter-dump` pcap. The pcap is used for the guest→host check because nc's
+  file output is block-buffered and its exit timing is unreliable — the guest's TX bytes on the NIC are
+  the deterministic signal. (A live debug confirmed the guest correctly transmits data even from
+  CLOSE_WAIT when a fast server FINs first.)
+- **Deferred:** DNS/name resolution (numeric IP only), a real ephemeral-port allocator (currently
+  `40000 + slot`). The TCP stack now does **both** directions: inbound server (`/bin/tcpecho`) and
+  outbound client (`/bin/tcpget`).

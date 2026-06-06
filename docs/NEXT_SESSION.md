@@ -5,7 +5,7 @@ Working notes for picking up swift-os development. Authoritative milestone histo
 
 ## Where we are (2026-06-06)
 
-- **Network stack — net-a + net-b + net-c (c1+c2) DONE (2026-06-06).** Own Swift, sans-IO.
+- **Network stack — net-a + net-b + net-c (c1+c2) + net-d DONE (2026-06-06).** Own Swift, sans-IO.
   - **net-a:** Swift virtio-net driver (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config,
     zero-copy DMA) + a pure host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The
     boot probe ARPs + pings the QEMU slirp gateway `10.0.2.2`.
@@ -18,10 +18,14 @@ Working notes for picking up swift-os development. Authoritative milestone histo
     `read`/`write`, a kernel TCP socket layer (`kernel/net/socket.swift`, 4-tuple demux + RTO via the NIC
     pump), and `/bin/tcpecho`. Acceptance: `tests/tcp_echo_test.sh` does a TCP round-trip over `hostfwd`
     with `nc` (handshake → data → echo → close).
-  - Tests: `tests/net_test.swift` (host feed-bytes for L2/L3/UDP/TCP) + `tests/virtio_net_test.sh` +
-    `tests/udp_echo_test.sh` + `tests/tcp_echo_test.sh`. See "Network stack (N-series)" in `docs/NOTES.md`.
-  - **Next options:** TCP `connect()` (active client; the engine already supports active open), accept
-    backlog > 1 / multiple connections, or move up the roadmap (native Swift apps; a real server demo).
+  - **net-d:** TCP `connect()` (active client) = syscall 44 + `/bin/tcpget`; the guest connects out to a
+    host server (slirp maps `10.0.2.2` to the host). Acceptance: `tests/tcp_connect_test.sh` (host `nc -l`
+    + a `filter-dump` pcap proving the guest's request on the wire). `netPump` now drives TCP RTO.
+  - Tests: `tests/net_test.swift` (host feed-bytes L2/L3/UDP/TCP) + `virtio_net_test.sh` + `udp_echo_test.sh`
+    + `tcp_echo_test.sh` + `tcp_connect_test.sh`. See "Network stack (N-series)" in `docs/NOTES.md`.
+  - **Next options:** a real multi-connection server demo (accept backlog > 1; concurrent connections),
+    DNS resolution + an ephemeral-port allocator, or move up the roadmap (native Swift apps / a server
+    workload). The stack now does inbound (server) and outbound (client) TCP.
 
 ## Where we were (2026-06-04)
 

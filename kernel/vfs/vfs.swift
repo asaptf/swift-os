@@ -1365,6 +1365,14 @@ func vfsAccept(fd: Int) -> Int {
     return installSocketFD(c)
 }
 
+func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    if port <= 0 || port > 65535 { return errInvalid }
+    return socketConnect(s, dstIP: UInt32(truncatingIfNeeded: ip), dstPort: UInt16(port),
+                         timeoutMs: socketAcceptTimeoutMs)
+}
+
 private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {
     guard validFD(proc, fd) else { return -1 }
     let d = fdEntry(proc, fd).file

@@ -74,5 +74,7 @@ long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
 int swiftos_socket_stream(void);
 int swiftos_listen(int fd, int backlog);
 int swiftos_accept(int fd);
+// Active open to (ip, port) — ip is host order (e.g. 0x0A000202 = 10.0.2.2).
+int swiftos_connect(int fd, unsigned int ip, unsigned short port);
 
 #endif // SWIFTOS_USER_SWIFT_USER_H

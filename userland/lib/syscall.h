@@ -50,6 +50,7 @@
 #define SYS_RECVFROM      41
 #define SYS_LISTEN        42
 #define SYS_ACCEPT        43
+#define SYS_CONNECT       44
 
 #ifndef __ASSEMBLER__
 
