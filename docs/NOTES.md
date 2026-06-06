@@ -979,6 +979,33 @@ path (busybox, the newlib port). This is the answer to the session's "what runti
   division-by-zero/`:sum`, plus the bounded-heap churn assertion, then returns to a working shell.
 - Out of scope: floating point, multi-line input, functions/conditionals, REPL history editing.
 
+## Second native Swift app: `/bin/kv` (DONE, 2026-06-06)
+
+An in-memory key-value store REPL — the second idiomatic Embedded Swift EL0 app. Where `calc`
+stressed the runtime through a recursive-enum AST + ARC, `kv` leans on the **String/Unicode**
+machinery: it stores arbitrary user-supplied keys and values in a `Dictionary<String, String>`
+behind a `final class Store`, so every `SET`/`GET`/`DEL` **hashes text the user typed** (calc only
+ever hashed `String` keys it minted itself), `KEYS` **sorts** those keys (`String: Comparable`,
+Unicode-ordered), the verb dispatch runs through `.uppercased()` (Unicode case mapping), and
+`:stats` reduces over `map.values` with a closure (`reduce(0) { $0 + $1.utf8.count }`). No new
+kernel work and no new bridge calls — it reuses the calc-era allocator/`putchar`/`arc4random_buf`
+and links `libswiftUnicodeDataTables.a` (`SWIFT_UNICODE_DATA`), trimmed by `--gc-sections`.
+
+- Commands: `SET k v…` (value keeps interior spaces — the rest of the line), `GET k`, `DEL k`,
+  `KEYS` (sorted), `COUNT`, plus `:stats` / `:mem` / `:help` / `:q`. Line parsing is a small
+  `splitFields(line, max:)` over the UTF-8 bytes so the value field preserves spaces.
+- Files: `userland/kv.swift`; `kernel/user/exec.swift` routes `/bin/kv` (disk-backed); `Makefile`
+  `user_kv.o`/`$(USER_KV_ELF)` rules (links the Unicode tables like calc) + base-image staging.
+- `tests/kv_test.sh` (wired into `make test`): SET with a multi-word value, GET/DEL of a missing key
+  (`(nil)`), DEL of a present key, COUNT 3→2, KEYS sorted, `:stats`, then a SET/DEL **churn loop**
+  with two `:mem` readings asserting the heap break stays identical (the free-capable allocator
+  recycles), and a final return to the shell. The QEMU window is 75 s (boot+login+churn under
+  emulation lags the scripted feed; the suite is sequential, so this is comfortable in practice).
+- Out of scope: persistence (in-memory only, lost on exit by design), value quoting, TTL/expiry.
+
+Native-Swift userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown head touch wc date
+calc kv`.
+
 ## Open decisions / resolved
 
 - [x] Runtime-low for native Swift apps (2026-06-06): **extend the `swift_user` bridge** (real
