@@ -212,8 +212,14 @@ USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
 USER_DATE_ELF := $(BUILD)/date.elf
 USER_CALC_ELF := $(BUILD)/calc.elf
+USER_HEAD_ELF := $(BUILD)/head.elf
+USER_TOUCH_ELF := $(BUILD)/touch.elf
+USER_WC_ELF := $(BUILD)/wc.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
+	$(USER_HEAD_ELF) \
+	$(USER_TOUCH_ELF) \
+	$(USER_WC_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -386,6 +392,15 @@ $(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_calc.o: userland/calc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/calc.swift -o $@
 
+$(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
+
+$(BUILD)/user_touch.o: userland/touch.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/touch.swift -o $@
+
+$(BUILD)/user_wc.o: userland/wc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/wc.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -468,6 +483,15 @@ $(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_
 $(USER_CALC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o $(SWIFT_UNICODE_DATA) -o $@
 
+$(USER_HEAD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o -o $@
+
+$(USER_TOUCH_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_touch.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_touch.o -o $@
+
+$(USER_WC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -530,6 +554,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_coreutils_test.sh
 	./tests/swift_fileops_test.sh
 	./tests/swift_chmodown_test.sh
+	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
 	./tests/calc_test.sh
 	./tests/busybox_test.sh
@@ -622,6 +647,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
+	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
+	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
+	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

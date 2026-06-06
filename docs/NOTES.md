@@ -801,6 +801,24 @@ by `ls -l`.
 
 Native-Swift userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown`.
 
+## Native Swift `head` / `touch` / `wc` (DONE, 2026-06-06)
+
+Three more pure-Swift coreutils over the existing bridge (no new kernel work, no new bridge calls):
+`userland/{head,touch,wc}.swift`.
+
+- **head** prints the first N lines (`-n N`, default 10) of each file, or of stdin. **wc** counts
+  lines/words/bytes (`L W C name`), stdin when given no file. **touch** creates each missing file in
+  the writable tmpfs (swift-os has no `utimes`, so it is "create if missing", not an mtime bump; the
+  base FS is read-only).
+- All three are byte-oriented (UnsafePointer + `withUnsafeTemporaryAllocation`), so unlike `/bin/calc`
+  they pull no Unicode data tables — they link like `ls`/`cat`. Reached by absolute path; `exec.swift`
+  routes `/bin/{head,touch,wc}` to the packed disk ELFs; bare names stay busybox/ash.
+- **Test.** `tests/swift_headwc_test.sh` (wired into `make test`): builds a 3-line file with the
+  shell, asserts `wc` reports `3 3 14`, `head -n 2 … | wc` reports `2 2 8` (proving head stops at the
+  limit), and `touch` + `wc` reports an empty `0 0 0` file.
+
+Native-Swift userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown head touch wc calc`.
+
 ## Wall clock: PL031 RTC + `/bin/date` (DONE, 2026-06-05)
 
 swift-os had no clock (timestamps showed the 1970 epoch). Added a real wall clock from the QEMU virt
