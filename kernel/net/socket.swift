@@ -82,10 +82,17 @@ func netInit() {
     netReady = true
 }
 
-/// Pump the NIC once: drain RX frames through the stack, delivering any UDP
-/// datagrams to bound sockets (via socketDeliverUDP, called from virtioNetPoll).
+/// Pump the NIC once: drain RX frames through the stack (delivering UDP/TCP to
+/// sockets via virtioNetPoll), then run each live TCP connection's timers so a
+/// lost SYN/data is retransmitted and close timers advance.
 func netPump() {
-    if netReady { _ = virtioNetPoll(&gNet) }
+    if !netReady { return }
+    _ = virtioNetPoll(&gNet)
+    let now = systemTicks
+    for c in 0..<maxSockets where sockInUse[c] && sockProto[c] == sockProtoTCP && !sockIsListener[c] {
+        tcpConns[c].tick(now: now)
+        if tcpConns[c].outCount > 0 { tcpDrain(c, now) }
+    }
 }
 
 /// Called by the driver for each received UDP datagram. `payload` points into
@@ -292,6 +299,43 @@ func tcpAccept(_ s: Int, timeoutMs: Int) -> Int {
             sockAccepted[c] = true
             return c
         }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        wfi()
+    }
+}
+
+/// Actively open a connection from TCP socket `s` to (`dstIP`, `dstPort`):
+/// send the SYN, then pump until the handshake completes or `timeoutMs` elapses.
+func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> Int {
+    if !netReady { return netErrDown }
+    if !socketIsTCP(s) || sockIsListener[s] { return netErrInval }
+    if tcpConns[s].state != .closed { return netErrInval }   // already open/opening
+
+    // Route: resolve the destination MAC (direct, else via the slirp gateway).
+    var mac = gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)
+    if mac == nil {
+        _ = netResolve(netGatewayIP, timeoutMs: 2000)
+        mac = gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)
+    }
+    guard let dmac = mac else { return netErrUnreach }
+
+    let localPort = UInt16(40000 + s)        // simple per-slot ephemeral port
+    sockPort[s] = localPort; sockBound[s] = true
+    sockRemoteIP[s] = dstIP; sockRemotePort[s] = dstPort; sockRemoteMac[s] = dmac
+    sockConnReady[s] = false
+    let now = systemTicks
+    let iss = UInt32(truncatingIfNeeded: now) &* 1664525 &+ 1013904223
+    tcpConns[s] = TCPConnection()
+    tcpConns[s].activeOpen(localPort: localPort, remoteIP: dstIP, remotePort: dstPort, now: now, iss: iss)
+    tcpDrain(s, now)                         // emit the SYN
+
+    let start = systemTicks
+    let ticks = UInt64((timeoutMs + 9) / 10)
+    enable_irq()
+    while true {
+        netPump()
+        if sockConnReady[s] { return 0 }
+        if tcpConns[s].state == .closed { return netErrUnreach }   // refused/reset
         if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
         wfi()
     }
