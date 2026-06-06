@@ -511,3 +511,7 @@ int swiftos_accept(int fd) {
 int swiftos_connect(int fd, unsigned int ip, unsigned short port) {
     return (int)__syscall3(SYS_CONNECT, fd, (long)ip, (long)port);
 }
+
+long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms) {
+    return __syscall3(SYS_POLL, (long)fds, (long)nfds, timeout_ms);
+}
