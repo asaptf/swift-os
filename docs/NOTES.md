@@ -1153,7 +1153,30 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   **and** that nc received the echo back. Both wired into `make test`. (`busybox_test` updated: root caps
   now `0x3f`.)
 
-### net-c — recorded, not built
+### net-c1 — sans-IO TCP connection state machine (DONE, 2026-06-06)
 
-- **net-c:** a minimal sans-IO TCP connection state machine (handshake/seq/RTO) with host unit tests
-  before any in-QEMU run, then a small `connect`/`listen` socket path.
+- **`kernel/net/tcp.swift`** (pure, host-tested): TCP segment parse/build + the pseudo-header checksum
+  (reusing `sumBytes`/`sumWord`/`foldChecksum`), wraparound-safe sequence comparisons (`seqLT`/`seqLEQ`,
+  RFC 1982), and a `TCPConnection` state machine. It consumes parsed inbound segment fields (+ payload +
+  a `now` tick) and emits outbound segment *descriptors* (`TCPSegmentOut`: flags/seq/ack/window/payload
+  span) into a fixed queue the caller drains — no I/O, no kernel state, identical Swift for kernel and host.
+- **Scope:** passive open (LISTEN→SYN_RCVD→ESTABLISHED) and active open (→SYN_SENT→ESTABLISHED); in-order
+  data with cumulative ACK (out-of-order/old → drop + re-ACK); an app send buffer with a single-timer RTO
+  retransmit of the oldest unacked data; a fixed window; the full close handshake (active
+  FIN_WAIT_1→FIN_WAIT_2→TIME_WAIT; passive CLOSE_WAIT→LAST_ACK→CLOSED); RST. The SYN/FIN phantom sequence
+  numbers are handled (passive-open completion is an explicit branch since `processAck` only tracks data +
+  a queued FIN). **Intentionally deferred to net-c2+:** out-of-order reassembly, delayed ACK, Nagle,
+  congestion control beyond the fixed window, SACK, timestamps. ISS is fixed (`0x1000`) for net-c1
+  determinism; net-c2 seeds it from the RTC.
+- **Not wired into the kernel yet** — the engine is dead code in the image (`--gc-sections` drops it) until
+  net-c2 connects it to sockets. It compiles into the kernel (Embedded) to keep it building.
+- **Tests:** `tests/net_test.swift` drives the engine with crafted segments — checksum, passive handshake,
+  in-order data + cumulative ACK, old-segment re-ACK, app send + ACK drain, RTO retransmit, passive close,
+  active open + active close, and RST — plus the sequence-wraparound comparisons. Host gate in `make test`.
+
+### net-c2 — recorded, not built
+
+- **net-c2:** wire `TCPConnection` to `connect`/`listen`/`accept` sockets (sockets-as-fds, like net-b: a
+  listen socket spawns accepted connection fds), drive RTO/retransmit from `netPump`/`systemTicks`, add
+  `/bin/tcpecho`, and the **passive** in-QEMU acceptance — the guest `listen()`s and a host `nc` connects
+  over `hostfwd=tcp::5555-:5555`. Seed the ISS from the RTC.
