@@ -86,7 +86,9 @@ SWIFT_SRCS := \
 	kernel/net/arp.swift \
 	kernel/net/ipv4.swift \
 	kernel/net/icmp.swift \
+	kernel/net/udp.swift \
 	kernel/net/stack.swift \
+	kernel/net/socket.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
 	kernel/syscall/syscall.swift \
@@ -223,12 +225,14 @@ USER_KV_ELF := $(BUILD)/kv.elf
 USER_HEAD_ELF := $(BUILD)/head.elf
 USER_TOUCH_ELF := $(BUILD)/touch.elf
 USER_WC_ELF := $(BUILD)/wc.elf
+USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_KV_ELF) \
 	$(USER_HEAD_ELF) \
 	$(USER_TOUCH_ELF) \
 	$(USER_WC_ELF) \
+	$(USER_UDPECHO_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -410,6 +414,9 @@ $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_touch.o: userland/touch.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/touch.swift -o $@
 
+$(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
+
 $(BUILD)/user_wc.o: userland/wc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/wc.swift -o $@
 
@@ -507,6 +514,9 @@ $(USER_TOUCH_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_WC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o -o $@
 
+$(USER_UDPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -555,13 +565,14 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
-	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/stack.swift -o $(BUILD)/net_test
+	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh
+	./tests/udp_echo_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
@@ -670,6 +681,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
 	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc
+	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

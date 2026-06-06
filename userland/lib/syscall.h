@@ -44,6 +44,10 @@
 #define SYS_CHMOD         35
 #define SYS_CHOWN         36
 #define SYS_TIME          37
+#define SYS_SOCKET        38
+#define SYS_BIND          39
+#define SYS_SENDTO        40
+#define SYS_RECVFROM      41
 
 #ifndef __ASSEMBLER__
 

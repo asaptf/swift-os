@@ -40,12 +40,23 @@ struct RxOutcome {
     var resolvedMac: MAC = .zero
     var echoReply = false
     var echoSeq: UInt16 = 0
+    // A received UDP datagram addressed to us. The payload is reported by its
+    // offset into the original frame buffer (zero-copy: the kernel socket layer
+    // copies it out of the RX buffer itself).
+    var gotUDP = false
+    var udpSrcIP: IPv4 = 0
+    var udpSrcPort: UInt16 = 0
+    var udpDstPort: UInt16 = 0
+    var udpSrcMac: MAC = .zero
+    var udpPayloadOff = 0
+    var udpPayloadLen = 0
 }
 
 struct NetStack {
     let mac: MAC
     let ip: IPv4
     var arp = ARPCache()
+    private var nextIPID: UInt16 = 0
 
     init(mac: MAC, ip: IPv4) {
         self.mac = mac
@@ -83,26 +94,61 @@ struct NetStack {
             if payloadLen < ipv4HeaderLen { return r }
             let ipp = payload
             guard ipVersion(ipp) == 4, ipValidChecksum(ipp), ipDst(ipp) == ip else { return r }
+            arp.insert(ipSrc(ipp), ethSrcMac(p))   // learn L2 so we can route replies
             let ihl = ipHeaderLenBytes(ipp)
             let total = Int(ipTotalLen(ipp))
-            guard total >= ihl, total <= payloadLen, ipProto(ipp) == ipProtoICMP else { return r }
-            let icmpLen = total - ihl
-            guard icmpLen >= icmpHeaderLen else { return r }
-            let icmp = ipp + ihl
-            guard inetChecksum(icmp, icmpLen) == 0 else { return r }
+            guard total >= ihl, total <= payloadLen else { return r }
+            let proto = ipProto(ipp)
+            let l4 = ipp + ihl
+            let l4Len = total - ihl
 
-            let t = icmpType(icmp)
-            if t == icmpTypeEchoReply {
-                r.echoReply = true; r.echoSeq = icmpSeq(icmp)
-            } else if t == icmpTypeEchoRequest {
-                r.txLen = buildEchoReply(out, outCap: outCap, toMac: ethSrcMac(p),
-                                         toIP: ipSrc(ipp), id: icmpId(icmp),
-                                         reqICMP: icmp, reqICMPLen: icmpLen)
+            if proto == ipProtoICMP {
+                guard l4Len >= icmpHeaderLen, inetChecksum(l4, l4Len) == 0 else { return r }
+                let t = icmpType(l4)
+                if t == icmpTypeEchoReply {
+                    r.echoReply = true; r.echoSeq = icmpSeq(l4)
+                } else if t == icmpTypeEchoRequest {
+                    r.txLen = buildEchoReply(out, outCap: outCap, toMac: ethSrcMac(p),
+                                             toIP: ipSrc(ipp), id: icmpId(l4),
+                                             reqICMP: l4, reqICMPLen: l4Len)
+                }
+            } else if proto == ipProtoUDP {
+                guard l4Len >= udpHeaderLen else { return r }
+                // A zero checksum field means "not present" (RFC 768); verify only when set.
+                if udpChecksumField(l4) != 0 {
+                    guard udpChecksumValid(src: ipSrc(ipp), dst: ipDst(ipp),
+                                           udp: l4, udpLen: l4Len) else { return r }
+                }
+                let udpLen = Int(udpLength(l4))
+                guard udpLen >= udpHeaderLen, udpLen <= l4Len else { return r }
+                r.gotUDP = true
+                r.udpSrcIP = ipSrc(ipp)
+                r.udpSrcPort = udpSrcPort(l4)
+                r.udpDstPort = udpDstPort(l4)
+                r.udpSrcMac = ethSrcMac(p)
+                r.udpPayloadOff = ethHeaderLen + ihl + udpHeaderLen
+                r.udpPayloadLen = udpLen - udpHeaderLen
             }
             return r
         }
 
         return r
+    }
+
+    /// Build a UDP datagram to (`toMac`, `toIP`):`dstPort` from `srcPort`,
+    /// carrying `payloadLen` bytes at `payload`. Returns the frame length.
+    mutating func buildUDP(toMac: MAC, toIP: IPv4, srcPort: UInt16, dstPort: UInt16,
+                           payload: UnsafeRawPointer?, payloadLen: Int,
+                           out: UnsafeMutableRawPointer) -> Int {
+        ethWriteHeader(out, dst: toMac, src: mac, type: ethTypeIPv4)
+        let ipp = out + ethHeaderLen
+        let udp = ipp + ipv4HeaderLen
+        let udpLen = udpWrite(udp, src: ip, dst: toIP, srcPort: srcPort, dstPort: dstPort,
+                              payload: payload, payloadLen: payloadLen)
+        let total = ipv4HeaderLen + udpLen
+        nextIPID &+= 1
+        ipWriteHeader(ipp, src: ip, dst: toIP, proto: ipProtoUDP, totalLen: total, id: nextIPID)
+        return ethHeaderLen + total
     }
 
     /// Build a broadcast ARP request for `targetIP`. Returns the frame length.

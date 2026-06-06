@@ -57,4 +57,16 @@ int  swiftos_exec_shell(const char *path);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
 void swiftos_set_echo(int on);
 
+// UDP sockets (net-b). IPv4 addresses are host order (e.g. 0x0A000202 = 10.0.2.2).
+// swiftos_socket() opens a SOCK_DGRAM socket (needs the net capability) and
+// returns an fd, or a negative errno.
+int  swiftos_socket(void);
+int  swiftos_bind(int fd, unsigned short port);
+long swiftos_sendto(int fd, const void *buf, unsigned long len,
+                    unsigned int ip, unsigned short port);
+// Receive one datagram (blocking, bounded). Fills *ip/*port (may be NULL) with
+// the sender. Returns the byte count or a negative errno.
+long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
+                      unsigned int *ip, unsigned short *port);
+
 #endif // SWIFTOS_USER_SWIFT_USER_H

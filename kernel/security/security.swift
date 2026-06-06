@@ -16,6 +16,7 @@ let capSpawn: UInt64 = 1 << 1
 let capFsRead: UInt64 = 1 << 2
 let capTmpWrite: UInt64 = 1 << 3
 let capProcessInspect: UInt64 = 1 << 4
+let capNet: UInt64 = 1 << 5         // open network sockets (net-b)
 
 private let bootPrincipal: UInt32 = 1
 private let bootSession: UInt32 = 1
@@ -27,6 +28,6 @@ func securityInit() {
 func securityBootContext() -> ProcessSecurityContext {
     ProcessSecurityContext(principal: bootPrincipal,
                            session: bootSession,
-                           caps: capConsole | capSpawn | capFsRead | capTmpWrite | capProcessInspect)
+                           caps: capConsole | capSpawn | capFsRead | capTmpWrite | capProcessInspect | capNet)
 }
 

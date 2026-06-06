@@ -37,6 +37,10 @@ private let sysFcntl: UInt = 34        // fcntl(fd, cmd, arg) — F_DUPFD(_CLOEX
 private let sysChmod: UInt = 35        // chmod(path, mode) — tmpfs only
 private let sysChown: UInt = 36        // chown(path, owner) — tmpfs only
 private let sysTime: UInt = 37         // time() — Unix seconds from the PL031 RTC
+private let sysSocket: UInt = 38       // socket(domain, type, proto) → fd (capNet)
+private let sysBind: UInt = 39         // bind(fd, port) — local UDP port
+private let sysSendto: UInt = 40       // sendto(fd, &msg) — UDP datagram out
+private let sysRecvfrom: UInt = 41     // recvfrom(fd, &msg) — UDP datagram in
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -150,6 +154,16 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysTime {
         frame[0] = UInt(rtcNow())
         return // returns a time value, not an errno
+    } else if number == sysSocket {
+        result = vfsSocket(domain: Int(bitPattern: frame[0]),
+                           type: Int(bitPattern: frame[1]),
+                           proto: Int(bitPattern: frame[2]))
+    } else if number == sysBind {
+        result = vfsSocketBind(fd: Int(bitPattern: frame[0]), port: Int(bitPattern: frame[1]))
+    } else if number == sysSendto {
+        result = vfsSendto(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
+    } else if number == sysRecvfrom {
+        result = vfsRecvfrom(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
     } else {
         result = -38 // ENOSYS
     }

@@ -5,12 +5,16 @@ Working notes for picking up swift-os development. Authoritative milestone histo
 
 ## Where we are (2026-06-06)
 
-- **Network stack started — net-a DONE (2026-06-06).** Own Swift, sans-IO. A Swift virtio-net driver
-  (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config, zero-copy DMA buffers) plus a pure
-  host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The boot probe ARPs the QEMU
-  slirp gateway `10.0.2.2` and gets an ICMP echo reply (`net-a OK: ICMP echo reply from 10.0.2.2`).
-  Tests: `tests/net_test.swift` (host feed-bytes) + `tests/virtio_net_test.sh` (in-QEMU). See the
-  "Network stack (N-series)" section in `docs/NOTES.md`. **Next: net-b (UDP + socket syscalls), net-c (TCP).**
+- **Network stack — net-a + net-b DONE (2026-06-06).** Own Swift, sans-IO.
+  - **net-a:** Swift virtio-net driver (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config,
+    zero-copy DMA) + a pure host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The
+    boot probe ARPs + pings the QEMU slirp gateway `10.0.2.2`.
+  - **net-b:** sans-IO UDP (`kernel/net/udp.swift`) + a capability-gated socket syscall surface
+    (`socket`/`bind`/`sendto`/`recvfrom` = syscalls 38–41, gated on `capNet`), sockets as VFS fds, a kernel
+    socket layer (`kernel/net/socket.swift`), the `swiftos_*` bridge, and `/bin/udpecho`. Acceptance:
+    `tests/udp_echo_test.sh` does a UDP round-trip over `hostfwd` with `nc`.
+  - Tests: `tests/net_test.swift` (host feed-bytes for L2/L3/UDP) + `tests/virtio_net_test.sh` +
+    `tests/udp_echo_test.sh`. See "Network stack (N-series)" in `docs/NOTES.md`. **Next: net-c (TCP).**
 
 ## Where we were (2026-06-04)
 

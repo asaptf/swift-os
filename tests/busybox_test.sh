@@ -76,7 +76,7 @@ grep -qF "readme.txt" "$LOG"           || { echo "FAIL: ls applet (dir listing)"
 grep -qF "Welcome to swift-os." "$LOG" | true
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 grep -qE "PID +PPID +STATE +CMD" "$LOG" || { echo "FAIL: ps (PATH exec of /bin/ps)" >&2; ok=0; }
-grep -qF "principal=1(root) session=1 caps=0x1f" "$LOG" || { echo "FAIL: /bin/id (Swift) context + name" >&2; ok=0; }
+grep -qF "principal=1(root) session=1 caps=0x3f" "$LOG" || { echo "FAIL: /bin/id (Swift) context + name" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: busybox ash ran echo/ls/cat on swift-os (M8 acceptance)"
