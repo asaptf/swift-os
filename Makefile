@@ -229,6 +229,7 @@ USER_WC_ELF := $(BUILD)/wc.elf
 USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
+USER_HTTPD_ELF := $(BUILD)/httpd.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_KV_ELF) \
@@ -238,6 +239,7 @@ BASE_EXEC_ELFS := \
 	$(USER_UDPECHO_ELF) \
 	$(USER_TCPECHO_ELF) \
 	$(USER_TCPGET_ELF) \
+	$(USER_HTTPD_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -425,6 +427,9 @@ $(BUILD)/user_tcpecho.o: userland/tcpecho.swift userland/lib/swift_user.h Makefi
 $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tcpget.swift -o $@
 
+$(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -534,6 +539,9 @@ $(USER_TCPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/us
 $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o -o $@
 
+$(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -592,6 +600,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/udp_echo_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
+	./tests/httpd_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
@@ -703,6 +712,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
 	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
+	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

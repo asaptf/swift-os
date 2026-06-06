@@ -76,5 +76,9 @@ int swiftos_listen(int fd, int backlog);
 int swiftos_accept(int fd);
 // Active open to (ip, port) — ip is host order (e.g. 0x0A000202 = 10.0.2.2).
 int swiftos_connect(int fd, unsigned int ip, unsigned short port);
+// Wait for events on a set of fds. `fds` points at an array of pollfd records
+// (fd:int32 @0, events:int16 @4, revents:int16 @6 — 8 bytes each). POLLIN=0x001,
+// POLLOUT=0x004, POLLHUP=0x010. Returns the number of ready fds, 0 on timeout.
+long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
 
 #endif // SWIFTOS_USER_SWIFT_USER_H

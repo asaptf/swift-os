@@ -1223,3 +1223,24 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
 - **Deferred:** DNS/name resolution (numeric IP only), a real ephemeral-port allocator (currently
   `40000 + slot`). The TCP stack now does **both** directions: inbound server (`/bin/tcpecho`) and
   outbound client (`/bin/tcpget`).
+
+### net-e — concurrent poll()-driven HTTP server /bin/httpd (DONE, 2026-06-06)
+
+- **A real concurrent server**, the stated purpose of swift-os. `userland/httpd.swift` → `/bin/httpd`:
+  `socket`/`bind(8080)`/`listen`, then a single `poll()` event loop multiplexing the listener plus all
+  live connections (fixed table, cap 8). On listener-readable it `accept`s and tracks the new fd; on
+  connection-readable it reads the request, sends a fixed `HTTP/1.0 200 OK` + `Hello from swift-os`
+  (built via `StaticString.withUTF8Buffer` — no String/Array/unicode-table dependency), and closes
+  (Connection: close). Concurrency is real: several connections are in flight across poll iterations.
+- **Kernel: no change needed.** `vfsPoll` already pumps the NIC and reports socket readiness
+  (`socketPollReadable`: a listener is readable when a connection awaits accept, a connection when it has
+  data or peer-closed), and `socketDeliverTCP` spawns a connection socket per SYN. The calls are
+  *poll-gated*, so the existing blocking `accept`/`read` return immediately — no O_NONBLOCK needed.
+- **Only new plumbing:** a `swiftos_poll(fds, nfds, timeout_ms)` userland bridge over the existing
+  `SYS_POLL` (26); the Swift caller builds the 8-byte `pollfd` records (fd@0/events@4/revents@6) in a
+  scratch buffer. Reached by absolute path (`/bin/httpd`).
+- **Acceptance:** `tests/httpd_test.sh` boots with `hostfwd=tcp::8080-:8080`, runs `/bin/httpd`, fires
+  **two concurrent** host `curl`s (falls back to an `nc`-built GET), and asserts both receive the body
+  **and** the serial shows ≥2 `httpd: 200` lines — concurrent serving end to end. Wired into `make test`.
+- **Deferred:** keep-alive (HTTP/1.0 close only), request parsing/routing (responds to any request),
+  `maxSockets`/conn-table caps (8). swift-os now hosts a working concurrent network server.
