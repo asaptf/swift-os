@@ -161,10 +161,13 @@ M12 is now underway.
   existing kernel syscalls (`userland/{mkdir,rmdir,rm,mv}.swift`; bridge `swiftos_mkdir/rmdir/unlink/
   rename`). `tests/swift_fileops_test.sh`. The Swift userland now covers
   `ls cat echo pwd ps id mkdir rmdir rm mv`.
+- **Native Swift `chmod`/`chown` — DONE (2026-06-05):** `SYS_CHMOD`(35)/`SYS_CHOWN`(36) for tmpfs
+  (capTmpWrite-gated) + `userland/{chmod,chown}.swift`; `ls -l` reflects the change.
+  `tests/swift_chmodown_test.sh`. Native userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown`.
 - **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os. Smaller next steps:
   make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them —
-  will require updating busybox_test/ls_l_test to the Swift output); `rm -r`; the remaining M13
-  follow-ups (read/write-time enforcement, base-owner manifest, clock/mtimes, chown/chmod).
+  will require updating busybox_test/ls_l_test to the Swift output); `rm -r`; remaining M13 follow-ups
+  (read/write-time enforcement, base-owner manifest, clock/mtimes).
 
 ## Post-roadmap (M0–M13 done) — going down the list
 

@@ -76,6 +76,14 @@ int swiftos_rename(const char *oldpath, const char *newpath) {
     return (int)__syscall3(SYS_RENAME, (long)oldpath, (long)newpath, 0);
 }
 
+int swiftos_chmod(const char *path, unsigned int mode) {
+    return (int)__syscall3(SYS_CHMOD, (long)path, (long)mode, 0);
+}
+
+int swiftos_chown(const char *path, unsigned int owner) {
+    return (int)__syscall3(SYS_CHOWN, (long)path, (long)owner, 0);
+}
+
 int swiftos_open(const char *path, int flags) {
     return open(path, flags);
 }

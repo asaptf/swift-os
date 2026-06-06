@@ -1158,6 +1158,30 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     return 0
 }
 
+// chmod/chown — change a tmpfs node's permission bits / owning principal. The
+// base FS is read-only, so only tmpfs nodes are mutable; like the other
+// namespace mutations (M13b) this requires capTmpWrite. Cosmetic for ls -l,
+// since tmpfs is ephemeral, but completes the M13c ownership story.
+func vfsChmod(path pathVA: UInt, mode: UInt) -> Int {
+    guard let path = userCString(pathVA) else { return errInvalid }
+    if !mayWriteTmp() { return errAccess }
+    let node = resolve(path)
+    if node == -1 { return errNoEntry }
+    if nodes[node].readOnly { return errReadOnly }
+    nodes[node].mode = UInt32(mode & 0o7777)
+    return 0
+}
+
+func vfsChown(path pathVA: UInt, owner: UInt) -> Int {
+    guard let path = userCString(pathVA) else { return errInvalid }
+    if !mayWriteTmp() { return errAccess }
+    let node = resolve(path)
+    if node == -1 { return errNoEntry }
+    if nodes[node].readOnly { return errReadOnly }
+    nodes[node].owner = UInt32(truncatingIfNeeded: owner)
+    return 0
+}
+
 private func pollReadyForDescription(_ desc: OpenDescription, events: Int16) -> Int16 {
     var revents: Int16 = 0
     if desc.kind == fdKindTTY {

@@ -204,6 +204,8 @@ USER_MKDIR_ELF := $(BUILD)/mkdir.elf
 USER_RMDIR_ELF := $(BUILD)/rmdir.elf
 USER_RM_ELF := $(BUILD)/rm.elf
 USER_MV_ELF := $(BUILD)/mv.elf
+USER_CHMOD_ELF := $(BUILD)/chmod.elf
+USER_CHOWN_ELF := $(BUILD)/chown.elf
 BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
@@ -215,6 +217,8 @@ BASE_EXEC_ELFS := \
 	$(USER_RMDIR_ELF) \
 	$(USER_RM_ELF) \
 	$(USER_MV_ELF) \
+	$(USER_CHMOD_ELF) \
+	$(USER_CHOWN_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
@@ -362,6 +366,12 @@ $(BUILD)/user_rm.o: userland/rm.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_mv.o: userland/mv.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/mv.swift -o $@
 
+$(BUILD)/user_chmod.o: userland/chmod.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/chmod.swift -o $@
+
+$(BUILD)/user_chown.o: userland/chown.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/chown.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -431,6 +441,12 @@ $(USER_RM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_rm
 $(USER_MV_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mv.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mv.o -o $@
 
+$(USER_CHMOD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chmod.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chmod.o -o $@
+
+$(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chown.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chown.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -492,6 +508,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_ls_test.sh
 	./tests/swift_coreutils_test.sh
 	./tests/swift_fileops_test.sh
+	./tests/swift_chmodown_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -578,6 +595,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_RMDIR_ELF) $(BASE_ROOT)/bin/rmdir
 	cp $(USER_RM_ELF) $(BASE_ROOT)/bin/rm
 	cp $(USER_MV_ELF) $(BASE_ROOT)/bin/mv
+	cp $(USER_CHMOD_ELF) $(BASE_ROOT)/bin/chmod
+	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

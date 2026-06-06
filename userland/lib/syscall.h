@@ -40,6 +40,9 @@
 #define SYS_SECURITY_INFO 31
 #define SYS_LOGIN         32
 #define SYS_FTRUNCATE     33
+#define SYS_FCNTL         34
+#define SYS_CHMOD         35
+#define SYS_CHOWN         36
 
 #ifndef __ASSEMBLER__
 

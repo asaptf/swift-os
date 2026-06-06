@@ -30,6 +30,8 @@ int swiftos_mkdir(const char *path);
 int swiftos_rmdir(const char *path);
 int swiftos_unlink(const char *path);
 int swiftos_rename(const char *oldpath, const char *newpath);
+int swiftos_chmod(const char *path, unsigned int mode);
+int swiftos_chown(const char *path, unsigned int owner);
 
 // Thin syscall bridges for Swift userland (e.g. console-login).
 int  swiftos_open(const char *path, int flags);

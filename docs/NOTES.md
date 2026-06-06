@@ -784,6 +784,23 @@ existing kernel syscalls (no new kernel work).
 The native-Swift userland now covers `ls cat echo pwd ps id mkdir rmdir rm mv` — a usable coreutils
 set, all over the `swift_user` bridge.
 
+## Native Swift `chmod` / `chown` (DONE, 2026-06-05)
+
+`/bin/chmod` and `/bin/chown` (`userland/{chmod,chown}.swift`) plus the two kernel syscalls they need,
+completing the M13c ownership story: tmpfs file mode/owner can now actually be changed and is reflected
+by `ls -l`.
+
+- **Kernel.** `SYS_CHMOD` (35) → `vfsChmod(path, mode)` sets a node's permission bits; `SYS_CHOWN`
+  (36) → `vfsChown(path, owner)` sets its owning principal. Both are tmpfs-only (the base FS is
+  read-only → `EROFS`) and require `capTmpWrite`, consistent with the other namespace mutations (M13b).
+  Cosmetic only, since tmpfs is ephemeral, but it makes ownership/mode first-class and editable.
+- **Tools.** `chmod OCTAL FILE...` (octal mode), `chown UID FILE...` (numeric principal id — swift-os
+  principals are small numbers, no name lookup). Bridge: `swiftos_chmod`/`swiftos_chown`.
+- **Test.** `tests/swift_chmodown_test.sh` (wired into `make test`): `echo > /tmp/f`,
+  `chmod 600` → `ls -l` shows `-rw------- … root`, `chown 2` → `ls -l` shows `… user user`.
+
+Native-Swift userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown`.
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
