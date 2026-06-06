@@ -164,7 +164,15 @@ M12 is now underway.
 - **Native Swift `chmod`/`chown` — DONE (2026-06-05):** `SYS_CHMOD`(35)/`SYS_CHOWN`(36) for tmpfs
   (capTmpWrite-gated) + `userland/{chmod,chown}.swift`; `ls -l` reflects the change.
   `tests/swift_chmodown_test.sh`. Native userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown`.
-- **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os. Smaller next steps:
+- **Native Swift app `/bin/calc` + free-capable allocator — DONE (2026-06-06):** the first
+  *idiomatic* Embedded Swift EL0 program (an Int64 expression REPL) — classes+ARC, an `indirect enum`
+  AST, `Array`/`String`/`Dictionary`, generics, a closure, a protocol witness table, and `print()`
+  interpolation. Runtime-low fork **resolved: extend the `swift_user` bridge**, not newlib. Replaced
+  the bump-forever allocator with a K&R free-list (coalescing) so ARC churn keeps the heap break
+  bounded; added `putchar`/`arc4random_buf` and linked `libswiftUnicodeDataTables.a` (calc only).
+  `tests/calc_test.sh` asserts functionality + bounded heap across a churn loop. Full details and the
+  decision rationale in `docs/NOTES.md` ("First native Swift app").
+- **Bigger arcs:** own-Swift sans-IO network stack; more/bigger native Swift apps on swift-os. Smaller next steps:
   make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them —
   will require updating busybox_test/ls_l_test to the Swift output); `rm -r`; remaining M13 follow-ups
   (read/write-time enforcement, base-owner manifest, clock/mtimes).

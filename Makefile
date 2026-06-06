@@ -28,6 +28,10 @@ GDB       ?= aarch64-elf-gdb
 
 # ---- Target ----------------------------------------------------------------
 TRIPLE    := aarch64-none-none-elf
+# Embedded Swift's prebuilt Unicode normalization/grapheme tables. Linked into
+# userland programs that use dynamic String comparison/hashing (e.g. /bin/calc's
+# Dictionary<String,Int64>); --gc-sections trims it to only the referenced data.
+SWIFT_UNICODE_DATA := $(TOOLCHAIN)/usr/lib/swift/embedded/$(TRIPLE)/libswiftUnicodeDataTables.a
 ARCH_DIR  := kernel/arch/aarch64
 BRIDGE    := $(ARCH_DIR)/io.h
 LINKER    := $(ARCH_DIR)/kernel.ld
@@ -207,7 +211,9 @@ USER_MV_ELF := $(BUILD)/mv.elf
 USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
 USER_DATE_ELF := $(BUILD)/date.elf
+USER_CALC_ELF := $(BUILD)/calc.elf
 BASE_EXEC_ELFS := \
+	$(USER_CALC_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -377,6 +383,9 @@ $(BUILD)/user_chown.o: userland/chown.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/date.swift -o $@
 
+$(BUILD)/user_calc.o: userland/calc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/calc.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -455,6 +464,10 @@ $(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o -o $@
 
+# calc links the Unicode data tables (it uses dynamic String compare/hashing).
+$(USER_CALC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o $(SWIFT_UNICODE_DATA) -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -518,6 +531,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_fileops_test.sh
 	./tests/swift_chmodown_test.sh
 	./tests/swift_date_test.sh
+	./tests/calc_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -607,6 +621,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CHMOD_ELF) $(BASE_ROOT)/bin/chmod
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
+	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 
