@@ -219,11 +219,13 @@ USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
 USER_DATE_ELF := $(BUILD)/date.elf
 USER_CALC_ELF := $(BUILD)/calc.elf
+USER_KV_ELF := $(BUILD)/kv.elf
 USER_HEAD_ELF := $(BUILD)/head.elf
 USER_TOUCH_ELF := $(BUILD)/touch.elf
 USER_WC_ELF := $(BUILD)/wc.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
+	$(USER_KV_ELF) \
 	$(USER_HEAD_ELF) \
 	$(USER_TOUCH_ELF) \
 	$(USER_WC_ELF) \
@@ -399,6 +401,9 @@ $(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_calc.o: userland/calc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/calc.swift -o $@
 
+$(BUILD)/user_kv.o: userland/kv.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/kv.swift -o $@
+
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
 
@@ -486,9 +491,12 @@ $(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o -o $@
 
-# calc links the Unicode data tables (it uses dynamic String compare/hashing).
+# calc and kv link the Unicode data tables (they use dynamic String compare/hashing).
 $(USER_CALC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o $(SWIFT_UNICODE_DATA) -o $@
+
+$(USER_KV_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_kv.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_kv.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_HEAD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o -o $@
@@ -567,6 +575,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
 	./tests/calc_test.sh
+	./tests/kv_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -657,6 +666,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
+	cp $(USER_KV_ELF) $(BASE_ROOT)/bin/kv
 	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
 	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc

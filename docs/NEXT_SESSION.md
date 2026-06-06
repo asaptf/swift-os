@@ -181,6 +181,14 @@ M12 is now underway.
   bounded; added `putchar`/`arc4random_buf` and linked `libswiftUnicodeDataTables.a` (calc only).
   `tests/calc_test.sh` asserts functionality + bounded heap across a churn loop. Full details and the
   decision rationale in `docs/NOTES.md` ("First native Swift app").
+- **Native Swift app `/bin/kv` — DONE (2026-06-06):** an in-memory key-value store REPL — the second
+  idiomatic Embedded Swift app. `final class Store` over `Dictionary<String,String>` with
+  `SET`/`GET`/`DEL`/`KEYS`(sorted)/`COUNT` + `:stats`/`:mem`/`:help`/`:q`. Stresses String/Unicode
+  harder than calc: it hashes **arbitrary user-typed** keys, sorts them (`String: Comparable`), runs
+  verbs through `.uppercased()`, and `:stats` reduces over `map.values` with a closure. No new kernel
+  or bridge work — reuses the calc allocator/`putchar`/`arc4random_buf` and links
+  `SWIFT_UNICODE_DATA`. `tests/kv_test.sh` asserts the commands + bounded heap across a SET/DEL churn.
+  Details in `docs/NOTES.md` ("Second native Swift app"). Native Swift userland now adds `kv`.
 - **Bigger arcs:** own-Swift sans-IO network stack; more/bigger native Swift apps on swift-os. Smaller next steps:
   make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them —
   will require updating busybox_test/ls_l_test to the Swift output); `rm -r`; remaining M13 follow-ups
