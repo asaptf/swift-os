@@ -34,6 +34,8 @@ int swiftos_chmod(const char *path, unsigned int mode);
 int swiftos_chown(const char *path, unsigned int owner);
 // Current wall-clock time in Unix seconds (0 if no RTC).
 unsigned long swiftos_time(void);
+// Current program break (sbrk(0)) — for reporting bounded heap growth.
+unsigned long swiftos_heap_break(void);
 // Format Unix seconds as UTC "YYYY-MM-DD HH:MM:SS" into out (>= 20 bytes).
 void swiftos_fmt_time(unsigned long t, char *out);
 
@@ -45,7 +47,8 @@ int  swiftos_close(int fd);
 long swiftos_getdents(int fd, void *buf, unsigned long count);
 // Stat a path. Fills the provided fields (any may be NULL). Returns 0 on success.
 int  swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
-                  unsigned int *gid, unsigned int *nlink, unsigned long *size);
+                  unsigned int *gid, unsigned int *nlink, unsigned long *size,
+                  unsigned long *mtime);
 int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);

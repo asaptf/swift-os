@@ -817,6 +817,19 @@ PL031 RTC.
 - Out of scope: timezones, `settimeofday`/RTC writes, DTB discovery of the RTC base (QEMU default is
   hardcoded, like the other pre-discovery defaults).
 
+### Per-file mtime + `ls -l` date column (DONE, 2026-06-05)
+
+Files now carry a real modification time, shown by `ls -l`.
+
+- **Kernel.** `VNode.mtime` (Unix seconds). Set from `rtcNow()` on `createTmpNode` and on every tmpfs
+  write/`ftruncate`; the base/literal tree (and `/tmp`) is stamped with the boot time at `vfsInit`, so
+  read-only files show a real date instead of 1970. The kstat grew 24→32 bytes (mtime u64 at off 24;
+  earlier fields keep their offsets).
+- **Userland.** `newlib_syscalls.c` fills `st_mtim`/`st_ctim`/`st_atim` (so busybox `ls -l` shows the
+  date too); `fs.h` and the `swift_user` kstat mirror the 32-byte layout; `swiftos_stat` gained an
+  `mtime` out-param. Native `/bin/ls -l` prints a `YYYY-MM-DD HH:MM` column (reusing the bridge's
+  `swiftos_fmt_time`). `swift_ls_test`/`swift_chmodown_test` updated for the new column.
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
@@ -891,8 +904,67 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
   no kernel panic. 14 suites green.
 - **nano:** not done — it needs an ncurses/terminfo port plus locale/regex, a separate multi-step effort.
 
+## First native Swift app: `/bin/calc` + free-capable allocator (DONE, 2026-06-06)
+
+The first *idiomatic* Embedded Swift EL0 program on swift-os. Every prior userland tool
+(`ls`/`cat`/`ps`/`console-login`, …) is hand-rolled with `UnsafePointer`/`withUnsafeTemporaryAllocation`
+and manual byte loops — none ever used the high-level runtime, so ARC/`String`/`Array`/`Dictionary`/
+generics were *asserted* to work but never exercised, and the bridge's allocator had never been
+stressed. `/bin/calc` (an interactive Int64 expression REPL) drives all of it end to end:
+classes + ARC, an `indirect enum` AST, `Array`/`String`/`Dictionary<String,Int64>`, generics, a
+closure, a protocol witness table, and `print()` with String interpolation.
+
+### Runtime-low decision (locked): extend the minimal bridge, not newlib
+
+For "real" Swift apps we keep building Embedded Swift on **our own `svc` ABI + the
+`userland/lib/swift_user.*` bridge**, and we grow the bridge as the runtime demands — rather than
+relinking Embedded Swift against newlib for malloc/stdio. Why: it keeps the userland Swift-first and
+lightweight; the genuinely missing primitive is a **free-capable allocator** (ARC churn), which is a
+~80-line addition, not a reason to pull in a second libc; and a working `malloc`/`free` over `sbrk`
+is exactly the bottom end the long-horizon Node/JVM targets will need. Newlib stays the third-party
+path (busybox, the newlib port). This is the answer to the session's "what runtime-low" fork.
+
+### Gaps that surfaced (verified empirically, all closed)
+
+- **Allocator never freed.** The old `swift_slowAlloc` only bumped `sbrk`; `swift_slowDealloc`/`free`
+  were no-ops. A REPL that builds+drops an AST per line would grow the break monotonically until
+  `sbrk` failed. Replaced with a classic **K&R free-list allocator with coalescing** (16-byte units
+  → 16-aligned payloads, the Embedded Swift heap alignment; grows the arena from `sbrk` in 64 KiB
+  chunks). Now `malloc`/`calloc`/`realloc`/`free` are real; `swift_slowAlloc`/`swift_slowDealloc`
+  route through it (over-aligned requests stash the base pointer in the preceding word);
+  `posix_memalign` likewise. `calc`'s `:mem` prints `sbrk(0)` and the test asserts the break is
+  **identical before/after a 24-line churn** (`0xA0010000` = heap base + one 64 KiB chunk) — proof
+  the allocator recycles.
+- **`print()` needs `putchar`.** Embedded `print`/String output lowers to `putchar`; added a thin one
+  to the bridge over `SYS_WRITE`.
+- **`String` compare/hashing needs the Unicode data tables.** Dynamic `String ==` (and so
+  `Dictionary<String,_>`) references `_swift_stdlib_getNormData`/`nfd_decompositions`/grapheme-break
+  accessors. The toolchain ships `libswiftUnicodeDataTables.a` for `aarch64-none-none-elf`; we link
+  it into `/bin/calc` only (`SWIFT_UNICODE_DATA` in the Makefile), and `--gc-sections` trims its
+  825 KiB to just the referenced tables (final ELF ~160 KiB). `Dictionary`/`Set` also need
+  `arc4random_buf` (hash seed) — added a deterministic fill to the bridge (reproducible; the seed
+  only randomises hash-table iteration order, and we have no entropy source).
+- **FP at EL0 is fine** (not relied upon): `boot.S` sets `CPACR_EL1.FPEN=0b11`, which permits FP/SIMD
+  at EL0 too, so scalar FP would not trap. The calculator core stays Int64 anyway so acceptance does
+  not hinge on soft-float/compiler-rt; floating point is recorded as available for a future app.
+
+### Files / tests
+
+- `userland/calc.swift` — the REPL (lexer → `indirect enum Expr` → recursive-descent parser →
+  `final class Env` with `Dictionary` → recursive evaluator returning an `EvalResult` enum). `:help`
+  `:mem` `:vars` `:sum` `:q` commands.
+- `userland/lib/swift_user.{c,h}` — the allocator, `putchar`, `arc4random_buf`, `swiftos_heap_break`.
+- `kernel/user/exec.swift` — `/bin/calc` routing (disk-backed, like the other Swift tools).
+- `Makefile` — `SWIFT_UNICODE_DATA`, `user_calc.o`/`$(USER_CALC_ELF)` rules (calc links the Unicode
+  tables), base-image staging.
+- `tests/calc_test.sh` (wired into `make test`): precedence/parens/assignment+lookup/modulo/unary/
+  division-by-zero/`:sum`, plus the bounded-heap churn assertion, then returns to a working shell.
+- Out of scope: floating point, multi-line input, functions/conditionals, REPL history editing.
+
 ## Open decisions / resolved
 
+- [x] Runtime-low for native Swift apps (2026-06-06): **extend the `swift_user` bridge** (real
+  free-capable allocator on our own ABI), not Embedded-Swift-on-newlib. See the calc section above.
 - [x] Embedded Swift toolchain → swift.org **6.3.2-RELEASE** (user-local xctoolchain).
 - [x] Embedded Swift flags & triple → pinned above (`aarch64-none-none-elf`).
 - [x] Linker → `aarch64-elf-ld`.

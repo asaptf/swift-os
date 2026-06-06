@@ -118,14 +118,25 @@ private func printModeString(_ mode: UInt32) {
     }
 }
 
-// One long-format line: "mode nlink owner group size name".
+// Print the "YYYY-MM-DD HH:MM" prefix (16 chars) of the formatted UTC time.
+private func printDate(_ mtime: UInt64) {
+    withUnsafeTemporaryAllocation(of: CChar.self, capacity: 24) { tb in
+        let p = tb.baseAddress!
+        swiftos_fmt_time(UInt(mtime), p)   // "YYYY-MM-DD HH:MM:SS"
+        putBytes(UnsafeRawPointer(p).assumingMemoryBound(to: UInt8.self), 16)
+    }
+}
+
+// One long-format line: "mode nlink owner group size date name".
 private func printLongEntry(_ namePtr: UnsafePointer<UInt8>, _ nameLen: Int,
-                            mode: UInt32, uid: UInt32, gid: UInt32, nlink: UInt32, size: UInt64) {
+                            mode: UInt32, uid: UInt32, gid: UInt32, nlink: UInt32,
+                            size: UInt64, mtime: UInt64) {
     printModeString(mode)
     putc(0x20); putUInt(UInt64(nlink))
     putc(0x20); printOwner(uid)
     putc(0x20); printGroup(gid)
     putc(0x20); putUInt(size)
+    putc(0x20); printDate(mtime)
     putc(0x20); putBytes(namePtr, nameLen)
     putc(0x0A)
 }
@@ -173,11 +184,11 @@ private func listDir(_ path: UnsafePointer<CChar>, long: Bool) -> Int32 {
 
                 if long {
                     var mode: UInt32 = 0, uid: UInt32 = 0, gid: UInt32 = 0, nlink: UInt32 = 0
-                    var size: UInt = 0
+                    var size: UInt = 0, mtime: UInt = 0
                     if joinPath(path, dirLen, namePtr, nameLen, pbase),
-                       swiftos_stat(pbase, &mode, &uid, &gid, &nlink, &size) == 0 {
+                       swiftos_stat(pbase, &mode, &uid, &gid, &nlink, &size, &mtime) == 0 {
                         printLongEntry(namePtr, nameLen, mode: mode, uid: uid, gid: gid,
-                                       nlink: nlink, size: UInt64(size))
+                                       nlink: nlink, size: UInt64(size), mtime: UInt64(mtime))
                     } else {
                         putBytes(namePtr, nameLen); putc(0x0A)
                     }
@@ -224,8 +235,8 @@ func main(_ argc: Int32,
         ?? UnsafeRawPointer(dot.utf8Start).assumingMemoryBound(to: CChar.self)
 
     var mode: UInt32 = 0, uid: UInt32 = 0, gid: UInt32 = 0, nlink: UInt32 = 0
-    var size: UInt = 0
-    if swiftos_stat(path, &mode, &uid, &gid, &nlink, &size) != 0 {
+    var size: UInt = 0, mtime: UInt = 0
+    if swiftos_stat(path, &mode, &uid, &gid, &nlink, &size, &mtime) != 0 {
         swiftos_puts("ls: cannot access path\n")
         return 1
     }
@@ -238,7 +249,8 @@ func main(_ argc: Int32,
     let pl = cstrlen(path)
     let pu = UnsafeRawPointer(path).assumingMemoryBound(to: UInt8.self)
     if long {
-        printLongEntry(pu, pl, mode: mode, uid: uid, gid: gid, nlink: nlink, size: UInt64(size))
+        printLongEntry(pu, pl, mode: mode, uid: uid, gid: gid, nlink: nlink,
+                       size: UInt64(size), mtime: UInt64(mtime))
     } else {
         putBytes(pu, pl); putc(0x0A)
     }

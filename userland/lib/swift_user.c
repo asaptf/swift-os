@@ -132,17 +132,19 @@ long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }
 
-// Kernel stat record (kernel/vfs/vfs.swift writeStatMode), 24 bytes.
+// Kernel stat record (kernel/vfs/vfs.swift writeStatMode), 32 bytes.
 struct swiftos_kstat {
     unsigned int mode;
     unsigned int uid;
     unsigned long size;
     unsigned int gid;
     unsigned int nlink;
+    unsigned long mtime;
 };
 
 int swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
-                 unsigned int *gid, unsigned int *nlink, unsigned long *size) {
+                 unsigned int *gid, unsigned int *nlink, unsigned long *size,
+                 unsigned long *mtime) {
     struct swiftos_kstat k;
     long rc = __syscall3(SYS_STAT, (long)path, (long)&k, 0);
     if (rc != 0) return (int)rc;
@@ -151,6 +153,7 @@ int swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
     if (gid)   *gid = k.gid;
     if (nlink) *nlink = k.nlink;
     if (size)  *size = k.size;
+    if (mtime) *mtime = k.mtime;
     return 0;
 }
 
@@ -233,33 +236,206 @@ int memcmp(const void *a, const void *b, size_t count) {
     return 0;
 }
 
-void *swift_slowAlloc(unsigned long byte_count, unsigned long align_mask) {
-    unsigned long alignment = align_mask == ~0UL ? 16 : align_mask + 1;
-    void *cur = sbrk(0);
-    unsigned long start = align_up((unsigned long)cur, alignment);
-    unsigned long end = start + byte_count;
-    if ((long)sbrk((long)(end - (unsigned long)cur)) == -1) {
-        for (;;) {
+// ---- Heap allocator --------------------------------------------------------
+//
+// A real, free-capable allocator (classic K&R storage manager) over the kernel
+// `sbrk` syscall. The previous bridge only bumped `sbrk` and never freed, so any
+// program that churns heap objects (ARC class/Array/String/Dictionary traffic in
+// a loop) grew the break monotonically until `sbrk` failed. This implementation
+// recycles freed blocks and coalesces adjacent ones, so the break stays bounded
+// under steady-state churn — the primitive the Swift runtime (and, later, Node /
+// the JVM) needs. It is the deliberate "extend the minimal bridge" choice over
+// pulling in newlib for a pure-Swift userland; see docs/NOTES.md.
+//
+// Blocks are managed in 16-byte units, so every returned payload is 16-aligned —
+// exactly Embedded Swift's default heap alignment for classes/arrays/strings.
+
+typedef union header Header;
+union header {
+    struct {
+        Header *next;        // next free block
+        unsigned long size;  // size of this block, in Header units (incl. header)
+    } s;
+    long _align[2];          // force sizeof(Header) == 16 and 16-byte alignment
+};
+
+static Header freebase;          // zero-sized list head sentinel
+static Header *freep = 0;        // last-allocated free block (rover)
+
+#define NALLOC 4096              // grow the heap in 64 KiB chunks (4096 * 16)
+
+static void heap_free(void *ap); // forward
+
+// Grow the arena by at least `nu` units via sbrk and add it to the free list.
+static Header *morecore(unsigned long nu) {
+    if (nu < NALLOC) {
+        nu = NALLOC;
+    }
+    void *cp = sbrk((long)(nu * sizeof(Header)));
+    if (cp == (void *)-1) {
+        return 0;
+    }
+    Header *up = (Header *)cp;
+    up->s.size = nu;
+    heap_free((void *)(up + 1)); // splice the new region into the free list
+    return freep;
+}
+
+void *malloc(unsigned long nbytes) {
+    if (nbytes == 0) {
+        nbytes = 1;
+    }
+    // Units needed: payload rounded up, plus one for the header.
+    unsigned long nunits = (nbytes + sizeof(Header) - 1) / sizeof(Header) + 1;
+
+    Header *prevp = freep;
+    if (prevp == 0) { // first call: build a degenerate one-element list
+        freebase.s.next = freep = prevp = &freebase;
+        freebase.s.size = 0;
+    }
+
+    for (Header *p = prevp->s.next; ; prevp = p, p = p->s.next) {
+        if (p->s.size >= nunits) {        // big enough
+            if (p->s.size == nunits) {    // exact fit: unlink
+                prevp->s.next = p->s.next;
+            } else {                      // split: carve the tail
+                p->s.size -= nunits;
+                p += p->s.size;
+                p->s.size = nunits;
+            }
+            freep = prevp;
+            return (void *)(p + 1);
+        }
+        if (p == freep) {                 // wrapped the list: ask for more
+            if ((p = morecore(nunits)) == 0) {
+                return 0;                 // out of memory
+            }
         }
     }
-    return (void *)start;
+}
+
+// Return a block to the free list, coalescing with adjacent free neighbours.
+static void heap_free(void *ap) {
+    Header *bp = (Header *)ap - 1; // block header
+    Header *p;
+    for (p = freep; !(bp > p && bp < p->s.next); p = p->s.next) {
+        if (p >= p->s.next && (bp > p || bp < p->s.next)) {
+            break; // freed block at the start or end of the arena
+        }
+    }
+    if (bp + bp->s.size == p->s.next) { // join to upper neighbour
+        bp->s.size += p->s.next->s.size;
+        bp->s.next = p->s.next->s.next;
+    } else {
+        bp->s.next = p->s.next;
+    }
+    if (p + p->s.size == bp) {          // join to lower neighbour
+        p->s.size += bp->s.size;
+        p->s.next = bp->s.next;
+    } else {
+        p->s.next = bp;
+    }
+    freep = p;
+}
+
+void free(void *ptr) {
+    if (ptr) {
+        heap_free(ptr);
+    }
+}
+
+void *calloc(size_t n, size_t size) {
+    unsigned long total = (unsigned long)n * (unsigned long)size;
+    void *p = malloc(total);
+    if (p) {
+        memset(p, 0, total);
+    }
+    return p;
+}
+
+void *realloc(void *ptr, size_t size) {
+    if (ptr == 0) {
+        return malloc(size);
+    }
+    if (size == 0) {
+        free(ptr);
+        return 0;
+    }
+    Header *bp = (Header *)ptr - 1;
+    unsigned long oldbytes = (bp->s.size - 1) * sizeof(Header);
+    if (oldbytes >= size) {
+        return ptr; // current block already large enough
+    }
+    void *np = malloc(size);
+    if (np) {
+        memcpy(np, ptr, oldbytes);
+        free(ptr);
+    }
+    return np;
+}
+
+// Swift runtime allocation hooks route through the allocator above. Payloads are
+// 16-aligned; for the rare over-aligned request we over-allocate and stash the
+// real base in the word before the returned pointer (recovered on dealloc, which
+// is always given the same align mask).
+void *swift_slowAlloc(unsigned long byte_count, unsigned long align_mask) {
+    unsigned long alignment = align_mask == ~0UL ? 16 : align_mask + 1;
+    if (alignment <= 16) {
+        return malloc(byte_count);
+    }
+    void *raw = malloc(byte_count + alignment + sizeof(void *));
+    if (!raw) {
+        return 0;
+    }
+    unsigned long a = align_up((unsigned long)raw + sizeof(void *), alignment);
+    ((void **)a)[-1] = raw;
+    return (void *)a;
 }
 
 void swift_slowDealloc(void *ptr, unsigned long byte_count, unsigned long align_mask) {
-    (void)ptr;
     (void)byte_count;
-    (void)align_mask;
+    if (!ptr) {
+        return;
+    }
+    unsigned long alignment = align_mask == ~0UL ? 16 : align_mask + 1;
+    if (alignment <= 16) {
+        free(ptr);
+    } else {
+        free(((void **)ptr)[-1]);
+    }
 }
 
 int posix_memalign(void **memptr, size_t alignment, size_t size) {
     unsigned long mask = alignment == 0 ? 15 : (unsigned long)alignment - 1;
     void *ptr = swift_slowAlloc((unsigned long)size, mask);
     *memptr = ptr;
-    return 0;
+    return ptr ? 0 : 12; // ENOMEM
 }
 
-void free(void *ptr) {
-    (void)ptr;
+// Current program break — lets a tool report bounded heap growth (calc's `:mem`).
+unsigned long swiftos_heap_break(void) {
+    return (unsigned long)sbrk(0);
+}
+
+// ---- misc runtime shims ----------------------------------------------------
+
+// Embedded Swift's print()/String output lowers to putchar.
+int putchar(int c) {
+    unsigned char b = (unsigned char)c;
+    (void)write(1, &b, 1);
+    return c;
+}
+
+// Dictionary/Set seed their hashers from arc4random_buf. We have no entropy
+// source and want reproducible behaviour, so fill deterministically — fine for a
+// single-user REPL (the seed only randomises hash-table iteration order).
+void arc4random_buf(void *buf, size_t n) {
+    unsigned char *p = (unsigned char *)buf;
+    unsigned long x = 0x9E3779B97F4A7C15UL; // splitmix64-ish constant
+    for (size_t i = 0; i < n; i += 1) {
+        x = x * 6364136223846793005UL + 1442695040888963407UL;
+        p[i] = (unsigned char)(x >> 56);
+    }
 }
 
 void __stack_chk_fail(void) {

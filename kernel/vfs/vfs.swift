@@ -65,6 +65,7 @@ private struct VNode {
     var diskOffset = 0      // byte offset of contents within the disk image
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
+    var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
@@ -359,6 +360,12 @@ func vfsInit() {
     }
     _ = addDir(root, "tmp", readOnly: false)
 
+    // Stamp the base/literal tree (and /tmp) with the boot time, so ls -l shows
+    // a real date for read-only files instead of the 1970 epoch. tmpfs nodes
+    // created later get their own creation time in createTmpNode.
+    let bootTime = rtcNow()
+    for i in 0..<nodeCount { nodes[i].mtime = bootTime }
+
     for p in 0..<maxVFSProcesses {
         cwdNodes[p] = root
         for fd in 0..<maxFDs { fds[fdIndex(p, fd)] = FDEntry() }
@@ -586,6 +593,7 @@ private func createTmpNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
     // reflects who wrote the file (the live login context, not always root).
     nodes[n].owner = processCurrentPrincipal()
     nodes[n].mode = isDir ? 0o755 : 0o644
+    nodes[n].mtime = rtcNow()
     if !isDir {
         let cap = 4096
         guard let dataBuf = swiftos_kernel_alloc(UInt(cap), 16) else { return -1 }
@@ -782,6 +790,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         if file.offset > nodes[node].dataLen { nodes[node].dataLen = file.offset }
         w += 1
     }
+    if w > 0 { nodes[node].mtime = rtcNow() }
     openDescriptions[d] = file
     return w
 }
@@ -808,6 +817,7 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
         while i < length { base[i] = 0; i += 1 }
     }
     nodes[node].dataLen = length
+    nodes[node].mtime = rtcNow()
     return 0
 }
 
@@ -944,19 +954,21 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
 }
 
 // Kernel stat record (kstat) the newlib/Swift bottom ends translate into their
-// own struct stat. 24-byte little-endian layout (M13c widened it from 16):
+// own struct stat. 32-byte little-endian layout (grown from 16→24→32):
 //   off 0  u32 mode    off 4  u32 uid    off 8  u64 size
-//   off 16 u32 gid     off 20 u32 nlink
-// The first 16 bytes are unchanged, so older 16-byte readers stay valid.
+//   off 16 u32 gid     off 20 u32 nlink  off 24 u64 mtime (Unix seconds)
+// Earlier fields keep their offsets, so older shorter readers stay valid.
 private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int,
-                           uid: UInt32 = 1, gid: UInt32 = 1, nlink: UInt32 = 1) -> Int {
-    guard let p8 = userWritableBuffer(va, 24) else { return errInvalid }
+                           uid: UInt32 = 1, gid: UInt32 = 1, nlink: UInt32 = 1,
+                           mtime: UInt64 = 0) -> Int {
+    guard let p8 = userWritableBuffer(va, 32) else { return errInvalid }
     let p = UnsafeMutableRawPointer(p8)
     p.storeBytes(of: mode, toByteOffset: 0, as: UInt32.self)
     p.storeBytes(of: uid, toByteOffset: 4, as: UInt32.self)
     p.storeBytes(of: UInt64(size), toByteOffset: 8, as: UInt64.self)
     p.storeBytes(of: gid, toByteOffset: 16, as: UInt32.self)
     p.storeBytes(of: nlink, toByteOffset: 20, as: UInt32.self)
+    p.storeBytes(of: mtime, toByteOffset: 24, as: UInt64.self)
     return 0
 }
 
@@ -980,7 +992,8 @@ private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
         : (nodes[node].isDir ? 0o755 : (nodeIsExecutable(node) ? 0o755 : 0o644))
     let mode: UInt32 = (nodes[node].isDir ? sIFDIR : sIFREG) | perms
     let owner = nodes[node].owner
-    return writeStatMode(va, mode, nodes[node].dataLen, uid: owner, gid: owner)
+    return writeStatMode(va, mode, nodes[node].dataLen, uid: owner, gid: owner,
+                         mtime: nodes[node].mtime)
 }
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
@@ -995,8 +1008,9 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     guard validFD(proc, fd) else { return errBadFD }
     let file = openDescriptions[fdEntry(proc, fd).file]
     let me = processCurrentPrincipal()
-    if file.kind == fdKindTTY { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me) }
-    if file.kind == fdKindPipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me) }
+    let now = rtcNow()
+    if file.kind == fdKindTTY { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now) }
+    if file.kind == fdKindPipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if file.kind == fdKindVNode { return writeStatNode(statbuf, file.node) }
     return errBadFD
 }

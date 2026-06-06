@@ -59,10 +59,12 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 check() { grep -Eq -- "$1" <<<"$clean" || { echo "FAIL: $2" >&2; ok=0; }; }
 
-check '^motd$'                                   "plain /bin/ls did not list /etc/motd"
-check '^drwxr-xr-x +1 +root +root +0 +swos$'     "ls -l did not show /etc/swos dir (root, drwxr-xr-x)"
-check '^-rw-r--r-- +1 +root +root +21 +motd$'    "ls -l did not show motd (root, -rw-r--r--, size 21)"
-check '^-rwxr-xr-x +1 +root +root +[0-9]+ +/bin/busybox$' "ls -l of a single executable file wrong"
+# Long format: "mode nlink owner group size YYYY-MM-DD HH:MM name".
+D='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]'
+check '^motd$'                                                 "plain /bin/ls did not list /etc/motd"
+check "^drwxr-xr-x +1 +root +root +0 +$D +swos\$"              "ls -l did not show /etc/swos dir (root, drwxr-xr-x)"
+check "^-rw-r--r-- +1 +root +root +21 +$D +motd\$"             "ls -l did not show motd (root, -rw-r--r--, size 21)"
+check "^-rwxr-xr-x +1 +root +root +[0-9]+ +$D +/bin/busybox\$" "ls -l of a single executable file wrong"
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: native Swift /bin/ls lists and long-formats with resolved owner/group"

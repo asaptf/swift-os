@@ -61,9 +61,10 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 check() { grep -Eq -- "$1" <<<"$clean" || { echo "FAIL: $2" >&2; ok=0; }; }
 
-check '^-rw------- +1 +root +root +3 +/tmp/f$'  "chmod 600 not reflected (expected -rw------- root)"
-check '^-rw------- +1 +user +user +3 +/tmp/f$'  "chown 2 not reflected (expected owner/group user)"
-check 'CHOWN-DONE'                              "shell did not survive chmod/chown"
+D='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]'
+check "^-rw------- +1 +root +root +3 +$D +/tmp/f\$"  "chmod 600 not reflected (expected -rw------- root)"
+check "^-rw------- +1 +user +user +3 +$D +/tmp/f\$"  "chown 2 not reflected (expected owner/group user)"
+check 'CHOWN-DONE'                                   "shell did not survive chmod/chown"
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: native Swift chmod/chown change tmpfs mode and owner (shown by ls -l)"

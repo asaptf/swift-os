@@ -42,6 +42,7 @@ struct kstat {
     unsigned long size;
     unsigned int gid;
     unsigned int nlink;
+    unsigned long mtime;
 };
 
 char *__env[1] = { 0 };
@@ -107,6 +108,9 @@ int _fstat(int fd, struct stat *st) {
     st->st_uid = k.uid;
     st->st_gid = k.gid;
     st->st_nlink = k.nlink ? k.nlink : 1;
+    st->st_mtim.tv_sec = (time_t)k.mtime;
+    st->st_ctim.tv_sec = (time_t)k.mtime;
+    st->st_atim.tv_sec = (time_t)k.mtime;
     return 0;
 }
 
@@ -118,6 +122,9 @@ int _stat(const char *path, struct stat *st) {
     st->st_uid = k.uid;
     st->st_gid = k.gid;
     st->st_nlink = k.nlink ? k.nlink : 1;
+    st->st_mtim.tv_sec = (time_t)k.mtime;
+    st->st_ctim.tv_sec = (time_t)k.mtime;
+    st->st_atim.tv_sec = (time_t)k.mtime;
     return 0;
 }
 
