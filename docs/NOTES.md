@@ -946,3 +946,57 @@ BusyBox v1.38.0 ... built-in shell (ash)
 ```
 Prereqs: `make newlib && make busybox` once, then `make build` / `make test`. The full
 **M0 → M8 path is complete**: a static busybox sh runs ls/cat/echo on our read-only base + tmpfs in QEMU.
+
+## Network stack (N-series) — own Swift, sans-IO
+
+The next major arc is our own TCP/IP stack in Embedded Swift, following the sans-IO direction recorded
+in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at net-a:
+
+- **In-kernel for now.** ARCHITECTURE's long-horizon target is a userland driver/stack *service* gated by
+  capabilities, but restartable driver services are a non-goal "this stage" and the codebase is
+  monolithic. net-a keeps the driver and the protocol core in-kernel. The **sans-IO purity** of the core
+  is what preserves the option to lift it into a userland service later without rewriting its logic.
+- **Zero-copy data path.** RX buffers are PMM pages the device DMAs into; the sans-IO core reads the
+  Ethernet frame straight out of the RX buffer (no bounce copy in), and replies are written directly into
+  the TX DMA buffer and handed to the transmit ring by address (no copy out). Only the 12-byte
+  `virtio_net_hdr` is added. Honors the ARCHITECTURE N0–N4 zero-copy requirement from the start.
+- **sans-IO core in `kernel/net/*.swift`** — pure Swift, no MMIO/heap-per-packet/syscalls — compiled both
+  into the kernel (Embedded) and into a host unit test (`tests/net_test.swift`), exactly like `fdt.swift`
+  ↔ `tests/fdt_test.swift`. The control-plane ARP cache is the only heap use; the per-packet path does
+  not allocate.
+
+### net-a — virtio-net driver + sans-IO Ethernet/ARP/IPv4/ICMP (DONE, 2026-06-06)
+
+- **Driver `kernel/drivers/virtio_net.swift` (Swift).** Mirrors `virtio_blk.c` but in Swift (the project
+  default; `uart.swift` is the Swift-MMIO precedent) with **two** virtqueues plus an RX buffer pool. Scans
+  the HAL virtio-mmio window for a modern device id 1, negotiates `VIRTIO_F_VERSION_1` (+ `VIRTIO_NET_F_MAC`
+  when offered), reads the MAC from config space, sets up the receive (queue 0) and transmit (queue 1)
+  rings from PMM pages, pre-fills the RX ring, and polls the used rings (IRQs masked, like the blk driver
+  and virtio-input). MMIO + cache maintenance go through the io.h C bridge (new `dc_cvac`/`dc_ivac`/`dsb_sy`
+  inlines); everything else is Swift, including `~Copyable`-style buffer ownership via the PMM pool.
+- **sans-IO core `kernel/net/`.** `packet.swift` (byte/BE helpers, RFC 1071 internet checksum, `MAC`),
+  `ethernet.swift`, `arp.swift` (request/reply + a tiny ARP cache), `ipv4.swift` (no options/frag),
+  `icmp.swift` (echo), and `stack.swift` (`NetStack.onFrame` + `buildArpRequest`/`buildEchoRequest`). The
+  core consumes one received frame and writes any reply into a caller buffer; it does no I/O. NB: ARP
+  `spa` is at offset 14 (after the 6-byte `sha` at 8), not 12 — an early bug caught by the host test.
+- **Boot probe `runVirtioNetProbe` (kernel/main.swift)**, run after `vfsInit`: brings up virtio-net, ARPs
+  the slirp gateway `10.0.2.2`, then sends an ICMP echo request and waits for the reply, logging
+  `net-a OK: ICMP echo reply from 10.0.2.2`. A no-op (one log line) when no NIC is attached, so the other
+  boot/test paths are unchanged (mirrors `runVirtioBlkProbe`). Static addressing: guest `10.0.2.15`,
+  gateway `10.0.2.2`; no DHCP yet.
+- **Tests.** `tests/net_test.swift` (host) feeds crafted frames and asserts ARP request/reply build +
+  parse, ARP-cache population, IPv4/ICMP checksum correctness, echo reply recognition, the inbound echo
+  responder, and rejection of runt/bad-checksum frames. `tests/virtio_net_test.sh` boots `-kernel` with
+  `-netdev user,id=n0 -device virtio-net-device,netdev=n0` and asserts the three `net-a` serial lines.
+  Both wired into `make test`.
+- **QEMU launch:** the slirp gateway answers ARP for and ICMP echo to `10.0.2.2` while the guest spins —
+  the vCPU busy-poll does not starve QEMU's iothread, so the reply arrives. Acceptance is guest-initiated
+  because slirp does not reliably originate ICMP to the guest headless.
+
+### net-b / net-c — recorded, not built
+
+- **net-b:** sans-IO IPv4+UDP, a small capability-gated socket syscall surface (next free syscall numbers
+  ≥ 37; the existing `poll` syscall 26 is the intended event hook), and a `/bin/*` UDP demo over the
+  `swiftos_*` bridge.
+- **net-c:** a minimal sans-IO TCP connection state machine (handshake/seq/RTO) with host unit tests
+  before any in-QEMU run.

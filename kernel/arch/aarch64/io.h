@@ -113,6 +113,20 @@ static inline uint32_t mmio_read32(uintptr_t addr) {
     return *(volatile uint32_t *)addr;
 }
 
+// Cache maintenance for DMA. A Swift driver (kernel/drivers/virtio_net.swift)
+// cleans (writes back) the cache lines a device reads and invalidates the lines
+// a device writes, around each DMA. No-ops under TCG, real work under a caching
+// accelerator — same discipline as the inline asm in virtio_blk.c.
+static inline void dc_cvac(uintptr_t addr) {
+    __asm__ volatile("dc cvac, %0" :: "r"(addr) : "memory");
+}
+static inline void dc_ivac(uintptr_t addr) {
+    __asm__ volatile("dc ivac, %0" :: "r"(addr) : "memory");
+}
+static inline void dsb_sy(void) {
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
 static inline uintptr_t swiftos_heap_start(void) {
     return (uintptr_t)__heap_start;
 }

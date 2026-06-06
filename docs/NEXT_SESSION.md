@@ -3,7 +3,16 @@
 Working notes for picking up swift-os development. Authoritative milestone history lives in
 `docs/NOTES.md`; this file is the short-lived "where we are / what to do next" scratchpad.
 
-## Where we are (2026-06-04)
+## Where we are (2026-06-06)
+
+- **Network stack started — net-a DONE (2026-06-06).** Own Swift, sans-IO. A Swift virtio-net driver
+  (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config, zero-copy DMA buffers) plus a pure
+  host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The boot probe ARPs the QEMU
+  slirp gateway `10.0.2.2` and gets an ICMP echo reply (`net-a OK: ICMP echo reply from 10.0.2.2`).
+  Tests: `tests/net_test.swift` (host feed-bytes) + `tests/virtio_net_test.sh` (in-QEMU). See the
+  "Network stack (N-series)" section in `docs/NOTES.md`. **Next: net-b (UDP + socket syscalls), net-c (TCP).**
+
+## Where we were (2026-06-04)
 
 - **M0–M9 — DONE.** Boot, MMU, scheduler, syscalls, VFS, newlib, busybox `sh`, and the M9 HAL
   (runtime hardware discovery from the device tree).

@@ -76,6 +76,13 @@ SWIFT_SRCS := \
 	kernel/arch/aarch64/fdt.swift \
 	kernel/drivers/uart.swift \
 	kernel/drivers/gic.swift \
+	kernel/drivers/virtio_net.swift \
+	kernel/net/packet.swift \
+	kernel/net/ethernet.swift \
+	kernel/net/arp.swift \
+	kernel/net/ipv4.swift \
+	kernel/net/icmp.swift \
+	kernel/net/stack.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
 	kernel/syscall/syscall.swift \
@@ -495,10 +502,13 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
+	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/stack.swift -o $(BUILD)/net_test
+	$(BUILD)/net_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
+	./tests/virtio_net_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
