@@ -359,6 +359,73 @@ private func runVirtioBlkProbe() {
     }
 }
 
+/// Print a MAC address as `aa:bb:cc:dd:ee:ff`.
+private func printMac(_ m: MAC) {
+    let bytes = [m.a, m.b, m.c, m.d, m.e, m.f]
+    for (i, byte) in bytes.enumerated() {
+        if i != 0 { uartPutc(0x3A) } // ':'
+        let hi = byte >> 4, lo = byte & 0xF
+        uartPutc(hi < 10 ? 0x30 + hi : 0x61 + (hi - 10))
+        uartPutc(lo < 10 ? 0x30 + lo : 0x61 + (lo - 10))
+    }
+}
+
+/// net-a: bring up virtio-net and exercise the sans-IO stack against the QEMU
+/// user-net (slirp) gateway. We ARP for 10.0.2.2, then send an ICMP echo request
+/// and wait for the reply — proving driver RX/TX plus the Ethernet/ARP/IPv4/ICMP
+/// core end to end. A no-op (one log line) when no NIC is attached, so the other
+/// boot/test paths are unaffected (mirrors runVirtioBlkProbe).
+private func runVirtioNetProbe() {
+    if !virtioNetInit() {
+        uartPuts("net-a: no virtio-net device attached\n")
+        return
+    }
+    let mac = virtioNetMac()
+    uartPuts("net-a: virtio-net up, MAC ")
+    printMac(mac)
+    uartPuts("\n")
+
+    let ourIP: IPv4 = 0x0A00_020F   // 10.0.2.15 (slirp's default guest address)
+    let gwIP: IPv4 = 0x0A00_0202    // 10.0.2.2  (slirp gateway)
+    var stack = NetStack(mac: mac, ip: ourIP)
+
+    // 1) Resolve the gateway's MAC via ARP.
+    let arpLen = stack.buildArpRequest(targetIP: gwIP, out: virtioNetTxBuffer())
+    virtioNetTxSubmit(frameLen: arpLen)
+    var gwMac = MAC()
+    var resolved = false
+    var spins = 0
+    while spins < 4_000_000 && !resolved {
+        let r = virtioNetPoll(&stack)
+        if r.arpResolved && r.resolvedIP == gwIP { gwMac = r.resolvedMac; resolved = true }
+        spins += 1
+    }
+    if !resolved {
+        uartPuts("net-a: ARP for 10.0.2.2 timed out\n")
+        return
+    }
+    uartPuts("net-a: ARP reply, 10.0.2.2 is at ")
+    printMac(gwMac)
+    uartPuts("\n")
+
+    // 2) Ping the gateway: send an ICMP echo request and await the echo reply.
+    let echoLen = stack.buildEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234,
+                                         seq: 1, payloadLen: 32, out: virtioNetTxBuffer())
+    virtioNetTxSubmit(frameLen: echoLen)
+    var got = false
+    spins = 0
+    while spins < 4_000_000 && !got {
+        let r = virtioNetPoll(&stack)
+        if r.echoReply { got = true }
+        spins += 1
+    }
+    if got {
+        uartPuts("net-a OK: ICMP echo reply from 10.0.2.2\n")
+    } else {
+        uartPuts("net-a: ICMP echo reply timed out\n")
+    }
+}
+
 private func runInit() {
     uartPuts("swift-os M12c: starting console-login (init)\n")
     // Keep the system usable: when a session ends, start a fresh login rather
@@ -555,6 +622,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
+    runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     ttyInit()
     signalReset()
     uartRxInit()
