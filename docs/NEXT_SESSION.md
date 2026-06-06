@@ -157,9 +157,14 @@ M12 is now underway.
 - **Native Swift `cat`/`echo`/`pwd` — DONE (2026-06-05):** `userland/{cat,echo,pwd}.swift` over the
   bridge (added `swiftos_write`/`swiftos_getcwd`); reached by absolute path, bare names stay busybox.
   `tests/swift_coreutils_test.sh`. swift-os now has `ls`/`cat`/`echo`/`pwd`/`ps`/`id` in native Swift.
+- **Native Swift `mkdir`/`rmdir`/`rm`/`mv` — DONE (2026-06-05):** tmpfs-mutation utilities over the
+  existing kernel syscalls (`userland/{mkdir,rmdir,rm,mv}.swift`; bridge `swiftos_mkdir/rmdir/unlink/
+  rename`). `tests/swift_fileops_test.sh`. The Swift userland now covers
+  `ls cat echo pwd ps id mkdir rmdir rm mv`.
 - **Bigger arcs:** own-Swift sans-IO network stack; native Swift apps on swift-os. Smaller next steps:
-  make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them);
-  more utilities (`mkdir`/`rm`/`mv` in Swift); the remaining M13 follow-ups.
+  make the Swift coreutils the *default* (retire the busybox applets so bare `ls`/`cat`/… use them —
+  will require updating busybox_test/ls_l_test to the Swift output); `rm -r`; the remaining M13
+  follow-ups (read/write-time enforcement, base-owner manifest, clock/mtimes, chown/chmod).
 
 ## Post-roadmap (M0–M13 done) — going down the list
 

@@ -200,6 +200,10 @@ USER_LS_ELF := $(BUILD)/ls.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
 USER_PWD_ELF := $(BUILD)/pwd.elf
+USER_MKDIR_ELF := $(BUILD)/mkdir.elf
+USER_RMDIR_ELF := $(BUILD)/rmdir.elf
+USER_RM_ELF := $(BUILD)/rm.elf
+USER_MV_ELF := $(BUILD)/mv.elf
 BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
@@ -207,6 +211,10 @@ BASE_EXEC_ELFS := \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
 	$(USER_PWD_ELF) \
+	$(USER_MKDIR_ELF) \
+	$(USER_RMDIR_ELF) \
+	$(USER_RM_ELF) \
+	$(USER_MV_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
@@ -342,6 +350,18 @@ $(BUILD)/user_echo.o: userland/echo.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_pwd.o: userland/pwd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pwd.swift -o $@
 
+$(BUILD)/user_mkdir.o: userland/mkdir.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/mkdir.swift -o $@
+
+$(BUILD)/user_rmdir.o: userland/rmdir.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/rmdir.swift -o $@
+
+$(BUILD)/user_rm.o: userland/rm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/rm.swift -o $@
+
+$(BUILD)/user_mv.o: userland/mv.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/mv.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -398,6 +418,18 @@ $(USER_ECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_
 
 $(USER_PWD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pwd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pwd.o -o $@
+
+$(USER_MKDIR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mkdir.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mkdir.o -o $@
+
+$(USER_RMDIR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_rmdir.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_rmdir.o -o $@
+
+$(USER_RM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_rm.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_rm.o -o $@
+
+$(USER_MV_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mv.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mv.o -o $@
 
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
@@ -459,6 +491,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/redirect_test.sh
 	./tests/swift_ls_test.sh
 	./tests/swift_coreutils_test.sh
+	./tests/swift_fileops_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -541,6 +574,10 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo
 	cp $(USER_PWD_ELF) $(BASE_ROOT)/bin/pwd
+	cp $(USER_MKDIR_ELF) $(BASE_ROOT)/bin/mkdir
+	cp $(USER_RMDIR_ELF) $(BASE_ROOT)/bin/rmdir
+	cp $(USER_RM_ELF) $(BASE_ROOT)/bin/rm
+	cp $(USER_MV_ELF) $(BASE_ROOT)/bin/mv
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

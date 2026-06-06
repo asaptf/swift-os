@@ -24,6 +24,12 @@ void swiftos_puts(const char *s);
 long swiftos_write(int fd, const void *buf, unsigned long count);
 // Current working directory into buf (size bytes); returns length or negative.
 long swiftos_getcwd(char *buf, unsigned long size);
+// Filesystem mutations (tmpfs only; the base is read-only). 0 on success, else
+// a negative errno.
+int swiftos_mkdir(const char *path);
+int swiftos_rmdir(const char *path);
+int swiftos_unlink(const char *path);
+int swiftos_rename(const char *oldpath, const char *newpath);
 
 // Thin syscall bridges for Swift userland (e.g. console-login).
 int  swiftos_open(const char *path, int flags);

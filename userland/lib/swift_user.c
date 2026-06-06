@@ -60,6 +60,22 @@ long swiftos_getcwd(char *buf, unsigned long size) {
     return __syscall3(SYS_GETCWD, (long)buf, (long)size, 0);
 }
 
+int swiftos_mkdir(const char *path) {
+    return (int)__syscall3(SYS_MKDIR, (long)path, 0755, 0);
+}
+
+int swiftos_rmdir(const char *path) {
+    return (int)__syscall3(SYS_RMDIR, (long)path, 0, 0);
+}
+
+int swiftos_unlink(const char *path) {
+    return (int)__syscall3(SYS_UNLINK, (long)path, 0, 0);
+}
+
+int swiftos_rename(const char *oldpath, const char *newpath) {
+    return (int)__syscall3(SYS_RENAME, (long)oldpath, (long)newpath, 0);
+}
+
 int swiftos_open(const char *path, int flags) {
     return open(path, flags);
 }

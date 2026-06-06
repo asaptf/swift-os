@@ -765,6 +765,25 @@ Three more pure-Swift coreutils (`userland/{cat,echo,pwd}.swift`), continuing th
   `/bin/cat /etc/motd` prints the motd, `cd /etc; /bin/pwd` → `/etc` (proves getcwd + cwd inheritance
   across execve), and `/bin/echo -n` suppresses the newline.
 
+## Native Swift `mkdir` / `rmdir` / `rm` / `mv` (DONE, 2026-06-05)
+
+Pure-Swift tmpfs-mutation utilities (`userland/{mkdir,rmdir,rm,mv}.swift`), built directly on the
+existing kernel syscalls (no new kernel work).
+
+- **Bridge.** `swift_user.{h,c}` gained `swiftos_mkdir`/`swiftos_rmdir`/`swiftos_unlink`/
+  `swiftos_rename` over `SYS_MKDIR`/`SYS_RMDIR`/`SYS_UNLINK`/`SYS_RENAME`. They only affect the
+  writable tmpfs; the base FS is read-only, and the calls already require `capTmpWrite` (M13b).
+- **Scope.** `rm` is files-only (no `-r`); `rmdir` removes empty dirs; `mv` is a single rename. Reached
+  by absolute path; `exec.swift` routes `/bin/{mkdir,rmdir,rm,mv}` to the packed disk ELFs. (busybox
+  ships no mkdir/rm/mv applets in our config except `mkdir`, which is only used by `ls_l_test` as a
+  bare command — unaffected.)
+- **Test.** `tests/swift_fileops_test.sh` (wired into `make test`): `/bin/mkdir /tmp/d`, write a file,
+  `/bin/mv` it, `/bin/ls` confirms the rename and `/bin/cat` confirms content survived, then
+  `/bin/rm` + `/bin/rmdir` and `/bin/ls /tmp` confirms removal.
+
+The native-Swift userland now covers `ls cat echo pwd ps id mkdir rmdir rm mv` — a usable coreutils
+set, all over the `swift_user` bridge.
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —
