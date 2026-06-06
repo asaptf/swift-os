@@ -41,6 +41,8 @@ private let sysSocket: UInt = 38       // socket(domain, type, proto) → fd (ca
 private let sysBind: UInt = 39         // bind(fd, port) — local UDP port
 private let sysSendto: UInt = 40       // sendto(fd, &msg) — UDP datagram out
 private let sysRecvfrom: UInt = 41     // recvfrom(fd, &msg) — UDP datagram in
+private let sysListen: UInt = 42       // listen(fd, backlog) — TCP
+private let sysAccept: UInt = 43       // accept(fd) → connection fd — TCP
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -164,6 +166,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsSendto(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
     } else if number == sysRecvfrom {
         result = vfsRecvfrom(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
+    } else if number == sysListen {
+        result = vfsListen(fd: Int(bitPattern: frame[0]), backlog: Int(bitPattern: frame[1]))
+    } else if number == sysAccept {
+        result = vfsAccept(fd: Int(bitPattern: frame[0]))
     } else {
         result = -38 // ENOSYS
     }

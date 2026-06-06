@@ -227,6 +227,7 @@ USER_HEAD_ELF := $(BUILD)/head.elf
 USER_TOUCH_ELF := $(BUILD)/touch.elf
 USER_WC_ELF := $(BUILD)/wc.elf
 USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
+USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_KV_ELF) \
@@ -234,6 +235,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TOUCH_ELF) \
 	$(USER_WC_ELF) \
 	$(USER_UDPECHO_ELF) \
+	$(USER_TCPECHO_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -415,6 +417,9 @@ $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_touch.o: userland/touch.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/touch.swift -o $@
 
+$(BUILD)/user_tcpecho.o: userland/tcpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tcpecho.swift -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -518,6 +523,9 @@ $(USER_WC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc
 $(USER_UDPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o -o $@
 
+$(USER_TCPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpecho.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpecho.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -574,6 +582,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh
 	./tests/udp_echo_test.sh
+	./tests/tcp_echo_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
@@ -683,6 +692,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
 	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc
 	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
+	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

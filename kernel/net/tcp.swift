@@ -122,6 +122,7 @@ struct TCPConnection {
     private var sndNxt: UInt32 = 0
     private var sndWnd: UInt16 = 0xFFFF
     private var iss: UInt32 = 0
+    private var openISS: UInt32 = tcpISS   // ISS to use on open (net-c2 seeds from the RTC)
     private var finQueued = false
     private var finSeq: UInt32 = 0
     private var finAckedNow = false
@@ -145,7 +146,16 @@ struct TCPConnection {
 
     // ---- output queue accessors (drained by the caller) ----
     func outSegment(_ i: Int) -> TCPSegmentOut { out[i] }
+    func availableBytes() -> Int { rcvCount }
     func segmentPayloadByte(_ seg: TCPSegmentOut, _ i: Int) -> UInt8 { sndBuf[seg.payloadOff + i] }
+    /// Copy a segment's payload out of the (private) send buffer into `dst`.
+    func copySegmentPayload(_ seg: TCPSegmentOut, to dst: UnsafeMutableRawPointer) {
+        var i = 0
+        while i < seg.payloadLen {
+            dst.storeBytes(of: sndBuf[seg.payloadOff + i], toByteOffset: i, as: UInt8.self)
+            i += 1
+        }
+    }
     mutating func clearOut() { outCount = 0 }
 
     private mutating func emit(flags: UInt8, seq: UInt32, payloadOff: Int = 0, payloadLen: Int = 0) {
@@ -160,16 +170,18 @@ struct TCPConnection {
     private mutating func armRTO(_ now: UInt64) { rtoActive = true; rtoDeadline = now &+ tcpRtoTicks; retries = 0 }
 
     // ---- opens ----
-    mutating func passiveOpen(localPort: UInt16) {
+    mutating func passiveOpen(localPort: UInt16, iss: UInt32 = tcpISS) {
         self.localPort = localPort
+        self.openISS = iss
         state = .listen
     }
 
-    mutating func activeOpen(localPort: UInt16, remoteIP: IPv4, remotePort: UInt16, now: UInt64) {
+    mutating func activeOpen(localPort: UInt16, remoteIP: IPv4, remotePort: UInt16,
+                             now: UInt64, iss issArg: UInt32 = tcpISS) {
         self.localPort = localPort
         self.remoteIP = remoteIP
         self.remotePort = remotePort
-        iss = tcpISS; sndUna = iss; sndNxt = iss &+ 1
+        iss = issArg; sndUna = iss; sndNxt = iss &+ 1
         state = .synSent
         emit(flags: tcpFlagSYN, seq: iss)
         armRTO(now)
@@ -291,7 +303,7 @@ struct TCPConnection {
         if state == .listen {
             if isSYN && !isACK {
                 irs = seq; rcvNxt = seq &+ 1
-                iss = tcpISS; sndUna = iss; sndNxt = iss &+ 1
+                iss = openISS; sndUna = iss; sndNxt = iss &+ 1
                 state = .synRcvd
                 emit(flags: tcpFlagSYN | tcpFlagACK, seq: iss)
                 armRTO(now)

@@ -285,6 +285,12 @@ func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
                 socketDeliverUDP(srcIP: r.udpSrcIP, srcPort: r.udpSrcPort, dstPort: r.udpDstPort,
                                  payload: frame + r.udpPayloadOff, len: r.udpPayloadLen)
             }
+            if r.gotTCP {
+                socketDeliverTCP(srcIP: r.tcpSrcIP, srcMac: r.tcpSrcMac, srcPort: r.tcpSrcPort,
+                                 dstPort: r.tcpDstPort, flags: r.tcpFlags, seq: r.tcpSeqNum,
+                                 ack: r.tcpAckNum, window: r.tcpWnd, payload: frame + r.tcpPayloadOff,
+                                 payloadLen: r.tcpPayloadLen, now: systemTicks)
+            }
             if r.txLen > 0 { virtioNetTxSubmit(frameLen: r.txLen) }
 
             // Recycle the RX descriptor back onto the available ring.

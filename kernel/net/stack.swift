@@ -50,6 +50,19 @@ struct RxOutcome {
     var udpSrcMac: MAC = .zero
     var udpPayloadOff = 0
     var udpPayloadLen = 0
+    // A received TCP segment addressed to us (the kernel socket layer owns the
+    // connections and drives the state machine; the core only reports).
+    var gotTCP = false
+    var tcpSrcIP: IPv4 = 0
+    var tcpSrcMac: MAC = .zero
+    var tcpSrcPort: UInt16 = 0
+    var tcpDstPort: UInt16 = 0
+    var tcpFlags: UInt8 = 0
+    var tcpSeqNum: UInt32 = 0
+    var tcpAckNum: UInt32 = 0
+    var tcpWnd: UInt16 = 0
+    var tcpPayloadOff = 0
+    var tcpPayloadLen = 0
 }
 
 struct NetStack {
@@ -128,6 +141,22 @@ struct NetStack {
                 r.udpSrcMac = ethSrcMac(p)
                 r.udpPayloadOff = ethHeaderLen + ihl + udpHeaderLen
                 r.udpPayloadLen = udpLen - udpHeaderLen
+            } else if proto == ipProtoTCP {
+                guard l4Len >= tcpMinHeaderLen,
+                      tcpChecksumValid(src: ipSrc(ipp), dst: ipDst(ipp), seg: l4, segLen: l4Len) else { return r }
+                let dataOff = tcpDataOffset(l4)
+                guard dataOff >= tcpMinHeaderLen, dataOff <= l4Len else { return r }
+                r.gotTCP = true
+                r.tcpSrcIP = ipSrc(ipp)
+                r.tcpSrcMac = ethSrcMac(p)
+                r.tcpSrcPort = tcpSrcPort(l4)
+                r.tcpDstPort = tcpDstPort(l4)
+                r.tcpFlags = tcpFlags(l4)
+                r.tcpSeqNum = tcpSeq(l4)
+                r.tcpAckNum = tcpAck(l4)
+                r.tcpWnd = tcpWindow(l4)
+                r.tcpPayloadOff = ethHeaderLen + ihl + dataOff
+                r.tcpPayloadLen = l4Len - dataOff
             }
             return r
         }
@@ -148,6 +177,23 @@ struct NetStack {
         let total = ipv4HeaderLen + udpLen
         nextIPID &+= 1
         ipWriteHeader(ipp, src: ip, dst: toIP, proto: ipProtoUDP, totalLen: total, id: nextIPID)
+        return ethHeaderLen + total
+    }
+
+    /// Build a TCP segment frame. The caller must have already placed `payloadLen`
+    /// payload bytes at `out + ethHeaderLen + ipv4HeaderLen + tcpMinHeaderLen`
+    /// (e.g. via TCPConnection.copySegmentPayload). Returns the frame length.
+    mutating func buildTCP(toMac: MAC, toIP: IPv4, srcPort: UInt16, dstPort: UInt16,
+                           seq: UInt32, ack: UInt32, flags: UInt8, window: UInt16,
+                           payloadLen: Int, out: UnsafeMutableRawPointer) -> Int {
+        ethWriteHeader(out, dst: toMac, src: mac, type: ethTypeIPv4)
+        let ipp = out + ethHeaderLen
+        let seg = ipp + ipv4HeaderLen
+        tcpWriteHeader(seg, srcPort: srcPort, dstPort: dstPort, seq: seq, ack: ack,
+                       flags: flags, window: window, src: ip, dst: toIP, payloadLen: payloadLen)
+        let total = ipv4HeaderLen + tcpMinHeaderLen + payloadLen
+        nextIPID &+= 1
+        ipWriteHeader(ipp, src: ip, dst: toIP, proto: ipProtoTCP, totalLen: total, id: nextIPID)
         return ethHeaderLen + total
     }
 
