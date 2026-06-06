@@ -5,7 +5,7 @@ Working notes for picking up swift-os development. Authoritative milestone histo
 
 ## Where we are (2026-06-06)
 
-- **Network stack — net-a + net-b DONE (2026-06-06).** Own Swift, sans-IO.
+- **Network stack — net-a + net-b + net-c1 DONE (2026-06-06).** Own Swift, sans-IO.
   - **net-a:** Swift virtio-net driver (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config,
     zero-copy DMA) + a pure host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The
     boot probe ARPs + pings the QEMU slirp gateway `10.0.2.2`.
@@ -13,8 +13,13 @@ Working notes for picking up swift-os development. Authoritative milestone histo
     (`socket`/`bind`/`sendto`/`recvfrom` = syscalls 38–41, gated on `capNet`), sockets as VFS fds, a kernel
     socket layer (`kernel/net/socket.swift`), the `swiftos_*` bridge, and `/bin/udpecho`. Acceptance:
     `tests/udp_echo_test.sh` does a UDP round-trip over `hostfwd` with `nc`.
-  - Tests: `tests/net_test.swift` (host feed-bytes for L2/L3/UDP) + `tests/virtio_net_test.sh` +
-    `tests/udp_echo_test.sh`. See "Network stack (N-series)" in `docs/NOTES.md`. **Next: net-c (TCP).**
+  - **net-c1:** pure sans-IO TCP connection state machine (`kernel/net/tcp.swift`) — passive/active open,
+    in-order data + cumulative ACK, RTO retransmit, full close handshake, RST — host-tested in
+    `tests/net_test.swift`. **Not wired into the kernel yet** (dead code until net-c2).
+  - Tests: `tests/net_test.swift` (host feed-bytes for L2/L3/UDP/TCP) + `tests/virtio_net_test.sh` +
+    `tests/udp_echo_test.sh`. See "Network stack (N-series)" in `docs/NOTES.md`.
+  - **Next: net-c2** — wire `TCPConnection` to `connect`/`listen`/`accept` sockets, drive RTO from
+    `netPump`/`systemTicks`, add `/bin/tcpecho`, passive in-QEMU acceptance (host `nc` over `hostfwd=tcp`).
 
 ## Where we were (2026-06-04)
 

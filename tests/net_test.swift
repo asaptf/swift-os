@@ -168,8 +168,130 @@ struct NetTest {
         out = stack.onFrame(inBuf, inLen, out: outBuf, outCap: 2048)
         check(!out.gotUDP, "UDP datagram with a bad checksum is dropped")
 
+        // --- 12. TCP: sequence arithmetic + checksum ----------------------
+        check(seqLT(0xFFFF_FFF0, 0x0000_0010), "seqLT handles wraparound")
+        check(seqGT(0x0000_0010, 0xFFFF_FFF0), "seqGT handles wraparound")
+        tcpWriteHeader(outBuf, srcPort: 1234, dstPort: 80, seq: 1000, ack: 0,
+                       flags: tcpFlagSYN, window: 4096, src: ourIP, dst: gwIP, payloadLen: 0)
+        check(tcpChecksumValid(src: ourIP, dst: gwIP, seg: outBuf, segLen: tcpMinHeaderLen),
+              "TCP checksum verifies")
+
+        // --- 13. passive open handshake -----------------------------------
+        var c = TCPConnection()
+        c.passiveOpen(localPort: 5555)
+        var e = feed(&c, tcpFlagSYN, 1000, 0)
+        check(c.outCount == 1, "SYN gets one reply")
+        let s0 = c.outSegment(0)
+        check((s0.flags & (tcpFlagSYN | tcpFlagACK)) == (tcpFlagSYN | tcpFlagACK), "reply is SYN|ACK")
+        check(s0.ack == 1001, "SYN-ACK acks client ISN+1")
+        let iss = s0.seq
+        c.clearOut()
+        e = feed(&c, tcpFlagACK, 1001, iss &+ 1)
+        check(c.state == .established, "ESTABLISHED after the client's ACK")
+        check(e.established, "established event fired")
+        c.clearOut()
+
+        // --- 14. in-order data receive + cumulative ACK -------------------
+        let hello: [UInt8] = Array("hello".utf8)
+        e = feed(&c, tcpFlagPSH | tcpFlagACK, 1001, iss &+ 1, hello)
+        check(e.dataAvailable, "payload delivered")
+        check(c.outCount >= 1 && c.outSegment(c.outCount - 1).ack == 1006, "ACK advanced by 5")
+        var rb = [UInt8](repeating: 0, count: 16)
+        let rn = rb.withUnsafeMutableBytes { c.read($0.baseAddress!, 16) }
+        check(rn == 5, "read 5 delivered bytes")
+        var dmatch = true
+        for i in 0..<5 where rb[i] != hello[i] { dmatch = false }
+        check(dmatch, "delivered bytes match")
+        c.clearOut()
+        e = feed(&c, tcpFlagACK, 1001, iss &+ 1, hello)   // old/duplicate segment
+        check(!e.dataAvailable, "old segment is not re-delivered")
+        c.clearOut()
+
+        // --- 15. app send + ACK drains the send buffer --------------------
+        let world: [UInt8] = Array("world".utf8)
+        let sent = world.withUnsafeBytes { c.appSend($0.baseAddress!, 5, now: 0) }
+        check(sent == 5, "appSend accepted 5 bytes")
+        check(c.outCount == 1, "one data segment emitted")
+        let ds = c.outSegment(0)
+        check((ds.flags & tcpFlagPSH) != 0 && ds.seq == iss &+ 1 && ds.payloadLen == 5, "data seg fields")
+        var pmatch = true
+        for i in 0..<5 where c.segmentPayloadByte(ds, i) != world[i] { pmatch = false }
+        check(pmatch, "sent payload matches")
+        c.clearOut()
+        e = feed(&c, tcpFlagACK, 1006, iss &+ 6)
+        c.tick(now: 1000)                                  // well past the RTO
+        check(c.outCount == 0, "no retransmit once data is acked")
+        c.clearOut()
+
+        // --- 16. RTO retransmit -------------------------------------------
+        let xyz: [UInt8] = Array("xyz".utf8)
+        _ = xyz.withUnsafeBytes { c.appSend($0.baseAddress!, 3, now: 2000) }
+        c.clearOut()
+        c.tick(now: 2200)                                  // > rtoTicks (100)
+        check(c.outCount == 1, "retransmitted after the RTO fired")
+        let rseg = c.outSegment(0)
+        check(rseg.payloadLen == 3 && rseg.seq == iss &+ 6, "retransmit from snd.una")
+        c.clearOut()
+        e = feed(&c, tcpFlagACK, 1006, iss &+ 9)
+        c.clearOut()
+
+        // --- 17. passive close (peer FIN, then we close) ------------------
+        e = feed(&c, tcpFlagFIN | tcpFlagACK, 1006, iss &+ 9)
+        check(e.peerClosed && c.state == .closeWait, "peer FIN → CLOSE_WAIT")
+        c.clearOut()
+        c.appClose(now: 3000)
+        check(c.state == .lastAck && c.outCount == 1 && (c.outSegment(0).flags & tcpFlagFIN) != 0,
+              "appClose → FIN, LAST_ACK")
+        let myFin = c.outSegment(0)
+        c.clearOut()
+        e = feed(&c, tcpFlagACK, 1007, myFin.seq &+ 1)
+        check(c.state == .closed && e.closed, "CLOSED after our FIN is acked")
+
+        // --- 18. active open + active close -------------------------------
+        var a = TCPConnection()
+        a.activeOpen(localPort: 40000, remoteIP: gwIP, remotePort: 80, now: 0)
+        check(a.outCount == 1 && (a.outSegment(0).flags & tcpFlagSYN) != 0, "active open emits SYN")
+        let aiss = a.outSegment(0).seq
+        a.clearOut()
+        e = feed(&a, tcpFlagSYN | tcpFlagACK, 5000, aiss &+ 1)
+        check(a.state == .established && e.established, "active open reaches ESTABLISHED")
+        a.clearOut()
+        a.appClose(now: 10)
+        check(a.state == .finWait1, "active close → FIN_WAIT_1")
+        let aFin = a.outSegment(0)
+        a.clearOut()
+        e = feed(&a, tcpFlagACK, 5001, aFin.seq &+ 1)
+        check(a.state == .finWait2, "FIN_WAIT_2 once our FIN is acked")
+        a.clearOut()
+        e = feed(&a, tcpFlagFIN | tcpFlagACK, 5001, aFin.seq &+ 1)
+        check(a.state == .timeWait, "TIME_WAIT after the peer's FIN")
+
+        // --- 19. RST tears the connection down ----------------------------
+        var r = TCPConnection()
+        r.passiveOpen(localPort: 5555)
+        _ = feed(&r, tcpFlagSYN, 100, 0)
+        let riss = r.outSegment(0).seq
+        r.clearOut()
+        _ = feed(&r, tcpFlagACK, 101, riss &+ 1)
+        r.clearOut()
+        e = feed(&r, tcpFlagRST, 101, 0)
+        check(e.reset && r.state == .closed, "RST → reset event + CLOSED")
+
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP) parses and builds correctly")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP) parses and builds correctly")
+    }
+
+    /// Feed one TCP segment into a connection (optional payload).
+    static func feed(_ c: inout TCPConnection, _ flags: UInt8, _ seq: UInt32, _ ack: UInt32,
+                     _ payload: [UInt8] = [], window: UInt16 = 4096, now: UInt64 = 0) -> TCPEvent {
+        if payload.isEmpty {
+            return c.onSegment(flags: flags, seq: seq, ack: ack, window: window,
+                               payload: nil, payloadLen: 0, now: now)
+        }
+        return payload.withUnsafeBytes {
+            c.onSegment(flags: flags, seq: seq, ack: ack, window: window,
+                        payload: $0.baseAddress, payloadLen: payload.count, now: now)
+        }
     }
 
     /// Build a full UDP frame (Ethernet + IPv4 + UDP) into `p`.

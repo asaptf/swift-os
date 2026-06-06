@@ -87,6 +87,7 @@ SWIFT_SRCS := \
 	kernel/net/ipv4.swift \
 	kernel/net/icmp.swift \
 	kernel/net/udp.swift \
+	kernel/net/tcp.swift \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
 	kernel/timer/generic_timer.swift \
@@ -565,7 +566,7 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
-	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/stack.swift -o $(BUILD)/net_test
+	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
