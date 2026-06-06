@@ -1174,9 +1174,31 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   in-order data + cumulative ACK, old-segment re-ACK, app send + ACK drain, RTO retransmit, passive close,
   active open + active close, and RST — plus the sequence-wraparound comparisons. Host gate in `make test`.
 
-### net-c2 — recorded, not built
+### net-c2 — TCP sockets + /bin/tcpecho, in-QEMU (DONE, 2026-06-06)
 
-- **net-c2:** wire `TCPConnection` to `connect`/`listen`/`accept` sockets (sockets-as-fds, like net-b: a
-  listen socket spawns accepted connection fds), drive RTO/retransmit from `netPump`/`systemTicks`, add
-  `/bin/tcpecho`, and the **passive** in-QEMU acceptance — the guest `listen()`s and a host `nc` connects
-  over `hostfwd=tcp::5555-:5555`. Seed the ISS from the RTC.
+- **`NetStack` reports TCP** (stays pure): `onFrame`'s IPv4 path validates the TCP checksum and fills
+  `RxOutcome` TCP fields (flags/seq/ack/window/payload offset+len); `buildTCP` builds a segment frame
+  (payload placed before the header so the checksum covers it). `tcp.swift` gained an ISS parameter on the
+  open calls and `copySegmentPayload`.
+- **Kernel TCP sockets** (`kernel/net/socket.swift`): the socket table carries a protocol tag; a TCP socket
+  is a listener or a connection (owns a `TCPConnection`, keyed by the 4-tuple). `socketDeliverTCP` (called
+  from `virtioNetPoll`) demuxes by 4-tuple, spawns a connection on a SYN to a listener, drives `onSegment`,
+  and `tcpDrain` transmits the emitted segments via `buildTCP`. `tcpListen`/`tcpAccept`/`tcpRecv`/`tcpSend`
+  back the syscalls; `socketClose` sends a FIN first. ISS seeded from `rtcNow()`.
+- **Accept latch (bug fixed during bring-up):** a fast client (nc) sends SYN→ACK→data→FIN within one NIC
+  pump, so the connection races past `.established` to `.closeWait` before `accept` polls. `accept` now
+  matches a one-shot "handshake completed" latch (set on the `established` event) rather than the live
+  state — otherwise `accept` never returns for a quick client.
+- **Sockets-as-fds:** `vfsSocket` honors `type` (SOCK_STREAM→TCP); new `listen`(42)/`accept`(43) syscalls;
+  TCP streams use `read`/`write` on the connection fd (`vfsRead`/`vfsWrite` dispatch `fdKindSocket`+TCP to
+  `tcpRecv`/`tcpSend`); `poll` reports a listener readable when a connection awaits accept, a connection
+  when it has data or peer-closed. UDP keeps sendto/recvfrom.
+- **Userland:** `swiftos_socket_stream`/`listen`/`accept` bridges (stream I/O reuses `swiftos_read`/`write`);
+  `userland/tcpecho.swift` → `/bin/tcpecho` (bind 5555, listen, accept one connection, read a chunk, echo,
+  close).
+- **Acceptance:** `tests/tcp_echo_test.sh` boots with `-netdev user,hostfwd=tcp::5555-:5555`, runs
+  `/bin/tcpecho`, connects with `nc`, and asserts the guest's "got N bytes" line + that nc received the echo
+  — the full SYN/data/echo/FIN round-trip. Wired into `make test`.
+- **Deferred:** `connect()` (active client), accept backlog > 1, graceful TIME_WAIT after close (the slot is
+  freed once the FIN is flushed), congestion control. The engine already supports active open; a `connect`
+  socket path is the natural next follow-up. **net-c (a+b+c1+c2) is complete.**

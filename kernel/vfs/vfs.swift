@@ -706,6 +706,14 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     }
     guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
 
+    if file.kind == fdKindSocket {
+        if socketIsTCP(file.node) {
+            return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
+                           timeoutMs: socketRecvTimeoutMs)
+        }
+        return errInvalid   // UDP: use recvfrom
+    }
+
     if file.kind == fdKindPipe {
         let p = file.pipe
         var copied = 0
@@ -762,6 +770,13 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         var w = 0
         while w < Int(count) { uartPutc(src[w]); w += 1 }
         return Int(count)
+    }
+
+    if file.kind == fdKindSocket {
+        if socketIsTCP(file.node) {
+            return tcpSend(file.node, src: UnsafeRawPointer(src), len: Int(count))
+        }
+        return errInvalid   // UDP: use sendto
     }
 
     if file.kind == fdKindPipe {
@@ -1211,7 +1226,7 @@ private func pollReadyForDescription(_ desc: OpenDescription, events: Int16) -> 
         return revents
     }
     if desc.kind == fdKindSocket {
-        if (events & pollIn) != 0 && socketReadable(desc.node) { revents |= pollIn }
+        if (events & pollIn) != 0 && socketPollReadable(desc.node) { revents |= pollIn }
         if (events & pollOut) != 0 { revents |= pollOut }   // always writable
         return revents
     }
@@ -1306,11 +1321,20 @@ private let socketRecvTimeoutMs = 12000
 //   off 16: port (u16)
 private let udpMsgSize: UInt = 18
 
+// Socket type (matches the userland constants): SOCK_STREAM = TCP, else UDP.
+private let sockTypeStream = 1
+
 func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
-    _ = domain; _ = type; _ = proto   // AF_INET + SOCK_DGRAM (UDP) is the only combo for net-b
+    _ = domain; _ = proto              // AF_INET; type selects TCP (stream) vs UDP (dgram)
     if (processCurrentCaps() & capNet) == 0 { return errAccess }
-    let s = socketCreate(owner: processCurrentPrincipal())
+    let s = type == sockTypeStream ? socketCreateTCP(owner: processCurrentPrincipal())
+                                    : socketCreate(owner: processCurrentPrincipal())
     if s < 0 { return s }
+    return installSocketFD(s)
+}
+
+/// Bind an allocated socket index to a fresh fd backed by a socket description.
+private func installSocketFD(_ s: Int) -> Int {
     let proc = currentVFSProcess()
     let fd = allocFDInProcess(proc, from: 3)
     if fd < 0 { socketClose(s); return errNoSpace }
@@ -1322,6 +1346,23 @@ func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
     openDescriptions[d].node = s
     installDescription(proc, fd, d)
     return fd
+}
+
+// Stream accept/recv block until ready, bounded so a test can never hang.
+private let socketAcceptTimeoutMs = 15000
+
+func vfsListen(fd: Int, backlog: Int) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    return tcpListen(s, backlog: backlog)
+}
+
+func vfsAccept(fd: Int) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    let c = tcpAccept(s, timeoutMs: socketAcceptTimeoutMs)
+    if c < 0 { return c }
+    return installSocketFD(c)
 }
 
 private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {

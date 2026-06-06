@@ -48,6 +48,8 @@
 #define SYS_BIND          39
 #define SYS_SENDTO        40
 #define SYS_RECVFROM      41
+#define SYS_LISTEN        42
+#define SYS_ACCEPT        43
 
 #ifndef __ASSEMBLER__
 

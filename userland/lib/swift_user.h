@@ -69,4 +69,10 @@ long swiftos_sendto(int fd, const void *buf, unsigned long len,
 long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
                       unsigned int *ip, unsigned short *port);
 
+// TCP (net-c2). swiftos_socket_stream() opens a SOCK_STREAM socket; data is read
+// and written with swiftos_read/swiftos_write on the (accepted) connection fd.
+int swiftos_socket_stream(void);
+int swiftos_listen(int fd, int backlog);
+int swiftos_accept(int fd);
+
 #endif // SWIFTOS_USER_SWIFT_USER_H

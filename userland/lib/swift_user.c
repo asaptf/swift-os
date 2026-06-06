@@ -494,3 +494,16 @@ long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
     }
     return n;
 }
+
+// ---- TCP sockets (net-c2) -------------------------------------------------
+int swiftos_socket_stream(void) {
+    return (int)__syscall3(SYS_SOCKET, 2, 1, 0);   // AF_INET, SOCK_STREAM
+}
+
+int swiftos_listen(int fd, int backlog) {
+    return (int)__syscall3(SYS_LISTEN, fd, backlog, 0);
+}
+
+int swiftos_accept(int fd) {
+    return (int)__syscall3(SYS_ACCEPT, fd, 0, 0);
+}
