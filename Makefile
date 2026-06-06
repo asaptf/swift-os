@@ -206,6 +206,7 @@ USER_RM_ELF := $(BUILD)/rm.elf
 USER_MV_ELF := $(BUILD)/mv.elf
 USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
+USER_DATE_ELF := $(BUILD)/date.elf
 BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
@@ -219,6 +220,7 @@ BASE_EXEC_ELFS := \
 	$(USER_MV_ELF) \
 	$(USER_CHMOD_ELF) \
 	$(USER_CHOWN_ELF) \
+	$(USER_DATE_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
@@ -372,6 +374,9 @@ $(BUILD)/user_chmod.o: userland/chmod.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_chown.o: userland/chown.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/chown.swift -o $@
 
+$(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/date.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -447,6 +452,9 @@ $(USER_CHMOD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chown.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_chown.o -o $@
 
+$(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -509,6 +517,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_coreutils_test.sh
 	./tests/swift_fileops_test.sh
 	./tests/swift_chmodown_test.sh
+	./tests/swift_date_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -597,6 +606,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_MV_ELF) $(BASE_ROOT)/bin/mv
 	cp $(USER_CHMOD_ELF) $(BASE_ROOT)/bin/chmod
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
+	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

@@ -21,6 +21,16 @@ func timerScheduleNext() {
     write_cntp_ctl_el0(1) // ENABLE=1, IMASK=0.
 }
 
+/// Current wall-clock time in seconds since the Unix epoch, read from the PL031
+/// RTC data register (QEMU initializes it to the host time). Returns 0 when no
+/// RTC base is known (e.g. the VirtualBox board), so callers degrade to "no
+/// clock" rather than faulting.
+func rtcNow() -> UInt64 {
+    let base = platform.rtcBase
+    if base == 0 { return 0 }
+    return UInt64(mmio_read32(base))
+}
+
 func timerHandleTick() {
     systemTicks += 1
     // Per-tick logging is silenced (it spammed the console once we run at a high

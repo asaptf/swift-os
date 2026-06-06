@@ -801,6 +801,22 @@ by `ls -l`.
 
 Native-Swift userland: `ls cat echo pwd ps id mkdir rmdir rm mv chmod chown`.
 
+## Wall clock: PL031 RTC + `/bin/date` (DONE, 2026-06-05)
+
+swift-os had no clock (timestamps showed the 1970 epoch). Added a real wall clock from the QEMU virt
+PL031 RTC.
+
+- **Kernel.** `platform.rtcBase` (QEMU virt `0x0901_0000`; 0 on the VBox board → disabled). `rtcNow()`
+  (generic_timer.swift) reads the PL031 data register (Unix seconds; QEMU seeds it from the host).
+  `SYS_TIME` (37) returns it to EL0.
+- **`/bin/date`** (`userland/date.swift`): prints UTC `YYYY-MM-DD HH:MM:SS`. The epoch→calendar
+  conversion (Howard Hinnant's civil-from-days) lives in the C bridge as `swiftos_fmt_time` so `ls`
+  can reuse it; `swiftos_time` exposes the syscall.
+- **Test.** `tests/swift_date_test.sh` asserts a plausible `20xx-..-.. ..:..:.. UTC` line (year in the
+  2020s proves the RTC was actually read, not a zero/epoch fallback).
+- Out of scope: timezones, `settimeofday`/RTC writes, DTB discovery of the RTC base (QEMU default is
+  hardcoded, like the other pre-discovery defaults).
+
 ## Userland editors — busybox vi (DONE, 2026-06-05)
 
 A side feature off the M9→M13 critical path: a usable full-screen text editor. We took the cheap path —

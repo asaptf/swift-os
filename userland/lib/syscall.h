@@ -43,6 +43,7 @@
 #define SYS_FCNTL         34
 #define SYS_CHMOD         35
 #define SYS_CHOWN         36
+#define SYS_TIME          37
 
 #ifndef __ASSEMBLER__
 

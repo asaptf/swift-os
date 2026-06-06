@@ -29,6 +29,8 @@
     var virtioMmioBase: UInt = 0x0A00_0000
     var virtioMmioStride: UInt = 0x200
     var virtioMmioCount: UInt32 = 32
+    // PL031 RTC: unknown on VBox; 0 disables the clock (rtcNow returns 0).
+    var rtcBase: UInt = 0
 #else
     // Main RAM.
     var ramBase: UInt = 0x4000_0000
@@ -45,6 +47,8 @@
     var virtioMmioBase: UInt = 0x0A00_0000
     var virtioMmioStride: UInt = 0x200
     var virtioMmioCount: UInt32 = 32
+    // PL031 RTC (QEMU virt): data register at base holds Unix time in seconds.
+    var rtcBase: UInt = 0x0901_0000
 #endif
 }
 

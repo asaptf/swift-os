@@ -32,6 +32,10 @@ int swiftos_unlink(const char *path);
 int swiftos_rename(const char *oldpath, const char *newpath);
 int swiftos_chmod(const char *path, unsigned int mode);
 int swiftos_chown(const char *path, unsigned int owner);
+// Current wall-clock time in Unix seconds (0 if no RTC).
+unsigned long swiftos_time(void);
+// Format Unix seconds as UTC "YYYY-MM-DD HH:MM:SS" into out (>= 20 bytes).
+void swiftos_fmt_time(unsigned long t, char *out);
 
 // Thin syscall bridges for Swift userland (e.g. console-login).
 int  swiftos_open(const char *path, int flags);

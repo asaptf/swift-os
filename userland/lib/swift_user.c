@@ -84,6 +84,38 @@ int swiftos_chown(const char *path, unsigned int owner) {
     return (int)__syscall3(SYS_CHOWN, (long)path, (long)owner, 0);
 }
 
+unsigned long swiftos_time(void) {
+    return (unsigned long)__syscall3(SYS_TIME, 0, 0, 0);
+}
+
+static void put2(char *p, unsigned int v) { p[0] = '0' + (v / 10) % 10; p[1] = '0' + v % 10; }
+
+void swiftos_fmt_time(unsigned long t, char *out) {
+    unsigned long secs = t % 86400UL;
+    unsigned int hh = (unsigned int)(secs / 3600);
+    unsigned int mm = (unsigned int)((secs % 3600) / 60);
+    unsigned int ss = (unsigned int)(secs % 60);
+    // civil_from_days (Howard Hinnant): days since 1970-01-01 -> y/m/d.
+    long z = (long)(t / 86400UL) + 719468;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned long doe = (unsigned long)(z - era * 146097);
+    unsigned long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long y = (long)yoe + era * 400;
+    unsigned long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned long mp = (5 * doy + 2) / 153;
+    unsigned int d = (unsigned int)(doy - (153 * mp + 2) / 5 + 1);
+    unsigned int m = (unsigned int)(mp < 10 ? mp + 3 : mp - 9);
+    if (m <= 2) y += 1;
+    unsigned int yr = (unsigned int)y;
+    // "YYYY-MM-DD HH:MM:SS"
+    put2(out + 0, yr / 100); put2(out + 2, yr % 100); out[4] = '-';
+    put2(out + 5, m); out[7] = '-';
+    put2(out + 8, d); out[10] = ' ';
+    put2(out + 11, hh); out[13] = ':';
+    put2(out + 14, mm); out[16] = ':';
+    put2(out + 17, ss); out[19] = 0;
+}
+
 int swiftos_open(const char *path, int flags) {
     return open(path, flags);
 }
