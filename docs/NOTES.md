@@ -1099,10 +1099,34 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   the vCPU busy-poll does not starve QEMU's iothread, so the reply arrives. Acceptance is guest-initiated
   because slirp does not reliably originate ICMP to the guest headless.
 
-### net-b / net-c — recorded, not built
+### net-b — sans-IO UDP + a capability-gated socket syscall surface (DONE, 2026-06-06)
 
-- **net-b:** sans-IO IPv4+UDP, a small capability-gated socket syscall surface (next free syscall numbers
-  ≥ 37; the existing `poll` syscall 26 is the intended event hook), and a `/bin/*` UDP demo over the
-  `swiftos_*` bridge.
+- **sans-IO UDP `kernel/net/udp.swift`** (pure, host-tested): parse/build + the IPv4 pseudo-header
+  checksum, reusing a new `sumBytes`/`sumWord`/`foldChecksum` accumulator in `packet.swift` (so a checksum
+  can span the pseudo-header + UDP header + payload). `NetStack.onFrame` gained a UDP branch that *reports*
+  a received datagram via `RxOutcome` (gotUDP, src IP/port, dst port, payload offset+len) without copying,
+  plus `buildUDP`; it also now learns L2 from inbound IPv4 (`arp.insert(ipSrc, ethSrc)`) so replies route
+  without an extra ARP.
+- **Sockets are VFS fds.** New `fdKindSocket` in `kernel/vfs/vfs.swift`; `OpenDescription.node` indexes a
+  kernel socket table. `close`/`poll` work uniformly (poll pumps the NIC when a socket fd is present).
+- **Kernel socket layer `kernel/net/socket.swift`** (kernel-only, not in the host test): one shared live
+  `NetStack` (`gNet`), brought up once by `netInit()`; a fixed socket table with a small per-socket
+  datagram ring backed by a single PMM region. `netPump()` drains the NIC and routes UDP to bound sockets
+  (`socketDeliverUDP`, called from `virtioNetPoll`). `socketRecv` pumps until a datagram arrives or a
+  bounded timeout. `socketSend` routes via the ARP cache, falling back to the slirp gateway. net-a's probe
+  now shares `gNet`/`netInit` instead of a local stack.
+- **Syscalls 38–41:** `socket`/`bind`/`sendto`/`recvfrom`. `socket()` requires the new `capNet` (1<<5);
+  the boot context and `root` (store caps 31→63) hold it. The 3-arg ABI is kept: `sendto`/`recvfrom` pass
+  a small `swiftos_udp_msg` struct by pointer (buf/len/ip/port), validated via `user_access`.
+- **Userland:** `swiftos_socket/bind/sendto/recvfrom` in the `swift_user.*` bridge; `userland/udpecho.swift`
+  → `/bin/udpecho` binds UDP 5555, echoes the first datagram, prints the size/sender.
+- **Tests:** `tests/net_test.swift` gained UDP cases (build/parse + pseudo-header checksum + bad-checksum
+  reject). `tests/udp_echo_test.sh` boots with `-netdev user,hostfwd=udp::5555-:5555`, runs `/bin/udpecho`,
+  sends a datagram from the host with `nc -u`, and asserts the guest's "got 8 bytes from 10.0.2.2:" line
+  **and** that nc received the echo back. Both wired into `make test`. (`busybox_test` updated: root caps
+  now `0x3f`.)
+
+### net-c — recorded, not built
+
 - **net-c:** a minimal sans-IO TCP connection state machine (handshake/seq/RTO) with host unit tests
-  before any in-QEMU run.
+  before any in-QEMU run, then a small `connect`/`listen` socket path.

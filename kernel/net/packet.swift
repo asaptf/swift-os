@@ -56,17 +56,37 @@ struct MAC: Equatable {
     b8set(p, off + 3, m.d); b8set(p, off + 4, m.e); b8set(p, off + 5, m.f)
 }
 
-/// The RFC 1071 internet checksum over `[p, p+len)`. Used for both the IPv4
-/// header and the ICMP message. A buffer whose checksum field already holds the
-/// correct value sums to 0, which is how we validate received packets.
-func inetChecksum(_ p: UnsafeRawPointer, _ len: Int) -> UInt16 {
-    var sum: UInt32 = 0
+// The internet checksum (RFC 1071) is a ones-complement sum of 16-bit words.
+// These three helpers let a checksum span several regions — UDP needs the IPv4
+// pseudo-header plus the UDP header and payload — by accumulating into a 32-bit
+// running sum and folding once at the end. `inetChecksum` is the single-region
+// case used by the IPv4 header and ICMP.
+
+/// Add the big-endian 16-bit words of `[p, p+len)` to a running sum.
+func sumBytes(_ acc: UInt32, _ p: UnsafeRawPointer, _ len: Int) -> UInt32 {
+    var sum = acc
     var i = 0
     while i + 1 < len {
         sum &+= (UInt32(b8(p, i)) << 8) | UInt32(b8(p, i + 1))
         i += 2
     }
     if i < len { sum &+= UInt32(b8(p, i)) << 8 }  // odd trailing byte
+    return sum
+}
+
+/// Add one 16-bit word to a running sum (for pseudo-header fields).
+@inline(__always) func sumWord(_ acc: UInt32, _ v: UInt16) -> UInt32 { acc &+ UInt32(v) }
+
+/// Fold the carries and complement to produce the final checksum field.
+func foldChecksum(_ acc: UInt32) -> UInt16 {
+    var sum = acc
     while (sum >> 16) != 0 { sum = (sum & 0xFFFF) &+ (sum >> 16) }
     return UInt16(~sum & 0xFFFF)
+}
+
+/// The RFC 1071 internet checksum over `[p, p+len)`. Used for both the IPv4
+/// header and the ICMP message. A buffer whose checksum field already holds the
+/// correct value sums to 0, which is how we validate received packets.
+func inetChecksum(_ p: UnsafeRawPointer, _ len: Int) -> UInt16 {
+    foldChecksum(sumBytes(0, p, len))
 }

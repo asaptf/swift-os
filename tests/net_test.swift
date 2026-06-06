@@ -125,8 +125,67 @@ struct NetTest {
                             out: outBuf, outCap: 2048)
         check(out.txLen == 0, "frame with a bad IPv4 checksum is dropped")
 
+        // --- 9. buildUDP produces a valid IPv4 + UDP datagram -------------
+        let payload: [UInt8] = Array("hello-udp".utf8)
+        let udpLen = payload.withUnsafeBytes {
+            stack.buildUDP(toMac: gwMac, toIP: gwIP, srcPort: 5555, dstPort: 4000,
+                           payload: $0.baseAddress, payloadLen: payload.count, out: outBuf)
+        }
+        check(udpLen == ethHeaderLen + ipv4HeaderLen + udpHeaderLen + payload.count,
+              "UDP frame length, got \(udpLen)")
+        do {
+            let ip = outBuf + ethHeaderLen
+            check(ipValidChecksum(ip), "UDP frame IPv4 checksum verifies")
+            check(ipProto(ip) == ipProtoUDP, "protocol is UDP")
+            let udp = ip + ipv4HeaderLen
+            check(udpSrcPort(udp) == 5555 && udpDstPort(udp) == 4000, "UDP ports")
+            check(udpChecksumValid(src: ourIP, dst: gwIP, udp: udp,
+                                   udpLen: udpHeaderLen + payload.count), "UDP checksum verifies")
+        }
+
+        // --- 10. inbound UDP datagram is reported with payload + src ------
+        let pl: [UInt8] = Array("swos-udp".utf8)
+        let inLen = craftUDP(inBuf, srcMac: gwMac, srcIP: gwIP, dstMac: ourMac, dstIP: ourIP,
+                             srcPort: 1234, dstPort: 5555, payload: pl)
+        out = stack.onFrame(inBuf, inLen, out: outBuf, outCap: 2048)
+        check(out.gotUDP, "UDP datagram recognised")
+        check(out.udpSrcIP == gwIP && out.udpSrcPort == 1234, "UDP source addr")
+        check(out.udpDstPort == 5555, "UDP destination port")
+        check(out.udpSrcMac == gwMac, "UDP source MAC learned for the reply route")
+        check(out.udpPayloadLen == pl.count, "UDP payload length, got \(out.udpPayloadLen)")
+        check(stack.arp.lookup(gwIP) == gwMac, "inbound IPv4 learns L2 into the ARP cache")
+        do {
+            var same = true
+            for i in 0..<pl.count where b8(inBuf, out.udpPayloadOff + i) != pl[i] { same = false }
+            check(same, "UDP payload bytes preserved at the reported offset")
+        }
+
+        // --- 11. a corrupted UDP checksum is dropped ----------------------
+        _ = craftUDP(inBuf, srcMac: gwMac, srcIP: gwIP, dstMac: ourMac, dstIP: ourIP,
+                     srcPort: 1234, dstPort: 5555, payload: pl)
+        b8set(inBuf, ethHeaderLen + ipv4HeaderLen + udpHeaderLen,
+              b8(inBuf, ethHeaderLen + ipv4HeaderLen + udpHeaderLen) ^ 0xFF)  // flip a payload byte
+        out = stack.onFrame(inBuf, inLen, out: outBuf, outCap: 2048)
+        check(!out.gotUDP, "UDP datagram with a bad checksum is dropped")
+
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP) parses and builds correctly")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP) parses and builds correctly")
+    }
+
+    /// Build a full UDP frame (Ethernet + IPv4 + UDP) into `p`.
+    static func craftUDP(_ p: UnsafeMutableRawPointer, srcMac: MAC, srcIP: IPv4,
+                         dstMac: MAC, dstIP: IPv4, srcPort: UInt16, dstPort: UInt16,
+                         payload: [UInt8]) -> Int {
+        ethWriteHeader(p, dst: dstMac, src: srcMac, type: ethTypeIPv4)
+        let ip = p + ethHeaderLen
+        let udp = ip + ipv4HeaderLen
+        let ulen = payload.withUnsafeBytes {
+            udpWrite(udp, src: srcIP, dst: dstIP, srcPort: srcPort, dstPort: dstPort,
+                     payload: $0.baseAddress, payloadLen: payload.count)
+        }
+        let total = ipv4HeaderLen + ulen
+        ipWriteHeader(ip, src: srcIP, dst: dstIP, proto: ipProtoUDP, totalLen: total, id: 99)
+        return ethHeaderLen + total
     }
 
     /// Build a full ICMP echo frame (Ethernet + IPv4 + ICMP) into `p`.

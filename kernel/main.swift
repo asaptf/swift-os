@@ -376,27 +376,23 @@ private func printMac(_ m: MAC) {
 /// core end to end. A no-op (one log line) when no NIC is attached, so the other
 /// boot/test paths are unaffected (mirrors runVirtioBlkProbe).
 private func runVirtioNetProbe() {
-    if !virtioNetInit() {
-        uartPuts("net-a: no virtio-net device attached\n")
-        return
+    netInit()   // brings up the NIC + the shared NetStack the socket layer uses
+    if !netReady {
+        return  // netInit already logged "net: no virtio-net device attached"
     }
-    let mac = virtioNetMac()
     uartPuts("net-a: virtio-net up, MAC ")
-    printMac(mac)
+    printMac(gNet.mac)
     uartPuts("\n")
 
-    let ourIP: IPv4 = 0x0A00_020F   // 10.0.2.15 (slirp's default guest address)
-    let gwIP: IPv4 = 0x0A00_0202    // 10.0.2.2  (slirp gateway)
-    var stack = NetStack(mac: mac, ip: ourIP)
+    let gwIP = netGatewayIP   // 10.0.2.2 (slirp gateway)
 
     // 1) Resolve the gateway's MAC via ARP.
-    let arpLen = stack.buildArpRequest(targetIP: gwIP, out: virtioNetTxBuffer())
-    virtioNetTxSubmit(frameLen: arpLen)
+    virtioNetTxSubmit(frameLen: gNet.buildArpRequest(targetIP: gwIP, out: virtioNetTxBuffer()))
     var gwMac = MAC()
     var resolved = false
     var spins = 0
     while spins < 4_000_000 && !resolved {
-        let r = virtioNetPoll(&stack)
+        let r = virtioNetPoll(&gNet)
         if r.arpResolved && r.resolvedIP == gwIP { gwMac = r.resolvedMac; resolved = true }
         spins += 1
     }
@@ -409,13 +405,12 @@ private func runVirtioNetProbe() {
     uartPuts("\n")
 
     // 2) Ping the gateway: send an ICMP echo request and await the echo reply.
-    let echoLen = stack.buildEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234,
-                                         seq: 1, payloadLen: 32, out: virtioNetTxBuffer())
-    virtioNetTxSubmit(frameLen: echoLen)
+    virtioNetTxSubmit(frameLen: gNet.buildEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234,
+                                                      seq: 1, payloadLen: 32, out: virtioNetTxBuffer()))
     var got = false
     spins = 0
     while spins < 4_000_000 && !got {
-        let r = virtioNetPoll(&stack)
+        let r = virtioNetPoll(&gNet)
         if r.echoReply { got = true }
         spins += 1
     }

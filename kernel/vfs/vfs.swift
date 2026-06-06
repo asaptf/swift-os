@@ -81,6 +81,7 @@ private let fdKindNone = 0
 private let fdKindTTY = 1
 private let fdKindVNode = 2
 private let fdKindPipe = 3
+private let fdKindSocket = 4   // net-b: OpenDescription.node indexes the socket table
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
@@ -548,6 +549,7 @@ private func releaseDescription(_ d: Int) {
     if openDescriptions[d].refCount > 0 { return }
 
     let desc = openDescriptions[d]
+    if desc.kind == fdKindSocket { socketClose(desc.node) }
     if desc.kind == fdKindPipe && desc.pipe >= 0 && desc.pipe < maxPipes && pipes[desc.pipe].inUse {
         if desc.pipeEnd == pipeReadEnd {
             if pipes[desc.pipe].readRefs > 0 { pipes[desc.pipe].readRefs -= 1 }
@@ -1208,6 +1210,11 @@ private func pollReadyForDescription(_ desc: OpenDescription, events: Int16) -> 
         if (events & pollOut) != 0 && desc.writable { revents |= pollOut }
         return revents
     }
+    if desc.kind == fdKindSocket {
+        if (events & pollIn) != 0 && socketReadable(desc.node) { revents |= pollIn }
+        if (events & pollOut) != 0 { revents |= pollOut }   // always writable
+        return revents
+    }
     if desc.kind == fdKindPipe {
         let p = desc.pipe
         if (events & pollIn) != 0 && desc.readable {
@@ -1264,19 +1271,110 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     //     (yieldToScheduler masks IRQs across the switch — see process.swift).
     let proc = currentVFSProcess()
     var hasPipe = false
+    var hasSocket = false
     for i in 0..<count {
         let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
-        if fd >= 0 && validFD(proc, fd)
-            && openDescriptions[fdEntry(proc, fd).file].kind == fdKindPipe { hasPipe = true }
+        if fd >= 0 && validFD(proc, fd) {
+            let kind = openDescriptions[fdEntry(proc, fd).file].kind
+            if kind == fdKindPipe { hasPipe = true }
+            if kind == fdKindSocket { hasSocket = true }
+        }
     }
 
     enable_irq()
     while true {
+        if hasSocket { netPump() }   // a socket only becomes ready when the NIC is drained
         let ready = pollScan(base, count)
         if ready > 0 || timeout == 0 { return ready }
         if timeout > 0 && systemTicks - startTicks >= timeoutTicks { return 0 }
         if hasPipe { processYieldForIO() } else { wfi() }
     }
+}
+
+// ---- UDP sockets (net-b) --------------------------------------------------
+//
+// Sockets are ordinary fds (fdKindSocket) whose OpenDescription.node indexes the
+// kernel socket table (kernel/net/socket.swift). socket() is gated on capNet;
+// sendto/recvfrom pass their extra arguments in a small user struct (the 3-arg
+// syscall ABI), copied/validated through user_access.
+
+// Recvfrom blocks until a datagram arrives, bounded so a test can never hang.
+private let socketRecvTimeoutMs = 12000
+
+// Layout of the user `swiftos_udp_msg` struct (little-endian, native):
+//   off 0: buf (u64 user VA)   off 8: len (u32)   off 12: ip (u32, host order)
+//   off 16: port (u16)
+private let udpMsgSize: UInt = 18
+
+func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
+    _ = domain; _ = type; _ = proto   // AF_INET + SOCK_DGRAM (UDP) is the only combo for net-b
+    if (processCurrentCaps() & capNet) == 0 { return errAccess }
+    let s = socketCreate(owner: processCurrentPrincipal())
+    if s < 0 { return s }
+    let proc = currentVFSProcess()
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd < 0 { socketClose(s); return errNoSpace }
+    let d = allocDescription()
+    if d < 0 { socketClose(s); return errNoSpace }
+    openDescriptions[d].kind = fdKindSocket
+    openDescriptions[d].readable = true
+    openDescriptions[d].writable = true
+    openDescriptions[d].node = s
+    installDescription(proc, fd, d)
+    return fd
+}
+
+private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {
+    guard validFD(proc, fd) else { return -1 }
+    let d = fdEntry(proc, fd).file
+    guard openDescriptions[d].kind == fdKindSocket else { return -1 }
+    return openDescriptions[d].node
+}
+
+func vfsSocketBind(fd: Int, port: Int) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    if port < 0 || port > 65535 { return errInvalid }
+    return socketBind(s, port: UInt16(port))
+}
+
+func vfsSendto(fd: Int, msgVA: UInt) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    guard let m = userReadableBuffer(msgVA, udpMsgSize) else { return errInvalid }
+    let buf = UInt(le64(m, 0))
+    let len = Int(le32(m, 8))
+    let ip = le32(m, 12)
+    let port = UInt16(m[16]) | (UInt16(m[17]) << 8)
+    if len < 0 || len > 65507 { return errInvalid }
+    if len == 0 {
+        return socketSend(s, dstIP: ip, dstPort: port, src: UnsafeRawPointer(m), len: 0)
+    }
+    guard let payload = userReadableBuffer(buf, UInt(len)) else { return errInvalid }
+    return socketSend(s, dstIP: ip, dstPort: port, src: UnsafeRawPointer(payload), len: len)
+}
+
+func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
+    let s = socketIndexForFD(currentVFSProcess(), fd)
+    if s < 0 { return errBadFD }
+    guard let m = userWritableBuffer(msgVA, udpMsgSize) else { return errInvalid }
+    let buf = UInt(le64(m, 0))
+    let cap = Int(le32(m, 8))
+    if cap < 0 || cap > 65507 { return errInvalid }
+    guard let dst = userWritableBuffer(buf, UInt(cap)) else { return errInvalid }
+    var srcIP: IPv4 = 0
+    var srcPort: UInt16 = 0
+    let n = socketRecv(s, dst: UnsafeMutableRawPointer(dst), cap: cap,
+                       srcIP: &srcIP, srcPort: &srcPort, timeoutMs: socketRecvTimeoutMs)
+    if n < 0 { return n }
+    // Write back the received length and the sender's address into the struct.
+    let un = UInt32(n)
+    m[8]  = UInt8(un & 0xFF);        m[9]  = UInt8((un >> 8) & 0xFF)
+    m[10] = UInt8((un >> 16) & 0xFF); m[11] = UInt8((un >> 24) & 0xFF)
+    m[12] = UInt8(srcIP & 0xFF);      m[13] = UInt8((srcIP >> 8) & 0xFF)
+    m[14] = UInt8((srcIP >> 16) & 0xFF); m[15] = UInt8((srcIP >> 24) & 0xFF)
+    m[16] = UInt8(srcPort & 0xFF);    m[17] = UInt8((srcPort >> 8) & 0xFF)
+    return n
 }
 
 // ---- executable lookup (M11d) ---------------------------------------------

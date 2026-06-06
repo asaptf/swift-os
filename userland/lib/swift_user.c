@@ -448,3 +448,49 @@ int swift_stdlib_isStackAllocationSafe(unsigned long byte_count, unsigned long a
     (void)alignment;
     return 1;
 }
+
+// ---- UDP sockets (net-b) --------------------------------------------------
+// sendto/recvfrom pass their extra arguments in this struct (the kernel reads
+// the first 18 bytes); the 3-arg syscall ABI carries only (fd, &msg).
+struct swiftos_udp_msg {
+    unsigned long buf;    // user VA of the payload buffer
+    unsigned int len;     // send: length; recv in: capacity, out: received length
+    unsigned int ip;      // host-order IPv4 (send: dst; recv out: src)
+    unsigned short port;  // send: dst port; recv out: src port
+    unsigned short pad;
+};
+
+int swiftos_socket(void) {
+    return (int)__syscall3(SYS_SOCKET, 2, 2, 0);   // AF_INET, SOCK_DGRAM
+}
+
+int swiftos_bind(int fd, unsigned short port) {
+    return (int)__syscall3(SYS_BIND, fd, (long)port, 0);
+}
+
+long swiftos_sendto(int fd, const void *buf, unsigned long len,
+                    unsigned int ip, unsigned short port) {
+    struct swiftos_udp_msg m;
+    m.buf = (unsigned long)buf;
+    m.len = (unsigned int)len;
+    m.ip = ip;
+    m.port = port;
+    m.pad = 0;
+    return __syscall3(SYS_SENDTO, fd, (long)&m, 0);
+}
+
+long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
+                      unsigned int *ip, unsigned short *port) {
+    struct swiftos_udp_msg m;
+    m.buf = (unsigned long)buf;
+    m.len = (unsigned int)cap;
+    m.ip = 0;
+    m.port = 0;
+    m.pad = 0;
+    long n = __syscall3(SYS_RECVFROM, fd, (long)&m, 0);
+    if (n >= 0) {
+        if (ip) *ip = m.ip;
+        if (port) *port = m.port;
+    }
+    return n;
+}
