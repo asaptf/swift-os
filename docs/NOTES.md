@@ -1338,3 +1338,38 @@ Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net
 - **This is TLS groundwork only.** TLS 1.3 mandates AEAD_CHACHA20_POLY1305; the handshake, key schedule
   (HKDF), and record layer are **deliberately deferred** to a later milestone. No networking or syscalls
   were added here.
+## Threading runtime groundwork (R-series)
+
+### rt-a — threads + futex (DONE, 2026-06-07)
+
+The kernel primitives a userland threading runtime (and later Swift-concurrency / Node / the JVM) needs:
+schedulable EL0 threads that share one address space, plus a futex to block/wake them.
+
+- **`thread_create(entry, arg, stackTop) = syscall 46`** (`processThreadCreate`, `kernel/user/process.swift`):
+  allocates a fresh process-table slot whose `TTBR0` is the creator's **shared** (not cloned) address space,
+  with its own kernel stack and a crafted context that lands in a new EL0 trampoline `user_thread_launch_arg`
+  (`user_entry.S`) — identical to `user_thread_launch` but it also delivers the argument in x0, so the thread
+  starts at `entry(arg)` on the caller-supplied user stack. The thread is parented to the *creator's* parent so
+  it is a sibling (not a waitpid-reapable child); threads join via futex. Returns a thread id (a pid in the
+  shared table). Because the AS is shared and never freed, no teardown races: a thread exiting just frees its
+  own slot (`pIsThread` short-circuits `processExit` to self-reap instead of zombify, and drops any futex wait
+  record). The shared AS lives on for surviving threads.
+- **`futex(uaddr, op, val) = syscall 47`** (`kernel/sched/futex.swift`): `op=0` FUTEX_WAIT blocks the caller iff
+  `*uaddr == val`; `op=1` FUTEX_WAKE wakes up to `val` waiters on `uaddr` (returns the count woken). A small
+  in-kernel wait queue (slot, watched VA) keyed by the user VA — sufficient for a single multi-threaded
+  process, since all its threads share the VA space. The compare-and-block runs under `irq_save`/`irq_restore`
+  so the `*uaddr` load and the block transition can't race a concurrent WAKE on a preempted sibling. The user
+  word is validated through `userReadableBuffer` before any access.
+- **Userland bridge:** `swiftos_thread_create` / `swiftos_futex` / `swiftos_thread_exit` and atomic
+  CAS/swap/load/fetch-add helpers (LL/SC the Swift layer can't express directly — justified low-level bridge)
+  in `userland/lib/swift_user.{h,c}`; `SYS_THREAD_CREATE`(46)/`SYS_FUTEX`(47) in `userland/lib/syscall.h`.
+- **Demo `/bin/threadsdemo`** (`userland/threadsdemo.swift`): spawns 2 EL0 threads that each increment a shared
+  counter 2000× under a 3-state futex mutex (Drepper's "Futexes Are Tricky"), joins them via a futex on a
+  done-counter, and prints `threadsdemo: counter=4000` (= 2N). Resolved in `exec.swift` and packed into the
+  base image. `tests/threads_test.sh` boots `-kernel` + base.img, logs in root/swordfish, runs the demo, and
+  asserts `counter=4000`. Wired into `make test`.
+- **Caveats / follow-ups:** fd-table sharing is a *snapshot* at thread_create (like fork inherit), enough for
+  the demo's shared stdout; true fd-table aliasing across threads is deferred. A thread's own kernel stack and
+  the shared AS pages are not reclaimed (same global limitation as processes). `processRunElf` stops when the
+  top process exits, so the runtime must join its threads before the main thread returns (the demo does).
+  `BOARD=virtualbox` still builds; its boot path parks before the scheduler, so threads don't run there.
