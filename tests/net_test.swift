@@ -277,8 +277,67 @@ struct NetTest {
         e = feed(&r, tcpFlagRST, 101, 0)
         check(e.reset && r.state == .closed, "RST → reset event + CLOSED")
 
+        // --- 20. DNS query build ------------------------------------------
+        let qname: [UInt8] = Array("a.bc".utf8)
+        let qlen = qname.withUnsafeBytes {
+            dnsBuildQuery(name: $0.baseAddress!, nameLen: $0.count, id: 0xABCD, out: outBuf)
+        }
+        check(qlen == 22, "DNS query length, got \(qlen)")
+        check(be16(outBuf, 0) == 0xABCD, "DNS query id")
+        check(be16(outBuf, 2) == 0x0100, "DNS recursion-desired flag")
+        check(be16(outBuf, 4) == 1, "DNS qdcount 1")
+        check(b8(outBuf, 12) == 1 && b8(outBuf, 13) == 0x61 && b8(outBuf, 14) == 2 &&
+              b8(outBuf, 15) == 0x62 && b8(outBuf, 16) == 0x63 && b8(outBuf, 17) == 0,
+              "DNS QNAME label encoding (1 'a' 2 'b' 'c' 0)")
+        check(be16(outBuf, 18) == dnsTypeA && be16(outBuf, 20) == dnsClassIN, "DNS QTYPE A / QCLASS IN")
+
+        // --- 21. DNS response parse (A via a compression pointer) ---------
+        func craftDNSHeader(_ id: UInt16, flags: UInt16, an: UInt16) {
+            be16set(inBuf, 0, id); be16set(inBuf, 2, flags)
+            be16set(inBuf, 4, 1); be16set(inBuf, 6, an)
+            be16set(inBuf, 8, 0); be16set(inBuf, 10, 0)
+            // question at offset 12: "a.bc" A IN
+            var o = 12
+            b8set(inBuf, o, 1); o += 1; b8set(inBuf, o, 0x61); o += 1
+            b8set(inBuf, o, 2); o += 1; b8set(inBuf, o, 0x62); o += 1; b8set(inBuf, o, 0x63); o += 1
+            b8set(inBuf, o, 0); o += 1
+            be16set(inBuf, o, dnsTypeA); o += 2; be16set(inBuf, o, dnsClassIN)
+        }
+        let qend = 12 + 6 + 4   // header + qname(6) + qtype/qclass(4) = 22
+        craftDNSHeader(0x1234, flags: 0x8180, an: 1)
+        var o = qend
+        be16set(inBuf, o, 0xC00C); o += 2          // name = pointer to offset 12
+        be16set(inBuf, o, dnsTypeA); o += 2
+        be16set(inBuf, o, dnsClassIN); o += 2
+        be32set(inBuf, o, 300); o += 4             // TTL
+        be16set(inBuf, o, 4); o += 2               // RDLENGTH
+        be32set(inBuf, o, 0xC000_0207); o += 4     // 192.0.2.7
+        check(dnsParseResponse(inBuf, o, id: 0x1234) == 0xC000_0207, "DNS parsed A record (192.0.2.7)")
+        check(dnsParseResponse(inBuf, o, id: 0x9999) == 0, "DNS wrong id rejected")
+
+        // --- 22. NXDOMAIN / no-answer → 0 ---------------------------------
+        craftDNSHeader(0x1234, flags: 0x8183, an: 0)   // rcode 3, no answers
+        check(dnsParseResponse(inBuf, qend, id: 0x1234) == 0, "DNS NXDOMAIN → 0")
+
+        // --- 23. CNAME then A: skip the CNAME, return the A ---------------
+        craftDNSHeader(0x1234, flags: 0x8180, an: 2)
+        o = qend
+        be16set(inBuf, o, 0xC00C); o += 2          // answer 1 name → pointer
+        be16set(inBuf, o, 5); o += 2               // TYPE CNAME
+        be16set(inBuf, o, dnsClassIN); o += 2
+        be32set(inBuf, o, 300); o += 4
+        be16set(inBuf, o, 2); o += 2               // RDLENGTH 2
+        be16set(inBuf, o, 0xC00C); o += 2          // RDATA = a (compressed) name
+        be16set(inBuf, o, 0xC00C); o += 2          // answer 2 name → pointer
+        be16set(inBuf, o, dnsTypeA); o += 2
+        be16set(inBuf, o, dnsClassIN); o += 2
+        be32set(inBuf, o, 300); o += 4
+        be16set(inBuf, o, 4); o += 2
+        be32set(inBuf, o, 0x08080808); o += 4      // 8.8.8.8
+        check(dnsParseResponse(inBuf, o, id: 0x1234) == 0x0808_0808, "DNS CNAME-then-A returns the A record")
+
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP) parses and builds correctly")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS) parses and builds correctly")
     }
 
     /// Feed one TCP segment into a connection (optional payload).
