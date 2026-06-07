@@ -79,6 +79,14 @@ func pmmFreeCount() -> Int {
     return pmm?.freePages ?? 0
 }
 
+/// Total managed frames (the PMM's bitmap size). Used by /bin/top to report the
+/// physical memory footprint; the unmanaged hole below the kernel image and the
+/// kernel image itself are not counted here (they are never free frames).
+@_cdecl("pmm_total_count")
+func pmmTotalCount() -> Int {
+    return pmm?.pageCount ?? 0
+}
+
 /// Allocate a zeroed 4 KiB frame. Returns 0 on failure.
 func pmmAllocZeroedPage() -> UInt {
     let addr = pmmAllocPage()

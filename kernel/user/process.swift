@@ -20,6 +20,9 @@ private let userHeapBase: UInt = 0xA000_0000
 private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
+private let procStatRecordSize = 56 // richer per-process record for /bin/top
+private let sysInfoSize = 64        // system-wide stats blob for /bin/top
+private let kernelLoadOffset: UInt = 0x80000 // kernel links/loads at ramBase + this
 
 private let trapFrameSPIndex = 31
 private let trapFrameELRIndex = 32
@@ -52,6 +55,16 @@ private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 private var pPrincipal = [UInt32](repeating: 0, count: maxProc)
 private var pSession = [UInt32](repeating: 0, count: maxProc)
 private var pCaps = [UInt64](repeating: 0, count: maxProc)
+
+// Accounting for /bin/top. CPU is charged one tick per timer interrupt to
+// whichever process is current (idle ticks when none is). Resident pages track
+// the user frames a process owns (ELF image + stack + heap); fork copies the
+// parent's count, exec resets to the new image, sbrk adds heap growth. Start
+// tick is systemTicks at creation, for "uptime of this process".
+private var pCpuTicks = [UInt64](repeating: 0, count: maxProc)
+private var pStartTick = [UInt64](repeating: 0, count: maxProc)
+private var pResPages = [Int](repeating: 0, count: maxProc)
+private var idleTicks: UInt64 = 0
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var rrCursor = 0     // round-robin hint
@@ -196,6 +209,11 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    // elf_load (above) recorded the image's mapped page count; stack mapping used
+    // the PMM directly, so it is still valid. RES = image + user stack pages.
+    pCpuTicks[slot] = 0
+    pStartTick[slot] = systemTicks
+    pResPages[slot] = Int(elf_last_load_pages()) + userStackPages
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent)
@@ -377,6 +395,11 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
+    // The eager address-space clone duplicates every mapped user page, so the
+    // child's resident set equals the parent's; CPU/time start fresh.
+    pCpuTicks[child] = 0
+    pStartTick[child] = systemTicks
+    pResPages[child] = pResPages[parent]
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
@@ -430,6 +453,9 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
+    // New image replaces the resident set (old pages are dropped with the old
+    // address space); accumulated CPU time and the start tick survive the exec.
+    pResPages[me] = Int(elf_last_load_pages()) + userStackPages
     // POSIX: close-on-exec descriptors are dropped across exec. ash relocates
     // its saved fds above 10 with F_DUPFD_CLOEXEC and relies on this.
     vfsCloseCloexec(slot: me)
@@ -475,6 +501,82 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
     return total
 }
 
+/// SYS_procstat: copy richer fixed-size process records for /bin/top.
+/// Record layout (56 bytes, naturally aligned): pid:u32, ppid:u32, state:u32,
+/// principal:u32, cpuTicks:u64, startTick:u64, resBytes:u64, name[16].
+func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
+    var total = 0
+    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    if writable > 0 {
+        guard let dst = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
+            return -22
+        }
+        let raw = UnsafeMutableRawPointer(dst)
+        let frameBytes = UInt64(PageAllocator.pageSize)
+        for i in 0..<maxProc where pState[i] != pUnused {
+            if total < writable {
+                let rec = raw.advanced(by: total * procStatRecordSize)
+                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+                rec.storeBytes(of: pPrincipal[i], toByteOffset: 12, as: UInt32.self)
+                rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
+                rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
+                rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
+
+                let nameDst = rec.advanced(by: 40).assumingMemoryBound(to: UInt8.self)
+                var j = 0
+                let nameBase = i * procNameMax
+                while j < 16 {
+                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                    j += 1
+                }
+            }
+            total += 1
+        }
+    } else {
+        for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
+    }
+    return total
+}
+
+/// SYS_sysinfo: copy a system-wide stats blob for /bin/top.
+/// Layout (64 bytes, naturally aligned): uptimeTicks:u64, idleTicks:u64,
+/// memTotal:u64, memFree:u64, kernelImage:u64, kernelHeap:u64, hz:u32,
+/// procTotal:u32, procRunning:u32, reserved:u32.
+func processSysInfo(buffer: UInt) -> Int {
+    guard let dst = userWritableBuffer(buffer, UInt(sysInfoSize)) else { return -22 }
+    let raw = UnsafeMutableRawPointer(dst)
+
+    var total = 0
+    var running = 0
+    for i in 0..<maxProc where pState[i] != pUnused {
+        total += 1
+        if pState[i] == pRunning || pState[i] == pReady { running += 1 }
+    }
+
+    let frameBytes = UInt64(PageAllocator.pageSize)
+    let memFree = UInt64(pmmFreeCount()) * frameBytes
+    let memTotal = UInt64(platform.ramSize)
+    // The kernel statically occupies [ramBase + kernelLoadOffset .. __image_end):
+    // code + data + bss + boot stack + early heap reservation.
+    let imageBytes = UInt64(swiftos_image_end() - (platform.ramBase + kernelLoadOffset))
+    let heapBytes = UInt64(swiftos_kernel_heap_used_bytes())
+
+    raw.storeBytes(of: systemTicks, toByteOffset: 0, as: UInt64.self)
+    raw.storeBytes(of: idleTicks, toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: memTotal, toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: memFree, toByteOffset: 24, as: UInt64.self)
+    raw.storeBytes(of: imageBytes, toByteOffset: 32, as: UInt64.self)
+    raw.storeBytes(of: heapBytes, toByteOffset: 40, as: UInt64.self)
+    raw.storeBytes(of: timerHz, toByteOffset: 48, as: UInt32.self)
+    raw.storeBytes(of: UInt32(total), toByteOffset: 52, as: UInt32.self)
+    raw.storeBytes(of: UInt32(running), toByteOffset: 56, as: UInt32.self)
+    raw.storeBytes(of: UInt32(0), toByteOffset: 60, as: UInt32.self)
+    return 0
+}
+
 /// SYS_security_info: copy the current process security context.
 /// Record layout (16 bytes): principal:u32, session:u32, caps:u64.
 /// The capability mask of the running process (M13). Used by the VFS to check
@@ -518,7 +620,20 @@ func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
 }
 
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
-func processOnTick() {
+/// `fromEL0` is true when the timer interrupted user code, false at EL1.
+func processOnTick(fromEL0: Bool) {
+    // CPU accounting for /bin/top. Charge a tick as *user* time to the running
+    // process only when the timer interrupted EL0 (it was executing user code);
+    // EL1 ticks — the scheduler's idle wfi, and a process parked in a wfi-based
+    // blocking syscall (poll/read) — count as idle. So a process sleeping on
+    // input shows ~0% CPU and an idle system shows ~100% idle, while a CPU-bound
+    // EL0 loop shows ~100%. (Kernel "system" time is bucketed into idle; a
+    // separate sy% would need to distinguish syscall work from a wfi wait.)
+    if fromEL0 && currentProc >= 0 {
+        pCpuTicks[currentProc] &+= 1
+    } else {
+        idleTicks &+= 1
+    }
     if currentProc >= 0 && pState[currentProc] == pRunning {
         pState[currentProc] = pReady
         yieldToScheduler()
@@ -572,6 +687,7 @@ func processSbrk(_ incr: Int) -> UInt {
             }
             va += PageAllocator.pageSize
         }
+        pResPages[me] += Int((newTop - oldTop) / PageAllocator.pageSize)
     }
     pBrk[me] = newBreak
     return old

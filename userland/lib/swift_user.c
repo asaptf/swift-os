@@ -190,6 +190,81 @@ void swiftos_set_echo(int on) {
     (void)__syscall3(SYS_TCSETATTR, 0, 0, (long)t);
 }
 
+static unsigned int g_saved_lflag = (1u << 0) | (1u << 1) | (1u << 2); // ICANON|ECHO|ISIG
+
+void swiftos_set_raw(int on) {
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, 0, (long)t, 0);
+    const unsigned int ICANON_BIT = 1u << 0;
+    const unsigned int ECHO_BIT = 1u << 1;
+    if (on) {
+        g_saved_lflag = t[3];
+        t[3] &= ~(ICANON_BIT | ECHO_BIT); // keep ISIG so Ctrl-C still terminates top
+    } else {
+        t[3] = g_saved_lflag;
+    }
+    (void)__syscall3(SYS_TCSETATTR, 0, 0, (long)t);
+}
+
+// ---- /bin/top statistics (SYS_SYSINFO / SYS_PROCSTAT) ---------------------
+// Kernel record layouts (must match kernel/user/process.swift).
+struct top_sysinfo {
+    unsigned long uptime_ticks;   // off 0
+    unsigned long idle_ticks;     // off 8
+    unsigned long mem_total;      // off 16
+    unsigned long mem_free;       // off 24
+    unsigned long kernel_image;   // off 32
+    unsigned long kernel_heap;    // off 40
+    unsigned int  hz;             // off 48
+    unsigned int  proc_total;     // off 52
+    unsigned int  proc_running;   // off 56
+    unsigned int  reserved;       // off 60
+};
+
+struct top_procstat {
+    unsigned int  pid;            // off 0
+    unsigned int  ppid;           // off 4
+    unsigned int  state;          // off 8
+    unsigned int  principal;      // off 12
+    unsigned long cpu_ticks;      // off 16
+    unsigned long start_tick;     // off 24
+    unsigned long res_bytes;      // off 32
+    char          name[16];       // off 40
+};
+
+static struct top_sysinfo g_sys;
+static struct top_procstat g_top[SWIFTOS_TOP_MAX];
+static int g_top_count;
+
+int swiftos_sysinfo_refresh(void) {
+    return (int)__syscall3(SYS_SYSINFO, (long)&g_sys, 0, 0);
+}
+unsigned long swiftos_sys_uptime_ticks(void) { return g_sys.uptime_ticks; }
+unsigned long swiftos_sys_idle_ticks(void)   { return g_sys.idle_ticks; }
+unsigned long swiftos_sys_mem_total(void)    { return g_sys.mem_total; }
+unsigned long swiftos_sys_mem_free(void)     { return g_sys.mem_free; }
+unsigned long swiftos_sys_kernel_image(void) { return g_sys.kernel_image; }
+unsigned long swiftos_sys_kernel_heap(void)  { return g_sys.kernel_heap; }
+unsigned int  swiftos_sys_hz(void)           { return g_sys.hz; }
+unsigned int  swiftos_sys_proc_total(void)   { return g_sys.proc_total; }
+unsigned int  swiftos_sys_proc_running(void) { return g_sys.proc_running; }
+
+int swiftos_top_refresh(void) {
+    g_top_count = (int)__syscall3(SYS_PROCSTAT, (long)g_top, SWIFTOS_TOP_MAX, 0);
+    return g_top_count;
+}
+
+static int top_valid(int i) { return i >= 0 && i < g_top_count && i < SWIFTOS_TOP_MAX; }
+
+unsigned int  swiftos_top_pid(int i)        { return top_valid(i) ? g_top[i].pid : 0; }
+unsigned int  swiftos_top_ppid(int i)       { return top_valid(i) ? g_top[i].ppid : 0; }
+unsigned int  swiftos_top_state(int i)      { return top_valid(i) ? g_top[i].state : 0; }
+unsigned int  swiftos_top_principal(int i)  { return top_valid(i) ? g_top[i].principal : 0; }
+unsigned long swiftos_top_cpu_ticks(int i)  { return top_valid(i) ? g_top[i].cpu_ticks : 0; }
+unsigned long swiftos_top_start_tick(int i) { return top_valid(i) ? g_top[i].start_tick : 0; }
+unsigned long swiftos_top_res_bytes(int i)  { return top_valid(i) ? g_top[i].res_bytes : 0; }
+const char   *swiftos_top_name(int i)       { return top_valid(i) ? g_top[i].name : "?"; }
+
 void *memset(void *dst, int value, size_t count) {
     unsigned char *p = (unsigned char *)dst;
     for (size_t i = 0; i < count; i += 1) {

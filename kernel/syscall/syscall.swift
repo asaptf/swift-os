@@ -44,6 +44,8 @@ private let sysRecvfrom: UInt = 41     // recvfrom(fd, &msg) — UDP datagram in
 private let sysListen: UInt = 42       // listen(fd, backlog) — TCP
 private let sysAccept: UInt = 43       // accept(fd) → connection fd — TCP
 private let sysConnect: UInt = 44      // connect(fd, ip, port) — TCP active open
+private let sysSysInfo: UInt = 46      // sysinfo(buffer) — system stats for /bin/top
+private let sysProcStat: UInt = 47     // procstat(buffer, capacity) — rich per-proc records
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -173,6 +175,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsAccept(fd: Int(bitPattern: frame[0]))
     } else if number == sysConnect {
         result = vfsConnect(fd: Int(bitPattern: frame[0]), ip: frame[1], port: Int(bitPattern: frame[2]))
+    } else if number == sysSysInfo {
+        result = processSysInfo(buffer: frame[0])
+    } else if number == sysProcStat {
+        result = processStatSnapshot(buffer: frame[0], capacity: frame[1])
     } else {
         result = -38 // ENOSYS
     }

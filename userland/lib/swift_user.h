@@ -56,6 +56,37 @@ int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned lo
 int  swiftos_exec_shell(const char *path);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
 void swiftos_set_echo(int on);
+// Toggle raw mode on fd 0 (off = canonical). Raw clears ICANON+ECHO so a single
+// keypress is delivered without Enter and is not echoed (for /bin/top's 'q');
+// ISIG is kept so Ctrl-C still works. set_raw(0) restores the saved flags.
+void swiftos_set_raw(int on);
+
+// ---- /bin/top: system + per-process statistics --------------------------
+#define SWIFTOS_TOP_MAX 16
+
+// Refresh the cached system-stats blob (SYS_SYSINFO). 0 on success, else < 0.
+int swiftos_sysinfo_refresh(void);
+unsigned long swiftos_sys_uptime_ticks(void);
+unsigned long swiftos_sys_idle_ticks(void);
+unsigned long swiftos_sys_mem_total(void);   // bytes of physical RAM
+unsigned long swiftos_sys_mem_free(void);    // bytes of free frames
+unsigned long swiftos_sys_kernel_image(void);// bytes the kernel statically occupies
+unsigned long swiftos_sys_kernel_heap(void); // bytes used in the kernel bump heap
+unsigned int  swiftos_sys_hz(void);          // scheduler ticks per second
+unsigned int  swiftos_sys_proc_total(void);
+unsigned int  swiftos_sys_proc_running(void);
+
+// Refresh the cached per-process table (SYS_PROCSTAT). Returns the process
+// count (< 0 on error); accessors below are valid for index 0..count-1.
+int  swiftos_top_refresh(void);
+unsigned int  swiftos_top_pid(int i);
+unsigned int  swiftos_top_ppid(int i);
+unsigned int  swiftos_top_state(int i);
+unsigned int  swiftos_top_principal(int i);
+unsigned long swiftos_top_cpu_ticks(int i);
+unsigned long swiftos_top_start_tick(int i);
+unsigned long swiftos_top_res_bytes(int i);
+const char   *swiftos_top_name(int i);
 
 // UDP sockets (net-b). IPv4 addresses are host order (e.g. 0x0A000202 = 10.0.2.2).
 // swiftos_socket() opens a SOCK_DGRAM socket (needs the net capability) and

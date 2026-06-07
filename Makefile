@@ -226,6 +226,7 @@ USER_KV_ELF := $(BUILD)/kv.elf
 USER_HEAD_ELF := $(BUILD)/head.elf
 USER_TOUCH_ELF := $(BUILD)/touch.elf
 USER_WC_ELF := $(BUILD)/wc.elf
+USER_TOP_ELF := $(BUILD)/top.elf
 USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
@@ -236,6 +237,7 @@ BASE_EXEC_ELFS := \
 	$(USER_HEAD_ELF) \
 	$(USER_TOUCH_ELF) \
 	$(USER_WC_ELF) \
+	$(USER_TOP_ELF) \
 	$(USER_UDPECHO_ELF) \
 	$(USER_TCPECHO_ELF) \
 	$(USER_TCPGET_ELF) \
@@ -436,6 +438,9 @@ $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefi
 $(BUILD)/user_wc.o: userland/wc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/wc.swift -o $@
 
+$(BUILD)/user_top.o: userland/top.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/top.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -530,6 +535,9 @@ $(USER_TOUCH_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_WC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc.o -o $@
 
+$(USER_TOP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_top.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_top.o -o $@
+
 $(USER_UDPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o -o $@
 
@@ -615,6 +623,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_date_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
+	./tests/top_test.sh
 	./tests/busybox_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
@@ -709,6 +718,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
 	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc
+	cp $(USER_TOP_ELF) $(BASE_ROOT)/bin/top
 	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
 	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget

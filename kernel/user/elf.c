@@ -52,6 +52,11 @@ extern void *memcpy(void *dst, const void *src, unsigned long count);
 static uintptr_t page_down(uintptr_t v) { return v & ~(PAGE_SIZE - 1); }
 static uintptr_t page_up(uintptr_t v) { return (v + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); }
 
+// Number of distinct user pages the most recent elf_load mapped (for /bin/top's
+// per-process resident-memory accounting). Set at the start of each elf_load.
+static unsigned long g_elf_load_pages = 0;
+unsigned long elf_last_load_pages(void) { return g_elf_load_pages; }
+
 // Copy `len` bytes to virtual address `va` in `ttbr0`, walking page by page and
 // resolving each page to its physical (identity-mapped) frame.
 static int copy_to_user(uintptr_t ttbr0, uintptr_t va, const unsigned char *src, uint64_t len) {
@@ -77,6 +82,7 @@ uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size) {
     if (size < sizeof(Elf64_Ehdr)) {
         return 0;
     }
+    g_elf_load_pages = 0;
     const unsigned char *base = (const unsigned char *)image;
     const Elf64_Ehdr *eh = (const Elf64_Ehdr *)image;
 
@@ -119,6 +125,7 @@ uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size) {
                 if (address_space_map(ttbr0, va, pa, perm) != 0) {
                     return 0;
                 }
+                g_elf_load_pages += 1; // a fresh frame (not a perm upgrade of a shared page)
             } else if (perm == VM_PERM_USER_CODE) {
                 // A previous (data) segment already mapped this page; executable wins.
                 if (address_space_map(ttbr0, va, pa, VM_PERM_USER_CODE) != 0) {

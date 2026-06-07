@@ -483,6 +483,11 @@ func exceptionHandler() {
 
 @_cdecl("irq_handler")
 func irqHandler() {
+    // Capture the interrupted exception level before any handler runs (SPSR_EL1
+    // still holds the pre-IRQ PSTATE; no nested EL1 exception is taken here).
+    // M[3:0] == 0 means EL0t — user code was running. Used for CPU accounting.
+    let fromEL0 = (read_spsr_el1() & 0xF) == 0
+
     let iar = gicAcknowledge()
     let interruptId = iar & 0x3FF
 
@@ -506,7 +511,7 @@ func irqHandler() {
         virtioKbdDrain() // poll the graphical-window keyboard into the tty
         fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
-        processOnTick()  // preempt the current EL0 process
+        processOnTick(fromEL0: fromEL0)  // preempt the current EL0 process + CPU accounting
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
     }

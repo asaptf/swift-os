@@ -107,6 +107,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/head") { return loadProgramImage("/bin/head") }
     if userPathEquals(pathVA, "/bin/touch") { return loadProgramImage("/bin/touch") }
     if userPathEquals(pathVA, "/bin/wc") { return loadProgramImage("/bin/wc") }
+    if userPathEquals(pathVA, "/bin/top") { return loadProgramImage("/bin/top") }
     if userPathEquals(pathVA, "/bin/udpecho") { return loadProgramImage("/bin/udpecho") }
     if userPathEquals(pathVA, "/bin/tcpecho") { return loadProgramImage("/bin/tcpecho") }
     if userPathEquals(pathVA, "/bin/tcpget") { return loadProgramImage("/bin/tcpget") }

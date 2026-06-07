@@ -108,6 +108,11 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
 - busybox vi addition: `33 ftruncate(fd, length)` — resize a writable tmpfs file (busybox vi writes
   with `O_CREAT` without `O_TRUNC`, then `ftruncate`s to the exact length). Growth zero-fills up to
   the node's capacity; shrink updates the length. Read-only/base files and directories are rejected.
+- `/bin/top` additions: `46 sysinfo(buffer)` copies a 64-byte system-stats blob (uptime ticks, idle
+  ticks, total/free RAM bytes, kernel image/heap bytes, tick rate, process counts); `47 procstat(buffer,
+  capacity)` copies richer 56-byte per-process records (`pid`, `ppid`, state, principal, CPU ticks,
+  start tick, resident bytes, name[16]). The 32-byte `22 psinfo` record is left unchanged so `/bin/ps`
+  is unaffected.
 
 ## Build / run commands (verified at M9)
 
@@ -1244,3 +1249,66 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   **and** the serial shows ≥2 `httpd: 200` lines — concurrent serving end to end. Wired into `make test`.
 - **Deferred:** keep-alive (HTTP/1.0 close only), request parsing/routing (responds to any request),
   `maxSockets`/conn-table caps (8). swift-os now hosts a working concurrent network server.
+
+## Process/resource monitor: native Swift `/bin/top` + CPU/mem accounting (DONE, 2026-06-07)
+
+A live `top` (`userland/top.swift`) — the natural successor to `/bin/ps`. `ps` was a one-shot dump
+because the kernel had no CPU/memory accounting ("CPU, memory, tty, and time columns need more kernel
+accounting", M8 note). This adds that accounting and renders it as a refreshing top-style screen:
+a summary header (uptime, task states, CPU busy/idle, RAM total/used/free, and the kernel's own
+footprint) plus a per-process table (PID/PPID/USER/STATE/%CPU/RES/TIME+/COMMAND) sorted by %CPU.
+
+- **Kernel accounting (`kernel/user/process.swift`).** New parallel arrays: `pCpuTicks` (per-process
+  CPU ticks), `pStartTick` (systemTicks at creation), `pResPages` (resident user pages), plus an
+  `idleTicks` counter. RES is tracked at the obvious map sites: `createProcess` = ELF image pages +
+  stack; `fork` copies the parent's count (the eager clone duplicates every page); `execve` resets to
+  the new image; `sbrk` adds heap growth. The image page count comes from `elf.c`, which now exports
+  `elf_last_load_pages()` (distinct frames the last `elf_load` mapped — counted only on a fresh
+  `pmm_alloc_page`, not on a shared-page perm upgrade).
+- **EL0-charged CPU time.** `processOnTick` now takes `fromEL0`: it charges a tick as *user* time to
+  the running process only when the timer interrupted EL0; EL1 ticks (the scheduler's idle `wfi`, and a
+  process parked in a `wfi`-based blocking syscall such as `poll`/`read`) count as idle. `irqHandler`
+  reads `SPSR_EL1.M` at entry (still the pre-IRQ PSTATE — no nested EL1 exception is taken before it)
+  and passes it down. Effect: an idle system reads ~100% idle and a process sleeping on input reads ~0%
+  CPU, while a CPU-bound EL0 loop reads ~100%. The preemption decision is byte-identical to before — only
+  which counter increments changed. Limitation (documented in the code): kernel "system" time is
+  bucketed into idle, since a real syscall doing work and a syscall parked in `wfi` both look like
+  "currentProc at EL1"; a separate sy% would need to tell them apart.
+- **Syscalls 45/46.** `sysinfo(buffer)` fills a 64-byte stats blob; `procstat(buffer, capacity)` fills
+  56-byte per-process records. Both are additive — the 32-byte `psinfo` (22) record is untouched, so
+  `/bin/ps` keeps working. Memory totals come from `platform.ramSize`, `pmm_free_count`/`pmm_total_count`
+  (new), the kernel image span (`__image_end − (ramBase + 0x80000)`), and `swiftos_kernel_heap_used_bytes`.
+  `generic_timer.swift` now publishes `timerHz` for tick↔second conversion.
+- **Userland.** `/bin/top` is a pure byte-oriented Embedded Swift program (no String/Unicode tables, so
+  it links ~27 KiB like `/bin/ps`, not ~160 KiB like `calc`). It builds each frame in one 8 KiB buffer
+  and writes it once. %CPU is a per-interval rate from the delta in a process's CPU ticks between
+  refreshes (the first frame falls back to the since-start average). USER resolves the principal→name
+  from `/etc/swos/passwd` (the `id`/`ls` colon-scan pattern), TIME+ is `M:SS.cc` (centiseconds, exact at
+  100 Hz), RES is in KiB. The bridge (`swift_user.{c,h}`) gained `swiftos_sysinfo_refresh`/`swiftos_top_refresh`
+  + scalar accessors (the proven `ps` pattern, so Swift never touches a C struct field) and `swiftos_set_raw`
+  (clear ICANON+ECHO for single-key `q`, keep ISIG).
+- **Modes.** `top` interactive (clear+repaint every 2s via an ANSI home, raw tty, `q` to quit — the
+  delay is a `poll(stdin, timeout)` that doubles as the quit check); `top -b` batch (no cursor/raw, for
+  scripts/logs); `top -d SECS` delay; `top -n N` iterations; `top -h`. Reached by absolute path; routed
+  in `exec.swift`. Caveat: interactive mode left raw if killed by Ctrl-C (no custom signal delivery yet) —
+  the next shell resets its own termios; `q` is the clean exit.
+- **Test.** `tests/top_test.sh` (wired into `make test`): logs in as root, runs `/bin/top -b -n 2 -d 1`,
+  and asserts the uptime/Tasks/Cpu/Mem/Kernel header lines, the column header, that **two** frames
+  rendered (the refresh/%CPU-delta path), that top lists its own row, and that the shell survives top.
+
+Native-Swift userland: `ls cat echo pwd ps top id mkdir rmdir rm mv chmod chown head touch wc date
+calc kv`.
+
+### Kernel memory footprint (measured 2026-06-07, before this feature)
+
+Recorded because `/bin/top`'s `Kernel:` line reports it live. For the QEMU `virt -m 256M` build at the
+time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + the boot log):
+- Static: `.text`+`.rodata`+`.got` ≈ 140 KiB, `.data` ≈ 2.3 KiB, `.bss` ≈ 55 KiB → ELF `dec` ≈ 197 KiB;
+  `kernel.bin` (flat, loadable) ≈ 142 KiB.
+- Resident at boot (`_start` 0x4008_0000 → `__image_end`, = 0x81A50 ≈ **519 KiB**): 144 KiB code/data +
+  55 KiB bss + 64 KiB boot stack + 256 KiB early bump heap (of which only ~96 B used at M1, ~50 KiB
+  after full boot).
+- Dynamic: of 256 MiB RAM the PMM reports **65276 free frames** right after init (~254.98 MiB free), so
+  the kernel + the 512 KiB sub-load-base hole + the bitmap consume ~1.02 MiB before any process runs.
+  The accounting/syscalls added by this feature grow the image by ~3 KiB (top's `Kernel:` line then
+  reads ~522 KiB).
