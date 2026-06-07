@@ -56,9 +56,12 @@ private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on
 private var pBrk = [UInt](repeating: 0, count: maxProc)
 private var pNameLen = [Int](repeating: 0, count: maxProc)
 private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
-private var pPrincipal = [UInt32](repeating: 0, count: maxProc)
-private var pSession = [UInt32](repeating: 0, count: maxProc)
-private var pCaps = [UInt64](repeating: 0, count: maxProc)
+// Principal / session / capability mask, plus the process's Cell tag, kept as
+// one typed record per slot (adding a Cell field is now a struct change, not a
+// new parallel array).
+private var pSecurity = [ProcessSecurityContext](
+    repeating: ProcessSecurityContext(principal: 0, session: 0, caps: 0, cell: globalCell),
+    count: maxProc)
 // rt-a: a thread shares its creator's address space (TTBR0) instead of owning a
 // private one, so its exit must not be treated as an address-space teardown and
 // it joins via futex rather than waitpid.
@@ -155,22 +158,15 @@ private func copyProcessName(from parent: Int, to child: Int) {
 private func setProcessSecurity(slot: Int, parent: Int) {
     if slot < 0 || slot >= maxProc { return }
     if parent >= 0 && parent < maxProc {
-        pPrincipal[slot] = pPrincipal[parent]
-        pSession[slot] = pSession[parent]
-        pCaps[slot] = pCaps[parent]
+        pSecurity[slot] = pSecurity[parent]
         return
     }
-    let ctx = securityBootContext()
-    pPrincipal[slot] = ctx.principal
-    pSession[slot] = ctx.session
-    pCaps[slot] = ctx.caps
+    pSecurity[slot] = securityBootContext()
 }
 
 private func copyProcessSecurity(from parent: Int, to child: Int) {
     if parent < 0 || parent >= maxProc || child < 0 || child >= maxProc { return }
-    pPrincipal[child] = pPrincipal[parent]
-    pSession[child] = pSession[parent]
-    pCaps[child] = pCaps[parent]
+    pSecurity[child] = pSecurity[parent] // whole context, including the Cell tag
 }
 
 // Build a process from an ELF image. Returns its slot, or -1.
@@ -635,7 +631,7 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
                 rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
                 rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
                 rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
-                rec.storeBytes(of: pPrincipal[i], toByteOffset: 12, as: UInt32.self)
+                rec.storeBytes(of: pSecurity[i].principal, toByteOffset: 12, as: UInt32.self)
                 rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
                 rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
                 rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
@@ -698,14 +694,14 @@ func processSysInfo(buffer: UInt) -> Int {
 /// file access against the process's principal context. The kernel itself
 /// (no active process) is fully privileged.
 func processCurrentCaps() -> UInt64 {
-    currentProc >= 0 ? pCaps[currentProc] : ~UInt64(0)
+    currentProc >= 0 ? pSecurity[currentProc].caps : ~UInt64(0)
 }
 
 /// The principal id of the running process (M13c). Used by the VFS to stamp the
 /// owner on tmpfs nodes it creates. The kernel itself (no active process) acts
 /// as the boot/root principal 1.
 func processCurrentPrincipal() -> UInt32 {
-    currentProc >= 0 ? pPrincipal[currentProc] : 1
+    currentProc >= 0 ? pSecurity[currentProc].principal : 1
 }
 
 func processSecurityInfo(buffer: UInt) -> Int {
@@ -713,9 +709,9 @@ func processSecurityInfo(buffer: UInt) -> Int {
     guard me >= 0 else { return -22 }
     guard let dst = userWritableBuffer(buffer, 16) else { return -22 }
     let raw = UnsafeMutableRawPointer(dst)
-    raw.storeBytes(of: pPrincipal[me], toByteOffset: 0, as: UInt32.self)
-    raw.storeBytes(of: pSession[me], toByteOffset: 4, as: UInt32.self)
-    raw.storeBytes(of: pCaps[me], toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: pSecurity[me].principal, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].session, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].caps, toByteOffset: 8, as: UInt64.self)
     return 0
 }
 
@@ -727,10 +723,10 @@ func processSecurityInfo(buffer: UInt) -> Int {
 func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
     let me = currentProc
     guard me >= 0 else { return -22 }            // EINVAL
-    if (pCaps[me] & capConsole) == 0 { return -1 } // EPERM
-    pPrincipal[me] = principal
-    pSession[me] = session
-    pCaps[me] = caps
+    if (pSecurity[me].caps & capConsole) == 0 { return -1 } // EPERM
+    pSecurity[me].principal = principal
+    pSecurity[me].session = session
+    pSecurity[me].caps = caps
     return 0
 }
 
