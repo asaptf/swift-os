@@ -52,6 +52,7 @@ private let ctApplicationData: UInt8 = 23
 
 private let hsClientHello: UInt8 = 1
 private let hsServerHello: UInt8 = 2
+private let hsNewSessionTicket: UInt8 = 4
 private let hsEncryptedExtensions: UInt8 = 8
 private let hsCertificate: UInt8 = 11
 private let hsCertificateVerify: UInt8 = 15
@@ -306,13 +307,15 @@ final class TLS13Client {
         return n
     }
 
-    /// Drive the state machine over whatever inbound bytes have arrived.
+    /// Drive the state machine over whatever inbound bytes have arrived. After
+    /// the handshake completes this also decrypts inbound application_data
+    /// records into the `receiveAppData` buffer, so the caller keeps pumping
+    /// read→`feedTLS`→`advance` and draining `receiveAppData` until EOF/alert.
     func advance() -> TLSProgress {
         if phase == .dead { return .failed }
-        if phase == .established { return .handshakeComplete }
         while true {
             guard let (ct, body, bodyLen, consumed) = peekRecord() else {
-                return .needMoreData
+                return phase == .established ? .handshakeComplete : .needMoreData
             }
             // Skip legacy ChangeCipherSpec (RFC 8446 §5: middlebox compatibility).
             if ct == ctChangeCipherSpec {
@@ -329,7 +332,6 @@ final class TLS13Client {
                 return .failed
             }
             dropInbound(consumed)
-            if phase == .established { return .handshakeComplete }
             if phase == .dead { return .failed }
         }
     }
@@ -636,20 +638,24 @@ final class TLS13Client {
     private func handleEncryptedRecord(body: UnsafeRawPointer, bodyLen: Int) -> Bool {
         if bodyLen < tagLen { lastError = 111; return false }
         let ctLen = bodyLen - tagLen
+        let usedSeq = rdSeq                  // the sequence we decrypt this record at
         var ok = false
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: max(1, ctLen)) { ptb in
             let pt = ptb.baseAddress!
             var plainLen = 0
             let innerType: UInt8? = rdKey.withUnsafeBytes { kp in
                 rdIV.withUnsafeBytes { ivp in
-                    tlsRecordOpen(key: kp.baseAddress!, iv: ivp.baseAddress!, seq: rdSeq,
+                    tlsRecordOpen(key: kp.baseAddress!, iv: ivp.baseAddress!, seq: usedSeq,
                                   body: body, bodyLen: bodyLen, out: pt, outLen: &plainLen)
                 }
             }
             guard let t = innerType else { return }
             ok = dispatchInner(type: t, data: pt, len: plainLen)
         }
-        rdSeq &+= 1
+        // Advance the record sequence within the current key epoch — but if
+        // dispatch installed new read keys (server Finished → application keys
+        // resets rdSeq to 0, RFC 8446 §5.3), leave that fresh counter alone.
+        if rdSeq == usedSeq { rdSeq = usedSeq &+ 1 }
         if !ok && lastError == 0 { lastError = 112 }
         return ok
     }
@@ -678,6 +684,13 @@ final class TLS13Client {
 
     private func handleHandshakeMessage(type: UInt8, full: UnsafeRawPointer, fullLen: Int) -> Bool {
         switch type {
+        case hsNewSessionTicket:
+            // Post-handshake message (RFC 8446 §4.6.1). We do not do session
+            // resumption, so ignore it. It arrives *after* the handshake (under
+            // application keys) and is NOT part of the handshake transcript, so
+            // we must not fold it in.
+            _ = full; _ = fullLen
+            return true
         case hsEncryptedExtensions, hsCertificate, hsCertificateVerify:
             // We do not parse these (no cert verification — see the file header).
             // They are folded into the transcript so the server Finished verifies.
