@@ -63,6 +63,7 @@ int address_space_map(uintptr_t ttbr0, uintptr_t va, uintptr_t pa, int perm);
 void address_space_switch(uintptr_t ttbr0);
 uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va);
 uintptr_t address_space_clone(uintptr_t parent); // eager fork copy
+void address_space_destroy(uintptr_t ttbr0);     // free a process's frames on teardown
 
 void user_program_install(void *code_dst, void *data_dst);
 void enter_el0(uintptr_t entry, uintptr_t stack_top);

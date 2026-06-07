@@ -198,7 +198,8 @@ because `fork` needs parent and child alive at once. Staged:
   fork/waitpid). A new `coproc` demo runs **two** EL0 processes that interleave under preemption
   (`coproc A/B iter 0..2` in alternation) → real preemptive multitasking proven. All prior demos
   (M5–M8c) and the interactive tty/Ctrl-C test still pass.
-  - NOTE: process teardown does not yet reclaim frames (AS/stacks/heap) — a follow-up.
+  - NOTE: process teardown now reclaims frames (address space + page tables + kernel stack) on
+    exit/exec/reap — see "Process teardown reclaims frames" below. (Originally a documented follow-up.)
   - NOTE: per-process fd table/cwd still global in the VFS — fine while one EL0 process uses fds at a
     time; will move into the process struct when fork needs fd inheritance (d2/d4).
 - **Security test hardening — DONE.** Added an embedded `securitydemo` EL0 program to the boot test. It
@@ -1349,3 +1350,35 @@ time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + t
   serial shows ≥2 `httpd: 200` lines. `base/www/*` ride along via the existing `BASE_SEED_FILES` glob.
 - **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
   loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.
+
+### Process teardown reclaims frames — the per-command page leak is closed (DONE, 2026-06-07)
+
+- **The leak.** Process teardown set the slot to `pUnused` but never returned any frames to the PMM, so
+  every command leaked its whole footprint: the **address space** (L0/L1 page tables + the L2/L3 tables
+  and every user leaf page), the **kernel stack** (2 frames), and — on `execve` — the **replaced** old
+  address space (fork clones the shell, the child execs, the clone is dropped). At ~2 MiB per busybox
+  command the OS exhausted RAM after ~100 commands. This was the main barrier to long-running use.
+- **`address_space_destroy(ttbr0)` (`kernel/mm/vm.c`).** Walks the user half of the tables (L1 index ≥ 2,
+  i.e. VA ≥ `0x8000_0000`) and frees every leaf frame, then each L3/L2 table, then the L1 and L0 frames,
+  via `pmm_free_page`. The kernel/device identity entries (L1 indices 0,1) are 1 GiB **block** descriptors,
+  not tables — the `DESC_TABLE` test skips them, so the shared kernel mapping is never freed. Eager fork
+  gives each space **private** leaf frames (no COW sharing), so a flat free is correct with no refcounting.
+  Safe on a partially built space (failed `createProcess`/`buildExecImage` now clean up too). If the doomed
+  space is the **currently installed TTBR0** (the case when the kernel scheduler reaps a just-exited
+  top-level process, whose tables are still live in the register), it switches to the kernel identity map
+  first so the MMU never walks frames being handed back.
+- **`process.swift` wiring.** A new `reapProcess(slot)` frees the address space + kernel stack (tracked in
+  a new `pKstack` array) and marks the slot unused; it replaces the bare `pState = pUnused` at all four
+  reap sites (`processRunElf`, `processRunPair`, `processSpawnChild`, `processWaitpid`). `processExec` frees
+  the **old** address space after switching to the new one (kernel stack is reused across exec, so it is
+  not freed there). A zombie never runs again, so its space/stack are quiescent at reap time.
+- **Test / acceptance.** `runReclaimDemo` (in `main.swift`, on the boot path) records the PMM free-frame
+  count, runs **5 rounds** of fork+waitpid (`forkdemo`), exec-replace (`execdemo`), and spawn+reap
+  (`spawndemo`) — the exact teardown paths a shell command takes — and asserts the count is **identical**
+  before and after. Measured in QEMU: `baseline=64747 after=64747` (zero leak; before the fix it would
+  drop by hundreds of frames). `tests/boot_test.sh` greps for `reclaim OK: no frame leak across
+  fork/exec/exit/reap`. The host `PageAllocator` `free`/double-free tests already cover the frame allocator.
+- **Remaining efficiency holes (still future work, by design for now):** `fork` is eager-copy (no
+  copy-on-write); no page cache; the PMM is O(n) first-fit (a buddy/free-list refinement is noted in
+  `docs/ARCHITECTURE.md`); single core (no SMP). The footprint section above was measured **before** this
+  feature; steady-state RAM is now flat across commands rather than monotonically shrinking.

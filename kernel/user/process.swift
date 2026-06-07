@@ -11,11 +11,14 @@
 // the same scheduler loop runs the children and wakes the parent. This is the
 // foundation for fork/execve/waitpid (next steps).
 //
-// NOTE: process teardown does not yet free its frames (address space, stacks);
-// page reclamation is a follow-up. Fine for bring-up workloads.
+// Process teardown reclaims frames: reapProcess frees the address space (every
+// user page + its page tables, via address_space_destroy) and the kernel stack
+// back to the PMM, and execve frees the replaced image's address space. Without
+// this the OS leaked ~2 MiB per command and exhausted RAM after ~100 commands.
 
 private let userStackTop: UInt = 0x9000_0000
 private let userStackPages = 4
+private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
 private let maxProc = 16
 private let procNameMax = 16
@@ -46,6 +49,7 @@ private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [1]
 private var pState = [Int32](repeating: 0, count: maxProc)
 private var pParent = [Int](repeating: -1, count: maxProc)   // parent slot, -1 = kernel
 private var pTtbr0 = [UInt](repeating: 0, count: maxProc)
+private var pKstack = [UInt](repeating: 0, count: maxProc) // kernel stack base (2 frames), freed on reap
 private var pExit = [Int](repeating: 0, count: maxProc)
 private var pKilled = [Bool](repeating: false, count: maxProc)
 private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on / waitAny
@@ -174,18 +178,22 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     let ttbr0 = address_space_create()
     if ttbr0 == 0 { return -1 }
     let entry = elfLoad(ttbr0, UnsafeRawPointer(bitPattern: image), size)
-    if entry == 0 { return -1 }
+    if entry == 0 { address_space_destroy(ttbr0); return -1 }
 
     var va = userStackTop - UInt(userStackPages) * PageAllocator.pageSize
     while va < userStackTop {
         let pa = pmmAllocZeroedPage()
-        if pa == 0 || address_space_map(ttbr0, va, pa, Int32(VM_PERM_USER_DATA)) != 0 { return -1 }
+        if pa == 0 || address_space_map(ttbr0, va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+            if pa != 0 { pmmFreePage(pa) }
+            address_space_destroy(ttbr0)
+            return -1
+        }
         va += PageAllocator.pageSize
     }
 
-    let kstack = pmmAllocPages(2)
-    if kstack == 0 { return -1 }
-    let kstackTop = kstack + 2 * PageAllocator.pageSize
+    let kstack = pmmAllocPages(kernelStackPages)
+    if kstack == 0 { address_space_destroy(ttbr0); return -1 }
+    let kstackTop = kstack + UInt(kernelStackPages) * PageAllocator.pageSize
 
     var userSP = userStackTop
     if packedLen > 0 && argc > 0 {
@@ -205,6 +213,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pState[slot] = pReady
     pParent[slot] = parent
     pTtbr0[slot] = ttbr0
+    pKstack[slot] = kstack
     pExit[slot] = 0
     pKilled[slot] = false
     pWait[slot] = waitNone
@@ -225,12 +234,14 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
     let ttbr0 = address_space_create()
     if ttbr0 == 0 { return (0, 0, 0) }
     let entry = elfLoad(ttbr0, UnsafeRawPointer(bitPattern: image), size)
-    if entry == 0 { return (0, 0, 0) }
+    if entry == 0 { address_space_destroy(ttbr0); return (0, 0, 0) }
 
     var va = userStackTop - UInt(userStackPages) * PageAllocator.pageSize
     while va < userStackTop {
         let pa = pmmAllocZeroedPage()
         if pa == 0 || address_space_map(ttbr0, va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+            if pa != 0 { pmmFreePage(pa) }
+            address_space_destroy(ttbr0)
             return (0, 0, 0)
         }
         va += PageAllocator.pageSize
@@ -277,6 +288,28 @@ private func wakeParent(of slot: Int) {
     }
 }
 
+/// Reap a zombie slot: return its frames to the PMM and mark the slot unused.
+/// The caller must already hold the exit status it needs (this clears nothing
+/// but ownership). Safe because a zombie never runs again, so its address space
+/// and kernel stack are quiescent; address_space_destroy switches off the
+/// doomed TTBR0 first if it happens to be the one currently installed.
+private func reapProcess(_ slot: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    if pTtbr0[slot] != 0 {
+        address_space_destroy(pTtbr0[slot])
+        pTtbr0[slot] = 0
+    }
+    if pKstack[slot] != 0 {
+        var pa = pKstack[slot]
+        for _ in 0..<kernelStackPages {
+            pmmFreePage(pa)
+            pa += PageAllocator.pageSize
+        }
+        pKstack[slot] = 0
+    }
+    pState[slot] = pUnused
+}
+
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
 //
 // The loop runs with IRQs masked so a timer tick can never preempt a switch-in
@@ -320,7 +353,7 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
     schedule(until: { pState[slot] == pZombie })
     let code = pExit[slot]
     lastReapedKilled = pKilled[slot]
-    pState[slot] = pUnused
+    reapProcess(slot)
     return code
 }
 
@@ -334,8 +367,8 @@ func processRunPair(_ imageA: UInt, _ sizeA: UInt, _ pa: UInt, _ na: UInt, _ ca:
         while true {}
     }
     schedule(until: { pState[a] == pZombie && pState[b] == pZombie })
-    pState[a] = pUnused
-    pState[b] = pUnused
+    reapProcess(a)
+    reapProcess(b)
 }
 
 /// spawn(path) child: create it, block until it exits, return its exit status.
@@ -348,7 +381,7 @@ func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UIn
     yieldToScheduler() // scheduler runs the child; we resume once it exits
     let code = pExit[child]
     pWait[parent] = waitNone
-    pState[child] = pUnused // reap
+    reapProcess(child)
     return code
 }
 
@@ -372,9 +405,9 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     let childTtbr0 = address_space_clone(pTtbr0[parent])
     if childTtbr0 == 0 { return -12 } // ENOMEM
 
-    let kstack = pmmAllocPages(2)
-    if kstack == 0 { return -12 }
-    let kstackTop = kstack + 2 * PageAllocator.pageSize
+    let kstack = pmmAllocPages(kernelStackPages)
+    if kstack == 0 { address_space_destroy(childTtbr0); return -12 }
+    let kstackTop = kstack + UInt(kernelStackPages) * PageAllocator.pageSize
 
     // Copy the parent's 288-byte trap frame to the top of the child kstack.
     let frameWords = 36
@@ -391,6 +424,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pState[child] = pReady
     pParent[child] = parent
     pTtbr0[child] = childTtbr0
+    pKstack[child] = kstack
     pExit[child] = 0
     pKilled[child] = false
     pWait[child] = waitNone
@@ -425,7 +459,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
         if found >= 0 {
             let code = pExit[found]
             let killed = pKilled[found]
-            pState[found] = pUnused // reap
+            reapProcess(found)
             pWait[parent] = waitNone
             if statusVA != 0, let sp = userWritableBuffer(statusVA, 4) {
                 // WEXITSTATUS = (s >> 8) & 0xff; signal in low 7 bits.
@@ -451,6 +485,10 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed, packedLen: packedLen, argc: argc)
     if ttbr0 == 0 { return -12 } // ENOMEM / invalid image during bring-up
 
+    // The old image is fully replaced; reclaim its frames once we are no longer
+    // running on its tables. The kernel stack is reused across exec, so it is
+    // not freed here — only the address space.
+    let oldTtbr0 = pTtbr0[me]
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
     // New image replaces the resident set (old pages are dropped with the old
@@ -464,6 +502,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     frame[trapFrameELRIndex] = entry
     frame[trapFrameSPSRIndex] = 0
     address_space_switch(ttbr0)
+    address_space_destroy(oldTtbr0) // now on the new space; old tables are dead
     return 0
 }
 

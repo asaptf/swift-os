@@ -298,6 +298,59 @@ private func runIdentityDemo() {
     uartPuts("\n")
 }
 
+// One round of teardown-exercising work: fork+waitpid (forkdemo), exec-replace
+// (execdemo), and spawn+reap (spawndemo). Each image is loaded immediately
+// before it runs because the ELF staging buffer (exec.swift's elfBuf) is shared
+// and reused. Returns the number of programs that actually ran.
+private func runReclaimRound() -> Int {
+    var ran = 0
+    let (fk, fks) = demoImage("/bin/forkdemo")
+    if fk != 0 {
+        let (p, n, c) = packArgs(["forkdemo"])
+        _ = processRunElf(fk, fks, packed: p, packedLen: n, argc: c); ran += 1
+    }
+    let (ex, exs) = demoImage("/bin/execdemo")
+    if ex != 0 {
+        let (p, n, c) = packArgs(["execdemo"])
+        _ = processRunElf(ex, exs, packed: p, packedLen: n, argc: c); ran += 1
+    }
+    let (sp, sps) = demoImage("/bin/spawndemo")
+    if sp != 0 {
+        let (p, n, c) = packArgs(["spawndemo"])
+        _ = processRunElf(sp, sps, packed: p, packedLen: n, argc: c); ran += 1
+    }
+    return ran
+}
+
+/// Process-teardown reclamation self-test. Runs several rounds of fork/exec/
+/// spawn/exit/reap and asserts the PMM free-frame count is identical before and
+/// after — proving every frame (address space, page tables, kernel stacks) is
+/// returned to the allocator. Regression guard for the ~2 MiB-per-command leak
+/// that previously exhausted RAM after ~100 commands.
+private func runReclaimDemo() {
+    uartPuts("swift-os reclaim: process teardown frees frames\n")
+    // A warm-up round settles any one-time lazy state (e.g. the ELF staging
+    // buffer) so the baseline measures steady-state frame use only.
+    if runReclaimRound() == 0 {
+        uartPuts("reclaim: demo images missing; skipping\n")
+        return
+    }
+    let baseline = pmmFreeCount()
+    for _ in 0..<5 { _ = runReclaimRound() }
+    let after = pmmFreeCount()
+
+    uartPuts("reclaim: free frames baseline=")
+    uartPutUInt(UInt64(baseline))
+    uartPuts(" after=")
+    uartPutUInt(UInt64(after))
+    uartPuts("\n")
+    if after == baseline {
+        uartPuts("reclaim OK: no frame leak across fork/exec/exit/reap\n")
+    } else {
+        uartPuts("reclaim FAIL: leaked frames across process teardown\n")
+    }
+}
+
 private func runPsDemo() {
     uartPuts("swift-os userland: Swift ps\n")
     let (img, sz) = demoImage("/bin/ps")
@@ -652,6 +705,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
+        runReclaimDemo()
         runPsDemo()
         runTtyDemo()
         runInit() // console-login (init) — interactive, last
