@@ -274,11 +274,11 @@ private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ 
 /// to the compiled-in literals. The metadata buffer (entries + string table) is
 /// kept permanently: vnode names point straight into it.
 private func buildBaseFromDisk(_ root: Int) -> Bool {
-    if virtio_blk_available() == 0 { return false }
+    if !virtioBlkAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
-        virtio_blk_read_range(0, raw.baseAddress, 64) == 0
+        virtioBlkReadRange(0, raw.baseAddress, 64) == 0
     }
     if !hok { return false }
 
@@ -306,7 +306,7 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
 
         guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
         let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
-        if virtio_blk_read_range(entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+        if virtioBlkReadRange(entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
 
         let stringsBase = Int(stringsOffset - entriesOffset)
         for k in 0..<entryCount {
@@ -739,7 +739,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         if avail <= 0 { return 0 }
         let want = min(Int(count), avail)
         let off = UInt64(nodes[node].diskOffset + file.offset)
-        let rc = virtio_blk_read_range(off, UnsafeMutableRawPointer(dst), UInt32(want))
+        let rc = virtioBlkReadRange(off, UnsafeMutableRawPointer(dst), UInt32(want))
         if rc != 0 { return errInvalid }
         file.offset += want
         openDescriptions[d] = file

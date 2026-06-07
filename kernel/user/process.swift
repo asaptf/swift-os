@@ -181,7 +181,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
 
     let ttbr0 = address_space_create()
     if ttbr0 == 0 { return -1 }
-    let entry = elf_load(ttbr0, UnsafeRawPointer(bitPattern: image), size)
+    let entry = elfLoad(ttbr0, UnsafeRawPointer(bitPattern: image), size)
     if entry == 0 { address_space_destroy(ttbr0); return -1 }
 
     var va = userStackTop - UInt(userStackPages) * PageAllocator.pageSize
@@ -201,7 +201,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
 
     var userSP = userStackTop
     if packedLen > 0 && argc > 0 {
-        let built = user_stack_build(ttbr0, userStackTop,
+        let built = userStackBuild(ttbr0, userStackTop,
                                      UnsafePointer<CChar>(bitPattern: packed), packedLen, Int32(argc))
         if built != 0 { userSP = built }
     }
@@ -223,11 +223,11 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
     pIsThread[slot] = false
-    // elf_load (above) recorded the image's mapped page count; stack mapping used
+    // elfLoad (above) recorded the image's mapped page count; stack mapping used
     // the PMM directly, so it is still valid. RES = image + user stack pages.
     pCpuTicks[slot] = 0
     pStartTick[slot] = systemTicks
-    pResPages[slot] = Int(elf_last_load_pages()) + userStackPages
+    pResPages[slot] = Int(elfLastLoadPages()) + userStackPages
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent)
@@ -238,7 +238,7 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
                             argc: Int) -> (UInt, UInt, UInt) {
     let ttbr0 = address_space_create()
     if ttbr0 == 0 { return (0, 0, 0) }
-    let entry = elf_load(ttbr0, UnsafeRawPointer(bitPattern: image), size)
+    let entry = elfLoad(ttbr0, UnsafeRawPointer(bitPattern: image), size)
     if entry == 0 { address_space_destroy(ttbr0); return (0, 0, 0) }
 
     var va = userStackTop - UInt(userStackPages) * PageAllocator.pageSize
@@ -254,7 +254,7 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
 
     var userSP = userStackTop
     if packedLen > 0 && argc > 0 {
-        let built = user_stack_build(ttbr0, userStackTop,
+        let built = userStackBuild(ttbr0, userStackTop,
                                      UnsafePointer<CChar>(bitPattern: packed), packedLen, Int32(argc))
         if built != 0 { userSP = built }
     }
@@ -569,7 +569,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     pBrk[me] = userHeapBase
     // New image replaces the resident set (old pages are dropped with the old
     // address space); accumulated CPU time and the start tick survive the exec.
-    pResPages[me] = Int(elf_last_load_pages()) + userStackPages
+    pResPages[me] = Int(elfLastLoadPages()) + userStackPages
     // POSIX: close-on-exec descriptors are dropped across exec. ash relocates
     // its saved fds above 10 with F_DUPFD_CLOEXEC and relies on this.
     vfsCloseCloexec(slot: me)

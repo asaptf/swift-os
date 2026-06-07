@@ -373,9 +373,9 @@ private func runPsDemo() {
 /// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
 /// recognise here — the M11c on-disk filesystem will build on this read path.
 private func runVirtioBlkProbe() {
-    let cap = virtio_blk_init(UInt64(platform.virtioMmioBase),
-                              UInt64(platform.virtioMmioStride),
-                              platform.virtioMmioCount)
+    let cap = virtioBlkInit(platform.virtioMmioBase,
+                            platform.virtioMmioStride,
+                            platform.virtioMmioCount)
     if cap == 0 {
         uartPuts("M11b: no virtio-blk disk attached\n")
         return
@@ -386,7 +386,7 @@ private func runVirtioBlkProbe() {
 
     var sector = [UInt8](repeating: 0, count: 512)
     let rc = sector.withUnsafeMutableBytes { raw -> Int32 in
-        virtio_blk_read(0, raw.baseAddress)
+        virtioBlkRead(0, raw.baseAddress)
     }
     if rc != 0 {
         uartPuts("M11b: sector 0 read failed, rc ")
@@ -575,7 +575,7 @@ func irqHandler() {
 /// no keyboard device (the getchar returns -1 immediately).
 private func virtioKbdDrain() {
     while true {
-        let b = virtio_kbd_getchar()
+        let b = virtioKbdGetchar()
         if b < 0 { break }
         ttyOnInput(UInt8(b & 0xFF))
     }
@@ -679,7 +679,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
-    let windowKeyboard = virtio_kbd_init() > 0  // graphical window has a keyboard
+    let windowKeyboard = virtioKbdInit() > 0  // graphical window has a keyboard
     if windowKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }

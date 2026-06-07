@@ -81,6 +81,8 @@ SWIFT_SRCS := \
 	kernel/drivers/uart.swift \
 	kernel/drivers/gic.swift \
 	kernel/drivers/virtio_net.swift \
+	kernel/drivers/virtio_blk.swift \
+	kernel/drivers/virtio_input.swift \
 	kernel/net/packet.swift \
 	kernel/net/ethernet.swift \
 	kernel/net/arp.swift \
@@ -103,6 +105,8 @@ SWIFT_SRCS := \
 	kernel/user/user_process.swift \
 	kernel/user/process.swift \
 	kernel/user/exec.swift \
+	kernel/user/elf.swift \
+	kernel/user/ustack.swift \
 	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift
@@ -186,11 +190,7 @@ HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 FB_OBJ     := $(BUILD)/fb.o
-VIRTIO_OBJ := $(BUILD)/virtio_input.o
-VIRTIO_BLK_OBJ := $(BUILD)/virtio_blk.o
 EL0_OBJ    := $(BUILD)/el0.o
-ELF_OBJ    := $(BUILD)/elf.o
-USTACK_OBJ := $(BUILD)/ustack.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
@@ -312,19 +312,7 @@ $(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
 $(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
-$(VIRTIO_OBJ): kernel/drivers/virtio_input.c $(BRIDGE) Makefile | $(BUILD)/.dir
-	$(CLANG) $(C_FLAGS) $< -o $@
-
-$(VIRTIO_BLK_OBJ): kernel/drivers/virtio_blk.c $(BRIDGE) Makefile | $(BUILD)/.dir
-	$(CLANG) $(C_FLAGS) $< -o $@
-
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
-	$(CLANG) $(C_FLAGS) $< -o $@
-
-$(ELF_OBJ): kernel/user/elf.c $(BRIDGE) Makefile | $(BUILD)/.dir
-	$(CLANG) $(C_FLAGS) $< -o $@
-
-$(USTACK_OBJ): kernel/user/ustack.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(USER_ENTRY_OBJ): $(ARCH_DIR)/user_entry.S Makefile | $(BUILD)/.dir
@@ -593,7 +581,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(FB_OBJ) $(VIRTIO_OBJ) $(VIRTIO_BLK_OBJ) $(EL0_OBJ) $(ELF_OBJ) $(USTACK_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(FB_OBJ) $(EL0_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
