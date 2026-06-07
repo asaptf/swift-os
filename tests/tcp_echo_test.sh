@@ -25,6 +25,7 @@ command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to connect)"
 LOG="$(mktemp -t swiftos-tcp.XXXXXX)"
 NCOUT="$(mktemp -t swiftos-tcp-nc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-tcp-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-tcp-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -33,21 +34,26 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$NCOUT" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-# Feed the console: skip the M7 tty demo, log in as root, then run tcpecho. Keep
-# stdin open afterwards so the server can accept/echo and QEMU stays alive.
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/tcpecho\n'
-  sleep 20
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+# await: block until a literal MARKER appears in the serial log (bounded).
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+# Boot QEMU with its console read from a FIFO that we hold open on fd 3, so the
+# main script can drive the login *reactively* (below) instead of on a fixed
+# timeline. Opening the FIFO read-write (3<>) never blocks and keeps it open; QEMU
+# is the only process that read()s it, so every byte we write reaches the guest.
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
@@ -55,8 +61,20 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0,hostfwd=tcp:127.0.0.1:5555-:5555 \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
+exec 3<>"$INFIFO"
+
+# Wait for each stage's prompt before sending its input, rather than using fixed
+# sleeps: on a cold `make test` boot a fixed schedule can lag enough that a line
+# lands in the wrong reader and the guest never reaches tcpecho ("never reported
+# listening"). tty input is line-buffered, so sending the instant the prompt
+# appears is safe. Skip the M7 tty demo, log in as root, then run tcpecho.
+await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
+await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
+await "swift-os login:"                20 && printf 'root\n'         >&3
+await "Password:"                      15 && printf 'swordfish\n'    >&3
+await "Welcome to swift-os, root"      15 && printf '/bin/tcpecho\n' >&3
 
 # Wait for the guest to listen, then connect + send a line from the host.
 listening=0
@@ -64,10 +82,37 @@ for _ in $(seq 1 40); do
   if grep -qF "tcpecho: listening on 5555" "$LOG"; then listening=1; break; fi
   sleep 1
 done
+
+# Connect with a patient timeout + bounded retry. The virtio-net driver is polled,
+# so the guest only services the wire while blocked in a syscall; tcpecho prints
+# "listening" just *before* it enters accept(), and the host's hostfwd connect
+# resolves instantly against slirp regardless of guest state. So a connect can land
+# in that startup gap and the guest-side SYN/ARP handshake then races the listener
+# reaching accept() — and on a cold, post-build `make test` host, QEMU is starved
+# enough that the handshake + echo can take several seconds of wall-clock. The
+# original single `nc -w3` gave up mid-handshake, with no recovery for a one-shot
+# server (the flake). The `-w` here is generous so the *same* connection that sent
+# the data waits out a slow handshake and receives the echo (a short timeout risks
+# the guest consuming its one accept just after nc gave up — data read, echo lost).
+# The retry then only has to cover an attempt that fails to connect outright; we
+# stop as soon as the echo returns, or once the guest has spent its one accept.
 if [[ "$listening" -eq 1 ]]; then
-  printf '%s\n' "$MSG" | nc -w3 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+  for _ in $(seq 1 4); do
+    : > "$NCOUT"
+    printf '%s\n' "$MSG" | nc -w8 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+    grep -qF "$MSG" "$NCOUT" && break                      # echo came back → done
+    grep -Eq "tcpecho: got [0-9]+ bytes" "$LOG" && break   # one-shot server spent
+    sleep 1                                                # brief backoff, then retry
+  done
 fi
-sleep 2
+
+# Let the guest flush its "got N bytes" line before we tear QEMU down (bounded;
+# emitted right after the echo we just received, so it normally returns at once).
+for _ in $(seq 1 20); do
+  grep -Eq "tcpecho: got [0-9]+ bytes" "$LOG" && break
+  sleep 0.1
+done
+exec 3>&-          # close the guest's console stdin (QEMU survives the EOF)
 stop_qemu
 QP=""
 
