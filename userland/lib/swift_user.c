@@ -519,3 +519,43 @@ long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms) {
 unsigned int swiftos_resolve(const char *name, unsigned int server_ip, unsigned short server_port) {
     return (unsigned int)__syscall3(SYS_RESOLVE, (long)name, (long)server_ip, (long)server_port);
 }
+
+// ---- Threads + futex (rt-a) ------------------------------------------------
+int swiftos_thread_create(unsigned long entry, unsigned long arg, unsigned long stack_top) {
+    return (int)__syscall3(SYS_THREAD_CREATE, (long)entry, (long)arg, (long)stack_top);
+}
+
+int swiftos_futex(unsigned int *uaddr, int op, unsigned int val) {
+    return (int)__syscall3(SYS_FUTEX, (long)uaddr, op, (long)val);
+}
+
+long swiftos_getpid(void) {
+    return __syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+void swiftos_thread_exit(void) {
+    __syscall3(SYS_EXIT, 0, 0, 0);
+    for (;;) {
+    }
+}
+
+// Atomic CAS via the AArch64 LL/SC loop. Returns the prior value of *p; the
+// store happened iff that equals `expected`. __ATOMIC_SEQ_CST gives the barriers
+// the futex protocol relies on (the lock word orders the protected counter).
+unsigned int swiftos_atomic_cas(unsigned int *p, unsigned int expected, unsigned int desired) {
+    __atomic_compare_exchange_n(p, &expected, desired, 0,
+                                __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return expected; // updated to the actual prior value on failure
+}
+
+unsigned int swiftos_atomic_swap(unsigned int *p, unsigned int desired) {
+    return __atomic_exchange_n(p, desired, __ATOMIC_SEQ_CST);
+}
+
+unsigned int swiftos_atomic_load(unsigned int *p) {
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+
+unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta) {
+    return __atomic_fetch_add(p, delta, __ATOMIC_SEQ_CST);
+}

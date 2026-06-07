@@ -52,6 +52,10 @@ private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 private var pPrincipal = [UInt32](repeating: 0, count: maxProc)
 private var pSession = [UInt32](repeating: 0, count: maxProc)
 private var pCaps = [UInt64](repeating: 0, count: maxProc)
+// rt-a: a thread shares its creator's address space (TTBR0) instead of owning a
+// private one, so its exit must not be treated as an address-space teardown and
+// it joins via futex rather than waitpid.
+private var pIsThread = [Bool](repeating: false, count: maxProc)
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var rrCursor = 0     // round-robin hint
@@ -196,6 +200,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    pIsThread[slot] = false
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent)
@@ -377,10 +382,81 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
+    pIsThread[child] = false
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
     return child + 1 // pid
+}
+
+/// thread_create(entryVA, argVA, stackTopVA): spawn a new EL0 thread that SHARES
+/// the current process's address space (same TTBR0, hence the same code, data,
+/// and heap), runs `entry(arg)` on the caller-supplied user stack, and is
+/// schedulable alongside its siblings. This is "fork without copying the address
+/// space", plus an explicit entry point and stack — the kernel primitive a
+/// userland threading runtime is built on. Returns the new thread's pid, or a
+/// negative errno. The shared address space is never torn down here; it outlives
+/// every thread (page reclamation is a global follow-up, as for processes).
+func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
+    let creator = currentProc
+    guard creator >= 0 else { return -22 } // EINVAL: no active process
+    // The entry PC and the top of the thread's stack must be valid user VAs in
+    // the (shared) address space; reject obvious garbage early.
+    if userReadableBuffer(entryVA, 4) == nil { return -14 } // EFAULT
+    // The stack grows down from stackTopVA; require the word just below the top
+    // to be a writable user VA in the shared space.
+    if stackTopVA < 16 || userWritableBuffer(stackTopVA - 16, 16) == nil { return -14 }
+
+    let slot = allocSlot()
+    if slot < 0 { return -11 } // EAGAIN: process table full
+
+    let kstack = pmmAllocPages(2)
+    if kstack == 0 { return -12 } // ENOMEM
+    let kstackTop = kstack + 2 * PageAllocator.pageSize
+
+    // Craft a first-run context that lands in user_thread_launch_arg, which
+    // installs the shared TTBR0 and eret's to entry(arg) on the given stack.
+    let ctx = procCtx.advanced(by: slot)
+    ctx.pointee = CPUContext()
+    ctx.pointee.x19 = UInt64(entryVA)             // entry PC
+    ctx.pointee.x20 = UInt64(stackTopVA)          // SP_EL0
+    ctx.pointee.x21 = UInt64(pTtbr0[creator])     // shared address space
+    ctx.pointee.x22 = UInt64(argVA)               // entry argument (x0)
+    ctx.pointee.lr = UInt64(user_thread_launch_arg_addr())
+    ctx.pointee.sp = UInt64(kstackTop)
+
+    pState[slot] = pReady
+    // Parent is the creator's parent so the thread is a sibling, not a child:
+    // it must not be reapable by the creator's waitpid (threads join via futex).
+    pParent[slot] = pParent[creator]
+    pTtbr0[slot] = pTtbr0[creator] // SHARED — not a clone
+    pExit[slot] = 0
+    pKilled[slot] = false
+    pWait[slot] = waitNone
+    pBrk[slot] = pBrk[creator]
+    pIsThread[slot] = true
+    copyProcessName(from: creator, to: slot)
+    copyProcessSecurity(from: creator, to: slot)
+    // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
+    // needs shared stdout; full fd-table aliasing is a follow-up — see NOTES).
+    vfsProcessInit(slot: slot, parent: creator)
+    return slot + 1 // thread id (a pid in the shared table)
+}
+
+/// FUTEX_WAIT backend: block the current thread until a FUTEX_WAKE marks it
+/// ready again. Mirrors processYieldForIO but parks in pBlocked (it must not be
+/// rescheduled until explicitly woken). Returns once rescheduled.
+func processBlockOnFutex() {
+    let me = currentProc
+    if me < 0 { return }
+    pState[me] = pBlocked
+    yieldToScheduler()
+}
+
+/// FUTEX_WAKE backend: mark a futex-blocked thread runnable again.
+func processWakeFromFutex(_ slot: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    if pState[slot] == pBlocked { pState[slot] = pReady }
 }
 
 /// waitpid(pid, *status, opts): reap a (matching) zombie child, blocking until
@@ -529,6 +605,16 @@ func processOnTick() {
 func processExit(_ code: Int) {
     let me = currentProc
     vfsProcessCloseAll(slot: me)
+    // rt-a: a thread has no waitpid joiner (siblings join via futex), so it must
+    // not linger as an unreapable zombie — free its slot directly. The shared
+    // address space stays mapped for the surviving threads. Drop any stale futex
+    // wait record first so a later wake cannot resurrect a reused slot.
+    if pIsThread[me] {
+        futexForgetSlot(me)
+        pState[me] = pUnused
+        yieldToScheduler()
+        while true { wfi() }
+    }
     pExit[me] = code
     pKilled[me] = false
     pState[me] = pZombie

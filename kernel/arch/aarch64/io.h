@@ -85,6 +85,8 @@ uintptr_t trap_return_addr(void); // exceptions.S — fork child trap-return ent
 // ELF64 loader (kernel/user/elf.c) and EL0 entry trampoline (user_entry.S).
 uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
 uintptr_t user_thread_launch_addr(void);
+// rt-a: EL0 thread first-run trampoline, entry(arg) — see user_entry.S.
+uintptr_t user_thread_launch_arg_addr(void);
 
 // Build the initial EL0 stack (argc/argv/envp). kernel/user/ustack.c.
 uintptr_t user_stack_build(uintptr_t ttbr0, uintptr_t stack_top,

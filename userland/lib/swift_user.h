@@ -84,4 +84,28 @@ long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
 // the slirp DNS (10.0.2.3); server_port 0 uses 53. Returns 0 on failure.
 unsigned int swiftos_resolve(const char *name, unsigned int server_ip, unsigned short server_port);
 
+// Threads + futex (rt-a). swiftos_thread_create spawns a new EL0 thread that
+// shares this process's address space and runs entry(arg) on the given stack
+// top; returns a thread id (>0) or a negative errno. The futex helpers operate
+// on a 32-bit word at *uaddr: WAIT blocks while *uaddr == val; WAKE wakes up to
+// `val` waiters and returns the number woken.
+#define SWIFTOS_FUTEX_WAIT 0
+#define SWIFTOS_FUTEX_WAKE 1
+int swiftos_thread_create(unsigned long entry, unsigned long arg, unsigned long stack_top);
+int swiftos_futex(unsigned int *uaddr, int op, unsigned int val);
+long swiftos_getpid(void);
+// Terminate the calling thread (frees just this thread; the shared address
+// space lives on for the others). A thread's entry function must call this
+// rather than return — it was entered via eret with no valid return address.
+void swiftos_thread_exit(void) __attribute__((noreturn));
+
+// Atomic primitives over a 32-bit word (low-level LL/SC the Swift layer cannot
+// express directly). CAS returns the value read before the attempt; the swap
+// succeeded iff that equals `expected`. Used to build a futex mutex in Swift.
+unsigned int swiftos_atomic_cas(unsigned int *p, unsigned int expected, unsigned int desired);
+unsigned int swiftos_atomic_swap(unsigned int *p, unsigned int desired);
+// Atomic load / fetch-add on a 32-bit word.
+unsigned int swiftos_atomic_load(unsigned int *p);
+unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta);
+
 #endif // SWIFTOS_USER_SWIFT_USER_H
