@@ -79,6 +79,7 @@ SWIFT_SRCS := \
 	kernel/arch/aarch64/platform.swift \
 	kernel/arch/aarch64/fdt.swift \
 	kernel/drivers/uart.swift \
+	kernel/drivers/fb.swift \
 	kernel/drivers/gic.swift \
 	kernel/drivers/virtio_net.swift \
 	kernel/drivers/virtio_blk.swift \
@@ -191,7 +192,6 @@ SWITCH_OBJ := $(BUILD)/switch.o
 HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
-FB_OBJ     := $(BUILD)/fb.o
 EL0_OBJ    := $(BUILD)/el0.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
 KERNEL_OBJ := $(BUILD)/kernel.o
@@ -315,9 +315,6 @@ $(STRING_OBJ): kernel/runtime/string.c Makefile | $(BUILD)/.dir
 # C2: vm.c split into vm_early.c (MMU-off bring-up half, C) + vm.swift
 # (per-process address spaces, Swift — listed in SWIFT_SRCS above).
 $(VM_OBJ): kernel/mm/vm_early.c $(BRIDGE) Makefile | $(BUILD)/.dir
-	$(CLANG) $(C_FLAGS) $< -o $@
-
-$(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
@@ -604,7 +601,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(FB_OBJ) $(EL0_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
