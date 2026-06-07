@@ -13,7 +13,7 @@
 // One per kind of kernel-managed object behind a handle. 1:1 with the old
 // fdKind* constants in vfs.swift: none/tty/file/pipe/socket, with the former
 // fdKindVNode folding into .file (directories keep using .file too).
-enum HandleKind: UInt8 { case none, tty, file, pipe, socket }
+enum HandleKind: UInt8 { case none, tty, file, pipe, socket, endpoint }
 
 // Per-handle, per-kind rights — a typed bitset checked per *handle*, not per
 // *process*. read/write are used today; the rest are reserved for later

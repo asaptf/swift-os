@@ -57,6 +57,9 @@
 #define SYS_THREAD_CREATE 48
 #define SYS_FUTEX         49
 #define SYS_CONFINE       50
+#define SYS_ENDPOINT_CREATE 51
+#define SYS_IPC_SEND      52
+#define SYS_IPC_RECV      53
 
 #ifndef __ASSEMBLER__
 
@@ -95,6 +98,19 @@ static inline int close(int fd) {
 // paths outside it are denied. Confine-only (cannot widen). Negative on error.
 static inline int confine(const char *path) {
     return (int)__syscall3(SYS_CONFINE, (long)path, 0, 0);
+}
+
+// C4a: handle-passing IPC. endpoint_create fills ends[2] = {send, recv}. ipc_send
+// transfers the handle at handle_fd to the peer; ipc_recv blocks and returns a new
+// fd for the received handle. Negative on error.
+static inline int endpoint_create(int ends[2]) {
+    return (int)__syscall3(SYS_ENDPOINT_CREATE, (long)ends, 0, 0);
+}
+static inline int ipc_send(int fd, int handle_fd) {
+    return (int)__syscall3(SYS_IPC_SEND, fd, handle_fd, 0);
+}
+static inline int ipc_recv(int fd) {
+    return (int)__syscall3(SYS_IPC_RECV, fd, 0, 0);
 }
 
 static inline long lseek(int fd, long offset, int whence) {

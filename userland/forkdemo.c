@@ -30,6 +30,12 @@ int main(void) {
         return 1;
     }
 
+    int ep[2];
+    if (endpoint_create(ep) != 0) {
+        puts_raw("forkdemo: endpoint_create failed\n");
+        return 1;
+    }
+
     int status = 0;
     int pid = fork();
     if (pid < 0) {
@@ -56,7 +62,26 @@ int main(void) {
         }
         puts_raw("forkdemo: child inherited cwd/fd\n");
         puts_raw("forkdemo: child sees private marker\n");
+        // C4a: receive a handle the parent transfers over the IPC endpoint — one
+        // the child never inherited (the parent opens it after the fork). Reading
+        // it proves the capability moved across the endpoint.
+        close(ep[0]);
+        int rf = ipc_recv(ep[1]);
+        if (rf < 0) { puts_raw("forkdemo: ipc_recv failed\n"); return 1; }
+        long m = read(rf, buf, sizeof(buf) - 1);
+        if (m <= 0) { puts_raw("forkdemo: transferred handle unreadable\n"); return 1; }
+        puts_raw("forkdemo: IPC-XFER-OK\n");
+        close(rf);
         return 42;
+    }
+
+    // C4a: hand the child a handle it did not inherit — opened after the fork —
+    // then transfer it over the endpoint.
+    close(ep[1]);
+    int xf = open("/etc/hostname", O_RDONLY);
+    if (xf < 0 || ipc_send(ep[0], xf) != 0) {
+        puts_raw("forkdemo: ipc_send failed\n");
+        return 1;
     }
 
     int waited = waitpid(pid, &status, 0);

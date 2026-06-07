@@ -119,6 +119,17 @@ private struct Pipe {
     var writeRefs = 0
 }
 
+// C4a: a handle-passing IPC endpoint — a channel that carries a transferred Handle
+// (capability) instead of bytes. Modeled on Pipe: a single in-flight handle slot,
+// with sendRefs/recvRefs tracking open ends. See docs/CAPABILITIES.md §4.
+private struct Endpoint {
+    var inUse = false
+    var hasHandle = false
+    var handle = HandleEntry()
+    var sendRefs = 0
+    var recvRefs = 0
+}
+
 private let maxFDs = 32
 private let maxOpenDescriptions = 96
 private let maxPipes = 16
@@ -128,6 +139,10 @@ private let maxVFSProcesses = 16
 private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * maxVFSProcesses)
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
+private let maxEndpoints = 16
+private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
+private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
+private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // C3: the subtree a process is confined to — object-scoped fs authority. 0 means
 // unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
@@ -579,6 +594,21 @@ private func releaseDescription(_ d: Int) {
             pipes[desc.pipe] = Pipe()
         }
     }
+    if desc.kind == .endpoint && desc.node >= 0 && desc.node < maxEndpoints && endpoints[desc.node].inUse {
+        let ep = desc.node
+        if desc.pipeEnd == endpointSendEnd {
+            if endpoints[ep].sendRefs > 0 { endpoints[ep].sendRefs -= 1 }
+        } else {
+            if endpoints[ep].recvRefs > 0 { endpoints[ep].recvRefs -= 1 }
+        }
+        if endpoints[ep].sendRefs == 0 && endpoints[ep].recvRefs == 0 {
+            // Balance an in-flight handle that was never received before teardown.
+            if endpoints[ep].hasHandle && endpoints[ep].handle.inUse {
+                releaseDescription(endpoints[ep].handle.object)
+            }
+            endpoints[ep] = Endpoint()
+        }
+    }
     openDescriptions[d] = OpenDescription()
 }
 
@@ -1006,6 +1036,96 @@ func vfsPipe(fdsVA: UInt) -> Int {
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
     return 0
+}
+
+// ---- C4a: handle-passing IPC endpoints ------------------------------------
+//
+// A minimal capability-passing primitive (docs/CAPABILITIES.md §4): endpoint_create
+// returns a (send, recv) fd pair; ipc_send MOVES a handle into the channel; ipc_recv
+// blocks until one arrives and installs it as a new fd in the receiver. This is the
+// keystone for restartable services and cells. Modeled on the pipe subsystem above;
+// byte payloads, bidirectional channels, VMOs and async rings are later sub-milestones.
+// Note: endpoints allocate no heap (unlike pipes), so they add no frame churn.
+
+private func allocEndpoint() -> Int {
+    for i in 0..<maxEndpoints where !endpoints[i].inUse {
+        endpoints[i] = Endpoint(inUse: true, hasHandle: false, handle: HandleEntry(),
+                                sendRefs: 1, recvRefs: 1)
+        return i
+    }
+    return -1
+}
+
+/// endpoint_create(int ends[2]) -> 0; ends[0] = send end, ends[1] = recv end.
+func vfsEndpointCreate(endsVA: UInt) -> Int {
+    guard let out = userWritableBuffer(endsVA, 8) else { return errInvalid }
+    let proc = currentVFSProcess()
+    let sfd = allocFDInProcess(proc, from: 0)
+    if sfd == -1 { return errNoSpace }
+    setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve
+    let rfd = allocFDInProcess(proc, from: 0)
+    setFDEntry(proc, sfd, HandleEntry())
+    if rfd == -1 { return errNoSpace }
+
+    let ep = allocEndpoint()
+    if ep == -1 { return errNoMem }
+    let sd = allocDescription()
+    let rd = allocDescription()
+    if sd == -1 || rd == -1 { return errNoSpace }
+
+    openDescriptions[sd].kind = .endpoint
+    openDescriptions[sd].node = ep
+    openDescriptions[sd].pipeEnd = endpointSendEnd
+    openDescriptions[rd].kind = .endpoint
+    openDescriptions[rd].node = ep
+    openDescriptions[rd].pipeEnd = endpointRecvEnd
+
+    installDescription(proc, sfd, sd, rights: [.write, .transfer])
+    installDescription(proc, rfd, rd, rights: [.read, .transfer])
+    let raw = UnsafeMutableRawPointer(out)
+    raw.storeBytes(of: Int32(sfd), toByteOffset: 0, as: Int32.self)
+    raw.storeBytes(of: Int32(rfd), toByteOffset: 4, as: Int32.self)
+    return 0
+}
+
+/// ipc_send(fd, handleFd): MOVE the handle at handleFd to the endpoint's peer. The
+/// sender's fd is cleared WITHOUT releasing the underlying object — ownership (and
+/// its refcount) transfers with the handle. errAgain if a handle is already in
+/// flight (single-slot channel for C4a).
+func vfsIpcSend(fd: Int, handleFd: Int) -> Int {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd), validFD(proc, handleFd), fd != handleFd else { return errBadFD }
+    let desc = openDescriptions[fdEntry(proc, fd).object]
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
+    let ep = desc.node
+    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
+    if endpoints[ep].hasHandle { return errAgain }
+    endpoints[ep].handle = fdEntry(proc, handleFd) // copy the entry...
+    endpoints[ep].hasHandle = true
+    setFDEntry(proc, handleFd, HandleEntry())       // ...then clear the source (move, no release)
+    return 0
+}
+
+/// ipc_recv(fd) -> new fd: block until a handle is in flight, then install it in
+/// this process's table. errPipe if every sender closed first (EOF-like).
+func vfsIpcRecv(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let desc = openDescriptions[fdEntry(proc, fd).object]
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
+    let ep = desc.node
+    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
+    enable_irq()
+    while !endpoints[ep].hasHandle {
+        if endpoints[ep].sendRefs == 0 { return errPipe }
+        processYieldForIO()
+    }
+    let newfd = allocFDInProcess(proc, from: 0)
+    if newfd == -1 { return errNoSpace }
+    setFDEntry(proc, newfd, endpoints[ep].handle)
+    endpoints[ep].handle = HandleEntry()
+    endpoints[ep].hasHandle = false
+    return newfd
 }
 
 func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
