@@ -634,6 +634,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/swift_ls_test.sh
 	./tests/swift_coreutils_test.sh
 	./tests/swift_fileops_test.sh
+	./tests/swift_rm_r_test.sh
 	./tests/swift_chmodown_test.sh
 	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
