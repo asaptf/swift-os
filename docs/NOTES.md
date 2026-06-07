@@ -1351,6 +1351,112 @@ time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + t
 - **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
   loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.
 
+### net-h2 — HTTP MIME types + directory listing (DONE, 2026-06-07)
+
+- **MIME by extension:** `/bin/httpd` derives `Content-Type` from the request path's final extension
+  (`.html`→`text/html`, `.txt`→`text/plain`, `.css`/`.js`/`.json`, else `application/octet-stream`) instead
+  of the net-g hardcoded `text/html`. The extension is the last `.` within the final path segment (a `/`
+  resets the scan).
+- **Directory listing:** when the resolved `/www` path `stat`s as a directory (`S_IFDIR`), httpd reads it
+  with `swiftos_getdents` (same dirent layout as `/bin/ls`) and serves a generated HTML index (skipping
+  `.`/`..`), buffered so `Content-Length` is accurate. `/` still prefers `/www/index.html`; a dir with no
+  index (the new seed `base/www/sub/`) gets the listing. The `..` guard is intact. Userland-only.
+- **Test:** `tests/httpd_test.sh` extended — `GET /hello.txt` carries `Content-Type: text/plain` (via
+  `curl -D -`), and `GET /sub/` returns a listing containing `note.txt`, alongside the net-g concurrent
+  index + 404 assertions.
+- **Deferred:** keep-alive, percent-decoding, HTML-escaping dirent names, listing sort/size columns.
+
+### net-rob — TCP/socket robustness (DONE, 2026-06-07)
+
+Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net/socket.swift`,
+`tests/net_test.swift`.
+
+- **Ephemeral-port allocator.** A pure rotating allocator `nextEphemeralPort(cursor:inUse:)` over the IANA
+  dynamic range **49152–65535** now lives in `tcp.swift` (sans-IO, so the host net_test can unit-check it).
+  `socket.swift` keeps a live `ephemeralCursor` and an `inUse` predicate over the bind table; `socketConnect`,
+  the UDP `socketSend` (implicit bind on first send), and `dnsResolve` all draw from it, replacing the old
+  `40000 + slot` scheme so two concurrent outbound connections (or a slot reused after close) can't collide
+  on a stale port. The cursor wraps within the range and skips ports another bound socket already holds.
+- **Larger connection tables.** `maxSockets` 16 → **32**. The socket buffer pool scales with it
+  (`sockBufBytes = 32·4·1536 = 192 KiB` → `sockBufPages = 48`, one PMM alloc at `netInit`); the DNS scratch
+  is a separate single page, unaffected. Memory cost is ~24 KiB extra, allocated once.
+- **TCP teardown edge cases (engine).** A **RST** from *any* non-LISTEN state (incl. SYN_SENT, the
+  FIN_WAIT/CLOSING/CLOSE_WAIT/LAST_ACK close states, TIME_WAIT) now cleanly tears down: state→CLOSED, RTO
+  off, queued output dropped, and both `ev.reset` **and** `ev.closed` flagged. **TIME_WAIT** already decays
+  to CLOSED via `tick` after `tcpTimeWaitTicks`; simultaneous-close ordering is correct (FIN before the
+  ACK-of-our-FIN → CLOSING → TIME_WAIT once acked; FIN+ACK together → TIME_WAIT directly).
+- **Slot reaping (socket layer).** `netPump` now calls `reapConnIfDead` per live connection: a
+  listener-spawned connection that reaches CLOSED (TIME_WAIT having decayed) **and was never accepted** is
+  freed, so a refused/reset backlog entry or a TIME_WAIT remnant can't leak the (now larger) table.
+  Accepted connections stay owned by their fd and are freed only by `socketClose` (which already discards the
+  engine state regardless of TIME_WAIT), and active-open sockets (`sockListenerOf == -1`) are never reaped
+  out from under the app.
+- **Tests (`tests/net_test.swift`):** added RST-from-ESTABLISHED, RST-from-FIN_WAIT_1/FIN_WAIT_2,
+  full active+passive close → TIME_WAIT → CLOSED (driving `tick` past the timer), simultaneous-close →
+  CLOSING → TIME_WAIT, and an ephemeral-allocator unit check (rotation, skip-in-use, wrap). All prior cases
+  still pass; the two in-QEMU acceptance scripts (`tcp_echo_test.sh`, `tcp_connect_test.sh`) still pass.
+- **Deferred:** TIME_WAIT FIN re-ACK on a peer retransmit, SO_REUSEADDR semantics, a per-connection RTT
+  estimator (RTO is still a fixed 1 s). The wider table is a cap bump, not a dynamic table.
+### net-h — ChaCha20-Poly1305 AEAD (RFC 8439), TLS groundwork (DONE, 2026-06-07)
+
+- **Pure crypto module `kernel/crypto/chacha20poly1305.swift`** (no Foundation/MMIO/syscalls/heap, same
+  purity as `kernel/net/packet.swift`, so it compiles both for the host test and for the kernel — Embedded):
+  - `chacha20Block` (20-round keystream block) and `chacha20Encrypt(key, counter, nonce, in, out, len)`
+    (the symmetric stream cipher; `out` may alias `in`). 256-bit key, 96-bit nonce, 32-bit block counter.
+  - `poly1305Mac(key, msg, len, tagOut)` — the one-time MAC over GF(2^130 − 5), implemented with a
+    schoolbook 5×26-bit-limb multiply-reduce (no 128-bit-int dependency), final reduction + add-s.
+  - `aeadSeal(...)`/`aeadOpen(...) -> Bool` — the AEAD construction (§2.8): block-0 keystream derives the
+    Poly1305 key, ChaCha20 from counter 1 encrypts, the tag covers `aad ‖ pad16 ‖ ct ‖ pad16 ‖ len64(aad)
+    ‖ len64(ct)`. `aeadOpen` verifies the tag in **constant time** (no early-out) and only then decrypts.
+    Callers pass a `scratch` buffer for the MAC input (no allocation inside the module).
+- **Self-contained byte helpers** (`cb8`/`cb8set`/`le32`, file-private) rather than reusing
+  `kernel/net/packet.swift`'s `b8`/`b8set` — under `-wmo` the whole module compiles together, so the net
+  helpers would collide; keeping crypto independent also lets `--gc-sections` drop it cleanly while unused.
+- **Wired into the kernel `SWIFT_SRCS`** so it keeps building in Embedded mode; it is unused/gc'd for now,
+  exactly like `dns.swift` was before net-f wired it up. No kernel paths call it yet.
+- **Host test `tests/crypto_test.swift`** asserts the published RFC 8439 vectors: §2.4.2 ChaCha20 of the
+  "Ladies and Gentlemen…" plaintext (key 00..1f, nonce …4a…, counter 1) → the published ciphertext (plus a
+  symmetric round-trip), §2.5.2 Poly1305 of "Cryptographic Forum Research Group" → `a8061dc1…27a9`, and
+  §2.8.2 the full AEAD seal (ciphertext + 16-byte tag) plus `aeadOpen` accepting the valid tag and rejecting
+  a corrupted one. Built/run with `$(HOST_SWIFTC)` right after `net_test` in the `test:` target.
+- **This is TLS groundwork only.** TLS 1.3 mandates AEAD_CHACHA20_POLY1305; the handshake, key schedule
+  (HKDF), and record layer are **deliberately deferred** to a later milestone. No networking or syscalls
+  were added here.
+## Threading runtime groundwork (R-series)
+
+### rt-a — threads + futex (DONE, 2026-06-07)
+
+The kernel primitives a userland threading runtime (and later Swift-concurrency / Node / the JVM) needs:
+schedulable EL0 threads that share one address space, plus a futex to block/wake them.
+
+- **`thread_create(entry, arg, stackTop) = syscall 46`** (`processThreadCreate`, `kernel/user/process.swift`):
+  allocates a fresh process-table slot whose `TTBR0` is the creator's **shared** (not cloned) address space,
+  with its own kernel stack and a crafted context that lands in a new EL0 trampoline `user_thread_launch_arg`
+  (`user_entry.S`) — identical to `user_thread_launch` but it also delivers the argument in x0, so the thread
+  starts at `entry(arg)` on the caller-supplied user stack. The thread is parented to the *creator's* parent so
+  it is a sibling (not a waitpid-reapable child); threads join via futex. Returns a thread id (a pid in the
+  shared table). Because the AS is shared and never freed, no teardown races: a thread exiting just frees its
+  own slot (`pIsThread` short-circuits `processExit` to self-reap instead of zombify, and drops any futex wait
+  record). The shared AS lives on for surviving threads.
+- **`futex(uaddr, op, val) = syscall 47`** (`kernel/sched/futex.swift`): `op=0` FUTEX_WAIT blocks the caller iff
+  `*uaddr == val`; `op=1` FUTEX_WAKE wakes up to `val` waiters on `uaddr` (returns the count woken). A small
+  in-kernel wait queue (slot, watched VA) keyed by the user VA — sufficient for a single multi-threaded
+  process, since all its threads share the VA space. The compare-and-block runs under `irq_save`/`irq_restore`
+  so the `*uaddr` load and the block transition can't race a concurrent WAKE on a preempted sibling. The user
+  word is validated through `userReadableBuffer` before any access.
+- **Userland bridge:** `swiftos_thread_create` / `swiftos_futex` / `swiftos_thread_exit` and atomic
+  CAS/swap/load/fetch-add helpers (LL/SC the Swift layer can't express directly — justified low-level bridge)
+  in `userland/lib/swift_user.{h,c}`; `SYS_THREAD_CREATE`(46)/`SYS_FUTEX`(47) in `userland/lib/syscall.h`.
+- **Demo `/bin/threadsdemo`** (`userland/threadsdemo.swift`): spawns 2 EL0 threads that each increment a shared
+  counter 2000× under a 3-state futex mutex (Drepper's "Futexes Are Tricky"), joins them via a futex on a
+  done-counter, and prints `threadsdemo: counter=4000` (= 2N). Resolved in `exec.swift` and packed into the
+  base image. `tests/threads_test.sh` boots `-kernel` + base.img, logs in root/swordfish, runs the demo, and
+  asserts `counter=4000`. Wired into `make test`.
+- **Caveats / follow-ups:** fd-table sharing is a *snapshot* at thread_create (like fork inherit), enough for
+  the demo's shared stdout; true fd-table aliasing across threads is deferred. A thread's own kernel stack and
+  the shared AS pages are not reclaimed (same global limitation as processes). `processRunElf` stops when the
+  top process exits, so the runtime must join its threads before the main thread returns (the demo does).
+  `BOARD=virtualbox` still builds; its boot path parks before the scheduler, so threads don't run there.
 ### Process teardown reclaims frames — the per-command page leak is closed (DONE, 2026-06-07)
 
 - **The leak.** Process teardown set the slot to `pUnused` but never returned any frames to the PMM, so

@@ -47,6 +47,8 @@ private let sysConnect: UInt = 44      // connect(fd, ip, port) — TCP active o
 private let sysResolve: UInt = 45      // resolve(name, server_ip, server_port) -> ip — DNS
 private let sysSysInfo: UInt = 46      // sysinfo(buffer) — system stats for /bin/top
 private let sysProcStat: UInt = 47     // procstat(buffer, capacity) — rich per-proc records
+private let sysThreadCreate: UInt = 48 // thread_create(entry, arg, stackTop) -> tid (rt-a)
+private let sysFutex: UInt = 49        // futex(uaddr, op, val) — minimal WAIT/WAKE (rt-a)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -183,6 +185,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processSysInfo(buffer: frame[0])
     } else if number == sysProcStat {
         result = processStatSnapshot(buffer: frame[0], capacity: frame[1])
+    } else if number == sysThreadCreate {
+        result = processThreadCreate(entryVA: frame[0], argVA: frame[1], stackTopVA: frame[2])
+    } else if number == sysFutex {
+        result = futexOp(uaddrVA: frame[0], op: Int(bitPattern: frame[1]), val: frame[2])
     } else {
         result = -38 // ENOSYS
     }

@@ -277,6 +277,109 @@ struct NetTest {
         e = feed(&r, tcpFlagRST, 101, 0)
         check(e.reset && r.state == .closed, "RST → reset event + CLOSED")
 
+        // --- 19b. RST from ESTABLISHED → reset + closed (net-rob) ---------
+        do {
+            var x = TCPConnection()
+            x.activeOpen(localPort: 50000, remoteIP: gwIP, remotePort: 80, now: 0)
+            let xiss = x.outSegment(0).seq
+            x.clearOut()
+            _ = feed(&x, tcpFlagSYN | tcpFlagACK, 7000, xiss &+ 1)
+            check(x.state == .established, "RST case reaches ESTABLISHED")
+            x.clearOut()
+            let rev = feed(&x, tcpFlagRST | tcpFlagACK, 7001, xiss &+ 1)
+            check(rev.reset && rev.closed && x.state == .closed, "RST from ESTABLISHED → reset+closed+CLOSED")
+            check(x.outCount == 0, "RST drops any queued output (no reply)")
+        }
+
+        // --- 19c. RST from FIN_WAIT_1 and FIN_WAIT_2 → closed (net-rob) ---
+        do {
+            // FIN_WAIT_1: we sent a FIN, not yet acked, then peer RSTs.
+            var x = TCPConnection()
+            x.activeOpen(localPort: 50001, remoteIP: gwIP, remotePort: 80, now: 0)
+            let xiss = x.outSegment(0).seq
+            x.clearOut()
+            _ = feed(&x, tcpFlagSYN | tcpFlagACK, 8000, xiss &+ 1)
+            x.clearOut()
+            x.appClose(now: 0)
+            check(x.state == .finWait1, "RST case reaches FIN_WAIT_1")
+            x.clearOut()
+            let rev1 = feed(&x, tcpFlagRST, 8001, 0)
+            check(rev1.reset && x.state == .closed, "RST from FIN_WAIT_1 → CLOSED")
+
+            // FIN_WAIT_2: our FIN is acked first, then peer RSTs.
+            var y = TCPConnection()
+            y.activeOpen(localPort: 50002, remoteIP: gwIP, remotePort: 80, now: 0)
+            let yiss = y.outSegment(0).seq
+            y.clearOut()
+            _ = feed(&y, tcpFlagSYN | tcpFlagACK, 9000, yiss &+ 1)
+            y.clearOut()
+            y.appClose(now: 0)
+            let yFin = y.outSegment(0)
+            y.clearOut()
+            _ = feed(&y, tcpFlagACK, 9001, yFin.seq &+ 1)
+            check(y.state == .finWait2, "RST case reaches FIN_WAIT_2")
+            let rev2 = feed(&y, tcpFlagRST, 9001, 0)
+            check(rev2.reset && y.state == .closed, "RST from FIN_WAIT_2 → CLOSED")
+        }
+
+        // --- 19d. full active+passive close reaches TIME_WAIT→CLOSED ------
+        do {
+            var x = TCPConnection()
+            x.activeOpen(localPort: 50003, remoteIP: gwIP, remotePort: 80, now: 0)
+            let xiss = x.outSegment(0).seq
+            x.clearOut()
+            _ = feed(&x, tcpFlagSYN | tcpFlagACK, 11000, xiss &+ 1)
+            x.clearOut()
+            x.appClose(now: 100)                       // active close → FIN_WAIT_1
+            let xFin = x.outSegment(0)
+            x.clearOut()
+            // Peer acks our FIN, then sends its own FIN (typical active+passive).
+            _ = feed(&x, tcpFlagACK, 11001, xFin.seq &+ 1)
+            check(x.state == .finWait2, "active close: FIN_WAIT_2 after our FIN acked")
+            let cev = feed(&x, tcpFlagFIN | tcpFlagACK, 11001, xFin.seq &+ 1, now: 100)
+            check(cev.peerClosed && x.state == .timeWait, "peer FIN → TIME_WAIT")
+            x.tick(now: 100)
+            check(x.state == .timeWait, "TIME_WAIT holds before the timer expires")
+            x.tick(now: 100 + 50 /* tcpTimeWaitTicks */)
+            check(x.state == .closed, "TIME_WAIT → CLOSED after the 2MSL timer")
+        }
+
+        // --- 19e. simultaneous close (FIN before ACK-of-FIN) → CLOSING ----
+        do {
+            var x = TCPConnection()
+            x.activeOpen(localPort: 50004, remoteIP: gwIP, remotePort: 80, now: 0)
+            let xiss = x.outSegment(0).seq
+            x.clearOut()
+            _ = feed(&x, tcpFlagSYN | tcpFlagACK, 12000, xiss &+ 1)
+            x.clearOut()
+            x.appClose(now: 0)                         // FIN_WAIT_1, our FIN unacked
+            let xFin = x.outSegment(0)
+            x.clearOut()
+            // Peer's FIN arrives WITHOUT acking our FIN (ack still = our FIN seq).
+            let sev = feed(&x, tcpFlagFIN | tcpFlagACK, 12001, xFin.seq)
+            check(sev.peerClosed && x.state == .closing, "simultaneous close → CLOSING")
+            // Now the peer acks our FIN → TIME_WAIT.
+            _ = feed(&x, tcpFlagACK, 12002, xFin.seq &+ 1, now: 0)
+            check(x.state == .timeWait, "CLOSING → TIME_WAIT once our FIN is acked")
+        }
+
+        // --- 19f. ephemeral-port allocator: rotates + skips in-use --------
+        do {
+            var cursor: UInt16 = ephemeralPortLow
+            let p0 = nextEphemeralPort(cursor: &cursor) { _ in false }
+            let p1 = nextEphemeralPort(cursor: &cursor) { _ in false }
+            check(p0 == ephemeralPortLow && p1 == ephemeralPortLow + 1, "allocator rotates upward")
+            // Skip a busy port: low+2 is taken, so the next free is low+3.
+            cursor = ephemeralPortLow + 2
+            let p2 = nextEphemeralPort(cursor: &cursor) { $0 == ephemeralPortLow + 2 }
+            check(p2 == ephemeralPortLow + 3, "allocator skips an in-use port")
+            // Wrap at the top of the range back to the low edge.
+            cursor = ephemeralPortHigh
+            let pHi = nextEphemeralPort(cursor: &cursor) { _ in false }
+            let pWrap = nextEphemeralPort(cursor: &cursor) { _ in false }
+            check(pHi == ephemeralPortHigh && pWrap == ephemeralPortLow, "allocator wraps at the range top")
+        }
+
         // --- 20. DNS query build ------------------------------------------
         let qname: [UInt8] = Array("a.bc".utf8)
         let qlen = qname.withUnsafeBytes {

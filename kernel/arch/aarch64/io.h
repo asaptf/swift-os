@@ -78,6 +78,8 @@ uintptr_t trap_return_addr(void); // exceptions.S — fork child trap-return ent
 // builder are now Swift (kernel/user/elf.swift, ustack.swift), called only from
 // Swift, so they need no bridging declaration here.
 uintptr_t user_thread_launch_addr(void);
+// rt-a: EL0 thread first-run trampoline, entry(arg) — see user_entry.S.
+uintptr_t user_thread_launch_arg_addr(void);
 
 // Userland programs (busybox + demos) are no longer embedded in the kernel
 // image (M11d). They live in the packed base image on disk and are loaded via

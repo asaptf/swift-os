@@ -12,11 +12,18 @@ let netLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest addre
 let netGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
 let netDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
 
-private let maxSockets = 16
+private let maxSockets = 32
 private let sockRingDepth = 4
 private let sockDatagramCap = 1536
 private let sockBufBytes = maxSockets * sockRingDepth * sockDatagramCap
 private let sockBufPages = (sockBufBytes + 4095) / 4096
+
+// Ephemeral local-port allocator (net-rob). The pure rotating allocator lives in
+// tcp.swift (`nextEphemeralPort`, `ephemeralPort{Low,High}`) so the host net_test
+// can unit-check it; here we just hold the live cursor and the `inUse` predicate
+// over the bind table, so two concurrent outbound connections (or a slot reused
+// after close) never collide on a stale `40000 + slot` port.
+private var ephemeralCursor: UInt16 = ephemeralPortLow
 
 // Negative errno-ish returns shared with the syscall layer.
 let netErrDown = -100      // ENETDOWN: no NIC
@@ -65,6 +72,20 @@ private var tcpConns = [TCPConnection](repeating: TCPConnection(), count: maxSoc
     s >= 0 && s < maxSockets && sockInUse[s]
 }
 
+/// True if any bound socket other than `except` already holds local port `p`.
+@inline(__always) private func localPortInUse(_ p: UInt16, except: Int) -> Bool {
+    for o in 0..<maxSockets where o != except && sockInUse[o] && sockBound[o] && sockPort[o] == p {
+        return true
+    }
+    return false
+}
+
+/// Allocate a free ephemeral local port for socket `s` from the rotating
+/// allocator, skipping ports another socket already uses.
+private func allocEphemeralPort(for s: Int) -> UInt16 {
+    nextEphemeralPort(cursor: &ephemeralCursor) { localPortInUse($0, except: s) }
+}
+
 /// Bring up the NIC once and create the shared NetStack + socket buffer pool.
 /// Idempotent. A no-op when no virtio-net device is attached (netReady stays
 /// false, so socket() returns ENETDOWN and the other boot paths are unaffected).
@@ -96,7 +117,7 @@ func dnsResolve(name: UnsafeRawPointer, nameLen: Int, serverIP: IPv4, serverPort
     let port = serverPort == 0 ? UInt16(53) : serverPort
     let s = socketCreate(owner: 0)
     if s < 0 { return 0 }
-    _ = socketBind(s, port: UInt16(40000 + s))
+    _ = socketBind(s, port: allocEphemeralPort(for: s))
     let id = UInt16(truncatingIfNeeded: rtcNow()) ^ 0x55AA
 
     let qbuf = UnsafeMutableRawPointer(bitPattern: gDnsScratch)!
@@ -121,8 +142,23 @@ func netPump() {
     _ = virtioNetPoll(&gNet)
     let now = systemTicks
     for c in 0..<maxSockets where sockInUse[c] && sockProto[c] == sockProtoTCP && !sockIsListener[c] {
-        tcpConns[c].tick(now: now)
+        tcpConns[c].tick(now: now)         // advances RTO + TIME_WAIT→CLOSED timers
         if tcpConns[c].outCount > 0 { tcpDrain(c, now) }
+        reapConnIfDead(c)
+    }
+}
+
+/// Free a listener-spawned connection slot once its TCP engine has fully torn
+/// down (CLOSED — TIME_WAIT decays to CLOSED via `tick`) and no application fd
+/// can still reference it. A connection the app accepted is owned by that fd and
+/// is only freed by `socketClose`; only orphans (never accepted, or accepted-then
+/// -reaped is impossible since accept latches `sockAccepted`) are reclaimed here,
+/// so a refused/reset backlog entry or a TIME_WAIT remnant cannot leak the table.
+@inline(__always) private func reapConnIfDead(_ c: Int) {
+    guard sockListenerOf[c] >= 0 && !sockAccepted[c] else { return }
+    if tcpConns[c].state == .closed {
+        sockInUse[c] = false; sockBound[c] = false; sockPort[c] = 0
+        sockProto[c] = sockProtoUDP; sockListenerOf[c] = -1; sockConnReady[c] = false
     }
 }
 
@@ -203,7 +239,10 @@ func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, l
         mac = gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)
     }
     guard let dmac = mac else { return netErrUnreach }
-    let srcPort = sockBound[s] ? sockPort[s] : UInt16(40000 + s)
+    if !sockBound[s] {                       // implicit ephemeral bind on first send
+        sockPort[s] = allocEphemeralPort(for: s); sockBound[s] = true
+    }
+    let srcPort = sockPort[s]
     let frameLen = gNet.buildUDP(toMac: dmac, toIP: dstIP, srcPort: srcPort, dstPort: dstPort,
                                  payload: src, payloadLen: len, out: virtioNetTxBuffer())
     virtioNetTxSubmit(frameLen: frameLen)
@@ -350,7 +389,7 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
     }
     guard let dmac = mac else { return netErrUnreach }
 
-    let localPort = UInt16(40000 + s)        // simple per-slot ephemeral port
+    let localPort = sockBound[s] ? sockPort[s] : allocEphemeralPort(for: s)
     sockPort[s] = localPort; sockBound[s] = true
     sockRemoteIP[s] = dstIP; sockRemotePort[s] = dstPort; sockRemoteMac[s] = dmac
     sockConnReady[s] = false

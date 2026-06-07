@@ -54,6 +54,8 @@
 #define SYS_RESOLVE       45
 #define SYS_SYSINFO       46
 #define SYS_PROCSTAT      47
+#define SYS_THREAD_CREATE 48
+#define SYS_FUTEX         49
 
 #ifndef __ASSEMBLER__
 
