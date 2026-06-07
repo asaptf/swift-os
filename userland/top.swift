@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // top.swift — process/resource monitor for swift-os (a native Embedded Swift
 // EL0 app, like /bin/ps but live).
 //

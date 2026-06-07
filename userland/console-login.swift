@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // console-login.swift — authenticate a principal from the base-image identity
 // store, then hand off to the user's shell (M12b).
 //

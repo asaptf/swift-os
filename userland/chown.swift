@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // chown.swift — native Swift `/bin/chown` for swift-os.
 //
 // Usage: chown UID FILE...   (numeric principal id, e.g. chown 2 /tmp/f)

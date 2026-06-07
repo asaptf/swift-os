@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // pmm.swift — physical memory manager.
 //
 // Wires the host-tested `PageAllocator` bitmap to real RAM and exposes a tiny

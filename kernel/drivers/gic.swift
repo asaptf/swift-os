@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // gic.swift — minimal GICv2 driver for QEMU `virt`.
 
 // Distributor and CPU-interface bases, discovered into the HAL (QEMU `virt`

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // tcpecho.swift — native Swift `/bin/tcpecho` for swift-os (net-c2 demo).
 //
 // A one-shot TCP echo server: open a stream socket, bind 5555, listen, accept

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // base_image_test.swift - host test for the packed read-only base image.
 
 import Foundation

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // cat.swift — native Swift `/bin/cat` for swift-os.
 //
 // Concatenates files (or stdin when given no file arguments) to stdout, using

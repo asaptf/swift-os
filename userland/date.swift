@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // date.swift — native Swift `/bin/date` for swift-os.
 //
 // Prints the current UTC wall-clock time read from the PL031 RTC (via the

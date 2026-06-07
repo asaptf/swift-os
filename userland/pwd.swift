@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // pwd.swift — native Swift `/bin/pwd` for swift-os.
 //
 // Prints the current working directory (kernel getcwd syscall via the bridge).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // tty.swift — console line discipline for the PL011 serial tty.
 //
 // Receives bytes from the UART IRQ (ttyOnInput) and serves read(0) (ttyRead).

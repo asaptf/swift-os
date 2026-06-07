@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // security.swift - minimal principal/session/capability core (M12a).
 //
 // This is the first kernel-native security model scaffold. It deliberately does

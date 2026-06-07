@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // net_test.swift — host unit test for the sans-IO network core.
 //
 // Compiled with the host Swift toolchain against the same kernel/net/*.swift the

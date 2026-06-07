@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // nslookup.swift — native Swift `/bin/nslookup` for swift-os (net-f demo).
 //
 // Resolve a hostname to an IPv4 via the kernel DNS resolver (which queries a DNS

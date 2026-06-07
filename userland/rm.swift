@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // rm.swift — native Swift `/bin/rm` for swift-os.
 //
 // Removes each named file (unlink) from the writable tmpfs. Files only; there is

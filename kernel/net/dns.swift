@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // dns.swift — sans-IO DNS message codec (net-f).
 //
 // Pure: builds an A-record query and parses a response's first A record. No I/O

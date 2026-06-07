@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // kv.swift — an in-memory key-value store REPL for swift-os.
 //
 // The second *idiomatic* Embedded Swift EL0 program (after /bin/calc). Where

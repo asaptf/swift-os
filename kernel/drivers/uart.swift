@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // uart.swift — PL011 UART driver for QEMU `virt`.
 //
 // The PL011 is mapped at 0x0900_0000. For M0 we only transmit: QEMU resets the

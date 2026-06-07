@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // syscall.swift — tiny POSIX-like syscall dispatcher.
 
 private let sysOpen: UInt = 1

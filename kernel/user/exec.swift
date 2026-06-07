@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // exec.swift — resolve a program path to an ELF image and marshal argv.
 //
 // spawn()/execve() resolve a small built-in table of program paths. M11d makes

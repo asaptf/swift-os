@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // generic_timer.swift — ARM generic physical timer.
 
 let physicalTimerIrq: UInt32 = 30

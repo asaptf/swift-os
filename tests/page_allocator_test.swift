@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 @main
 struct PageAllocatorTest {
     static func expect(_ condition: Bool, _ message: String) {

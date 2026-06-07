@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // httpd.swift — native Swift `/bin/httpd` for swift-os (net-e/net-g/net-h2).
 //
 // A concurrent static-file HTTP/1.0 server: bind 8080, listen, then a single

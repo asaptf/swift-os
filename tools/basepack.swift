@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // basepack.swift - build the swift-os packed read-only base image.
 //
 // Format v1 is intentionally tiny and kernel-friendly:

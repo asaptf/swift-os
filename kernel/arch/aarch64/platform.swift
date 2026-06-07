@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // platform.swift - the hardware abstraction layer (HAL).
 //
 // One global `Platform` holds the device addresses and IRQ numbers the kernel

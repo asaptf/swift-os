@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // threadsdemo.swift — native Swift `/bin/threadsdemo` for swift-os (rt-a demo).
 //
 // Spawns two EL0 threads that share this process's address space. Each thread

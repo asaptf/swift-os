@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // fdt_test.swift - host unit test for the flattened-device-tree reader.
 //
 // Compiled with the host Swift toolchain against the same kernel/arch/aarch64/

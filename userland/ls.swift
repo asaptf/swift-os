@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ls.swift — a native Swift `/bin/ls` for swift-os (with `-l`).
 //
 // Lists a directory (or a single file) using the kernel getdents/stat ABI, and

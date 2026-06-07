@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // virtio_input.swift — minimal polled virtio-input (keyboard) driver.
 //
 // Gives the graphical QEMU window (-device virtio-keyboard-device) a keyboard:

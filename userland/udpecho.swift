@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // udpecho.swift — native Swift `/bin/udpecho` for swift-os (net-b demo).
 //
 // Opens a UDP socket, binds port 5555, receives one datagram, prints its size

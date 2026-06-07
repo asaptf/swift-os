@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // signal.swift — minimal signal support for the foreground process.
 //
 // M7 scope: enough to make Ctrl-C interrupt a running command. Pending signals

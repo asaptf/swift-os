@@ -313,3 +313,13 @@ TLS, userland network services isolated in Cells, and high-pps optimization.
 
 These boundaries are not accidental omissions. They keep the kernel surface
 small enough to measure, test, and trust.
+
+## License
+
+swift-os is licensed under the **Apache License, Version 2.0** — see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). New source files we author carry an
+`// SPDX-License-Identifier: Apache-2.0` header.
+
+Bundled third-party components keep their own licenses and are **not** covered by
+the Apache license above: `userland/busybox` (GPL-2.0-only) and `libc/newlib`
+(BSD-style / permissive). See `NOTICE` for details.

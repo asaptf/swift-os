@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // stack.swift — the sans-IO engine façade.
 //
 // `NetStack` is pure protocol logic: it consumes one received Ethernet frame at

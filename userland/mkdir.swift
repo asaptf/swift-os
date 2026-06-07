@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // mkdir.swift — native Swift `/bin/mkdir` for swift-os.
 //
 // Creates each named directory (in the writable tmpfs; the base is read-only).

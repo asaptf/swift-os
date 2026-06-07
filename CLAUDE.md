@@ -65,3 +65,7 @@ See `docs/ARCHITECTURE.md`.
 - No dead/half files. Clear commits per milestone.
 - **Write Swift by default** (see "Language" under hard decisions). C/asm only with a strong, documented
   reason — third-party code, low-level bridges, or a recorded toolchain limitation.
+- **License header on every new source file.** Start each new source file we author with an SPDX
+  identifier on the first line: `// SPDX-License-Identifier: Apache-2.0` for Swift/C/headers/assembly,
+  `# SPDX-License-Identifier: Apache-2.0` for shell, Make, and linker scripts. Third-party / vendored
+  files (busybox, newlib) keep their upstream headers untouched. See `LICENSE` and `NOTICE`.

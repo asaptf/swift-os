@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // scheduler.swift — real kernel-thread scheduler.
 //
 // Each thread has its own kernel stack (from the PMM) and a saved CPU context.

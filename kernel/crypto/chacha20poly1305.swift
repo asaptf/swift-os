@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // chacha20poly1305.swift — RFC 8439 AEAD_CHACHA20_POLY1305 (net-h).
 //
 // Pure Swift: no Foundation, no MMIO, no heap allocation, no syscalls — same

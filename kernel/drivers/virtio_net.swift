@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // virtio_net.swift — minimal polled virtio 1.0 (modern, MMIO) network driver.
 //
 // net-a: gives the kernel raw Ethernet frame TX/RX so the sans-IO protocol core

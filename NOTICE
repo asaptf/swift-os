@@ -1,0 +1,14 @@
+swift-os
+Copyright 2026 Andrey Sapunov
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository also bundles third-party components distributed under their
+own licenses, which continue to apply to those components and are NOT covered
+by the Apache License above:
+
+  - userland/busybox  — BusyBox, GNU General Public License v2 (GPL-2.0-only)
+  - libc/newlib       — Newlib, a collection of BSD-style / permissive licenses
+
+Refer to those subdirectories (and their upstream sources) for the full
+license texts.

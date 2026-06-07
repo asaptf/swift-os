@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ipv4.swift — IPv4 (RFC 791) header parse/build. No options, no fragmentation.
 //
 // Header layout (20 bytes): ver/IHL[1], DSCP/ECN[1], total length[2], id[2],

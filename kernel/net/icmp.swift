@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // icmp.swift — ICMP (RFC 792) echo request/reply.
 //
 // Header layout (8 bytes): type[1], code[1], checksum[2], identifier[2],

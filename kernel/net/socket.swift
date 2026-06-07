@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // socket.swift — kernel UDP socket layer (net-b). Kernel-only glue between the
 // pure sans-IO core (NetStack) and the virtio-net driver; NOT part of the host
 // net_test. It owns the live NetStack, pumps the NIC, demuxes received UDP

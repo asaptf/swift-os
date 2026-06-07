@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // packet.swift — byte-level helpers shared by the sans-IO network core.
 //
 // Pure Swift: no MMIO, no heap allocation on the per-packet path, no syscalls.

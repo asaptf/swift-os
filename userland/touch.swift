@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // touch.swift — native Swift `/bin/touch` for swift-os.
 //
 // Creates each named file if absent (in the writable tmpfs). Note: swift-os has

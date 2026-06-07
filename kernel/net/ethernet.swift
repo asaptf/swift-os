@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ethernet.swift — Ethernet II framing for the sans-IO core.
 //
 // Layout (14 bytes): dst MAC[6], src MAC[6], ethertype[2, big-endian].

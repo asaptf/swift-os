@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // virtio_blk.swift — minimal polled virtio 1.0 (modern, MMIO) block driver.
 //
 // M11b: gives the kernel synchronous, read-only access to a virtio-blk disk so

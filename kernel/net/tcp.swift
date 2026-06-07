@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // tcp.swift — sans-IO TCP connection state machine (net-c1).
 //
 // Pure protocol logic: a `TCPConnection` value consumes parsed inbound segment

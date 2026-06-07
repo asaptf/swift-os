@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // id.swift — print the calling process's security identity (swift-os).
 //
 // Reports the kernel security context (principal/session/capability mask) via

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // wc.swift — native Swift `/bin/wc` for swift-os.
 //
 // Counts lines, words, and bytes of each file argument and prints

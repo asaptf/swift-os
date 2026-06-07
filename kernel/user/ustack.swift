@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ustack.swift — build the initial EL0 stack (argc/argv/envp/auxv).
 //
 // Lays out the SysV AArch64 process-entry stack at the top of a process's

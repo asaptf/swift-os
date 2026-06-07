@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // rmdir.swift — native Swift `/bin/rmdir` for swift-os.
 //
 // Removes each named (empty) directory from the writable tmpfs.

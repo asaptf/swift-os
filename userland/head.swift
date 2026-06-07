@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // head.swift — native Swift `/bin/head` for swift-os.
 //
 // Prints the first N lines (default 10; -n N) of each file argument, or of

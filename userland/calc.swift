@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // calc.swift — an interactive expression-calculator REPL for swift-os.
 //
 // This is the first EL0 program written in *idiomatic* Embedded Swift rather

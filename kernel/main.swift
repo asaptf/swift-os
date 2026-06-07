@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // main.swift — Swift kernel entry point.
 //
 // The assembly boot stub (arch/aarch64/boot.S) sets up the stack and clears

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // futex.swift — minimal fast userspace mutex primitive (rt-a).
 //
 // A futex lets a userland threading runtime block and wake threads keyed by a

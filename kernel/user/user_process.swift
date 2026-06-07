@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // user_process.swift — minimal EL0 process/syscall probe.
 
 private let userTextVA: UInt = 0x8010_0000

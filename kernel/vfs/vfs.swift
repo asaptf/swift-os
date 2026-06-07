@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // vfs.swift — a small in-memory VFS: read-only base tree + writable tmpfs.
 //
 // The filesystem is a fixed vnode table linked as parent/child/sibling. The

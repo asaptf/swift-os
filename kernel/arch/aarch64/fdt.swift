@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // fdt.swift - a minimal flattened-device-tree (FDT/DTB) reader.
 //
 // QEMU `-kernel` hands the kernel a pointer to a flattened device tree in x0.

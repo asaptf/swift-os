@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // arp.swift — ARP (RFC 826) over Ethernet for IPv4.
 //
 // ARP packet layout (28 bytes, after the 14-byte Ethernet header):

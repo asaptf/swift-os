@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // crypto_test.swift — host unit test for kernel/crypto/chacha20poly1305.swift.
 //
 // Compiled with the host Swift toolchain against the same pure crypto module the

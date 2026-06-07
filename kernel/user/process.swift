@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // process.swift — preemptive EL0 process model.
 //
 // A real process table scheduled preemptively. Each process has its own address

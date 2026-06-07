@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // udp.swift — UDP (RFC 768) over IPv4 for the sans-IO core.
 //
 // Header layout (8 bytes): source port[2], destination port[2], length[2]

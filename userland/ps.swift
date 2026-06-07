@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // ps.swift — small process listing utility for swift-os.
 
 private let stateReady: UInt32 = 1

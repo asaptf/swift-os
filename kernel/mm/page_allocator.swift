@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // page_allocator.swift — physical frame allocator (PMM).
 //
 // A bitmap allocator over a contiguous physical range, one bit per 4 KiB frame

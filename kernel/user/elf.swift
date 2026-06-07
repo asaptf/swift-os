@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // elf.swift — minimal static ELF64 loader for AArch64 EL0 programs.
 //
 // Parses an in-memory ET_EXEC image and maps its PT_LOAD segments into a target

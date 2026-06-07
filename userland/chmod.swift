@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // chmod.swift — native Swift `/bin/chmod` for swift-os.
 //
 // Usage: chmod OCTAL FILE...   (e.g. chmod 600 /tmp/f)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // echo.swift — native Swift `/bin/echo` for swift-os.
 //
 // Prints its arguments separated by single spaces, followed by a newline.

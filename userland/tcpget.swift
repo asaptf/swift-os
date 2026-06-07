@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // tcpget.swift — native Swift `/bin/tcpget` for swift-os (net-d demo).
 //
 // A minimal TCP client: connect to [ip] [port] (default 10.0.2.2:5555 — the

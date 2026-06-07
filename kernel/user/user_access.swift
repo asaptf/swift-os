@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // user_access.swift — checked EL0 memory access helpers.
 //
 // Syscalls must not dereference user pointers directly. These helpers first
