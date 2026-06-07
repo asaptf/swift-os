@@ -1281,3 +1281,35 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   serial shows ≥2 `httpd: 200` lines. `base/www/*` ride along via the existing `BASE_SEED_FILES` glob.
 - **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
   loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.
+
+### net-rob — TCP/socket robustness (DONE, 2026-06-07)
+
+Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net/socket.swift`,
+`tests/net_test.swift`.
+
+- **Ephemeral-port allocator.** A pure rotating allocator `nextEphemeralPort(cursor:inUse:)` over the IANA
+  dynamic range **49152–65535** now lives in `tcp.swift` (sans-IO, so the host net_test can unit-check it).
+  `socket.swift` keeps a live `ephemeralCursor` and an `inUse` predicate over the bind table; `socketConnect`,
+  the UDP `socketSend` (implicit bind on first send), and `dnsResolve` all draw from it, replacing the old
+  `40000 + slot` scheme so two concurrent outbound connections (or a slot reused after close) can't collide
+  on a stale port. The cursor wraps within the range and skips ports another bound socket already holds.
+- **Larger connection tables.** `maxSockets` 16 → **32**. The socket buffer pool scales with it
+  (`sockBufBytes = 32·4·1536 = 192 KiB` → `sockBufPages = 48`, one PMM alloc at `netInit`); the DNS scratch
+  is a separate single page, unaffected. Memory cost is ~24 KiB extra, allocated once.
+- **TCP teardown edge cases (engine).** A **RST** from *any* non-LISTEN state (incl. SYN_SENT, the
+  FIN_WAIT/CLOSING/CLOSE_WAIT/LAST_ACK close states, TIME_WAIT) now cleanly tears down: state→CLOSED, RTO
+  off, queued output dropped, and both `ev.reset` **and** `ev.closed` flagged. **TIME_WAIT** already decays
+  to CLOSED via `tick` after `tcpTimeWaitTicks`; simultaneous-close ordering is correct (FIN before the
+  ACK-of-our-FIN → CLOSING → TIME_WAIT once acked; FIN+ACK together → TIME_WAIT directly).
+- **Slot reaping (socket layer).** `netPump` now calls `reapConnIfDead` per live connection: a
+  listener-spawned connection that reaches CLOSED (TIME_WAIT having decayed) **and was never accepted** is
+  freed, so a refused/reset backlog entry or a TIME_WAIT remnant can't leak the (now larger) table.
+  Accepted connections stay owned by their fd and are freed only by `socketClose` (which already discards the
+  engine state regardless of TIME_WAIT), and active-open sockets (`sockListenerOf == -1`) are never reaped
+  out from under the app.
+- **Tests (`tests/net_test.swift`):** added RST-from-ESTABLISHED, RST-from-FIN_WAIT_1/FIN_WAIT_2,
+  full active+passive close → TIME_WAIT → CLOSED (driving `tick` past the timer), simultaneous-close →
+  CLOSING → TIME_WAIT, and an ephemeral-allocator unit check (rotation, skip-in-use, wrap). All prior cases
+  still pass; the two in-QEMU acceptance scripts (`tcp_echo_test.sh`, `tcp_connect_test.sh`) still pass.
+- **Deferred:** TIME_WAIT FIN re-ACK on a peer retransmit, SO_REUSEADDR semantics, a per-connection RTT
+  estimator (RTO is still a fixed 1 s). The wider table is a cap bump, not a dynamic table.
