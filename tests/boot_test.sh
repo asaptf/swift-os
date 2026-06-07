@@ -42,6 +42,7 @@ coproc B done
 M8d OK: two EL0 processes ran concurrently
 forkdemo: child inherited cwd/fd
 forkdemo: child sees private marker
+forkdemo: IPC-MSG-OK
 forkdemo: IPC-XFER-OK
 forkdemo: parent waited child
 M8d OK: fork demo exited, code 0

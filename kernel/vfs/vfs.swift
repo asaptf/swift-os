@@ -119,16 +119,21 @@ private struct Pipe {
     var writeRefs = 0
 }
 
-// C4a: a handle-passing IPC endpoint — a channel that carries a transferred Handle
-// (capability) instead of bytes. Modeled on Pipe: a single in-flight handle slot,
-// with sendRefs/recvRefs tracking open ends. See docs/CAPABILITIES.md §4.
+// C4a/C4b: an IPC endpoint — a channel carrying a single in-flight message that
+// pairs BYTES (C4b) with an optionally transferred Handle (C4a, the capability).
+// Modeled on Pipe: a heap message buffer plus a one-slot handle, with
+// sendRefs/recvRefs tracking open ends. See docs/CAPABILITIES.md §4.
 private struct Endpoint {
     var inUse = false
+    var hasMsg = false      // a message (bytes ± a handle) is pending in the slot
+    var bufPtr: UInt = 0    // heap byte buffer (endpointMsgCap), like Pipe.bufPtr
+    var msgLen = 0          // valid bytes in bufPtr for the pending message
     var hasHandle = false
     var handle = HandleEntry()
     var sendRefs = 0
     var recvRefs = 0
 }
+private let endpointMsgCap = 256
 
 private let maxFDs = 32
 private let maxOpenDescriptions = 96
@@ -606,6 +611,9 @@ private func releaseDescription(_ d: Int) {
             if endpoints[ep].hasHandle && endpoints[ep].handle.inUse {
                 releaseDescription(endpoints[ep].handle.object)
             }
+            // Drop the message buffer, mirroring the .pipe block: the kernel heap is
+            // a bump allocator (runtime/heap.c free() is a no-op), so resetting the
+            // struct is exactly how a freed pipe relinquishes its bufPtr.
             endpoints[ep] = Endpoint()
         }
     }
@@ -1041,15 +1049,18 @@ func vfsPipe(fdsVA: UInt) -> Int {
 // ---- C4a: handle-passing IPC endpoints ------------------------------------
 //
 // A minimal capability-passing primitive (docs/CAPABILITIES.md §4): endpoint_create
-// returns a (send, recv) fd pair; ipc_send MOVES a handle into the channel; ipc_recv
-// blocks until one arrives and installs it as a new fd in the receiver. This is the
-// keystone for restartable services and cells. Modeled on the pipe subsystem above;
-// byte payloads, bidirectional channels, VMOs and async rings are later sub-milestones.
-// Note: endpoints allocate no heap (unlike pipes), so they add no frame churn.
+// returns a (send, recv) fd pair; ipc_send copies BYTES (C4b) and MOVES an optional
+// handle into the channel; ipc_recv blocks until a message arrives, copies the bytes
+// out and installs any transferred handle as a new fd in the receiver. This is the
+// keystone for restartable services and cells (request/reply rides the bytes); a
+// bidirectional channel, VMOs and async rings are later sub-milestones. Like a pipe,
+// each endpoint owns a heap message buffer (off the bump heap — see allocPipe).
 
 private func allocEndpoint() -> Int {
     for i in 0..<maxEndpoints where !endpoints[i].inUse {
-        endpoints[i] = Endpoint(inUse: true, hasHandle: false, handle: HandleEntry(),
+        guard let buf = swiftos_kernel_alloc(UInt(endpointMsgCap), 16) else { return -1 }
+        endpoints[i] = Endpoint(inUse: true, hasMsg: false, bufPtr: UInt(bitPattern: buf),
+                                msgLen: 0, hasHandle: false, handle: HandleEntry(),
                                 sendRefs: 1, recvRefs: 1)
         return i
     }
@@ -1088,44 +1099,101 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     return 0
 }
 
-/// ipc_send(fd, handleFd): MOVE the handle at handleFd to the endpoint's peer. The
-/// sender's fd is cleared WITHOUT releasing the underlying object — ownership (and
-/// its refcount) transfers with the handle. errAgain if a handle is already in
-/// flight (single-slot channel for C4a).
-func vfsIpcSend(fd: Int, handleFd: Int) -> Int {
+// The user-side msg structs (fixed little-endian offsets, like sendto's udp_msg —
+// the 3-arg syscall ABI carries only (fd, &msg)):
+//   SEND  off 0: buf (u64 user VA)  off 8: len (u64)  off 16: handle_fd (i32, <0 = none)
+//   RECV  off 0: buf (u64 user VA)  off 8: cap (u64)  off 16: out_handle_fd (u64 user VA → int)
+private let ipcSendMsgSize: UInt = 20  // buf(8) + len(8) + handle_fd(4)
+private let ipcRecvMsgSize: UInt = 24  // buf(8) + cap(8) + out_handle_fd(8)
+
+/// ipc_send(fd, &msg): copy up to endpointMsgCap message BYTES into the endpoint and,
+/// if msg.handle_fd >= 0, MOVE that handle to the peer. The handle's source fd is
+/// cleared WITHOUT releasing the underlying object — ownership (and its refcount)
+/// transfers with the handle. errAgain if a message is already in flight (single-slot
+/// channel). A message may carry bytes with no handle, so the slot is gated on hasMsg.
+func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
-    guard validFD(proc, fd), validFD(proc, handleFd), fd != handleFd else { return errBadFD }
+    guard validFD(proc, fd) else { return errBadFD }
     let desc = openDescriptions[fdEntry(proc, fd).object]
     guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
     let ep = desc.node
     guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
-    if endpoints[ep].hasHandle { return errAgain }
-    endpoints[ep].handle = fdEntry(proc, handleFd) // copy the entry...
-    endpoints[ep].hasHandle = true
-    setFDEntry(proc, handleFd, HandleEntry())       // ...then clear the source (move, no release)
+    if endpoints[ep].hasMsg { return errAgain }
+
+    guard let m = userReadableBuffer(msgVA, ipcSendMsgSize) else { return errInvalid }
+    let buf = UInt(le64(m, 0))
+    let len = Int(le64(m, 8))
+    let handleFd = Int(Int32(bitPattern: le32(m, 16)))
+    if len < 0 { return errInvalid }
+
+    // The handle (if any) must be a distinct, valid fd before we commit the message.
+    if handleFd >= 0 {
+        guard validFD(proc, handleFd), handleFd != fd else { return errBadFD }
+    }
+
+    let n = min(len, endpointMsgCap)
+    if n > 0 {
+        guard let src = userReadableBuffer(buf, UInt(n)) else { return errInvalid }
+        let dst = UnsafeMutablePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
+        for i in 0..<n { dst[i] = src[i] }
+    }
+    endpoints[ep].msgLen = n
+
+    if handleFd >= 0 {
+        endpoints[ep].handle = fdEntry(proc, handleFd) // copy the entry...
+        endpoints[ep].hasHandle = true
+        setFDEntry(proc, handleFd, HandleEntry())       // ...then clear the source (move, no release)
+    }
+    endpoints[ep].hasMsg = true
     return 0
 }
 
-/// ipc_recv(fd) -> new fd: block until a handle is in flight, then install it in
-/// this process's table. errPipe if every sender closed first (EOF-like).
-func vfsIpcRecv(fd: Int) -> Int {
+/// ipc_recv(fd, &msg) -> byte count: block until a message is in flight, copy up to
+/// msg.cap bytes into msg.buf, and — if a handle was transferred — install it as a new
+/// fd written to *msg.out_handle_fd (else -1). errPipe if every sender closed first
+/// (EOF-like). Returns the number of bytes copied to the user buffer.
+func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
     let desc = openDescriptions[fdEntry(proc, fd).object]
     guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
     let ep = desc.node
     guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
+
+    guard let m = userReadableBuffer(msgVA, ipcRecvMsgSize) else { return errInvalid }
+    let buf = UInt(le64(m, 0))
+    let cap = Int(le64(m, 8))
+    let outHandleVA = UInt(le64(m, 16))
+    if cap < 0 { return errInvalid }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+
     enable_irq()
-    while !endpoints[ep].hasHandle {
+    while !endpoints[ep].hasMsg {
         if endpoints[ep].sendRefs == 0 { return errPipe }
         processYieldForIO()
     }
-    let newfd = allocFDInProcess(proc, from: 0)
-    if newfd == -1 { return errNoSpace }
-    setFDEntry(proc, newfd, endpoints[ep].handle)
+
+    let n = min(endpoints[ep].msgLen, cap)
+    if n > 0 {
+        guard let dst = userWritableBuffer(buf, UInt(n)) else { return errInvalid }
+        let src = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
+        for i in 0..<n { dst[i] = src[i] }
+    }
+
+    var newfd: Int32 = -1
+    if endpoints[ep].hasHandle {
+        let installed = allocFDInProcess(proc, from: 0)
+        if installed == -1 { return errNoSpace }
+        setFDEntry(proc, installed, endpoints[ep].handle)
+        newfd = Int32(installed)
+    }
+    UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
+
     endpoints[ep].handle = HandleEntry()
     endpoints[ep].hasHandle = false
-    return newfd
+    endpoints[ep].hasMsg = false
+    endpoints[ep].msgLen = 0
+    return n
 }
 
 func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
