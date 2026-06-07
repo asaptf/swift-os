@@ -1282,6 +1282,21 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
 - **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
   loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.
 
+### net-h2 — HTTP MIME types + directory listing (DONE, 2026-06-07)
+
+- **MIME by extension:** `/bin/httpd` derives `Content-Type` from the request path's final extension
+  (`.html`→`text/html`, `.txt`→`text/plain`, `.css`/`.js`/`.json`, else `application/octet-stream`) instead
+  of the net-g hardcoded `text/html`. The extension is the last `.` within the final path segment (a `/`
+  resets the scan).
+- **Directory listing:** when the resolved `/www` path `stat`s as a directory (`S_IFDIR`), httpd reads it
+  with `swiftos_getdents` (same dirent layout as `/bin/ls`) and serves a generated HTML index (skipping
+  `.`/`..`), buffered so `Content-Length` is accurate. `/` still prefers `/www/index.html`; a dir with no
+  index (the new seed `base/www/sub/`) gets the listing. The `..` guard is intact. Userland-only.
+- **Test:** `tests/httpd_test.sh` extended — `GET /hello.txt` carries `Content-Type: text/plain` (via
+  `curl -D -`), and `GET /sub/` returns a listing containing `note.txt`, alongside the net-g concurrent
+  index + 404 assertions.
+- **Deferred:** keep-alive, percent-decoding, HTML-escaping dirent names, listing sort/size columns.
+
 ### net-rob — TCP/socket robustness (DONE, 2026-06-07)
 
 Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net/socket.swift`,
