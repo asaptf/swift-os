@@ -45,8 +45,10 @@ private let sysListen: UInt = 42       // listen(fd, backlog) — TCP
 private let sysAccept: UInt = 43       // accept(fd) → connection fd — TCP
 private let sysConnect: UInt = 44      // connect(fd, ip, port) — TCP active open
 private let sysResolve: UInt = 45      // resolve(name, server_ip, server_port) -> ip — DNS
-private let sysThreadCreate: UInt = 46 // thread_create(entry, arg, stackTop) -> tid (rt-a)
-private let sysFutex: UInt = 47        // futex(uaddr, op, val) — minimal WAIT/WAKE (rt-a)
+private let sysSysInfo: UInt = 46      // sysinfo(buffer) — system stats for /bin/top
+private let sysProcStat: UInt = 47     // procstat(buffer, capacity) — rich per-proc records
+private let sysThreadCreate: UInt = 48 // thread_create(entry, arg, stackTop) -> tid (rt-a)
+private let sysFutex: UInt = 49        // futex(uaddr, op, val) — minimal WAIT/WAKE (rt-a)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -179,6 +181,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysResolve {
         frame[0] = UInt(vfsResolve(nameVA: frame[0], serverIP: frame[1], serverPort: Int(bitPattern: frame[2])))
         return  // returns an IPv4 value (0 = failure), not an errno
+    } else if number == sysSysInfo {
+        result = processSysInfo(buffer: frame[0])
+    } else if number == sysProcStat {
+        result = processStatSnapshot(buffer: frame[0], capacity: frame[1])
     } else if number == sysThreadCreate {
         result = processThreadCreate(entryVA: frame[0], argVA: frame[1], stackTopVA: frame[2])
     } else if number == sysFutex {

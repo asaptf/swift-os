@@ -4,9 +4,12 @@ let physicalTimerIrq: UInt32 = 30
 
 private var timerIntervalTicks: UInt64 = 0
 private(set) var systemTicks: UInt64 = 0
+// Scheduler tick rate (Hz); published so /bin/top can convert ticks ↔ seconds.
+private(set) var timerHz: UInt32 = 0
 
 func timerInit(ticksPerSecond: UInt64) {
     let frequency = read_cntfrq_el0()
+    timerHz = UInt32(truncatingIfNeeded: ticksPerSecond)
     timerIntervalTicks = frequency / ticksPerSecond
     if timerIntervalTicks == 0 {
         timerIntervalTicks = 1

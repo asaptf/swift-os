@@ -26,6 +26,7 @@ uintptr_t pmm_alloc_page(void);
 uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
 long pmm_free_count(void);
+long pmm_total_count(void); // total managed frames (for /bin/top memory stats)
 
 // Framebuffer text console (kernel/drivers/fb.c). The loader passes a GOP
 // framebuffer; fb_init(0,...) leaves it disabled (serial-only, e.g. QEMU
@@ -72,6 +73,7 @@ int address_space_map(uintptr_t ttbr0, uintptr_t va, uintptr_t pa, int perm);
 void address_space_switch(uintptr_t ttbr0);
 uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va);
 uintptr_t address_space_clone(uintptr_t parent); // eager fork copy
+void address_space_destroy(uintptr_t ttbr0);     // free a process's frames on teardown
 
 void user_program_install(void *code_dst, void *data_dst);
 void enter_el0(uintptr_t entry, uintptr_t stack_top);
@@ -84,6 +86,7 @@ uintptr_t trap_return_addr(void); // exceptions.S — fork child trap-return ent
 
 // ELF64 loader (kernel/user/elf.c) and EL0 entry trampoline (user_entry.S).
 uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
+unsigned long elf_last_load_pages(void); // user pages mapped by the last elf_load
 uintptr_t user_thread_launch_addr(void);
 // rt-a: EL0 thread first-run trampoline, entry(arg) — see user_entry.S.
 uintptr_t user_thread_launch_arg_addr(void);
