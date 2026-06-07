@@ -69,6 +69,29 @@ func tcpWriteHeader(_ p: UnsafeMutableRawPointer, srcPort: UInt16, dstPort: UInt
     be16set(p, 16, tcpChecksum(src: src, dst: dst, seg: p, segLen: tcpMinHeaderLen + payloadLen))
 }
 
+// --- ephemeral local-port allocator (net-rob) ------------------------------
+// Pure rotating allocator over the IANA dynamic range. The socket layer keeps
+// the live cursor and supplies an `inUse` predicate over its bind table; kept
+// here (sans-IO) so the host net_test can unit-check it without the kernel-only
+// socket.swift.
+let ephemeralPortLow: UInt16 = 49152
+let ephemeralPortHigh: UInt16 = 65535
+
+/// Pick the next free local port in [low, high], skipping any port for which
+/// `inUse` is true. Advances `cursor` (wrapping within the range) so successive
+/// calls rotate and rarely re-issue a just-used port.
+func nextEphemeralPort(cursor: inout UInt16, inUse: (UInt16) -> Bool) -> UInt16 {
+    let span = Int(ephemeralPortHigh - ephemeralPortLow) + 1
+    var tries = 0
+    while tries < span {
+        let candidate = cursor
+        cursor = candidate == ephemeralPortHigh ? ephemeralPortLow : candidate + 1
+        if !inUse(candidate) { return candidate }
+        tries += 1
+    }
+    return cursor   // every port busy (impossible with the socket table << span)
+}
+
 // --- sequence-number arithmetic (wraparound-safe, RFC 1982) ----------------
 @inline(__always) func seqLT(_ a: UInt32, _ b: UInt32) -> Bool { Int32(bitPattern: a &- b) < 0 }
 @inline(__always) func seqLEQ(_ a: UInt32, _ b: UInt32) -> Bool { Int32(bitPattern: a &- b) <= 0 }
@@ -295,8 +318,18 @@ struct TCPConnection {
 
         if state == .closed { return ev }
 
+        // A RST tears the connection down from ANY non-LISTEN state (SYN_SENT,
+        // SYN_RCVD, ESTABLISHED, the FIN_WAIT/CLOSING/CLOSE_WAIT/LAST_ACK close
+        // states, even TIME_WAIT): stop all timers, flag both reset and closed,
+        // and drop any queued output so the caller emits nothing in reply.
         if isRST {
-            if state != .listen { state = .closed; rtoActive = false; ev.reset = true }
+            if state != .listen {
+                state = .closed
+                rtoActive = false
+                outCount = 0
+                ev.reset = true
+                ev.closed = true
+            }
             return ev
         }
 
