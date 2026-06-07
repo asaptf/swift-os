@@ -52,8 +52,8 @@ private let sysThreadCreate: UInt = 48 // thread_create(entry, arg, stackTop) ->
 private let sysFutex: UInt = 49        // futex(uaddr, op, val) — minimal WAIT/WAKE (rt-a)
 private let sysConfine: UInt = 50      // confine(path) — restrict FS access to a subtree (C3)
 private let sysEndpointCreate: UInt = 51 // endpoint_create(ends[2]) — IPC endpoint pair (C4a)
-private let sysIpcSend: UInt = 52      // ipc_send(fd, handle_fd) — transfer a handle (C4a)
-private let sysIpcRecv: UInt = 53      // ipc_recv(fd) -> new fd — receive a handle (C4a)
+private let sysIpcSend: UInt = 52      // ipc_send(fd, &msg) — bytes + optional handle (C4b)
+private let sysIpcRecv: UInt = 53      // ipc_recv(fd, &msg) -> bytes; installs any handle (C4b)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -199,9 +199,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysEndpointCreate {
         result = vfsEndpointCreate(endsVA: frame[0])
     } else if number == sysIpcSend {
-        result = vfsIpcSend(fd: Int(bitPattern: frame[0]), handleFd: Int(bitPattern: frame[1]))
+        result = vfsIpcSend(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
     } else if number == sysIpcRecv {
-        result = vfsIpcRecv(fd: Int(bitPattern: frame[0]))
+        result = vfsIpcRecv(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
     } else {
         result = -38 // ENOSYS
     }

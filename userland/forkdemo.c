@@ -62,24 +62,33 @@ int main(void) {
         }
         puts_raw("forkdemo: child inherited cwd/fd\n");
         puts_raw("forkdemo: child sees private marker\n");
-        // C4a: receive a handle the parent transfers over the IPC endpoint — one
-        // the child never inherited (the parent opens it after the fork). Reading
-        // it proves the capability moved across the endpoint.
+        // C4b: receive a byte message AND a handle the parent transfers over the IPC
+        // endpoint — the handle is one the child never inherited (the parent opens it
+        // after the fork). The bytes prove the payload arrived; reading the handle
+        // proves the capability moved across the same message.
         close(ep[0]);
-        int rf = ipc_recv(ep[1]);
-        if (rf < 0) { puts_raw("forkdemo: ipc_recv failed\n"); return 1; }
-        long m = read(rf, buf, sizeof(buf) - 1);
+        int rh = -1;
+        long bn = ipc_recv(ep[1], buf, sizeof(buf) - 1, &rh);
+        if (bn < 0) { puts_raw("forkdemo: ipc_recv failed\n"); return 1; }
+        buf[bn] = 0;
+        if (bn != 5 || !streq(buf, "PING\n")) {
+            puts_raw("forkdemo: IPC byte message mismatch\n");
+            return 1;
+        }
+        puts_raw("forkdemo: IPC-MSG-OK\n");
+        if (rh < 0) { puts_raw("forkdemo: no handle transferred\n"); return 1; }
+        long m = read(rh, buf, sizeof(buf) - 1);
         if (m <= 0) { puts_raw("forkdemo: transferred handle unreadable\n"); return 1; }
         puts_raw("forkdemo: IPC-XFER-OK\n");
-        close(rf);
+        close(rh);
         return 42;
     }
 
-    // C4a: hand the child a handle it did not inherit — opened after the fork —
-    // then transfer it over the endpoint.
+    // C4b: send the child a byte message plus a handle it did not inherit — the
+    // handle is opened after the fork — over the endpoint in one ipc_send.
     close(ep[1]);
     int xf = open("/etc/hostname", O_RDONLY);
-    if (xf < 0 || ipc_send(ep[0], xf) != 0) {
+    if (xf < 0 || ipc_send(ep[0], "PING\n", 5, xf) != 0) {
         puts_raw("forkdemo: ipc_send failed\n");
         return 1;
     }
