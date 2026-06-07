@@ -111,6 +111,55 @@ private func nextTable(_ table: UInt, _ idx: Int) -> UInt {
     return frame
 }
 
+// Descend L0->L1->L2 for `va` and return the L3 table base that holds its
+// 4 KiB leaf. With allocate=true the intermediate tables are created on demand
+// (the path map() and clone() take); returns 0 if a level is missing/cannot be
+// allocated. This is the single-VA allocating walk shared by map and clone.
+// translate() keeps its own block-aware walk (it must combine a 1 GiB/2 MiB
+// block base with the low offset), and destroy() does a full-tree sweep, so
+// neither routes through here.
+private func walkToL3(_ ttbr0: UInt, _ va: UInt, allocate: Bool) -> UInt {
+    var table = ttbr0
+    // L0, L1, L2 shifts {39, 30, 21} == 39 - 9*level for level 0..2.
+    for level in 0..<3 {
+        let idx = Int((va >> UInt(39 - 9 * level)) & 0x1ff)
+        let next: UInt
+        if allocate {
+            next = nextTable(table, idx)
+        } else {
+            let desc = tableLoad(table, idx)
+            next = (desc & DESC_VALID) != 0 ? UInt(desc & PAGE_4K_MASK) : 0
+        }
+        if next == 0 { return 0 }
+        table = next
+    }
+    return table
+}
+
+// Walk-allocate to L3 and write `leafDesc` for `va`. Returns false if the walk
+// could not allocate a table. The leaf descriptor is supplied by the caller so
+// the bit pattern stays exact: map() builds it with permPageDesc(); clone()
+// rebases the parent leaf onto a fresh frame, preserving its perm/attr bits.
+// No barrier here — callers issue the appropriate dsb/tlbi (per-page in map,
+// one bulk flush in clone).
+private func linkPage(_ ttbr0: UInt, _ va: UInt, _ leafDesc: UInt64) -> Bool {
+    let l3 = walkToL3(ttbr0, va, allocate: true)
+    if l3 == 0 { return false }
+    tableStore(l3, Int((va >> 12) & 0x1ff), leafDesc)
+    return true
+}
+
+// Allocate a fresh frame and copy `srcPA`'s 4 KiB into it; returns the new PA,
+// or 0 on allocation failure. The eager-fork per-page copy. (A later track will
+// swap this for a copy-on-write share.)
+private func copyFrame(_ srcPA: UInt) -> UInt {
+    let dstPA = pmm_alloc_page()
+    if dstPA == 0 { return 0 }
+    UnsafeMutableRawPointer(bitPattern: dstPA)!
+        .copyMemory(from: UnsafeRawPointer(bitPattern: srcPA)!, byteCount: Int(PAGE_SIZE))
+    return dstPA
+}
+
 @_cdecl("mmu_kernel_ttbr0")
 func mmuKernelTtbr0() -> UInt {
     return vm_kernel_l0_table()
@@ -145,15 +194,9 @@ func addressSpaceMap(_ ttbr0: UInt, _ va: UInt, _ pa: UInt, _ perm: Int32) -> In
     if (va & (PAGE_SIZE - 1)) != 0 || (pa & (PAGE_SIZE - 1)) != 0 {
         return -1
     }
-    let l0 = ttbr0
-    let l1 = nextTable(l0, Int((va >> 39) & 0x1ff))
-    if l1 == 0 { return -2 }
-    let l2 = nextTable(l1, Int((va >> 30) & 0x1ff))
-    if l2 == 0 { return -2 }
-    let l3 = nextTable(l2, Int((va >> 21) & 0x1ff))
-    if l3 == 0 { return -2 }
-
-    tableStore(l3, Int((va >> 12) & 0x1ff), permPageDesc(pa, perm))
+    if !linkPage(ttbr0, va, permPageDesc(pa, perm)) {
+        return -2
+    }
     dsb_sy()
     tlbi_va(va)
     return 0
@@ -278,18 +321,12 @@ func addressSpaceClone(_ parent: UInt) -> UInt {
 
                 let va: UInt = (UInt(i1) << 30) | (UInt(i2) << 21) | (UInt(i3) << 12)
                 let srcpa = UInt(d3 & PAGE_4K_MASK)
-                let dstpa = pmm_alloc_page()
+                let dstpa = copyFrame(srcpa)
                 if dstpa == 0 { return 0 }
-                UnsafeMutableRawPointer(bitPattern: dstpa)!
-                    .copyMemory(from: UnsafeRawPointer(bitPattern: srcpa)!, byteCount: Int(PAGE_SIZE))
-
-                let cl1 = nextTable(cl0, Int((va >> 39) & 0x1ff))
-                if cl1 == 0 { return 0 }
-                let cl2 = nextTable(cl1, Int((va >> 30) & 0x1ff))
-                if cl2 == 0 { return 0 }
-                let cl3 = nextTable(cl2, Int((va >> 21) & 0x1ff))
-                if cl3 == 0 { return 0 }
-                tableStore(cl3, Int((va >> 12) & 0x1ff), (d3 & ~PAGE_4K_MASK) | (UInt64(dstpa) & PAGE_4K_MASK))
+                // Rebase the parent leaf onto the fresh frame, preserving its
+                // perm/attr bits exactly (no permPageDesc round-trip).
+                let leafDesc = (d3 & ~PAGE_4K_MASK) | (UInt64(dstpa) & PAGE_4K_MASK)
+                if !linkPage(cl0, va, leafDesc) { return 0 }
             }
         }
     }
