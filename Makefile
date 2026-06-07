@@ -110,7 +110,8 @@ SWIFT_SRCS := \
 	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift \
-	kernel/mm/pmm.swift
+	kernel/mm/pmm.swift \
+	kernel/mm/vm.swift
 
 # ---- Flags -----------------------------------------------------------------
 # Embedded Swift: freestanding, no Foundation/stdlib, whole-module.
@@ -307,7 +308,9 @@ $(HEAP_OBJ): kernel/runtime/heap.c $(BRIDGE) Makefile | $(BUILD)/.dir
 $(STRING_OBJ): kernel/runtime/string.c Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS_NB) $< -o $@
 
-$(VM_OBJ): kernel/mm/vm.c $(BRIDGE) Makefile | $(BUILD)/.dir
+# C2: vm.c split into vm_early.c (MMU-off bring-up half, C) + vm.swift
+# (per-process address spaces, Swift — listed in SWIFT_SRCS above).
+$(VM_OBJ): kernel/mm/vm_early.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(FB_OBJ): kernel/drivers/fb.c $(BRIDGE) Makefile | $(BUILD)/.dir
