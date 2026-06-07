@@ -3,7 +3,9 @@
 swift-os is a minimal, modern operating system written in **Embedded Swift** for
 `aarch64` on QEMU `virt`. It is built for one focused bring-up goal: boot a
 small kernel, launch statically linked userland programs, and reach a busybox
-`sh` that can run `ls`, `cat`, and `echo` on the swift-os filesystem.
+`sh` that can run `ls`, `cat`, and `echo` on the swift-os filesystem. That goal
+is complete; development has continued into portability, security, a native
+Swift userland coreutils set, and a userland-facing network stack.
 
 The project is not a Linux clone, not a legacy Unix compatibility exercise, and
 not a general-purpose desktop OS. It chooses a small trusted core, fast boot,
@@ -11,19 +13,83 @@ explicit isolation, and testable correctness over broad compatibility.
 
 ## Current Status
 
-The repository is currently through **M6**:
+The kernel is well past M8. The current state, in order of what was completed:
 
-- the kernel boots at EL1 on QEMU `virt`;
-- UART, exceptions, GIC timer interrupts, the MMU, and basic scheduling are up;
-- each process has its own address space;
-- EL0 syscall entry works through `svc #0`;
-- a tiny VFS exposes a read-only bring-up file and UART stdout/stderr;
-- a static ELF64 user program is embedded, loaded, executed, and exits back to
-  the kernel;
-- `make test` runs host-side unit checks and QEMU boot assertions.
+- **M0–M8 (busybox bring-up):** the kernel boots at EL1 on QEMU `virt`; UART,
+  exceptions, GIC timer interrupts, the MMU, and preemptive EL0 scheduling are
+  up; each process has its own address space; fork/exec/waitpid work; a VFS
+  exposes a read-only base FS plus a writable tmpfs; static ELF64 programs load
+  and execute from the VFS; and a statically linked busybox `sh` (ash + ls/cat/
+  echo/pwd) runs on the filesystem. `make test` covers host-side unit checks and
+  QEMU boot assertions.
 
-The headline target remains **M8**: a statically linked busybox `sh` running on
-the project filesystem inside QEMU.
+- **M9 — HAL + device tree:** the kernel reads its own DTB at boot and populates
+  a global `Platform` struct; UART/GIC/RAM addresses come from the device tree
+  instead of being hardcoded.
+
+- **M10 (a/b/c) — UEFI boot from GPT disk:** a minimal AArch64 PE32+ EFI loader
+  (`BOOTAA64.EFI`) calls `ExitBootServices` and hands off to the Swift kernel.
+  `make disk` produces `build/swift-os.img`, a sparse GPT image with an EFI
+  System Partition. `make disk-run` boots it under QEMU+AAVMF (edk2) with no
+  `-kernel`. The direct `-kernel` path is kept as a fallback and both are tested
+  by `make test`.
+
+- **M10.5 — VirtualBox ARM prep:** the EFI loader emits diagnostics before
+  handoff; a procedure for manually testing on VirtualBox ARM is in
+  `docs/VIRTUALBOX.md`.
+
+- **M11 (a–d) — virtio-blk + packed read-only base FS from disk:** a
+  deterministic packed base image format (`SWOSBASE v2`); a host packer
+  (`tools/basepack.swift`); a polled virtio 1.0 block driver; the VFS mounts the
+  packed image at boot and serves `/bin`, `/etc`, and other base files directly
+  from disk. The kernel no longer embeds any userland binary; the image shrank
+  from ~1.4 MiB to ~208 KiB. Every `make run` / `make test` invocation attaches
+  `build/base.img` as a virtio-blk device.
+
+- **M12 (a–d) — capability/principal security + console-login as init:** a
+  typed `ProcessSecurityContext` (principal, session, capability mask — not
+  Unix uid==0); a base-image identity store `/etc/swos/passwd` with
+  SHA-256-hashed passwords; `console-login` authenticates a principal, calls
+  `SYS_LOGIN`, and `execve`s the shell with the adopted context; when a session
+  ends, init loops back to a fresh login prompt.
+
+- **M13 (a–c) + follow-ups — VFS capability enforcement, file ownership, shell
+  redirection:** `vfsOpen` checks the caller's capability mask at open time
+  (`capFsRead`, `capTmpWrite`); tmpfs namespace mutations (`mkdir`/`rm`/`mv`)
+  require `capTmpWrite`; vnodes carry an owner (principal) and mode written at
+  creation or packed from the base image; `ls -l` shows permission strings,
+  owner names, sizes, and real timestamps (PL031 RTC); `fcntl` (`F_DUPFD_CLOEXEC`,
+  `F_GETFD`/`F_SETFD`, `F_GETFL`) and close-on-exec semantics make shell I/O
+  redirection (`echo > file`, `>>`, pipe-into-redirect) work correctly.
+
+- **Native Swift userland coreutils:** a growing set of pure-Embedded-Swift EL0
+  utilities over the `userland/lib/swift_user.*` bridge, all packed into the base
+  image: `ls` (with `-l`), `cat`, `echo`, `pwd`, `ps`, `top`, `id`, `mkdir`,
+  `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`, `touch`, `wc`, `date`, `calc`
+  (an interactive expression REPL that exercises Swift `String`/`Array`/
+  `Dictionary`/ARC), `kv` (an in-memory key-value REPL), and `console-login`.
+  The userland free-capable allocator (K&R free-list over `sbrk`) backs ARC for
+  these apps.
+
+- **Network stack (N-series, in-kernel, sans-IO core):** a TCP/IP/UDP/ARP/ICMP/
+  DNS stack in Embedded Swift. The protocol core (`kernel/net/`) is pure Swift
+  (no MMIO/heap-per-packet), compiled into both the kernel and host unit tests.
+  The virtio-net driver (`kernel/drivers/virtio_net.swift`) provides the DMA
+  path. Capability-gated socket syscalls (`socket`/`bind`/`sendto`/`recvfrom`/
+  `listen`/`accept`/`connect`/`resolve`) are exposed to EL0. Userland tools:
+  `/bin/udpecho`, `/bin/tcpecho`, `/bin/tcpget`, `/bin/nslookup`, `/bin/httpd`
+  (a concurrent poll()-driven static-file HTTP server with MIME types and
+  directory listings). A ChaCha20-Poly1305 AEAD module (`kernel/crypto/`) is
+  built and tested as TLS groundwork. DNS queries resolve against slirp's
+  nameserver by default.
+
+- **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
+  syscalls; EL0 threads share one address space; a futex-based mutex demo proves
+  correct concurrent increment across preemption.
+
+- **Process teardown reclaims frames:** `address_space_destroy` walks and frees
+  all user-half page tables and leaf frames on process exit/exec/reap; a boot-
+  time reclaim demo asserts zero leak across fork+exec+spawn round-trips.
 
 ## Philosophy
 
@@ -33,8 +99,9 @@ The design is intentionally narrow:
    cost, CPU cost, boot-time cost, and security surface.
 2. **Simple enough to trust.** Prefer explicit, testable mechanisms over clever
    machinery.
-3. **Secure by construction.** Move toward separate address spaces,
-   capability-like handles, restartable services, and small privileged code.
+3. **Secure by construction.** Separate address spaces, capability-based handles,
+   small privileged code. Kernel authorization is principal/capability, not
+   uid==0.
 4. **Correctness proven by tests.** Each milestone must build, boot, satisfy its
    acceptance criterion, and ship executable checks.
 5. **Modern over legacy.** Rebuild tools against the swift-os ABI instead of
@@ -45,45 +112,69 @@ See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 ## Architecture
 
 ```text
-EL0  userland      busybox, static C programs, future Swift apps, Node.js, JVM
+EL0  userland      busybox, native Swift coreutils+network tools, future Swift apps, Node.js, JVM
       ----------   syscall boundary: swift-os POSIX-like ABI, not Linux ABI
-EL1  kernel        Embedded Swift: runtime, mm, sched, vfs, drivers
-      arch/aarch64 boot, exception vectors, context switch
+EL1  kernel        Embedded Swift: runtime, mm, sched, vfs, drivers, net, security, tty
+      arch/aarch64 boot (UEFI loader + direct -kernel fallback), exception vectors, context switch
 ```
 
-Early architecture decisions:
+Key architectural decisions:
 
-- **Target:** `aarch64`, QEMU `virt`, single core.
-- **Kernel language:** Embedded Swift, freestanding, no Foundation, no full
-  standard library.
-- **Isolation:** real MMU-based process isolation, one address space per
-  process.
-- **Filesystem direction:** read-only packed base image plus RAM tmpfs scratch;
-  no journaling in the bring-up design.
-- **ABI:** a small swift-os syscall surface, POSIX-like where useful, explicitly
-  not the Linux syscall ABI.
-- **Linking:** static userland only; no dynamic loader at this stage.
+- **Target:** `aarch64`, QEMU `virt` (primary), QEMU+AAVMF UEFI (primary boot path), VirtualBox ARM
+  (best-effort). Single core.
+- **Boot:** UEFI (`BOOTAA64.EFI` on an ESP in a GPT disk image) is the primary path; direct `-kernel`
+  is kept as a fallback.
+- **Hardware discovery:** a boot-time DTB reader populates a global `Platform`; driver and PMM
+  initialization read from it instead of hardcoded constants.
+- **Kernel language:** Embedded Swift, freestanding, no Foundation, no full standard library.
+- **Isolation:** real MMU-based process isolation, one address space per process.
+- **Filesystem:** two-tier. A packed read-only base image (`SWOSBASE v2`) served off a virtio-blk
+  device; a RAM tmpfs for writable scratch. No journaling; data loss on reboot is by design.
+- **Security:** capability/principal model. `/etc/swos/passwd` is the identity source; `/etc/passwd`
+  is a generated compatibility view for busybox/newlib only.
+- **ABI:** a small swift-os syscall surface, POSIX-like where useful, explicitly not the Linux
+  syscall ABI.
+- **Linking:** static userland only; no dynamic loader.
+- **Network:** in-kernel, virtio-net, sans-IO pure-Swift protocol core; capability-gated socket ABI.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for subsystem boundaries,
-driver strategy, long-horizon runtime constraints, and explicit non-goals.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for subsystem boundaries, driver strategy,
+long-horizon runtime constraints, and explicit non-goals.
 
 ## Repository Map
 
 ```text
+boot/
+  efi/            UEFI loader (AArch64 PE32+): loader.c, efi.h, kernel_blob.S
 kernel/
-  arch/aarch64/   boot code, vectors, context switch, linker script
-  drivers/        PL011 UART, GIC
-  mm/             physical pages, virtual memory
+  arch/aarch64/   boot.S, exception vectors, context switch, linker script, FDT reader, platform
+  crypto/         ChaCha20-Poly1305 AEAD (TLS groundwork)
+  drivers/        PL011 UART, GICv2, virtio-blk, virtio-net, virtio-input, framebuffer
+  mm/             physical page allocator (PMM), virtual memory / address space management
+  net/            sans-IO Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS core; socket layer
   runtime/        freestanding runtime support for Embedded Swift
-  sched/          process/thread scheduling
+  sched/          preemptive process/thread scheduler, futex
+  security/       process security context, principal/capability model
+  signal/         signal delivery, pending mask
   syscall/        syscall dispatch
-  user/           EL0 entry, ELF loading, process launch
-  vfs/            minimal VFS bring-up layer
+  timer/          ARM generic timer, PL031 RTC
+  tty/            line discipline, termios, canonical/raw mode
+  user/           ELF loader, process/thread lifecycle, exec
+  vfs/            VFS (disk-backed base + tmpfs), fcntl, capability enforcement
 userland/
-  lib/            crt0, syscall wrappers, tiny libc subset
-  hello.c         static ELF bring-up program
-tests/            host and QEMU acceptance checks
-docs/             philosophy, architecture, hardware/toolchain notes
+  lib/            swift_user bridge (svc ABI, allocator, atomic ops, putchar),
+                  crt0, newlib syscall stubs, compat headers
+  compat/         POSIX/Linux shim headers and stubs for busybox/newlib cross-build
+  busybox/        busybox 1.38.0 build config
+  *.swift         native Swift EL0 utilities: ls cat echo pwd ps top id mkdir rmdir
+                  rm mv chmod chown head touch wc date calc kv nslookup udpecho
+                  tcpecho tcpget httpd console-login threadsdemo …
+  hello.c         original bring-up C program (kept for reference)
+base/             host seed tree for the packed base image (etc, www, …)
+tools/
+  basepack.swift  host-side packed base image packer
+scripts/          build-busybox.sh, build-newlib.sh, make-disk.sh, …
+tests/            host unit tests (Swift) + QEMU boot assertion scripts (bash)
+docs/             philosophy, architecture, hardware/toolchain notes, virtualbox guide
 ```
 
 ## Build And Run
@@ -92,25 +183,58 @@ The default tool paths are pinned for the current macOS Apple Silicon bring-up
 environment in [docs/NOTES.md](docs/NOTES.md). They can be overridden from
 `make` if your local installation differs.
 
+Prerequisites (run once):
+
+```sh
+make newlib    # cross-build newlib 4.6.0 into ./sysroot
+make busybox   # cross-build busybox 1.38.0
+```
+
+Then:
+
 ```sh
 make tools-check
 make build
-make run
+make run       # direct -kernel boot with base.img attached
 ```
 
-Useful targets:
+UEFI boot (primary path):
 
 ```sh
-make test     # host page allocator test + userland ELF check + QEMU boot asserts
-make debug    # boot QEMU paused with a gdbstub on :1234
-make gdb      # attach aarch64-elf-gdb to the paused kernel
+make disk      # build BOOTAA64.EFI + GPT disk image (build/swift-os.img)
+make disk-run  # boot under QEMU+AAVMF from the GPT disk
+```
+
+Other useful targets:
+
+```sh
+make test      # full test suite: host unit tests + QEMU boot assertions
+               # (both -kernel and UEFI/disk paths are tested)
+make uefi-run  # UEFI boot from a QEMU virtual FAT directory (quick, no GPT)
+make debug     # boot QEMU paused with a gdbstub on :1234
+make gdb       # attach aarch64-elf-gdb to the paused kernel
+make base-image  # pack build/base.img from base/ + staged userland ELFs
 make clean
 ```
 
 `make run` starts:
 
 ```sh
-qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -kernel build/kernel.elf
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=<dtb>,addr=...,force-raw=on \
+  -drive file=build/base.img,...,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -kernel build/kernel.elf
+```
+
+`make disk-run` starts:
+
+```sh
+qemu-system-aarch64 -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic \
+  -bios <AAVMF_CODE> \
+  -drive file=build/swift-os.img,format=raw,if=virtio \
+  <base.img as second virtio-blk>
 ```
 
 Exit QEMU serial with `Ctrl-A X`.
@@ -130,22 +254,43 @@ Embedded Swift flags across toolchain versions.
 
 ## Roadmap
 
-Milestones are developed in order, and each one must remain buildable,
-bootable, tested, and reviewable before moving on.
+Milestones are developed in order; each must remain buildable, bootable, tested,
+and reviewable before moving on.
 
-- **M0:** boot skeleton and UART output.
-- **M1:** runtime hooks, exception vectors, heap, page allocator.
-- **M2:** GIC and timer interrupts.
-- **M3:** virtual memory and MMU.
-- **M4:** processes, scheduling, EL0 trap path.
-- **M5:** syscall entry and VFS skeleton.
+- **M0:** boot skeleton and UART output. **Done.**
+- **M1:** runtime hooks, exception vectors, heap, page allocator. **Done.**
+- **M2:** GIC and timer interrupts. **Done.**
+- **M3:** virtual memory and MMU. **Done.**
+- **M4:** processes, scheduling, EL0 trap path. **Done.**
+- **M5:** syscall entry and VFS skeleton. **Done.**
 - **M6:** libc subset, ELF64 loader, spawn. **Done.**
-- **M7:** TTY, termios, signals.
-- **M8:** static busybox `sh` with `ls`, `cat`, and `echo`.
+- **M7:** TTY, termios, signals. **Done.**
+- **M8:** static busybox `sh` with `ls`, `cat`, and `echo`. **Done.**
+- **M9:** HAL + runtime hardware discovery from DTB. **Done.**
+- **M10 (a/b/c):** UEFI boot from a GPT disk image under QEMU+AAVMF. **Done.**
+- **M10.5:** VirtualBox ARM validation prep. **Done (prep only; manual run needed).**
+- **M11 (a–d):** virtio-blk driver, packed `SWOSBASE` format + host packer,
+  base FS served read-only from disk, disk-first executable lookup, embedded
+  kernel blob removed. **Done.**
+- **M12 (a–d):** capability/principal security core, identity store,
+  console-login as init, SHA-256 password hashing. **Done.**
+- **M13 (a–c):** VFS capability enforcement at open time, tmpfs mutation gating,
+  file ownership + `ls -l`. **Done.**
+- **Post-M13 follow-ups:** shell I/O redirection + `fcntl`; native Swift
+  userland coreutils (`ls cat echo pwd ps top id mkdir rmdir rm mv chmod chown
+  head touch wc date calc kv …`); busybox `vi`; PL031 RTC + per-file mtime;
+  free-capable allocator for Swift ARC; threading (`thread_create` + `futex`);
+  process teardown frame reclaim. **Done.**
+- **N-series (networking):** virtio-net driver, sans-IO Ethernet/ARP/IPv4/ICMP/
+  UDP/TCP/DNS core, capability-gated socket syscalls, `/bin/udpecho`,
+  `/bin/tcpecho`, `/bin/tcpget`, `/bin/httpd` (concurrent poll-driven static-file
+  HTTP server), `/bin/nslookup`, DNS resolver, TCP robustness + ephemeral-port
+  allocator, ChaCha20-Poly1305 AEAD (TLS groundwork). **Done.**
 
-Longer-horizon goals are recorded, not implemented early: native Swift
-applications, Node.js, the JVM, cells, restartable driver services, richer
-observability, and hot-update-friendly kernel structure.
+Longer-horizon goals are recorded, not implemented early: TLS 1.3 record layer
+and handshake; Cells (kernel-native capability-based isolated execution domains);
+restartable driver services; native Swift application runtime; Node.js; the JVM;
+richer observability; hot-update-friendly kernel structure.
 
 ## Non-Goals At This Stage
 
@@ -153,11 +298,18 @@ observability, and hot-update-friendly kernel structure.
 - dynamic linking;
 - SMP;
 - amd64/x86-64 support;
-- network stack;
-- graphics;
+- full Cells isolation (the architecture is designed for it; the implementation
+  is future work — see `docs/ARCHITECTURE.md`);
 - Docker/OCI compatibility;
 - journaling or persistent writable filesystem guarantees;
-- broad loadable kernel-module ABI.
+- broad loadable kernel-module ABI;
+- GPU/NPU acceleration;
+- graphics as a first-class target (a basic VT100 framebuffer console exists for
+  QEMU graphical mode, but it is not the primary display path).
 
-These are not accidental omissions. They keep the bring-up path small enough to
-measure, test, and understand.
+Networking is **not** a non-goal: a TCP/UDP/ARP/ICMP/DNS stack and a set of
+userland network tools are present and tested. What remains future work is
+TLS, userland network services isolated in Cells, and high-pps optimization.
+
+These boundaries are not accidental omissions. They keep the kernel surface
+small enough to measure, test, and trust.
