@@ -141,6 +141,13 @@ static inline void tlbi_va(uintptr_t va) {
 static inline void write_ttbr0_el1(uint64_t value) {
     __asm__ volatile("msr ttbr0_el1, %0" :: "r"(value) : "memory");
 }
+// Kernel L0 table base (the identity map built by mmu_init_identity_map in
+// vm_early.c). vm.swift returns it from mmu_kernel_ttbr0() and compares against
+// it in address_space_destroy.
+extern uint64_t l0_table[];
+static inline uintptr_t vm_kernel_l0_table(void) {
+    return (uintptr_t)l0_table;
+}
 
 static inline uintptr_t swiftos_heap_start(void) {
     return (uintptr_t)__heap_start;
