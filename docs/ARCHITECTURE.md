@@ -424,6 +424,8 @@ swift-os will eventually use kernel-native, capability-based **Cells**: lightwei
 inspired by FreeBSD jails and Solaris zones, but designed around immutable base images, private tmpfs scratch,
 explicit capabilities, resource accounting, and direct kernel lifecycle management.
 
+See [CAPABILITIES.md](CAPABILITIES.md) for the handle/capability ABI and the Cell-as-composition decision.
+
 Cells are not Docker compatibility. They do not depend on Linux namespaces, cgroups, overlayfs, privileged
 containers, or a container daemon. Docker is an ecosystem and packaging model; Cells are an operating-system
 security and resource boundary.
