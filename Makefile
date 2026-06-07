@@ -87,6 +87,7 @@ SWIFT_SRCS := \
 	kernel/net/ipv4.swift \
 	kernel/net/icmp.swift \
 	kernel/net/udp.swift \
+	kernel/net/dns.swift \
 	kernel/net/tcp.swift \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
@@ -231,6 +232,7 @@ USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
+USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_KV_ELF) \
@@ -242,6 +244,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TCPECHO_ELF) \
 	$(USER_TCPGET_ELF) \
 	$(USER_HTTPD_ELF) \
+	$(USER_NSLOOKUP_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -432,6 +435,9 @@ $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile
 $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
 
+$(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/nslookup.swift -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -550,6 +556,9 @@ $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/use
 $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o -o $@
 
+$(USER_NSLOOKUP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -598,7 +607,7 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
-	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/stack.swift -o $(BUILD)/net_test
+	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
@@ -609,6 +618,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
 	./tests/httpd_test.sh
+	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/console_login_test.sh
@@ -723,6 +733,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
+	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

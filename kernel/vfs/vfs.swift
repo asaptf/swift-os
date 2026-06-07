@@ -1373,6 +1373,23 @@ func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
                          timeoutMs: socketAcceptTimeoutMs)
 }
 
+// Recursive DNS resolve. Returns the IPv4 (host order) as the syscall value,
+// or 0 on failure (a value return, not an errno). Gated on capNet.
+private let socketResolveTimeoutMs = 5000
+
+func vfsResolve(nameVA: UInt, serverIP: UInt, serverPort: Int) -> Int {
+    if (processCurrentCaps() & capNet) == 0 { return 0 }
+    guard let name = userCString(nameVA) else { return 0 }
+    var n = 0
+    while name[n] != 0 { n += 1 }
+    if n == 0 || n > 255 { return 0 }
+    let port = (serverPort > 0 && serverPort <= 65535) ? UInt16(serverPort) : UInt16(0)
+    let ip = dnsResolve(name: UnsafeRawPointer(name), nameLen: n,
+                        serverIP: UInt32(truncatingIfNeeded: serverIP), serverPort: port,
+                        timeoutMs: socketResolveTimeoutMs)
+    return Int(ip)
+}
+
 private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {
     guard validFD(proc, fd) else { return -1 }
     let d = fdEntry(proc, fd).file

@@ -44,6 +44,7 @@ private let sysRecvfrom: UInt = 41     // recvfrom(fd, &msg) — UDP datagram in
 private let sysListen: UInt = 42       // listen(fd, backlog) — TCP
 private let sysAccept: UInt = 43       // accept(fd) → connection fd — TCP
 private let sysConnect: UInt = 44      // connect(fd, ip, port) — TCP active open
+private let sysResolve: UInt = 45      // resolve(name, server_ip, server_port) -> ip — DNS
 private let sysSysInfo: UInt = 46      // sysinfo(buffer) — system stats for /bin/top
 private let sysProcStat: UInt = 47     // procstat(buffer, capacity) — rich per-proc records
 
@@ -175,6 +176,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsAccept(fd: Int(bitPattern: frame[0]))
     } else if number == sysConnect {
         result = vfsConnect(fd: Int(bitPattern: frame[0]), ip: frame[1], port: Int(bitPattern: frame[2]))
+    } else if number == sysResolve {
+        frame[0] = UInt(vfsResolve(nameVA: frame[0], serverIP: frame[1], serverPort: Int(bitPattern: frame[2])))
+        return  // returns an IPv4 value (0 = failure), not an errno
     } else if number == sysSysInfo {
         result = processSysInfo(buffer: frame[0])
     } else if number == sysProcStat {

@@ -590,3 +590,7 @@ int swiftos_connect(int fd, unsigned int ip, unsigned short port) {
 long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms) {
     return __syscall3(SYS_POLL, (long)fds, (long)nfds, timeout_ms);
 }
+
+unsigned int swiftos_resolve(const char *name, unsigned int server_ip, unsigned short server_port) {
+    return (unsigned int)__syscall3(SYS_RESOLVE, (long)name, (long)server_ip, (long)server_port);
+}

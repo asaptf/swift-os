@@ -111,5 +111,8 @@ int swiftos_connect(int fd, unsigned int ip, unsigned short port);
 // (fd:int32 @0, events:int16 @4, revents:int16 @6 — 8 bytes each). POLLIN=0x001,
 // POLLOUT=0x004, POLLHUP=0x010. Returns the number of ready fds, 0 on timeout.
 long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
+// Resolve a hostname to an IPv4 (host order, e.g. 0x0A000202). server_ip 0 uses
+// the slirp DNS (10.0.2.3); server_port 0 uses 53. Returns 0 on failure.
+unsigned int swiftos_resolve(const char *name, unsigned int server_ip, unsigned short server_port);
 
 #endif // SWIFTOS_USER_SWIFT_USER_H

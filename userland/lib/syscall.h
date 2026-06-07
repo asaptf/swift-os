@@ -51,6 +51,7 @@
 #define SYS_LISTEN        42
 #define SYS_ACCEPT        43
 #define SYS_CONNECT       44
+#define SYS_RESOLVE       45
 #define SYS_SYSINFO       46
 #define SYS_PROCSTAT      47
 

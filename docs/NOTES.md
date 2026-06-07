@@ -1312,3 +1312,40 @@ time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + t
   the kernel + the 512 KiB sub-load-base hole + the bitmap consume ~1.02 MiB before any process runs.
   The accounting/syscalls added by this feature grow the image by ~3 KiB (top's `Kernel:` line then
   reads ~522 KiB).
+
+### net-f — DNS resolver: sans-IO codec + resolve syscall + /bin/nslookup (DONE, 2026-06-07)
+
+- **sans-IO codec `kernel/net/dns.swift`** (pure, host-tested): `dnsBuildQuery` (header + length-prefixed
+  QNAME labels + QTYPE A/QCLASS IN) and `dnsParseResponse` (validate id/response/rcode, skip the question,
+  walk answers, return the first A record). Handles **name-compression pointers** (`0xC0`) when skipping
+  names and bounds-checks every read (a malformed/hostile response can't over-read).
+- **Kernel resolve `dnsResolve`** (`kernel/net/socket.swift`): a transient UDP socket (reusing
+  `socketCreate`/`Bind`/`Send`/`Recv`) sends the query to a DNS server and parses the reply. Query id from
+  `rtcNow()`; a dedicated PMM scratch page holds the query/response. `serverIP == 0` defaults to slirp's
+  DNS at **10.0.2.3:53**.
+- **`resolve(name, server_ip, server_port) = syscall 45`**, gated on `capNet`; returns the IPv4 in x0
+  (0 = failure), a value return like `time`. `userland/nslookup.swift` → `/bin/nslookup <name> [server]
+  [port]` prints `name -> a.b.c.d`.
+- **Tests:** `tests/net_test.swift` gained DNS cases (query encoding; parse an A record reached via a
+  compression pointer; CNAME-then-A; NXDOMAIN/wrong-id → 0). `tests/dns_test.sh` runs a tiny host `python3`
+  UDP DNS responder (answers any A query with `192.0.2.7`); the guest `/bin/nslookup test.swos 10.0.2.2
+  5354` queries it (slirp routes guest→`10.0.2.2` to the host) and prints `test.swos -> 192.0.2.7` — fully
+  hermetic. Skips cleanly if `python3` is absent. Wired into `make test`.
+- **Deferred:** connect-by-name in `/bin/tcpget` (small follow-up), caching, IPv6/AAAA, a real ephemeral
+  port allocator. `/bin/nslookup name` (no server) resolves against slirp's real DNS for interactive use.
+
+### net-g — static-file HTTP server (/bin/httpd serves the VFS) (DONE, 2026-06-07)
+
+- **`/bin/httpd` now serves real files** instead of a canned body. Per connection it parses the request
+  line (`GET <path>`), maps the path into a **`/www` docroot** on the VFS (`/` → `/www/index.html`), and
+  streams the file with a `stat`-derived `Content-Length` (`open`/`read`→`write` in chunks), 404 on miss.
+  The poll() concurrency from net-e is unchanged. Userland-only (`userland/httpd.swift` + the existing
+  `open`/`read`/`close`/`stat` bridge); no kernel change.
+- **Docroot, not the whole VFS:** only `base/www/` is reachable (seed files `index.html`, `hello.txt`), so
+  the server never exposes `/etc/swos/passwd` etc. A path-traversal guard rejects any `..` in the request
+  path (and requires a leading `/`) → 404; verified a raw `GET /../etc/swos/passwd` returns 404, no leak.
+- **Tests:** `tests/httpd_test.sh` updated — two concurrent `curl`s for `/index.html` both get the page
+  (concurrency), `/hello.txt` returns its content (file serving), a missing path returns HTTP 404, and the
+  serial shows ≥2 `httpd: 200` lines. `base/www/*` ride along via the existing `BASE_SEED_FILES` glob.
+- **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
+  loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.

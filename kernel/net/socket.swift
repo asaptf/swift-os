@@ -10,6 +10,7 @@
 
 let netLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest address)
 let netGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
+let netDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
 
 private let maxSockets = 16
 private let sockRingDepth = 4
@@ -28,6 +29,7 @@ let netErrAgain = -11      // EAGAIN / timed out
 var gNet = NetStack(mac: .zero, ip: netLocalIP)   // replaced in netInit with the real MAC
 var netReady = false
 private var gSockBufBase: UInt = 0
+private var gDnsScratch: UInt = 0   // one PMM page: query at +0, response at +1024 (net-f)
 
 private var sockInUse = [Bool](repeating: false, count: maxSockets)
 private var sockBound = [Bool](repeating: false, count: maxSockets)
@@ -79,7 +81,36 @@ func netInit() {
         return
     }
     gSockBufBase = base
+    gDnsScratch = pmm_alloc_page()   // 0 on failure → dnsResolve returns 0 gracefully
     netReady = true
+}
+
+/// Resolve `name` (`nameLen` bytes, dotted form) to an IPv4 by querying a DNS
+/// server over a transient UDP socket. `serverIP`/`serverPort` of 0 default to
+/// the slirp DNS at 10.0.2.3:53. Returns the address (host order), or 0 on
+/// failure/timeout. Uses the pure dns.swift codec.
+func dnsResolve(name: UnsafeRawPointer, nameLen: Int, serverIP: IPv4, serverPort: UInt16,
+                timeoutMs: Int) -> IPv4 {
+    if !netReady || gDnsScratch == 0 || nameLen <= 0 || nameLen > 255 { return 0 }
+    let server = serverIP == 0 ? netDnsIP : serverIP
+    let port = serverPort == 0 ? UInt16(53) : serverPort
+    let s = socketCreate(owner: 0)
+    if s < 0 { return 0 }
+    _ = socketBind(s, port: UInt16(40000 + s))
+    let id = UInt16(truncatingIfNeeded: rtcNow()) ^ 0x55AA
+
+    let qbuf = UnsafeMutableRawPointer(bitPattern: gDnsScratch)!
+    let rbuf = UnsafeMutableRawPointer(bitPattern: gDnsScratch + 1024)!
+    let qlen = dnsBuildQuery(name: name, nameLen: nameLen, id: id, out: qbuf)
+    _ = socketSend(s, dstIP: server, dstPort: port, src: qbuf, len: qlen)
+
+    var srcIP: IPv4 = 0
+    var srcPort: UInt16 = 0
+    let n = socketRecv(s, dst: rbuf, cap: 1024, srcIP: &srcIP, srcPort: &srcPort, timeoutMs: timeoutMs)
+    var result: IPv4 = 0
+    if n > 0 { result = dnsParseResponse(rbuf, n, id: id) }
+    socketClose(s)
+    return result
 }
 
 /// Pump the NIC once: drain RX frames through the stack (delivering UDP/TCP to
