@@ -1265,3 +1265,43 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   hermetic. Skips cleanly if `python3` is absent. Wired into `make test`.
 - **Deferred:** connect-by-name in `/bin/tcpget` (small follow-up), caching, IPv6/AAAA, a real ephemeral
   port allocator. `/bin/nslookup name` (no server) resolves against slirp's real DNS for interactive use.
+
+### net-g — static-file HTTP server (/bin/httpd serves the VFS) (DONE, 2026-06-07)
+
+- **`/bin/httpd` now serves real files** instead of a canned body. Per connection it parses the request
+  line (`GET <path>`), maps the path into a **`/www` docroot** on the VFS (`/` → `/www/index.html`), and
+  streams the file with a `stat`-derived `Content-Length` (`open`/`read`→`write` in chunks), 404 on miss.
+  The poll() concurrency from net-e is unchanged. Userland-only (`userland/httpd.swift` + the existing
+  `open`/`read`/`close`/`stat` bridge); no kernel change.
+- **Docroot, not the whole VFS:** only `base/www/` is reachable (seed files `index.html`, `hello.txt`), so
+  the server never exposes `/etc/swos/passwd` etc. A path-traversal guard rejects any `..` in the request
+  path (and requires a leading `/`) → 404; verified a raw `GET /../etc/swos/passwd` returns 404, no leak.
+- **Tests:** `tests/httpd_test.sh` updated — two concurrent `curl`s for `/index.html` both get the page
+  (concurrency), `/hello.txt` returns its content (file serving), a missing path returns HTTP 404, and the
+  serial shows ≥2 `httpd: 200` lines. `base/www/*` ride along via the existing `BASE_SEED_FILES` glob.
+- **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
+  loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.
+
+### net-h2 — HTTP server depth: MIME types + directory listing (DONE, 2026-06-07)
+
+- **Content-Type by extension.** `/bin/httpd` now derives the response `Content-Type` from the request
+  path's final extension instead of hardcoding `text/html`: `.html`→`text/html`, `.txt`→`text/plain`,
+  `.css`→`text/css`, `.js`→`text/javascript`, `.json`→`application/json`, else
+  `application/octet-stream`. The extension is the last `.` within the final path segment (a `/` resets
+  the scan, so a dotted directory name doesn't fool it). Lowercase match, kept deliberately small.
+- **Directory listings.** When the resolved `/www` path `stat`s as a directory (mode `S_IFDIR`), httpd
+  opens it and generates a small HTML index from `swiftos_getdents` (same dirent layout as `/bin/ls`:
+  `d_reclen` u16 @16, NUL-terminated name @19), skipping `.`/`..`, emitting `<li><a href="name">name</a>`.
+  The body is buffered (8 KiB cap) so the response carries an accurate `Content-Length`. `/` still prefers
+  `/www/index.html` (the existing `/`→index rewrite is unchanged); a directory with **no** index — e.g.
+  the new `base/www/sub/` — gets the listing. The `..` path-traversal guard is intact.
+- **Robust logging.** The request path is now copied into a stable buffer up front, so the
+  `httpd: 200|404 <path>` log line (and MIME selection) stay correct even though file serving reuses the
+  request buffer for file content.
+- **Userland-only:** `userland/httpd.swift` only; no kernel/syscall change (`open`/`read`/`close`/`stat`/
+  `getdents` already exist). Seed file `base/www/sub/note.txt` added to demonstrate the listing.
+- **Tests:** `tests/httpd_test.sh` extended — keeps the concurrent `/index.html` + 404 assertions and adds
+  (a) `Content-Type: text/plain` on `GET /hello.txt` (via `curl -D -`) and (b) a `/sub/` listing
+  containing `note.txt`. PASS.
+- **Deferred (still):** keep-alive, percent-decoding of request paths, HTML-escaping of dirent names
+  (our docroot names are plain), sorting/size columns in the listing.
