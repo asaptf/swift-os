@@ -78,27 +78,29 @@ private var nodeCount = 0
 
 // ---- open files, fd table, pipes -----------------------------------------
 
-private let fdKindNone = 0
-private let fdKindTTY = 1
-private let fdKindVNode = 2
-private let fdKindPipe = 3
-private let fdKindSocket = 4   // net-b: OpenDescription.node indexes the socket table
+// Handle kinds live in handle.swift (HandleKind): .none/.tty/.file/.pipe/.socket,
+// 1:1 with the former fdKind* constants (fdKindVNode → .file). net-b: a .socket
+// description's `node` field indexes the socket table.
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
 
-private struct FDEntry {
+// One entry in a process's handle table — the generalization of the old FDEntry
+// (C1). `object` is an index into the per-kind object pool (today: an open
+// description); `rights` is the authority THIS holder has on it (moved off the
+// shared description so dups/forks can carry attenuated rights). See
+// docs/CAPABILITIES.md §2.
+private struct HandleEntry {
     var inUse = false
-    var file = -1
+    var object = -1
+    var rights = Rights()
     var cloexec = false   // close-on-exec (F_SETFD FD_CLOEXEC / O_CLOEXEC / F_DUPFD_CLOEXEC)
 }
 
 private struct OpenDescription {
     var inUse = false
     var refCount = 0
-    var kind = fdKindNone
-    var readable = false
-    var writable = false
+    var kind: HandleKind = .none
     var node = -1
     var offset = 0
     var dirCursor = 0
@@ -123,7 +125,7 @@ private let maxPipes = 16
 private let pipeCap = 1024
 private let maxVFSProcesses = 16
 
-private var fds = [FDEntry](repeating: FDEntry(), count: maxFDs * maxVFSProcesses)
+private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * maxVFSProcesses)
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
@@ -370,7 +372,7 @@ func vfsInit() {
 
     for p in 0..<maxVFSProcesses {
         cwdNodes[p] = root
-        for fd in 0..<maxFDs { fds[fdIndex(p, fd)] = FDEntry() }
+        for fd in 0..<maxFDs { handles[fdIndex(p, fd)] = HandleEntry() }
     }
     for i in 0..<maxOpenDescriptions { openDescriptions[i] = OpenDescription() }
     for i in 0..<maxPipes { pipes[i] = Pipe() }
@@ -381,15 +383,15 @@ func vfsProcessInit(slot: Int, parent: Int) {
     if parent >= 0 && parent < maxVFSProcesses {
         cwdNodes[slot] = cwdNodes[parent]
         for fd in 0..<maxFDs {
-            let e = fds[fdIndex(parent, fd)]
-            fds[fdIndex(slot, fd)] = e
-            if e.inUse { retainDescription(e.file) }
+            let e = handles[fdIndex(parent, fd)]
+            handles[fdIndex(slot, fd)] = e
+            if e.inUse { retainDescription(e.object) }
         }
         return
     }
 
     cwdNodes[slot] = 0
-    for fd in 0..<maxFDs { fds[fdIndex(slot, fd)] = FDEntry() }
+    for fd in 0..<maxFDs { handles[fdIndex(slot, fd)] = HandleEntry() }
     _ = installTTY(slot: slot, fd: 0, readable: true, writable: true)
     _ = installTTY(slot: slot, fd: 1, readable: true, writable: true)
     _ = installTTY(slot: slot, fd: 2, readable: true, writable: true)
@@ -399,9 +401,9 @@ func vfsProcessCloseAll(slot: Int) {
     if slot < 0 || slot >= maxVFSProcesses { return }
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
-        if fds[idx].inUse {
-            releaseDescription(fds[idx].file)
-            fds[idx] = FDEntry()
+        if handles[idx].inUse {
+            releaseDescription(handles[idx].object)
+            handles[idx] = HandleEntry()
         }
     }
 }
@@ -413,9 +415,9 @@ func vfsCloseCloexec(slot: Int) {
     if slot < 0 || slot >= maxVFSProcesses { return }
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
-        if fds[idx].inUse && fds[idx].cloexec {
-            releaseDescription(fds[idx].file)
-            fds[idx] = FDEntry()
+        if handles[idx].inUse && handles[idx].cloexec {
+            releaseDescription(handles[idx].object)
+            handles[idx] = HandleEntry()
         }
     }
 }
@@ -435,12 +437,12 @@ private func cwdNodeForCurrentProcess() -> Int {
     cwdNodes[currentVFSProcess()]
 }
 
-private func fdEntry(_ proc: Int, _ fd: Int) -> FDEntry {
-    fds[fdIndex(proc, fd)]
+private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {
+    handles[fdIndex(proc, fd)]
 }
 
-private func setFDEntry(_ proc: Int, _ fd: Int, _ value: FDEntry) {
-    fds[fdIndex(proc, fd)] = value
+private func setFDEntry(_ proc: Int, _ fd: Int, _ value: HandleEntry) {
+    handles[fdIndex(proc, fd)] = value
 }
 
 private func nameEquals(_ node: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> Bool {
@@ -550,8 +552,8 @@ private func releaseDescription(_ d: Int) {
     if openDescriptions[d].refCount > 0 { return }
 
     let desc = openDescriptions[d]
-    if desc.kind == fdKindSocket { socketClose(desc.node) }
-    if desc.kind == fdKindPipe && desc.pipe >= 0 && desc.pipe < maxPipes && pipes[desc.pipe].inUse {
+    if desc.kind == .socket { socketClose(desc.node) }
+    if desc.kind == .pipe && desc.pipe >= 0 && desc.pipe < maxPipes && pipes[desc.pipe].inUse {
         if desc.pipeEnd == pipeReadEnd {
             if pipes[desc.pipe].readRefs > 0 { pipes[desc.pipe].readRefs -= 1 }
         } else {
@@ -571,15 +573,49 @@ private func validFD(_ proc: Int, _ fd: Int) -> Bool {
 private func installTTY(slot: Int, fd: Int, readable: Bool, writable: Bool) -> Int {
     let d = allocDescription()
     if d < 0 { return d }
-    openDescriptions[d].kind = fdKindTTY
-    openDescriptions[d].readable = readable
-    openDescriptions[d].writable = writable
-    setFDEntry(slot, fd, FDEntry(inUse: true, file: d))
+    openDescriptions[d].kind = .tty
+    setFDEntry(slot, fd, HandleEntry(inUse: true, object: d,
+                                     rights: rights(read: readable, write: writable)))
     return fd
 }
 
-private func installDescription(_ proc: Int, _ fd: Int, _ desc: Int) {
-    setFDEntry(proc, fd, FDEntry(inUse: true, file: desc))
+private func installDescription(_ proc: Int, _ fd: Int, _ desc: Int, rights: Rights) {
+    setFDEntry(proc, fd, HandleEntry(inUse: true, object: desc, rights: rights))
+}
+
+// ---- kernel-internal handle API (C1) --------------------------------------
+//
+// The handle-generic operations from docs/CAPABILITIES.md §2. These are not yet
+// wired to syscalls (the POSIX dup/dup2/fcntl/close paths above still do that);
+// later milestones (C2+) call these to manipulate handles directly, with
+// per-handle rights and attenuation.
+
+/// The rights the holder has on the handle at `(proc, fd)`, or empty if invalid.
+func handleRights(_ proc: Int, _ fd: Int) -> Rights {
+    validFD(proc, fd) ? fdEntry(proc, fd).rights : Rights()
+}
+
+/// Duplicate a handle into the lowest free slot, sharing the same underlying
+/// description/offset, with rights attenuated to (at most) `mask`. The new
+/// handle can never hold more authority than the source. Returns the new fd or
+/// a negative error.
+func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
+    guard validFD(proc, fd) else { return errBadFD }
+    let newfd = allocFDInProcess(proc, from: 0)
+    if newfd == -1 { return errNoSpace }
+    let d = fdEntry(proc, fd).object
+    retainDescription(d)
+    installDescription(proc, newfd, d, rights: attenuate(fdEntry(proc, fd).rights, to: mask))
+    return newfd
+}
+
+/// Close the handle at `(proc, fd)`, dropping its reference to the underlying
+/// object. vfsClose is the current-process view of this.
+func handleClose(_ proc: Int, _ fd: Int) -> Int {
+    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return errBadFD }
+    releaseDescription(fdEntry(proc, fd).object)
+    setFDEntry(proc, fd, HandleEntry())
+    return 0
 }
 
 // ---- tmpfs node helpers ---------------------------------------------------
@@ -681,16 +717,17 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     let d = allocDescription()
     if d == -1 { return errNoSpace }
 
-    openDescriptions[d].kind = fdKindVNode
+    openDescriptions[d].kind = .file
     openDescriptions[d].node = node
     // O_APPEND starts the offset at end-of-file (shell `>>` redirects).
     openDescriptions[d].offset = (f & oAppend) != 0 ? nodes[node].dataLen : 0
     openDescriptions[d].dirCursor = 0
     openDescriptions[d].flags = f
-    openDescriptions[d].readable = (f & oWrOnly) == 0 || (f & oRdWr) != 0
-    openDescriptions[d].writable = (f & oWrOnly) != 0 || (f & oRdWr) != 0
-    installDescription(proc, fd, d)
-    if (f & oCloexec) != 0 { fds[fdIndex(proc, fd)].cloexec = true }
+    // Rights are per-handle (C1): derive read/write from the open mode.
+    let r = rights(read: (f & oWrOnly) == 0 || (f & oRdWr) != 0,
+                   write: (f & oWrOnly) != 0 || (f & oRdWr) != 0)
+    installDescription(proc, fd, d, rights: r)
+    if (f & oCloexec) != 0 { handles[fdIndex(proc, fd)].cloexec = true }
     return fd
 }
 
@@ -698,16 +735,16 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     var file = openDescriptions[d]
-    guard file.readable else { return errBadFD }
+    guard fdEntry(proc, fd).rights.contains(.read) else { return errBadFD }
 
-    if file.kind == fdKindTTY {
+    if file.kind == .tty {
         return ttyRead(buffer: buffer, count: count)
     }
     guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
 
-    if file.kind == fdKindSocket {
+    if file.kind == .socket {
         if socketIsTCP(file.node) {
             return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
                            timeoutMs: socketRecvTimeoutMs)
@@ -715,7 +752,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         return errInvalid   // UDP: use recvfrom
     }
 
-    if file.kind == fdKindPipe {
+    if file.kind == .pipe {
         let p = file.pipe
         var copied = 0
         enable_irq()
@@ -730,7 +767,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         return copied
     }
 
-    guard file.kind == fdKindVNode else { return errBadFD }
+    guard file.kind == .file else { return errBadFD }
     let node = file.node
     if nodes[node].isDir { return errIsDir }
 
@@ -762,25 +799,25 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     var file = openDescriptions[d]
-    guard file.writable else { return errBadFD }
+    guard fdEntry(proc, fd).rights.contains(.write) else { return errBadFD }
     guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
 
-    if file.kind == fdKindTTY {
+    if file.kind == .tty {
         var w = 0
         while w < Int(count) { uartPutc(src[w]); w += 1 }
         return Int(count)
     }
 
-    if file.kind == fdKindSocket {
+    if file.kind == .socket {
         if socketIsTCP(file.node) {
             return tcpSend(file.node, src: UnsafeRawPointer(src), len: Int(count))
         }
         return errInvalid   // UDP: use sendto
     }
 
-    if file.kind == fdKindPipe {
+    if file.kind == .pipe {
         let p = file.pipe
         var written = 0
         enable_irq()
@@ -795,7 +832,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         return written
     }
 
-    guard file.kind == fdKindVNode else { return errBadFD }
+    guard file.kind == .file else { return errBadFD }
     let node = file.node
     if nodes[node].isDir { return errIsDir }
     if nodes[node].readOnly { return errReadOnly }
@@ -821,10 +858,10 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
     if length < 0 { return errInvalid }
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     let file = openDescriptions[d]
-    guard file.writable else { return errBadFD }
-    guard file.kind == fdKindVNode else { return errInvalid }
+    guard fdEntry(proc, fd).rights.contains(.write) else { return errBadFD }
+    guard file.kind == .file else { return errInvalid }
     let node = file.node
     if nodes[node].isDir { return errIsDir }
     if nodes[node].readOnly { return errReadOnly }
@@ -840,11 +877,7 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
 }
 
 func vfsClose(fd: Int) -> Int {
-    let proc = currentVFSProcess()
-    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return errBadFD }
-    releaseDescription(fdEntry(proc, fd).file)
-    setFDEntry(proc, fd, FDEntry())
-    return 0
+    return handleClose(currentVFSProcess(), fd)
 }
 
 func vfsDup(fd: Int) -> Int {
@@ -852,9 +885,11 @@ func vfsDup(fd: Int) -> Int {
     guard validFD(proc, fd) else { return errBadFD }
     let newfd = allocFDInProcess(proc, from: 0)
     if newfd == -1 { return errNoSpace }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     retainDescription(d)
-    installDescription(proc, newfd, d)
+    // The dup carries the source handle's rights (today: identical access via
+    // the shared description).
+    installDescription(proc, newfd, d, rights: fdEntry(proc, fd).rights)
     return newfd
 }
 
@@ -864,12 +899,12 @@ func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     if newfd < 0 || newfd >= maxFDs { return errBadFD }
     if oldfd == newfd { return newfd }
     if fdEntry(proc, newfd).inUse {
-        releaseDescription(fdEntry(proc, newfd).file)
-        setFDEntry(proc, newfd, FDEntry())
+        releaseDescription(fdEntry(proc, newfd).object)
+        setFDEntry(proc, newfd, HandleEntry())
     }
-    let d = fdEntry(proc, oldfd).file
+    let d = fdEntry(proc, oldfd).object
     retainDescription(d)
-    installDescription(proc, newfd, d)
+    installDescription(proc, newfd, d, rights: fdEntry(proc, oldfd).rights)
     return newfd
 }
 
@@ -898,18 +933,18 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         let start = arg < 0 ? 0 : arg
         let newfd = allocFDInProcess(proc, from: start)
         if newfd == -1 { return errNoSpace }
-        let d = fdEntry(proc, fd).file
+        let d = fdEntry(proc, fd).object
         retainDescription(d)
-        installDescription(proc, newfd, d)
-        if cmd == fDupFDCloexec { fds[fdIndex(proc, newfd)].cloexec = true }
+        installDescription(proc, newfd, d, rights: fdEntry(proc, fd).rights)
+        if cmd == fDupFDCloexec { handles[fdIndex(proc, newfd)].cloexec = true }
         return newfd
     case fGetFD:
         return fdEntry(proc, fd).cloexec ? fdCloexecFlag : 0
     case fSetFD:
-        fds[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
+        handles[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
         return 0
     case fGetFL:
-        return openDescriptions[fdEntry(proc, fd).file].flags
+        return openDescriptions[fdEntry(proc, fd).object].flags
     case fSetFL:
         return 0
     default:
@@ -922,9 +957,9 @@ func vfsPipe(fdsVA: UInt) -> Int {
     let proc = currentVFSProcess()
     let rfd = allocFDInProcess(proc, from: 0)
     if rfd == -1 { return errNoSpace }
-    setFDEntry(proc, rfd, FDEntry(inUse: true, file: -1)) // reserve
+    setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
     let wfd = allocFDInProcess(proc, from: 0)
-    setFDEntry(proc, rfd, FDEntry())
+    setFDEntry(proc, rfd, HandleEntry())
     if wfd == -1 { return errNoSpace }
 
     let p = allocPipe()
@@ -933,20 +968,17 @@ func vfsPipe(fdsVA: UInt) -> Int {
     let wr = allocDescription()
     if rd == -1 || wr == -1 { return errNoSpace }
 
-    openDescriptions[rd].kind = fdKindPipe
-    openDescriptions[rd].readable = true
-    openDescriptions[rd].writable = false
+    openDescriptions[rd].kind = .pipe
     openDescriptions[rd].pipe = p
     openDescriptions[rd].pipeEnd = pipeReadEnd
 
-    openDescriptions[wr].kind = fdKindPipe
-    openDescriptions[wr].readable = false
-    openDescriptions[wr].writable = true
+    openDescriptions[wr].kind = .pipe
     openDescriptions[wr].pipe = p
     openDescriptions[wr].pipeEnd = pipeWriteEnd
 
-    installDescription(proc, rfd, rd)
-    installDescription(proc, wfd, wr)
+    // The read end may only be read from; the write end only written to.
+    installDescription(proc, rfd, rd, rights: .read)
+    installDescription(proc, wfd, wr, rights: .write)
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
@@ -956,9 +988,9 @@ func vfsPipe(fdsVA: UInt) -> Int {
 func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     var file = openDescriptions[d]
-    guard file.kind == fdKindVNode else { return errInvalid }
+    guard file.kind == .file else { return errInvalid }
     let node = file.node
     var base = 0
     if whence == 1 { base = file.offset }
@@ -1024,12 +1056,12 @@ func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
 func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let file = openDescriptions[fdEntry(proc, fd).file]
+    let file = openDescriptions[fdEntry(proc, fd).object]
     let me = processCurrentPrincipal()
     let now = rtcNow()
-    if file.kind == fdKindTTY { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now) }
-    if file.kind == fdKindPipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
-    if file.kind == fdKindVNode { return writeStatNode(statbuf, file.node) }
+    if file.kind == .tty { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now) }
+    if file.kind == .pipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
+    if file.kind == .file { return writeStatNode(statbuf, file.node) }
     return errBadFD
 }
 
@@ -1038,9 +1070,9 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let d = fdEntry(proc, fd).file
+    let d = fdEntry(proc, fd).object
     var file = openDescriptions[d]
-    guard file.kind == fdKindVNode else { return errInvalid }
+    guard file.kind == .file else { return errInvalid }
     let dir = file.node
     if !nodes[dir].isDir { return errInvalid }
     guard let b = userWritableBuffer(buffer, count) else { return errInvalid }
@@ -1214,29 +1246,29 @@ func vfsChown(path pathVA: UInt, owner: UInt) -> Int {
     return 0
 }
 
-private func pollReadyForDescription(_ desc: OpenDescription, events: Int16) -> Int16 {
+private func pollReadyForDescription(_ desc: OpenDescription, rights: Rights, events: Int16) -> Int16 {
     var revents: Int16 = 0
-    if desc.kind == fdKindTTY {
-        if (events & pollIn) != 0 && desc.readable && ttyReadable() { revents |= pollIn }
-        if (events & pollOut) != 0 && desc.writable { revents |= pollOut }
+    if desc.kind == .tty {
+        if (events & pollIn) != 0 && rights.contains(.read) && ttyReadable() { revents |= pollIn }
+        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }
         return revents
     }
-    if desc.kind == fdKindVNode {
-        if (events & pollIn) != 0 && desc.readable { revents |= pollIn }
-        if (events & pollOut) != 0 && desc.writable { revents |= pollOut }
+    if desc.kind == .file {
+        if (events & pollIn) != 0 && rights.contains(.read) { revents |= pollIn }
+        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }
         return revents
     }
-    if desc.kind == fdKindSocket {
+    if desc.kind == .socket {
         if (events & pollIn) != 0 && socketPollReadable(desc.node) { revents |= pollIn }
         if (events & pollOut) != 0 { revents |= pollOut }   // always writable
         return revents
     }
-    if desc.kind == fdKindPipe {
+    if desc.kind == .pipe {
         let p = desc.pipe
-        if (events & pollIn) != 0 && desc.readable {
+        if (events & pollIn) != 0 && rights.contains(.read) {
             if pipeCount(p) > 0 || pipes[p].writeRefs == 0 { revents |= pollIn }
         }
-        if (events & pollOut) != 0 && desc.writable {
+        if (events & pollOut) != 0 && rights.contains(.write) {
             if pipes[p].readRefs == 0 { revents |= pollErr }
             else if pipeSpace(p) > 0 { revents |= pollOut }
         }
@@ -1260,7 +1292,8 @@ private func pollScan(_ base: UnsafeMutableRawPointer, _ nfds: Int) -> Int {
         } else if !validFD(proc, fd) {
             revents = pollNval
         } else {
-            revents = pollReadyForDescription(openDescriptions[fdEntry(proc, fd).file], events: events)
+            let e = fdEntry(proc, fd)
+            revents = pollReadyForDescription(openDescriptions[e.object], rights: e.rights, events: events)
         }
         rec.storeBytes(of: revents, toByteOffset: 6, as: Int16.self)
         if revents != 0 { ready += 1 }
@@ -1291,9 +1324,9 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     for i in 0..<count {
         let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
         if fd >= 0 && validFD(proc, fd) {
-            let kind = openDescriptions[fdEntry(proc, fd).file].kind
-            if kind == fdKindPipe { hasPipe = true }
-            if kind == fdKindSocket { hasSocket = true }
+            let kind = openDescriptions[fdEntry(proc, fd).object].kind
+            if kind == .pipe { hasPipe = true }
+            if kind == .socket { hasSocket = true }
         }
     }
 
@@ -1309,8 +1342,8 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
 
 // ---- UDP sockets (net-b) --------------------------------------------------
 //
-// Sockets are ordinary fds (fdKindSocket) whose OpenDescription.node indexes the
-// kernel socket table (kernel/net/socket.swift). socket() is gated on capNet;
+// Sockets are ordinary fds (HandleKind .socket) whose OpenDescription.node
+// indexes the kernel socket table (kernel/net/socket.swift). socket() is gated on capNet;
 // sendto/recvfrom pass their extra arguments in a small user struct (the 3-arg
 // syscall ABI), copied/validated through user_access.
 
@@ -1341,11 +1374,9 @@ private func installSocketFD(_ s: Int) -> Int {
     if fd < 0 { socketClose(s); return errNoSpace }
     let d = allocDescription()
     if d < 0 { socketClose(s); return errNoSpace }
-    openDescriptions[d].kind = fdKindSocket
-    openDescriptions[d].readable = true
-    openDescriptions[d].writable = true
+    openDescriptions[d].kind = .socket
     openDescriptions[d].node = s
-    installDescription(proc, fd, d)
+    installDescription(proc, fd, d, rights: [.read, .write])
     return fd
 }
 
@@ -1393,8 +1424,8 @@ func vfsResolve(nameVA: UInt, serverIP: UInt, serverPort: Int) -> Int {
 
 private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {
     guard validFD(proc, fd) else { return -1 }
-    let d = fdEntry(proc, fd).file
-    guard openDescriptions[d].kind == fdKindSocket else { return -1 }
+    let d = fdEntry(proc, fd).object
+    guard openDescriptions[d].kind == .socket else { return -1 }
     return openDescriptions[d].node
 }
 
