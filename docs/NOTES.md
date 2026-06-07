@@ -1244,3 +1244,24 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   **and** the serial shows ≥2 `httpd: 200` lines — concurrent serving end to end. Wired into `make test`.
 - **Deferred:** keep-alive (HTTP/1.0 close only), request parsing/routing (responds to any request),
   `maxSockets`/conn-table caps (8). swift-os now hosts a working concurrent network server.
+
+### net-f — DNS resolver: sans-IO codec + resolve syscall + /bin/nslookup (DONE, 2026-06-07)
+
+- **sans-IO codec `kernel/net/dns.swift`** (pure, host-tested): `dnsBuildQuery` (header + length-prefixed
+  QNAME labels + QTYPE A/QCLASS IN) and `dnsParseResponse` (validate id/response/rcode, skip the question,
+  walk answers, return the first A record). Handles **name-compression pointers** (`0xC0`) when skipping
+  names and bounds-checks every read (a malformed/hostile response can't over-read).
+- **Kernel resolve `dnsResolve`** (`kernel/net/socket.swift`): a transient UDP socket (reusing
+  `socketCreate`/`Bind`/`Send`/`Recv`) sends the query to a DNS server and parses the reply. Query id from
+  `rtcNow()`; a dedicated PMM scratch page holds the query/response. `serverIP == 0` defaults to slirp's
+  DNS at **10.0.2.3:53**.
+- **`resolve(name, server_ip, server_port) = syscall 45`**, gated on `capNet`; returns the IPv4 in x0
+  (0 = failure), a value return like `time`. `userland/nslookup.swift` → `/bin/nslookup <name> [server]
+  [port]` prints `name -> a.b.c.d`.
+- **Tests:** `tests/net_test.swift` gained DNS cases (query encoding; parse an A record reached via a
+  compression pointer; CNAME-then-A; NXDOMAIN/wrong-id → 0). `tests/dns_test.sh` runs a tiny host `python3`
+  UDP DNS responder (answers any A query with `192.0.2.7`); the guest `/bin/nslookup test.swos 10.0.2.2
+  5354` queries it (slirp routes guest→`10.0.2.2` to the host) and prints `test.swos -> 192.0.2.7` — fully
+  hermetic. Skips cleanly if `python3` is absent. Wired into `make test`.
+- **Deferred:** connect-by-name in `/bin/tcpget` (small follow-up), caching, IPv6/AAAA, a real ephemeral
+  port allocator. `/bin/nslookup name` (no server) resolves against slirp's real DNS for interactive use.

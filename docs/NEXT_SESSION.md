@@ -5,7 +5,7 @@ Working notes for picking up swift-os development. Authoritative milestone histo
 
 ## Where we are (2026-06-06)
 
-- **Network stack — net-a..e DONE (2026-06-06).** Own Swift, sans-IO. Now hosts a real concurrent server.
+- **Network stack — net-a..f DONE (2026-06-06/07).** Own Swift, sans-IO. Concurrent server + DNS resolver.
   - **net-a:** Swift virtio-net driver (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config,
     zero-copy DMA) + a pure host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The
     boot probe ARPs + pings the QEMU slirp gateway `10.0.2.2`.
@@ -25,11 +25,14 @@ Working notes for picking up swift-os development. Authoritative milestone histo
     listener + all live connections, serving multiple clients at once. New `swiftos_poll` bridge over
     `SYS_POLL`; no kernel change. Acceptance: `tests/httpd_test.sh` (two concurrent host `curl`s both get
     the body).
-  - Tests: `net_test.swift` (host L2/L3/UDP/TCP) + `virtio_net_test.sh` + `udp_echo_test.sh` +
-    `tcp_echo_test.sh` + `tcp_connect_test.sh` + `httpd_test.sh`. See "Network stack (N-series)" in NOTES.
-  - **Next options:** HTTP keep-alive + request routing / a static file server off the VFS; DNS + an
-    ephemeral-port allocator + larger conn tables; TLS in userland (N5); or move up the roadmap toward
-    native Swift app runtimes (threads + futex, mmap W^X). The stack now hosts a real concurrent server.
+  - **net-f:** DNS — sans-IO codec (`kernel/net/dns.swift`, host-tested) + a `resolve()` syscall (45) over
+    UDP + `/bin/nslookup`. Acceptance: `tests/dns_test.sh` (host python3 DNS responder; guest resolves a
+    name to an A record). Defaults to slirp DNS 10.0.2.3.
+  - Tests: `net_test.swift` (host L2/L3/UDP/TCP/DNS) + `virtio_net_test.sh` + `udp_echo_test.sh` +
+    `tcp_echo_test.sh` + `tcp_connect_test.sh` + `httpd_test.sh` + `dns_test.sh`. See NOTES "Network stack".
+  - **Next options:** connect-by-name in `/bin/tcpget` (tiny: resolve then connect); HTTP keep-alive +
+    request routing / a static file server off the VFS; a real ephemeral-port allocator + larger conn
+    tables; TLS in userland (N5); or up the roadmap to native Swift app runtimes (threads+futex, mmap W^X).
 
 ## Where we were (2026-06-04)
 
