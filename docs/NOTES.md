@@ -1313,3 +1313,28 @@ Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net
   still pass; the two in-QEMU acceptance scripts (`tcp_echo_test.sh`, `tcp_connect_test.sh`) still pass.
 - **Deferred:** TIME_WAIT FIN re-ACK on a peer retransmit, SO_REUSEADDR semantics, a per-connection RTT
   estimator (RTO is still a fixed 1 s). The wider table is a cap bump, not a dynamic table.
+### net-h — ChaCha20-Poly1305 AEAD (RFC 8439), TLS groundwork (DONE, 2026-06-07)
+
+- **Pure crypto module `kernel/crypto/chacha20poly1305.swift`** (no Foundation/MMIO/syscalls/heap, same
+  purity as `kernel/net/packet.swift`, so it compiles both for the host test and for the kernel — Embedded):
+  - `chacha20Block` (20-round keystream block) and `chacha20Encrypt(key, counter, nonce, in, out, len)`
+    (the symmetric stream cipher; `out` may alias `in`). 256-bit key, 96-bit nonce, 32-bit block counter.
+  - `poly1305Mac(key, msg, len, tagOut)` — the one-time MAC over GF(2^130 − 5), implemented with a
+    schoolbook 5×26-bit-limb multiply-reduce (no 128-bit-int dependency), final reduction + add-s.
+  - `aeadSeal(...)`/`aeadOpen(...) -> Bool` — the AEAD construction (§2.8): block-0 keystream derives the
+    Poly1305 key, ChaCha20 from counter 1 encrypts, the tag covers `aad ‖ pad16 ‖ ct ‖ pad16 ‖ len64(aad)
+    ‖ len64(ct)`. `aeadOpen` verifies the tag in **constant time** (no early-out) and only then decrypts.
+    Callers pass a `scratch` buffer for the MAC input (no allocation inside the module).
+- **Self-contained byte helpers** (`cb8`/`cb8set`/`le32`, file-private) rather than reusing
+  `kernel/net/packet.swift`'s `b8`/`b8set` — under `-wmo` the whole module compiles together, so the net
+  helpers would collide; keeping crypto independent also lets `--gc-sections` drop it cleanly while unused.
+- **Wired into the kernel `SWIFT_SRCS`** so it keeps building in Embedded mode; it is unused/gc'd for now,
+  exactly like `dns.swift` was before net-f wired it up. No kernel paths call it yet.
+- **Host test `tests/crypto_test.swift`** asserts the published RFC 8439 vectors: §2.4.2 ChaCha20 of the
+  "Ladies and Gentlemen…" plaintext (key 00..1f, nonce …4a…, counter 1) → the published ciphertext (plus a
+  symmetric round-trip), §2.5.2 Poly1305 of "Cryptographic Forum Research Group" → `a8061dc1…27a9`, and
+  §2.8.2 the full AEAD seal (ciphertext + 16-byte tag) plus `aeadOpen` accepting the valid tag and rejecting
+  a corrupted one. Built/run with `$(HOST_SWIFTC)` right after `net_test` in the `test:` target.
+- **This is TLS groundwork only.** TLS 1.3 mandates AEAD_CHACHA20_POLY1305; the handshake, key schedule
+  (HKDF), and record layer are **deliberately deferred** to a later milestone. No networking or syscalls
+  were added here.
