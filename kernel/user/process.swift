@@ -21,6 +21,20 @@ private let userStackTop: UInt = 0x9000_0000
 private let userStackPages = 4
 private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
+
+// Track B — anonymous mmap arena. The valid user window is [0x8000_0000,
+// 0xB000_0000) (user_access.swift). Within it the fixed regions are: the ELF
+// image at 0x8000_0000 growing UP (busybox ~1.1 MiB, far short of 0x8800_0000);
+// the 4-page user stack at the top of [0x8FFF_C000, 0x9000_0000); and the sbrk
+// heap at 0xA000_0000 growing UP. That leaves a 256 MiB gap between the stack
+// top (0x9000_0000) and the heap base (0xA000_0000) with nothing in it. We park
+// the mmap arena at the MIDPOINT of that gap, 0x9800_0000, and grow it DOWN.
+// This keeps 128 MiB of clearance above the stack top and 128 MiB below the
+// heap base, so an mmap region can never collide with code, data, stack, or
+// heap. The cursor is per-process (pMmapTop), reset on exec, copied on fork.
+// Growing down (away from the heap) mirrors the classic Linux mmap layout.
+private let userMmapTop: UInt = 0x9800_0000
+private let userMmapFloor: UInt = 0x9000_0000 // never grow into the stack region
 private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
@@ -55,6 +69,9 @@ private var pExit = [Int](repeating: 0, count: maxProc)
 private var pKilled = [Bool](repeating: false, count: maxProc)
 private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on / waitAny
 private var pBrk = [UInt](repeating: 0, count: maxProc)
+// Track B — descending mmap cursor. Next anonymous mmap is placed just below
+// pMmapTop[slot]; it starts at userMmapTop and shrinks toward userMmapFloor.
+private var pMmapTop = [UInt](repeating: 0, count: maxProc)
 private var pNameLen = [Int](repeating: 0, count: maxProc)
 private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 // Principal / session / capability mask, plus the process's Cell tag, kept as
@@ -222,6 +239,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    pMmapTop[slot] = userMmapTop
     pIsThread[slot] = false
     // elfLoad (above) recorded the image's mapped page count; stack mapping used
     // the PMM directly, so it is still valid. RES = image + user stack pages.
@@ -437,6 +455,9 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
+    // The eager clone copies every mapped user page (including mmap'd regions),
+    // so the child inherits the parent's mmap cursor verbatim.
+    pMmapTop[child] = pMmapTop[parent]
     pIsThread[child] = false
     // The eager address-space clone duplicates every mapped user page, so the
     // child's resident set equals the parent's; CPU/time start fresh.
@@ -494,6 +515,10 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = pBrk[creator]
+    // A thread shares the creator's address space; seed it with the same mmap
+    // cursor. (Concurrent mmap from multiple threads sharing one TTBR0 would
+    // need a shared cursor + lock — a follow-up; single-core today.)
+    pMmapTop[slot] = pMmapTop[creator]
     pIsThread[slot] = true
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
@@ -570,6 +595,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     let oldTtbr0 = pTtbr0[me]
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
+    pMmapTop[me] = userMmapTop // fresh image: empty mmap arena
     // New image replaces the resident set (old pages are dropped with the old
     // address space); accumulated CPU time and the start tick survive the exec.
     pResPages[me] = Int(elfLastLoadPages()) + userStackPages
@@ -819,4 +845,74 @@ func processSbrk(_ incr: Int) -> UInt {
     }
     pBrk[me] = newBreak
     return old
+}
+
+// --- Track B: anonymous mmap / munmap / mprotect ----------------------------
+// The return convention mirrors raw-syscall mmap: a success is the base VA, a
+// failure is a small negative errno encoded as UInt (in [-4095, -1]); the
+// userland bridge converts that to MAP_FAILED + errno. munmap/mprotect return 0
+// or a negative errno (Int) and route through the normal errno path.
+
+private func roundUpPages(_ len: UInt) -> UInt {
+    let mask = PageAllocator.pageSize - 1
+    return ((len + mask) & ~mask) / PageAllocator.pageSize
+}
+
+/// mmap(NULL, len, prot, MAP_ANONYMOUS|MAP_PRIVATE): reserve `len` (rounded up to
+/// whole pages) of fresh, zero-filled anonymous memory in the descending mmap
+/// arena and return its base VA. prot is a PROT_* bitmask; PROT_WRITE|PROT_EXEC
+/// (W^X) and PROT_NONE are rejected with EINVAL. Errors are returned as a
+/// negative errno encoded in the UInt result.
+func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    guard currentProc >= 0 else { return err(-22) } // EINVAL
+    let me = currentProc
+    if len == 0 { return err(-22) }
+    // W^X / PROT_NONE up front (also enforced in protPageDesc, defensively).
+    if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return err(-22) }
+    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return err(-22) }
+
+    let pages = roundUpPages(len)
+    let bytes = pages * PageAllocator.pageSize
+    // Carve the region just below the cursor, growing down. Guard against
+    // underflow and against running into the stack region.
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+
+    let rc = address_space_mmap(pTtbr0[me], base, pages, prot)
+    if rc != 0 { return err(Int(rc)) }
+    pMmapTop[me] = base
+    pResPages[me] += Int(pages)
+    return base
+}
+
+/// munmap(addr, len): unmap and free `len` (rounded up) bytes at `addr`. addr
+/// must be page-aligned and lie in the mmap arena. Returns 0 or a negative errno.
+func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
+    guard currentProc >= 0 else { return -22 }
+    let me = currentProc
+    if len == 0 { return -22 }
+    if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 } // EINVAL: unaligned
+    let pages = roundUpPages(len)
+    let bytes = pages * PageAllocator.pageSize
+    // Must sit wholly inside the arena [pMmapTop, userMmapTop).
+    if addr < pMmapTop[me] || addr >= userMmapTop { return -22 }
+    if addr > userMmapTop - bytes { return -22 } // range would overrun the arena top
+
+    // Count live pages before freeing so resident accounting stays correct
+    // (munmap of a hole is allowed and frees nothing there).
+    var live = 0
+    var i: UInt = 0
+    while i < pages {
+        if address_space_translate(pTtbr0[me], addr + i * PageAllocator.pageSize) != 0 { live += 1 }
+        i += 1
+    }
+    let rc = address_space_munmap(pTtbr0[me], addr, pages)
+    if rc != 0 { return Int(rc) }
+    pResPages[me] -= live
+    // Cursor reclaim: if the freed region sat at the bottom of the arena, hand
+    // the VA space back so a later mmap can reuse it. (Interior holes are left
+    // as gaps — a free-list is a follow-up; the JIT pattern maps once.)
+    if addr == pMmapTop[me] { pMmapTop[me] += bytes }
+    return 0
 }

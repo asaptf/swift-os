@@ -235,6 +235,7 @@ USER_TOP_ELF := $(BUILD)/top.elf
 USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_THREADSDEMO_ELF := $(BUILD)/threadsdemo.elf
+USER_MMAPDEMO_ELF := $(BUILD)/mmapdemo.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
@@ -248,6 +249,7 @@ BASE_EXEC_ELFS := \
 	$(USER_UDPECHO_ELF) \
 	$(USER_TCPECHO_ELF) \
 	$(USER_THREADSDEMO_ELF) \
+	$(USER_MMAPDEMO_ELF) \
 	$(USER_TCPGET_ELF) \
 	$(USER_HTTPD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
@@ -428,6 +430,9 @@ $(BUILD)/user_tcpecho.o: userland/tcpecho.swift userland/lib/swift_user.h Makefi
 $(BUILD)/user_threadsdemo.o: userland/threadsdemo.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/threadsdemo.swift -o $@
 
+$(BUILD)/user_mmapdemo.o: userland/mmapdemo.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/mmapdemo.swift -o $@
+
 $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tcpget.swift -o $@
 
@@ -552,6 +557,9 @@ $(USER_TCPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/us
 $(USER_THREADSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_threadsdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_threadsdemo.o -o $@
 
+$(USER_MMAPDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mmapdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_mmapdemo.o -o $@
+
 $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o -o $@
 
@@ -649,6 +657,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/top_test.sh
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
+	./tests/mmap_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	./tests/fb_vi_test.sh
@@ -746,6 +755,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
 	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(USER_THREADSDEMO_ELF) $(BASE_ROOT)/bin/threadsdemo
+	cp $(USER_MMAPDEMO_ELF) $(BASE_ROOT)/bin/mmapdemo
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
