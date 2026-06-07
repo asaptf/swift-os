@@ -26,6 +26,7 @@ argv[1]=alpha
 M8a OK: argv delivered, argc=3
 spawndemo: child exit status 2
 M8a OK: spawn parent exited, code 0
+SPAWN-ISO-OK
 cat /etc/motd: Welcome to swift-os.
 cwd2=/etc
 tmp/note: hi-tmpfs

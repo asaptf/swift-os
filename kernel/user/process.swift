@@ -170,9 +170,12 @@ private func copyProcessSecurity(from parent: Int, to child: Int) {
     pSecurity[child] = pSecurity[parent] // whole context, including the Cell tag
 }
 
-// Build a process from an ELF image. Returns its slot, or -1.
+// Build a process from an ELF image. Returns its slot, or -1. `inherit` selects
+// how the child's handle table is seeded from the parent (C2): the default `.all`
+// preserves the old fork-inherits-everything behavior; `processSpawnChild` opts
+// into `.stdioOnly`. See docs/CAPABILITIES.md §3.
 private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
-                           argc: Int, parent: Int) -> Int {
+                           argc: Int, parent: Int, inherit: HandleInheritance = .all) -> Int {
     let slot = allocSlot()
     if slot < 0 { return -1 }
 
@@ -227,7 +230,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pResPages[slot] = Int(elfLastLoadPages()) + userStackPages
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
-    vfsProcessInit(slot: slot, parent: parent)
+    vfsProcessInit(slot: slot, parent: parent, inherit: inherit)
     return slot
 }
 
@@ -376,7 +379,10 @@ func processRunPair(_ imageA: UInt, _ sizeA: UInt, _ pa: UInt, _ na: UInt, _ ca:
 /// spawn(path) child: create it, block until it exits, return its exit status.
 func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int) -> Int {
     let parent = currentProc
-    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc, parent: parent)
+    // C2: a spawned child starts with stdio only, not the parent's whole fd
+    // table. fork keeps full inheritance; see vfsProcessInit / docs/CAPABILITIES.md §3.
+    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
+                              parent: parent, inherit: .stdioOnly)
     if child < 0 { return -11 } // EAGAIN
     pState[parent] = pBlocked
     pWait[parent] = child

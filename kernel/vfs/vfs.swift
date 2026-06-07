@@ -378,12 +378,18 @@ func vfsInit() {
     for i in 0..<maxPipes { pipes[i] = Pipe() }
 }
 
-func vfsProcessInit(slot: Int, parent: Int) {
+func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all) {
     if slot < 0 || slot >= maxVFSProcesses { return }
     if parent >= 0 && parent < maxVFSProcesses {
+        // cwd is always inherited; the handle set depends on the mode. `.all`
+        // copies the whole table (the fork/thread case); `.stdioOnly` copies just
+        // fds 0/1/2, leaving the rest empty — the explicit, minimal spawn default
+        // (C2, docs/CAPABILITIES.md §3). Same copy+retain logic either way, only
+        // the bound differs; fds beyond it stay the fresh HandleEntry().
         cwdNodes[slot] = cwdNodes[parent]
+        let upper = inherit == .all ? maxFDs : 3
         for fd in 0..<maxFDs {
-            let e = handles[fdIndex(parent, fd)]
+            let e = fd < upper ? handles[fdIndex(parent, fd)] : HandleEntry()
             handles[fdIndex(slot, fd)] = e
             if e.inUse { retainDescription(e.object) }
         }

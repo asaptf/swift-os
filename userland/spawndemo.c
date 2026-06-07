@@ -11,7 +11,10 @@ int puts_raw(const char *s);
 int main(void) {
     puts_raw("spawndemo: spawning /bin/argvdemo\n");
 
-    char *const argv[] = { "argvdemo", "child-arg", 0 };
+    char *const argv[] = { "argvdemo", "isocheck", 0 };
+    // C2: hold a non-stdio fd open (fd 3) before spawning, to prove the child
+    // does NOT inherit it. Open a DIFFERENT file than the one being spawned.
+    (void)open("/etc/motd", 0); // O_RDONLY
     long status = spawn("/bin/argvdemo", argv);
 
     puts_raw("spawndemo: child exit status ");

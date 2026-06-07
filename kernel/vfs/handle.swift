@@ -30,6 +30,11 @@ struct Rights: OptionSet {
     static let setattr   = Rights(rawValue: 1 << 7)
 }
 
+// How a new process's handle table is seeded from its parent (C2). `all` is the
+// permissive fork case (copy every in-use handle); `stdioOnly` is the explicit,
+// minimal spawn default (just fds 0/1/2). See docs/CAPABILITIES.md §3.
+enum HandleInheritance { case all, stdioOnly }
+
 // Build the read/write rights for a freshly minted handle. Kept dependency-free:
 // the O_* flag constants live in vfs.swift, which computes these two bools.
 func rights(read: Bool, write: Bool) -> Rights {
