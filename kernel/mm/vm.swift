@@ -89,6 +89,34 @@ private func permPageDesc(_ pa: UInt, _ perm: Int32) -> UInt64 {
          | DESC_TABLE | DESC_VALID
 }
 
+// --- mmap/mprotect leaf descriptors (Track B) -------------------------------
+// PROT bitmask (matches userland/lib/swift_user.h / mman.h): the mmap/mprotect
+// surface that JIT runtimes (V8, the JVM) and large Swift apps need.
+let PROT_READ: Int32  = 1
+let PROT_WRITE: Int32 = 2
+let PROT_EXEC: Int32  = 4
+
+// Build a 4 KiB leaf descriptor for `pa` from a PROT bitmask, mapped into the
+// EL0 (user) half. memAttrs already encodes the W^X levers: executable drives
+// UXN/PXN, userReadOnly drives AP. A page is user-accessible, executable iff
+// PROT_EXEC, and read-only unless PROT_WRITE — exactly mmap/mprotect semantics.
+//
+// W^X is enforced defensively here as well as at the syscall boundary: a leaf is
+// never simultaneously writable and executable. PROT_WRITE|PROT_EXEC returns 0
+// (an invalid descriptor, DESC_VALID clear), which callers treat as EINVAL.
+// PROT_NONE (no bits) also yields 0 — there is no "mapped but inaccessible" leaf
+// in this minimal surface, so callers reject it rather than map a present page
+// the process cannot touch.
+func protPageDesc(_ pa: UInt, _ prot: Int32) -> UInt64 {
+    if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return 0 } // W^X
+    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return 0 }  // PROT_NONE
+    let executable = (prot & PROT_EXEC) != 0
+    let readOnly = (prot & PROT_WRITE) == 0
+    return (UInt64(pa) & PAGE_4K_MASK)
+         | memAttrs(ATTR_NORMAL, executable, /*userAccess*/ true, readOnly)
+         | DESC_TABLE | DESC_VALID
+}
+
 private func zeroTable(_ table: UInt) {
     for i in 0..<ENTRIES_PER_TABLE {
         tableStore(table, i, 0)
@@ -200,6 +228,122 @@ func addressSpaceMap(_ ttbr0: UInt, _ va: UInt, _ pa: UInt, _ perm: Int32) -> In
     dsb_sy()
     tlbi_va(va)
     return 0
+}
+
+// --- mmap / munmap / mprotect (Track B) -------------------------------------
+// Anonymous mmap: map `pageCount` fresh, zero-filled frames at [va, va+n*4K)
+// with PROT bits `prot`, in the EL0 half of `ttbr0`. The caller (process.swift)
+// owns the VA cursor and page accounting and supplies an aligned base `va`.
+// Returns 0 on success, or a negative errno. On any mid-map failure every frame
+// already linked here is rolled back, so a failed mmap leaves no partial region.
+// Frames are zeroed because anonymous memory must read as 0.
+@_cdecl("address_space_mmap")
+func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int32) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 { return -22 } // EINVAL
+    if pageCount == 0 { return -22 }
+    // Reject PROT_WRITE|PROT_EXEC (W^X) and PROT_NONE up front: protPageDesc
+    // would return an invalid descriptor for both.
+    if protPageDesc(0, prot) == 0 { return -22 }
+
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let frame = pmm_alloc_page()
+        if frame == 0 {
+            unmapRange(ttbr0, va, i) // roll back the frames mapped so far
+            return -12 // ENOMEM
+        }
+        zeroFrame(frame)
+        if !linkPage(ttbr0, cur, protPageDesc(frame, prot)) {
+            pmm_free_page(frame)
+            unmapRange(ttbr0, va, i)
+            return -12
+        }
+        i += 1
+    }
+    dsb_sy()
+    tlbi_all() // one bulk flush for the whole region
+    return 0
+}
+
+// munmap: clear the leaf descriptors over [va, va+n*4K), free each backing
+// frame, and flush. Pages with no live mapping are skipped (munmap of a hole is
+// not an error). The page tables themselves are kept (cheap, and the region is
+// typically re-mmap'd); address_space_destroy reclaims them at process exit.
+@_cdecl("address_space_munmap")
+func addressSpaceMunmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
+    unmapRange(ttbr0, va, pageCount)
+    dsb_sy()
+    tlbi_all()
+    return 0
+}
+
+// mprotect: change the PROT bits over [va, va+n*4K), preserving each page's
+// backing frame. Walks to the existing L3 leaf (no allocation), rebuilds the
+// descriptor from the same PA with the new prot, and rewrites it. A hole (no
+// live leaf) in the range is rejected (ENOMEM, as POSIX). The W^X / PROT_NONE
+// rejection lives in protPageDesc, so a bad prot fails before any leaf is
+// touched. Returns 0 on success or a negative errno.
+@_cdecl("address_space_mprotect")
+func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int32) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
+    if pageCount == 0 { return -22 }
+    if protPageDesc(0, prot) == 0 { return -22 } // W^X + PROT_NONE guard
+
+    // Pre-validate: every page in the range must already be mapped, so we never
+    // change a prefix and then fail on a hole.
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let l3 = walkToL3(ttbr0, cur, allocate: false)
+        if l3 == 0 { return -12 } // ENOMEM: address not mapped
+        if (tableLoad(l3, Int((cur >> 12) & 0x1ff)) & DESC_VALID) == 0 { return -12 }
+        i += 1
+    }
+
+    i = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let l3 = walkToL3(ttbr0, cur, allocate: false)
+        let leafIdx = Int((cur >> 12) & 0x1ff)
+        let oldDesc = tableLoad(l3, leafIdx)
+        let pa = UInt(oldDesc & PAGE_4K_MASK)
+        tableStore(l3, leafIdx, protPageDesc(pa, prot))
+        i += 1
+    }
+    dsb_sy()
+    tlbi_all()
+    return 0
+}
+
+// Clear and free up to `pageCount` live leaf frames starting at `va`. Shared by
+// munmap and by mmap's rollback path. No barrier — the caller flushes.
+private func unmapRange(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) {
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let l3 = walkToL3(ttbr0, cur, allocate: false)
+        if l3 != 0 {
+            let leafIdx = Int((cur >> 12) & 0x1ff)
+            let desc = tableLoad(l3, leafIdx)
+            if (desc & DESC_VALID) != 0 {
+                tableStore(l3, leafIdx, 0)
+                pmm_free_page(UInt(desc & PAGE_4K_MASK))
+            }
+        }
+        i += 1
+    }
+}
+
+@inline(__always)
+private func zeroFrame(_ frame: UInt) {
+    let p = UnsafeMutableRawPointer(bitPattern: frame)!
+    var off = 0
+    while off < Int(PAGE_SIZE) {
+        p.storeBytes(of: UInt64(0), toByteOffset: off, as: UInt64.self)
+        off += 8
+    }
 }
 
 @_cdecl("address_space_switch")

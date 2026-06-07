@@ -60,6 +60,21 @@
 #define SYS_ENDPOINT_CREATE 51
 #define SYS_IPC_SEND      52
 #define SYS_IPC_RECV      53
+#define SYS_MMAP          54
+#define SYS_MUNMAP        55
+#define SYS_MPROTECT      56
+
+// mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
+#define PROT_NONE  0x0
+#define PROT_READ  0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC  0x4
+// mmap flags. Only anonymous private mappings are supported; the flags are
+// accepted for source compatibility but the kernel always maps anonymous RAM.
+#define MAP_PRIVATE   0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_ANON      MAP_ANONYMOUS
+#define MAP_FAILED    ((void *)-1)
 
 #ifndef __ASSEMBLER__
 
@@ -206,6 +221,29 @@ static inline int login(unsigned int principal, unsigned int session, unsigned l
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.
 static inline void *sbrk(long incr) {
     return (void *)__syscall3(SYS_SBRK, incr, 0, 0);
+}
+
+// Anonymous mmap (Track B). Only MAP_ANONYMOUS|MAP_PRIVATE is meaningful; addr,
+// fd, and offset are ignored (the kernel always allocates fresh zero-filled
+// RAM). The raw syscall returns a base VA or a small negative errno; we convert
+// the error range to MAP_FAILED. PROT_WRITE|PROT_EXEC is rejected (W^X).
+static inline void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset) {
+    (void)flags; (void)fd; (void)offset;
+    long r = __syscall3(SYS_MMAP, (long)addr, (long)length, prot);
+    if (r < 0 && r >= -4095) {
+        return MAP_FAILED;
+    }
+    return (void *)r;
+}
+
+static inline int munmap(void *addr, size_t length) {
+    return (int)__syscall3(SYS_MUNMAP, (long)addr, (long)length, 0);
+}
+
+// Change protection on [addr, addr+length). RW->RX is the JIT path; RWX is
+// rejected (W^X). 0 on success, negative errno otherwise.
+static inline int mprotect(void *addr, size_t length, int prot) {
+    return (int)__syscall3(SYS_MPROTECT, (long)addr, (long)length, prot);
 }
 
 #endif // __ASSEMBLER__

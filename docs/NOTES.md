@@ -126,6 +126,70 @@ brew install qemu llvm lld aarch64-elf-binutils aarch64-elf-gdb
   Ctrl-C/SIGINT interruption).
 - `make clean` — remove build artifacts.
 
+## Track B — `mmap`/`munmap`/`mprotect` + W^X
+
+The last "common denominator" in the long-horizon table (`docs/ARCHITECTURE.md`): anonymous
+`mmap` with W^X-enforced executable mappings, the substrate JIT runtimes (V8, the JVM) and
+large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `linkPage`,
+`memAttrs`/`protPageDesc`).
+
+### B1 — anonymous `mmap`/`munmap` (DONE, 2026-06-07)
+
+- **`protPageDesc(pa, prot)` in `vm.swift`** builds a 4 KiB leaf from a PROT bitmask
+  (READ=1/WRITE=2/EXEC=4) via `memAttrs(userAccess: true, executable: prot&EXEC,
+  userReadOnly: !(prot&WRITE))`. W^X (`WRITE|EXEC`) and `PROT_NONE` both return an invalid
+  descriptor (0), which callers treat as `EINVAL` — the W^X guard is intrinsic to the
+  descriptor builder, not just the syscall.
+- **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
+  The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
+  the ELF image sits at `0x8000_0000` growing up (busybox ~1.1 MiB, far short of
+  `0x8800_0000`); the 4-page user stack is at the top of `[0x8FFF_C000, 0x9000_0000)`; the
+  `sbrk` heap is at `0xA000_0000` growing up. That leaves a **256 MiB hole** between the
+  stack top (`0x9000_0000`) and the heap base (`0xA000_0000`). The mmap arena is parked at
+  the **midpoint** (`0x9800_0000`) and grows down, so it keeps 128 MiB of clearance above
+  the stack top and 128 MiB below the heap base — it cannot collide with code, data, stack,
+  or heap. The cursor (`pMmapTop`) is per-process: reset on `exec`, copied on `fork` (the
+  eager clone duplicates mmap'd pages too), seeded from the creator for a thread.
+- **`address_space_mmap`/`munmap` (`vm.swift`)** do the frame work given an aligned base VA
+  + page count from `process.swift`: `pmm_alloc_page` each, **zero the frame** (anonymous
+  memory reads as 0), `linkPage(protPageDesc(...))`, one bulk `dsb;tlbi`. A mid-map failure
+  rolls back every frame already linked, so a failed mmap leaves no partial region. munmap
+  clears leaves + frees frames (page tables kept; reclaimed at process exit). The kernel
+  policy/accounting half is `processMmap`/`processMunmap` (cursor, `pResPages`, validation).
+- **Syscalls:** `mmap` = **54** (returns base VA, or a small negative errno in `[-4095,-1]`
+  encoded in the result — bridge maps that to `MAP_FAILED`), `munmap` = **55**.
+  Bridges `swiftos_mmap`/`swiftos_munmap` in `swift_user.{h,c}`; POSIX-shaped `mmap`/`munmap`
+  inlines + `PROT_*`/`MAP_*` in `syscall.h`.
+- **Test:** `userland/mmapdemo.swift` (`/bin/mmapdemo`) maps anonymous RAM, asserts it reads
+  as 0, round-trips a write/read pattern across a page boundary, munmaps. `tests/mmap_test.sh`
+  (in `make test`). NOTE: syscall numbers 54/55 are next-free at impl time; other concurrent
+  sessions may also be adding syscalls to main — renumber at merge if they clash.
+
+### B2 — `mprotect` + W^X (DONE, 2026-06-07)
+
+- **`address_space_mprotect` (`vm.swift`)** changes the PROT bits over a range, preserving
+  each page's backing frame: `walkToL3(allocate: false)`, rebuild the leaf from the same PA
+  via `protPageDesc`, rewrite it, `dsb;tlbi`. It pre-validates the whole range (every page
+  must be mapped) before touching any leaf, so a hole is rejected (ENOMEM) without leaving a
+  partially-changed region. `processMprotect` adds the cursor/arena bounds + alignment checks.
+- **W^X is enforced at BOTH ends:** at the syscall boundary (`processMmap`/`processMprotect`
+  reject `PROT_WRITE|PROT_EXEC` → EINVAL) and defensively inside `protPageDesc` (a W^X or
+  PROT_NONE bitmask yields an invalid descriptor, so even a direct `address_space_*` caller
+  can never install a writable+executable leaf). So a page is never simultaneously W and X.
+- **Syscall `mprotect` = 56**; `mprotect` inline in `syscall.h`, bridge `swiftos_mprotect`.
+- **Test — the JIT pattern** (`/bin/mmapdemo`, `tests/mmap_test.sh`): mmap a page RW, write
+  `mov w0,#42; ret` (bytes `40 05 80 52  c0 03 5f d6`), `mprotect` RW→RX (must succeed), call
+  it through a `@convention(c)` function pointer → returns **42**. Then assert both W^X
+  breaches are rejected: `mmap` RWX fails, and `mprotect`→RWX on a live mapping fails.
+  Verified in QEMU:
+  ```
+  mmapdemo: B1-OK anon mmap zero+write+read+munmap
+  mmapdemo: B2-OK jit RW->RX call returned 42
+  mmapdemo: WX-OK mprotect ->RWX rejected
+  mmapdemo: WX-OK mmap RWX rejected
+  mmapdemo: ALL-OK
+  ```
+
 ## Milestone log
 
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
