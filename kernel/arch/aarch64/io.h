@@ -38,20 +38,10 @@ int fb_available(void);
 uint64_t fb_phys_base(void);
 uint64_t fb_phys_size(void);
 
-// virtio-input keyboard (kernel/drivers/virtio_input.c). Polled: the kernel
-// drains it each timer tick and feeds the tty. No-op without the device (e.g.
-// the QEMU -kernel path), so getchar just returns -1.
-int virtio_kbd_init(void);
-int virtio_kbd_getchar(void);
-
-// virtio-blk block device (kernel/drivers/virtio_blk.c). Polled, read-only,
-// 512-byte sectors. init scans the virtio-mmio window for a block device and
-// returns its capacity in sectors (0 if none). No-op without the device.
-uint64_t virtio_blk_init(uint64_t base, uint64_t stride, uint32_t count);
-int virtio_blk_available(void);
-uint64_t virtio_blk_capacity(void);
-int virtio_blk_read(uint64_t sector, void *buf);
-int virtio_blk_read_range(uint64_t byte_off, void *buf, uint32_t len);
+// The virtio-input keyboard and virtio-blk block device are now Swift drivers
+// (kernel/drivers/virtio_input.swift, virtio_blk.swift). Called only from Swift,
+// they need no bridging declaration here; like virtio_net.swift they use this
+// header solely for MMIO and cache maintenance.
 
 void mmu_init_identity_map(void);
 void mmu_configure_translation(void);
@@ -83,18 +73,14 @@ uintptr_t thread_trampoline_addr(void);
 void thread_exit(void); // provided by kernel/sched/scheduler.swift
 uintptr_t trap_return_addr(void); // exceptions.S — fork child trap-return entry
 
-// ELF64 loader (kernel/user/elf.c) and EL0 entry trampoline (user_entry.S).
-uintptr_t elf_load(uintptr_t ttbr0, const void *image, unsigned long size);
-unsigned long elf_last_load_pages(void); // user pages mapped by the last elf_load
+// EL0 entry trampoline (user_entry.S). The ELF64 loader and the initial-stack
+// builder are now Swift (kernel/user/elf.swift, ustack.swift), called only from
+// Swift, so they need no bridging declaration here.
 uintptr_t user_thread_launch_addr(void);
-
-// Build the initial EL0 stack (argc/argv/envp). kernel/user/ustack.c.
-uintptr_t user_stack_build(uintptr_t ttbr0, uintptr_t stack_top,
-                           const char *packed, unsigned long packed_len, int argc);
 
 // Userland programs (busybox + demos) are no longer embedded in the kernel
 // image (M11d). They live in the packed base image on disk and are loaded via
-// the VFS (vfsDiskImageExtent) + virtio_blk_read_range — see kernel/user/exec.swift.
+// the VFS (vfsDiskImageExtent) + virtioBlkReadRange — see kernel/user/exec.swift.
 
 enum {
     VM_ATTR_NORMAL = 0,

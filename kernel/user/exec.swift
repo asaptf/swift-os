@@ -9,7 +9,7 @@
 // packed into a kernel buffer, so it survives the switch into the child's space.
 
 // Reusable staging buffer for an ELF read off disk. Loads are sequential (one
-// exec resolves, loads, and elf_load-copies into the new address space before
+// exec resolves, loads, and elfLoad-copies into the new address space before
 // the next), so a single buffer is safe; it is allocated lazily on first use.
 // It comes from the PMM (physically contiguous, identity-mapped) rather than the
 // tiny 256 KiB bump heap, since busybox is ~1.1 MiB.
@@ -30,7 +30,7 @@ private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
         if pa == 0 { return (0, 0) }
         elfBuf = pa
     }
-    let rc = virtio_blk_read_range(UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
+    let rc = virtioBlkReadRange(UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
     if rc != 0 { return (0, 0) }
     return (elfBuf, UInt(len))
 }
