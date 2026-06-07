@@ -342,6 +342,63 @@ uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va) {
     return 0;
 }
 
+extern void pmm_free_page(uintptr_t addr); // from pmm.swift
+
+// Tear down a per-process address space created by address_space_create() /
+// address_space_clone(): free every USER leaf frame (VA >= 0x8000_0000, i.e. L1
+// index >= 2) and the L3/L2 page tables that map them, then the L1 and L0
+// frames. The kernel/device identity entries (L1 indices 0,1) are 1 GiB *block*
+// descriptors, not tables — they own no frames and are skipped by the
+// DESC_TABLE test, so the shared kernel mapping is never freed. Eager fork
+// gives each space private leaf frames (no COW sharing), so a flat free is
+// correct — no refcounting needed.
+//
+// Frame reclamation is the inverse of the leak that made the OS unusable for
+// long-running workloads (~2 MiB lost per busybox command). Safe to call on a
+// partially built space (failed createProcess) — it frees whatever exists.
+//
+// If the doomed space is the currently installed TTBR0 (the common case when
+// the kernel scheduler reaps a just-exited top-level process, whose tables are
+// still live in the register), switch to the kernel identity map first so the
+// MMU never walks frames we are about to hand back to the PMM.
+void address_space_destroy(uintptr_t ttbr0) {
+    if (ttbr0 == 0 || ttbr0 == (uintptr_t)l0_table) {
+        return;
+    }
+
+    uint64_t cur;
+    __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(cur));
+    if ((uintptr_t)(cur & PAGE_4K_MASK) == ttbr0) {
+        address_space_switch((uintptr_t)l0_table);
+    }
+
+    uint64_t *l0 = (uint64_t *)ttbr0;
+    uint64_t d0 = l0[0];
+    if ((d0 & DESC_VALID) && (d0 & DESC_TABLE)) {
+        uint64_t *l1 = (uint64_t *)(uintptr_t)(d0 & PAGE_4K_MASK);
+        for (unsigned i1 = 2; i1 < ENTRIES_PER_TABLE; i1 += 1) {
+            uint64_t d1 = l1[i1];
+            if (!(d1 & DESC_VALID) || !(d1 & DESC_TABLE)) continue;
+            uint64_t *l2 = (uint64_t *)(uintptr_t)(d1 & PAGE_4K_MASK);
+            for (unsigned i2 = 0; i2 < ENTRIES_PER_TABLE; i2 += 1) {
+                uint64_t d2 = l2[i2];
+                if (!(d2 & DESC_VALID) || !(d2 & DESC_TABLE)) continue;
+                uint64_t *l3 = (uint64_t *)(uintptr_t)(d2 & PAGE_4K_MASK);
+                for (unsigned i3 = 0; i3 < ENTRIES_PER_TABLE; i3 += 1) {
+                    uint64_t d3 = l3[i3];
+                    if (d3 & DESC_VALID) {
+                        pmm_free_page((uintptr_t)(d3 & PAGE_4K_MASK)); // leaf user frame
+                    }
+                }
+                pmm_free_page((uintptr_t)l3); // L3 table
+            }
+            pmm_free_page((uintptr_t)l2); // L2 table
+        }
+        pmm_free_page((uintptr_t)l1); // L1 table
+    }
+    pmm_free_page(ttbr0); // L0 table
+}
+
 extern void *memcpy(void *dst, const void *src, unsigned long n); // string.c
 
 // Eager fork: create a new address space and copy every mapped USER page

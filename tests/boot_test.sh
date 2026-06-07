@@ -14,9 +14,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
-# 45s: every demo program is now loaded from disk (M11d), which is slower than
-# the old embedded blob — give the full demo sequence room to finish.
-TIMEOUT="${TIMEOUT:-45}"
+# 60s: every demo program is now loaded from disk (M11d), which is slower than
+# the old embedded blob; the reclaim self-test adds several fork/exec rounds —
+# give the full demo sequence room to finish.
+TIMEOUT="${TIMEOUT:-60}"
 
 EXPECTS="${EXPECTS:-M9 OK: hardware discovered from device tree
 hello from ELF userland
@@ -56,6 +57,7 @@ identitydemo: boot principal/session/caps OK
 identitydemo: child inherited security context
 identitydemo: parent observed inherited context
 M12a OK: identity demo exited, code 0
+reclaim OK: no frame leak across fork/exec/exit/reap
 swift-os userland: Swift ps
  PID PPID STATE CMD
    1    0 RUN   ps
