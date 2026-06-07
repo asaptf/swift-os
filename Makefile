@@ -619,6 +619,8 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/hkdf_test
 	$(HOST_SWIFTC) tests/x25519_test.swift kernel/crypto/x25519.swift -o $(BUILD)/x25519_test
 	$(BUILD)/x25519_test
+	$(HOST_SWIFTC) tests/tls_handshake_test.swift userland/lib/tls13.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/tls_handshake_test
+	$(BUILD)/tls_handshake_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
