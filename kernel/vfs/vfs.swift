@@ -129,6 +129,10 @@ private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * ma
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
+// C3: the subtree a process is confined to — object-scoped fs authority. 0 means
+// unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
+// is always true, so the confinement guard is a no-op for unconfined processes.
+private var confineNodes = [Int](repeating: 0, count: maxVFSProcesses)
 
 // ---- construction ---------------------------------------------------------
 
@@ -387,6 +391,7 @@ func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all) {
         // (C2, docs/CAPABILITIES.md §3). Same copy+retain logic either way, only
         // the bound differs; fds beyond it stay the fresh HandleEntry().
         cwdNodes[slot] = cwdNodes[parent]
+        confineNodes[slot] = confineNodes[parent] // a confined parent's child stays confined
         let upper = inherit == .all ? maxFDs : 3
         for fd in 0..<maxFDs {
             let e = fd < upper ? handles[fdIndex(parent, fd)] : HandleEntry()
@@ -397,6 +402,7 @@ func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all) {
     }
 
     cwdNodes[slot] = 0
+    confineNodes[slot] = 0
     for fd in 0..<maxFDs { handles[fdIndex(slot, fd)] = HandleEntry() }
     _ = installTTY(slot: slot, fd: 0, readable: true, writable: true)
     _ = installTTY(slot: slot, fd: 1, readable: true, writable: true)
@@ -441,6 +447,10 @@ private func fdIndex(_ proc: Int, _ fd: Int) -> Int {
 
 private func cwdNodeForCurrentProcess() -> Int {
     cwdNodes[currentVFSProcess()]
+}
+
+private func confineRootForCurrentProcess() -> Int {
+    confineNodes[currentVFSProcess()]
 }
 
 private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {
@@ -697,11 +707,18 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     if wantRead && (caps & capFsRead) == 0 { return errAccess }
     if wantWrite && (caps & capTmpWrite) == 0 { return errAccess }
 
+    // C3: object-scoped confinement. A confined process (confineNodes != 0) may only
+    // reach paths inside its subtree; isDescendant(_, of: 0) is always true, so this is
+    // a no-op for the unconfined default. See docs/CAPABILITIES.md §6 (C3).
+    let confineRoot = confineRootForCurrentProcess()
+    if node != -1 && !isDescendant(node, of: confineRoot) { return errAccess }
+
     if node == -1 {
         if (f & oCreat) != 0 {
             var ls = 0, ll = 0
             let parent = resolveParent(path, &ls, &ll)
             if parent == -1 { return errNoEntry }
+            if !isDescendant(parent, of: confineRoot) { return errAccess } // C3 confinement
             if nodes[parent].readOnly { return errReadOnly }
             if findChild(parent, path + ls, ll) != -1 { return errExists }
             node = createTmpNode(parent, path + ls, ll, isDir: false)
@@ -1118,6 +1135,21 @@ func vfsChdir(path pathVA: UInt) -> Int {
     if node == -1 { return errNoEntry }
     if !nodes[node].isDir { return errNotDir }
     cwdNodes[currentVFSProcess()] = node
+    return 0
+}
+
+// C3: confine this process's filesystem access to a subtree (object-scoped
+// authority). Confine-only: the new root must lie within the current confinement,
+// so a confined process cannot widen its own reach. Once set, vfsOpen denies any
+// path outside the subtree. See docs/CAPABILITIES.md §6 (C3).
+func vfsConfine(path pathVA: UInt) -> Int {
+    guard let path = userCString(pathVA) else { return errInvalid }
+    let node = resolve(path)
+    if node == -1 { return errNoEntry }
+    if !nodes[node].isDir { return errNotDir }
+    let proc = currentVFSProcess()
+    if !isDescendant(node, of: confineNodes[proc]) { return errAccess }
+    confineNodes[proc] = node
     return 0
 }
 

@@ -56,6 +56,7 @@
 #define SYS_PROCSTAT      47
 #define SYS_THREAD_CREATE 48
 #define SYS_FUTEX         49
+#define SYS_CONFINE       50
 
 #ifndef __ASSEMBLER__
 
@@ -88,6 +89,12 @@ static inline int open(const char *path, int flags) {
 
 static inline int close(int fd) {
     return (int)__syscall3(SYS_CLOSE, fd, 0, 0);
+}
+
+// C3: confine this process's filesystem access to a subtree. Subsequent opens of
+// paths outside it are denied. Confine-only (cannot widen). Negative on error.
+static inline int confine(const char *path) {
+    return (int)__syscall3(SYS_CONFINE, (long)path, 0, 0);
 }
 
 static inline long lseek(int fd, long offset, int whence) {

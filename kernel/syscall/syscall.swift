@@ -50,6 +50,7 @@ private let sysSysInfo: UInt = 46      // sysinfo(buffer) — system stats for /
 private let sysProcStat: UInt = 47     // procstat(buffer, capacity) — rich per-proc records
 private let sysThreadCreate: UInt = 48 // thread_create(entry, arg, stackTop) -> tid (rt-a)
 private let sysFutex: UInt = 49        // futex(uaddr, op, val) — minimal WAIT/WAKE (rt-a)
+private let sysConfine: UInt = 50      // confine(path) — restrict FS access to a subtree (C3)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -190,6 +191,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processThreadCreate(entryVA: frame[0], argVA: frame[1], stackTopVA: frame[2])
     } else if number == sysFutex {
         result = futexOp(uaddrVA: frame[0], op: Int(bitPattern: frame[1]), val: frame[2])
+    } else if number == sysConfine {
+        result = vfsConfine(path: frame[0])
     } else {
         result = -38 // ENOSYS
     }

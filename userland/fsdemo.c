@@ -61,5 +61,16 @@ int main(void) {
     }
     close(fd);
 
+    // C3: confine FS access to /etc, then prove the confinement holds — a file
+    // inside the subtree opens, a file outside is denied (object-scoped authority).
+    if (confine("/etc") == 0) {
+        int cin = open("/etc/motd", O_RDONLY);
+        puts_raw(cin >= 0 ? "CONFINE-IN-OK\n" : "CONFINE-IN-FAIL\n");
+        if (cin >= 0) close(cin);
+        int cout = open("/bin/ps", O_RDONLY);
+        puts_raw(cout < 0 ? "CONFINE-OUT-OK\n" : "CONFINE-OUT-LEAK\n");
+        if (cout >= 0) close(cout);
+    }
+
     return 0;
 }
