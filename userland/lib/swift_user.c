@@ -614,11 +614,10 @@ void swiftos_thread_exit(void) {
     }
 }
 
-// ---- Anonymous mmap / munmap (Track B) ------------------------------------
-// Thin wrappers over the mmap/munmap inlines in syscall.h. swiftos_mmap returns
-// the base address, or 0 on failure (Swift has no errno, so a 0 sentinel is
-// simplest; a valid mapping is never at VA 0). (swiftos_mprotect — the JIT
-// lever — is added in B2.)
+// ---- Anonymous mmap / munmap / mprotect (Track B) -------------------------
+// Thin wrappers over the mmap/munmap/mprotect inlines in syscall.h. swiftos_mmap
+// returns the base address, or 0 on failure (Swift has no errno, so a 0 sentinel
+// is simplest; a valid mapping is never at VA 0).
 unsigned long swiftos_mmap(unsigned long len, int prot) {
     void *p = mmap(0, len, prot, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     return (p == MAP_FAILED) ? 0 : (unsigned long)p;
@@ -626,6 +625,10 @@ unsigned long swiftos_mmap(unsigned long len, int prot) {
 
 int swiftos_munmap(unsigned long addr, unsigned long len) {
     return munmap((void *)addr, len);
+}
+
+int swiftos_mprotect(unsigned long addr, unsigned long len, int prot) {
+    return mprotect((void *)addr, len, prot);
 }
 
 // Atomic CAS via the AArch64 LL/SC loop. Returns the prior value of *p; the

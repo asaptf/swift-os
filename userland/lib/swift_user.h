@@ -130,16 +130,17 @@ long swiftos_getpid(void);
 // rather than return — it was entered via eret with no valid return address.
 void swiftos_thread_exit(void) __attribute__((noreturn));
 
-// Anonymous mmap / munmap (Track B). swiftos_mmap reserves `len` bytes of fresh
-// zero-filled RAM with the given PROT bits and returns its base address (0 on
-// failure — convenient for Swift, which has no errno). munmap returns 0 on
-// success or a negative errno. PROT_WRITE|PROT_EXEC is rejected (W^X).
-// (swiftos_mprotect is added in B2 — the JIT pattern: mmap RW, write, RX, call.)
+// Anonymous mmap / munmap / mprotect (Track B). swiftos_mmap reserves `len`
+// bytes of fresh zero-filled RAM with the given PROT bits and returns its base
+// address (0 on failure — convenient for Swift, which has no errno). munmap and
+// mprotect return 0 on success or a negative errno. PROT_WRITE|PROT_EXEC is
+// rejected (W^X); the JIT pattern is mmap RW, write code, mprotect RX, call.
 #define SWIFTOS_PROT_READ  0x1
 #define SWIFTOS_PROT_WRITE 0x2
 #define SWIFTOS_PROT_EXEC  0x4
 unsigned long swiftos_mmap(unsigned long len, int prot);
 int swiftos_munmap(unsigned long addr, unsigned long len);
+int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 
 // Atomic primitives over a 32-bit word (low-level LL/SC the Swift layer cannot
 // express directly). CAS returns the value read before the attempt; the swap

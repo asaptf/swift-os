@@ -165,6 +165,31 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
   (in `make test`). NOTE: syscall numbers 54/55 are next-free at impl time; other concurrent
   sessions may also be adding syscalls to main — renumber at merge if they clash.
 
+### B2 — `mprotect` + W^X (DONE, 2026-06-07)
+
+- **`address_space_mprotect` (`vm.swift`)** changes the PROT bits over a range, preserving
+  each page's backing frame: `walkToL3(allocate: false)`, rebuild the leaf from the same PA
+  via `protPageDesc`, rewrite it, `dsb;tlbi`. It pre-validates the whole range (every page
+  must be mapped) before touching any leaf, so a hole is rejected (ENOMEM) without leaving a
+  partially-changed region. `processMprotect` adds the cursor/arena bounds + alignment checks.
+- **W^X is enforced at BOTH ends:** at the syscall boundary (`processMmap`/`processMprotect`
+  reject `PROT_WRITE|PROT_EXEC` → EINVAL) and defensively inside `protPageDesc` (a W^X or
+  PROT_NONE bitmask yields an invalid descriptor, so even a direct `address_space_*` caller
+  can never install a writable+executable leaf). So a page is never simultaneously W and X.
+- **Syscall `mprotect` = 56**; `mprotect` inline in `syscall.h`, bridge `swiftos_mprotect`.
+- **Test — the JIT pattern** (`/bin/mmapdemo`, `tests/mmap_test.sh`): mmap a page RW, write
+  `mov w0,#42; ret` (bytes `40 05 80 52  c0 03 5f d6`), `mprotect` RW→RX (must succeed), call
+  it through a `@convention(c)` function pointer → returns **42**. Then assert both W^X
+  breaches are rejected: `mmap` RWX fails, and `mprotect`→RWX on a live mapping fails.
+  Verified in QEMU:
+  ```
+  mmapdemo: B1-OK anon mmap zero+write+read+munmap
+  mmapdemo: B2-OK jit RW->RX call returned 42
+  mmapdemo: WX-OK mprotect ->RWX rejected
+  mmapdemo: WX-OK mmap RWX rejected
+  mmapdemo: ALL-OK
+  ```
+
 ## Milestone log
 
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a

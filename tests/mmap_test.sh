@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# mmap_test.sh — Track B acceptance: anonymous mmap/munmap (B1).
+# mmap_test.sh — Track B acceptance: mmap/munmap/mprotect + W^X.
 #
 # Boots the kernel (-kernel) with the packed base image attached, satisfies the
 # M7 tty demo (a line + Ctrl-C), logs in as root, then runs /bin/mmapdemo, which
-# maps anonymous memory, confirms it reads as 0, round-trips a write/read pattern
-# across a page boundary, and munmaps. (B2 — mprotect + W^X — extends this.)
+# exercises the whole Track B surface and prints one `mmapdemo: <TAG>` line per
+# check:
+#   B1 — anonymous mmap: a fresh mapping reads as 0, then a write/read pattern
+#        round-trips across a page boundary, then munmap.
+#   B2 — mprotect + W^X (the JIT pattern): mmap RW, write `mov w0,#42; ret`,
+#        mprotect RW->RX, call it -> 42; and both W^X breaches (mmap RWX,
+#        mprotect ->RWX on a live mapping) are rejected.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -70,11 +75,21 @@ QP=""
 
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
+# B1 — anonymous mmap.
 grep -qF "mmapdemo: B1-OK" <<<"$clean" || { echo "FAIL: B1 anon mmap (zero/write/read/munmap)" >&2; ok=0; }
+# B2 — JIT pattern + W^X.
+grep -qF "mmapdemo: B2-OK jit RW->RX call returned 42" <<<"$clean" \
+  || { echo "FAIL: B2 mprotect RW->RX + call != 42" >&2; ok=0; }
+grep -qF "mmapdemo: WX-OK mprotect ->RWX rejected" <<<"$clean" \
+  || { echo "FAIL: W^X did not reject mprotect ->RWX" >&2; ok=0; }
+grep -qF "mmapdemo: WX-OK mmap RWX rejected" <<<"$clean" \
+  || { echo "FAIL: W^X did not reject mmap RWX" >&2; ok=0; }
 grep -qF "mmapdemo: ALL-OK" <<<"$clean" || { echo "FAIL: mmapdemo did not finish cleanly" >&2; ok=0; }
+# A W^X breach (a live RWX mapping) must never have been reported.
+grep -qF "W^X breach" <<<"$clean" && { echo "FAIL: a W^X breach was reported" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: anonymous mmap/munmap (Track B B1 acceptance)"
+  echo "PASS: mmap/munmap/mprotect + W^X (Track B acceptance)"
   exit 0
 fi
 echo "--- serial (mmapdemo region) ---" >&2

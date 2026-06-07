@@ -56,7 +56,7 @@ private let sysIpcSend: UInt = 52      // ipc_send(fd, &msg) — bytes + optiona
 private let sysIpcRecv: UInt = 53      // ipc_recv(fd, &msg) -> bytes; installs any handle (C4b)
 private let sysMmap: UInt = 54         // mmap(len, prot) -> base VA — anonymous mmap (Track B)
 private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anonymous pages (Track B)
-// sysMprotect (56) is added in B2 (mprotect + W^X).
+private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -212,6 +212,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         return // result is an address, not an errno
     } else if number == sysMunmap {
         result = processMunmap(frame[0], frame[1])
+    } else if number == sysMprotect {
+        result = processMprotect(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]))
     } else {
         result = -38 // ENOSYS
     }

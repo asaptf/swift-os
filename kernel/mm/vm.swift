@@ -279,6 +279,44 @@ func addressSpaceMunmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) -> Int32 {
     return 0
 }
 
+// mprotect: change the PROT bits over [va, va+n*4K), preserving each page's
+// backing frame. Walks to the existing L3 leaf (no allocation), rebuilds the
+// descriptor from the same PA with the new prot, and rewrites it. A hole (no
+// live leaf) in the range is rejected (ENOMEM, as POSIX). The W^X / PROT_NONE
+// rejection lives in protPageDesc, so a bad prot fails before any leaf is
+// touched. Returns 0 on success or a negative errno.
+@_cdecl("address_space_mprotect")
+func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int32) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
+    if pageCount == 0 { return -22 }
+    if protPageDesc(0, prot) == 0 { return -22 } // W^X + PROT_NONE guard
+
+    // Pre-validate: every page in the range must already be mapped, so we never
+    // change a prefix and then fail on a hole.
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let l3 = walkToL3(ttbr0, cur, allocate: false)
+        if l3 == 0 { return -12 } // ENOMEM: address not mapped
+        if (tableLoad(l3, Int((cur >> 12) & 0x1ff)) & DESC_VALID) == 0 { return -12 }
+        i += 1
+    }
+
+    i = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let l3 = walkToL3(ttbr0, cur, allocate: false)
+        let leafIdx = Int((cur >> 12) & 0x1ff)
+        let oldDesc = tableLoad(l3, leafIdx)
+        let pa = UInt(oldDesc & PAGE_4K_MASK)
+        tableStore(l3, leafIdx, protPageDesc(pa, prot))
+        i += 1
+    }
+    dsb_sy()
+    tlbi_all()
+    return 0
+}
+
 // Clear and free up to `pageCount` live leaf frames starting at `va`. Shared by
 // munmap and by mmap's rollback path. No barrier — the caller flushes.
 private func unmapRange(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) {

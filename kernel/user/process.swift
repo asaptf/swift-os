@@ -916,3 +916,22 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
     if addr == pMmapTop[me] { pMmapTop[me] += bytes }
     return 0
 }
+
+/// mprotect(addr, len, prot): change protection on an existing mapping. addr
+/// must be page-aligned and in the mmap arena; every page in the range must be
+/// mapped. PROT_WRITE|PROT_EXEC (W^X) and PROT_NONE are rejected. This is the
+/// JIT lever: write code as RW, then flip the region to RX. Returns 0 or errno.
+func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
+    guard currentProc >= 0 else { return -22 }
+    let me = currentProc
+    if len == 0 { return -22 }
+    if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 }
+    // W^X invariant enforced HERE (syscall entry) as well as in protPageDesc.
+    if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return -22 } // EINVAL
+    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return -22 }
+    let pages = roundUpPages(len)
+    let bytes = pages * PageAllocator.pageSize
+    if addr < pMmapTop[me] || addr >= userMmapTop { return -22 }
+    if addr > userMmapTop - bytes { return -22 }
+    return Int(address_space_mprotect(pTtbr0[me], addr, pages, prot))
+}

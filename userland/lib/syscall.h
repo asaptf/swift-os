@@ -62,7 +62,7 @@
 #define SYS_IPC_RECV      53
 #define SYS_MMAP          54
 #define SYS_MUNMAP        55
-/* SYS_MPROTECT (56) is added in B2. */
+#define SYS_MPROTECT      56
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -240,7 +240,11 @@ static inline int munmap(void *addr, size_t length) {
     return (int)__syscall3(SYS_MUNMAP, (long)addr, (long)length, 0);
 }
 
-/* mprotect() is added in B2 (mprotect + W^X). */
+// Change protection on [addr, addr+length). RW->RX is the JIT path; RWX is
+// rejected (W^X). 0 on success, negative errno otherwise.
+static inline int mprotect(void *addr, size_t length, int prot) {
+    return (int)__syscall3(SYS_MPROTECT, (long)addr, (long)length, prot);
+}
 
 #endif // __ASSEMBLER__
 #endif // SWIFTOS_USER_SYSCALL_H
