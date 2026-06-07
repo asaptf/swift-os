@@ -1265,3 +1265,19 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   hermetic. Skips cleanly if `python3` is absent. Wired into `make test`.
 - **Deferred:** connect-by-name in `/bin/tcpget` (small follow-up), caching, IPv6/AAAA, a real ephemeral
   port allocator. `/bin/nslookup name` (no server) resolves against slirp's real DNS for interactive use.
+
+### net-g — static-file HTTP server (/bin/httpd serves the VFS) (DONE, 2026-06-07)
+
+- **`/bin/httpd` now serves real files** instead of a canned body. Per connection it parses the request
+  line (`GET <path>`), maps the path into a **`/www` docroot** on the VFS (`/` → `/www/index.html`), and
+  streams the file with a `stat`-derived `Content-Length` (`open`/`read`→`write` in chunks), 404 on miss.
+  The poll() concurrency from net-e is unchanged. Userland-only (`userland/httpd.swift` + the existing
+  `open`/`read`/`close`/`stat` bridge); no kernel change.
+- **Docroot, not the whole VFS:** only `base/www/` is reachable (seed files `index.html`, `hello.txt`), so
+  the server never exposes `/etc/swos/passwd` etc. A path-traversal guard rejects any `..` in the request
+  path (and requires a leading `/`) → 404; verified a raw `GET /../etc/swos/passwd` returns 404, no leak.
+- **Tests:** `tests/httpd_test.sh` updated — two concurrent `curl`s for `/index.html` both get the page
+  (concurrency), `/hello.txt` returns its content (file serving), a missing path returns HTTP 404, and the
+  serial shows ≥2 `httpd: 200` lines. `base/www/*` ride along via the existing `BASE_SEED_FILES` glob.
+- **Deferred:** keep-alive, MIME types (all served as `text/html`), large-file streaming beyond a chunk
+  loop is present but untuned, directory listings. swift-os now serves its filesystem over HTTP.

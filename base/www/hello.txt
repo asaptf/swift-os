@@ -1,0 +1,1 @@
+hello from the swift-os static file server

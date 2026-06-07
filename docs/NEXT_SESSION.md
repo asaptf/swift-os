@@ -5,7 +5,7 @@ Working notes for picking up swift-os development. Authoritative milestone histo
 
 ## Where we are (2026-06-06)
 
-- **Network stack — net-a..f DONE (2026-06-06/07).** Own Swift, sans-IO. Concurrent server + DNS resolver.
+- **Network stack — net-a..g DONE (2026-06-06/07).** Own Swift, sans-IO. Serves files over HTTP + DNS.
   - **net-a:** Swift virtio-net driver (`kernel/drivers/virtio_net.swift`, RX+TX rings, MAC from config,
     zero-copy DMA) + a pure host-testable sans-IO core (`kernel/net/*.swift`: Ethernet/ARP/IPv4/ICMP). The
     boot probe ARPs + pings the QEMU slirp gateway `10.0.2.2`.
@@ -28,11 +28,14 @@ Working notes for picking up swift-os development. Authoritative milestone histo
   - **net-f:** DNS — sans-IO codec (`kernel/net/dns.swift`, host-tested) + a `resolve()` syscall (45) over
     UDP + `/bin/nslookup`. Acceptance: `tests/dns_test.sh` (host python3 DNS responder; guest resolves a
     name to an A record). Defaults to slirp DNS 10.0.2.3.
+  - **net-g:** `/bin/httpd` now serves real files from a `/www` docroot on the VFS (path parse →
+    open/stat/stream, 404 on miss, `..` traversal guard). Acceptance: `tests/httpd_test.sh` (concurrent
+    `/index.html`, `/hello.txt`, and a 404). Userland-only.
   - Tests: `net_test.swift` (host L2/L3/UDP/TCP/DNS) + `virtio_net_test.sh` + `udp_echo_test.sh` +
     `tcp_echo_test.sh` + `tcp_connect_test.sh` + `httpd_test.sh` + `dns_test.sh`. See NOTES "Network stack".
   - **Next options:** connect-by-name in `/bin/tcpget` (tiny: resolve then connect); HTTP keep-alive +
-    request routing / a static file server off the VFS; a real ephemeral-port allocator + larger conn
-    tables; TLS in userland (N5); or up the roadmap to native Swift app runtimes (threads+futex, mmap W^X).
+    MIME types + directory listings; a real ephemeral-port allocator + larger conn tables; TLS in userland
+    (N5); or up the roadmap to native Swift app runtimes (threads+futex, mmap W^X).
 
 ## Where we were (2026-06-04)
 
