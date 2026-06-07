@@ -107,6 +107,7 @@ SWIFT_SRCS := \
 	kernel/user/exec.swift \
 	kernel/user/elf.swift \
 	kernel/user/ustack.swift \
+	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift
@@ -609,6 +610,8 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/net_test
 	$(HOST_SWIFTC) tests/crypto_test.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/crypto_test
 	$(BUILD)/crypto_test
+	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
+	$(BUILD)/handle_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/tty_test.sh
