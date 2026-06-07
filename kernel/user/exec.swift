@@ -114,6 +114,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/threadsdemo") { return loadProgramImage("/bin/threadsdemo") }
     if userPathEquals(pathVA, "/bin/mmapdemo") { return loadProgramImage("/bin/mmapdemo") }
     if userPathEquals(pathVA, "/bin/tcpget") { return loadProgramImage("/bin/tcpget") }
+    if userPathEquals(pathVA, "/bin/tlsget") { return loadProgramImage("/bin/tlsget") }
     if userPathEquals(pathVA, "/bin/httpd") { return loadProgramImage("/bin/httpd") }
     if userPathEquals(pathVA, "/bin/nslookup") { return loadProgramImage("/bin/nslookup") }
     if userPathEquals(pathVA, "/bin/console-login") { return loadProgramImage("/bin/console-login") }

@@ -237,6 +237,7 @@ USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_THREADSDEMO_ELF := $(BUILD)/threadsdemo.elf
 USER_MMAPDEMO_ELF := $(BUILD)/mmapdemo.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
+USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 BASE_EXEC_ELFS := \
@@ -251,6 +252,7 @@ BASE_EXEC_ELFS := \
 	$(USER_THREADSDEMO_ELF) \
 	$(USER_MMAPDEMO_ELF) \
 	$(USER_TCPGET_ELF) \
+	$(USER_TLSGET_ELF) \
 	$(USER_HTTPD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
@@ -436,6 +438,12 @@ $(BUILD)/user_mmapdemo.o: userland/mmapdemo.swift userland/lib/swift_user.h Make
 $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tcpget.swift -o $@
 
+# /bin/tlsget links the pure-Swift TLS 1.3 client + crypto into one module
+# (mirrors the host tls_handshake_test target and the console-login+sha256 rule).
+TLS_SWIFT_SRCS := userland/lib/tls13.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+$(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) -o $@
+
 $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
 
@@ -563,6 +571,9 @@ $(USER_MMAPDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/u
 $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tcpget.o -o $@
 
+$(USER_TLSGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o -o $@
+
 $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o -o $@
 
@@ -637,6 +648,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/udp_echo_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
+	./tests/tls_test.sh
 	./tests/httpd_test.sh
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
@@ -757,6 +769,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_THREADSDEMO_ELF) $(BASE_ROOT)/bin/threadsdemo
 	cp $(USER_MMAPDEMO_ELF) $(BASE_ROOT)/bin/mmapdemo
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
+	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
