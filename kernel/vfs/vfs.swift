@@ -390,21 +390,74 @@ func vfsInit() {
     for i in 0..<maxPipes { pipes[i] = Pipe() }
 }
 
-func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all) {
+private func readHandleSpec(_ base: UnsafePointer<UInt8>, _ index: Int) -> HandleSpec {
+    let raw = UnsafeRawPointer(base)
+    let off = index * handleSpecSize
+    return HandleSpec(sourceFD: raw.load(fromByteOffset: off, as: Int32.self),
+                      targetFD: raw.load(fromByteOffset: off + 4, as: Int32.self),
+                      rightsMask: raw.load(fromByteOffset: off + 8, as: UInt32.self),
+                      flags: raw.load(fromByteOffset: off + 12, as: UInt32.self))
+}
+
+func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
+                                  specsVA: UInt = 0, specCount: UInt = 0) -> Int {
+    if inherit != .explicit { return 0 }
+    if parent < 0 || parent >= maxVFSProcesses { return errInvalid }
+    if specCount > UInt(maxFDs) { return errInvalid }
+    if specCount == 0 { return 0 }
+    guard let specs = userReadableBuffer(specsVA, specCount * UInt(handleSpecSize)) else {
+        return errInvalid
+    }
+
+    var targetMask: UInt64 = 0
+    for i in 0..<Int(specCount) {
+        let spec = readHandleSpec(specs, i)
+        let src = Int(spec.sourceFD)
+        let dst = Int(spec.targetFD)
+        if src < 0 || src >= maxFDs || dst < 0 || dst >= maxFDs { return errBadFD }
+        if !fdEntry(parent, src).inUse { return errBadFD }
+        if (spec.flags & ~handleSpecFlagCloexec) != 0 { return errInvalid }
+        let bit = UInt64(1) << UInt64(dst)
+        if (targetMask & bit) != 0 { return errInvalid }
+        targetMask |= bit
+    }
+    return 0
+}
+
+private func seedExplicitHandles(slot: Int, parent: Int, specsVA: UInt, specCount: UInt) {
+    if specCount == 0 { return }
+    guard let specs = userReadableBuffer(specsVA, specCount * UInt(handleSpecSize)) else { return }
+    for i in 0..<Int(specCount) {
+        let spec = readHandleSpec(specs, i)
+        let src = Int(spec.sourceFD)
+        let dst = Int(spec.targetFD)
+        let parentEntry = fdEntry(parent, src)
+        var childEntry = parentEntry
+        childEntry.rights = attenuate(parentEntry.rights, to: Rights(rawValue: spec.rightsMask))
+        childEntry.cloexec = (spec.flags & handleSpecFlagCloexec) != 0
+        handles[fdIndex(slot, dst)] = childEntry
+        retainDescription(childEntry.object)
+    }
+}
+
+func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
+                    specsVA: UInt = 0, specCount: UInt = 0) {
     if slot < 0 || slot >= maxVFSProcesses { return }
     if parent >= 0 && parent < maxVFSProcesses {
-        // cwd is always inherited; the handle set depends on the mode. `.all`
-        // copies the whole table (the fork/thread case); `.stdioOnly` copies just
-        // fds 0/1/2, leaving the rest empty — the explicit, minimal spawn default
-        // (C2, docs/CAPABILITIES.md §3). Same copy+retain logic either way, only
-        // the bound differs; fds beyond it stay the fresh HandleEntry().
+        // cwd is always inherited; the handle set depends on the mode. `.all` is
+        // the fork/thread case, `.stdioOnly` is legacy spawn compatibility, and
+        // `.explicit` starts empty and installs only named handle specs (C2).
         cwdNodes[slot] = cwdNodes[parent]
         confineNodes[slot] = confineNodes[parent] // a confined parent's child stays confined
-        let upper = inherit == .all ? maxFDs : 3
         for fd in 0..<maxFDs {
-            let e = fd < upper ? handles[fdIndex(parent, fd)] : HandleEntry()
+            let e = handleInheritanceCopiesFD(inherit, fd: fd)
+                ? handles[fdIndex(parent, fd)]
+                : HandleEntry()
             handles[fdIndex(slot, fd)] = e
             if e.inUse { retainDescription(e.object) }
+        }
+        if inherit == .explicit {
+            seedExplicitHandles(slot: slot, parent: parent, specsVA: specsVA, specCount: specCount)
         }
         return
     }

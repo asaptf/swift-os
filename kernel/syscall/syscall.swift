@@ -58,6 +58,7 @@ private let sysMmap: UInt = 54         // mmap(len, prot) -> base VA — anonymo
 private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anonymous pages (Track B)
 private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
 private let sysNanosleep: UInt = 57    // nanosleep(seconds, nanos) — block on the timer tick
+private let sysSpawnHandles: UInt = 58 // spawn_handles(path, argv, specs, count) — C2 explicit inheritance
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -119,6 +120,18 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
             result = processSpawnChild(addr, len, packed: packed, packedLen: packedLen, argc: argc)
+        }
+    } else if number == sysSpawnHandles {
+        // C2: same synchronous spawn shape, but the child starts empty and receives
+        // exactly the explicit handle specs named by the caller.
+        let (addr, len) = execResolve(frame[0])
+        if addr == 0 {
+            result = -2 // ENOENT
+        } else {
+            let (packed, packedLen, argc) = packUserArgv(frame[1])
+            result = processSpawnChildWithHandles(addr, len, packed: packed,
+                                                  packedLen: packedLen, argc: argc,
+                                                  specsVA: frame[2], specCount: frame[3])
         }
     } else if number == sysWaitpid {
         result = processWaitpid(Int(bitPattern: frame[0]), frame[1])

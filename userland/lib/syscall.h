@@ -64,6 +64,7 @@
 #define SYS_MUNMAP        55
 #define SYS_MPROTECT      56
 #define SYS_NANOSLEEP     57
+#define SYS_SPAWN_HANDLES 58
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -76,6 +77,23 @@
 #define MAP_ANONYMOUS 0x20
 #define MAP_ANON      MAP_ANONYMOUS
 #define MAP_FAILED    ((void *)-1)
+
+// Handle rights and C2 spawn-with-handles ABI. Rights match
+// kernel/vfs/handle.swift; the mask attenuates the inherited handle and can never
+// add rights the source fd does not hold.
+#define SWIFTOS_RIGHT_READ      (1u << 0)
+#define SWIFTOS_RIGHT_WRITE     (1u << 1)
+#define SWIFTOS_RIGHT_EXECUTE   (1u << 2)
+#define SWIFTOS_RIGHT_MAP       (1u << 3)
+#define SWIFTOS_RIGHT_DUPLICATE (1u << 4)
+#define SWIFTOS_RIGHT_TRANSFER  (1u << 5)
+#define SWIFTOS_RIGHT_GETATTR   (1u << 6)
+#define SWIFTOS_RIGHT_SETATTR   (1u << 7)
+#define SWIFTOS_RIGHT_ALL       (SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_WRITE | \
+                                 SWIFTOS_RIGHT_EXECUTE | SWIFTOS_RIGHT_MAP | \
+                                 SWIFTOS_RIGHT_DUPLICATE | SWIFTOS_RIGHT_TRANSFER | \
+                                 SWIFTOS_RIGHT_GETATTR | SWIFTOS_RIGHT_SETATTR)
+#define SWIFTOS_SPAWN_HANDLE_CLOEXEC (1u << 0)
 
 #ifndef __ASSEMBLER__
 
@@ -90,6 +108,19 @@ static inline long __syscall3(long n, long a0, long a1, long a2) {
     __asm__ volatile("svc #0"
                      : "+r"(x0)
                      : "r"(x8), "r"(x1), "r"(x2)
+                     : "memory");
+    return x0;
+}
+
+static inline long __syscall4(long n, long a0, long a1, long a2, long a3) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x8), "r"(x1), "r"(x2), "r"(x3)
                      : "memory");
     return x0;
 }
@@ -154,6 +185,20 @@ static inline void _exit(int code) {
 // COW fork). Negative on error.
 static inline long spawn(const char *path, char *const argv[]) {
     return __syscall3(SYS_SPAWN, (long)path, (long)argv, 0);
+}
+
+struct swiftos_spawn_handle {
+    int source_fd;
+    int target_fd;
+    unsigned int rights;
+    unsigned int flags;
+};
+
+static inline long spawn_handles(const char *path, char *const argv[],
+                                 const struct swiftos_spawn_handle *handles,
+                                 size_t handle_count) {
+    return __syscall4(SYS_SPAWN_HANDLES, (long)path, (long)argv,
+                      (long)handles, (long)handle_count);
 }
 
 static inline int getpid(void) {

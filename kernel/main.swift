@@ -22,6 +22,7 @@ final class HeapProbe {
 }
 
 private var retainedProbe: HeapProbe? = nil
+private var c2SpawnExplicitPassed = false
 
 /// Enable the MMU using the static boot page tables (kernel/mm/vm.c — these do
 /// not draw from the PMM). DTB parsing runs before this, so the parser avoids
@@ -201,6 +202,7 @@ private func runSpawnDemo() {
     uartPuts("M8a OK: spawn parent exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
+    if code == 0 { c2SpawnExplicitPassed = true }
 }
 
 private func runBrkDemo() {
@@ -242,6 +244,9 @@ private func runForkDemo() {
     uartPuts("M8d OK: fork demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
+    if code == 0 && c2SpawnExplicitPassed {
+        uartPuts("C2 OK: explicit handle inheritance preserved\n")
+    }
 }
 
 private func runExecDemo() {

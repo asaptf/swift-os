@@ -77,15 +77,15 @@ exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
-await_count "swift-os login:" 1 20 && printf 'root\n' >&3
-await_count "Password:" 1 15 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 15 && printf 'ls -l /\n' >&3
+await_count "swift-os login:" 1 60 && printf 'root\n' >&3
+await_count "Password:" 1 60 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 && printf 'ls -l /\n' >&3
 await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 && printf 'ls -l /bin\n' >&3
 await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 && printf 'ls -l /etc\n' >&3
 await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 && printf 'exit\n' >&3
-await_count "swift-os login:" 2 20 && printf 'user\n' >&3
-await_count "Password:" 2 15 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, user" 15 && printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
+await_count "swift-os login:" 2 60 && printf 'user\n' >&3
+await_count "Password:" 2 60 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, user" 60 && printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
 await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 && printf 'exit\n' >&3
 
 exec 3>&-

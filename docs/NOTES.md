@@ -465,6 +465,26 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   authority policy expansion (C3), no new IPC/VMO/device/cell handle semantics
   (C4+), and no SMP work.
 
+### C2 — spawn-with-handles / explicit handle inheritance (DONE, 2026-06-08)
+
+- **Explicit spawn inheritance.** `SYS_SPAWN_HANDLES` adds a synchronous
+  `spawn_handles(path, argv, HandleSpec[], count)` ABI. A spawned child starts
+  with an empty handle table and receives only the named `(source fd -> target fd)`
+  entries, with per-entry rights attenuated by the supplied mask and optional
+  child-side close-on-exec.
+- **Compatibility preserved.** The existing `SYS_SPAWN` / `spawn()` wrapper still
+  inherits stdio only (`0/1/2`). `fork()` still inherits the full handle table,
+  including fd numbers, shared open descriptions, offsets, rights, and `cloexec`
+  flags. `execve()` still closes only close-on-exec descriptors.
+- **Tests / acceptance.** `tests/handle_test.swift` covers the C2 inheritance
+  selector and `HandleSpec` ABI constants. `/bin/spawndemo` now proves both that
+  legacy spawn drops parent fd `3` and that `spawn_handles` can explicitly pass
+  fd `3`; `tests/boot_test.sh` asserts `C2 OK: explicit handle inheritance
+  preserved` and rejects leak/failure markers.
+- **Non-goals left for later C milestones.** C2 does not add object-scoped
+  filesystem authority, subtree grants, resource-limit enforcement, IPC transfer
+  policy, service/cell launch semantics, or SMP work.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

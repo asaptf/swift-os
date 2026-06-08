@@ -194,11 +194,12 @@ private func copyProcessSecurity(from parent: Int, to child: Int) {
 }
 
 // Build a process from an ELF image. Returns its slot, or -1. `inherit` selects
-// how the child's handle table is seeded from the parent (C2): the default `.all`
-// preserves the old fork-inherits-everything behavior; `processSpawnChild` opts
-// into `.stdioOnly`. See docs/CAPABILITIES.md §3.
+// how the child's handle table is seeded from the parent (C2): `.all` preserves
+// fork-inherits-everything behavior; `.stdioOnly` keeps legacy spawn tight; and
+// `.explicit` installs only the provided HandleSpec vector.
 private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
-                           argc: Int, parent: Int, inherit: HandleInheritance = .all) -> Int {
+                           argc: Int, parent: Int, inherit: HandleInheritance = .all,
+                           inheritSpecsVA: UInt = 0, inheritSpecCount: UInt = 0) -> Int {
     let slot = allocSlot()
     if slot < 0 { return -1 }
 
@@ -255,7 +256,8 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pWakeTick[slot] = 0
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
-    vfsProcessInit(slot: slot, parent: parent, inherit: inherit)
+    vfsProcessInit(slot: slot, parent: parent, inherit: inherit,
+                   specsVA: inheritSpecsVA, specCount: inheritSpecCount)
     return slot
 }
 
@@ -401,13 +403,18 @@ func processRunPair(_ imageA: UInt, _ sizeA: UInt, _ pa: UInt, _ na: UInt, _ ca:
     reapProcess(b)
 }
 
-/// spawn(path) child: create it, block until it exits, return its exit status.
-func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int) -> Int {
+private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,
+                                              packedLen: UInt, argc: Int,
+                                              inherit: HandleInheritance,
+                                              specsVA: UInt = 0, specCount: UInt = 0) -> Int {
     let parent = currentProc
-    // C2: a spawned child starts with stdio only, not the parent's whole fd
-    // table. fork keeps full inheritance; see vfsProcessInit / docs/CAPABILITIES.md §3.
+    guard parent >= 0 else { return -22 }
+    let valid = vfsValidateHandleInheritance(parent: parent, inherit: inherit,
+                                             specsVA: specsVA, specCount: specCount)
+    if valid < 0 { return valid }
     let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
-                              parent: parent, inherit: .stdioOnly)
+                              parent: parent, inherit: inherit,
+                              inheritSpecsVA: specsVA, inheritSpecCount: specCount)
     if child < 0 { return -11 } // EAGAIN
     pState[parent] = pBlocked
     pWait[parent] = child
@@ -416,6 +423,21 @@ func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UIn
     pWait[parent] = waitNone
     reapProcess(child)
     return code
+}
+
+/// spawn(path) child: create it with stdio only, block until it exits, return its exit status.
+func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int) -> Int {
+    return processSpawnChildWithInheritance(image, size, packed: packed, packedLen: packedLen,
+                                            argc: argc, inherit: .stdioOnly)
+}
+
+/// spawn_handles(path) child: start from an empty handle table and inherit exactly
+/// the caller-provided HandleSpec vector.
+func processSpawnChildWithHandles(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
+                                  argc: Int, specsVA: UInt, specCount: UInt) -> Int {
+    return processSpawnChildWithInheritance(image, size, packed: packed, packedLen: packedLen,
+                                            argc: argc, inherit: .explicit,
+                                            specsVA: specsVA, specCount: specCount)
 }
 
 func processCurrentPid() -> Int { currentProc >= 0 ? currentProc + 1 : 0 }

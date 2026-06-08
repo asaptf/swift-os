@@ -22,12 +22,27 @@ int main(int argc, char **argv) {
         puts_raw("\n");
     }
     // C2 spawn-isolation check: when spawned by spawndemo (arg "isocheck"), the
-    // parent holds fd 3 open. spawn-with-handles must not inherit it, so probing
-    // fd 3 must fail (EBADF). A direct launch passes other args and skips this.
+    // parent holds fd 3 open. legacy spawn() must not inherit it, so probing fd 3
+    // must fail (EBADF). A direct launch passes other args and skips this.
     if (argc >= 2 && streq(argv[1], "isocheck")) {
         char b;
         long r = read(3, &b, 1);
-        puts_raw(r < 0 ? "SPAWN-ISO-OK\n" : "SPAWN-ISO-LEAK\n");
+        if (r < 0) {
+            puts_raw("SPAWN-ISO-OK\n");
+        } else {
+            puts_raw("SPAWN-ISO-LEAK\n");
+            return 1;
+        }
+    }
+    if (argc >= 2 && streq(argv[1], "inheritcheck")) {
+        char b;
+        long r = read(3, &b, 1);
+        if (r == 1) {
+            puts_raw("SPAWN-EXPLICIT-OK\n");
+        } else {
+            puts_raw("SPAWN-EXPLICIT-FAIL\n");
+            return 1;
+        }
     }
     return argc;
 }

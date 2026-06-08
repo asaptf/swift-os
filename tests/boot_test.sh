@@ -24,9 +24,12 @@ hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha
 M8a OK: argv delivered, argc=3
-spawndemo: child exit status 2
-M8a OK: spawn parent exited, code 0
+SPAWN-ISO-PARENT-FD3
 SPAWN-ISO-OK
+SPAWN-EXPLICIT-OK
+spawndemo: child exit status 2
+spawndemo: explicit child exit status 2
+M8a OK: spawn parent exited, code 0
 cat /etc/motd: Welcome to swift-os.
 cwd2=/etc
 tmp/note: hi-tmpfs
@@ -49,6 +52,7 @@ forkdemo: IPC-MSG-OK
 forkdemo: IPC-XFER-OK
 forkdemo: parent waited child
 M8d OK: fork demo exited, code 0
+C2 OK: explicit handle inheritance preserved
 execdemo: before execve
 argv[1]=exec-alpha
 argv[2]=exec-beta
@@ -83,6 +87,10 @@ log: recent
 detail=100
 detail=4
 pid=1 principal=1}"
+
+FORBIDS="${FORBIDS:-SPAWN-ISO-LEAK
+SPAWN-ISO-SETUP-FAIL
+SPAWN-EXPLICIT-FAIL}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
@@ -120,8 +128,18 @@ all_found() {
     return 0
 }
 
+forbidden_found() {
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        grep -qF "$line" "$LOG" 2>/dev/null && return 0
+    done <<<"$FORBIDS"
+    return 1
+}
+
 found=0
 for _ in $(seq 1 "$((TIMEOUT * 10))"); do
+    if forbidden_found; then found=2; break; fi
     if all_found; then found=1; break; fi
     kill -0 "$QEMU_PID" 2>/dev/null || break
     sleep 0.1
@@ -134,6 +152,14 @@ if [[ "$found" -eq 1 ]]; then
     echo "PASS: serial console produced all expected lines:"
     while IFS= read -r line; do [[ -n "$line" ]] && echo "  - $line"; done <<<"$EXPECTS"
     exit 0
+fi
+
+if [[ "$found" -eq 2 ]]; then
+    echo "FAIL: forbidden C2 line seen. Serial log was:" >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
 fi
 
 echo "FAIL: not all expected lines seen within ${TIMEOUT}s. Serial log was:" >&2

@@ -31,9 +31,44 @@ struct Rights: OptionSet {
 }
 
 // How a new process's handle table is seeded from its parent (C2). `all` is the
-// permissive fork case (copy every in-use handle); `stdioOnly` is the explicit,
-// minimal spawn default (just fds 0/1/2). See docs/CAPABILITIES.md §3.
-enum HandleInheritance { case all, stdioOnly }
+// permissive fork case (copy every in-use handle); `stdioOnly` is the
+// compatibility spawn default (just fds 0/1/2); `explicit` starts empty and
+// installs only the caller-provided HandleSpec entries. See docs/CAPABILITIES.md §3.
+enum HandleInheritance { case all, stdioOnly, explicit }
+
+// One explicit inherited handle for C2 spawn-with-handles: duplicate sourceFD from
+// the parent into targetFD in the child, attenuating rights to rightsMask. flags
+// currently only carries close-on-exec for the child slot; object-scoped policy is
+// deliberately left for C3+.
+struct HandleSpec {
+    var sourceFD: Int32
+    var targetFD: Int32
+    var rightsMask: UInt32
+    var flags: UInt32
+
+    init(sourceFD: Int32 = -1, targetFD: Int32 = -1,
+         rightsMask: UInt32 = 0, flags: UInt32 = 0) {
+        self.sourceFD = sourceFD
+        self.targetFD = targetFD
+        self.rightsMask = rightsMask
+        self.flags = flags
+    }
+}
+
+let handleSpecSize = 16
+let handleSpecFlagCloexec: UInt32 = 1 << 0
+
+func handleInheritanceCopiesFD(_ inherit: HandleInheritance, fd: Int) -> Bool {
+    if fd < 0 { return false }
+    switch inherit {
+    case .all:
+        return true
+    case .stdioOnly:
+        return fd < 3
+    case .explicit:
+        return false
+    }
+}
 
 // One entry in a process's handle table. C1 keeps the POSIX fd namespace as the
 // observable view of this table: `object` is still the shared OpenDescription

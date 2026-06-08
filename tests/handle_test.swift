@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// handle_test.swift — host unit test for kernel/vfs/handle.swift (C1).
+// handle_test.swift — host unit test for kernel/vfs/handle.swift (C1/C2).
 //
 // Compiled with the host Swift toolchain against the pure, dependency-free
 // handle vocabulary the kernel links (no MMIO/syscalls/heap), then run with no
@@ -63,7 +63,29 @@ struct HandleTest {
         check(HandleKind.endpoint.rawValue != HandleKind.socket.rawValue,
               "HandleKind.endpoint != .socket")
 
-        // ---- 6. HandleEntry is a typed fd slot ------------------------------
+        // ---- 6. C2 handle inheritance selector ------------------------------
+        check(handleInheritanceCopiesFD(.all, fd: 0), ".all copies fd 0")
+        check(handleInheritanceCopiesFD(.all, fd: 3), ".all copies fd 3")
+        check(handleInheritanceCopiesFD(.all, fd: 31), ".all copies high fds")
+        check(handleInheritanceCopiesFD(.stdioOnly, fd: 0), ".stdioOnly copies stdin")
+        check(handleInheritanceCopiesFD(.stdioOnly, fd: 1), ".stdioOnly copies stdout")
+        check(handleInheritanceCopiesFD(.stdioOnly, fd: 2), ".stdioOnly copies stderr")
+        check(!handleInheritanceCopiesFD(.stdioOnly, fd: 3), ".stdioOnly drops fd 3")
+        check(!handleInheritanceCopiesFD(.explicit, fd: 0), ".explicit does not copy implicit fd 0")
+        check(!handleInheritanceCopiesFD(.explicit, fd: 3), ".explicit does not copy implicit fd 3")
+
+        // ---- 7. C2 HandleSpec ABI vocabulary --------------------------------
+        check(handleSpecSize == 16, "HandleSpec user ABI size is stable")
+        check(handleSpecFlagCloexec == 1, "HandleSpec cloexec flag bit is stable")
+        let spec = HandleSpec(sourceFD: 3, targetFD: 4,
+                              rightsMask: Rights.read.rawValue | Rights.getattr.rawValue,
+                              flags: handleSpecFlagCloexec)
+        check(spec.sourceFD == 3 && spec.targetFD == 4, "HandleSpec records source and target fds")
+        check(spec.rightsMask == (Rights.read.rawValue | Rights.getattr.rawValue),
+              "HandleSpec records the rights mask")
+        check(spec.flags == handleSpecFlagCloexec, "HandleSpec records flags")
+
+        // ---- 8. HandleEntry is a typed fd slot ------------------------------
         let empty = HandleEntry()
         check(!empty.inUse && empty.kind == .none && empty.object == -1 &&
               empty.rights == [] && !empty.cloexec,

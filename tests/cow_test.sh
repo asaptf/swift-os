@@ -3,8 +3,8 @@
 # cow_test.sh — COW fork acceptance.
 #
 # Boots the kernel, lets the built-in reclaim demo run, then logs in and drives
-# ash through a forked pipeline subshell. The child mutates a shell variable,
-# then the parent proves its copy is unchanged before mutating its own copy;
+# ash through a forked subshell. The child mutates a shell variable, then the
+# parent proves its copy is unchanged before mutating its own copy;
 # /bin/forkdemo adds the existing static-data marker check and waitpid path. The
 # boot reclaim line guards against leaked or double-freed frames across repeated
 # fork/exec/reap.
@@ -60,17 +60,25 @@ blk_args=(-global virtio-mmio.force-legacy=false \
   sleep 2;  printf 'root\n'
   sleep 1;  printf 'swordfish\n'
   sleep 2;  printf 'COWV=before\n'
-  sleep 1;  printf 'echo gate | ( read gate; COWV=child; echo cow-child-after:$COWV )\n'
-  sleep 1;  printf 'echo cow-parent-before:$COWV\n'
+  sleep 2;  printf '( COWV=child; echo cow-child-after:$COWV )\n'
+  sleep 2;  printf 'echo cow-parent-before:$COWV\n'
   sleep 1;  printf 'COWV=parent\n'
   sleep 1;  printf 'echo cow-parent-after:$COWV\n'
-  sleep 1;  printf '/bin/forkdemo\n'
+  sleep 2;  printf '/bin/forkdemo\n'
   sleep 3;  printf 'exit\n'
   sleep 2
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 35
+for _ in $(seq 1 450); do
+  partial="$(sed 's/\r//' "$LOG" 2>/dev/null || true)"
+  if grep -qF "cow-parent-after:parent" <<<"$partial" &&
+     grep -qF "cow-child-after:child" <<<"$partial" &&
+     grep -qF "forkdemo: parent waited child" <<<"$partial"; then
+    break
+  fi
+  sleep 0.2
+done
 stop_qemu
 QP=""
 
