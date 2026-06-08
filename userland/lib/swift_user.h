@@ -38,6 +38,9 @@ unsigned long swiftos_time(void);
 unsigned long swiftos_heap_break(void);
 // Format Unix seconds as UTC "YYYY-MM-DD HH:MM:SS" into out (>= 20 bytes).
 void swiftos_fmt_time(unsigned long t, char *out);
+// Block the calling process for at least sec seconds + nsec nanoseconds
+// (resolution = one timer tick). Yields the CPU meanwhile.
+void swiftos_nanosleep(unsigned long sec, unsigned long nsec);
 
 // Thin syscall bridges for Swift userland (e.g. console-login).
 int  swiftos_open(const char *path, int flags);

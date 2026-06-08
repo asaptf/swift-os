@@ -1715,3 +1715,30 @@ Before adding COW write-fault handling, every `pmm_alloc_page` / `pmmAllocPage` 
   address space on link failure, dropping any shared-frame references it already acquired.
 - **Known pre-existing non-COW leak:** EL0 thread kernel stacks are still not reclaimed on thread exit, as
   recorded in the rt-a notes; they are not COW-shared and were not changed in this track.
+
+### Timer-backed `nanosleep`/`sleep` (2026-06-08)
+
+**Why.** `nanosleep`/`sleep` were silent no-op stubs (`userland/compat/stubs.c`), so any ported server or
+script that slept returned instantly and busy-spun instead of yielding the CPU — wrong for an OS meant to
+host server apps. The kernel already had every primitive (100 Hz `systemTicks`, the `pBlocked` +
+`yieldToScheduler` block/wake model, and a per-tick hook that runs even while idle), so a real blocking
+sleep was a small, self-contained add.
+
+**Design.** New syscall `SYS_NANOSLEEP = 57`; ABI `x0 = seconds`, `x1 = nanoseconds`, returns 0.
+`processNanosleep` parks the caller in `pBlocked` with a wake deadline recorded in `pWakeTick[slot]`
+(systemTicks units; 0 = not sleeping) and yields. `processOnTick` wakes any blocked slot whose deadline has
+passed — the scan runs first and unconditionally, so it fires even when `currentProc == -1` during the
+scheduler's idle `wfi`. A nonzero `pWakeTick` is what distinguishes a sleeper from a futex/waitpid/IO
+blocker, so the scan never disturbs those. Resolution is one tick (10 ms); a sub-tick request rounds up to
+one tick. Sleep always completes fully — blocked syscalls are not signal-interrupted yet, so there is no
+unslept remainder (userland zeroes `*rem`).
+
+**Artifacts / test.** libc `nanosleep`/`sleep` now call the syscall (`stubs.c`); `swiftos_nanosleep` added
+to the Swift bridge; native `/bin/sleepprobe` measures an RTC delta around `nanosleep(2s)` and is registered
+in `execResolve`; busybox `CONFIG_SLEEP=y` ships a real `/bin/sleep`. `tests/sleep_test.sh` asserts
+`SLEEP_DELTA >= 2` (the old stub gave 0) and that `busybox sleep` completes end to end.
+
+**Cron — deliberately deferred.** A real cron/crond is **not** on the roadmap and was not built: it needs
+signal delivery to EL0, a supervisor/init daemon, and crontab storage — none on the critical path. Follow-on
+timing surface if a scheduler daemon is ever wanted: `SIGALRM`/`alarm`, `setitimer`/POSIX timers,
+signal-interruptible sleep (`EINTR` + a real `rem`), then crond/`at`.

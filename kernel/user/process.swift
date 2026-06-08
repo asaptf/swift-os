@@ -95,6 +95,11 @@ private var pCpuTicks = [UInt64](repeating: 0, count: maxProc)
 private var pStartTick = [UInt64](repeating: 0, count: maxProc)
 private var pResPages = [Int](repeating: 0, count: maxProc)
 private var idleTicks: UInt64 = 0
+// nanosleep deadline (in systemTicks); 0 = not sleeping. A sleeping process
+// parks in pBlocked exactly like a futex/waitpid blocker, but only sleepers
+// carry a nonzero deadline, so the per-tick wake scan can pick them out without
+// disturbing the others.
+private var pWakeTick = [UInt64](repeating: 0, count: maxProc)
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var rrCursor = 0     // round-robin hint
@@ -247,6 +252,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pCpuTicks[slot] = 0
     pStartTick[slot] = systemTicks
     pResPages[slot] = Int(elfLastLoadPages()) + userStackPages
+    pWakeTick[slot] = 0
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent, inherit: inherit)
@@ -467,6 +473,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pCpuTicks[child] = 0
     pStartTick[child] = systemTicks
     pResPages[child] = pResPages[parent]
+    pWakeTick[child] = 0
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
@@ -523,6 +530,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     // need a shared cursor + lock — a follow-up; single-core today.)
     pMmapTop[slot] = pMmapTop[creator]
     pIsThread[slot] = true
+    pWakeTick[slot] = 0
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
     // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
@@ -545,6 +553,28 @@ func processBlockOnFutex() {
 func processWakeFromFutex(_ slot: Int) {
     if slot < 0 || slot >= maxProc { return }
     if pState[slot] == pBlocked { pState[slot] = pReady }
+}
+
+/// nanosleep(seconds, nanos): block the current process until at least the
+/// requested time has elapsed, yielding the CPU meanwhile. The deadline is
+/// recorded in systemTicks and the per-tick wake scan (processOnTick) marks the
+/// process ready once it passes. Resolution is one timer tick (1/timerHz s), so
+/// a sub-tick request still parks for one tick. Always sleeps the full duration
+/// (blocked syscalls are not signal-interrupted today). Returns 0.
+func processNanosleep(seconds: UInt, nanos: UInt) -> Int {
+    let me = currentProc
+    guard me >= 0 else { return -22 } // EINVAL: no active process
+    let hz = UInt64(timerHz)
+    var ticks = UInt64(seconds) &* hz &+ (UInt64(nanos) &* hz) / 1_000_000_000
+    if ticks == 0 {
+        if seconds == 0 && nanos == 0 { return 0 } // nothing requested
+        ticks = 1 // round a sub-tick request up to one tick (≥ one yield)
+    }
+    pWakeTick[me] = systemTicks + ticks
+    pState[me] = pBlocked
+    yieldToScheduler()
+    pWakeTick[me] = 0
+    return 0
 }
 
 /// waitpid(pid, *status, opts): reap a (matching) zombie child, blocking until
@@ -769,6 +799,17 @@ func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
 /// `fromEL0` is true when the timer interrupted user code, false at EL1.
 func processOnTick(fromEL0: Bool) {
+    // Wake any sleepers whose deadline has passed. Runs first and unconditionally
+    // (even when currentProc == -1 during the scheduler's idle wfi) so a sleep
+    // resumes promptly on an otherwise idle system. Only nanosleep blockers carry
+    // a nonzero pWakeTick, so futex/waitpid/IO blockers are left untouched.
+    for i in 0..<maxProc where pState[i] == pBlocked && pWakeTick[i] != 0 {
+        if systemTicks >= pWakeTick[i] {
+            pState[i] = pReady
+            pWakeTick[i] = 0
+        }
+    }
+
     // CPU accounting for /bin/top. Charge a tick as *user* time to the running
     // process only when the timer interrupted EL0 (it was executing user code);
     // EL1 ticks — the scheduler's idle wfi, and a process parked in a wfi-based

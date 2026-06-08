@@ -63,6 +63,7 @@
 #define SYS_MMAP          54
 #define SYS_MUNMAP        55
 #define SYS_MPROTECT      56
+#define SYS_NANOSLEEP     57
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

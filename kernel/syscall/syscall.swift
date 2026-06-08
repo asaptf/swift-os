@@ -57,6 +57,7 @@ private let sysIpcRecv: UInt = 53      // ipc_recv(fd, &msg) -> bytes; installs 
 private let sysMmap: UInt = 54         // mmap(len, prot) -> base VA — anonymous mmap (Track B)
 private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anonymous pages (Track B)
 private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
+private let sysNanosleep: UInt = 57    // nanosleep(seconds, nanos) — block on the timer tick
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -214,6 +215,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processMunmap(frame[0], frame[1])
     } else if number == sysMprotect {
         result = processMprotect(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]))
+    } else if number == sysNanosleep {
+        result = processNanosleep(seconds: frame[0], nanos: frame[1])
     } else {
         result = -38 // ENOSYS
     }

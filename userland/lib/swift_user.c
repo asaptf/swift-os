@@ -88,6 +88,10 @@ unsigned long swiftos_time(void) {
     return (unsigned long)__syscall3(SYS_TIME, 0, 0, 0);
 }
 
+void swiftos_nanosleep(unsigned long sec, unsigned long nsec) {
+    __syscall3(SYS_NANOSLEEP, (long)sec, (long)nsec, 0);
+}
+
 static void put2(char *p, unsigned int v) { p[0] = '0' + (v / 10) % 10; p[1] = '0' + v % 10; }
 
 void swiftos_fmt_time(unsigned long t, char *out) {

@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <termios.h>
+#include <time.h>
 #include <pwd.h>
 #include <grp.h>
 #include <sys/utsname.h>
@@ -52,6 +53,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_RMDIR 30
 #define SYS_FTRUNCATE 33
 #define SYS_FCNTL 34
+#define SYS_NANOSLEEP 57
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -294,8 +296,21 @@ W int uname(struct utsname *u) {
     return 0;
 }
 W int clearenv(void) { if (environ) environ[0] = 0; return 0; }
-W unsigned int sleep(unsigned int s) { (void)s; return 0; }
-W int nanosleep(const struct timespec *req, struct timespec *rem) { (void)req; (void)rem; return 0; }
+// Real blocking sleep over SYS_NANOSLEEP: the kernel parks us until the
+// requested time elapses (resolution = one timer tick). The kernel never
+// returns early (blocked syscalls aren't signal-interrupted yet), so there is
+// no remaining time — zero *rem when asked.
+W int nanosleep(const struct timespec *req, struct timespec *rem) {
+    if (!req) { errno = EFAULT; return -1; }
+    long r = sys3(SYS_NANOSLEEP, (long)req->tv_sec, (long)req->tv_nsec, 0);
+    if (rem) { rem->tv_sec = 0; rem->tv_nsec = 0; }
+    return sysret(r);
+}
+W unsigned int sleep(unsigned int s) {
+    struct timespec ts = { (time_t)s, 0 };
+    nanosleep(&ts, 0);
+    return 0; // no early wake, so no unslept remainder
+}
 W long sysconf(int name) {
     switch (name) {
     case 2: return 100;   // _SC_CLK_TCK
