@@ -75,7 +75,7 @@ await() {  # await MARKER [MAXSEC]
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,ipv6=on,hostfwd=tcp:127.0.0.1:5555-:5555,hostfwd=tcp:[::1]:5556-:5556 \
+  -netdev user,id=n0,ipv6=on,hostfwd=tcp:127.0.0.1:5555-:5555,hostfwd=tcp:[::1]:5555-:5555,hostfwd=tcp:[::1]:5556-:5556 \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
@@ -86,23 +86,21 @@ await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 await "swift-os login:"                20 && printf 'root\n'         >&3
 await "Password:"                      15 && printf 'swordfish\n'    >&3
-await "Welcome to swift-os, root"      15 && printf '/bin/tcpecho\n' >&3
+await "Welcome to swift-os, root"      15 && printf '/bin/tcpecho 6\n' >&3
 
 # Wait for guest listener (the one-shot server prints just before accept()).
 listening=0
 for _ in $(seq 1 40); do
-  if grep -qF "tcpecho: listening on 5555" "$LOG"; then listening=1; break; fi
+  if grep -qF "tcpecho: listening on 5555 (IPv6)" "$LOG"; then listening=1; break; fi
   sleep 1
 done
 
-# Patient v4 connect + send + echo (copied from tcp_echo_test.sh rationale:
-# virtio is polled; one-shot server; cold `make test` starvation; the first
-# connect can race the listener; short -w loses the echo after guest spent
-# its accept). We stop on echo back or on "got N bytes".
+# Patient v6 connect + send + echo as primary (exercises AF_INET6 TCP listener +
+# kernel TCPv6 passive path + NDP if needed for outbound replies).
 if [[ "$listening" -eq 1 ]]; then
   for _ in $(seq 1 4); do
     : > "$NCOUT"
-    printf '%s\n' "$MSG" | nc -w8 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+    printf '%s\n' "$MSG" | nc -6 -w8 [::1] 5555 >"$NCOUT" 2>/dev/null || true
     grep -qF "$MSG" "$NCOUT" && break
     grep -Eq "tcpecho: got [0-9]+ bytes" "$LOG" && break
     sleep 1
@@ -116,8 +114,13 @@ for _ in $(seq 1 20); do
 done
 
 # Aggressive IPv6 error-case coverage: drive a TCPv6 SYN (via nc -6) at the
-# v6 hostfwd. With no AF_INET6 listener, this hits the IPv6 TCP path in
-# slirp->virtio->kernel (NDP if needed for L2, then TCPv6 dispatch, no
+# separate v6 hostfwd port (5556). No listener on 5556 so exercises v6 path
+# without match. Also a v4 probe for dual coverage.
+if [[ "$listening" -eq 1 ]]; then
+  : > "$NCOUT6"
+  printf '%s\n' "ipv6-probe-tcp" | nc -6 -w2 [::1] 5556 >"$NCOUT6" 2>/dev/null || true
+  printf '%s\n' "v4-probe-tcp" | nc -w1 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+fi
 # socket match → RST or drop). We assert it does *not* produce a successful
 # echo on the v6 side (prevents accidental success if userland v6 lands
 # unexpectedly) and does not affect the primary v4 results.
@@ -138,13 +141,13 @@ grep -qF "net: IPv6 link-local configured" <<<"$clean" \
   || { echo "FAIL: kernel did not log IPv6 link-local (EUI-64 + NDP)" >&2; ok=0; }
 [[ "$listening" -eq 1 ]] || { echo "FAIL: /bin/tcpecho never reported listening" >&2; ok=0; }
 grep -Eq "tcpecho: got [0-9]+ bytes" <<<"$clean" \
-  || { echo "FAIL: guest did not receive the connection data under ipv6=on" >&2; ok=0; }
+  || { echo "FAIL: guest did not receive the connection data under ipv6=on + AF_INET6 tcpecho" >&2; ok=0; }
 grep -qF "$MSG" "$NCOUT" \
-  || { echo "FAIL: host did not receive the echoed data back" >&2; ok=0; }
+  || { echo "FAIL: host did not receive the echoed data back (v6 path)" >&2; ok=0; }
 
-# Error case: nc -6 must not have seen its probe echoed.
+# Error case: nc -6 to 5556 (no listener) must not have echoed.
 if grep -qF "ipv6-probe-tcp" "$NCOUT6" 2>/dev/null; then
-  echo "FAIL: nc -6 unexpectedly received TCP echo (v6 listener active early?)" >&2
+  echo "FAIL: nc -6 to 5556 unexpectedly received TCP echo (no listener on that port)" >&2
   ok=0
 fi
 
@@ -154,11 +157,11 @@ if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
 fi
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/tcpecho TCP round-trip (ipv6=on netdev + hostfwd; NDP + dual-stack + error cases)"
+  echo "PASS: /bin/tcpecho TCP round-trip (ipv6=on + AF_INET6 listener '6'; v6 hostfwd primary + NDP + error cases)"
   exit 0
 fi
 echo "--- serial (tcpecho region) ---" >&2
 sed -n '/tcpecho:/,$p' <<<"$clean" | head -20 >&2
-echo "--- nc v4 output ---" >&2; cat "$NCOUT" >&2
-echo "--- nc -6 output (error case) ---" >&2; cat "$NCOUT6" >&2
+echo "--- nc v6 output ---" >&2; cat "$NCOUT" >&2
+echo "--- nc -6 error-probe output ---" >&2; cat "$NCOUT6" >&2
 exit 1

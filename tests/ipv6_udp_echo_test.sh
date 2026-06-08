@@ -78,7 +78,7 @@ await() {  # await MARKER [MAXSEC]
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555,hostfwd=udp:[::1]:5556-:5556 \
+  -netdev user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555,hostfwd=udp:[::1]:5555-:5555,hostfwd=udp:[::1]:5556-:5556 \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
@@ -90,26 +90,24 @@ await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 await "swift-os login:"                20 && printf 'root\n'         >&3
 await "Password:"                      15 && printf 'swordfish\n'    >&3
-await "Welcome to swift-os, root"      15 && printf '/bin/udpecho\n' >&3
+await "Welcome to swift-os, root"      15 && printf '/bin/udpecho 6\n' >&3
 
-# Wait for the guest to bind the (IPv4) socket.
+# Wait for the guest to bind the (IPv6) socket.
 listening=0
 for _ in $(seq 1 40); do
-  if grep -qF "udpecho: listening on 5555" "$LOG"; then listening=1; break; fi
+  if grep -qF "udpecho: listening on 5555 (IPv6)" "$LOG"; then listening=1; break; fi
   sleep 1
 done
 
-# Main data exchange over the v4 hostfwd (works with today's udpecho).
+# Main data exchange now over the IPv6 hostfwd (exercises full userland AF_INET6
+# UDP + v6 msg layout + NDP for any resolution + slirp v6 inbound).
 if [[ "$listening" -eq 1 ]]; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -6 -u -w2 [::1] 5555 >"$NCOUT" 2>/dev/null || true
 fi
 
-# Aggressive IPv6 coverage from host: attempt via nc -6 to a v6 hostfwd listener.
-# No AF_INET6 listener in guest yet (parallel userland work), so this exercises
-# the v6 ingress path in slirp + kernel (IPv6 UDP to guest, no matching socket
-# family → drop/unreach) and confirms we don't spuriously succeed or crash.
-# We do not require success here; we just ensure it doesn't poison the v4 results.
+# Extra v4 for coverage + error probe on separate v6 port (no listener there).
 if [[ "$listening" -eq 1 ]]; then
+  printf '%s' "v4-probe" | nc -u -w1 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
   printf '%s' "ipv6-probe" | nc -6 -u -w1 [::1] 5556 >"$NCOUT6" 2>/dev/null || true
 fi
 
@@ -125,15 +123,17 @@ grep -qF "net-a: virtio-net up, MAC" <<<"$clean" \
 grep -qF "net: IPv6 link-local configured" <<<"$clean" \
   || { echo "FAIL: kernel did not configure IPv6 link-local (EUI-64/NDP path)" >&2; ok=0; }
 [[ "$listening" -eq 1 ]] || { echo "FAIL: /bin/udpecho never reported listening" >&2; ok=0; }
-grep -Eq "udpecho: got 8 bytes from 10\.0\.2\.2:" <<<"$clean" \
-  || { echo "FAIL: guest did not receive the (v4-slirp) datagram under ipv6=on netdev" >&2; ok=0; }
+grep -Eq "udpecho: got 8 bytes from " <<<"$clean" \
+  || { echo "FAIL: guest did not receive the (v6) datagram under ipv6=on netdev + AF_INET6 udpecho" >&2; ok=0; }
+# v6 print uses ':' in addr (our hex groups); ensure we didn't fall back to v4 path.
+grep -Eq "udpecho: got 8 bytes from .*:" <<<"$clean" \
+  || { echo "FAIL: guest did not log a v6-style sender (colon in IPv6 addr print)" >&2; ok=0; }
 grep -qF "$MSG" "$NCOUT" \
-  || { echo "FAIL: host did not receive the echoed datagram back" >&2; ok=0; }
+  || { echo "FAIL: host did not receive the echoed datagram back (v6 path)" >&2; ok=0; }
 
-# Error-case: the -6 probe must not have echoed the probe string (no v6 path to udpecho).
-# It is OK (and expected today) for NCOUT6 to be empty or short.
+# The 5556 v6 probe (no listener) must not echo.
 if grep -qF "ipv6-probe" "$NCOUT6" 2>/dev/null; then
-  echo "FAIL: nc -6 unexpectedly received echo (v6 listener active before userland IPv6?)" >&2
+  echo "FAIL: nc -6 to 5556 unexpectedly received echo (should be no listener)" >&2
   ok=0
 fi
 
@@ -144,11 +144,11 @@ if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
 fi
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/udpecho UDP round-trip (ipv6=on netdev + hostfwd; NDP + dual-stack exercised; nc-6 error case)"
+  echo "PASS: /bin/udpecho UDP round-trip (ipv6=on + AF_INET6 listener via '6' arg; v6 hostfwd primary; NDP exercised)"
   exit 0
 fi
 echo "--- serial (udpecho region) ---" >&2
 sed -n '/udpecho:/,$p' <<<"$clean" | head -20 >&2
-echo "--- nc v4 output ---" >&2; cat "$NCOUT" >&2
-echo "--- nc -6 output (error case probe) ---" >&2; cat "$NCOUT6" >&2
+echo "--- nc v6 output ---" >&2; cat "$NCOUT" >&2
+echo "--- nc -6 error-probe output ---" >&2; cat "$NCOUT6" >&2
 exit 1
