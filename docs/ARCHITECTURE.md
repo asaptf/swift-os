@@ -760,7 +760,11 @@ Design constraints that keep hot updates possible:
 
 ## Long-horizon goals and what they require (record, don't build yet)
 
-These are **future work**. M0–M8 do not implement them, but we avoid decisions that foreclose them.
+These are **future work**. M0–M8 (and the M9–M13/N follow-ups) do not implement them, but we avoid decisions
+that foreclose them. The post-M13 risk remediation arc (SMP + completion of the C-capabilities plan) is the
+first deliberate step toward making several of these items practical rather than theoretical.
+
+See `docs/RISK_REMEDIATION_ROADMAP.md` for the current sequencing and decision record.
 
 | Runtime    | Key requirements we must not foreclose                                                        |
 |------------|-----------------------------------------------------------------------------------------------|
@@ -774,6 +778,12 @@ model are designed with these in mind even though only the bring-up subset is im
 
 ## Explicit non-goals (this stage)
 
-Network stack, the Swift server app itself, graphics, SMP, amd64/x86-64 support, dynamic linking, Linux ABI,
-FS crash-consistency, full Cells, Docker/OCI compatibility, a broad kernel-module ABI, restartable driver
-services, and hot kernel updates.
+Network stack (in the long term — a sans-IO core and capability-gated sockets exist today), the Swift server
+app itself, graphics, amd64/x86-64 support, dynamic linking, Linux ABI, FS crash-consistency, full Cells,
+Docker/OCI compatibility, a broad kernel-module ABI, and hot kernel updates.
+
+**SMP and restartable driver services are no longer blanket non-goals.** They are the subject of the active
+post-M13 risk remediation roadmap (see `docs/RISK_REMEDIATION_ROADMAP.md`). The first phase of that work
+completes the C-arc (explicit handles + IPC) and then delivers basic SMP (S0–S5) while moving at least one
+driver out of the kernel. Until those milestones land, the practical system remains effectively single-core
+and the in-kernel drivers/network stack remain the bring-up reality.

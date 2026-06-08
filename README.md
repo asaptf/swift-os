@@ -287,19 +287,26 @@ and reviewable before moving on.
   HTTP server), `/bin/nslookup`, DNS resolver, TCP robustness + ephemeral-port
   allocator, ChaCha20-Poly1305 AEAD (TLS groundwork). **Done.**
 
+**Post-M13 risk remediation (new focus as of 2026-06):** A dedicated plan exists in
+`docs/RISK_REMEDIATION_ROADMAP.md`. It treats SMP as a required deliverable (S0–S5 series)
+together with completing the capability/handle model (C-arc), moving drivers and the network
+stack toward the documented restartable userland service model, and making global kernel
+state concurrent-safe. Each sub-milestone will still follow the strict rule: builds, boots
+(including `-smp N`), has tests, is committed, then review. SMP and "restartable services"
+have been removed from the blanket non-goals list; they are now tracked work.
+
 Longer-horizon goals are recorded, not implemented early: TLS 1.3 record layer
 and handshake; Cells (kernel-native capability-based isolated execution domains);
-restartable driver services; native Swift application runtime; Node.js; the JVM;
-richer observability; hot-update-friendly kernel structure.
+native Swift application runtime; Node.js; the JVM; richer observability;
+hot-update-friendly kernel structure; A/B image updates with rollback.
 
-## Non-Goals At This Stage
+## Non-Goals At This Stage (and how the risk remediation arc changes them)
 
 - Linux ABI compatibility;
 - dynamic linking;
-- SMP;
 - amd64/x86-64 support;
 - full Cells isolation (the architecture is designed for it; the implementation
-  is future work — see `docs/ARCHITECTURE.md`);
+  is future work — see `docs/ARCHITECTURE.md` and `docs/CAPABILITIES.md`);
 - Docker/OCI compatibility;
 - journaling or persistent writable filesystem guarantees;
 - broad loadable kernel-module ABI;
@@ -307,9 +314,19 @@ richer observability; hot-update-friendly kernel structure.
 - graphics as a first-class target (a basic VT100 framebuffer console exists for
   QEMU graphical mode, but it is not the primary display path).
 
+(See the risk remediation roadmap for the current status of SMP and restartable
+driver services — they are no longer blanket non-goals.)
+
+**SMP is no longer a blanket non-goal.** It is the subject of the active S0–S5 series in
+`docs/RISK_REMEDIATION_ROADMAP.md`. Until that arc lands the practical system remains
+single-core (and `make run` / tests default to 1 CPU). The plan also covers completing
+the handle-based capability model and moving toward restartable userland driver services.
+
 Networking is **not** a non-goal: a TCP/UDP/ARP/ICMP/DNS stack and a set of
-userland network tools are present and tested. What remains future work is
-TLS, userland network services isolated in Cells, and high-pps optimization.
+userland network tools are present and tested. The long-term target (userland network
+service reachable only via capability-gated IPC, after the C-arc + basic SMP) is recorded
+in the risk remediation roadmap. What remains future work today is TLS in userland,
+high-pps optimizations, and the actual service-ization.
 
 These boundaries are not accidental omissions. They keep the kernel surface
 small enough to measure, test, and trust.

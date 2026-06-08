@@ -16,7 +16,7 @@ running `ls`/`cat`/`echo` on our filesystem inside QEMU.
   - Value types + `Unsafe*` pointers at the low level.
   - `~Copyable` structs with `deinit` for resource ownership.
   - Classes only after the heap is up, and sparingly (ARC has a cost).
-- **Isolation:** real MMU-based isolation; one address space per process. Single core (no SMP) at the start.
+- **Isolation:** real MMU-based isolation; one address space per process. Single core (no SMP) at the start. SMP support is a planned post-M13 remediation series (S0–S5); see `docs/RISK_REMEDIATION_ROADMAP.md`.
 - **Filesystem:** two-tier, no journaling. Read-only packed base + RAM tmpfs scratch. Data loss on reboot is acceptable by design.
 - **No Linux ABI.** Our own POSIX-like syscall surface; tools are recompiled.
 - **Static linking only.** No dynamic loader.

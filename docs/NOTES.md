@@ -402,6 +402,29 @@ because `fork` needs parent and child alive at once. Staged:
   `Hello from Swift kernel`. `make test` passes. Files: `kernel/arch/aarch64/{boot.S,kernel.ld,io.h}`,
   `kernel/drivers/uart.swift`, `kernel/main.swift`, `Makefile`, `tests/boot_test.sh`.
 
+## Risk remediation arc (post-M13) — planning started 2026-06
+
+A dedicated plan now exists in `docs/RISK_REMEDIATION_ROADMAP.md`. It addresses the structural risks
+that became visible once the M8–M13 + N goals were complete:
+
+- SMP (single-core was an explicit hard constraint through M13; it is now required for the server/AI-hosting
+  profile and for credible scaling).
+- Completion of the capability model (the "flag + ambient" version shipped for M12/M13; the handle-based
+  model with spawn-with-handles and IPC is designed in CAPABILITIES.md but not yet implemented beyond
+  syscall number reservations and the CellId tag).
+- Moving privileged in-kernel drivers and the network stack toward the documented restartable userland
+  service model (once IPC exists).
+- Making global mutable state (scheduler, PMM, VFS pools, net engine) safe for concurrent execution.
+- Other gaps noted in the plan (signal frames, observability, A/B updates, etc.).
+
+The arc follows the project rules exactly: one (sub)milestone at a time, each must build + boot (including
+on `-smp N`) + pass tests (with new concurrency stress where relevant) + be committed + reviewed before
+the next. C-arc work (explicit handles + IPC) is recommended early because it is both a risk mitigation
+in its own right and a prerequisite for a sane multi-core driver/service model.
+
+See the new document for the detailed S0–S5 SMP phases, recommended sequencing, decision forks that
+require explicit review ("ask, don't guess"), and acceptance criteria style.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
