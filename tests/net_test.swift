@@ -704,8 +704,8 @@ struct NetTest {
         // --- EH chain in onFrame: HBH(0) -> DestOpt(60) -> ICMPv6 echo req produces reply ---
         // Build: eth+ip6(NH=0) + HBH(NH=60, len0) + DestOpt(NH=58, len0) + ICMP echo req
         ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
-        // base IPv6 with NH=0 (HBH)
-        ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: 0, payloadLen: 8+8+8+16)
+        // base IPv6 with NH=0 (HBH). payload after ip6 hdr = hbh(8)+destopt(8)+icmp(16) = 32
+        ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: 0, payloadLen: 32)
         var ehCur = inBuf + ethHeaderLen + ipv6HeaderLen
         // HBH: NH=60, HdrExtLen=0 (8B total)
         b8set(ehCur, 0, 60); b8set(ehCur, 1, 0); b8set(ehCur,2,0);b8set(ehCur,3,0);b8set(ehCur,4,0);b8set(ehCur,5,0);b8set(ehCur,6,0);b8set(ehCur,7,0)
@@ -774,7 +774,7 @@ struct NetTest {
         let mrunt = dual5.onFrame(inBuf, 20, out: outBuf, outCap: 2048)
         check(mrunt.txLen == 0, "runt v6 frame dropped")
         // reset a good frame then corrupt ICMP6 cksum inside
-        ethWriteHeader(inBuf, dst: solNode, src: gwMac, type: ethTypeIPv6)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoICMPv6, payloadLen: 16)
         _ = icmp6WriteEcho(inBuf + ethHeaderLen + ipv6HeaderLen, type: icmp6TypeEchoRequest, id: 1, seq: 1, payloadLen: 8, src: v6dst, dst: v6src)
         // flip inside the icmp msg (after type/code/cks)
@@ -782,7 +782,7 @@ struct NetTest {
         let mcks = dual5.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 16, out: outBuf, outCap: 2048)
         check(mcks.txLen == 0, "IPv6+ICMPv6 with bad cksum dropped (no echo reply)")
         // bad EH len (claims more than available)
-        ethWriteHeader(inBuf, dst: v6src, src: gwMac, type: ethTypeIPv6)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: 0, payloadLen: 4) // too small for EH
         b8set(inBuf + ethHeaderLen + ipv6HeaderLen, 0, 58); b8set(inBuf + ethHeaderLen + ipv6HeaderLen, 1, 7) // huge len
         let mehl = dual5.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 4, out: outBuf, outCap: 2048)
@@ -790,7 +790,7 @@ struct NetTest {
 
         // --- non-matching dst (random mcast) ignored even if RA inside ---
         let otherMcast = IPv6(hi: 0xff02_0000_0000_0000, lo: 0x0000_0000_0000_0002) // ff02::2 not all-nodes
-        ethWriteHeader(inBuf, dst: otherMcast, src: gwMac, type: ethTypeIPv6)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         let ignRAL = icmp6WriteRA(inBuf + ethHeaderLen + ipv6HeaderLen, hopLimit: 1, src: v6dst, dst: otherMcast, prefix: pfx, prefixLen: 64)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: otherMcast, nextHeader: ipProtoICMPv6, payloadLen: ignRAL)
         let ignOut = dual5.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + ignRAL, out: outBuf, outCap: 2048)
@@ -798,7 +798,7 @@ struct NetTest {
 
         // --- TCPv6 delivery roundtrip via onFrame (basic, exercises post-EH path) ---
         var dual6 = NetStack(mac: ourMac, ip: ourIP, ipv6: v6src)
-        ethWriteHeader(inBuf, dst: v6src, src: gwMac, type: ethTypeIPv6)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoTCP, payloadLen: tcpMinHeaderLen)
         // minimal SYN-like (no payload)
         tcpWriteHeaderV6(inBuf + ethHeaderLen + ipv6HeaderLen, srcPort: 12345, dstPort: 80, seq: 0x1000, ack: 0,
@@ -810,7 +810,7 @@ struct NetTest {
 
         // --- checksum edge: IPv6 upper odd-length payload ---
         // Build a tiny UDP6 with odd payload len=1, ensure cksum computes/validates
-        ethWriteHeader(inBuf, dst: v6src, src: gwMac, type: ethTypeIPv6)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoUDP, payloadLen: 9)
         let uodd = inBuf + ethHeaderLen + ipv6HeaderLen
         be16set(uodd, 0, 1); be16set(uodd, 2, 2); be16set(uodd, 4, 9); be16set(uodd, 6, 0)
