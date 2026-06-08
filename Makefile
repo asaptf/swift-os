@@ -646,6 +646,8 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh
 	./tests/ipv6_smoke_test.sh
+	./tests/ipv6_udp_echo_test.sh
+	./tests/ipv6_tcp_echo_test.sh
 	./tests/udp_echo_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh

@@ -152,8 +152,44 @@ func icmp6WriteRS(_ p: UnsafeMutableRawPointer, srcLLA: MAC?, src: IPv6, dst: IP
     return total
 }
 
+/// Write a Router Advertisement (type 134). Base 16 bytes + optional Prefix Information
+/// option (type 3, 32B) when a prefix is supplied. Checksum uses IPv6 pseudo-header.
+/// Supports build/parse roundtrips and feeding full RAs (with prefixes+options) into onFrame.
+@discardableResult
+func icmp6WriteRA(_ p: UnsafeMutableRawPointer,
+                  hopLimit: UInt8,
+                  src: IPv6, dst: IPv6,
+                  prefix: IPv6? = nil, prefixLen: UInt8 = 0) -> Int {
+    b8set(p, 0, icmp6TypeRA)
+    b8set(p, 1, 0)   // code
+    be16set(p, 2, 0) // checksum placeholder
+    b8set(p, 4, hopLimit)
+    b8set(p, 5, 0)   // flags (M/O/H) — minimal, no DHCPv6 etc.
+    be16set(p, 6, 1800) // router lifetime (30min, typical)
+    be32set(p, 8, 0)    // reachable time
+    be32set(p, 12, 0)   // retrans timer
+    var total = 16
+    if let pre = prefix, prefixLen > 0 && prefixLen <= 128 {
+        // Prefix Information option (RFC 4861)
+        b8set(p, total + 0, 3)     // type
+        b8set(p, total + 1, 4)     // length (4 units of 8B = 32B)
+        b8set(p, total + 2, prefixLen)
+        b8set(p, total + 3, 0xC0)  // L=1 (on-link), A=1 (autonomous for SLAAC)
+        be32set(p, total + 4, 0xFFFFFFFF)  // valid lifetime (infinite for tests)
+        be32set(p, total + 8, 0xFFFFFFFF)  // preferred lifetime
+        be32set(p, total + 12, 0)          // reserved
+        ipv6Set(p, total + 16, pre)
+        total += 32
+    }
+    let ck = ipv6UpperChecksum(src: src, dst: dst, nextHeader: ipProtoICMPv6,
+                               upper: p, upperLen: total)
+    be16set(p, 2, ck)
+    return total
+}
+
 /// Very small RA parser — we only care about the current hop limit and whether
 /// there is a prefix we could use (for a more complete implementation later).
+/// Now exercised with full RAs containing prefixes + options in aggressive host tests.
 struct ICMP6RAInfo {
     var hopLimit: UInt8 = 0
     var hasPrefix: Bool = false
