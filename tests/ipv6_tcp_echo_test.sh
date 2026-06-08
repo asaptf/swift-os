@@ -3,26 +3,22 @@
 #
 # Boots with slirp netdev *with ipv6=on* (exercises full NDP/EUI-64 +
 # link-local + dual-stack TCPv6 ingress/egress readiness in the kernel).
-# Hostfwd (v4 form) for compatibility with today's AF_INET /bin/tcpecho;
+# Uses v6 hostfwd primary for AF_INET6 /bin/tcpecho (launched with "6");
 # extra v6 hostfwd + nc -6 probes for error cases and to drive IPv6 packets
-# into the guest while the stack is up.
+# into the guest while the stack is up. v4 kept for dual + coverage.
 #
-# Reactive FIFO/await login, launch /bin/tcpecho, wait for "listening",
-# then patient connect+send+echo from host (copied/adapted from the robust
+# Reactive FIFO/await login, launch /bin/tcpecho 6, wait for "listening",
+# then patient connect+send+echo from host via nc-6 (adapted from the robust
 # retry logic in tcp_echo_test.sh — virtio poll + one-shot server + cold-boot
 # starvation make short timeouts flake).
 #
-# Real SYN/data/echo/FIN roundtrip occurs. IPv6 coverage:
-#   - link-local configured + NDP paths exercised at boot
-#   - actual TCP data exchange while ipv6=on is active
-#   - nc -6 attempts (to v6 fwd listener) hit the v6 path (no AF_INET6
-#     listener yet → error/unreach at socket layer) for negative testing
+# Real SYN/data/echo/FIN roundtrip occurs over IPv6. IPv6 coverage:
+#   - link-local configured + NDP/RA paths exercised at boot
+#   - actual TCP data exchange while ipv6=on is active (AF_INET6 listener)
+#   - nc -6 error attempts (to unbound v6 fwd port) for negative testing
 #   - no crashes, no pollution of the working v4 path
 #
-# When the parallel userland IPv6 slice lands (swiftos_socket6 etc + AF_INET6
-# tcpecho), this test can be tightened to use hostfwd with IPv6 literals +
-# nc -6 as the *primary* client for true end-to-end v6 TCP to a v6-bound
-# listener (and guest will log the v6 src addr).
+# Exercises full userland AF_INET6 TCP + kernel TCPv6 passive dual-stack.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -96,7 +92,7 @@ for _ in $(seq 1 40); do
 done
 
 # Patient v6 connect + send + echo as primary (exercises AF_INET6 TCP listener +
-# kernel TCPv6 passive path + NDP if needed for outbound replies).
+# kernel TCPv6 passive path + NDP/RA if needed for outbound replies).
 if [[ "$listening" -eq 1 ]]; then
   for _ in $(seq 1 4); do
     : > "$NCOUT"
@@ -115,15 +111,12 @@ done
 
 # Aggressive IPv6 error-case coverage: drive a TCPv6 SYN (via nc -6) at the
 # separate v6 hostfwd port (5556). No listener on 5556 so exercises v6 path
-# without match. Also a v4 probe for dual coverage.
+# without match (RST/drop at socket). Also a v4 probe for dual coverage.
 if [[ "$listening" -eq 1 ]]; then
   : > "$NCOUT6"
   printf '%s\n' "ipv6-probe-tcp" | nc -6 -w2 [::1] 5556 >"$NCOUT6" 2>/dev/null || true
   printf '%s\n' "v4-probe-tcp" | nc -w1 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
 fi
-# socket match → RST or drop). We assert it does *not* produce a successful
-# echo on the v6 side (prevents accidental success if userland v6 lands
-# unexpectedly) and does not affect the primary v4 results.
 if [[ "$listening" -eq 1 ]]; then
   : > "$NCOUT6"
   printf '%s\n' "ipv6-probe-tcp" | nc -6 -w2 [::1] 5556 >"$NCOUT6" 2>/dev/null || true
@@ -138,7 +131,7 @@ ok=1
 grep -qF "net-a: virtio-net up, MAC" <<<"$clean" \
   || { echo "FAIL: virtio-net probe did not run (dual-stack not exercised)" >&2; ok=0; }
 grep -qF "net: IPv6 link-local configured" <<<"$clean" \
-  || { echo "FAIL: kernel did not log IPv6 link-local (EUI-64 + NDP)" >&2; ok=0; }
+  || { echo "FAIL: kernel did not log IPv6 link-local (EUI-64 + NDP/RA)" >&2; ok=0; }
 [[ "$listening" -eq 1 ]] || { echo "FAIL: /bin/tcpecho never reported listening" >&2; ok=0; }
 grep -Eq "tcpecho: got [0-9]+ bytes" <<<"$clean" \
   || { echo "FAIL: guest did not receive the connection data under ipv6=on + AF_INET6 tcpecho" >&2; ok=0; }
@@ -157,7 +150,7 @@ if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
 fi
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/tcpecho TCP round-trip (ipv6=on + AF_INET6 listener '6'; v6 hostfwd primary + NDP + error cases)"
+  echo "PASS: /bin/tcpecho TCP round-trip (ipv6=on + AF_INET6 listener '6'; v6 hostfwd primary + NDP/RA + error cases)"
   exit 0
 fi
 echo "--- serial (tcpecho region) ---" >&2
