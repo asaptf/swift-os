@@ -3,9 +3,23 @@
 #include "lib/syscall.h"
 #include "lib/fs.h"
 
+#define POLLIN  0x001
+#define POLLOUT 0x004
+#define POLLERR 0x008
+
+struct pollfd {
+    int fd;
+    short events;
+    short revents;
+};
+
 int puts_raw(const char *s);
 
 static volatile int marker = 7;
+
+static int poll(struct pollfd *fds, unsigned long nfds, int timeout) {
+    return (int)__syscall3(SYS_POLL, (long)fds, (long)nfds, timeout);
+}
 
 static int streq(const char *a, const char *b) {
     int i = 0;
@@ -16,8 +30,54 @@ static int streq(const char *a, const char *b) {
     return a[i] == 0 && b[i] == 0;
 }
 
+static int expect_poll_bit(int fd, short events, short want, int timeout,
+                           const char *fail) {
+    struct pollfd pf;
+    pf.fd = fd;
+    pf.events = events;
+    pf.revents = 0;
+    if (poll(&pf, 1, timeout) != 1 || (pf.revents & want) == 0) {
+        puts_raw(fail);
+        return 0;
+    }
+    return 1;
+}
+
+static int endpoint_closed_poll_checks(void) {
+    int ep[2];
+    if (endpoint_create(ep) != 0) {
+        puts_raw("forkdemo: closed-poll endpoint_create failed\n");
+        return 0;
+    }
+    close(ep[0]);
+    if (!expect_poll_bit(ep[1], POLLIN, POLLIN, 0,
+                         "forkdemo: recv poll after senders closed failed\n")) {
+        close(ep[1]);
+        return 0;
+    }
+    close(ep[1]);
+
+    if (endpoint_create(ep) != 0) {
+        puts_raw("forkdemo: err-poll endpoint_create failed\n");
+        return 0;
+    }
+    close(ep[1]);
+    if (!expect_poll_bit(ep[0], POLLOUT, POLLERR, 0,
+                         "forkdemo: send poll after receiver closed failed\n")) {
+        close(ep[0]);
+        return 0;
+    }
+    close(ep[0]);
+    puts_raw("forkdemo: IPC-POLL-CLOSED-OK\n");
+    return 1;
+}
+
 int main(void) {
     puts_raw("forkdemo: before fork\n");
+
+    if (!endpoint_closed_poll_checks()) {
+        return 1;
+    }
 
     char buf[32];
     if (chdir("/etc") != 0) {
@@ -67,6 +127,11 @@ int main(void) {
         // after the fork). The bytes prove the payload arrived; reading the handle
         // proves the capability moved across the same message.
         close(ep[0]);
+        if (!expect_poll_bit(ep[1], POLLIN, POLLIN, 1000,
+                             "forkdemo: IPC pollin failed\n")) {
+            return 1;
+        }
+        puts_raw("forkdemo: IPC-POLL-IN-OK\n");
         int rh = -1;
         long bn = ipc_recv(ep[1], buf, sizeof(buf) - 1, &rh);
         if (bn < 0) { puts_raw("forkdemo: ipc_recv failed\n"); return 1; }
@@ -87,6 +152,11 @@ int main(void) {
     // C4b: send the child a byte message plus a handle it did not inherit — the
     // handle is opened after the fork — over the endpoint in one ipc_send.
     close(ep[1]);
+    if (!expect_poll_bit(ep[0], POLLOUT, POLLOUT, 0,
+                         "forkdemo: IPC pollout failed\n")) {
+        return 1;
+    }
+    puts_raw("forkdemo: IPC-POLL-OUT-OK\n");
     int xf = open("/etc/hostname", O_RDONLY);
     if (xf < 0 || ipc_send(ep[0], "PING\n", 5, xf) != 0) {
         puts_raw("forkdemo: ipc_send failed\n");

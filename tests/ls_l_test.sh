@@ -23,6 +23,7 @@ fi
 
 LOG="$(mktemp -t swiftos-lsl.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-lsl-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-lsl-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -31,34 +32,63 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 8;  printf 'tty-line\n'              # M7 ttydemo
-  sleep 1;  printf '\003'                    # Ctrl-C -> login prompt
-  sleep 3;  printf 'root\n'
-  sleep 1.5;  printf 'swordfish\n'
-  sleep 3;  printf 'ls -l /\n'
-  sleep 3;  printf 'ls -l /bin\n'
-  sleep 3;  printf 'ls -l /etc\n'
-  sleep 3;  printf 'exit\n'                   # back to login prompt
-  sleep 3;  printf 'user\n'
-  sleep 1.5;  printf 'swordfish\n'
-  sleep 3;  printf 'mkdir /tmp/d; ls -l /tmp\n'  # tmpfs node owned by the user
-  sleep 3;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_count() {  # await_count MARKER COUNT [MAXSEC]
+  local marker="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(grep -cF "$marker" "$LOG" 2>/dev/null || true)"
+    (( got >= want )) && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 52
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
+await_count "swift-os login:" 1 20 && printf 'root\n' >&3
+await_count "Password:" 1 15 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 15 && printf 'ls -l /\n' >&3
+await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 && printf 'ls -l /bin\n' >&3
+await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 && printf 'ls -l /etc\n' >&3
+await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 && printf 'exit\n' >&3
+await_count "swift-os login:" 2 20 && printf 'user\n' >&3
+await_count "Password:" 2 15 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, user" 15 && printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
+await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 && printf 'exit\n' >&3
+
+exec 3>&-
 stop_qemu
 QP=""
 

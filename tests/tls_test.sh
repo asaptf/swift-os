@@ -42,6 +42,7 @@ fi
 CERTDIR="$(mktemp -d -t swiftos-tls.XXXXXX)"
 LOG="$(mktemp -t swiftos-tls-log.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-tls-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-tls-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""; SPID=""
 stop_all() {
   if [[ -f "$PIDFILE" ]]; then
@@ -51,7 +52,7 @@ stop_all() {
   [[ -n "$SPID" ]] && kill "$SPID" 2>/dev/null || true
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_all; rm -rf "$CERTDIR"; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_all; exec 3>&- 2>/dev/null; rm -rf "$CERTDIR"; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 # Throwaway self-signed cert (ECDSA P-256). The client ignores it; openssl still
 # needs *a* cert/key pair to serve.
@@ -89,14 +90,17 @@ fi
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/tlsget 10.0.2.2 %s\n' "$PORT"
-  sleep 12
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+# await: block until a literal MARKER appears in the serial log (bounded).
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
@@ -104,9 +108,17 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0 \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 34
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
+await "swift-os login:" 20 && printf 'root\n' >&3
+await "Password:" 15 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 15 && printf '/bin/tlsget 10.0.2.2 %s\n' "$PORT" >&3
+await "HTTP/1.0 200 ok" 45 || true
+exec 3>&-
 stop_all
 QP=""; SPID=""
 

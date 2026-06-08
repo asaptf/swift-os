@@ -14,10 +14,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
-# 60s: every demo program is now loaded from disk (M11d), which is slower than
+# 90s: every demo program is now loaded from disk (M11d), which is slower than
 # the old embedded blob; the reclaim self-test adds several fork/exec rounds —
 # give the full demo sequence room to finish.
-TIMEOUT="${TIMEOUT:-60}"
+TIMEOUT="${TIMEOUT:-90}"
 
 EXPECTS="${EXPECTS:-M9 OK: hardware discovered from device tree
 hello from ELF userland
@@ -37,11 +37,14 @@ M8c brk: heap read/write OK
 newlib: malloc works
 newlib motd: Welcome to swift-os.
 M8c OK: newlib program exited, code 0
-coproc A done
-coproc B done
+A done
+B done
 M8d OK: two EL0 processes ran concurrently
 forkdemo: child inherited cwd/fd
 forkdemo: child sees private marker
+forkdemo: IPC-POLL-CLOSED-OK
+forkdemo: IPC-POLL-OUT-OK
+forkdemo: IPC-POLL-IN-OK
 forkdemo: IPC-MSG-OK
 forkdemo: IPC-XFER-OK
 forkdemo: parent waited child

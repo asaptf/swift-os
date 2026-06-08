@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # dns_test.sh — net-f acceptance: the DNS resolver + /bin/nslookup.
 #
-# A tiny host python3 UDP DNS responder answers any A query with 192.0.2.7. The
-# guest's /bin/nslookup queries it at 10.0.2.2:5354 (slirp routes guest->10.0.2.2
-# to the host, as in the TCP-connect test) and prints the resolved address. Fully
-# hermetic — no dependency on real DNS. The host codec unit test (net_test.swift)
-# is the primary correctness gate; this proves the end-to-end resolve path.
+# A tiny host python3 UDP DNS responder answers A queries with 192.0.2.7 and AAAA
+# queries with 2001:db8::7. The guest's /bin/nslookup queries it at
+# 10.0.2.2:5354 (slirp routes guest->10.0.2.2 to the host, as in the TCP-connect
+# test). Fully hermetic — no dependency on real DNS. The host codec unit test
+# (net_test.swift) is the primary correctness gate; this proves the end-to-end
+# resolve path.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,6 +29,7 @@ fi
 LOG="$(mktemp -t swiftos-dns.XXXXXX)"
 PYRESP="$(mktemp -t swiftos-dns-py.XXXXXX).py"
 PIDFILE="$(mktemp -t swiftos-dns-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-dns-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""; PYPID=""
 stop_all() {
   if [[ -f "$PIDFILE" ]]; then
@@ -37,14 +39,14 @@ stop_all() {
   [[ -n "$PYPID" ]] && kill "$PYPID" 2>/dev/null || true
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_all; rm -f "$LOG" "$PYRESP" "$PIDFILE"' EXIT
+trap 'stop_all; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PYRESP" "$PIDFILE" "$INFIFO"' EXIT
 
 cat > "$PYRESP" <<'PY'
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(('127.0.0.1', 5354))
-s.settimeout(25)
+s.settimeout(120)
 try:
     while True:
         data, addr = s.recvfrom(2048)
@@ -77,24 +79,44 @@ sleep 0.5
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/nslookup test.swos 10.0.2.2 5354\n'
-  sleep 4;   printf '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\n'
-  sleep 6
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 35
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
+await "swift-os login:" 20 && printf 'root\n' >&3
+await "Password:" 15 && printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 15 && printf '/bin/nslookup test.swos 10.0.2.2 5354\necho DNS-A-DONE\n' >&3
+await "DNS-A-DONE" 60 && printf '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\necho DNS-AAAA-DONE\n' >&3
+await "DNS-AAAA-DONE" 60 && printf 'exit\n' >&3
+
+exec 3>&-
 stop_all
 QP=""; PYPID=""
 

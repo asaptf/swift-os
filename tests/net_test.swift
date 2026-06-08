@@ -839,8 +839,8 @@ struct NetTest {
         // too-short IPv6 (header claims payload but frame ends early)
         ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoUDP, payloadLen: 100)
-        let mrunt = dualDAD.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 10 /*short*/, out: outBuf, outCap: 2048)
-        check(mrunt.txLen == 0 && !mrunt.gotUDPv6, "runt IPv6 (len mismatch) dropped with no delivery")
+        let mshort_dad = dualDAD.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 10 /*short*/, out: outBuf, outCap: 2048)
+        check(mshort_dad.txLen == 0 && !mshort_dad.gotUDPv6, "runt IPv6 (len mismatch) dropped with no delivery")
         // unknown NH that isn't handled for L4 (e.g. 99), should not crash or misdeliver
         ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: 99, payloadLen: 4)

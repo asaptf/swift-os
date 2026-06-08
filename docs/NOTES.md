@@ -1568,29 +1568,30 @@ slices: foundation, protocol, userland, tests, integration). This is the concret
   option (hopLimit + formed global), bad-version/truncation guards, and v6 UDP/TCP delivery fields via
   `onFrame`. (Commit "net/ipv6: aggressively extend host net_test with IPv6 cases" + earlier foundation).
   All exercised with dual-stack `NetStack(mac, ip, ipv6: ...)` instances.
-- **E2E QEMU tests (new dedicated aggressive scripts, wired into make test).**
+- **E2E QEMU tests (dedicated scripts, wired into make test).**
   - `tests/ipv6_smoke_test.sh`: boots with `-netdev user,ipv6=on`, reactive FIFO/await past M7, asserts
     "net: IPv6 link-local configured" + no panic. Early-boot only (foundation + NDP config path).
-  - `tests/ipv6_udp_echo_test.sh`: ipv6=on + hostfwd udp v4+v6, login, `/bin/udpecho 6`, primary nc-6 to
-    [::1] via fwd (exercises AF_INET6 UDP + NDP + slirp v6 inbound), v6-style sender log assertion (colon
-    in addr), echo roundtrip, plus v6 error-probe on extra port (no listener), no-crash. Uses project
-    robust await pattern.
-  - `tests/ipv6_tcp_echo_test.sh`: analogous for TCP (hostfwd tcp v4+v6, `/bin/tcpecho 6`, patient nc-6
-    SYN+data+echo, "listening on 5555 (IPv6)", got-bytes + echo success, error probes on 5556, RST/drop
-    coverage). Adapted robust retry logic from tcp_echo_test.sh.
-  All three run unconditionally early in `make test` (after virtio_net, before v4 net tests) so IPv6 paths
-  are stressed on every CI-like run. (Commits: "tests: add dedicated aggressive ipv6_*...", "tests:
-  integrate ... into make test", "net/ipv6: make ... robust...", "broaden IPv6 test coverage - enable
-  ipv6=on in udp_echo and tcp_echo tests").
+  - `tests/ipv6_udp_echo_test.sh`: on Darwin, where QEMU rejects IPv6 hostfwd literals, requires the smoke
+    test above to pass and reports the AF_INET6 echo path as skipped. On QEMU builds with usable IPv6
+    hostfwd this script currently boots with `ipv6=on` and exercises an IPv4 UDP echo roundtrip while the
+    NIC is dual-stack, asserting link-local/NDP setup and no-crash behavior. True `/bin/udpecho 6` + `nc -6`
+    E2E remains a follow-up once the hostfwd transport is portable.
+  - `tests/ipv6_tcp_echo_test.sh`: analogous for TCP: Darwin falls back to the required smoke test; the
+    non-Darwin body currently validates TCP echo over IPv4 hostfwd under `ipv6=on` and keeps the AF_INET6
+    echo tightening point local to this script.
+  All three run early in `make test` (after virtio_net, before v4 net tests). Host `net_test` remains the
+  aggressive IPv6 protocol oracle; QEMU coverage proves link-local/NDP setup and dual-stack no-crash behavior
+  on this Darwin/QEMU setup.
 - **Integration / boot / QEMU.** `netInit` always configures IPv6 (even on v4-only runs the vars are zero
   but harmless); ipv6=on only needed for slirp to emit v6 and answer NDP/RA. All test launches that attach
   virtio-net for net tests now use ipv6=on where the dedicated scripts require it. No new syscalls;
   dual-stack lives behind the existing socket surface + bridge. `build/base.img` stages the IPv6-aware
   udpecho/tcpecho (and nslookup) ELFs.
-- **Status / deferred.** Foundation + NDP + dual-stack UDP/TCP + RA/EH/multicast ingress + full host+E2E
-  green and committed on net/ipv6. Global IPv6 gateway learned via RA (or static); SLAAC full, MLD,
-  privacy addrs, frag reassembly, larger conn tables for v6, AAAA in more tools, and lifting stack to
-  userland service are future (post this slice). All prior net-a..h and non-net tests remain green.
+- **Status / deferred.** Foundation + NDP + RA/EH/multicast ingress + aggressive host IPv6 tests are green;
+  QEMU coverage currently verifies link-local/NDP and IPv4 echo under an IPv6-enabled NIC on Darwin. Global
+  IPv6 gateway learned via RA (or static); portable AF_INET6 echo hostfwd, SLAAC full, MLD, privacy addrs,
+  frag reassembly, larger conn tables for v6, AAAA in more tools, and lifting stack to userland service are
+  future (post this slice). All prior net-a..h and non-net tests remain green.
   (See ARCHITECTURE update in same session.)
 
 ## Threading runtime groundwork (R-series)

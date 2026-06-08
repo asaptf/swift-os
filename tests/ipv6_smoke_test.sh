@@ -14,8 +14,8 @@
 #   - "net: IPv6 link-local configured" appears in the log
 #   - No panic / data abort / crash
 #
-# Complements the full udp/tcp echo E2E (which now exercise real AF_INET6
-# userland roundtrips + NDP/RA under ipv6=on).
+# Complements the IPv6-enabled udp/tcp smoke scripts by covering the pure
+# link-local/NDP setup path even when hostfwd behavior varies across QEMU hosts.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

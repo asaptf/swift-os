@@ -645,10 +645,9 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh
-	# IPv6 (net-ipv6 slice): all new E2E tests (smoke for foundation+NDP config; udp/tcp echo for
-	# dual-stack AF_INET6 + RA/EH/multicast paths + userland '6' support) are wired here and run
-	# unconditionally (early, before the v4 net tests) in `make test`. Host net_test also covers
-	# the full IPv6 cases (see its build line above, which pulls in ipv6.swift + icmp6.swift etc).
+	# IPv6 (net-ipv6 slice): host net_test covers the protocol core aggressively
+	# (NDP, RA, EH chains, DAD, malformed packets). QEMU smoke tests verify
+	# link-local/NDP setup; Darwin QEMU currently skips true IPv6 hostfwd echo.
 	./tests/ipv6_smoke_test.sh
 	./tests/ipv6_udp_echo_test.sh
 	./tests/ipv6_tcp_echo_test.sh

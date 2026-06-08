@@ -105,8 +105,8 @@ private func directResolveAAAA(_ name: UnsafePointer<CChar>, nameLen: Int,
     let qtype: UInt16 = wantAAAA ? 28 : 1   // AAAA=28, A=1
     let qclass: UInt16 = 1
 
-    let qbuf = withUnsafeTemporaryAllocation(byteCount: 512, alignment: 16) { qraw -> (Int, UnsafeMutableRawPointer) in
-        let q = qraw.baseAddress!
+    let result = withUnsafeTemporaryAllocation(byteCount: 1024, alignment: 16) { raw -> (Bool, UInt32, [UInt8]) in
+        let q = raw.baseAddress!
         // header
         q.storeBytes(of: id.bigEndian, toByteOffset: 0, as: UInt16.self)
         q.storeBytes(of: UInt16(0x0100).bigEndian, toByteOffset: 2, as: UInt16.self) // flags RD
@@ -135,88 +135,98 @@ private func directResolveAAAA(_ name: UnsafePointer<CChar>, nameLen: Int,
         q.storeBytes(of: UInt8(0), toByteOffset: off, as: UInt8.self); off += 1
         q.storeBytes(of: qtype.bigEndian, toByteOffset: off, as: UInt16.self); off += 2
         q.storeBytes(of: qclass.bigEndian, toByteOffset: off, as: UInt16.self); off += 2
-        return (off, q)
-    }
-    let (qlen, qptr) = qbuf
+        let qlen = off
 
-    let sport = serverPort == 0 ? UInt16(53) : serverPort
-    var sendOK: Int = 0
-    if v6Server {
-        let s6 = serverIP6!
-        sendOK = s6.withUnsafeBufferPointer { bp in
-            Int( swiftos_sendto_ipv6(fd, qptr, UInt(qlen), bp.baseAddress!, sport) )
+        let sport = serverPort == 0 ? UInt16(53) : serverPort
+        let sendOK: Int
+        if v6Server {
+            let s6 = serverIP6!
+            sendOK = s6.withUnsafeBufferPointer { bp in
+                Int(swiftos_sendto_ipv6(fd, q, UInt(qlen), bp.baseAddress!, sport))
+            }
+        } else {
+            sendOK = Int(swiftos_sendto(fd, q, UInt(qlen), serverIP, sport))
         }
-    } else {
-        sendOK = Int( swiftos_sendto(fd, qptr, UInt(qlen), serverIP, sport) )
-    }
-    if sendOK <= 0 { _ = swiftos_close(fd); return (false,0,[UInt8](repeating:0,count:16)) }
+        if sendOK <= 0 { return (false, 0, [UInt8](repeating: 0, count: 16)) }
 
-    // recv response
-    let rbuf = withUnsafeTemporaryAllocation(byteCount: 512, alignment: 16) { rraw -> (Int, UnsafeMutableRawPointer, UInt16) in
-        let r = rraw.baseAddress!
+        // recv response into the second half of the scratch allocation
+        let r = q.advanced(by: 512)
         var srcp: UInt16 = 0
         var src6 = [UInt8](repeating: 0, count: 16)
         let n: Int
         if v6Server {
             n = src6.withUnsafeMutableBufferPointer { bp in
-                Int( swiftos_recvfrom_ipv6(fd, r, 512, bp.baseAddress!, &srcp) )
+                Int(swiftos_recvfrom_ipv6(fd, r, 512, bp.baseAddress!, &srcp))
             }
         } else {
             var src4: UInt32 = 0
-            n = Int( swiftos_recvfrom(fd, r, 512, &src4, &srcp) )
+            n = Int(swiftos_recvfrom(fd, r, 512, &src4, &srcp))
         }
-        return (n, r, srcp)
+        if n < 12 { return (false, 0, [UInt8](repeating: 0, count: 16)) }
+
+        // basic parse (id, response, rcode=0, find first matching answer)
+        let rid = UInt16((UInt16(r.load(fromByteOffset: 0, as: UInt8.self)) << 8) |
+                         UInt16(r.load(fromByteOffset: 1, as: UInt8.self)))
+        if rid != id { return (false, 0, [UInt8](repeating: 0, count: 16)) }
+        let flags = UInt16((UInt16(r.load(fromByteOffset: 2, as: UInt8.self)) << 8) |
+                           UInt16(r.load(fromByteOffset: 3, as: UInt8.self)))
+        if (flags & 0x8000) == 0 { return (false, 0, [UInt8](repeating: 0, count: 16)) }
+        if (flags & 0x000F) != 0 { return (false, 0, [UInt8](repeating: 0, count: 16)) }
+        let ancount = Int((UInt16(r.load(fromByteOffset: 6, as: UInt8.self)) << 8) |
+                          UInt16(r.load(fromByteOffset: 7, as: UInt8.self)))
+        if ancount == 0 { return (false, 0, [UInt8](repeating: 0, count: 16)) }
+
+        // skip qd (assume 1)
+        off = 12
+        // skip qname + qtype+qclass (4)
+        while off < n && r.load(fromByteOffset: off, as: UInt8.self) != 0 {
+            if (r.load(fromByteOffset: off, as: UInt8.self) & 0xC0) == 0xC0 {
+                off += 2
+                break
+            }
+            off += 1 + Int(r.load(fromByteOffset: off, as: UInt8.self))
+        }
+        off += 1 + 4  // term + type/class
+
+        for _ in 0..<ancount {
+            // name skip
+            while off < n {
+                let b = r.load(fromByteOffset: off, as: UInt8.self)
+                if b == 0 {
+                    off += 1
+                    break
+                }
+                if (b & 0xC0) == 0xC0 {
+                    off += 2
+                    break
+                }
+                off += 1 + Int(b)
+            }
+            if off + 10 > n { break }
+            let rtype = UInt16((UInt16(r.load(fromByteOffset: off, as: UInt8.self)) << 8) |
+                               UInt16(r.load(fromByteOffset: off + 1, as: UInt8.self)))
+            let rdlen = Int((UInt16(r.load(fromByteOffset: off + 8, as: UInt8.self)) << 8) |
+                            UInt16(r.load(fromByteOffset: off + 9, as: UInt8.self)))
+            off += 10
+            if off + rdlen > n { break }
+            if wantAAAA && rtype == 28 && rdlen == 16 {
+                var res = [UInt8](repeating: 0, count: 16)
+                for k in 0..<16 { res[k] = r.load(fromByteOffset: off + k, as: UInt8.self) }
+                return (true, 0, res)
+            }
+            if !wantAAAA && rtype == 1 && rdlen == 4 {
+                let v4 = (UInt32(r.load(fromByteOffset: off, as: UInt8.self)) << 24) |
+                         (UInt32(r.load(fromByteOffset: off + 1, as: UInt8.self)) << 16) |
+                         (UInt32(r.load(fromByteOffset: off + 2, as: UInt8.self)) << 8) |
+                         UInt32(r.load(fromByteOffset: off + 3, as: UInt8.self))
+                return (true, v4, [UInt8](repeating: 0, count: 16))
+            }
+            off += rdlen
+        }
+        return (false, 0, [UInt8](repeating: 0, count: 16))
     }
-    let (n, rptr, _) = rbuf
     _ = swiftos_close(fd)
-    if n < 12 { return (false, 0, [UInt8](repeating:0,count:16)) }
-
-    // basic parse (id, response, rcode=0, find first matching answer)
-    let rid = UInt16( (UInt16(rptr.load(fromByteOffset:0,as:UInt8.self))<<8) | UInt16(rptr.load(fromByteOffset:1,as:UInt8.self)) )
-    if rid != id { return (false,0,[UInt8](repeating:0,count:16)) }
-    let flags = UInt16( (UInt16(rptr.load(fromByteOffset:2,as:UInt8.self))<<8) | UInt16(rptr.load(fromByteOffset:3,as:UInt8.self)) )
-    if (flags & 0x8000) == 0 { return (false,0,[UInt8](repeating:0,count:16)) }
-    if (flags & 0x000F) != 0 { return (false,0,[UInt8](repeating:0,count:16)) }
-    let ancount = Int( (UInt16(rptr.load(fromByteOffset:6,as:UInt8.self))<<8) | UInt16(rptr.load(fromByteOffset:7,as:UInt8.self)) )
-    if ancount == 0 { return (false,0,[UInt8](repeating:0,count:16)) }
-
-    // skip qd (assume 1)
-    var off = 12
-    // skip qname + qtype+qclass (4)
-    while off < n && rptr.load(fromByteOffset:off, as:UInt8.self) != 0 {
-        if (rptr.load(fromByteOffset:off,as:UInt8.self) & 0xC0) == 0xC0 { off += 2; break }
-        off += 1 + Int(rptr.load(fromByteOffset:off,as:UInt8.self))
-    }
-    off += 1 + 4  // term + type/class
-
-    for _ in 0..<ancount {
-        // name skip
-        while off < n {
-            let b = rptr.load(fromByteOffset:off, as:UInt8.self)
-            if b == 0 { off += 1; break }
-            if (b & 0xC0) == 0xC0 { off += 2; break }
-            off += 1 + Int(b)
-        }
-        if off + 10 > n { break }
-        let rtype = UInt16( (UInt16(rptr.load(fromByteOffset:off,as:UInt8.self))<<8) | UInt16(rptr.load(fromByteOffset:off+1,as:UInt8.self)) )
-        let rdlen = Int( (UInt16(rptr.load(fromByteOffset:off+8,as:UInt8.self))<<8) | UInt16(rptr.load(fromByteOffset:off+9,as:UInt8.self)) )
-        off += 10
-        if off + rdlen > n { break }
-        if wantAAAA && rtype == 28 && rdlen == 16 {
-            var res = [UInt8](repeating: 0, count: 16)
-            for k in 0..<16 { res[k] = rptr.load(fromByteOffset: off + k, as: UInt8.self) }
-            return (true, 0, res)
-        }
-        if !wantAAAA && rtype == 1 && rdlen == 4 {
-            let v4 = (UInt32(rptr.load(fromByteOffset:off,as:UInt8.self)) << 24) |
-                     (UInt32(rptr.load(fromByteOffset:off+1,as:UInt8.self)) << 16) |
-                     (UInt32(rptr.load(fromByteOffset:off+2,as:UInt8.self)) << 8) |
-                     UInt32(rptr.load(fromByteOffset:off+3,as:UInt8.self))
-            return (true, v4, [UInt8](repeating:0,count:16))
-        }
-        off += rdlen
-    }
-    return (false, 0, [UInt8](repeating:0,count:16))
+    return result
 }
 
 @_cdecl("main")
