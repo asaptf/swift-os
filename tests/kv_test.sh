@@ -76,7 +76,7 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 75
+sleep 105
 stop_qemu
 QP=""
 
