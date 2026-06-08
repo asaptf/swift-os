@@ -63,7 +63,11 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 55
+for _ in $(seq 1 1200); do
+  grep -Eq $'^RMR-DONE\r?$' "$LOG" 2>/dev/null && break
+  kill -0 "$QP" 2>/dev/null || break
+  sleep 0.1
+done
 stop_qemu
 QP=""
 

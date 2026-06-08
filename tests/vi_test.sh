@@ -57,7 +57,11 @@ blk_args=(-global virtio-mmio.force-legacy=false \
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 35
+for _ in $(seq 1 1200); do
+  grep -Eq $'^VI-DONE-MARKER\r?$' "$LOG" 2>/dev/null && break
+  kill -0 "$QP" 2>/dev/null || break
+  sleep 0.1
+done
 stop_qemu
 QP=""
 
@@ -68,7 +72,7 @@ grep -qaF $'\x1b[?1049h' "$LOG"     || { echo "FAIL: vi did not enter the altern
 # inserted text (which is embedded in cursor-positioning escapes) — so this
 # truly asserts the file was saved, not merely typed.
 grep -qE '^hello-from-vi$' <<<"$clean" || { echo "FAIL: saved file content not read back (vi :wq / ftruncate)" >&2; ok=0; }
-grep -qa "VI-DONE-MARKER" "$LOG"    || { echo "FAIL: shell did not survive vi (kernel panic in poll?)" >&2; ok=0; }
+grep -qE '^VI-DONE-MARKER$' <<<"$clean" || { echo "FAIL: shell did not survive vi (kernel panic in poll?)" >&2; ok=0; }
 grep -qa "panic" "$LOG"             && { echo "FAIL: kernel panic during vi" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
