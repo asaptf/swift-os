@@ -526,7 +526,8 @@ int swift_stdlib_isStackAllocationSafe(unsigned long byte_count, unsigned long a
 
 // ---- UDP sockets (net-b) --------------------------------------------------
 // sendto/recvfrom pass their extra arguments in this struct (the kernel reads
-// the first 18 bytes); the 3-arg syscall ABI carries only (fd, &msg).
+// the first 18 bytes for v4); the 3-arg syscall ABI carries only (fd, &msg).
+// v4 form is 18 bytes effective.
 struct swiftos_udp_msg {
     unsigned long buf;    // user VA of the payload buffer
     unsigned int len;     // send: length; recv in: capacity, out: received length
@@ -535,8 +536,22 @@ struct swiftos_udp_msg {
     unsigned short pad;
 };
 
+// Extended v6 form (34 bytes, matches kernel udpMsgSizeV6 and LE offsets in vfsSendto/Recvfrom):
+// buf@0(u64), len@8(u32), ip6[16]@12, port@28(u16), scope_id@30(u32).
+struct __attribute__((packed)) swiftos_udp_msg_v6 {
+    unsigned long buf;
+    unsigned int len;
+    unsigned char ip6[16];
+    unsigned short port;
+    unsigned int scope;
+};
+
 int swiftos_socket(void) {
     return (int)__syscall3(SYS_SOCKET, 2, 2, 0);   // AF_INET, SOCK_DGRAM
+}
+
+int swiftos_socket_ipv6(void) {
+    return (int)__syscall3(SYS_SOCKET, 10, 2, 0);  // AF_INET6, SOCK_DGRAM
 }
 
 int swiftos_bind(int fd, unsigned short port) {
@@ -565,6 +580,34 @@ long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
     long n = __syscall3(SYS_RECVFROM, fd, (long)&m, 0);
     if (n >= 0) {
         if (ip) *ip = m.ip;
+        if (port) *port = m.port;
+    }
+    return n;
+}
+
+// IPv6 send/recv: caller supplies 16-byte network-order IPv6 (or receives it).
+long swiftos_sendto_ipv6(int fd, const void *buf, unsigned long len,
+                         const unsigned char *ip6, unsigned short port) {
+    struct swiftos_udp_msg_v6 m;
+    m.buf = (unsigned long)buf;
+    m.len = (unsigned int)len;
+    for (int i = 0; i < 16; i++) { m.ip6[i] = ip6 ? ip6[i] : 0; }
+    m.port = port;
+    m.scope = 0;
+    return __syscall3(SYS_SENDTO, fd, (long)&m, 0);
+}
+
+long swiftos_recvfrom_ipv6(int fd, void *buf, unsigned long cap,
+                           unsigned char *ip6, unsigned short *port) {
+    struct swiftos_udp_msg_v6 m;
+    m.buf = (unsigned long)buf;
+    m.len = (unsigned int)cap;
+    for (int i = 0; i < 16; i++) { m.ip6[i] = 0; }
+    m.port = 0;
+    m.scope = 0;
+    long n = __syscall3(SYS_RECVFROM, fd, (long)&m, 0);
+    if (n >= 0) {
+        if (ip6) { for (int i = 0; i < 16; i++) { ip6[i] = m.ip6[i]; } }
         if (port) *port = m.port;
     }
     return n;

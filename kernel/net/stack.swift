@@ -67,6 +67,14 @@ struct RxOutcome {
     var resolvedIPv6: IPv6 = .zero
     var resolvedIPv6Mac: MAC = .zero
 
+    // RA handling (for router discovery and prefix-based address formation).
+    var raReceived = false
+    var raHopLimit: UInt8 = 0
+    var raHasPrefix: Bool = false
+    var raPrefix: IPv6 = .zero
+    var raPrefixLen: UInt8 = 0
+    var raFormedGlobal: IPv6 = .zero   // populated via ipv6FromPrefixAndIID when possible
+
     var echoReply = false
     var echoSeq: UInt16 = 0
     var echoReplyIPv6 = false   // true if this was an IPv6 echo reply
@@ -218,31 +226,44 @@ struct NetStack {
             let ip6p = payload
             guard ip6Version(ip6p) == 6 else { return r }
 
-            // For now we accept packets addressed to our configured IPv6 or
-            // to the solicited-node multicast derived from it (for NDP).
+            // Accept our unicast, our solicited-node (NDP), the all-nodes multicast (for RA and unsolicited NA),
+            // and loopback when testing against ourselves.
             let dst6 = ip6Dst(ip6p)
             let our6 = ipv6
             let solNode = ipv6SolicitedNodeMulticast(our6)
-            let dstMatchesUs = (dst6 == our6) || (dst6 == solNode) || (dst6 == .loopback && our6 == .loopback)
+            let allNodes = IPv6.allNodesLinkLocal
+            let dstMatchesUs = (dst6 == our6) || (dst6 == solNode) || (dst6 == allNodes) ||
+                               (dst6 == .loopback && our6 == .loopback)
 
             // We still learn from any IPv6 packet the source L2 (best-effort).
             // Real learning happens via NDP.
             if dstMatchesUs {
-                // Walk next-header chain (very small set of common EHs we skip).
+                // Walk next-header chain and skip common extension headers (RFC 8200) so we reach L4.
+                // We handle variable-len EHs (0,43,60) via HdrExtLen and the fixed 8-byte Fragment (44)
+                // by advancing a constant; this ensures EH chains are skipped correctly for UDP/TCP/ICMPv6
+                // delivery and for NDP/RA even when options or HBH are present.
                 var nh = ip6NextHeader(ip6p)
                 var l4Off = ipv6HeaderLen
                 var l4Len = Int(ip6PayloadLen(ip6p))
                 var cur = ip6p + ipv6HeaderLen
 
-                // Skip a few common extension headers so we reach the real upper layer.
                 var skipped = 0
-                while (nh == 0 /* Hop-by-Hop */ || nh == 43 /* Routing */ || nh == 60 /* DestOpts */) && skipped < 4 && l4Len > 2 {
-                    let hdrExtLen = Int(b8(cur, 1)) + 1   // in 8-byte units, +1 for the first 8
-                    if l4Len < hdrExtLen * 8 { break }
-                    nh = b8(cur, 0)
-                    l4Off += hdrExtLen * 8
-                    l4Len -= hdrExtLen * 8
-                    cur += hdrExtLen * 8
+                while skipped < 4 && l4Len >= 8 {
+                    if nh == 0 /* Hop-by-Hop */ || nh == 43 /* Routing */ || nh == 60 /* DestOpts */ {
+                        let hdrExtLen = Int(b8(cur, 1)) + 1
+                        if l4Len < hdrExtLen * 8 { break }
+                        nh = b8(cur, 0)
+                        l4Off += hdrExtLen * 8
+                        l4Len -= hdrExtLen * 8
+                        cur += hdrExtLen * 8
+                    } else if nh == 44 /* Fragment (fixed, no reassembly here) */ {
+                        nh = b8(cur, 0)
+                        l4Off += 8
+                        l4Len -= 8
+                        cur += 8
+                    } else {
+                        break
+                    }
                     skipped += 1
                 }
 
@@ -288,7 +309,8 @@ struct NetStack {
                             ndp.insert(src6, ethSrcMac(p))
                         }
                     } else if t == icmp6TypeNA {
-                        // Neighbor Advertisement — learn the mapping
+                        // Neighbor Advertisement — learn the mapping. This covers both solicited replies
+                        // and unsolicited NA (e.g. sent to all-nodes on link up or to announce presence).
                         let target = icmp6NDTarget(icmp6)
                         // For a proper implementation we should parse the TLLA option.
                         // Here we optimistically learn the source L2 for the target address.
@@ -299,6 +321,22 @@ struct NetStack {
                             r.ndpResolved = true
                             r.resolvedIPv6 = target
                             r.resolvedIPv6Mac = ethSrcMac(p)
+                        }
+                    } else if t == icmp6TypeRA {
+                        // Router Advertisement: learn the router (its src addr) for gateway reachability.
+                        // If it carries a prefix info option, use it + our IID to form a global address when possible.
+                        let ra = icmp6ParseRA(icmp6, len: l4Len)
+                        ndp.insert(src6, ethSrcMac(p))  // router L2
+                        r.raReceived = true
+                        r.raHopLimit = ra.hopLimit
+                        r.raHasPrefix = ra.hasPrefix
+                        r.raPrefix = ra.prefix
+                        r.raPrefixLen = ra.prefixLen
+                        if ra.hasPrefix {
+                            let formed = ipv6FromPrefixAndIID(prefix: ra.prefix, prefixLen: ra.prefixLen, iidFrom: our6)
+                            if formed != .zero {
+                                r.raFormedGlobal = formed
+                            }
                         }
                     }
                 } else if nh == ipProtoUDP {

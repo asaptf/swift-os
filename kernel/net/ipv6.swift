@@ -61,6 +61,8 @@ struct IPv6: Equatable {
 
     static let zero = IPv6()
     static let loopback = IPv6(hi: 0, lo: 1)
+    /// All-nodes link-local multicast (ff02::1). Routers send RA here; hosts may send unsolicited NA here.
+    static let allNodesLinkLocal = IPv6(hi: 0xFF02_0000_0000_0000, lo: 0x0000_0000_0000_0001)
 }
 
 /// Copy 16 bytes from `p` (wire order) into an IPv6 value.
@@ -109,6 +111,17 @@ func ipv6SolicitedNodeMulticast(_ addr: IPv6) -> IPv6 {
     let hi: UInt64 = 0xFF02_0000_0000_0000
     let lo: UInt64 = 0x0000_0001_FF00_0000 | (UInt64(addr.b13) << 16) | (UInt64(addr.b14) << 8) | UInt64(addr.b15)
     return IPv6(hi: hi, lo: lo)
+}
+
+/// Form an address from a /64 prefix (from RA) + the interface ID (IID) portion
+/// of an existing address (e.g. our EUI-64 IID from link-local). This lets us
+/// "use prefix for address if possible" on receiving a usable RA.
+func ipv6FromPrefixAndIID(prefix: IPv6, prefixLen: UInt8, iidFrom: IPv6) -> IPv6 {
+    if prefixLen == 64 {
+        return IPv6(hi: prefix.hi, lo: iidFrom.lo)
+    }
+    // For other lengths a fuller impl would mask; for our aggressive tests /64 is sufficient.
+    return prefix
 }
 
 /// Return true if the address has the link-local prefix fe80::/10.

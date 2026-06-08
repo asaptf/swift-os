@@ -89,9 +89,12 @@ unsigned long swiftos_top_res_bytes(int i);
 const char   *swiftos_top_name(int i);
 
 // UDP sockets (net-b). IPv4 addresses are host order (e.g. 0x0A000202 = 10.0.2.2).
-// swiftos_socket() opens a SOCK_DGRAM socket (needs the net capability) and
-// returns an fd, or a negative errno.
+// swiftos_socket() opens a SOCK_DGRAM / AF_INET socket (needs the net capability)
+// and returns an fd, or a negative errno. Use the _ipv6 variants for AF_INET6=10.
+// For AF_INET6 sockets, sendto/recvfrom must use the v6 extended msg layout
+// (34 bytes: buf u64@0, len u32@8, 16-byte IPv6@12, port u16@28, scope u32@30).
 int  swiftos_socket(void);
+int  swiftos_socket_ipv6(void);
 int  swiftos_bind(int fd, unsigned short port);
 long swiftos_sendto(int fd, const void *buf, unsigned long len,
                     unsigned int ip, unsigned short port);
@@ -100,9 +103,19 @@ long swiftos_sendto(int fd, const void *buf, unsigned long len,
 long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
                       unsigned int *ip, unsigned short *port);
 
-// TCP (net-c2). swiftos_socket_stream() opens a SOCK_STREAM socket; data is read
+// IPv6 variants for UDP send/recv (use only on AF_INET6 sockets created via
+// swiftos_socket_ipv6). ip6 is 16 bytes in network (big-endian) order.
+long swiftos_sendto_ipv6(int fd, const void *buf, unsigned long len,
+                         const unsigned char ip6[16], unsigned short port);
+long swiftos_recvfrom_ipv6(int fd, void *buf, unsigned long cap,
+                           unsigned char ip6[16], unsigned short *port);
+
+// TCP (net-c2). swiftos_socket_stream() opens a SOCK_STREAM / AF_INET socket; data is read
 // and written with swiftos_read/swiftos_write on the (accepted) connection fd.
+// Use swiftos_socket_stream_ipv6() for AF_INET6 listeners (dual-stack passive TCPv6
+// works via kernel; active v6 connect is not yet exposed for userland).
 int swiftos_socket_stream(void);
+int swiftos_socket_stream_ipv6(void);
 int swiftos_listen(int fd, int backlog);
 int swiftos_accept(int fd);
 // Active open to (ip, port) — ip is host order (e.g. 0x0A000202 = 10.0.2.2).
@@ -111,6 +124,8 @@ int swiftos_connect(int fd, unsigned int ip, unsigned short port);
 // (fd:int32 @0, events:int16 @4, revents:int16 @6 — 8 bytes each). POLLIN=0x001,
 // POLLOUT=0x004, POLLHUP=0x010. Returns the number of ready fds, 0 on timeout.
 long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
+
+#define AF_INET6 10  // for use with the _ipv6 socket creators (matches kernel)
 // Resolve a hostname to an IPv4 (host order, e.g. 0x0A000202). server_ip 0 uses
 // the slirp DNS (10.0.2.3); server_port 0 uses 53. Returns 0 on failure.
 unsigned int swiftos_resolve(const char *name, unsigned int server_ip, unsigned short server_port);
