@@ -8,6 +8,7 @@
 #ifndef SWIFT_OS_IO_H
 #define SWIFT_OS_IO_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 extern uint8_t __heap_start[];
@@ -25,6 +26,9 @@ void pmm_init(void);
 uintptr_t pmm_alloc_page(void);
 uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
+void pmm_frame_ref(uintptr_t addr);
+bool pmm_frame_unref(uintptr_t addr);
+long pmm_frame_refcount(uintptr_t addr);
 long pmm_free_count(void);
 long pmm_total_count(void); // total managed frames (for /bin/top memory stats)
 
@@ -62,7 +66,7 @@ uintptr_t address_space_create(void);
 int address_space_map(uintptr_t ttbr0, uintptr_t va, uintptr_t pa, int perm);
 void address_space_switch(uintptr_t ttbr0);
 uintptr_t address_space_translate(uintptr_t ttbr0, uintptr_t va);
-uintptr_t address_space_clone(uintptr_t parent); // eager fork copy
+uintptr_t address_space_clone(uintptr_t parent); // COW fork clone
 void address_space_destroy(uintptr_t ttbr0);     // free a process's frames on teardown
 
 // Track B: mmap/munmap/mprotect over the EL0 half of an address space. The

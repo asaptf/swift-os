@@ -57,7 +57,7 @@ blk_args=(-global virtio-mmio.force-legacy=false \
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 24
+sleep 35
 stop_qemu
 QP=""
 

@@ -10,39 +10,56 @@ struct PageAllocatorTest {
 
     static func main() {
         var bitmap = [UInt64](repeating: 0xFFFF_FFFF_FFFF_FFFF, count: 2)
+        var refs = [UInt16](repeating: 0xFFFF, count: 96)
         bitmap.withUnsafeMutableBufferPointer { buffer in
-            var allocator = PageAllocator(
-                base: 0x1000_0000,
-                pageCount: 96,
-                bitmap: buffer.baseAddress!
-            )
+            refs.withUnsafeMutableBufferPointer { refBuffer in
+                var allocator = PageAllocator(
+                    base: 0x1000_0000,
+                    pageCount: 96,
+                    bitmap: buffer.baseAddress!,
+                    refs: refBuffer.baseAddress!
+                )
 
-            expect(allocator.freePages == 96, "initial free count")
-            expect(buffer[0] == 0 && buffer[1] == 0, "bitmap cleared on init")
+                expect(allocator.freePages == 96, "initial free count")
+                expect(buffer[0] == 0 && buffer[1] == 0, "bitmap cleared on init")
+                expect(refBuffer[0] == 0 && refBuffer[95] == 0, "refcounts cleared on init")
 
-            allocator.reserve(base: 0x1000_0000, count: 2)
-            expect(allocator.freePages == 94, "reserve consumes free pages")
+                allocator.reserve(base: 0x1000_0000, count: 2)
+                expect(allocator.freePages == 94, "reserve consumes free pages")
+                expect(allocator.refcount(0x1000_0000) == 1, "reserve sets refcount to one")
 
-            let first = allocator.allocate()
-            expect(first == 0x1000_2000, "first allocation skips reserved pages")
-            expect(allocator.freePages == 93, "single allocation decrements free count")
+                let first = allocator.allocate()
+                expect(first == 0x1000_2000, "first allocation skips reserved pages")
+                expect(allocator.freePages == 93, "single allocation decrements free count")
+                expect(allocator.refcount(first!) == 1, "allocation starts with refcount one")
 
-            let run = allocator.allocateContiguous(4)
-            expect(run == 0x1000_3000, "contiguous allocation returns next run")
-            expect(allocator.freePages == 89, "contiguous allocation decrements free count")
+                let run = allocator.allocateContiguous(4)
+                expect(run == 0x1000_3000, "contiguous allocation returns next run")
+                expect(allocator.freePages == 89, "contiguous allocation decrements free count")
+                expect(allocator.refcount(run! + 3 * PageAllocator.pageSize) == 1, "contiguous allocation refs each frame")
 
-            allocator.free(first!)
-            expect(allocator.freePages == 90, "free restores one page")
+                allocator.ref(first!)
+                expect(allocator.refcount(first!) == 2, "ref increments a live frame")
+                expect(!allocator.unref(first!), "unref of shared frame does not free")
+                expect(allocator.refcount(first!) == 1, "unref decrements shared frame")
+                expect(allocator.unref(first!), "last unref asks caller to free")
+                expect(allocator.refcount(first!) == 0, "last unref leaves count zero until raw free")
 
-            let reused = allocator.allocate()
-            expect(reused == first, "allocator reuses freed lower frame")
+                allocator.free(first!)
+                expect(allocator.freePages == 90, "free restores one page")
+                expect(allocator.refcount(first!) == 0, "free clears refcount")
 
-            allocator.free(0x1000_0001)
-            allocator.free(0x2000_0000)
-            expect(allocator.freePages == 89, "invalid frees are ignored")
+                let reused = allocator.allocate()
+                expect(reused == first, "allocator reuses freed lower frame")
+                expect(allocator.refcount(reused!) == 1, "reused frame refcount reset")
 
-            expect(allocator.allocateContiguous(0) == nil, "zero-sized contiguous allocation rejected")
-            expect(allocator.allocateContiguous(97) == nil, "oversized contiguous allocation rejected")
+                allocator.free(0x1000_0001)
+                allocator.free(0x2000_0000)
+                expect(allocator.freePages == 89, "invalid frees are ignored")
+
+                expect(allocator.allocateContiguous(0) == nil, "zero-sized contiguous allocation rejected")
+                expect(allocator.allocateContiguous(97) == nil, "oversized contiguous allocation rejected")
+            }
         }
 
         var fragmentedBitmap = [UInt64](repeating: 0, count: 1)
@@ -73,6 +90,19 @@ struct PageAllocatorTest {
             allocator.free(c!)
             allocator.free(c!)
             expect(allocator.freePages == 1, "double free ignored")
+        }
+
+        var noRefBitmap = [UInt64](repeating: 0, count: 1)
+        noRefBitmap.withUnsafeMutableBufferPointer { buffer in
+            var allocator = PageAllocator(
+                base: 0x3000_0000,
+                pageCount: 4,
+                bitmap: buffer.baseAddress!
+            )
+            let a = allocator.allocate()!
+            allocator.ref(a)
+            expect(allocator.refcount(a) == 0, "nil ref table reports zero")
+            expect(allocator.unref(a), "nil ref table treats unref as last drop")
         }
 
         print("PASS: page allocator unit + adversarial tests")

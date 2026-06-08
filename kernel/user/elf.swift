@@ -113,7 +113,10 @@ func elfLoad(_ ttbr0: UInt, _ image: UnsafeRawPointer?, _ size: UInt) -> UInt {
                 pa = pmm_alloc_page()
                 if pa == 0 { return 0 }
                 elfZeroFrame(pa)
-                if address_space_map(ttbr0, va, pa, perm) != 0 { return 0 }
+                if address_space_map(ttbr0, va, pa, perm) != 0 {
+                    pmm_free_page(pa)
+                    return 0
+                }
                 elfLoadPages += 1 // a fresh frame (not a perm upgrade of a shared page)
             } else if perm == Int32(VM_PERM_USER_CODE) {
                 // A previous (data) segment already mapped this page; executable wins.

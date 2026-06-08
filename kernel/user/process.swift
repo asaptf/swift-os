@@ -87,9 +87,10 @@ private var pIsThread = [Bool](repeating: false, count: maxProc)
 
 // Accounting for /bin/top. CPU is charged one tick per timer interrupt to
 // whichever process is current (idle ticks when none is). Resident pages track
-// the user frames a process owns (ELF image + stack + heap); fork copies the
-// parent's count, exec resets to the new image, sbrk adds heap growth. Start
-// tick is systemTicks at creation, for "uptime of this process".
+// each process's mapped user footprint (ELF image + stack + heap); COW fork
+// copies the logical count even while physical frames are shared, exec resets to
+// the new image, and sbrk adds heap growth. Start tick is systemTicks at
+// creation, for "uptime of this process".
 private var pCpuTicks = [UInt64](repeating: 0, count: maxProc)
 private var pStartTick = [UInt64](repeating: 0, count: maxProc)
 private var pResPages = [Int](repeating: 0, count: maxProc)
@@ -419,9 +420,10 @@ func processYieldForIO() {
     yieldToScheduler()
 }
 
-/// fork(): eager-copy the current process. The child gets a cloned address
-/// space and a copy of the parent's trap frame with x0=0, so it "returns from
-/// fork()" into EL0 at the same point seeing 0; the parent gets the child pid.
+/// fork(): COW-clone the current process. The child gets a cloned address space
+/// whose user pages initially share frames with the parent, plus a copy of the
+/// parent's trap frame with x0=0, so it "returns from fork()" into EL0 at the
+/// same point seeing 0; the parent gets the child pid.
 func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     let parent = currentProc
     guard parent >= 0 else { return -11 }
@@ -455,12 +457,13 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pKilled[child] = false
     pWait[child] = waitNone
     pBrk[child] = pBrk[parent]
-    // The eager clone copies every mapped user page (including mmap'd regions),
+    // The COW clone preserves every mapped user page (including mmap'd regions),
     // so the child inherits the parent's mmap cursor verbatim.
     pMmapTop[child] = pMmapTop[parent]
     pIsThread[child] = false
-    // The eager address-space clone duplicates every mapped user page, so the
-    // child's resident set equals the parent's; CPU/time start fresh.
+    // The COW address-space clone preserves the child's logical mapped
+    // footprint; physical frames are copied lazily on write. CPU/time start
+    // fresh.
     pCpuTicks[child] = 0
     pStartTick[child] = systemTicks
     pResPages[child] = pResPages[parent]
@@ -837,6 +840,10 @@ func processSbrk(_ incr: Int) -> UInt {
         while va < newTop {
             let pa = pmmAllocZeroedPage()
             if pa == 0 || address_space_map(pTtbr0[me], va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+                if pa != 0 { pmmFreePage(pa) }
+                if va > oldTop {
+                    _ = address_space_munmap(pTtbr0[me], oldTop, (va - oldTop) / PageAllocator.pageSize)
+                }
                 return fail
             }
             va += PageAllocator.pageSize

@@ -591,6 +591,17 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
         syscallDispatch(number: frame[8], frame: frame)
         return
     }
+    if exceptionClass == 0x24 {
+        let dfsc = esr & 0x3F
+        let isWrite = (esr & (1 << 6)) != 0
+        let isPermissionFault = dfsc >= 0xC && dfsc <= 0xF
+        if isWrite && isPermissionFault {
+            let ttbr0 = processCurrentAddressSpace()
+            if ttbr0 != 0 && addressSpaceHandleCowFault(ttbr0, UInt(read_far_el1())) {
+                return
+            }
+        }
+    }
 
     uartPuts("panic: unexpected lower-EL sync exception\n")
     uartPuts("  ESR_EL1=")

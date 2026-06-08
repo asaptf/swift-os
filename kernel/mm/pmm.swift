@@ -28,13 +28,22 @@ func pmmInit() {
 
     let pageCount = Int((ramEnd - regionStart) / PageAllocator.pageSize)
     let bitmap = UnsafeMutablePointer<UInt64>(bitPattern: regionStart)!
-    var allocator = PageAllocator(base: regionStart, pageCount: pageCount, bitmap: bitmap)
 
-    // Protect the bitmap's own frames, which sit at the head of the region.
+    // The bitmap (1 bit/frame) and COW reference-count table (UInt16/frame)
+    // both live at the head of the managed region. The allocator reserves their
+    // frames immediately below, so normal PMM clients never receive metadata.
     let bitmapWords = (pageCount + 63) / 64
     let bitmapBytes = UInt(bitmapWords) * 8
-    let bitmapPages = Int((bitmapBytes + (PageAllocator.pageSize - 1)) / PageAllocator.pageSize)
-    allocator.reserve(base: regionStart, count: bitmapPages)
+    let refsStart = (regionStart + bitmapBytes + (PageAllocator.pageSize - 1))
+                  & ~(PageAllocator.pageSize - 1)
+    let refs = UnsafeMutablePointer<UInt16>(bitPattern: refsStart)!
+    var allocator = PageAllocator(base: regionStart, pageCount: pageCount, bitmap: bitmap, refs: refs)
+
+    // Protect the bitmap + refcount table frames.
+    let refsBytes = UInt(pageCount) * 2
+    let metaEnd = refsStart + refsBytes
+    let metaPages = Int((metaEnd - regionStart + (PageAllocator.pageSize - 1)) / PageAllocator.pageSize)
+    allocator.reserve(base: regionStart, count: metaPages)
 
     // Protect the GOP framebuffer (if any) — it sits in this RAM block, and the
     // display scans it directly, so the PMM must not hand its frames out.
@@ -73,6 +82,27 @@ func pmmAllocPages(_ count: Int) -> UInt {
 func pmmFreePage(_ addr: UInt) {
     if pmm == nil { return }
     pmm!.free(addr)
+}
+
+/// A second address space now shares `addr`; bump its COW reference count.
+@_cdecl("pmm_frame_ref")
+func pmmFrameRef(_ addr: UInt) {
+    if pmm == nil { return }
+    pmm!.ref(addr)
+}
+
+/// Drop one COW reference to `addr`. Returns true when this was the last
+/// reference and the caller should raw-free the frame with pmm_free_page().
+@_cdecl("pmm_frame_unref")
+func pmmFrameUnref(_ addr: UInt) -> Bool {
+    if pmm == nil { return false }
+    return pmm!.unref(addr)
+}
+
+/// Current COW reference count for `addr`, or 0 if it is free/untracked.
+@_cdecl("pmm_frame_refcount")
+func pmmFrameRefcount(_ addr: UInt) -> Int {
+    return pmm?.refcount(addr) ?? 0
 }
 
 @_cdecl("pmm_free_count")

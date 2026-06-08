@@ -3,7 +3,9 @@
 //
 // Syscalls must not dereference user pointers directly. These helpers first
 // reject kernel/device addresses, integer-overflowed ranges, huge lengths, and
-// unmapped user pages in the current process address space.
+// unmapped user pages in the current process address space. Writable buffers
+// also resolve COW leaves before returning: kernel copies write through the
+// current user VA, so they must not bypass the EL0 write-fault path.
 
 private let userAccessMinVA: UInt = 0x8000_0000
 private let userAccessMaxVA: UInt = 0xB000_0000
@@ -30,6 +32,26 @@ private func userRangeMapped(_ va: UInt, _ count: UInt) -> Bool {
     return true
 }
 
+private func userRangeWritable(_ va: UInt, _ count: UInt) -> Bool {
+    if count == 0 { return true }
+    if count > UInt(Int.max) { return false }
+    if va < userAccessMinVA { return false }
+    let last = va + count - 1
+    if last < va || last >= userAccessMaxVA { return false }
+
+    let ttbr0 = processCurrentAddressSpace()
+    if ttbr0 == 0 { return false }
+
+    var page = va & ~userAccessPageMask
+    let lastPage = last & ~userAccessPageMask
+    while true {
+        if !addressSpacePrepareWrite(ttbr0, page) { return false }
+        if page == lastPage { break }
+        page += PageAllocator.pageSize
+    }
+    return true
+}
+
 func userReadableBuffer(_ va: UInt, _ count: UInt) -> UnsafePointer<UInt8>? {
     if count == 0 {
         return UnsafePointer<UInt8>(bitPattern: va == 0 ? userAccessMinVA : va)
@@ -42,7 +64,7 @@ func userWritableBuffer(_ va: UInt, _ count: UInt) -> UnsafeMutablePointer<UInt8
     if count == 0 {
         return UnsafeMutablePointer<UInt8>(bitPattern: va == 0 ? userAccessMinVA : va)
     }
-    guard userRangeMapped(va, count) else { return nil }
+    guard userRangeWritable(va, count) else { return nil }
     return UnsafeMutablePointer<UInt8>(bitPattern: va)
 }
 
