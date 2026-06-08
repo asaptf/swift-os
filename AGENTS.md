@@ -1,8 +1,12 @@
 # AGENTS.md — swift-os
 
-A minimal, modern operating system written in **Embedded Swift** for `aarch64` (QEMU `virt`),
-built to host server applications. Minimum-viable goal: a statically linked busybox `sh`
-running `ls`/`cat`/`echo` on our filesystem inside QEMU.
+A full-fledged, modern operating system written in **Embedded Swift** for `aarch64`. Its flagship
+profile is **application & AI hosting**; **embedded/appliance** deployment is a co-primary profile;
+**desktop use is not excluded**. The design value is *efficient, reliable minimalism* — a small
+trusted core, capability-based isolation, fast deterministic boot, immutable signed images, and
+testable correctness, achieved by **removing legacy** rather than emulating it. The bring-up phase
+(M0–M13 + networking) is done; current work hardens the system for the product profile (see
+`docs/RISK_REMEDIATION_ROADMAP.md`).
 
 ## Priorities (in order)
 
@@ -31,16 +35,18 @@ running `ls`/`cat`/`echo` on our filesystem inside QEMU.
 
 ## Workflow (strict)
 
-- Implement **one milestone at a time**, M0 → M8 (see the prompt / `docs/NOTES.md`).
-- After each milestone: it **builds**, **boots in QEMU**, meets its acceptance criterion, has a test, and is committed.
+- Implement **one (sub)milestone at a time**. The active plan is **Phase 1** in
+  `docs/RISK_REMEDIATION_ROADMAP.md`; the bring-up milestone history lives in `docs/NOTES.md`.
+- After each milestone: it **builds**, **boots in QEMU** (single-core and `-smp N` where relevant),
+  meets its acceptance criterion, has a test, and is committed.
 - Then **stop, give a brief report, and wait for review** before the next milestone. No large unstable leaps.
 - At a fork with serious consequences: **ask, don't guess.**
 
 ## Long-horizon goals (record, don't build yet)
 
-Beyond busybox, the OS must eventually launch native **Swift** apps, the **Node.js** runtime, and the **JVM**.
-Keep the libc surface, threading model, syscall set, and memory model from foreclosing these.
-See `docs/ARCHITECTURE.md`.
+Beyond the current userland, the OS must eventually launch native **Swift** apps, the **Node.js**
+runtime, and the **JVM**. Keep the libc surface, threading model, syscall set, and memory model from
+foreclosing these. See `docs/ARCHITECTURE.md`.
 
 ## Build
 

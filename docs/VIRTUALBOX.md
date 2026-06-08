@@ -28,7 +28,7 @@ make disk            # builds build/swift-os.img (GPT + EFI System Partition + B
 ```
 
 `build/swift-os.img` is a real 96 MiB GPT disk: one EFI System Partition (FAT32) containing
-`\EFI\BOOT\BOOTAA64.EFI`, which embeds the kernel. It already boots to busybox under QEMU+AAVMF
+`\EFI\BOOT\BOOTAA64.EFI`, which embeds the kernel. It already boots to the login prompt under QEMU+AAVMF
 (`make disk-run`), so it is a known-good image — any VirtualBox-specific failure is about the device
 model, not the image.
 

@@ -13,11 +13,13 @@
 
 ## Why this arc exists
 
-The original bring-up (M0–M8) and the portability/security/network arcs (M9–M13 + N-series) deliberately took single-core as a hard constraint. This kept the trusted core small, the scheduler simple, IRQ and context-switch paths easy to reason about, and the test surface manageable.
+This document is **Phase 1** of the swift-os direction: hardening the bring-up system into a foundation that can credibly carry the product profiles — **application & AI hosting** (flagship) and **embedded/appliance** deployment (co-primary), with desktop use not excluded. (Phase 0 was bring-up: M0–M13 + the N-series network stack. Phase 2 is the forward full-OS build-out, sketched at the end of this document.)
 
-As of 2026-06 the system is past its minimum goal and has a real capability model, real networking, real native Swift userland, and a realistic UEFI boot path. At this point several structural risks are visible in the code and contradict (or at least fall short of) the long-term vision recorded in ARCHITECTURE.md, PHILOSOPHY.md, and CAPABILITIES.md:
+The Phase 0 bring-up (M0–M8) and the portability/security/network arcs (M9–M13 + N-series) deliberately took single-core as a hard constraint. This kept the trusted core small, the scheduler simple, IRQ and context-switch paths easy to reason about, and the test surface manageable.
 
-1. **Single-core assumption is now the largest blocker for the stated product profile** (server applications, AI inference appliances, hosting Node/Swift/JVM workloads at any scale). Cloud elasticity, multiple concurrent model servers, and believable throughput all require SMP.
+As of 2026-06 the system has a real capability model, real networking, real native Swift userland, and a realistic UEFI boot path. At this point several structural risks are visible in the code and contradict (or at least fall short of) the long-term vision recorded in ARCHITECTURE.md, PHILOSOPHY.md, and CAPABILITIES.md:
+
+1. **Single-core assumption is now the largest blocker for the stated product profiles** (hosting application/AI/Node/Swift/JVM workloads at any scale; multi-tenant appliances). Cloud elasticity, multiple concurrent servers, and believable throughput all require SMP. (Single-purpose embedded appliances may stay single-core, but the kernel must still be concurrency-correct for the hosting profile.)
 
 2. **Capability model is still the "flag + ambient inheritance" version.** CAPABILITIES.md describes the target (typed handles, per-handle Rights, spawn-with-handles, attenuation, IPC transfer). Only a CellId tag and a few syscall numbers (51–53) exist; the real C1–C6 work has not been done. This weakens every security and isolation claim.
 
@@ -157,4 +159,15 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 
 This roadmap turns the current set of "we deliberately didn't do X" into a deliberate, testable, reviewable sequence that brings the implementation back in line with the written architecture while delivering the SMP capability the project now requires.
 
-(End of plan document. Next step after review: pick the first concrete sub-milestone — most likely a C-arc piece or S0 — write its acceptance criteria, implement, test, commit, report.)
+## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
+
+Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:
+
+- **Observability & metrics:** per-cell/per-process accounting, health states, request/latency/throughput metrics, memory-pressure and restart counters (see PHILOSOPHY.md "Observability" and the hosting metrics list in ARCHITECTURE.md).
+- **A/B signed-image updates with rollback:** immutable signed base images, two slots, atomic switch, automatic rollback on failed health checks. This is shared between the hosting and embedded profiles.
+- **Application runtimes:** native Swift application runtime first, then Node.js and the JVM, on the threads + futex + `mmap`(W^X) + poll + TLS primitives the ABI already keeps open.
+- **Embedded footprint profile:** a build/config profile that strips optional services, minimizes the static image, and tightens deterministic boot for single-purpose appliances.
+- **Service-ization completion:** move the remaining drivers and the network stack into restartable userland services reachable only via capability-gated IPC.
+- **Richer device/display support:** as needed for the (not-excluded) desktop profile — beyond the current basic framebuffer + virtio-input.
+
+(End of plan document. Next step after review: pick the first concrete Phase 1 sub-milestone — most likely a C-arc piece or S0 — write its acceptance criteria, implement, test, commit, report.)
