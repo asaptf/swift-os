@@ -56,10 +56,15 @@ try:
             i += 1 + data[i]
         qend = i + 1 + 4                      # 0-byte + QTYPE + QCLASS
         question = data[12:qend]
+        qtype = (data[qend-4] << 8) | data[qend-3]
         # header: id, flags 0x8180, qd=1, an=1, ns=0, ar=0
         resp = tid + b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00' + question
-        # answer: name ptr 0xC00C, type A, class IN, ttl 60, rdlen 4, 192.0.2.7
-        resp += b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + bytes([192, 0, 2, 7])
+        if qtype == 28:  # AAAA
+            # name ptr, type AAAA=28, class IN, ttl 60, rdlen 16, 2001:db8::7
+            resp += b'\xc0\x0c\x00\x1c\x00\x01\x00\x00\x00\x3c\x00\x10' + bytes([0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,7])
+        else:
+            # answer A 192.0.2.7
+            resp += b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + bytes([192, 0, 2, 7])
         s.sendto(resp, addr)
 except socket.timeout:
     pass
@@ -78,6 +83,7 @@ dtb_args=()
   sleep 3;   printf 'root\n'
   sleep 1.5; printf 'swordfish\n'
   sleep 3;   printf '/bin/nslookup test.swos 10.0.2.2 5354\n'
+  sleep 4;   printf '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\n'
   sleep 6
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
@@ -88,16 +94,23 @@ dtb_args=()
   -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 30
+sleep 35
 stop_all
 QP=""; PYPID=""
 
 clean="$(sed 's/\r//' "$LOG")"
-if grep -qF "$EXPECT" <<<"$clean"; then
-  echo "PASS: /bin/nslookup resolved a name to an A record via DNS (net-f acceptance)"
-  exit 0
+if ! grep -qF "$EXPECT" <<<"$clean"; then
+  echo "FAIL: nslookup did not resolve test.swos to 192.0.2.7" >&2
+  echo "--- serial (nslookup region) ---" >&2
+  sed -n '/nslookup\|test\.swos/,$p' <<<"$clean" | head -15 >&2
+  exit 1
 fi
-echo "FAIL: nslookup did not resolve test.swos to 192.0.2.7" >&2
-echo "--- serial (nslookup region) ---" >&2
-sed -n '/nslookup\|test\.swos/,$p' <<<"$clean" | head -15 >&2
-exit 1
+# AAAA coverage via direct path in nslookup (exercises userland UDP + AAAA query/parse)
+if ! grep -qE 'test6\.swos -> .*:' <<<"$clean"; then
+  echo "FAIL: nslookup AAAA did not produce IPv6 result (colon-hex expected)" >&2
+  echo "--- serial (nslookup AAAA) ---" >&2
+  sed -n '/test6\.swos/,$p' <<<"$clean" | head -10 >&2
+  exit 1
+fi
+echo "PASS: /bin/nslookup resolved A (kernel path) + AAAA (userland direct UDP+DNS) via DNS (net-f + IPv6)"
+exit 0
