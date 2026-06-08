@@ -9,13 +9,14 @@ See also:
 - `docs/RISK_REMEDIATION_ROADMAP.md` (observability listed among the post-M13 gaps).
 - `docs/NOTES.md` (milestone log; hardware; decisions — new logging work is recorded here too).
 
-## Current State (L0-L2 Landed)
+## Current State (L0-L3 Landed)
 
 The current tree has the first logging foundation:
 
-- `kernel/log/log.swift` defines `LogLevel`, `klog(level, source, message)`, `klogInfo`, `logDumpRecent`, and `kpanic`.
+- `kernel/log/log.swift` defines `LogLevel`, `klog(level, source, message, detail)`, `klogInfo`, `logDumpRecent`, and `kpanic`.
 - `klog` emits `[tick] [L] source: message` through the UART path, so the framebuffer mirror still works through `uartPutc`.
-- A fixed 256-entry in-memory ring stores accepted `StaticString` records and can dump a recent tail with `logDumpRecent(n)`.
+- A fixed 256-entry in-memory ring stores accepted `StaticString` records plus an optional `UInt64` detail payload and can dump a recent tail with `logDumpRecent(n)`.
+- `logDumpRecent` renders nonzero structured payloads as `detail=...`; live UART lines stay text-only for now.
 - `kpanic` records a panic entry and dumps the recent ring tail before halting.
 - Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
 - `tests/boot_test.sh` asserts the L0 line, the L2 filtering announcement, and the ring dump header.
@@ -26,7 +27,7 @@ Most legacy milestone/probe output is still emitted by direct UART calls:
 - Platform, driver, exception, VFS, and TTY paths still have many direct `uartPuts` call sites.
 - The TTY layer (`kernel/tty/tty.swift`) remains userland console only; kernel logging does not flow through TTY.
 
-Further L3+ candidate slices exist in external worktrees, but they are not authoritative until individually reviewed, rebased onto current `main`, verified, and committed.
+Further L4+ candidate slices exist in external worktrees, but they are not authoritative until individually reviewed, rebased onto current `main`, verified, and committed.
 
 ## Goals
 
@@ -131,11 +132,13 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - Compile-time `DEBUG` vs release stripping of `.debug` (or a simple `#if`).
 - Source taxonomy documented (vfs, mm, sched, timer, net, security, user, ...).
 
-### L3 — Structured payload + serialization skeleton
+### L3 — Structured payload foundation (DONE, 2026-06-08); serialization deferred
 
-- Extend the record beyond (tick, level, source, msg) — add a small fixed "detail" union or a couple of numeric fields + a detail StaticString.
+- Done in this slice: `LogEntry` now carries `detail: UInt64` (`0` means none), `klog` accepts an optional trailing detail argument without breaking existing three-argument call sites, and ring dumps append `detail=...` for nonzero payloads.
+- Added real post-heap example call sites for timer frequency, PMM free-frame counts, and scheduler capacity.
+- Deferred follow-ups:
 - A pure function that can render a record to a caller buffer as JSONL line (host-testable).
-- Prepare the shape that the future central collector expects (document the schema in this file or a `docs/log-format.md`).
+- Prepare the schema expected by the future central collector in this file or a dedicated `docs/log-format.md`.
 - No wire protocol yet.
 
 ### L4 — Kernel log sink indirection + capability hook

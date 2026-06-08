@@ -71,6 +71,8 @@ func schedulerInit() {
     threadCount = 1
     schedulerReady = true
     uartPuts("M4.5 sched: scheduler online\n")
+    // L3 example use of detail: a small numeric scheduler config value.
+    klog(.info, "sched", "max threads", UInt64(maxThreads))
 }
 
 /// Create a ready kernel thread that runs `entry(arg)`. Returns its id, or -1.

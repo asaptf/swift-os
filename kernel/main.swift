@@ -340,6 +340,9 @@ private func runReclaimDemo() {
     for _ in 0..<5 { _ = runReclaimRound() }
     let after = pmmFreeCount()
 
+    klog(.info, "pmm", "free frames", UInt64(baseline))
+    klog(.info, "pmm", "free frames", UInt64(after))
+
     uartPuts("reclaim: free frames baseline=")
     uartPutUInt(UInt64(baseline))
     uartPuts(" after=")
@@ -682,6 +685,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
+    klog(.info, "timer", "tick rate (Hz)", 100)
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves

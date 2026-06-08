@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// log.swift — minimal kernel logging facade (L0 + L1 ring + L2 filtering).
+// log.swift — minimal kernel logging facade (L0 + L1 ring + L2 filtering + L3 structured).
 //
 // Provides klog(level, source, message) that renders timestamped, leveled,
 // source-tagged records to the UART (and the framebuffer mirror via uartPutc).
@@ -12,6 +12,9 @@
 // dump from kpanic paths.
 // L2 adds global min-level filtering (default .info so debug is quiet;
 // .panic always goes through). Ring only stores what passes the current filter.
+// L3 (this slice) adds basic structured detail (UInt64, 0=none) to LogEntry and
+// klog; detail is stored in the ring and rendered in logDumpRecent when non-zero.
+// Callers use 4-arg form for detail; 3-arg form unchanged (default detail=0).
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -39,12 +42,13 @@ private struct LogEntry {
     var level: LogLevel
     var source: StaticString
     var message: StaticString
+    var detail: UInt64   // 0 means no structured detail for this entry
 }
 
 // Static global ring. Initialiser materialises a small .data/.bss blob.
 // Our first klog use is after M1 heap + timer, so this is fine.
 private var ring: [LogEntry] = .init(
-    repeating: LogEntry(tick: 0, level: .info, source: "", message: ""),
+    repeating: LogEntry(tick: 0, level: .info, source: "", message: "", detail: 0),
     count: ringCapacity
 )
 private var ringNext = 0     // next write index
@@ -58,6 +62,7 @@ private var ringFull = false // set once we have wrapped at least once
 private var minLogLevel: LogLevel = .info
 
 private func ringStore(_ entry: LogEntry) {
+    // L3: ring now carries the optional detail; stored verbatim (0 = none).
     ring[ringNext] = entry
     ringNext = (ringNext + 1) % ringCapacity
     if ringNext == 0 { ringFull = true }
@@ -97,6 +102,10 @@ func logDumpRecent(_ maxCount: Int = 32) {
         uartPuts(e.source)
         uartPuts(": ")
         uartPuts(e.message)
+        if e.detail != 0 {
+            uartPuts(" detail=")
+            uartPutUInt(e.detail)
+        }
         uartPuts("\n")
     }
 }
@@ -120,17 +129,22 @@ func klogGetMinLevel() -> LogLevel {
 ///
 /// The output line has the shape:
 ///   [tick] [L] source: message\n
+/// (detail is not emitted on the live line in this L3 slice; it is recorded
+/// and appears when the ring is dumped via logDumpRecent.)
 ///
 /// - `tick` is the monotonic value from timerGetTicks() (0 if the timer is not
 ///   yet initialised — this path is exercised and useful for very early logs).
 /// - `L` is a single character from levelChar.
 /// - `source` and `message` are emitted verbatim (they are StaticString).
+/// - `detail` (optional, default 0) carries a small structured numeric payload
+///   (0 means "none"). Callers can use the 4-arg form without breaking any
+///   existing 3-arg call sites: `klog(.info, "pmm", "free frames", pmmFreeCount())`.
 ///
 /// This function is safe to call:
 /// - before timerInit / schedulerInit / heap;
 /// - from IRQ handlers (the underlying uartPut* are polled);
 /// - with IRQs masked (no locks are taken).
-func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString) {
+func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString, _ detail: UInt64 = 0) {
     // L2 filtering: drop everything below the current min level.
     // .panic is never filtered (always want the message + ring tail).
     if level != .panic && level.rawValue < minLogLevel.rawValue {
@@ -153,7 +167,8 @@ func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString) {
     uartPuts("\n")
 
     // L1: also record in the ring (cheap copy of StaticString).
-    ringStore(LogEntry(tick: timerGetTicks(), level: level, source: source, message: message))
+    // L3: detail travels with the entry (0 = none).
+    ringStore(LogEntry(tick: timerGetTicks(), level: level, source: source, message: message, detail: detail))
 }
 
 /// Convenience wrapper for the common "info" level.
@@ -174,7 +189,7 @@ func kpanic(_ message: StaticString) -> Never {
     uartPuts(message)
     uartPuts("\n")
 
-    let entry = LogEntry(tick: timerGetTicks(), level: .panic, source: "panic", message: message)
+    let entry = LogEntry(tick: timerGetTicks(), level: .panic, source: "panic", message: message, detail: 0)
     ringStore(entry)
     logDumpRecent(24)
 
