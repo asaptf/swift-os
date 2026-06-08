@@ -77,6 +77,7 @@ PID PPID STAT CMD
 1 0 R ps
 ps OK: Swift ps exited, code 0
 L0 kernel logger active
+level filtering active (min INFO)
 log: recent "
 
 if [[ ! -f "$KERNEL" ]]; then

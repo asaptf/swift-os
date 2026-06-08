@@ -196,6 +196,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 
 - **L1 (2026-06) — log ring buffer + dump.** Added fixed 256-entry ring of LogEntry (tick + level + source + StaticString message) with circular overwrite. `logDumpRecent(n)` replays the most recent entries (oldest of the window first). `kpanic` now stores + dumps the tail (~24 entries) after the panic banner. A `logDumpRecent(5)` call was placed late in the kernel demo sequence so the ring is exercised on every test boot; the dump header is asserted in `boot_test.sh`. Ring and dump are allocation-free and safe on panic/IRQ-masked paths. Pre-existing banners unchanged. See docs/LOGGING.md.
 
+- **L2 (2026-06) — runtime min-level filtering.** Added global `minLogLevel` (defaults to .info). `klog` drops sub-minimum messages (both UART and ring storage); `.panic` is never dropped. New `klogSetMinLevel`/`klogGetMinLevel`. Early boot now emits "level filtering active (min INFO)" (asserted in boot_test) plus a .debug example that is suppressed by default. This gives a runtime knob for quieter production images while keeping the ability to open the logs for diagnostics or the future central collector. Filtering decision is made before ringStore. See docs/LOGGING.md.
+
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
   pure Swift FDT reader with host coverage, a global `Platform` populated at boot, and driver/PMM use of
   discovered UART/GIC/RAM values. `make run`/`make test` now dump QEMU's actual `virt` DTB and load it

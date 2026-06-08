@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// log.swift — minimal kernel logging facade (L0 + L1 ring).
+// log.swift — minimal kernel logging facade (L0 + L1 ring + L2 filtering).
 //
 // Provides klog(level, source, message) that renders timestamped, leveled,
 // source-tagged records to the UART (and the framebuffer mirror via uartPutc).
@@ -9,8 +9,9 @@
 //
 // L0 was additive only (existing banners untouched).
 // L1 adds an in-memory ring (overwrite) + logDumpRecent + automatic tail
-// dump from kpanic paths. The ring is observable in normal boot via an
-// explicit dump call (used by tests) and will be present in panic output.
+// dump from kpanic paths.
+// L2 adds global min-level filtering (default .info so debug is quiet;
+// .panic always goes through). Ring only stores what passes the current filter.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -48,6 +49,13 @@ private var ring: [LogEntry] = .init(
 )
 private var ringNext = 0     // next write index
 private var ringFull = false // set once we have wrapped at least once
+
+// L2: global minimum level. Messages with level < minLogLevel are dropped
+// (both from UART and from the ring) unless they are .panic.
+// Default .info keeps the early boot "info" lines visible while suppressing
+// chatter. Callers can raise/lower at runtime (e.g. from a debug console or
+// capability-gated service later).
+private var minLogLevel: LogLevel = .info
 
 private func ringStore(_ entry: LogEntry) {
     ring[ringNext] = entry
@@ -93,6 +101,21 @@ func logDumpRecent(_ maxCount: Int = 32) {
     }
 }
 
+// MARK: - L2 runtime level control
+
+/// Set the global minimum log level. Messages below this are dropped from
+/// both the console and the ring (except .panic, which is never dropped).
+/// This is the knob that will later be driven by boot options, a privileged
+/// debug service, or per-cell policy.
+func klogSetMinLevel(_ level: LogLevel) {
+    minLogLevel = level
+}
+
+/// Current minimum level (for diagnostics / debug dumps).
+func klogGetMinLevel() -> LogLevel {
+    minLogLevel
+}
+
 /// Emit a log record.
 ///
 /// The output line has the shape:
@@ -108,6 +131,12 @@ func logDumpRecent(_ maxCount: Int = 32) {
 /// - from IRQ handlers (the underlying uartPut* are polled);
 /// - with IRQs masked (no locks are taken).
 func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString) {
+    // L2 filtering: drop everything below the current min level.
+    // .panic is never filtered (always want the message + ring tail).
+    if level != .panic && level.rawValue < minLogLevel.rawValue {
+        return
+    }
+
     uartPutc(0x5B) // [
     uartPutUInt(timerGetTicks())
     uartPuts("] [")

@@ -683,6 +683,10 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     klog(.info, "log", "L0 kernel logger active")
+    klog(.info, "log", "level filtering active (min INFO)")
+    // A .debug line that is suppressed by the L2 default (.info). This proves
+    // the filter is active without polluting normal boot logs or test output.
+    klog(.debug, "log", "this debug line should be filtered by default")
     schedulerInit()
     processInit()
     securityInit()
