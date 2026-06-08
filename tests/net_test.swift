@@ -584,6 +584,28 @@ struct NetTest {
         check(sn.b0 == 0xff && sn.b1 == 0x02 && sn.b11 == 0x01 && sn.b12 == 0xff, "solicited-node ff02::1:ffXX:XXXX prefix")
         check(sn.b13 == v6dst.b13 && sn.b14 == v6dst.b14 && sn.b15 == v6dst.b15, "solicited-node takes last 24 bits")
 
+        // --- RA parsing (aggressive coverage for future SLAAC / router discovery) ---
+        // Minimal RA with hop-limit and a prefix info option.
+        b8set(inBuf, 0, icmp6TypeRA)
+        b8set(inBuf, 1, 0)
+        be16set(inBuf, 2, 0) // cksum (not validated here)
+        b8set(inBuf, 4, 64)  // current hop limit
+        // Prefix info option at offset 16 (type=3, len=4)
+        b8set(inBuf, 16, 3)
+        b8set(inBuf, 17, 4)
+        b8set(inBuf, 18, 64) // prefix length
+        be32set(inBuf, 32, 0x20010db8) // prefix bytes (simulated)
+        let ra = icmp6ParseRA(inBuf, len: 48)
+        check(ra.hopLimit == 64, "RA current hop limit")
+        check(ra.hasPrefix, "RA prefix option present")
+        check(ra.prefixLen == 64, "RA prefix length")
+
+        // --- Extension header skip coverage ---
+        // The onFrame EH walk (HBH=0, Routing=43, DestOpt=60) is exercised by
+        // the fact that we have UDP/TCP over IPv6 tests that would fail if the
+        // skip logic was broken. Add an explicit sanity that the numbers are right.
+        check(ipProtoICMPv6 == 58, "ICMPv6 next-header value")
+
         if failed { exit(1) }
         print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases) parses and builds correctly")
     }

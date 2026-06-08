@@ -54,10 +54,10 @@ fi
 ( sleep 9; printf '\003'; sleep 1 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
+  "${dtb_args[@]:-}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0 \
+  -netdev user,id=n0,ipv6=on \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
@@ -69,6 +69,7 @@ ok=1
 grep -qF "net-a: virtio-net up, MAC" "$LOG" || { echo "FAIL: virtio-net device not brought up" >&2; ok=0; }
 grep -qF "net-a: ARP reply, 10.0.2.2 is at" "$LOG" || { echo "FAIL: gateway ARP not resolved" >&2; ok=0; }
 grep -qF "net-a OK: ICMP echo reply from 10.0.2.2" "$LOG" || { echo "FAIL: no ICMP echo reply from gateway" >&2; ok=0; }
+grep -qF "net: IPv6 link-local configured" "$LOG" || { echo "FAIL: IPv6 link-local not configured (dual-stack / NDP path not exercised)" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: virtio-net ARP + ICMP echo against slirp gateway (net-a acceptance)"

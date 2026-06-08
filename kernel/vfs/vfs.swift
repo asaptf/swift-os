@@ -637,6 +637,14 @@ private func installDescription(_ proc: Int, _ fd: Int, _ desc: Int, rights: Rig
     setFDEntry(proc, fd, HandleEntry(inUse: true, object: desc, rights: rights))
 }
 
+private func posixRights(read: Bool, write: Bool) -> Rights {
+    var r = rights(read: read, write: write)
+    r.insert(.duplicate)
+    r.insert(.transfer)
+    r.insert(.getattr)
+    return r
+}
+
 // ---- kernel-internal handle API (C1) --------------------------------------
 //
 // The handle-generic operations from docs/CAPABILITIES.md §2. These are not yet
