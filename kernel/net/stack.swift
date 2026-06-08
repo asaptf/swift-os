@@ -42,8 +42,8 @@ struct RxOutcome {
     var echoReply = false
     var echoSeq: UInt16 = 0
     // A received UDP datagram addressed to us. The payload is reported by its
-    // offset into the original frame buffer (zero-copy: the kernel socket layer
-    // copies it out of the RX buffer itself).
+    // offset into the original frame buffer; the driver/socket glue can retain
+    // that RX descriptor and queue only this metadata until recvfrom consumes it.
     var gotUDP = false
     var udpSrcIP: IPv4 = 0
     var udpSrcPort: UInt16 = 0
@@ -52,7 +52,8 @@ struct RxOutcome {
     var udpPayloadOff = 0
     var udpPayloadLen = 0
     // A received TCP segment addressed to us (the kernel socket layer owns the
-    // connections and drives the state machine; the core only reports).
+    // connections and drives the state machine; the core only reports the
+    // payload offset into the caller-owned RX frame).
     var gotTCP = false
     var tcpSrcIP: IPv4 = 0
     var tcpSrcMac: MAC = .zero

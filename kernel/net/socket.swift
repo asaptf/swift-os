@@ -4,10 +4,11 @@
 // net_test. It owns the live NetStack, pumps the NIC, demuxes received UDP
 // datagrams into bound sockets, and transmits outbound ones.
 //
-// One shared NetStack drives the NIC; sockets are a small fixed table, each with
-// a short ring of queued datagrams whose payloads live in a single PMM region
-// allocated once at netInit (no per-socket alloc churn). recvfrom pumps the NIC
-// until a datagram for the socket arrives or a timeout fires.
+// One shared NetStack drives the NIC; sockets are a small fixed table. UDP
+// receive rings hold references to retained RX DMA buffers rather than copying
+// payloads into per-socket storage. recvfrom pumps the NIC until a datagram for
+// the socket arrives or a timeout fires, then copies once across the syscall
+// boundary into the caller's user buffer and releases the RX descriptor.
 
 let netLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest address)
 let netGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
@@ -15,9 +16,6 @@ let netDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
 
 private let maxSockets = 32
 private let sockRingDepth = 4
-private let sockDatagramCap = 1536
-private let sockBufBytes = maxSockets * sockRingDepth * sockDatagramCap
-private let sockBufPages = (sockBufBytes + 4095) / 4096
 
 // Ephemeral local-port allocator (net-rob). The pure rotating allocator lives in
 // tcp.swift (`nextEphemeralPort`, `ephemeralPort{Low,High}`) so the host net_test
@@ -36,7 +34,6 @@ let netErrAgain = -11      // EAGAIN / timed out
 
 var gNet = NetStack(mac: .zero, ip: netLocalIP)   // replaced in netInit with the real MAC
 var netReady = false
-private var gSockBufBase: UInt = 0
 private var gDnsScratch: UInt = 0   // one PMM page: query at +0, response at +1024 (net-f)
 
 private var sockInUse = [Bool](repeating: false, count: maxSockets)
@@ -46,10 +43,13 @@ private var sockOwner = [UInt32](repeating: 0, count: maxSockets)
 private var sockHead = [Int](repeating: 0, count: maxSockets)
 private var sockCount = [Int](repeating: 0, count: maxSockets)
 // Per (socket, ring slot) datagram metadata; the payload bytes live at
-// gSockBufBase + (s*depth + slot) * sockDatagramCap.
+// virtioNetRxFramePointer(ref: dgRxRef[ri], offset: dgPayloadOff[ri]) until
+// recvfrom releases the descriptor reference.
 private var dgSrcIP = [IPv4](repeating: 0, count: maxSockets * sockRingDepth)
 private var dgSrcPort = [UInt16](repeating: 0, count: maxSockets * sockRingDepth)
 private var dgLen = [Int](repeating: 0, count: maxSockets * sockRingDepth)
+private var dgRxRef = [Int](repeating: -1, count: maxSockets * sockRingDepth)
+private var dgPayloadOff = [Int](repeating: 0, count: maxSockets * sockRingDepth)
 
 // Protocol + TCP state per socket (net-c2). A TCP socket is either a listener
 // (sockIsListener) or a connection that owns a TCPConnection in tcpConns and is
@@ -66,9 +66,6 @@ private var sockRemotePort = [UInt16](repeating: 0, count: maxSockets)
 private var sockRemoteMac = [MAC](repeating: .zero, count: maxSockets)
 private var tcpConns = [TCPConnection](repeating: TCPConnection(), count: maxSockets)
 
-@inline(__always) private func slotBuf(_ ri: Int) -> UnsafeMutableRawPointer {
-    UnsafeMutableRawPointer(bitPattern: gSockBufBase + UInt(ri * sockDatagramCap))!
-}
 @inline(__always) private func socketValid(_ s: Int) -> Bool {
     s >= 0 && s < maxSockets && sockInUse[s]
 }
@@ -87,7 +84,7 @@ private func allocEphemeralPort(for s: Int) -> UInt16 {
     nextEphemeralPort(cursor: &ephemeralCursor) { localPortInUse($0, except: s) }
 }
 
-/// Bring up the NIC once and create the shared NetStack + socket buffer pool.
+/// Bring up the NIC once and create the shared NetStack.
 /// Idempotent. A no-op when no virtio-net device is attached (netReady stays
 /// false, so socket() returns ENETDOWN and the other boot paths are unaffected).
 func netInit() {
@@ -97,12 +94,6 @@ func netInit() {
         return
     }
     gNet = NetStack(mac: virtioNetMac(), ip: netLocalIP)
-    let base = pmm_alloc_pages(sockBufPages)
-    if base == 0 {
-        uartPuts("net: socket buffer allocation failed\n")
-        return
-    }
-    gSockBufBase = base
     gDnsScratch = pmm_alloc_page()   // 0 on failure → dnsResolve returns 0 gracefully
     netReady = true
 }
@@ -147,6 +138,8 @@ func netPump() {
         if tcpConns[c].outCount > 0 { tcpDrain(c, now) }
         reapConnIfDead(c)
     }
+    _ = virtioNetTxDrain()
+    virtioNetMaybeReportZeroCopy()
 }
 
 /// Free a listener-spawned connection slot once its TCP engine has fully torn
@@ -163,27 +156,41 @@ func netPump() {
     }
 }
 
-/// Called by the driver for each received UDP datagram. `payload` points into
-/// the RX DMA buffer; we copy it into the matching bound socket's ring.
+private func releaseQueuedDatagrams(_ s: Int) {
+    var i = 0
+    while i < sockCount[s] {
+        let slot = (sockHead[s] + i) % sockRingDepth
+        let ri = s * sockRingDepth + slot
+        if dgRxRef[ri] >= 0 {
+            virtioNetReleaseRxBuffer(dgRxRef[ri])
+            dgRxRef[ri] = -1
+        }
+        dgPayloadOff[ri] = 0
+        dgLen[ri] = 0
+        i += 1
+    }
+    sockHead[s] = 0
+    sockCount[s] = 0
+}
+
+/// Called by the driver for each received UDP datagram. The payload stays in the
+/// RX DMA buffer; the socket ring queues a descriptor reference + payload offset.
+/// Returns true when the RX buffer was retained and must not be recycled by the
+/// driver after this call.
 func socketDeliverUDP(srcIP: IPv4, srcPort: UInt16, dstPort: UInt16,
-                      payload: UnsafeRawPointer, len: Int) {
-    if !netReady || len < 0 { return }
+                      rxRef: Int, payloadOffset: Int, len: Int) -> Bool {
+    if !netReady || len < 0 { return false }
     for s in 0..<maxSockets where sockInUse[s] && sockBound[s] && sockPort[s] == dstPort {
-        if sockCount[s] >= sockRingDepth { return }       // ring full: drop (UDP may)
-        let n = len > sockDatagramCap ? sockDatagramCap : len
+        if sockCount[s] >= sockRingDepth { return false }       // ring full: drop (UDP may)
+        if !virtioNetRetainRxBuffer(rxRef) { return false }
         let slot = (sockHead[s] + sockCount[s]) % sockRingDepth
         let ri = s * sockRingDepth + slot
-        let dst = slotBuf(ri)
-        var i = 0
-        while i < n {
-            dst.storeBytes(of: payload.load(fromByteOffset: i, as: UInt8.self),
-                           toByteOffset: i, as: UInt8.self)
-            i += 1
-        }
-        dgSrcIP[ri] = srcIP; dgSrcPort[ri] = srcPort; dgLen[ri] = n
+        dgSrcIP[ri] = srcIP; dgSrcPort[ri] = srcPort; dgLen[ri] = len
+        dgRxRef[ri] = rxRef; dgPayloadOff[ri] = payloadOffset
         sockCount[s] += 1
-        return
+        return true
     }
+    return false
 }
 
 /// Resolve `ip` to a MAC, ARPing (bounded) if it is not already cached.
@@ -265,7 +272,7 @@ func socketRecv(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
         if sockCount[s] > 0 {
             let ri = s * sockRingDepth + sockHead[s]
             let n = dgLen[ri] > cap ? cap : dgLen[ri]
-            let srcp = slotBuf(ri)
+            let srcp = virtioNetRxFramePointer(ref: dgRxRef[ri], offset: dgPayloadOff[ri])
             var i = 0
             while i < n {
                 dst.storeBytes(of: srcp.load(fromByteOffset: i, as: UInt8.self),
@@ -273,6 +280,10 @@ func socketRecv(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
                 i += 1
             }
             srcIP = dgSrcIP[ri]; srcPort = dgSrcPort[ri]
+            virtioNetReleaseRxBuffer(dgRxRef[ri])
+            dgRxRef[ri] = -1
+            dgPayloadOff[ri] = 0
+            dgLen[ri] = 0
             sockHead[s] = (sockHead[s] + 1) % sockRingDepth
             sockCount[s] -= 1
             return n
@@ -462,6 +473,9 @@ func socketPollReadable(_ s: Int) -> Bool {
 
 func socketClose(_ s: Int) {
     if !socketValid(s) { return }
+    if sockProto[s] == sockProtoUDP {
+        releaseQueuedDatagrams(s)
+    }
     // A live TCP connection sends a FIN (and flushes it) before the slot frees.
     if sockProto[s] == sockProtoTCP && !sockIsListener[s] {
         let st = tcpConns[s].state
