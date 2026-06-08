@@ -618,6 +618,10 @@ int swiftos_socket_stream(void) {
     return (int)__syscall3(SYS_SOCKET, 2, 1, 0);   // AF_INET, SOCK_STREAM
 }
 
+int swiftos_socket_stream_ipv6(void) {
+    return (int)__syscall3(SYS_SOCKET, 10, 1, 0);  // AF_INET6, SOCK_STREAM
+}
+
 int swiftos_listen(int fd, int backlog) {
     return (int)__syscall3(SYS_LISTEN, fd, backlog, 0);
 }
