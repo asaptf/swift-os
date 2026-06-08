@@ -54,7 +54,7 @@ dtb_args=()
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,hostfwd=udp:127.0.0.1:5555-:5555 \
+  -netdev user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555 \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
