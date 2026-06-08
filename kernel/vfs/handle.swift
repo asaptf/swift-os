@@ -35,6 +35,27 @@ struct Rights: OptionSet {
 // minimal spawn default (just fds 0/1/2). See docs/CAPABILITIES.md §3.
 enum HandleInheritance { case all, stdioOnly }
 
+// One entry in a process's handle table. C1 keeps the POSIX fd namespace as the
+// observable view of this table: `object` is still the shared OpenDescription
+// index used by vfs.swift, while `kind`, `rights`, and `cloexec` are properties
+// of the individual handle slot.
+struct HandleEntry {
+    var inUse = false
+    var kind: HandleKind = .none
+    var object = -1
+    var rights = Rights()
+    var cloexec = false
+
+    init(inUse: Bool = false, kind: HandleKind = .none, object: Int = -1,
+         rights: Rights = Rights(), cloexec: Bool = false) {
+        self.inUse = inUse
+        self.kind = kind
+        self.object = object
+        self.rights = rights
+        self.cloexec = cloexec
+    }
+}
+
 // Build the read/write rights for a freshly minted handle. Kept dependency-free:
 // the O_* flag constants live in vfs.swift, which computes these two bools.
 func rights(read: Bool, write: Bool) -> Rights {

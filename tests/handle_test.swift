@@ -21,19 +21,31 @@ struct HandleTest {
     }
 
     static func main() {
-        // ---- 1. Rights superset --------------------------------------------
+        // ---- 1. Stable Rights bit positions --------------------------------
+        check(Rights.read.rawValue == 1 << 0, "Rights.read bit is stable")
+        check(Rights.write.rawValue == 1 << 1, "Rights.write bit is stable")
+        check(Rights.duplicate.rawValue == 1 << 4, "Rights.duplicate bit is stable")
+        check(Rights.transfer.rawValue == 1 << 5, "Rights.transfer bit is stable")
+        check(Rights.getattr.rawValue == 1 << 6, "Rights.getattr bit is stable")
+        check(Rights.setattr.rawValue == 1 << 7, "Rights.setattr bit is stable")
+
+        // ---- 2. Rights superset --------------------------------------------
         check(Rights([.read, .write]).isSuperset(of: [.read]),
               "[read,write] is a superset of [read]")
         check(!Rights([.read]).isSuperset(of: [.read, .write]),
               "[read] is not a superset of [read,write]")
 
-        // ---- 2. Attenuation is restrict-only -------------------------------
+        // ---- 3. Attenuation is restrict-only -------------------------------
         check(attenuate([.read, .write], to: [.read]) == [.read],
               "attenuate([read,write], to: [read]) == [read]")
         check(attenuate([.read], to: [.read, .write]) == [.read],
               "attenuate([read], to: [read,write]) == [read] (cannot add)")
+        check(attenuate([.read, .duplicate], to: [.read, .transfer]) == [.read],
+              "attenuate cannot add transfer while restricting duplicate")
 
-        // ---- 3. rights(read:write:) constructor ----------------------------
+        // ---- 4. rights(read:write:) constructor ----------------------------
+        check(rights(read: false, write: false) == [],
+              "rights(read: false, write: false) == []")
         check(rights(read: true, write: false) == [.read],
               "rights(read: true, write: false) == [read]")
         check(rights(read: false, write: true) == [.write],
@@ -41,13 +53,29 @@ struct HandleTest {
         check(rights(read: true, write: true) == [.read, .write],
               "rights(read: true, write: true) == [read,write]")
 
-        // ---- 4. HandleKind cases are distinct ------------------------------
+        // ---- 5. HandleKind cases are distinct ------------------------------
         check(HandleKind.file.rawValue != HandleKind.socket.rawValue,
               "HandleKind.file != .socket")
         check(HandleKind.none.rawValue != HandleKind.tty.rawValue,
               "HandleKind.none != .tty")
         check(HandleKind.pipe.rawValue != HandleKind.file.rawValue,
               "HandleKind.pipe != .file")
+        check(HandleKind.endpoint.rawValue != HandleKind.socket.rawValue,
+              "HandleKind.endpoint != .socket")
+
+        // ---- 6. HandleEntry is a typed fd slot ------------------------------
+        let empty = HandleEntry()
+        check(!empty.inUse && empty.kind == .none && empty.object == -1 &&
+              empty.rights == [] && !empty.cloexec,
+              "default HandleEntry is empty")
+
+        let fd = HandleEntry(inUse: true, kind: .file, object: 7,
+                             rights: [.read, .duplicate], cloexec: true)
+        check(fd.inUse, "HandleEntry can be marked in use")
+        check(fd.kind == .file, "HandleEntry records its kind")
+        check(fd.object == 7, "HandleEntry records its object index")
+        check(fd.rights == [.read, .duplicate], "HandleEntry records per-handle rights")
+        check(fd.cloexec, "HandleEntry records close-on-exec per slot")
 
         if failed {
             FileHandle.standardError.write(Data("handle_test: FAILURES\n".utf8))

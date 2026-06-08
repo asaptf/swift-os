@@ -433,6 +433,34 @@ in its own right and a prerequisite for a sane multi-core driver/service model.
 See the new document for the detailed S0–S5 SMP phases, recommended sequencing, decision forks that
 require explicit review ("ask, don't guess"), and acceptance criteria style.
 
+## C-arc checkpoints (post-M13)
+
+### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
+
+- **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
+  `HandleKind`, `Rights`, `HandleInheritance`, and `HandleEntry` vocabulary. The
+  VFS fd table stores `HandleEntry` values keyed by `(process slot, fd)`: each slot
+  records the fd-visible object kind, the shared open-description index, per-handle
+  rights, and the per-slot `cloexec` flag.
+- **Behavior-preserving fd view.** POSIX-visible fd numbering is unchanged:
+  top-level stdio is still `0/1/2`, `open()` and `socket()` allocate from fd `3`,
+  while `dup`, `dup2`, `F_DUPFD(_CLOEXEC)`, and `pipe` preserve their existing
+  lowest-free behavior. Shared offsets, pipe/socket lifetime, close-on-exec,
+  fork inheritance, and exec behavior remain backed by the existing reference-counted
+  `OpenDescription` pool.
+- **Rights without new policy.** `read`/`write` rights stay per handle and are used
+  by the same syscall paths as before. C1 does not add enforcement for `.duplicate`,
+  `.transfer`, `.getattr`, socket-specific operations, or process capability checks
+  beyond the policy that already existed before this checkpoint.
+- **Tests / acceptance.** `tests/handle_test.swift` covers stable rights bits,
+  attenuation, `rights(read:write:)`, distinct handle kinds, and typed `HandleEntry`
+  initialization. The boot path prints `C1 OK: fds-as-handles preserved` only after
+  `/bin/fdopsdemo` exits successfully, and `tests/boot_test.sh` asserts that marker.
+- **Non-goals left for later C milestones.** No new user-visible generic handle
+  syscalls, no spawn-with-explicit-handles default flip (C2), no object-scoped
+  authority policy expansion (C3), no new IPC/VMO/device/cell handle semantics
+  (C4+), and no SMP work.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

@@ -264,6 +264,9 @@ private func runFdOpsDemo() {
     uartPuts("M8e OK: fdops demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
+    if code == 0 {
+        uartPuts("C1 OK: fds-as-handles preserved\n")
+    }
 }
 
 private func runFsDemo() {

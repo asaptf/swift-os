@@ -58,6 +58,7 @@ fdopsdemo: pipe/poll/fork OK
 fdopsdemo: pipe-poll preemption stress OK
 fdopsdemo: rename/unlink/mkdir/rmdir OK
 M8e OK: fdops demo exited, code 0
+C1 OK: fds-as-handles preserved
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
 M12a security: boot principal console session 1
