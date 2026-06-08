@@ -9,27 +9,24 @@ See also:
 - `docs/RISK_REMEDIATION_ROADMAP.md` (observability listed among the post-M13 gaps).
 - `docs/NOTES.md` (milestone log; hardware; decisions — new logging work is recorded here too).
 
-## Current State (pre-L0)
+## Current State (L0-L2 Landed)
 
-As of the current tree (post-M13 + net bring-up), there is **no structured logging subsystem**.
+The current tree has the first logging foundation:
 
-- Kernel output is performed exclusively by ad-hoc calls to the UART driver:
-  - `uartPuts(_: StaticString)`, `uartPutc`, `uartPutHex`, `uartPutUInt`.
-  - Defined in `kernel/drivers/uart.swift`.
-  - Also mirrored to a linear framebuffer (if present from UEFI GOP) via `fb_putc` inside `uartPutc`.
-- These calls are scattered across:
-  - `kernel/main.swift` (all the "M3: ...", "M4.5 ...", "Mxx OK:", "panic: ...", probe dumps, reclaim reports, etc.).
-  - `kernel/arch/aarch64/platform.swift` (DTB discovery banners).
-  - `kernel/sched/scheduler.swift`, `kernel/timer/generic_timer.swift` (one remaining sched online line; per-tick deliberately silenced).
-  - Exception/IRQ paths (`exception_handler`, `sync_lower_el...`, unexpected IRQ).
-  - TTY, VFS, drivers on panic paths.
-- The TTY layer (`kernel/tty/tty.swift`) is **userland console** only: it provides canonical/raw line discipline, echo, and `read(0)`/`write(1/2)` for EL0 processes. Kernel code does **not** go through the TTY.
-- Per-tick logging was explicitly turned off once the timer rate was raised to 100 Hz for preemption ("it spammed the console").
-- No levels, no source tags, no timestamps on messages, no ring, no filtering, no export.
-- Userland `printf` (newlib) and Swift `write(1,...)` ultimately reach the same UART via the VFS stdout path when fd 1/2 are open.
-- "Observability" exists only as aspirational text in the architecture docs and as the boot-time milestone banners that double as a poor man's trace.
+- `kernel/log/log.swift` defines `LogLevel`, `klog(level, source, message)`, `klogInfo`, `logDumpRecent`, and `kpanic`.
+- `klog` emits `[tick] [L] source: message` through the UART path, so the framebuffer mirror still works through `uartPutc`.
+- A fixed 256-entry in-memory ring stores accepted `StaticString` records and can dump a recent tail with `logDumpRecent(n)`.
+- `kpanic` records a panic entry and dumps the recent ring tail before halting.
+- Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
+- `tests/boot_test.sh` asserts the L0 line, the L2 filtering announcement, and the ring dump header.
 
-This was acceptable for bring-up (M0–M13). It is no longer sufficient once we want to debug real workloads, cells, driver services, or feed an AI bug-analysis backend.
+Most legacy milestone/probe output is still emitted by direct UART calls:
+
+- `kernel/main.swift` still owns the "M3: ...", "Mxx OK:", probe dumps, and demo banners.
+- Platform, driver, exception, VFS, and TTY paths still have many direct `uartPuts` call sites.
+- The TTY layer (`kernel/tty/tty.swift`) remains userland console only; kernel logging does not flow through TTY.
+
+Further L3+ candidate slices exist in external worktrees, but they are not authoritative until individually reviewed, rebased onto current `main`, verified, and committed.
 
 ## Goals
 
@@ -86,7 +83,7 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - is committed
 - then **stop, report, wait for review** before the next L piece.
 
-### L0 — Kernel log facade (current target)
+### L0 — Kernel log facade (DONE, 2026-06-08)
 
 **Scope (keep tiny):**
 - New module `kernel/log/log.swift` (pure Swift, no C bridge yet).
@@ -116,7 +113,7 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - Add runtime level filtering.
 - Touch userland (except that userland continues to see the same UART behavior).
 
-### L1 — Ring buffer + panic tail dump
+### L1 — Ring buffer + panic tail dump (DONE, 2026-06-08)
 
 - Fixed-size ring (power-of-two, 256–1024 entries) of lightweight records or pre-formatted text.
 - Overwrite policy (oldest first).
@@ -125,8 +122,10 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - Test: generate a burst of events, force a recoverable "error" path, capture the log, assert the ring tail is present and in order.
 - Still no change to the legacy banner strings.
 
-### L2 — Filtering, categories, boot-time policy
+### L2 — Global filtering (DONE, 2026-06-08); categories and boot policy deferred
 
+- Done in this slice: a global minimum level (`.info` by default), `klogSetMinLevel`, and a boot assertion that `.debug` is suppressed.
+- Deferred follow-ups:
 - Global + per-source runtime level mask (a small table or bitmask).
 - `klogSetLevel(.warn)` etc. (or a single "consoleLogLevel" for the UART sink).
 - Compile-time `DEBUG` vs release stripping of `.debug` (or a simple `#if`).

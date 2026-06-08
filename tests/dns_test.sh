@@ -112,9 +112,9 @@ await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
 await "swift-os login:" 20 && printf 'root\n' >&3
 await "Password:" 15 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 15 && printf '/bin/nslookup test.swos 10.0.2.2 5354\necho DNS-A-DONE\n' >&3
-await "DNS-A-DONE" 60 && printf '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\necho DNS-AAAA-DONE\n' >&3
-await "DNS-AAAA-DONE" 60 && printf 'exit\n' >&3
+await "Welcome to swift-os, root" 15 && printf '/bin/nslookup test.swos 10.0.2.2 5354\n' >&3
+await "$EXPECT" 60 && printf '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\n' >&3
+await_regex 'test6\.swos -> .*:' 60 && printf 'exit\n' >&3
 
 exec 3>&-
 stop_all

@@ -78,7 +78,7 @@ PID PPID STAT CMD
 ps OK: Swift ps exited, code 0
 L0 kernel logger active
 level filtering active (min INFO)
-log: recent "
+log: recent }"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
