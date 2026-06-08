@@ -44,3 +44,8 @@ func timerHandleTick() {
     // so a context switch never strands an active interrupt at the controller.
     timerScheduleNext()
 }
+
+/// Monotonic tick counter. Published for the logger (L0+) and for lightweight
+/// in-kernel accounting (e.g. /bin/top). Safe to read from any EL1 context
+/// once the timer has been initialised.
+func timerGetTicks() -> UInt64 { systemTicks }

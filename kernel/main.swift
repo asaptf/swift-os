@@ -682,6 +682,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     uartPuts("swift-os M2: enabling GIC and generic timer\n")
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
+    klog(.info, "log", "L0 kernel logger active")
     schedulerInit()
     processInit()
     securityInit()

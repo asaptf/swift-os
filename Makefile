@@ -97,6 +97,7 @@ SWIFT_SRCS := \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
+	kernel/log/log.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
 	kernel/sched/futex.swift \
