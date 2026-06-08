@@ -5,6 +5,7 @@
 // exits with argc; we print the status we got back.
 
 #include "lib/syscall.h"
+#include "lib/fs.h"
 
 int puts_raw(const char *s);
 
@@ -32,14 +33,23 @@ int main(void) {
     print_status("spawndemo: child exit status ", status);
     if (status != 2) { return 1; }
 
+    int root = open("/", O_RDONLY);
+    if (root < 0) {
+        puts_raw("SPAWN-EXPLICIT-FAIL\n");
+        return 1;
+    }
+
     struct swiftos_spawn_handle handles[] = {
         { 0, 0, SWIFTOS_RIGHT_ALL, 0 },
         { 1, 1, SWIFTOS_RIGHT_ALL, 0 },
         { 2, 2, SWIFTOS_RIGHT_ALL, 0 },
         { motd, 3, SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_GETATTR, 0 },
+        { root, 4, SWIFTOS_RIGHT_GETATTR, 0 },
+        { motd, 5, SWIFTOS_RIGHT_READ, 0 },
     };
     char *const inherit_argv[] = { "argvdemo", "inheritcheck", 0 };
-    long inherit_status = spawn_handles("/bin/argvdemo", inherit_argv, handles, 4);
+    long inherit_status = spawn_handles("/bin/argvdemo", inherit_argv,
+                                        handles, sizeof(handles) / sizeof(handles[0]));
     print_status("spawndemo: explicit child exit status ", inherit_status);
     if (inherit_status != 2) { return 1; }
     return 0;

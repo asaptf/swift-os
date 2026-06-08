@@ -103,3 +103,7 @@ func rights(read: Bool, write: Bool) -> Rights {
 // Attenuation: restrict `r` to at most `mask`. Restrict-only — the intersection
 // can never add a right the source did not already hold.
 func attenuate(_ r: Rights, to mask: Rights) -> Rights { r.intersection(mask) }
+
+func hasRights(_ held: Rights, _ required: Rights) -> Bool {
+    held.isSuperset(of: required)
+}

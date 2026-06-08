@@ -23,6 +23,7 @@ final class HeapProbe {
 
 private var retainedProbe: HeapProbe? = nil
 private var c2SpawnExplicitPassed = false
+private var c3HandleRightsPassed = false
 
 /// Enable the MMU using the static boot page tables (kernel/mm/vm.c — these do
 /// not draw from the PMM). DTB parsing runs before this, so the parser avoids
@@ -202,7 +203,10 @@ private func runSpawnDemo() {
     uartPuts("M8a OK: spawn parent exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
-    if code == 0 { c2SpawnExplicitPassed = true }
+    if code == 0 {
+        c2SpawnExplicitPassed = true
+        c3HandleRightsPassed = true
+    }
 }
 
 private func runBrkDemo() {
@@ -283,6 +287,9 @@ private func runFsDemo() {
     uartPuts("M8b OK: VFS demo exited, code ")
     uartPutUInt(UInt64(code))
     uartPuts("\n")
+    if code == 0 && c3HandleRightsPassed {
+        uartPuts("C3 OK: per-handle rights enforced\n")
+    }
 }
 
 private func runSecurityDemo() {

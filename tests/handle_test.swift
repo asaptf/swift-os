@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// handle_test.swift — host unit test for kernel/vfs/handle.swift (C1/C2).
+// handle_test.swift — host unit test for kernel/vfs/handle.swift (C1-C3).
 //
 // Compiled with the host Swift toolchain against the pure, dependency-free
 // handle vocabulary the kernel links (no MMIO/syscalls/heap), then run with no
@@ -24,6 +24,8 @@ struct HandleTest {
         // ---- 1. Stable Rights bit positions --------------------------------
         check(Rights.read.rawValue == 1 << 0, "Rights.read bit is stable")
         check(Rights.write.rawValue == 1 << 1, "Rights.write bit is stable")
+        check(Rights.execute.rawValue == 1 << 2, "Rights.execute bit is stable")
+        check(Rights.map.rawValue == 1 << 3, "Rights.map bit is stable")
         check(Rights.duplicate.rawValue == 1 << 4, "Rights.duplicate bit is stable")
         check(Rights.transfer.rawValue == 1 << 5, "Rights.transfer bit is stable")
         check(Rights.getattr.rawValue == 1 << 6, "Rights.getattr bit is stable")
@@ -34,6 +36,10 @@ struct HandleTest {
               "[read,write] is a superset of [read]")
         check(!Rights([.read]).isSuperset(of: [.read, .write]),
               "[read] is not a superset of [read,write]")
+        check(hasRights([.read, .getattr], [.read]),
+              "hasRights accepts a subset of held rights")
+        check(!hasRights([.read], [.read, .getattr]),
+              "hasRights rejects missing required rights")
 
         // ---- 3. Attenuation is restrict-only -------------------------------
         check(attenuate([.read, .write], to: [.read]) == [.read],
@@ -42,6 +48,11 @@ struct HandleTest {
               "attenuate([read], to: [read,write]) == [read] (cannot add)")
         check(attenuate([.read, .duplicate], to: [.read, .transfer]) == [.read],
               "attenuate cannot add transfer while restricting duplicate")
+        check(attenuate([.read, .write, .getattr], to: []) == [],
+              "attenuate to an empty mask removes all rights")
+        let allRights: Rights = [.read, .write, .execute, .map, .duplicate, .transfer, .getattr, .setattr]
+        check(attenuate(allRights, to: allRights) == allRights,
+              "attenuate to all rights preserves held rights")
 
         // ---- 4. rights(read:write:) constructor ----------------------------
         check(rights(read: false, write: false) == [],

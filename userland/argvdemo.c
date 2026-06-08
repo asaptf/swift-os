@@ -4,6 +4,7 @@
 // by crt0 and passed to main. Exits with argc as the status.
 
 #include "lib/syscall.h"
+#include "lib/fs.h"
 
 int puts_raw(const char *s);
 
@@ -41,6 +42,40 @@ int main(int argc, char **argv) {
             puts_raw("SPAWN-EXPLICIT-OK\n");
         } else {
             puts_raw("SPAWN-EXPLICIT-FAIL\n");
+            return 1;
+        }
+        struct stat st;
+        if (fstat(3, &st) == 0) {
+            puts_raw("C3-FSTAT-ALLOW-OK\n");
+        } else {
+            puts_raw("C3-FSTAT-ALLOW-FAIL\n");
+            return 1;
+        }
+        if (write(3, "x", 1) < 0) {
+            puts_raw("C3-WRITE-DENY-OK\n");
+        } else {
+            puts_raw("C3-WRITE-DENY-LEAK\n");
+            return 1;
+        }
+        int d = dup(3);
+        if (d < 0) {
+            puts_raw("C3-DUP-DENY-OK\n");
+        } else {
+            puts_raw("C3-DUP-DENY-LEAK\n");
+            close(d);
+            return 1;
+        }
+        char dbuf[96];
+        if (getdents(4, dbuf, sizeof(dbuf)) < 0) {
+            puts_raw("C3-GETDENTS-DENY-OK\n");
+        } else {
+            puts_raw("C3-GETDENTS-DENY-LEAK\n");
+            return 1;
+        }
+        if (fstat(5, &st) < 0) {
+            puts_raw("C3-FSTAT-DENY-OK\n");
+        } else {
+            puts_raw("C3-FSTAT-DENY-LEAK\n");
             return 1;
         }
     }

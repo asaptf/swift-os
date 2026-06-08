@@ -27,6 +27,11 @@ M8a OK: argv delivered, argc=3
 SPAWN-ISO-PARENT-FD3
 SPAWN-ISO-OK
 SPAWN-EXPLICIT-OK
+C3-FSTAT-ALLOW-OK
+C3-WRITE-DENY-OK
+C3-DUP-DENY-OK
+C3-GETDENTS-DENY-OK
+C3-FSTAT-DENY-OK
 spawndemo: child exit status 2
 spawndemo: explicit child exit status 2
 M8a OK: spawn parent exited, code 0
@@ -35,7 +40,14 @@ cwd2=/etc
 tmp/note: hi-tmpfs
 CONFINE-IN-OK
 CONFINE-OUT-OK
+C3-SCOPE-IN-OK
+C3-SCOPE-OPEN-OUT-OK err=-13
+C3-SCOPE-STAT-OUT-OK err=-13
+C3-SCOPE-WIDEN-OK err=-13
+C3-SCOPE-CREATE-OUT-OK err=-13
+C3-SCOPE-OK
 M8b OK: VFS demo exited, code 0
+C3 OK: per-handle rights enforced
 M8c brk: heap read/write OK
 newlib: malloc works
 newlib motd: Welcome to swift-os.
@@ -93,7 +105,18 @@ pid=1 principal=1}"
 FORBIDS="${FORBIDS:-SPAWN-ISO-LEAK
 SPAWN-ISO-SETUP-FAIL
 SPAWN-EXPLICIT-FAIL
-this source-filtered info line should be hidden}"
+this source-filtered info line should be hidden
+C3-FSTAT-ALLOW-FAIL
+C3-WRITE-DENY-LEAK
+C3-DUP-DENY-LEAK
+C3-GETDENTS-DENY-LEAK
+C3-FSTAT-DENY-LEAK
+C3-SCOPE-CONFINE-FAIL
+C3-SCOPE-IN-FAIL
+C3-SCOPE-OPEN-OUT-LEAK
+C3-SCOPE-STAT-OUT-LEAK
+C3-SCOPE-WIDEN-LEAK
+C3-SCOPE-CREATE-OUT-LEAK}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

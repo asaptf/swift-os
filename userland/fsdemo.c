@@ -61,16 +61,52 @@ int main(void) {
     }
     close(fd);
 
-    // C3: confine FS access to /etc, then prove the confinement holds — a file
-    // inside the subtree opens, a file outside is denied (object-scoped authority).
-    if (confine("/etc") == 0) {
-        int cin = open("/etc/motd", O_RDONLY);
-        puts_raw(cin >= 0 ? "CONFINE-IN-OK\n" : "CONFINE-IN-FAIL\n");
-        if (cin >= 0) close(cin);
-        int cout = open("/bin/ps", O_RDONLY);
-        puts_raw(cout < 0 ? "CONFINE-OUT-OK\n" : "CONFINE-OUT-LEAK\n");
-        if (cout >= 0) close(cout);
+    // C3: confine FS access to /etc and prove path operations cannot escape it.
+    if (confine("/etc") != 0) {
+        puts_raw("C3-SCOPE-CONFINE-FAIL\n");
+        return 1;
     }
+    int cin = open("/etc/motd", O_RDONLY);
+    if (cin >= 0) {
+        puts_raw("CONFINE-IN-OK\n");
+        puts_raw("C3-SCOPE-IN-OK\n");
+        close(cin);
+    } else {
+        puts_raw("CONFINE-IN-FAIL\n");
+        puts_raw("C3-SCOPE-IN-FAIL\n");
+        return 1;
+    }
+    int cout = open("/bin/ps", O_RDONLY);
+    if (cout == -13) {
+        puts_raw("CONFINE-OUT-OK\n");
+        puts_raw("C3-SCOPE-OPEN-OUT-OK err=-13\n");
+    } else {
+        puts_raw("CONFINE-OUT-LEAK\n");
+        puts_raw("C3-SCOPE-OPEN-OUT-LEAK\n");
+        if (cout >= 0) close(cout);
+        return 1;
+    }
+    if (stat("/bin/ps", &st) == -13) {
+        puts_raw("C3-SCOPE-STAT-OUT-OK err=-13\n");
+    } else {
+        puts_raw("C3-SCOPE-STAT-OUT-LEAK\n");
+        return 1;
+    }
+    if (confine("/") == -13) {
+        puts_raw("C3-SCOPE-WIDEN-OK err=-13\n");
+    } else {
+        puts_raw("C3-SCOPE-WIDEN-LEAK\n");
+        return 1;
+    }
+    int created = open("/tmp/c3-out", O_WRONLY | O_CREAT);
+    if (created == -13) {
+        puts_raw("C3-SCOPE-CREATE-OUT-OK err=-13\n");
+    } else {
+        puts_raw("C3-SCOPE-CREATE-OUT-LEAK\n");
+        if (created >= 0) close(created);
+        return 1;
+    }
+    puts_raw("C3-SCOPE-OK\n");
 
     return 0;
 }

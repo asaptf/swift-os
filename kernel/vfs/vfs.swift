@@ -416,6 +416,7 @@ func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
         let dst = Int(spec.targetFD)
         if src < 0 || src >= maxFDs || dst < 0 || dst >= maxFDs { return errBadFD }
         if !fdEntry(parent, src).inUse { return errBadFD }
+        if !hasRights(fdEntry(parent, src).rights, .transfer) { return errAccess }
         if (spec.flags & ~handleSpecFlagCloexec) != 0 { return errInvalid }
         let bit = UInt64(1) << UInt64(dst)
         if (targetMask & bit) != 0 { return errInvalid }
@@ -479,6 +480,8 @@ func vfsProcessCloseAll(slot: Int) {
             handles[idx] = HandleEntry()
         }
     }
+    cwdNodes[slot] = 0
+    confineNodes[slot] = 0
 }
 
 /// Close the slot's close-on-exec descriptors. Called from execve: POSIX closes
@@ -511,7 +514,8 @@ private func cwdNodeForCurrentProcess() -> Int {
 }
 
 private func confineRootForCurrentProcess() -> Int {
-    confineNodes[currentVFSProcess()]
+    let slot = processCurrentSlot()
+    return (slot >= 0 && slot < maxVFSProcesses) ? confineNodes[slot] : 0
 }
 
 private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {
@@ -520,6 +524,10 @@ private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {
 
 private func setFDEntry(_ proc: Int, _ fd: Int, _ value: HandleEntry) {
     handles[fdIndex(proc, fd)] = value
+}
+
+private func fdEntryHasRights(_ proc: Int, _ fd: Int, _ required: Rights) -> Bool {
+    validFD(proc, fd) && hasRights(fdEntry(proc, fd).rights, required)
 }
 
 private func nameEquals(_ node: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> Bool {
@@ -597,6 +605,10 @@ private func isDescendant(_ node: Int, of ancestor: Int) -> Bool {
         n = nodes[n].parent
     }
     return ancestor == 0
+}
+
+private func confinedAllows(_ node: Int) -> Bool {
+    isDescendant(node, of: confineRootForCurrentProcess())
 }
 
 // ---- fd/open-description helpers -----------------------------------------
@@ -685,6 +697,7 @@ private func posixRights(read: Bool, write: Bool) -> Rights {
     r.insert(.duplicate)
     r.insert(.transfer)
     r.insert(.getattr)
+    r.insert(.setattr)
     return r
 }
 
@@ -706,6 +719,7 @@ func handleRights(_ proc: Int, _ fd: Int) -> Rights {
 /// a negative error.
 func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
     guard validFD(proc, fd) else { return errBadFD }
+    guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
     let newfd = allocFDInProcess(proc, from: 0)
     if newfd == -1 { return errNoSpace }
     let d = fdEntry(proc, fd).object
@@ -791,7 +805,8 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     // M13: capability enforcement. Reading the filesystem needs capFsRead;
     // writing/creating (only the tmpfs is writable) needs capTmpWrite.
     let caps = processCurrentCaps()
-    let wantWrite = (f & oWrOnly) != 0 || (f & oRdWr) != 0 || (f & oCreat) != 0
+    let wantWrite = (f & oWrOnly) != 0 || (f & oRdWr) != 0 ||
+                    (f & oCreat) != 0 || (f & oTrunc) != 0
     let wantRead = (f & oWrOnly) == 0 // O_RDONLY or O_RDWR
     if wantRead && (caps & capFsRead) == 0 { return errAccess }
     if wantWrite && (caps & capTmpWrite) == 0 { return errAccess }
@@ -999,6 +1014,7 @@ func vfsClose(fd: Int) -> Int {
 func vfsDup(fd: Int) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
+    guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
     let newfd = allocFDInProcess(proc, from: 0)
     if newfd == -1 { return errNoSpace }
     let d = fdEntry(proc, fd).object
@@ -1014,6 +1030,7 @@ func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     guard validFD(proc, oldfd) else { return errBadFD }
     if newfd < 0 || newfd >= maxFDs { return errBadFD }
     if oldfd == newfd { return newfd }
+    guard fdEntryHasRights(proc, oldfd, .duplicate) else { return errAccess }
     if fdEntry(proc, newfd).inUse {
         releaseDescription(fdEntry(proc, newfd).object)
         setFDEntry(proc, newfd, HandleEntry())
@@ -1043,6 +1060,7 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
     guard validFD(proc, fd) else { return errBadFD }
     switch cmd {
     case fDupFD, fDupFDCloexec:
+        guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
         // Duplicate to the lowest free descriptor >= arg (shares the open
         // description, like dup). F_DUPFD_CLOEXEC additionally marks the new fd
         // close-on-exec.
@@ -1055,13 +1073,17 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         if cmd == fDupFDCloexec { handles[fdIndex(proc, newfd)].cloexec = true }
         return newfd
     case fGetFD:
+        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
         return fdEntry(proc, fd).cloexec ? fdCloexecFlag : 0
     case fSetFD:
+        guard fdEntryHasRights(proc, fd, .setattr) else { return errAccess }
         handles[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
         return 0
     case fGetFL:
+        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
         return openDescriptions[fdEntry(proc, fd).object].flags
     case fSetFL:
+        guard fdEntryHasRights(proc, fd, .setattr) else { return errAccess }
         return 0
     default:
         return errInvalid
@@ -1216,6 +1238,7 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
 func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
+    guard fdEntryHasRights(proc, fd, .read) else { return errBadFD }
     let desc = openDescriptions[fdEntry(proc, fd).object]
     guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
     let ep = desc.node
@@ -1261,6 +1284,7 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
+    guard hasRights(entry.rights, .read) || hasRights(entry.rights, .write) else { return errAccess }
     let d = entry.object
     var file = openDescriptions[d]
     guard entry.kind == .file else { return errInvalid }
@@ -1323,6 +1347,7 @@ func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
+    if !confinedAllows(node) { return errAccess }
     return writeStatNode(statbuf, node)
 }
 
@@ -1330,6 +1355,7 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
+    guard hasRights(entry.rights, .getattr) else { return errAccess }
     let file = openDescriptions[entry.object]
     let me = processCurrentPrincipal()
     let now = rtcNow()
@@ -1345,6 +1371,7 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
+    guard hasRights(entry.rights, .read) else { return errBadFD }
     let d = entry.object
     var file = openDescriptions[d]
     guard entry.kind == .file else { return errInvalid }
@@ -1385,6 +1412,7 @@ func vfsChdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
+    if !confinedAllows(node) { return errAccess }
     if !nodes[node].isDir { return errNotDir }
     cwdNodes[currentVFSProcess()] = node
     return 0
@@ -1402,6 +1430,7 @@ func vfsConfine(path pathVA: UInt) -> Int {
     let proc = currentVFSProcess()
     if !isDescendant(node, of: confineNodes[proc]) { return errAccess }
     confineNodes[proc] = node
+    if !isDescendant(cwdNodes[proc], of: node) { cwdNodes[proc] = node }
     return 0
 }
 
@@ -1452,6 +1481,7 @@ func vfsUnlink(path pathVA: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
+    if !confinedAllows(node) { return errAccess }
     if nodes[node].isDir { return errIsDir }
     let parent = nodes[node].parent
     if nodes[parent].readOnly { return errReadOnly }
@@ -1465,6 +1495,7 @@ func vfsMkdir(path pathVA: UInt) -> Int {
     var ls = 0, ll = 0
     let parent = resolveParent(path, &ls, &ll)
     if parent == -1 { return errNoEntry }
+    if !confinedAllows(parent) { return errAccess }
     if nodes[parent].readOnly { return errReadOnly }
     if findChild(parent, path + ls, ll) != -1 { return errExists }
     return createTmpNode(parent, path + ls, ll, isDir: true) == -1 ? errNoSpace : 0
@@ -1475,6 +1506,7 @@ func vfsRmdir(path pathVA: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node <= 0 { return errInvalid }
+    if !confinedAllows(node) { return errAccess }
     if !nodes[node].isDir { return errNotDir }
     if nodes[node].firstChild != -1 { return errNotEmpty }
     let parent = nodes[node].parent
@@ -1490,10 +1522,12 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let src = resolve(oldPath)
     if src <= 0 { return errNoEntry }
+    if !confinedAllows(src) { return errAccess }
 
     var nls = 0, nll = 0
     let dstParent = resolveParent(newPath, &nls, &nll)
     if dstParent == -1 { return errNoEntry }
+    if !confinedAllows(dstParent) { return errAccess }
     let srcParent = nodes[src].parent
     if nodes[srcParent].readOnly || nodes[dstParent].readOnly { return errReadOnly }
     if nodes[src].isDir && isDescendant(dstParent, of: src) { return errInvalid }
@@ -1521,6 +1555,7 @@ func vfsChmod(path pathVA: UInt, mode: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
+    if !confinedAllows(node) { return errAccess }
     if nodes[node].readOnly { return errReadOnly }
     nodes[node].mode = UInt32(mode & 0o7777)
     return 0
@@ -1531,6 +1566,7 @@ func vfsChown(path pathVA: UInt, owner: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
+    if !confinedAllows(node) { return errAccess }
     if nodes[node].readOnly { return errReadOnly }
     nodes[node].owner = UInt32(truncatingIfNeeded: owner)
     return 0
@@ -1550,8 +1586,8 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
         return revents
     }
     if kind == .socket {
-        if (events & pollIn) != 0 && socketPollReadable(desc.node) { revents |= pollIn }
-        if (events & pollOut) != 0 { revents |= pollOut }   // always writable
+        if (events & pollIn) != 0 && rights.contains(.read) && socketPollReadable(desc.node) { revents |= pollIn }
+        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }   // always writable
         return revents
     }
     if kind == .pipe {
@@ -1701,13 +1737,13 @@ private func installSocketFD(_ s: Int) -> Int {
 private let socketAcceptTimeoutMs = 15000
 
 func vfsListen(fd: Int, backlog: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
     if s < 0 { return errBadFD }
     return tcpListen(s, backlog: backlog)
 }
 
 func vfsAccept(fd: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .read)
     if s < 0 { return errBadFD }
     let c = tcpAccept(s, timeoutMs: socketAcceptTimeoutMs)
     if c < 0 { return c }
@@ -1715,7 +1751,7 @@ func vfsAccept(fd: Int) -> Int {
 }
 
 func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
     if s < 0 { return errBadFD }
     if port <= 0 || port > 65535 { return errInvalid }
     // For IPv6 sockets the simple u32 'ip' path is not used (userland must use a v6-aware connect).
@@ -1745,23 +1781,24 @@ func vfsResolve(nameVA: UInt, serverIP: UInt, serverPort: Int) -> Int {
     return Int(ip)
 }
 
-private func socketIndexForFD(_ proc: Int, _ fd: Int) -> Int {
+private func socketIndexForFD(_ proc: Int, _ fd: Int, required: Rights = []) -> Int {
     guard validFD(proc, fd) else { return -1 }
     let entry = fdEntry(proc, fd)
     guard entry.kind == .socket else { return -1 }
+    guard hasRights(entry.rights, required) else { return -1 }
     let d = entry.object
     return openDescriptions[d].node
 }
 
 func vfsSocketBind(fd: Int, port: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
     if s < 0 { return errBadFD }
     if port < 0 || port > 65535 { return errInvalid }
     return socketBind(s, port: UInt16(port))
 }
 
 func vfsSendto(fd: Int, msgVA: UInt) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
     if s < 0 { return errBadFD }
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
@@ -1797,7 +1834,7 @@ func vfsSendto(fd: Int, msgVA: UInt) -> Int {
 }
 
 func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd)
+    let s = socketIndexForFD(currentVFSProcess(), fd, required: .read)
     if s < 0 { return errBadFD }
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
@@ -1851,6 +1888,7 @@ func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
 func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int) {
     let node = resolve(path)
     if node < 0 { return (false, 0, 0) }
+    if !confinedAllows(node) { return (false, 0, 0) }
     if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0) }
     return (true, nodes[node].diskOffset, nodes[node].dataLen)
 }

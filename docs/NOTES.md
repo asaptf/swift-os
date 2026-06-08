@@ -487,6 +487,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   filesystem authority, subtree grants, resource-limit enforcement, IPC transfer
   policy, service/cell launch semantics, or SMP work.
 
+### C3 — per-handle VFS rights gates (DONE, 2026-06-08)
+
+- **Operation rights now live on the handle.** Existing fd-backed operations now
+  check `HandleEntry.rights` before dispatch for duplication, metadata (`fstat`,
+  `F_GET*`), fd attributes (`F_SET*`), directory iteration, lseek, socket
+  send/receive/control paths, and explicit spawn handle passing (`.transfer`).
+  `read`, `write`, `ftruncate`, pipe poll, and endpoint send were already
+  rights-aware; C3 closes the obvious fd bypasses without changing fd numbering.
+- **Compatibility defaults preserved.** Legacy `open()`, `pipe()`, stdio, and
+  `socket()` still mint POSIX-compatible handles with read/write plus the meta
+  rights needed by shells, redirects, fork, and `spawn_handles`. Process-global
+  caps remain coarse constructor gates for ambient `open()`/`socket()` and tmpfs
+  mutation compatibility; once a handle exists, those caps do not widen it.
+- **Scoped filesystem authority.** The existing `confine()` subtree root now gates
+  path syscalls beyond `open()`: `stat`, `chdir`, namespace mutations, chmod/chown,
+  and disk-backed exec image lookup. Confinement is narrow-only and keeps cwd
+  inside the subtree.
+- **Tests / acceptance.** `tests/handle_test.swift` covers C3 rights bit stability,
+  `hasRights`, and attenuation to all/empty masks. `/bin/spawndemo` passes
+  deliberately attenuated handles and `/bin/argvdemo` proves missing write,
+  duplicate, getattr, and directory-read rights are denied. `/bin/fsdemo` proves
+  `/etc` confinement allows inside access but denies open/stat/widen/create outside,
+  and the boot test asserts `C3 OK: per-handle rights enforced`.
+- **Non-goals left for later C milestones.** C3 does not add C4 IPC expansion,
+  endpoint handle policy beyond existing fd rights, VMOs, async rings, userland
+  drivers, Cells/resource domains, cap-stripping spawn policy, or SMP work.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
