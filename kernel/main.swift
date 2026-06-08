@@ -720,6 +720,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
+        logDumpRecent(5)
         runTtyDemo()
         runInit() // console-login (init) — interactive, last
     }

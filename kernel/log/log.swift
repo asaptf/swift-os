@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// log.swift — minimal kernel logging facade (L0).
+// log.swift — minimal kernel logging facade (L0 + L1 ring).
 //
 // Provides klog(level, source, message) that renders timestamped, leveled,
 // source-tagged records to the UART (and the framebuffer mirror via uartPutc).
@@ -7,12 +7,10 @@
 // work: ring buffer, runtime filtering, structured payloads, capability-gated
 // export, and shipping to a central collector for AI-assisted bug analysis.
 //
-// L0 is deliberately additive only:
-// - Existing uartPuts("M3 OK: ...") / "panic: ..." banners are left unchanged
-//   so that every boot_test.sh, busybox_test.sh, etc. expectation continues
-//   to match byte-for-byte.
-// - New events (and future code) use klog.
-// - No ring, no filtering, no userland API yet.
+// L0 was additive only (existing banners untouched).
+// L1 adds an in-memory ring (overwrite) + logDumpRecent + automatic tail
+// dump from kpanic paths. The ring is observable in normal boot via an
+// explicit dump call (used by tests) and will be present in panic output.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -30,6 +28,70 @@ enum LogLevel: UInt8 {
 }
 
 private let levelChar: StaticString = "DIWEP"
+
+// MARK: - L1 ring buffer (fixed size, overwrite, StaticString entries)
+
+private let ringCapacity = 256   // keep small and predictable
+
+private struct LogEntry {
+    var tick: UInt64
+    var level: LogLevel
+    var source: StaticString
+    var message: StaticString
+}
+
+// Static global ring. Initialiser materialises a small .data/.bss blob.
+// Our first klog use is after M1 heap + timer, so this is fine.
+private var ring: [LogEntry] = .init(
+    repeating: LogEntry(tick: 0, level: .info, source: "", message: ""),
+    count: ringCapacity
+)
+private var ringNext = 0     // next write index
+private var ringFull = false // set once we have wrapped at least once
+
+private func ringStore(_ entry: LogEntry) {
+    ring[ringNext] = entry
+    ringNext = (ringNext + 1) % ringCapacity
+    if ringNext == 0 { ringFull = true }
+}
+
+/// Dump the most recent `maxCount` entries (or all available) to the UART.
+/// Entries are printed oldest-to-newest within the window.
+/// Safe to call from panic paths, IRQ-masked code, etc. (only uses uartPuts).
+func logDumpRecent(_ maxCount: Int = 32) {
+    var n = maxCount
+    if n <= 0 { return }
+
+    let available = ringFull ? ringCapacity : ringNext
+    if available == 0 {
+        uartPuts("log: ring empty\n")
+        return
+    }
+    if n > available { n = available }
+
+    uartPuts("log: recent ")
+    uartPutUInt(UInt64(n))
+    uartPuts(" entries (oldest first):\n")
+
+    let start = ringFull ? ringNext : 0
+    for i in 0..<n {
+        let idx = (start + i) % ringCapacity
+        let e = ring[idx]
+
+        uartPutc(0x5B) // [
+        uartPutUInt(e.tick)
+        uartPuts("] [")
+
+        let ch = levelChar.withUTF8Buffer { buf in buf[Int(e.level.rawValue)] }
+        uartPutc(ch)
+
+        uartPuts("] ")
+        uartPuts(e.source)
+        uartPuts(": ")
+        uartPuts(e.message)
+        uartPuts("\n")
+    }
+}
 
 /// Emit a log record.
 ///
@@ -60,6 +122,9 @@ func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString) {
     uartPuts(": ")
     uartPuts(message)
     uartPuts("\n")
+
+    // L1: also record in the ring (cheap copy of StaticString).
+    ringStore(LogEntry(tick: timerGetTicks(), level: level, source: source, message: message))
 }
 
 /// Convenience wrapper for the common "info" level.
@@ -71,10 +136,18 @@ func klogInfo(_ source: StaticString, _ message: StaticString) {
 /// Callers are still expected to dump additional diagnostics (ESR, etc.)
 /// and then loop. The Never return helps the type checker in sites that
 /// truly never continue.
+///
+/// L1: this path now also dumps the recent ring tail (after emitting the
+/// panic line) so that the last events leading to the failure are visible
+/// even if the console was quiet or wrapped.
 func kpanic(_ message: StaticString) -> Never {
-    klog(.panic, "panic", message)
-    // Belt-and-suspenders halt. Real panic sites usually do their own
-    // register dump + "while true {}" (or wfi) after the message; this
-    // just guarantees we do not accidentally return into broken code.
+    uartPuts("panic: ")
+    uartPuts(message)
+    uartPuts("\n")
+
+    let entry = LogEntry(tick: timerGetTicks(), level: .panic, source: "panic", message: message)
+    ringStore(entry)
+    logDumpRecent(24)
+
     while true {}
 }

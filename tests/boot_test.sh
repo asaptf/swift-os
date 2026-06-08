@@ -76,7 +76,8 @@ root     1     0 R    ps
 PID PPID STAT CMD
 1 0 R ps
 ps OK: Swift ps exited, code 0
-L0 kernel logger active}"
+L0 kernel logger active
+log: recent "
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

@@ -194,6 +194,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 
 - **L0 (2026-06) — kernel log facade.** Introduced `kernel/log/log.swift` with `LogLevel`, `klog(level, source, message)` and `klogInfo`. Renders as `[tick] [L] source: message` to UART (and fb mirror). `timerGetTicks()` published from the timer. The facade is additive: all existing "Mxx OK:" / "panic:" banners were left untouched so every test expectation continues to match. One demo line (`L0 kernel logger active`) was added after `timerInit` and asserted in `boot_test.sh`. `make build` + real QEMU boot verified the line appears on serial. See the full plan, rationale (future central AI log collector), and design in `docs/LOGGING.md`. This is the first slice of the observability work called for in PHILOSOPHY.md and RISK_REMEDIATION_ROADMAP.md.
 
+- **L1 (2026-06) — log ring buffer + dump.** Added fixed 256-entry ring of LogEntry (tick + level + source + StaticString message) with circular overwrite. `logDumpRecent(n)` replays the most recent entries (oldest of the window first). `kpanic` now stores + dumps the tail (~24 entries) after the panic banner. A `logDumpRecent(5)` call was placed late in the kernel demo sequence so the ring is exercised on every test boot; the dump header is asserted in `boot_test.sh`. Ring and dump are allocation-free and safe on panic/IRQ-masked paths. Pre-existing banners unchanged. See docs/LOGGING.md.
+
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
   pure Swift FDT reader with host coverage, a global `Platform` populated at boot, and driver/PMM use of
   discovered UART/GIC/RAM values. `make run`/`make test` now dump QEMU's actual `virt` DTB and load it

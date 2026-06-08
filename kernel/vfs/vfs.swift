@@ -97,6 +97,17 @@ private struct HandleEntry {
     var cloexec = false   // close-on-exec (F_SETFD FD_CLOEXEC / O_CLOEXEC / F_DUPFD_CLOEXEC)
 }
 
+/// Temporary local helper (part of ongoing handle/cap work) to give ordinary
+/// POSIX fd operations the basic meta-rights they historically relied on.
+/// TODO: replace with explicit handle creation sites once C1 is complete.
+private func posixRights(read: Bool, write: Bool) -> Rights {
+    var r = rights(read: read, write: write)
+    r.insert(.duplicate)
+    r.insert(.transfer)
+    r.insert(.getattr)
+    return r
+}
+
 private struct OpenDescription {
     var inUse = false
     var refCount = 0
