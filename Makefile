@@ -88,7 +88,9 @@ SWIFT_SRCS := \
 	kernel/net/ethernet.swift \
 	kernel/net/arp.swift \
 	kernel/net/ipv4.swift \
+	kernel/net/ipv6.swift \
 	kernel/net/icmp.swift \
+	kernel/net/icmp6.swift \
 	kernel/net/udp.swift \
 	kernel/net/dns.swift \
 	kernel/net/tcp.swift \
@@ -625,7 +627,7 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
-	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/icmp.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
+	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/ipv6.swift kernel/net/icmp.swift kernel/net/icmp6.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
 	$(HOST_SWIFTC) tests/crypto_test.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/crypto_test
 	$(BUILD)/crypto_test

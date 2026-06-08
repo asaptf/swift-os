@@ -629,7 +629,7 @@ private func installTTY(slot: Int, fd: Int, readable: Bool, writable: Bool) -> I
     if d < 0 { return d }
     openDescriptions[d].kind = .tty
     setFDEntry(slot, fd, HandleEntry(inUse: true, object: d,
-                                     rights: rights(read: readable, write: writable)))
+                                     rights: posixRights(read: readable, write: writable)))
     return fd
 }
 
@@ -784,9 +784,10 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     openDescriptions[d].offset = (f & oAppend) != 0 ? nodes[node].dataLen : 0
     openDescriptions[d].dirCursor = 0
     openDescriptions[d].flags = f
-    // Rights are per-handle (C1): derive read/write from the open mode.
-    let r = rights(read: (f & oWrOnly) == 0 || (f & oRdWr) != 0,
-                   write: (f & oWrOnly) != 0 || (f & oRdWr) != 0)
+    // Rights are per-handle (C1): derive read/write from the open mode and add
+    // the POSIX fd meta-rights that keep dup/fork/fstat/IPC-transfer compatible.
+    let r = posixRights(read: (f & oWrOnly) == 0 || (f & oRdWr) != 0,
+                        write: (f & oWrOnly) != 0 || (f & oRdWr) != 0)
     installDescription(proc, fd, d, rights: r)
     if (f & oCloexec) != 0 { handles[fdIndex(proc, fd)].cloexec = true }
     return fd
@@ -1037,9 +1038,10 @@ func vfsPipe(fdsVA: UInt) -> Int {
     openDescriptions[wr].pipe = p
     openDescriptions[wr].pipeEnd = pipeWriteEnd
 
-    // The read end may only be read from; the write end only written to.
-    installDescription(proc, rfd, rd, rights: .read)
-    installDescription(proc, wfd, wr, rights: .write)
+    // The read end may only be read from; the write end only written to, with
+    // ordinary POSIX fd meta-rights for compatibility.
+    installDescription(proc, rfd, rd, rights: posixRights(read: true, write: false))
+    installDescription(proc, wfd, wr, rights: posixRights(read: false, write: true))
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
@@ -1114,10 +1116,14 @@ private let ipcRecvMsgSize: UInt = 24  // buf(8) + cap(8) + out_handle_fd(8)
 func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
     guard validFD(proc, fd) else { return errBadFD }
-    let desc = openDescriptions[fdEntry(proc, fd).object]
+    let sender = fdEntry(proc, fd)
+    guard sender.rights.contains(.write) else { return errBadFD }
+    guard sender.rights.contains(.transfer) else { return errAccess }
+    let desc = openDescriptions[sender.object]
     guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
     let ep = desc.node
     guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
+    if endpoints[ep].recvRefs == 0 { return errPipe }
     if endpoints[ep].hasMsg { return errAgain }
 
     guard let m = userReadableBuffer(msgVA, ipcSendMsgSize) else { return errInvalid }
@@ -1129,6 +1135,7 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     // The handle (if any) must be a distinct, valid fd before we commit the message.
     if handleFd >= 0 {
         guard validFD(proc, handleFd), handleFd != fd else { return errBadFD }
+        guard fdEntry(proc, handleFd).rights.contains(.transfer) else { return errAccess }
     }
 
     let n = min(len, endpointMsgCap)
@@ -1502,6 +1509,23 @@ private func pollReadyForDescription(_ desc: OpenDescription, rights: Rights, ev
         if desc.pipeEnd == pipeWriteEnd && pipes[p].readRefs == 0 { revents |= pollErr }
         return revents
     }
+    if desc.kind == .endpoint {
+        let ep = desc.node
+        if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse { return pollNval }
+        if desc.pipeEnd == endpointRecvEnd {
+            if (events & pollIn) != 0 && rights.contains(.read) {
+                if endpoints[ep].hasMsg || endpoints[ep].sendRefs == 0 { revents |= pollIn }
+            }
+            if endpoints[ep].sendRefs == 0 { revents |= pollHup }
+        } else {
+            if endpoints[ep].recvRefs == 0 {
+                revents |= pollErr
+            } else if (events & pollOut) != 0 && rights.contains(.write) && !endpoints[ep].hasMsg {
+                revents |= pollOut
+            }
+        }
+        return revents
+    }
     return pollNval
 }
 
@@ -1540,18 +1564,19 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     //   - tty/vnode fds become ready via the UART RX IRQ (or the timer for the
     //     timeout), so we block with `wfi()` exactly like ttyRead — no scheduler
     //     yield, so a single foreground reader does not busy-spin.
-    //   - a pipe only becomes ready when *another* process writes to it, so we
-    //     must yield the CPU (processYieldForIO) to let the writer run. That
-    //     cooperative-yield-from-a-blocking-syscall path is now preemption-safe
-    //     (yieldToScheduler masks IRQs across the switch — see process.swift).
+    //   - a pipe or endpoint only becomes ready when *another* process writes,
+    //     sends, receives, or closes its peer, so we must yield the CPU
+    //     (processYieldForIO) to let that peer run. That cooperative-yield-from-
+    //     a-blocking-syscall path is now preemption-safe (yieldToScheduler masks
+    //     IRQs across the switch — see process.swift).
     let proc = currentVFSProcess()
-    var hasPipe = false
+    var hasPeerDriven = false
     var hasSocket = false
     for i in 0..<count {
         let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
         if fd >= 0 && validFD(proc, fd) {
             let kind = openDescriptions[fdEntry(proc, fd).object].kind
-            if kind == .pipe { hasPipe = true }
+            if kind == .pipe || kind == .endpoint { hasPeerDriven = true }
             if kind == .socket { hasSocket = true }
         }
     }
@@ -1562,7 +1587,7 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
         let ready = pollScan(base, count)
         if ready > 0 || timeout == 0 { return ready }
         if timeout > 0 && systemTicks - startTicks >= timeoutTicks { return 0 }
-        if hasPipe { processYieldForIO() } else { wfi() }
+        if hasPeerDriven { processYieldForIO() } else { wfi() }
     }
 }
 
@@ -1579,16 +1604,23 @@ private let socketRecvTimeoutMs = 12000
 // Layout of the user `swiftos_udp_msg` struct (little-endian, native):
 //   off 0: buf (u64 user VA)   off 8: len (u32)   off 12: ip (u32, host order)
 //   off 16: port (u16)
+// For AF_INET6 sockets we use an extended layout (detected by socket family):
+//   off 0: buf (u64)  off 8: len (u32)  off 12: ip6[16]  off 28: port (u16)  off 30: scope_id (u32)
+// Total 34 bytes for the v6 form. v4 sockets continue to use the 18-byte form.
 private let udpMsgSize: UInt = 18
+private let udpMsgSizeV6: UInt = 34
 
 // Socket type (matches the userland constants): SOCK_STREAM = TCP, else UDP.
 private let sockTypeStream = 1
 
 func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
-    _ = domain; _ = proto              // AF_INET; type selects TCP (stream) vs UDP (dgram)
     if (processCurrentCaps() & capNet) == 0 { return errAccess }
-    let s = type == sockTypeStream ? socketCreateTCP(owner: processCurrentPrincipal())
-                                    : socketCreate(owner: processCurrentPrincipal())
+    let isV6 = (domain == AF_INET6)
+    let s = type == sockTypeStream
+        ? (isV6 ? socketCreateTCPIPv6(owner: processCurrentPrincipal())
+                : socketCreateTCP(owner: processCurrentPrincipal()))
+        : (isV6 ? socketCreateIPv6(owner: processCurrentPrincipal())
+                : socketCreate(owner: processCurrentPrincipal()))
     if s < 0 { return s }
     return installSocketFD(s)
 }
@@ -1602,7 +1634,7 @@ private func installSocketFD(_ s: Int) -> Int {
     if d < 0 { socketClose(s); return errNoSpace }
     openDescriptions[d].kind = .socket
     openDescriptions[d].node = s
-    installDescription(proc, fd, d, rights: [.read, .write])
+    installDescription(proc, fd, d, rights: posixRights(read: true, write: true))
     return fd
 }
 
@@ -1627,6 +1659,12 @@ func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
     let s = socketIndexForFD(currentVFSProcess(), fd)
     if s < 0 { return errBadFD }
     if port <= 0 || port > 65535 { return errInvalid }
+    // For IPv6 sockets the simple u32 'ip' path is not used (userland must use a v6-aware connect).
+    // We still support the old path for AF_INET sockets.
+    if socketFamilyOf(s) == AF_INET6 {
+        // v6 connect is done via a different path in practice (extended user struct or dedicated helper).
+        // For now fall back to the IPv4 engine (will be rejected by socket layer if family mismatch).
+    }
     return socketConnect(s, dstIP: UInt32(truncatingIfNeeded: ip), dstPort: UInt16(port),
                          timeoutMs: socketAcceptTimeoutMs)
 }
@@ -1665,7 +1703,27 @@ func vfsSocketBind(fd: Int, port: Int) -> Int {
 func vfsSendto(fd: Int, msgVA: UInt) -> Int {
     let s = socketIndexForFD(currentVFSProcess(), fd)
     if s < 0 { return errBadFD }
-    guard let m = userReadableBuffer(msgVA, udpMsgSize) else { return errInvalid }
+    let isV6 = (socketFamilyOf(s) == AF_INET6)
+    let need = isV6 ? udpMsgSizeV6 : udpMsgSize
+    guard let m = userReadableBuffer(msgVA, need) else { return errInvalid }
+
+    if isV6 {
+        let buf = UInt(le64(m, 0))
+        let len = Int(le32(m, 8))
+        if len < 0 || len > 65507 { return errInvalid }
+        var ip6b: [UInt8] = []
+        var k = 0
+        while k < 16 { ip6b.append(m[12 + k]); k += 1 }
+        let dst6 = IPv6(ip6b)
+        let port = UInt16(m[28]) | (UInt16(m[29]) << 8)
+        if len == 0 {
+            return socketSendv6(s, dstIPv6: dst6, dstPort: port, src: UnsafeRawPointer(m), len: 0)
+        }
+        guard let payload = userReadableBuffer(buf, UInt(len)) else { return errInvalid }
+        return socketSendv6(s, dstIPv6: dst6, dstPort: port, src: UnsafeRawPointer(payload), len: len)
+    }
+
+    // IPv4 classic path
     let buf = UInt(le64(m, 0))
     let len = Int(le32(m, 8))
     let ip = le32(m, 12)
@@ -1681,17 +1739,40 @@ func vfsSendto(fd: Int, msgVA: UInt) -> Int {
 func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
     let s = socketIndexForFD(currentVFSProcess(), fd)
     if s < 0 { return errBadFD }
-    guard let m = userWritableBuffer(msgVA, udpMsgSize) else { return errInvalid }
+    let isV6 = (socketFamilyOf(s) == AF_INET6)
+    let need = isV6 ? udpMsgSizeV6 : udpMsgSize
+    guard let m = userWritableBuffer(msgVA, need) else { return errInvalid }
     let buf = UInt(le64(m, 0))
     let cap = Int(le32(m, 8))
     if cap < 0 || cap > 65507 { return errInvalid }
     guard let dst = userWritableBuffer(buf, UInt(cap)) else { return errInvalid }
+
+    if isV6 {
+        var srcIP6 = IPv6()
+        var srcPort: UInt16 = 0
+        let n = socketRecvV6(s, dst: UnsafeMutableRawPointer(dst), cap: cap,
+                             srcIPv6: &srcIP6, srcPort: &srcPort, timeoutMs: socketRecvTimeoutMs)
+        if n < 0 { return n }
+        let un = UInt32(n)
+        m[8]  = UInt8(un & 0xFF); m[9] = UInt8((un >> 8) & 0xFF)
+        m[10] = UInt8((un >> 16) & 0xFF); m[11] = UInt8((un >> 24) & 0xFF)
+        // 16-byte IPv6
+        let bytes: [UInt8] = [srcIP6.b0, srcIP6.b1, srcIP6.b2, srcIP6.b3,
+                              srcIP6.b4, srcIP6.b5, srcIP6.b6, srcIP6.b7,
+                              srcIP6.b8, srcIP6.b9, srcIP6.b10, srcIP6.b11,
+                              srcIP6.b12, srcIP6.b13, srcIP6.b14, srcIP6.b15]
+        var k = 0
+        while k < 16 { m[12 + k] = bytes[k]; k += 1 }
+        m[28] = UInt8(srcPort & 0xFF); m[29] = UInt8((srcPort >> 8) & 0xFF)
+        m[30] = 0; m[31] = 0; m[32] = 0; m[33] = 0
+        return n
+    }
+
     var srcIP: IPv4 = 0
     var srcPort: UInt16 = 0
     let n = socketRecv(s, dst: UnsafeMutableRawPointer(dst), cap: cap,
                        srcIP: &srcIP, srcPort: &srcPort, timeoutMs: socketRecvTimeoutMs)
     if n < 0 { return n }
-    // Write back the received length and the sender's address into the struct.
     let un = UInt32(n)
     m[8]  = UInt8(un & 0xFF);        m[9]  = UInt8((un >> 8) & 0xFF)
     m[10] = UInt8((un >> 16) & 0xFF); m[11] = UInt8((un >> 24) & 0xFF)

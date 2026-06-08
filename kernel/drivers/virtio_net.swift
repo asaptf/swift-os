@@ -468,6 +468,20 @@ func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
                                  ack: r.tcpAckNum, window: r.tcpWnd, payload: frame + r.tcpPayloadOff,
                                  payloadLen: r.tcpPayloadLen, now: systemTicks)
             }
+            if r.gotUDPv6 {
+                netRxRefDeliveredTotal += 1
+                retained = socketDeliverUDPv6(srcIPv6: r.udpSrcIPv6, srcPort: r.udpSrcPortv6,
+                                              dstPort: r.udpDstPortv6, rxRef: rxid,
+                                              payloadOffset: r.udpPayloadOffv6, len: r.udpPayloadLenv6)
+            }
+            if r.gotTCPv6 {
+                netRxRefDeliveredTotal += 1
+                socketDeliverTCPv6(srcIPv6: r.tcpSrcIPv6, srcMac: r.tcpSrcMacv6, srcPort: r.tcpSrcPortv6,
+                                   dstPort: r.tcpDstPortv6, flags: r.tcpFlagsv6, seq: r.tcpSeqNumv6,
+                                   ack: r.tcpAckNumv6, window: r.tcpWndv6,
+                                   payload: frame + r.tcpPayloadOffv6, payloadLen: r.tcpPayloadLenv6,
+                                   now: systemTicks)
+            }
             if r.txLen > 0 { virtioNetTxSubmit(frameLen: r.txLen) }
 
             if !retained {

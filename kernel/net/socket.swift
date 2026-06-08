@@ -14,6 +14,14 @@ let netLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest addre
 let netGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
 let netDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
 
+// Our IPv6 address is derived at netInit time from the virtio-net MAC (link-local EUI-64 style).
+var netLocalIPv6: IPv6 = .zero
+var netGatewayIPv6: IPv6 = .zero   // often the router's link-local; learned via RA or static for slirp
+
+// Standard address families (for vfsSocket domain).
+let AF_INET: Int = 2
+let AF_INET6: Int = 10
+
 private let maxSockets = 32
 private let sockRingDepth = 4
 
@@ -64,10 +72,21 @@ private var sockConnReady = [Bool](repeating: false, count: maxSockets) // hands
 private var sockRemoteIP = [IPv4](repeating: 0, count: maxSockets)
 private var sockRemotePort = [UInt16](repeating: 0, count: maxSockets)
 private var sockRemoteMac = [MAC](repeating: .zero, count: maxSockets)
+
+// IPv6 socket state (parallel for dual-stack support).
+private var sockFamily = [Int](repeating: AF_INET, count: maxSockets)
+private var sockRemoteIPv6 = [IPv6](repeating: .zero, count: maxSockets)
+private var sockRemoteMacv6 = [MAC](repeating: .zero, count: maxSockets)
+
 private var tcpConns = [TCPConnection](repeating: TCPConnection(), count: maxSockets)
 
 @inline(__always) private func socketValid(_ s: Int) -> Bool {
     s >= 0 && s < maxSockets && sockInUse[s]
+}
+
+func socketFamilyOf(_ s: Int) -> Int {
+    if socketValid(s) { return sockFamily[s] }
+    return AF_INET
 }
 
 /// True if any bound socket other than `except` already holds local port `p`.
@@ -93,9 +112,16 @@ func netInit() {
         uartPuts("net: no virtio-net device attached\n")
         return
     }
-    gNet = NetStack(mac: virtioNetMac(), ip: netLocalIP)
+    let m = virtioNetMac()
+    let our6 = ipv6LinkLocalFromMAC(m)
+    netLocalIPv6 = our6
+    // For many QEMU slirp setups the "gateway" link-local is fe80::2 or similar.
+    // We leave netGatewayIPv6 zero here; NDP/RA will populate neighbors as needed.
+    // For direct testing we can also hardcode a common one if desired.
+    gNet = NetStack(mac: m, ip: netLocalIP, ipv6: our6)
     gDnsScratch = pmm_alloc_page()   // 0 on failure → dnsResolve returns 0 gracefully
     netReady = true
+    uartPuts("net: IPv6 link-local configured (EUI-64 from MAC)\n")
 }
 
 /// Resolve `name` (`nameLen` bytes, dotted form) to an IPv4 by querying a DNS
@@ -180,8 +206,8 @@ private func releaseQueuedDatagrams(_ s: Int) {
 func socketDeliverUDP(srcIP: IPv4, srcPort: UInt16, dstPort: UInt16,
                       rxRef: Int, payloadOffset: Int, len: Int) -> Bool {
     if !netReady || len < 0 { return false }
-    for s in 0..<maxSockets where sockInUse[s] && sockBound[s] && sockPort[s] == dstPort {
-        if sockCount[s] >= sockRingDepth { return false }       // ring full: drop (UDP may)
+    for s in 0..<maxSockets where sockInUse[s] && sockBound[s] && sockPort[s] == dstPort && sockFamily[s] == AF_INET {
+        if sockCount[s] >= sockRingDepth { return false }
         if !virtioNetRetainRxBuffer(rxRef) { return false }
         let slot = (sockHead[s] + sockCount[s]) % sockRingDepth
         let ri = s * sockRingDepth + slot
@@ -192,6 +218,33 @@ func socketDeliverUDP(srcIP: IPv4, srcPort: UInt16, dstPort: UInt16,
     }
     return false
 }
+
+/// IPv6 UDP delivery (dual-stack).
+func socketDeliverUDPv6(srcIPv6: IPv6, srcPort: UInt16, dstPort: UInt16,
+                        rxRef: Int, payloadOffset: Int, len: Int) -> Bool {
+    if !netReady || len < 0 { return false }
+    for s in 0..<maxSockets where sockInUse[s] && sockBound[s] && sockPort[s] == dstPort && sockFamily[s] == AF_INET6 {
+        if sockCount[s] >= sockRingDepth { return false }
+        if !virtioNetRetainRxBuffer(rxRef) { return false }
+        let slot = (sockHead[s] + sockCount[s]) % sockRingDepth
+        let ri = s * sockRingDepth + slot
+        // Reuse the IPv4 dg arrays for metadata where possible; for v6 src we store in a small side table or reuse the concept.
+        // For simplicity in this full impl we store the v6 src in a parallel set of arrays (added below).
+        dgSrcIP[ri] = 0
+        dgSrcPort[ri] = srcPort
+        dgLen[ri] = len
+        dgRxRef[ri] = rxRef
+        dgPayloadOff[ri] = payloadOffset
+        // Store v6 source in a dedicated side table for v6 sockets.
+        dgSrcIPv6[ri] = srcIPv6
+        sockCount[s] += 1
+        return true
+    }
+    return false
+}
+
+// Additional per-ring storage for IPv6 UDP sources (parallel to the IPv4 dg* tables).
+private var dgSrcIPv6 = [IPv6](repeating: .zero, count: maxSockets * sockRingDepth)
 
 /// Resolve `ip` to a MAC, ARPing (bounded) if it is not already cached.
 @discardableResult
@@ -209,10 +262,13 @@ private func netResolve(_ ip: IPv4, timeoutMs: Int) -> Bool {
     return gNet.arp.lookup(ip) != nil
 }
 
-func socketCreate(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoUDP) }
-func socketCreateTCP(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoTCP) }
+func socketCreate(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoUDP, family: AF_INET) }
+func socketCreateTCP(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoTCP, family: AF_INET) }
 
-private func socketAlloc(owner: UInt32, proto: UInt8) -> Int {
+func socketCreateIPv6(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoUDP, family: AF_INET6) }
+func socketCreateTCPIPv6(owner: UInt32) -> Int { socketAlloc(owner: owner, proto: sockProtoTCP, family: AF_INET6) }
+
+private func socketAlloc(owner: UInt32, proto: UInt8, family: Int = AF_INET) -> Int {
     if !netReady { return netErrDown }
     for s in 0..<maxSockets where !sockInUse[s] {
         sockInUse[s] = true; sockBound[s] = false; sockPort[s] = 0
@@ -220,6 +276,8 @@ private func socketAlloc(owner: UInt32, proto: UInt8) -> Int {
         sockProto[s] = proto; sockIsListener[s] = false; sockListenerOf[s] = -1
         sockAccepted[s] = false; sockConnReady[s] = false
         sockRemoteIP[s] = 0; sockRemotePort[s] = 0; sockRemoteMac[s] = .zero
+        sockFamily[s] = family
+        sockRemoteIPv6[s] = .zero; sockRemoteMacv6[s] = .zero
         if proto == sockProtoTCP { tcpConns[s] = TCPConnection() }
         return s
     }
@@ -257,6 +315,36 @@ func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, l
     return len
 }
 
+/// IPv6 send (uses NDP for neighbor resolution).
+func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointer, len: Int) -> Int {
+    if !netReady { return netErrDown }
+    if !socketValid(s) || sockFamily[s] != AF_INET6 { return netErrInval }
+    // Resolve via NDP cache; if missing, send NS and wait a bit.
+    var mac = gNet.ndp.lookup(dstIPv6)
+    if mac == nil {
+        // Send NS (solicited-node) and pump for a short time.
+        let nsFrameLen = gNet.buildNS(target: dstIPv6, out: virtioNetTxBuffer())
+        virtioNetTxSubmit(frameLen: nsFrameLen)
+        let start = systemTicks
+        let ticks = UInt64(200) // ~2s at 100 Hz
+        enable_irq()
+        while systemTicks - start < ticks {
+            netPump()
+            if let m = gNet.ndp.lookup(dstIPv6) { mac = m; break }
+            wfi()
+        }
+    }
+    guard let dmac = mac ?? gNet.ndp.lookup(dstIPv6) else { return netErrUnreach }
+    if !sockBound[s] {
+        sockPort[s] = allocEphemeralPort(for: s); sockBound[s] = true
+    }
+    let srcPort = sockPort[s]
+    let frameLen = gNet.buildUDPv6(toMac: dmac, toIPv6: dstIPv6, srcPort: srcPort, dstPort: dstPort,
+                                   payload: src, payloadLen: len, out: virtioNetTxBuffer())
+    virtioNetTxSubmit(frameLen: frameLen)
+    return len
+}
+
 /// Receive one datagram into `dst` (capacity `cap`), reporting the sender via
 /// `srcIP`/`srcPort`. Pumps the NIC until a datagram arrives or `timeoutMs`
 /// elapses (timeoutMs <= 0 blocks). Returns the byte count or a negative errno.
@@ -280,6 +368,41 @@ func socketRecv(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
                 i += 1
             }
             srcIP = dgSrcIP[ri]; srcPort = dgSrcPort[ri]
+            virtioNetReleaseRxBuffer(dgRxRef[ri])
+            dgRxRef[ri] = -1
+            dgPayloadOff[ri] = 0
+            dgLen[ri] = 0
+            sockHead[s] = (sockHead[s] + 1) % sockRingDepth
+            sockCount[s] -= 1
+            return n
+        }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        wfi()
+    }
+}
+
+/// IPv6 recvfrom.
+func socketRecvV6(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
+                  srcIPv6: inout IPv6, srcPort: inout UInt16, timeoutMs: Int) -> Int {
+    if !netReady { return netErrDown }
+    if !socketValid(s) || sockFamily[s] != AF_INET6 { return netErrInval }
+    let start = systemTicks
+    let ticks = UInt64((timeoutMs + 9) / 10)
+    enable_irq()
+    while true {
+        netPump()
+        if sockCount[s] > 0 {
+            let ri = s * sockRingDepth + sockHead[s]
+            let n = dgLen[ri] > cap ? cap : dgLen[ri]
+            let srcp = virtioNetRxFramePointer(ref: dgRxRef[ri], offset: dgPayloadOff[ri])
+            var i = 0
+            while i < n {
+                dst.storeBytes(of: srcp.load(fromByteOffset: i, as: UInt8.self),
+                               toByteOffset: i, as: UInt8.self)
+                i += 1
+            }
+            srcIPv6 = dgSrcIPv6[ri]
+            srcPort = dgSrcPort[ri]
             virtioNetReleaseRxBuffer(dgRxRef[ri])
             dgRxRef[ri] = -1
             dgPayloadOff[ri] = 0
@@ -357,6 +480,37 @@ func socketDeliverTCP(srcIP: IPv4, srcMac: MAC, srcPort: UInt16, dstPort: UInt16
         }
     }
     // 3. unmatched: ignore (minimal — no RST generation).
+}
+
+/// IPv6 TCP delivery (dual-stack).
+func socketDeliverTCPv6(srcIPv6: IPv6, srcMac: MAC, srcPort: UInt16, dstPort: UInt16,
+                        flags: UInt8, seq: UInt32, ack: UInt32, window: UInt16,
+                        payload: UnsafeRawPointer, payloadLen: Int, now: UInt64) {
+    if !netReady { return }
+    for s in 0..<maxSockets where sockInUse[s] && sockProto[s] == sockProtoTCP && !sockIsListener[s]
+            && sockPort[s] == dstPort && sockFamily[s] == AF_INET6
+            && sockRemoteIPv6[s] == srcIPv6 && sockRemotePort[s] == srcPort {
+        // Drive the same TCP engine (seq/ack logic is version-agnostic).
+        driveTCP(s, flags: flags, seq: seq, ack: ack, window: window,
+                 payload: payload, payloadLen: payloadLen, now: now)
+        return
+    }
+    if (flags & tcpFlagSYN) != 0 && (flags & tcpFlagACK) == 0 {
+        for l in 0..<maxSockets where sockInUse[l] && sockProto[l] == sockProtoTCP
+                && sockIsListener[l] && sockPort[l] == dstPort && sockFamily[l] == AF_INET6 {
+            let c = socketCreateTCP(owner: sockOwner[l])
+            if c < 0 { return }
+            sockBound[c] = true; sockPort[c] = dstPort
+            sockFamily[c] = AF_INET6
+            sockRemoteIPv6[c] = srcIPv6; sockRemotePort[c] = srcPort; sockRemoteMacv6[c] = srcMac
+            sockListenerOf[c] = l
+            let iss = UInt32(truncatingIfNeeded: rtcNow()) &* 1664525 &+ 1013904223
+            tcpConns[c].passiveOpen(localPort: dstPort, iss: iss)
+            driveTCP(c, flags: flags, seq: seq, ack: ack, window: window,
+                     payload: payload, payloadLen: payloadLen, now: now)
+            return
+        }
+    }
 }
 
 func tcpListen(_ s: Int, backlog: Int) -> Int {

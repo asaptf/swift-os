@@ -6,6 +6,7 @@
 let ethHeaderLen = 14
 let ethTypeIPv4: UInt16 = 0x0800
 let ethTypeARP: UInt16 = 0x0806
+let ethTypeIPv6: UInt16 = 0x86DD
 
 @inline(__always) func ethDstMac(_ p: UnsafeRawPointer) -> MAC { macGet(p, 0) }
 @inline(__always) func ethSrcMac(_ p: UnsafeRawPointer) -> MAC { macGet(p, 6) }
