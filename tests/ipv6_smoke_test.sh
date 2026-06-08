@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# ipv6_smoke_test.sh — aggressive IPv6 E2E smoke.
+# ipv6_smoke_test.sh — aggressive IPv6 E2E smoke (robust).
 #
-# Boots QEMU with slirp IPv6 enabled (ipv6=on). The kernel's netInit now
-# derives and logs an EUI-64 link-local address and the dual-stack NetStack
-# (with NDP) is initialized.
+# Boots QEMU with slirp IPv6 enabled (ipv6=on). Asserts that the early kernel
+# netInit path runs and logs the EUI-64 link-local address (exercises the
+# IPv6 + NDP foundation we added).
+#
+# This version uses the project's standard robust test pattern:
+#   - FIFO for reactive console control (avoids fixed-sleep flakes on slow boots)
+#   - await() polling for log markers with bounded retries
+#   - Minimal input to get past M7 tty demo (Ctrl-C), then wait for the IPv6 log
 #
 # Assertions (must stay green):
-#   - "net: IPv6 link-local configured" appears (exercises ipv6LinkLocalFromMAC + NDP setup)
-#   - No panic / data abort / crash in the log
+#   - "net: IPv6 link-local configured" appears in the log
+#   - No panic / data abort / crash
 #
-# This is intentionally early-boot only (no full login) so it is fast and
-# reliable. Later slices will add active UDPv6/TCPv6/echo roundtrips from
-# userland.
+# Intentionally early-boot only. Later slices will add real UDPv6/TCPv6
+# data roundtrips from userland.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,6 +31,7 @@ fi
 
 LOG="$(mktemp -t swiftos-ipv6.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-ipv6-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-ipv6-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 
 stop_qemu() {
@@ -36,15 +41,24 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
-if [[ -f "$DTB" ]]; then
-  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-# Minimal boot with IPv6 in user-net. We don't drive the console at all —
-# we just want the early kernel netInit path to run and log the IPv6 address.
+# await: block until a literal MARKER appears in the serial log (bounded).
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+# Boot QEMU with console driven via FIFO (fd 3). This makes input reactive
+# instead of fixed sleeps, which is the main source of flakes on cold/slow
+# `make test` boots.
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -53,31 +67,33 @@ fi
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0,ipv6=on \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
+exec 3<>"$INFIFO"
 
-# Give the kernel enough time to reach netInit + log the IPv6 line.
-# Use a longer wait and also send a Ctrl-C like other net tests to stop cleanly.
-sleep 15
-( sleep 1; printf '\003' ) | cat > /dev/null 2>&1 || true
-sleep 3
-stop_qemu
-QP=""
+# Minimal reactive input to get past the M7 tty demo (the kernel net stack
+# initialises very early, but the M7 demo can delay visible progress).
+# We don't need full login for this smoke — we just need the kernel to have
+# run netInit and printed the IPv6 line.
+await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 
-# Aggressive checks: with ipv6=on the net device still comes up and we don't crash.
-# The detailed "IPv6 link-local" log assertion lives in virtio_net_test.sh (which
-# also runs with ipv6=on) + the pure aggressive host net_test.swift.
-if ! grep -q "net-a: virtio-net up, MAC" "$LOG" && ! grep -q "virtio-net" "$LOG"; then
-  echo "FAIL: virtio-net did not come up under ipv6=on" >&2
+# Now wait specifically for the IPv6 link-local configuration log.
+# This is the key assertion that the dual-stack + NDP/EUI-64 path ran.
+if ! await "net: IPv6 link-local configured" 30; then
+  echo "FAIL: kernel did not log IPv6 link-local (EUI-64 + NDP path)" >&2
   echo "--- relevant log ---" >&2
-  grep -iE 'net:|ipv6|panic|abort' "$LOG" | tail -20 >&2 || true
+  grep -iE 'net:|ipv6|panic|abort|M7' "$LOG" | tail -30 >&2 || true
   exit 1
 fi
 
+# Final sanity: no crash during the IPv6-enabled boot.
 if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
   echo "FAIL: crash seen while IPv6 was active" >&2
+  echo "--- relevant log ---" >&2
+  grep -iE 'panic|abort' "$LOG" | tail -10 >&2 || true
   exit 1
 fi
 
-echo "PASS: IPv6 smoke (net bring-up under ipv6=on, no crash)"
+echo "PASS: IPv6 smoke (link-local configured under ipv6=on, no crash)"
 exit 0
