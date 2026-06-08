@@ -137,6 +137,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         return // result already written (sbrk returns an address, not errno)
     } else if number == sysPsInfo {
         result = processSnapshot(buffer: frame[0], capacity: frame[1])
+        klogRing(.info, "proc", "psinfo")
     } else if number == sysDup {
         result = vfsDup(fd: Int(bitPattern: frame[0]))
     } else if number == sysDup2 {

@@ -9,18 +9,18 @@ See also:
 - `docs/RISK_REMEDIATION_ROADMAP.md` (observability listed among the post-M13 gaps).
 - `docs/NOTES.md` (milestone log; hardware; decisions — new logging work is recorded here too).
 
-## Current State (L0-L3 Landed)
+## Current State (L0-L4 Context Landed)
 
 The current tree has the first logging foundation:
 
 - `kernel/log/log.swift` defines `LogLevel`, `klog(level, source, message, detail)`, `klogInfo`, `logDumpRecent`, and `kpanic`.
 - `klog` emits `[tick] [L] source: message` through the UART path, so the framebuffer mirror still works through `uartPutc`.
-- A fixed 256-entry in-memory ring stores accepted `StaticString` records plus an optional `UInt64` detail payload and can dump a recent tail with `logDumpRecent(n)`.
-- `logDumpRecent` renders nonzero structured payloads as `detail=...`; live UART lines stay text-only for now.
+- A fixed 256-entry in-memory ring stores accepted `StaticString` records plus an optional `UInt64` detail payload and compact process/security context (`pid`, `principal`) captured at emit time.
+- `logDumpRecent` renders nonzero structured payloads as `detail=...` and non-kernel context as `pid=... principal=...`; live UART lines stay text-only for now.
 - `kpanic` records a panic entry and dumps the recent ring tail before halting.
 - Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
-- Early adoption has moved or mirrored a small set of core boot events onto `klog`: platform discovery (mirrored after timer init), scheduler online/context-switch markers, disk/base mount success, reclaim success, and the Swift `ps` launch marker.
-- `tests/boot_test.sh` asserts the L0 line, the L2 filtering announcement, representative structured details, and the ring dump header.
+- Early adoption has moved or mirrored a small set of core boot events onto `klog`: platform discovery (mirrored after timer init), scheduler online/context-switch markers, disk/base mount success, reclaim success, the Swift `ps` launch marker, and a process syscall event stored ring-only.
+- `tests/boot_test.sh` asserts the L0 line, the L2 filtering announcement, representative structured details, a userland context suffix, and the ring dump header.
 
 Most legacy milestone/probe output is still emitted by direct UART calls:
 
@@ -142,7 +142,16 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - Prepare the schema expected by the future central collector in this file or a dedicated `docs/log-format.md`.
 - No wire protocol yet.
 
-### L4 — Kernel log sink indirection + capability hook
+### L4a — Ring context enrichment (DONE, 2026-06-08)
+
+- `LogEntry` now carries the current `pid` and `principal` alongside `tick`, `level`, `source`, `message`, and `detail`.
+- `klog` captures context through `processCurrentPid()` / `processCurrentPrincipal()` after filtering, so dropped records do no extra work and early/no-process paths use the kernel defaults (`pid=0`, `principal=1`).
+- `logDumpRecent` prints context only when it is useful (`pid != 0` or `principal != 1`), keeping kernel-only boot lines compact.
+- The live UART format is unchanged: `[tick] [L] source: message`.
+- `klogRing` records accepted events without rendering a live UART line; `psinfo` uses it to populate the ring from real EL0 process context without perturbing foreground console stdout/prompt behavior.
+- Boot acceptance checks both the old structured detail fields and the new context suffix.
+
+### L4b — Kernel log sink indirection + capability hook
 
 - The UART is no longer hard-coded inside `klog`. A `LogSink` protocol (or a tiny vtable because we avoid existentials on hot paths) with a current global sink.
 - Default sink = UART renderer.

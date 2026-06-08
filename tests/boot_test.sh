@@ -81,7 +81,8 @@ L0 kernel logger active
 level filtering active (min INFO)
 log: recent
 detail=100
-detail=4}"
+detail=4
+pid=1 principal=1}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
