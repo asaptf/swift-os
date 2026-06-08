@@ -3,7 +3,7 @@
 #
 # Boots QEMU with slirp IPv6 enabled (ipv6=on). Asserts that the early kernel
 # netInit path runs and logs the EUI-64 link-local address (exercises the
-# IPv6 + NDP foundation we added).
+# IPv6 + NDP/RA foundation).
 #
 # This version uses the project's standard robust test pattern:
 #   - FIFO for reactive console control (avoids fixed-sleep flakes on slow boots)
@@ -14,8 +14,8 @@
 #   - "net: IPv6 link-local configured" appears in the log
 #   - No panic / data abort / crash
 #
-# Intentionally early-boot only. Later slices will add real UDPv6/TCPv6
-# data roundtrips from userland.
+# Complements the full udp/tcp echo E2E (which now exercise real AF_INET6
+# userland roundtrips + NDP/RA under ipv6=on).
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

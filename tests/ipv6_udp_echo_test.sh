@@ -2,29 +2,27 @@
 # ipv6_udp_echo_test.sh — aggressive IPv6 UDP roundtrip (net-b over dual-stack).
 #
 # Boots with slirp netdev *with ipv6=on* (exercises NDP/EUI-64 link-local + RA
-# paths in kernel at netInit). Uses hostfwd (IPv4 alias for compatibility with
-# current userland bridge) so the IPv4 /bin/udpecho works for the data path;
-# additionally drives nc -6 attempts against the listener to cover IPv6 client
-# error cases while the stack is dual-stack.
+# paths in kernel at netInit). Uses v6 hostfwd so the AF_INET6 /bin/udpecho
+# (launched with "6") provides true v6-bound listener/echo; v4 fwd kept for
+# dual coverage + error probes with nc -6 to unbound port.
 #
-# After reactive login (FIFO + await), runs the native Swift /bin/udpecho (which
-# creates AF_INET UDP socket today; parallel userland IPv6 slice will make it
-# AF_INET6 capable for true v6-bound echo). Sends datagram from host, asserts
-# guest received it (and logged the src), and that the echo returned.
+# After reactive login (FIFO + await), runs the native Swift /bin/udpecho 6.
+# Sends datagram from host via nc-6, asserts guest received it (and logged the
+# v6-style src with ':'), and that the echo returned to host.
 #
 # Assertions (aggressive):
 #   - net-a probe ran (virtio up)
 #   - "net: IPv6 link-local configured" (EUI-64 + NDP foundation exercised)
-#   - udpecho reported listening
-#   - guest saw the datagram (from 10.0.2.2, as slirp presents)
-#   - host received the echo back
-#   - nc -6 attempt to the port demonstrates v6 client path (no v6 listener yet
-#     so it fails cleanly — error-case coverage; no pollution of the v4 results)
+#   - udpecho reported listening (IPv6)
+#   - guest saw the datagram with colon-hex sender (AF_INET6 + v6 msg layout path)
+#   - host received the echo back over v6 hostfwd
+#   - nc -6 error probe to separate port (no listener) gets no echo
 #   - no panic/crash under IPv6-enabled net
 #
 # Uses the project's robust FIFO/await pattern (like tcp_echo_test.sh and
 # ipv6_smoke_test.sh) to avoid fixed-sleep flakes on `make test` cold boots.
-# Real data exchange happens (UDP roundtrip); IPv6 setup + NDP success covered.
+# Real data exchange happens (UDP roundtrip over IPv6); RA/NDP + full userland
+# AF_INET6 exercised.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -100,7 +98,7 @@ for _ in $(seq 1 40); do
 done
 
 # Main data exchange now over the IPv6 hostfwd (exercises full userland AF_INET6
-# UDP + v6 msg layout + NDP for any resolution + slirp v6 inbound).
+# UDP + v6 msg layout + NDP/RA + slirp v6 inbound).
 if [[ "$listening" -eq 1 ]]; then
   printf '%s' "$MSG" | nc -6 -u -w2 [::1] 5555 >"$NCOUT" 2>/dev/null || true
 fi

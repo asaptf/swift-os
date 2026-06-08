@@ -634,7 +634,13 @@ Architecture (matches restartable driver services + capabilities already in this
   (priority #3, TDD) and portable, and it maps cleanly onto our event/poll syscall.
 - Single core removes ~80% of FreeBSD-stack complexity (no `NET_EPOCH`, no mbuf-zone races), which is
   precisely why a from-scratch stack is *less* work than porting and fits our model.
-- Layer scope: Ethernet / ARP / IPv4 (IPv6 later) / ICMP / UDP / TCP. **TLS in userland.**
+- Layer scope: Ethernet / ARP / IPv4 + IPv6 (dual-stack foundation) / ICMP + ICMPv6 / UDP / TCP.
+  NDP (NS/NA) for v6 address resolution (ARP equivalent); RA for router/prefix discovery; extension header
+  skipping (Hop-by-Hop, Routing, DestOpts, Fragment) for correct L4 reachability; multicast acceptance for
+  all-nodes and solicited-node. See the net-ipv6 section in `docs/NOTES.md` (implemented on the net/ipv6
+  branch after the N-series base). **TLS in userland.** (The long-horizon "userland service" model for the
+  stack itself is still recorded below; the current bring-up keeps the sans-IO core + driver in-kernel for
+  simplicity, exactly as the N milestones did.)
 
 Indicative future milestone sequence (N-series, after M13; one at a time, each builds/boots/tests):
 

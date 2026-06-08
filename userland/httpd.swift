@@ -10,6 +10,10 @@
 // closes (Connection: close). Multiple connections are serviced across poll
 // iterations. Exercises socket/poll/accept/read/write/close + open/stat/getdents
 // through the swiftos_* bridge.
+//
+// Pass "6" (or -6) as argv[1] to use AF_INET6 stream socket (dual-stack
+// HTTP listener over IPv6; same poll/accept/read/write paths). Drive with
+// nc -6 or curl -g against guest IPv6 (hostfwd tcp:[::1]:8080-:8080 etc).
 
 private let listenPort: UInt16 = 8080
 private let maxConns = 8
@@ -240,13 +244,19 @@ private func serveConnection(_ cfd: Int32) {
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
-    _ = argc; _ = argv; _ = envp
+    _ = envp
 
-    let lfd = swiftos_socket_stream()
+    let useV6: Bool = {
+        guard argc >= 2, let av = argv, let a1 = av[1] else { return false }
+        let c0 = a1[0]
+        return c0 == 0x36 /* '6' */ || (c0 == 0x2D /*'-'*/ && a1[1] == 0x36)
+    }()
+
+    let lfd = useV6 ? swiftos_socket_stream_ipv6() : swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("httpd: socket failed\n"); return 1 }
     if swiftos_bind(lfd, listenPort) != 0 { swiftos_puts("httpd: bind failed\n"); _ = swiftos_close(lfd); return 1 }
     if swiftos_listen(lfd, Int32(maxConns)) != 0 { swiftos_puts("httpd: listen failed\n"); _ = swiftos_close(lfd); return 1 }
-    swiftos_puts("httpd: listening on 8080\n")
+    swiftos_puts(useV6 ? "httpd: listening on 8080 (IPv6)\n" : "httpd: listening on 8080\n")
 
     var conns = [Int32](repeating: -1, count: maxConns)
 

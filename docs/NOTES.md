@@ -1509,6 +1509,90 @@ Hardening pass, no new syscalls. Confined to `kernel/net/tcp.swift`, `kernel/net
 - **This is TLS groundwork only.** TLS 1.3 mandates AEAD_CHACHA20_POLY1305; the handshake, key schedule
   (HKDF), and record layer are **deliberately deferred** to a later milestone. No networking or syscalls
   were added here.
+
+### net-ipv6 — IPv6 foundation + NDP + dual-stack sockets + RA/EH/multicast + userland + E2E tests (DONE, net/ipv6 branch 2026-06)
+
+Parallel workers delivered the IPv6 slice on top of the net stack (see git log on net/ipv6 for the subagent
+slices: foundation, protocol, userland, tests, integration). This is the concrete realisation of the
+"IPv6 later" placeholder in ARCHITECTURE.md "Future network stack model".
+
+- **Foundation (ipv6.swift + early netInit).** `struct IPv6` (two UInt64 for value semantics), byte accessors,
+  `ipv6LinkLocalFromMAC` (modified EUI-64 → fe80::/10), `ipv6SolicitedNodeMulticast`, `ipv6FromPrefixAndIID`
+  (for RA-derived globals), `ip6WriteHeader`/`ip6*` accessors, IPv6 pseudo-header checksum (`sumIPv6Pseudo` +
+  `ipv6UpperChecksum` for UDP6/TCP6/ICMPv6). `netInit` derives link-local from virtio MAC and passes to
+  `NetStack(..., ipv6: our6)`; logs "net: IPv6 link-local configured (EUI-64 from MAC)". `gNet` now carries
+  the IPv6; `netLocalIPv6` / `netGatewayIPv6` globals for kernel use. (Cross-ref commit "net: IPv6 + NDP +
+  dual-stack sockets (foundation...)").
+- **NDP (icmp6.swift + stack.swift NeighborCache + onFrame).** Full NS/NA (types 135/136): `icmp6WriteNS`
+  (with optional SLLA opt), `icmp6WriteNA` (Solicited|Override flags + TLLA), `icmp6NDTarget`, flag bits.
+  `NeighborCache` (fixed Entry table, insert/lookup) in stack; on inbound NA learn target→MAC. On NS for us:
+  reply with NA and learn peer from SLLA. `socketSendv6` uses NDP cache (falls back to NS+wait for resolution).
+  NDP also learns from any IPv6 src L2 (best-effort). Unsolicited NA (e.g. to all-nodes) also populates.
+- **Dual-stack sockets + VFS.** `socket.swift`: AF_INET6 paths (`socketCreateIPv6`, `socketCreateTCPIPv6`),
+  parallel tables `sockRemoteIPv6`/`sockRemoteMacv6`/`dgSrcIPv6` etc, `socketDeliverUDPv6`/`socketDeliverTCPv6`,
+  `socketSendv6` (NDP resolve + `buildUDPv6`/`buildTCPv6`), `socketRecvFromIPv6`. `stack.swift` adds gotUDPv6/
+  gotTCPv6 + v6 fields in RxOutcome, and full IPv6 dispatch in `onFrame`. `vfs.swift` (vfsOpen/vfsConnect etc):
+  detects AF_INET6 via family, routes to v6 socket creators, uses 16-byte IPv6 in connect/send/recvfrom
+  syscalls (new swiftos_*_ipv6 bridge calls). Sockets remain capNet-gated VFS fds; poll/ close uniform.
+- **Protocol enhancements (RA/EH/multicast in kernel/net).**
+  - RA (RFC 4861): `icmp6TypeRA`, `icmp6WriteRA` (base + optional Prefix Information option type=3 with L/A
+    flags, lifetimes), `icmp6ParseRA` (walks options, extracts hopLimit + first prefix). In `stack.onFrame`
+    (IPv6 path): on RA, `ndp.insert(routerLLA)`, set `raReceived`/`raHopLimit`/`raHasPrefix`/`raPrefix`/
+    `raFormedGlobal` (via ipv6FromPrefixAndIID). (Added in "net/ipv6: add icmp6WriteRA for full RA
+    build/parse roundtrips" + "fuller RA/NA/EH/multicast support").
+  - Extension Headers (RFC 8200): IPv6 ingress walks next-header chain (up to 4 skips) and advances over
+    Hop-by-Hop (0), Routing (43), Destination Options (60) using HdrExtLen, and fixed 8-byte Fragment (44).
+    This ensures L4 (UDP/TCP/ICMPv6) and NDP/RA delivery even when EHs or HBH options are present in test
+    frames or on the wire. Skips are bounded; malformed truncate safely.
+  - Multicast acceptance: IPv6 path in `onFrame` accepts our unicast, our solicited-node multicast, the
+    all-nodes link-local (ff02::1, for RA and unsolicited NA), plus loopback-for-test. Enables RA receipt
+    and NDP without a full MLD impl.
+  - Also: buildUDPv6/buildTCPv6 (with v6 pseudo checksums), ICMPv6 echo request/reply over v6, full
+    checksum validation using base-header src/dst (not L4 addrs).
+- **Userland IPv6 support.** `userland/lib/swift_user.{h,c}` bridge gained the AF_INET6 + v6 msg variants:
+  `swiftos_socket_ipv6`/`swiftos_socket_stream_ipv6`, `swiftos_bind` (reused), `swiftos_sendto_ipv6`/
+  `swiftos_recvfrom_ipv6` (use 16-byte IPv6 layout), stream read/write unchanged. 
+  - `udpecho.swift`: argv[1]=="6" → use v6 socket + recvfrom/sendto_ipv6 + printIPv6 (colon-hex groups);
+    logs "listening on 5555 (IPv6)" and "got N bytes from <v6>:port". (Commits: "userland: udpecho IPv6
+    support", "net/ipv6: userland udpecho/tcpecho/nslookup IPv6 support (AF_INET6 + bridge)").
+  - `tcpecho.swift`: analogous "6" path with `swiftos_socket_stream_ipv6`/`listen`/`accept` (logs IPv6
+    variant); uses plain read/write for the stream. ( "userland: tcpecho IPv6 support").
+  - `nslookup.swift`: AAAA support + IPv6 result printing (tightened in "tests: tighten ipv6_*_echo + dns
+    for userland IPv6" + "userland: nslookup IPv6 + AAAA support").
+  All reached via absolute /bin/* paths from packed base (exec.swift); bare names stay busybox.
+- **Host unit coverage (aggressive).** `tests/net_test.swift` (built+run in `make test` right after page
+  allocator) gained a large IPv6 block after the v4 cases: header parse/build + version/nh/payload accessors,
+  pseudo-header checksum roundtrips for UDP6/TCP6 (corruption detection), ICMPv6 echo writers + checksums
+  (over v6 addrs), full NDP NS wire + on-stack NS→NA reply roundtrip in a dual-stack `NetStack`, NA
+  parse/flags, `ipv6LinkLocalFromMAC` EUI-64 U/L bit, `ipv6SolicitedNodeMulticast`, RA parse with prefix-info
+  option (hopLimit + formed global), bad-version/truncation guards, and v6 UDP/TCP delivery fields via
+  `onFrame`. (Commit "net/ipv6: aggressively extend host net_test with IPv6 cases" + earlier foundation).
+  All exercised with dual-stack `NetStack(mac, ip, ipv6: ...)` instances.
+- **E2E QEMU tests (new dedicated aggressive scripts, wired into make test).**
+  - `tests/ipv6_smoke_test.sh`: boots with `-netdev user,ipv6=on`, reactive FIFO/await past M7, asserts
+    "net: IPv6 link-local configured" + no panic. Early-boot only (foundation + NDP config path).
+  - `tests/ipv6_udp_echo_test.sh`: ipv6=on + hostfwd udp v4+v6, login, `/bin/udpecho 6`, primary nc-6 to
+    [::1] via fwd (exercises AF_INET6 UDP + NDP + slirp v6 inbound), v6-style sender log assertion (colon
+    in addr), echo roundtrip, plus v6 error-probe on extra port (no listener), no-crash. Uses project
+    robust await pattern.
+  - `tests/ipv6_tcp_echo_test.sh`: analogous for TCP (hostfwd tcp v4+v6, `/bin/tcpecho 6`, patient nc-6
+    SYN+data+echo, "listening on 5555 (IPv6)", got-bytes + echo success, error probes on 5556, RST/drop
+    coverage). Adapted robust retry logic from tcp_echo_test.sh.
+  All three run unconditionally early in `make test` (after virtio_net, before v4 net tests) so IPv6 paths
+  are stressed on every CI-like run. (Commits: "tests: add dedicated aggressive ipv6_*...", "tests:
+  integrate ... into make test", "net/ipv6: make ... robust...", "broaden IPv6 test coverage - enable
+  ipv6=on in udp_echo and tcp_echo tests").
+- **Integration / boot / QEMU.** `netInit` always configures IPv6 (even on v4-only runs the vars are zero
+  but harmless); ipv6=on only needed for slirp to emit v6 and answer NDP/RA. All test launches that attach
+  virtio-net for net tests now use ipv6=on where the dedicated scripts require it. No new syscalls;
+  dual-stack lives behind the existing socket surface + bridge. `build/base.img` stages the IPv6-aware
+  udpecho/tcpecho (and nslookup) ELFs.
+- **Status / deferred.** Foundation + NDP + dual-stack UDP/TCP + RA/EH/multicast ingress + full host+E2E
+  green and committed on net/ipv6. Global IPv6 gateway learned via RA (or static); SLAAC full, MLD,
+  privacy addrs, frag reassembly, larger conn tables for v6, AAAA in more tools, and lifting stack to
+  userland service are future (post this slice). All prior net-a..h and non-net tests remain green.
+  (See ARCHITECTURE update in same session.)
+
 ## Threading runtime groundwork (R-series)
 
 ### rt-a — threads + futex (DONE, 2026-06-07)
