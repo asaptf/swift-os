@@ -639,6 +639,7 @@ test: build $(QEMU_DTB) disk base-image
 	$(BUILD)/tls_handshake_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	bash ./tests/cow_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh

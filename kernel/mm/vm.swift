@@ -23,9 +23,16 @@ private let DESC_SH_INNER: UInt64 = 3 << 8
 private let DESC_AP_EL1_RW: UInt64 = 0 << 6
 private let DESC_AP_EL0_RW: UInt64 = 1 << 6
 private let DESC_AP_EL0_RO: UInt64 = 3 << 6
+private let DESC_AP_MASK: UInt64 = 3 << 6
 private let DESC_ATTR_SHIFT: UInt64 = 2
 private let DESC_UXN: UInt64 = 1 << 54
 private let DESC_PXN: UInt64 = 1 << 53
+
+// AArch64 stage-1 leaf bits [58:55] are software-defined. Bit 55 marks a leaf
+// that is read-only in hardware but logically writable-on-copy: a write fault
+// resolves it into a private writable frame, while teardown drops only this
+// address space's reference to the shared frame.
+private let DESC_COW: UInt64 = 1 << 55
 
 private let ATTR_NORMAL: UInt32 = 0
 private let ATTR_DEVICE: UInt32 = 1
@@ -178,14 +185,69 @@ private func linkPage(_ ttbr0: UInt, _ va: UInt, _ leafDesc: UInt64) -> Bool {
 }
 
 // Allocate a fresh frame and copy `srcPA`'s 4 KiB into it; returns the new PA,
-// or 0 on allocation failure. The eager-fork per-page copy. (A later track will
-// swap this for a copy-on-write share.)
+// or 0 on allocation failure. Used by COW write-fault resolution.
 private func copyFrame(_ srcPA: UInt) -> UInt {
     let dstPA = pmm_alloc_page()
     if dstPA == 0 { return 0 }
     UnsafeMutableRawPointer(bitPattern: dstPA)!
         .copyMemory(from: UnsafeRawPointer(bitPattern: srcPA)!, byteCount: Int(PAGE_SIZE))
     return dstPA
+}
+
+@inline(__always)
+private func releaseUserFrame(_ pa: UInt) {
+    if pmm_frame_unref(pa) {
+        pmm_free_page(pa)
+    }
+}
+
+private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
+    let va = faultVA & ~(PAGE_SIZE - 1)
+    let l3 = walkToL3(ttbr0, va, allocate: false)
+    if l3 == 0 { return false }
+
+    let leafIdx = Int((va >> 12) & 0x1ff)
+    let desc = tableLoad(l3, leafIdx)
+    if (desc & DESC_VALID) == 0 || (desc & DESC_COW) == 0 {
+        return false
+    }
+
+    let oldPA = UInt(desc & PAGE_4K_MASK)
+    let writableDesc = (desc & ~DESC_AP_MASK & ~DESC_COW) | DESC_AP_EL0_RW
+
+    if pmm_frame_refcount(oldPA) <= 1 {
+        // The other sharer already went away. No copy is needed; just restore
+        // write permission and clear the software COW marker.
+        tableStore(l3, leafIdx, writableDesc)
+        dsb_sy()
+        tlbi_va(va)
+        return true
+    }
+
+    let newPA = copyFrame(oldPA)
+    if newPA == 0 { return false }
+    let newDesc = (writableDesc & ~PAGE_4K_MASK) | (UInt64(newPA) & PAGE_4K_MASK)
+    tableStore(l3, leafIdx, newDesc)
+    releaseUserFrame(oldPA)
+    dsb_sy()
+    tlbi_va(va)
+    return true
+}
+
+func addressSpaceHandleCowFault(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
+    return resolveCow(ttbr0, faultVA)
+}
+
+func addressSpacePrepareWrite(_ ttbr0: UInt, _ va: UInt) -> Bool {
+    let pageVA = va & ~(PAGE_SIZE - 1)
+    let l3 = walkToL3(ttbr0, pageVA, allocate: false)
+    if l3 == 0 { return false }
+    let desc = tableLoad(l3, Int((pageVA >> 12) & 0x1ff))
+    if (desc & DESC_VALID) == 0 { return false }
+    if (desc & DESC_COW) != 0 {
+        return resolveCow(ttbr0, pageVA)
+    }
+    return (desc & DESC_AP_MASK) == DESC_AP_EL0_RW
 }
 
 @_cdecl("mmu_kernel_ttbr0")
@@ -198,6 +260,8 @@ func addressSpaceCreate() -> UInt {
     let l0 = pmm_alloc_page()
     let l1 = pmm_alloc_page()
     if l0 == 0 || l1 == 0 {
+        if l0 != 0 { pmm_free_page(l0) }
+        if l1 != 0 { pmm_free_page(l1) }
         return 0
     }
     zeroTable(l0)
@@ -309,7 +373,14 @@ func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: 
         let leafIdx = Int((cur >> 12) & 0x1ff)
         let oldDesc = tableLoad(l3, leafIdx)
         let pa = UInt(oldDesc & PAGE_4K_MASK)
-        tableStore(l3, leafIdx, protPageDesc(pa, prot))
+        var newDesc = protPageDesc(pa, prot)
+        if (prot & PROT_WRITE) != 0 && pmm_frame_refcount(pa) > 1 {
+            // mprotect(PROT_WRITE) on a still-shared private page must not make
+            // the shared frame writable. Keep it hardware-RO and COW-marked so
+            // the first store materializes a private frame.
+            newDesc = (newDesc & ~DESC_AP_MASK) | DESC_AP_EL0_RO | DESC_COW
+        }
+        tableStore(l3, leafIdx, newDesc)
         i += 1
     }
     dsb_sy()
@@ -329,7 +400,7 @@ private func unmapRange(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) {
             let desc = tableLoad(l3, leafIdx)
             if (desc & DESC_VALID) != 0 {
                 tableStore(l3, leafIdx, 0)
-                pmm_free_page(UInt(desc & PAGE_4K_MASK))
+                releaseUserFrame(UInt(desc & PAGE_4K_MASK))
             }
         }
         i += 1
@@ -380,13 +451,13 @@ func addressSpaceTranslate(_ ttbr0: UInt, _ va: UInt) -> UInt {
 }
 
 // Tear down a per-process address space created by address_space_create() /
-// address_space_clone(): free every USER leaf frame (VA >= 0x8000_0000, i.e. L1
-// index >= 2) and the L3/L2 page tables that map them, then the L1 and L0
+// address_space_clone(): release every USER leaf frame (VA >= 0x8000_0000, i.e.
+// L1 index >= 2) and free the private L3/L2 page tables, then the L1 and L0
 // frames. The kernel/device identity entries (L1 indices 0,1) are 1 GiB *block*
 // descriptors, not tables — they own no frames and are skipped by the
-// DESC_TABLE test, so the shared kernel mapping is never freed. Eager fork
-// gives each space private leaf frames (no COW sharing), so a flat free is
-// correct — no refcounting needed.
+// DESC_TABLE test, so the shared kernel mapping is never freed. User leaf frames
+// may now be shared by COW fork, so leaves drop a refcount and raw-free only on
+// the last owner; page-table frames are never shared and still raw-free here.
 //
 // Frame reclamation is the inverse of the leak that made the OS unusable for
 // long-running workloads (~2 MiB lost per busybox command). Safe to call on a
@@ -422,7 +493,7 @@ func addressSpaceDestroy(_ ttbr0: UInt) {
                 for i3 in 0..<ENTRIES_PER_TABLE {
                     let d3 = tableLoad(l3, i3)
                     if (d3 & DESC_VALID) != 0 {
-                        pmm_free_page(UInt(d3 & PAGE_4K_MASK)) // leaf user frame
+                        releaseUserFrame(UInt(d3 & PAGE_4K_MASK)) // leaf user frame
                     }
                 }
                 pmm_free_page(l3) // L3 table
@@ -434,10 +505,13 @@ func addressSpaceDestroy(_ ttbr0: UInt) {
     pmm_free_page(ttbr0) // L0 table
 }
 
-// Eager fork: create a new address space and copy every mapped USER page
-// (VA >= 0x8000_0000, i.e. L1 index >= 2) from `parent`, preserving each page's
-// permission/attribute bits. The kernel/device identity blocks come fresh from
-// address_space_create(). Returns the child TTBR0, or 0 on failure.
+// Copy-on-write fork: create a new address space and share every mapped USER
+// page (VA >= 0x8000_0000, i.e. L1 index >= 2) from `parent`. Writable leaves in
+// either space are made hardware-read-only and tagged DESC_COW; the first store
+// in parent or child copies the frame and restores write permission. Read-only
+// leaves (code/rodata) are shared without DESC_COW. The kernel/device identity
+// blocks come fresh from address_space_create(). Returns the child TTBR0, or 0
+// on failure.
 @_cdecl("address_space_clone")
 func addressSpaceClone(_ parent: UInt) -> UInt {
     let child = addressSpaceCreate()
@@ -464,13 +538,21 @@ func addressSpaceClone(_ parent: UInt) -> UInt {
                 if (d3 & DESC_VALID) == 0 { continue }
 
                 let va: UInt = (UInt(i1) << 30) | (UInt(i2) << 21) | (UInt(i3) << 12)
-                let srcpa = UInt(d3 & PAGE_4K_MASK)
-                let dstpa = copyFrame(srcpa)
-                if dstpa == 0 { return 0 }
-                // Rebase the parent leaf onto the fresh frame, preserving its
-                // perm/attr bits exactly (no permPageDesc round-trip).
-                let leafDesc = (d3 & ~PAGE_4K_MASK) | (UInt64(dstpa) & PAGE_4K_MASK)
-                if !linkPage(cl0, va, leafDesc) { return 0 }
+                let frame = UInt(d3 & PAGE_4K_MASK)
+                let needsCow = (d3 & DESC_COW) != 0 || (d3 & DESC_AP_MASK) == DESC_AP_EL0_RW
+                let childDesc: UInt64
+                if needsCow {
+                    let cowDesc = (d3 & ~DESC_AP_MASK) | DESC_AP_EL0_RO | DESC_COW
+                    tableStore(pl3, i3, cowDesc)
+                    childDesc = cowDesc
+                } else {
+                    childDesc = d3
+                }
+                if !linkPage(cl0, va, childDesc) {
+                    addressSpaceDestroy(child)
+                    return 0
+                }
+                pmm_frame_ref(frame)
             }
         }
     }

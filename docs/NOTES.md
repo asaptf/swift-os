@@ -1551,15 +1551,16 @@ schedulable EL0 threads that share one address space, plus a futex to block/wake
   and every user leaf page), the **kernel stack** (2 frames), and — on `execve` — the **replaced** old
   address space (fork clones the shell, the child execs, the clone is dropped). At ~2 MiB per busybox
   command the OS exhausted RAM after ~100 commands. This was the main barrier to long-running use.
-- **`address_space_destroy(ttbr0)` (`kernel/mm/vm.c`).** Walks the user half of the tables (L1 index ≥ 2,
-  i.e. VA ≥ `0x8000_0000`) and frees every leaf frame, then each L3/L2 table, then the L1 and L0 frames,
-  via `pmm_free_page`. The kernel/device identity entries (L1 indices 0,1) are 1 GiB **block** descriptors,
-  not tables — the `DESC_TABLE` test skips them, so the shared kernel mapping is never freed. Eager fork
-  gives each space **private** leaf frames (no COW sharing), so a flat free is correct with no refcounting.
-  Safe on a partially built space (failed `createProcess`/`buildExecImage` now clean up too). If the doomed
-  space is the **currently installed TTBR0** (the case when the kernel scheduler reaps a just-exited
-  top-level process, whose tables are still live in the register), it switches to the kernel identity map
-  first so the MMU never walks frames being handed back.
+- **`address_space_destroy(ttbr0)` (`kernel/mm/vm.swift`).** Walks the user half of the tables (L1 index ≥ 2,
+  i.e. VA ≥ `0x8000_0000`) and releases every leaf frame, then frees each L3/L2 table, then the L1 and L0
+  frames. The kernel/device identity entries (L1 indices 0,1) are 1 GiB **block** descriptors,
+  not tables — the `DESC_TABLE` test skips them, so the shared kernel mapping is never freed. With COW fork,
+  user leaf frames may be shared; teardown drops each leaf's PMM refcount and raw-frees only on the last
+  owner, while page-table frames remain private to the address space. Safe on a partially built space
+  (failed `createProcess`/`buildExecImage` now clean up too). If the doomed space is the **currently
+  installed TTBR0** (the case when the kernel scheduler reaps a just-exited top-level process, whose tables
+  are still live in the register), it switches to the kernel identity map first so the MMU never walks
+  frames being handed back.
 - **`process.swift` wiring.** A new `reapProcess(slot)` frees the address space + kernel stack (tracked in
   a new `pKstack` array) and marks the slot unused; it replaces the bare `pState = pUnused` at all four
   reap sites (`processRunElf`, `processRunPair`, `processSpawnChild`, `processWaitpid`). `processExec` frees
@@ -1571,7 +1572,25 @@ schedulable EL0 threads that share one address space, plus a futex to block/wake
   before and after. Measured in QEMU: `baseline=64747 after=64747` (zero leak; before the fix it would
   drop by hundreds of frames). `tests/boot_test.sh` greps for `reclaim OK: no frame leak across
   fork/exec/exit/reap`. The host `PageAllocator` `free`/double-free tests already cover the frame allocator.
-- **Remaining efficiency holes (still future work, by design for now):** `fork` is eager-copy (no
-  copy-on-write); no page cache; the PMM is O(n) first-fit (a buddy/free-list refinement is noted in
-  `docs/ARCHITECTURE.md`); single core (no SMP). The footprint section above was measured **before** this
-  feature; steady-state RAM is now flat across commands rather than monotonically shrinking.
+- **Remaining efficiency holes (still future work, by design for now):** no page cache; the PMM is O(n)
+  first-fit (a buddy/free-list refinement is noted in `docs/ARCHITECTURE.md`); single core (no SMP). The
+  footprint section above was measured **before** this feature; steady-state RAM is now flat across commands
+  rather than monotonically shrinking.
+
+### Track B — COW fork PMM ownership audit (2026-06-08)
+
+Before adding COW write-fault handling, every `pmm_alloc_page` / `pmmAllocPage` /
+`pmmAllocZeroedPage` / `pmmAllocPages` caller was audited for frame ownership:
+- **User leaf frames** (`elfLoad`, process stacks, `sbrk`, `mmap`) now start with PMM refcount 1 and are
+  the only frames shared by COW fork. Address-space teardown and `munmap` drop a reference and raw-free
+  only on the last owner. COW write faults allocate a private frame for the writer and drop the old frame's
+  reference.
+- **Page tables, kernel stacks, driver DMA/ring buffers, network socket buffers, DNS scratch, and the ELF
+  staging buffer** are not mapped as COW user leaves. They remain single-owner or permanent kernel/device
+  allocations and continue to use raw `pmm_free_page` only where a reclaim path exists.
+- **Fixed during the audit:** `address_space_create` now frees a lone L0/L1 allocation if the paired table
+  allocation fails; `elfLoad` frees a just-allocated page if mapping it fails; `processSbrk` rolls back any
+  partially mapped heap pages when growth fails. `address_space_clone` now destroys a partially built child
+  address space on link failure, dropping any shared-frame references it already acquired.
+- **Known pre-existing non-COW leak:** EL0 thread kernel stacks are still not reclaimed on thread exit, as
+  recorded in the rt-a notes; they are not COW-shared and were not changed in this track.
