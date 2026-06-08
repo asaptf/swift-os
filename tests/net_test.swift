@@ -820,8 +820,35 @@ struct NetTest {
         let oodd = dual6.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 9, out: outBuf, outCap: 2048)
         check(oodd.gotUDPv6 && oodd.udpPayloadLenv6 == 1, "UDPv6 odd payload length checksum edge delivered")
 
+        // --- DAD simulation: NS targeting our own tentative addr gets NA reply (owner defends) ---
+        // Another host doing DAD for our addr would see our NA and back off (no duplicate).
+        var dualDAD = NetStack(mac: ourMac, ip: ourIP, ipv6: v6src)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
+        // NS from gw for target = our v6src (as if DAD probe for our addr); dst = solnode of target.
+        let dadNSLen = icmp6WriteNS(inBuf + ethHeaderLen + ipv6HeaderLen, target: v6src, srcLLA: gwMac, src: v6dst, dst: ipv6SolicitedNodeMulticast(v6src))
+        ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: ipv6SolicitedNodeMulticast(v6src), nextHeader: ipProtoICMPv6, payloadLen: dadNSLen)
+        let dadFrame = ethHeaderLen + ipv6HeaderLen + dadNSLen
+        let dadOut = dualDAD.onFrame(inBuf, dadFrame, out: outBuf, outCap: 2048)
+        check(dadOut.txLen > 0, "DAD NS for our addr produces NA defense")
+        check(ethType(outBuf) == ethTypeIPv6, "DAD defense is IPv6")
+        let dadNA = outBuf + ethHeaderLen + ipv6HeaderLen
+        check(icmp6Type(dadNA) == icmp6TypeNA, "defense reply is NA")
+        check(icmp6NDTarget(dadNA) == v6src, "NA defends our target addr")
+
+        // --- more malformed IPv6: runt (len mismatch), unknown next-header (no L4 delivery) ---
+        // too-short IPv6 (header claims payload but frame ends early)
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
+        ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoUDP, payloadLen: 100)
+        let mrunt = dualDAD.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 10 /*short*/, out: outBuf, outCap: 2048)
+        check(mrunt.txLen == 0 && !mrunt.gotUDPv6, "runt IPv6 (len mismatch) dropped with no delivery")
+        // unknown NH that isn't handled for L4 (e.g. 99), should not crash or misdeliver
+        ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
+        ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: 99, payloadLen: 4)
+        let mnh = dualDAD.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 4, out: outBuf, outCap: 2048)
+        check(mnh.txLen == 0 && !mnh.gotUDPv6 && !mnh.gotTCPv6, "unknown NH aborts without L4 delivery")
+
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + many roundtrips)")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + DAD sim + many roundtrips)")
     }
 
     /// Feed one TCP segment into a connection (optional payload).
