@@ -647,6 +647,7 @@ test: build $(QEMU_DTB) disk base-image
 	./tests/tcp_connect_test.sh
 	./tests/tls_test.sh
 	./tests/httpd_test.sh
+	bash ./tests/net_zero_copy_throughput_test.sh
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh

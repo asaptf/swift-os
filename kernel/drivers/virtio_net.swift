@@ -54,15 +54,15 @@ private let NET_F_MAC_LO_BIT: UInt32 = 1 << 5     // feature bit 5 → DEVFEATSE
 private let VIRTQ_DESC_F_NEXT: UInt16  = 1
 private let VIRTQ_DESC_F_WRITE: UInt16 = 2
 
-private let NET_QSZ = 8
+private let NET_QSZ = 16
 private let NET_BUFSZ = 2048
 private let VIRTIO_NET_HDR_LEN = 12               // virtio 1.0 header (incl. num_buffers)
 
 // Ring-page layout: descriptor table, available ring, and used ring carved out
 // of one 4 KiB page at fixed, naturally-aligned offsets.
 private let OFF_DESC: UInt  = 0x000
-private let OFF_AVAIL: UInt = 0x080
-private let OFF_USED: UInt  = 0x100
+private let OFF_AVAIL: UInt = 0x200
+private let OFF_USED: UInt  = 0x400
 
 private struct NetQueue {
     var ringBase: UInt = 0   // PA of the page holding desc/avail/used
@@ -76,6 +76,25 @@ private var netMmio: UInt = 0
 private var netMac = MAC()
 private var rxq = NetQueue()
 private var txq = NetQueue()
+private var txStaged = -1
+private var txInFlight = 0
+
+// RX state: false in rxInDevice means the descriptor is currently owned by the
+// driver/socket layer; rxHeld means a socket queued it by reference and will
+// release it after recvfrom consumes the datagram.
+private var rxInDevice = [Bool](repeating: false, count: NET_QSZ)
+private var rxHeld = [Bool](repeating: false, count: NET_QSZ)
+
+// TX state: 0 free, 1 reserved by virtioNetTxBuffer(), 2 submitted to device.
+private var txState = [UInt8](repeating: 0, count: NET_QSZ)
+
+private var netRxBatchMax = 0
+private var netTxDrainBatchMax = 0
+private var netRxRefDeliveredTotal: UInt64 = 0
+private var netRxHeldTotal: UInt64 = 0
+private var netTxSubmittedTotal: UInt64 = 0
+private var netTxCompletedTotal: UInt64 = 0
+private var netZeroCopyReported: UInt64 = 0
 
 // --- cache maintenance ------------------------------------------------------
 private func netClean(_ pa: UInt, _ n: Int) {
@@ -124,9 +143,124 @@ private func usedElem(_ q: NetQueue, _ slot: Int) -> (id: UInt32, len: UInt32) {
     return (u.load(fromByteOffset: 0, as: UInt32.self), u.load(fromByteOffset: 4, as: UInt32.self))
 }
 
+private func descBytes(_ q: NetQueue) -> Int { Int(q.qnum) * 16 }
+private func availBytes(_ q: NetQueue) -> Int { 4 + Int(q.qnum) * 2 + 2 }
+private func usedBytes(_ q: NetQueue) -> Int { 4 + Int(q.qnum) * 8 }
+
 private func cleanRing(_ q: NetQueue) {
-    netClean(q.ringBase + OFF_DESC, NET_QSZ * 16)
-    netClean(q.ringBase + OFF_AVAIL, 32)
+    netClean(q.ringBase + OFF_DESC, descBytes(q))
+    netClean(q.ringBase + OFF_AVAIL, availBytes(q))
+}
+
+private func invalidateUsedRing(_ q: NetQueue) {
+    netInvalidate(q.ringBase + OFF_USED, usedBytes(q))
+}
+
+private func txBufferPA(_ i: Int) -> UInt {
+    txq.bufBase + UInt(i * NET_BUFSZ)
+}
+
+private func rxBufferPA(_ i: Int) -> UInt {
+    rxq.bufBase + UInt(i * NET_BUFSZ)
+}
+
+private func recycleRxDescriptor(_ id: Int) {
+    if id < 0 || id >= Int(rxq.qnum) || rxInDevice[id] || rxHeld[id] { return }
+    let buf = rxBufferPA(id)
+    descSet(rxq, id, addr: UInt64(buf), len: UInt32(NET_BUFSZ),
+            flags: VIRTQ_DESC_F_WRITE, next: 0)
+    availAdd(&rxq, descIdx: UInt16(id))
+    rxInDevice[id] = true
+}
+
+func virtioNetRetainRxBuffer(_ id: Int) -> Bool {
+    if netMmio == 0 || id < 0 || id >= Int(rxq.qnum) || rxInDevice[id] || rxHeld[id] {
+        return false
+    }
+    rxHeld[id] = true
+    netRxHeldTotal += 1
+    return true
+}
+
+func virtioNetReleaseRxBuffer(_ id: Int) {
+    if netMmio == 0 || id < 0 || id >= Int(rxq.qnum) || !rxHeld[id] { return }
+    rxHeld[id] = false
+    recycleRxDescriptor(id)
+    cleanRing(rxq)
+    mmio_write32(netMmio + R_QNOTIFY, 0)
+}
+
+func virtioNetRxFramePointer(ref id: Int, offset: Int) -> UnsafeRawPointer {
+    UnsafeRawPointer(bitPattern: rxBufferPA(id) + UInt(VIRTIO_NET_HDR_LEN + offset))!
+}
+
+@discardableResult
+func virtioNetTxDrain() -> Int {
+    guard netMmio != 0 else { return 0 }
+    invalidateUsedRing(txq)
+    let cur = usedIdx(txq)
+    var done = 0
+    while txq.lastUsed != cur {
+        let slot = Int(txq.lastUsed % UInt16(txq.qnum))
+        let (id, _) = usedElem(txq, slot)
+        txq.lastUsed &+= 1
+        let idx = Int(id)
+        if idx >= 0 && idx < Int(txq.qnum) && txState[idx] == 2 {
+            txState[idx] = 0
+            if txInFlight > 0 { txInFlight -= 1 }
+            done += 1
+        }
+    }
+    if done > netTxDrainBatchMax { netTxDrainBatchMax = done }
+    netTxCompletedTotal += UInt64(done)
+    let ist = mmio_read32(netMmio + R_ISTATUS)
+    if ist != 0 { mmio_write32(netMmio + R_IACK, ist) }
+    return done
+}
+
+private func reserveTxIndex() -> Int {
+    _ = virtioNetTxDrain()
+    var i = 0
+    while i < Int(txq.qnum) {
+        if txState[i] == 0 {
+            txState[i] = 1
+            return i
+        }
+        i += 1
+    }
+
+    while true {
+        if virtioNetTxDrain() > 0 {
+            i = 0
+            while i < Int(txq.qnum) {
+                if txState[i] == 0 {
+                    txState[i] = 1
+                    return i
+                }
+                i += 1
+            }
+        }
+    }
+}
+
+func virtioNetMaybeReportZeroCopy() {
+    if netZeroCopyReported != 0 || netMmio == 0 { return }
+    if netRxRefDeliveredTotal < 16 || netTxSubmittedTotal < 16 { return }
+    if netRxBatchMax < 2 && netTxDrainBatchMax < 2 { return }
+    netZeroCopyReported = 1
+    uartPuts("net-zc OK: rx_batch=")
+    uartPutUInt(UInt64(netRxBatchMax))
+    uartPuts(" tx_batch=")
+    uartPutUInt(UInt64(netTxDrainBatchMax))
+    uartPuts(" rx_refs=")
+    uartPutUInt(netRxRefDeliveredTotal)
+    uartPuts(" rx_held=")
+    uartPutUInt(netRxHeldTotal)
+    uartPuts(" tx_submitted=")
+    uartPutUInt(netTxSubmittedTotal)
+    uartPuts(" tx_completed=")
+    uartPutUInt(netTxCompletedTotal)
+    uartPuts("\n")
 }
 
 // --- bring-up ---------------------------------------------------------------
@@ -164,14 +298,31 @@ private func bringUp(_ m: UInt) -> Bool {
     let rxRing = pmm_alloc_page()
     let txRing = pmm_alloc_page()
     let rxBufs = pmm_alloc_pages(Int((NET_QSZ * NET_BUFSZ + 4095) / 4096))
-    let txBuf  = pmm_alloc_page()
-    if rxRing == 0 || txRing == 0 || rxBufs == 0 || txBuf == 0 { netMmio = 0; return false }
+    let txBufs = pmm_alloc_pages(Int((NET_QSZ * NET_BUFSZ + 4095) / 4096))
+    if rxRing == 0 || txRing == 0 || rxBufs == 0 || txBufs == 0 { netMmio = 0; return false }
     zeroPage(rxRing); zeroPage(txRing)
     rxq = NetQueue(); rxq.ringBase = rxRing; rxq.bufBase = rxBufs
-    txq = NetQueue(); txq.ringBase = txRing; txq.bufBase = txBuf
+    txq = NetQueue(); txq.ringBase = txRing; txq.bufBase = txBufs
+    txStaged = -1
+    txInFlight = 0
+    netRxBatchMax = 0
+    netTxDrainBatchMax = 0
+    netRxRefDeliveredTotal = 0
+    netRxHeldTotal = 0
+    netTxSubmittedTotal = 0
+    netTxCompletedTotal = 0
+    netZeroCopyReported = 0
 
     if !setupQueue(m, 0, &rxq) { netMmio = 0; return false }   // receiveq
     if !setupQueue(m, 1, &txq) { netMmio = 0; return false }   // transmitq
+
+    var k = 0
+    while k < NET_QSZ {
+        rxInDevice[k] = false
+        rxHeld[k] = false
+        txState[k] = 0
+        k += 1
+    }
 
     if haveMac {
         let lo = mmio_read32(m + R_CONFIG + 0)
@@ -186,17 +337,18 @@ private func bringUp(_ m: UInt) -> Bool {
     mmio_write32(m + R_STATUS, S_ACK | S_DRV | S_FEATOK | S_DRVOK)
 
     // Pre-fill the RX ring: descriptor i → RX buffer i, device-writable.
-    var k = 0
+    k = 0
     while k < Int(rxq.qnum) {
-        let buf = rxq.bufBase + UInt(k * NET_BUFSZ)
+        let buf = rxBufferPA(k)
         descSet(rxq, k, addr: UInt64(buf), len: UInt32(NET_BUFSZ),
                 flags: VIRTQ_DESC_F_WRITE, next: 0)
+        rxInDevice[k] = true
         k += 1
     }
-    netClean(rxq.ringBase + OFF_DESC, NET_QSZ * 16)
+    netClean(rxq.ringBase + OFF_DESC, descBytes(rxq))
     k = 0
     while k < Int(rxq.qnum) { availAdd(&rxq, descIdx: UInt16(k)); k += 1 }
-    netClean(rxq.ringBase + OFF_AVAIL, 32)
+    netClean(rxq.ringBase + OFF_AVAIL, availBytes(rxq))
     mmio_write32(m + R_QNOTIFY, 0)              // kick the receive queue
     return true
 }
@@ -224,38 +376,47 @@ func virtioNetInit() -> Bool {
 func virtioNetAvailable() -> Bool { netMmio != 0 }
 func virtioNetMac() -> MAC { netMac }
 
-/// The frame area of the single TX buffer — the sans-IO core writes a frame to
-/// transmit here (zero-copy), then `virtioNetTxSubmit` sends it.
+/// The frame area of a reserved TX buffer — the sans-IO core writes a frame to
+/// transmit here (zero-copy), then `virtioNetTxSubmit` sends it. Each call
+/// reserves one buffer from the fixed TX pool; completion is drained in batches.
 func virtioNetTxBuffer() -> UnsafeMutableRawPointer {
-    UnsafeMutableRawPointer(bitPattern: txq.bufBase + UInt(VIRTIO_NET_HDR_LEN))!
+    if txStaged >= 0 {
+        return UnsafeMutableRawPointer(bitPattern: txBufferPA(txStaged) + UInt(VIRTIO_NET_HDR_LEN))!
+    }
+    let idx = reserveTxIndex()
+    if idx < 0 { return UnsafeMutableRawPointer(bitPattern: txBufferPA(0) + UInt(VIRTIO_NET_HDR_LEN))! }
+    txStaged = idx
+    return UnsafeMutableRawPointer(bitPattern: txBufferPA(idx) + UInt(VIRTIO_NET_HDR_LEN))!
 }
 
 /// Transmit the `frameLen` bytes currently in the TX buffer. Prepends a zeroed
-/// virtio_net_hdr and blocks on the transmit used ring (synchronous, one frame
-/// at a time — fine for net-a's request/reply probe).
+/// virtio_net_hdr and queues the descriptor. Completion is intentionally not
+/// waited for here; `virtioNetTxDrain` reclaims any completed descriptors in
+/// bulk during the next pump/reservation.
 func virtioNetTxSubmit(frameLen: Int) {
-    guard netMmio != 0, frameLen > 0 else { return }
-    let hdr = UnsafeMutableRawPointer(bitPattern: txq.bufBase)!
+    guard netMmio != 0 else { return }
+    let idx = txStaged
+    if idx < 0 || idx >= Int(txq.qnum) { return }
+    txStaged = -1
+    if frameLen <= 0 || frameLen > NET_BUFSZ - VIRTIO_NET_HDR_LEN {
+        txState[idx] = 0
+        return
+    }
+
+    let buf = txBufferPA(idx)
+    let hdr = UnsafeMutableRawPointer(bitPattern: buf)!
     var z = 0
     while z < VIRTIO_NET_HDR_LEN { hdr.storeBytes(of: UInt8(0), toByteOffset: z, as: UInt8.self); z += 1 }
     let total = VIRTIO_NET_HDR_LEN + frameLen
-    netClean(txq.bufBase, total)
-    descSet(txq, 0, addr: UInt64(txq.bufBase), len: UInt32(total), flags: 0, next: 0)
-    cleanRing(txq)
-    availAdd(&txq, descIdx: 0)
-    netClean(txq.ringBase + OFF_AVAIL, 32)
-
-    let target = txq.lastUsed &+ 1
+    netClean(buf, total)
+    descSet(txq, idx, addr: UInt64(buf), len: UInt32(total), flags: 0, next: 0)
+    netClean(txq.ringBase + OFF_DESC + UInt(idx * 16), 16)
+    availAdd(&txq, descIdx: UInt16(idx))
+    netClean(txq.ringBase + OFF_AVAIL, availBytes(txq))
+    txState[idx] = 2
+    txInFlight += 1
+    netTxSubmittedTotal += 1
     mmio_write32(netMmio + R_QNOTIFY, 1)
-    var spins = 0
-    while spins < 5_000_000 {
-        netInvalidate(txq.ringBase + OFF_USED, 72)
-        if usedIdx(txq) == target { break }
-        spins += 1
-    }
-    txq.lastUsed = target
-    let ist = mmio_read32(netMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(netMmio + R_IACK, ist) }
 }
 
 /// Drain every RX frame the device has completed, feeding each through `stack`.
@@ -264,29 +425,44 @@ func virtioNetTxSubmit(frameLen: Int) {
 func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
     var agg = RxOutcome()
     guard netMmio != 0 else { return agg }
-    netInvalidate(rxq.ringBase + OFF_USED, 72)
-    var cur = usedIdx(rxq)
+    _ = virtioNetTxDrain()
+    invalidateUsedRing(rxq)
+    let cur = usedIdx(rxq)
+    var batch = 0
+    var recycled = 0
     while rxq.lastUsed != cur {
         let slot = Int(rxq.lastUsed % UInt16(rxq.qnum))
         let (id, ulen) = usedElem(rxq, slot)
         rxq.lastUsed &+= 1
-        if Int(id) < Int(rxq.qnum) && ulen >= UInt32(VIRTIO_NET_HDR_LEN) {
-            let buf = rxq.bufBase + UInt(Int(id) * NET_BUFSZ)
+        batch += 1
+        let rxid = Int(id)
+        if rxid < Int(rxq.qnum) {
+            rxInDevice[rxid] = false
+            if ulen < UInt32(VIRTIO_NET_HDR_LEN) {
+                recycleRxDescriptor(rxid)
+                recycled += 1
+                continue
+            }
+            let buf = rxBufferPA(rxid)
             netInvalidate(buf, Int(ulen))
             let frame = UnsafeRawPointer(bitPattern: buf + UInt(VIRTIO_NET_HDR_LEN))!
             let frameLen = Int(ulen) - VIRTIO_NET_HDR_LEN
             let r = stack.onFrame(frame, frameLen,
                                   out: virtioNetTxBuffer(),
                                   outCap: NET_BUFSZ - VIRTIO_NET_HDR_LEN)
+            var retained = false
             if r.arpResolved {
                 agg.arpResolved = true; agg.resolvedIP = r.resolvedIP; agg.resolvedMac = r.resolvedMac
             }
             if r.echoReply { agg.echoReply = true; agg.echoSeq = r.echoSeq }
             if r.gotUDP {
-                socketDeliverUDP(srcIP: r.udpSrcIP, srcPort: r.udpSrcPort, dstPort: r.udpDstPort,
-                                 payload: frame + r.udpPayloadOff, len: r.udpPayloadLen)
+                netRxRefDeliveredTotal += 1
+                retained = socketDeliverUDP(srcIP: r.udpSrcIP, srcPort: r.udpSrcPort,
+                                            dstPort: r.udpDstPort, rxRef: rxid,
+                                            payloadOffset: r.udpPayloadOff, len: r.udpPayloadLen)
             }
             if r.gotTCP {
+                netRxRefDeliveredTotal += 1
                 socketDeliverTCP(srcIP: r.tcpSrcIP, srcMac: r.tcpSrcMac, srcPort: r.tcpSrcPort,
                                  dstPort: r.tcpDstPort, flags: r.tcpFlags, seq: r.tcpSeqNum,
                                  ack: r.tcpAckNum, window: r.tcpWnd, payload: frame + r.tcpPayloadOff,
@@ -294,17 +470,18 @@ func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
             }
             if r.txLen > 0 { virtioNetTxSubmit(frameLen: r.txLen) }
 
-            // Recycle the RX descriptor back onto the available ring.
-            descSet(rxq, Int(id), addr: UInt64(buf), len: UInt32(NET_BUFSZ),
-                    flags: VIRTQ_DESC_F_WRITE, next: 0)
-            netClean(rxq.ringBase + OFF_DESC, NET_QSZ * 16)
-            availAdd(&rxq, descIdx: UInt16(id))
-            netClean(rxq.ringBase + OFF_AVAIL, 32)
-            mmio_write32(netMmio + R_QNOTIFY, 0)
+            if !retained {
+                recycleRxDescriptor(rxid)
+                recycled += 1
+            }
         }
-        netInvalidate(rxq.ringBase + OFF_USED, 72)
-        cur = usedIdx(rxq)
     }
+    if batch > netRxBatchMax { netRxBatchMax = batch }
+    if recycled > 0 {
+        cleanRing(rxq)
+        mmio_write32(netMmio + R_QNOTIFY, 0)
+    }
+    _ = virtioNetTxDrain()
     let ist = mmio_read32(netMmio + R_ISTATUS)
     if ist != 0 { mmio_write32(netMmio + R_IACK, ist) }
     return agg
