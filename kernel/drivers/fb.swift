@@ -28,18 +28,15 @@ private let GLYPH_W = 8
 private let GLYPH_H = 16               // IBM PC / VGA text-mode glyph cell (8 wide, 16 tall)
 
 // Global layout note (kernel builds with `-mattr=+strict-align`, which faults on
-// a misaligned multi-byte access): keep every 8-byte global on an 8-aligned
-// offset, and keep the 32-bit cursor pair (g_cx,g_cy) on an 8-aligned pair
-// boundary. The optimizer fuses two adjacent same-width stores into one wider
-// store — e.g. `g_cx = 0; g_cy = 0` becomes a single 64-bit `str xzr` — and that
-// fused store must be 8-aligned. So the three 8-byte words come first (an
-// 8-aligned anchor), and g_cx/g_cy lead the 32-bit run so the fused zero-store
-// lands aligned. Do not reorder these without re-checking the disassembly.
+// a misaligned multi-byte access): the linker may reorder private globals, so
+// source order alone cannot guarantee that adjacent 32-bit cursor/layout globals
+// land on an 8-byte pair boundary. Keep the hot framebuffer state in machine
+// words; then any scalar or fused store the optimizer emits is naturally aligned.
 private var g_fb: UInt = 0             // PA of the framebuffer (0 = disabled)
 private var g_fb_base: UInt64 = 0, g_fb_size: UInt64 = 0   // for the PMM to reserve the region
-private var g_cx: UInt32 = 0, g_cy: UInt32 = 0   // text cursor cell (column, row)
-private var g_w: UInt32 = 0, g_h: UInt32 = 0, g_stride: UInt32 = 0 // pixels; stride = pixels per scanline
-private var g_cols: UInt32 = 0, g_rows: UInt32 = 0
+private var g_cx: UInt = 0, g_cy: UInt = 0   // text cursor cell (column, row)
+private var g_w: UInt = 0, g_h: UInt = 0, g_stride: UInt = 0 // pixels; stride = pixels per scanline
+private var g_cols: UInt = 0, g_rows: UInt = 0
 
 private let FG: UInt32 = 0xFFFFFFFF
 private let BG: UInt32 = 0x00000000
@@ -63,10 +60,8 @@ private var g_cells: InlineArray<32768, UInt8> = .init(repeating: UInt8(ascii: "
 
 // Reverse-video block cursor, blinked from the timer tick. g_cur_* records where
 // the cursor is currently painted so it can be lifted when it moves or blinks off.
-// g_cur_col/g_cur_row lead this 32-bit run for the same 8-aligned-pair reason as
-// g_cx/g_cy above (they are assigned together in fb_cursor_blink).
-private var g_cur_col: UInt32 = 0, g_cur_row: UInt32 = 0
-private var g_blink_ctr: UInt32 = 0
+private var g_cur_col: UInt = 0, g_cur_row: UInt = 0
+private var g_blink_ctr: UInt = 0
 private var g_blink_on = true          // desired phase: true = show cursor, false = hide
 private var g_cur_drawn = false        // is an inverted cell currently on screen?
 
@@ -231,19 +226,19 @@ func fb_init(_ base: UInt64, _ width: UInt32, _ height: UInt32, _ stride_px: UIn
         return
     }
     g_fb = UInt(base)
-    g_w = width
-    g_h = height
-    g_stride = stride_px
-    g_cols = width / UInt32(GLYPH_W)
-    g_rows = height / UInt32(GLYPH_H)
-    if g_cols > UInt32(MAX_COLS) { g_cols = UInt32(MAX_COLS) }  // text area is the top-left region
-    if g_rows > UInt32(MAX_ROWS) { g_rows = UInt32(MAX_ROWS) }
+    g_w = UInt(width)
+    g_h = UInt(height)
+    g_stride = UInt(stride_px)
+    g_cols = g_w / UInt(GLYPH_W)
+    g_rows = g_h / UInt(GLYPH_H)
+    if g_cols > UInt(MAX_COLS) { g_cols = UInt(MAX_COLS) }  // text area is the top-left region
+    if g_rows > UInt(MAX_ROWS) { g_rows = UInt(MAX_ROWS) }
     g_cx = 0
     g_cy = 0
     g_fb_base = base
-    g_fb_size = UInt64(stride_px) * UInt64(height) * 4
+    g_fb_size = UInt64(g_stride) * UInt64(g_h) * 4
     var i: UInt64 = 0
-    let total = UInt64(stride_px) * UInt64(height)
+    let total = UInt64(g_stride) * UInt64(g_h)
     while i < total {
         fbStorePixel(i, 0x00000000)
         i += 1
@@ -266,7 +261,7 @@ func fb_phys_size() -> UInt64 { g_fb_size }
 
 // Render a glyph at (cx,cy). When `inverted` the fg/bg swap, giving a solid
 // reverse-video block — that is how the text cursor is drawn over its cell.
-private func fb_render(_ c: UInt8, _ cx: UInt32, _ cy: UInt32, _ inverted: Bool) {
+private func fb_render(_ c: UInt8, _ cx: UInt, _ cy: UInt, _ inverted: Bool) {
     let glyph = Int(c & 0x7F) * GLYPH_H
     let px0 = UInt64(cx) * UInt64(GLYPH_W)
     let py0 = UInt64(cy) * UInt64(GLYPH_H)
@@ -283,16 +278,16 @@ private func fb_render(_ c: UInt8, _ cx: UInt32, _ cy: UInt32, _ inverted: Bool)
 }
 
 // Draw a printable glyph at the cursor cell and remember it in the shadow buffer.
-private func fb_draw_glyph(_ c: UInt8, _ cx: UInt32, _ cy: UInt32) {
-    if cx < UInt32(MAX_COLS) && cy < UInt32(MAX_ROWS) {
+private func fb_draw_glyph(_ c: UInt8, _ cx: UInt, _ cy: UInt) {
+    if cx < UInt(MAX_COLS) && cy < UInt(MAX_ROWS) {
         g_cells[Int(cy) * MAX_COLS + Int(cx)] = c
     }
     fb_render(c, cx, cy, false)
 }
 
 // Repaint a cell from the shadow buffer (used to lift the cursor off it).
-private func fb_restore_cell(_ cx: UInt32, _ cy: UInt32) {
-    var c = (cx < UInt32(MAX_COLS) && cy < UInt32(MAX_ROWS))
+private func fb_restore_cell(_ cx: UInt, _ cy: UInt) {
+    var c = (cx < UInt(MAX_COLS) && cy < UInt(MAX_ROWS))
         ? g_cells[Int(cy) * MAX_COLS + Int(cx)] : UInt8(ascii: " ")
     if c < 0x20 { c = UInt8(ascii: " ") }
     fb_render(c, cx, cy, false)
@@ -300,7 +295,7 @@ private func fb_restore_cell(_ cx: UInt32, _ cy: UInt32) {
 
 private func fb_scroll() {
     let row_px = UInt64(GLYPH_H) * UInt64(g_stride)       // pixels in one text row
-    let move = UInt64(g_h - UInt32(GLYPH_H)) * UInt64(g_stride) // pixels to shift up
+    let move = UInt64(g_h - UInt(GLYPH_H)) * UInt64(g_stride) // pixels to shift up
     var i: UInt64 = 0
     while i < move {
         fbStorePixel(i, fbLoadPixel(i + row_px))
@@ -313,7 +308,7 @@ private func fb_scroll() {
         i += 1
     }
     // Mirror the scroll in the shadow buffer so the cursor restores correctly.
-    var r: UInt32 = 1
+    var r: UInt = 1
     while r < g_rows {
         for c in 0..<Int(g_cols) {
             g_cells[Int(r - 1) * MAX_COLS + c] = g_cells[Int(r) * MAX_COLS + c]
@@ -367,13 +362,13 @@ private func fb_lift_cursor() {
 }
 
 // Clear cells [c0, c1) on row r in both the shadow buffer and the framebuffer.
-private func fb_clear_row_span(_ r: UInt32, _ c0: UInt32, _ c1in: UInt32) {
+private func fb_clear_row_span(_ r: UInt, _ c0: UInt, _ c1in: UInt) {
     if r >= g_rows { return }
     var c1 = c1in
     if c1 > g_cols { c1 = g_cols }
     var c = c0
     while c < c1 {
-        if r < UInt32(MAX_ROWS) && c < UInt32(MAX_COLS) {
+        if r < UInt(MAX_ROWS) && c < UInt(MAX_COLS) {
             g_cells[Int(r) * MAX_COLS + Int(c)] = UInt8(ascii: " ")
         }
         fb_render(UInt8(ascii: " "), c, r, false)
@@ -391,10 +386,10 @@ private func fb_erase_line(_ mode: Int32) {
 // Erase in display (CSI J): 0 = cursor..end, 1 = start..cursor, 2 = all.
 private func fb_erase_display(_ mode: Int32) {
     if mode == 2 {
-        var r: UInt32 = 0
+        var r: UInt = 0
         while r < g_rows { fb_clear_row_span(r, 0, g_cols); r += 1 }
     } else if mode == 1 {
-        var r: UInt32 = 0
+        var r: UInt = 0
         while r < g_cy { fb_clear_row_span(r, 0, g_cols); r += 1 }
         fb_clear_row_span(g_cy, 0, g_cx + 1)
     } else {
@@ -408,28 +403,28 @@ private func fb_erase_display(_ mode: Int32) {
 private func fb_csi_dispatch(_ final: UInt8) {
     switch final {
     case UInt8(ascii: "H"), UInt8(ascii: "f"):  // CUP — cursor position (1-based)
-        let row = UInt32(csi_param(0, 1))
-        let col = UInt32(csi_param(1, 1))
+        let row = UInt(csi_param(0, 1))
+        let col = UInt(csi_param(1, 1))
         fb_lift_cursor()
         g_cy = row - 1; if g_cy >= g_rows { g_cy = g_rows != 0 ? g_rows - 1 : 0 }
         g_cx = col - 1; if g_cx >= g_cols { g_cx = g_cols != 0 ? g_cols - 1 : 0 }
     case UInt8(ascii: "A"):                                                   // CUU
-        let n = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let n = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cy = (n > g_cy) ? 0 : g_cy - n
     case UInt8(ascii: "B"):                                                   // CUD
-        let n = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let n = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cy += n; if g_cy >= g_rows { g_cy = g_rows - 1 }
     case UInt8(ascii: "C"):                                                   // CUF
-        let n = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let n = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cx += n; if g_cx >= g_cols { g_cx = g_cols - 1 }
     case UInt8(ascii: "D"):                                                   // CUB
-        let n = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let n = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cx = (n > g_cx) ? 0 : g_cx - n
     case UInt8(ascii: "G"):                                                   // CHA
-        let col = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let col = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cx = col - 1; if g_cx >= g_cols { g_cx = g_cols - 1 }
     case UInt8(ascii: "d"):                                                   // VPA
-        let row = UInt32(csi_param(0, 1)); fb_lift_cursor()
+        let row = UInt(csi_param(0, 1)); fb_lift_cursor()
         g_cy = row - 1; if g_cy >= g_rows { g_cy = g_rows - 1 }
     case UInt8(ascii: "J"): fb_lift_cursor(); fb_erase_display(csi_param(0, 0)) // ED
     case UInt8(ascii: "K"): fb_lift_cursor(); fb_erase_line(csi_param(0, 0))    // EL
@@ -501,7 +496,7 @@ func fb_putc(_ c: UInt8) {
         if g_cx > 0 { g_cx -= 1 }
         return
     } else if c == UInt8(ascii: "\t") {
-        g_cx = (g_cx + 4) & ~UInt32(3)
+        g_cx = (g_cx + 4) & ~UInt(3)
     } else {
         if g_cx >= g_cols {
             g_cx = 0

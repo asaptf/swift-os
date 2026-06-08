@@ -100,6 +100,16 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+require_await() {  # require_await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}"
+  if ! await "$marker" "$max"; then
+    echo "FAIL: timed out waiting for serial marker: $marker" >&2
+    echo "--- serial tail ---" >&2
+    sed 's/\r//' "$LOG" | tail -80 >&2
+    exit 1
+  fi
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -112,12 +122,12 @@ await() {  # await MARKER [MAXSEC]
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
-await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
-await "swift-os login:" 20 && printf 'root\n' >&3
-await "Password:" 15 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 15 && printf '/bin/tlsget 10.0.2.2 %s\n' "$PORT" >&3
-await "HTTP/1.0 200 ok" 45 || true
+require_await "M7 tty: type a line then Enter" 60; printf 'tty-line\n' >&3
+require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
+require_await "swift-os login:" 40; printf 'root\n' >&3
+require_await "Password:" 30; printf 'swordfish\n' >&3
+require_await "Welcome to swift-os, root" 40; printf '/bin/tlsget 10.0.2.2 %s\n' "$PORT" >&3
+await "HTTP/1.0 200 ok" 90 || true
 exec 3>&-
 stop_all
 QP=""; SPID=""
