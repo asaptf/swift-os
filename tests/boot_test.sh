@@ -88,7 +88,12 @@ source override allows error
 log: recent
 detail=100
 detail=4
-pid=1 principal=1}"
+pid=1 principal=1
+LOG-EXPORT bytes=
+LOG-EXPORT-BEGIN
+source=proc msg=\"psinfo\" pid=1 principal=1
+source=log_export msg=\"tail serialization ready\"
+LOG-EXPORT-END}"
 
 FORBIDS="${FORBIDS:-SPAWN-ISO-LEAK
 SPAWN-ISO-SETUP-FAIL

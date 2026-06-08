@@ -742,7 +742,22 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
+        klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
+        withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in
+            let base = exportBuffer.baseAddress!
+            let n = logFormatRecentTail(6, into: base, capacity: exportBuffer.count)
+            uartPuts("LOG-EXPORT bytes=")
+            uartPutUInt(UInt64(n))
+            uartPuts("\n")
+            uartPuts("LOG-EXPORT-BEGIN\n")
+            var i = 0
+            while i < n {
+                uartPutc(base[i])
+                i += 1
+            }
+            uartPuts("LOG-EXPORT-END\n")
+        }
         runTtyDemo()
         runInit() // console-login (init) — interactive, last
     }
