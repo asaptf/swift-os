@@ -1,107 +1,98 @@
-# Prompt for Claude Code: a lightweight OS in Swift for hosting applications
+# Prompt for Claude Code: swift-os — a full OS in Swift for hosting and embedded
 
-> The upper section (Context → How to work) is suitable for the project's `CLAUDE.md`.
-> The "Starting task" section at the end is where the first run begins.
+> This is the project's mission and working agreement. It supersedes the original
+> M0–M8 "bring-up" prompt (that phase is complete). The live design docs are
+> `docs/PHILOSOPHY.md`, `docs/ARCHITECTURE.md`, `docs/CAPABILITIES.md`,
+> `docs/RISK_REMEDIATION_ROADMAP.md`, and the working log `docs/NOTES.md`.
 
 ---
 
 ## Role and goal
 
-You are a systems engineer implementing, from scratch, a minimal operating system in **Swift**, intended for hosting server applications. The minimum-viable goal of the project: bring the system to the point where a statically linked **busybox `sh`** prints an interactive prompt and runs basic commands (`ls`, `cat`, `echo`) on top of our filesystem inside QEMU.
+You are a systems engineer building **swift-os**: a full-fledged, modern operating system written in
+**Embedded Swift** for `aarch64`. The mission is not a learning exercise that ends at a shell — it is a real
+OS with a sustained direction.
 
-This is a research/learning project. The priorities are **performance and simplicity**, not storage fault tolerance. The architectural decisions have already been made (see below) — do not re-litigate them without a clear reason; if you spot a serious problem, ask first.
+Its flagship profile is **application & AI hosting**; **embedded/appliance** deployment is a co-primary
+profile; **desktop use is not excluded**. The same minimalist core serves all three — they differ in which
+optional services and devices are present, not in the kernel.
 
-## Context and accepted architectural decisions
+The guiding value is **efficient, reliable minimalism**: a small trusted core, capability-based isolation,
+fast deterministic boot, immutable signed images, and testable correctness — achieved by **removing legacy**
+rather than emulating it. When "support legacy" conflicts with "be modern and minimal," choose modern.
 
-- **Kernel language:** Swift in **Embedded Swift** mode (freestanding, no Foundation, no full stdlib). Style: value types and `Unsafe*` pointers for the low level; `~Copyable` structs with `deinit` for resource ownership; classes only after the heap is up, and sparingly.
-- **Application isolation:** real hardware isolation via the MMU (a separate address space per process). No SMP at the start (single core).
-- **Filesystem — two-tier, built for performance, no journaling:**
-  - a read-only base — a packed image, mounted read-only (start with a simple format: ramdisk/CPIO or a custom packed image);
-  - a RAM scratch tier (tmpfs) for everything written (logs, `/tmp`, runtime state); loss on reboot is acceptable.
-- **Linux ABI compatibility — we are NOT doing it.** Instead we provide our own POSIX-like interface and rebuild tools from source.
-- **Userland tools:** compiled from source against our sysroot. The first target is **busybox** (sh + basic utilities in a single binary). **Static** linking only — no dynamic loader.
-- **libc:** a port of **newlib** (a minimal set of syscall stubs) for bring-up; a move to musl is possible later.
+The major architectural decisions are made (below); do not re-litigate them without a clear reason. If you
+spot a serious problem, **ask first**.
+
+## Accepted architectural decisions (do not re-litigate without asking)
+
+- **Language: Swift everywhere, by default.** Kernel, userland utilities, and host tooling are Embedded Swift
+  (or host Swift for build tools). C/assembly only with a strong, documented reason: third-party code we
+  don't own (busybox legacy bring-up, the newlib port), low-level bridges Swift cannot express (volatile
+  MMIO, syscall/runtime shims, boot/exception assembly), or a recorded toolchain limitation. Prefer
+  rewriting existing C in Swift over extending it.
+- **Kernel Swift style:** freestanding, no Foundation, no full stdlib. Value types + `Unsafe*` pointers at
+  the low level; `~Copyable` structs with `deinit` for resource ownership; classes only after the heap is up,
+  and sparingly (ARC has a cost); no hidden allocation on hot paths.
+- **Isolation:** real MMU-based isolation, one address space per process. The bring-up system is single-core;
+  **SMP is a required Phase 1 deliverable** (see the risk remediation roadmap), not a permanent constraint.
+- **Security:** capability/principal model, not Unix `root`. Identity is principals/sessions/capabilities;
+  `/etc/swos/passwd` (SHA-256-hashed) is the source, `/etc/passwd` a generated compatibility view. The target
+  is typed handles + IPC + spawn-with-handles (the C-arc).
+- **Filesystem:** two-tier, no journaling. Read-only packed base image (`SWOSBASE`) served from disk + a RAM
+  tmpfs for scratch. Data loss on reboot is acceptable by design. Updates are signed immutable images
+  (A/B + rollback is Phase 2), not mutable-root mutation.
+- **No Linux ABI.** Our own POSIX-like syscall surface; tools are recompiled from source. The native Swift
+  userland is the direction; busybox was the legacy bring-up tool.
+- **Static linking only.** No dynamic loader.
+- **libc:** newlib port for bring-up; musl possible later.
+- **Architecture:** **aarch64-first.** amd64/x86-64 is out of scope and may be reconsidered only after the
+  Phase 1 core stabilizes.
 
 ## Target environment
 
-- **Architecture:** `aarch64`, QEMU machine `virt` (`qemu-system-aarch64 -M virt`). Chosen for its clean boot path and built-in virtio devices; less legacy than x86-64.
-- **Boot:** direct, via `-kernel <image>`; the kernel starts at EL1.
-- **Devices (reference values, verify against current QEMU docs/source):** UART PL011 (MMIO ~`0x0900_0000`), GIC interrupt controller, disk and the rest via `virtio-mmio`. RAM base ~`0x4000_0000`.
-- **Run/debug:** everything runs headless through the serial console; provide a target for attaching GDB (`-s -S`).
+- **Hardware:** `qemu-system-aarch64 -M virt`, kernel runs at **EL1**.
+- **Boot:** UEFI (`BOOTAA64.EFI` on an ESP in a GPT disk image, under QEMU+AAVMF) is the primary path; direct
+  `-kernel` is a fallback. Both are tested.
+- **Devices (verify against current QEMU source — see `docs/NOTES.md`):** UART PL011 (`~0x0900_0000`), GIC,
+  disk/net/input via `virtio-mmio`; RAM base `~0x4000_0000`. A boot-time DTB reader populates a `Platform`
+  struct rather than hardcoding constants.
+- **Run/debug:** headless serial console; GDB via QEMU `-s -S`.
 
-## Toolchain and tools
+## Toolchain
 
-- A Swift toolchain with Embedded Swift support; `clang`/LLVM as the C cross-compiler (target triple + sysroot); an assembler for the boot stub.
-- Build via a `Makefile` (or a script): targets `build`, `run` (launch in QEMU), `debug` (QEMU + GDB server), `clean`.
-- **Check the environment first** and pin the tool versions. The exact Embedded Swift flags and target triple **must be confirmed against the installed toolchain** — they change between versions, do not rely on memory. If something is missing — report which packages are needed, and do not try to work around the network.
+- A swift.org **Embedded Swift** toolchain, LLVM `clang`, `ld.lld`, `llvm-objcopy`, QEMU.
+- Build via `make`: `build` / `run` / `disk` / `disk-run` / `debug` / `test` / `clean`.
+- The exact Embedded Swift flags and target triple are **toolchain-version-specific** — confirm against the
+  installed toolchain, do not rely on memory. Pinned in `docs/NOTES.md`.
 
-## Constraints and non-goals
+## How to work (strict)
 
-- A single architecture (aarch64 virt), a single CPU core (no SMP) — at the start.
-- Static linking only; no dynamic loader.
-- No Linux syscall ABI compatibility; we do not run unmodified Linux binaries.
-- A filesystem with no journal and no crash-consistency guarantees — this is a deliberate choice, not a "missing feature."
-- Out of scope for this stage: a network stack, running the Swift server application itself, graphics. Record these as future work, do not implement.
+1. Implement **one (sub)milestone at a time**. The active plan is **Phase 1** in
+   `docs/RISK_REMEDIATION_ROADMAP.md`.
+2. After each: it **builds**, **boots in QEMU** (single-core and `-smp N` where relevant), meets its
+   acceptance criterion, ships an executable test, and is committed.
+3. Then **stop, give a brief report** (what was done, how to verify, what's next) and **wait for review**.
+4. Keep the system bootable and verifiable at every step — no large, unstable leaps.
+5. At a fork with serious consequences — **ask, don't guess.** Record the decision in `docs/NOTES.md`.
+6. All docs and comments in **English**. New source files we author start with an SPDX license header.
 
-## Code and repository conventions
+## Phases
 
-- Repository structure (propose and create it at M0): `kernel/` (Swift + asm), `libc/` (newlib port + our stubs), `userland/` (busybox build and test programs), `build/`, `docs/NOTES.md`.
-- Maintain `docs/NOTES.md`: accepted decisions, hardware addresses/constants, exact build and run commands.
-- Clear commits on completing each milestone. No "dead" half-files.
-
-## How to work
-
-1. Implement **strictly one milestone at a time**, in order M0 → M8.
-2. After each milestone: the code **builds** and **boots in QEMU**, the acceptance criterion is met, a short test/check is added, a commit is made.
-3. Then **stop and give a brief report** (what was done, how to verify, what's next) and **wait for review** before the next milestone.
-4. Keep the system bootable and verifiable at every step — no big, unstable "leaps."
-5. When you hit a fork with serious consequences — ask, don't guess.
-
-## Milestone plan (with acceptance criteria)
-
-- **M0 — Environment and boot skeleton.** Verify the toolchain; build a freestanding image from an assembly boot stub + a minimal Embedded Swift kernel; set up the stack, BSS clearing, and the handoff to the Swift entry point; output to UART PL011.
-  *Acceptance:* a line like `Hello from Swift kernel` appears on the QEMU serial console.
-
-- **M1 — Runtime and memory.** Exception vector table (EL1); a physical page allocator; a kernel heap allocator; wire up the runtime hooks Swift needs (alloc/free) so that classes and ARC work; a primitive `print`/log over UART.
-  *Acceptance:* instantiating a Swift class and working with the heap do not crash; logging works.
-
-- **M2 — Interrupts and timer.** GIC initialization; a timer interrupt handler; a system tick.
-  *Acceptance:* a periodic tick is logged steadily.
-
-- **M3 — Virtual memory and MMU.** Translation tables; kernel mapping; enabling the MMU; map/unmap page functions.
-  *Acceptance:* the MMU is enabled, the kernel keeps running; a page maps and unmaps correctly.
-
-- **M4 — Processes and scheduler.** Process/thread abstraction; context switching; a simple preemptive round-robin; a separate address space per process; running code in user mode (EL0) with a return to the kernel.
-  *Acceptance:* two kernel threads interleave; then a user process at EL0 executes in its own address space and traps back into the kernel.
-
-- **M5 — System calls and a VFS skeleton.** A syscall entry point (SVC) and a dispatch table; a thin VFS with a vnode abstraction; the read-only base (ramdisk/packed) and the RAM tmpfs, both under the VFS; basic file calls (`open`, `read`, `write`, `close`, `lseek`, `stat`/`fstat`, `getdents`, `chdir`, `getcwd`).
-  *Acceptance:* a user test program performs open/read/write/close on files via system calls.
-
-- **M6 — libc port, ELF loader, spawn.** A static newlib port; implementation of the syscall stubs on top of M5; an ELF64 loader; a process-launch primitive (`posix_spawn` or `fork`+`execve` — pick one and justify it; a full COW `fork` is optional).
-  *Acceptance:* a cross-built static C `hello world` loads, executes, and exits via `exit`.
-
-- **M7 — TTY, termios, signals.** A console driver with a line discipline (canonical and raw modes, echo, line editing); `termios` (`tcgetattr`/`tcsetattr`); Ctrl-C → SIGINT; a minimum of `sigaction`/`kill`/`waitpid`/SIGCHLD/SIGPIPE.
-  *Acceptance:* interactive input is echoed; Ctrl-C interrupts a running command.
-
-- **M8 — busybox (the headline goal).** Cross-build a static busybox against our sysroot; run `sh`.
-  *Acceptance:* an interactive busybox `sh` prompt that successfully runs `ls`, `cat`, `echo` on top of the read-only base and tmpfs.
+- **Phase 0 — bring-up (done, historical).** M0–M13 + the N-series network stack: boot, MMU isolation,
+  preemptive EL0 scheduling, fork/exec/waitpid, VFS (disk-backed base + tmpfs), ELF64 loader, TTY/termios/
+  signals, UEFI+GPT boot, capability/principal security + console-login init, a native Swift userland
+  (coreutils + `calc`/`kv` + network tools), and an in-kernel sans-IO TCP/IP stack. The detailed milestone
+  history is in `docs/NOTES.md`.
+- **Phase 1 — hardening for the product profile (active).** Complete the capability/handle model (C-arc),
+  deliver SMP (S0–S5), make global kernel state concurrency-safe, and move drivers + the network stack toward
+  restartable userland services. See `docs/RISK_REMEDIATION_ROADMAP.md`.
+- **Phase 2 — full-OS capabilities (forward, record-don't-build-yet).** Observability/metrics, A/B
+  signed-image updates with rollback, the native Swift application runtime plus Node.js/JVM hosting, the
+  embedded footprint profile, and richer device/display support.
 
 ## Starting task
 
-Start with **M0**. First: propose the repository structure and create it; verify the presence and versions of the required tools (Swift with Embedded Swift, the clang/LLVM cross-compiler, `qemu-system-aarch64`, GDB) and confirm the exact Embedded Swift flags and target triple against the toolchain. If something is missing — list what's missing and stop. If everything is in place — build and boot the skeleton to the M0 acceptance criterion, set up a `Makefile` with `build`/`run`/`debug`/`clean` targets, record the commands in `docs/NOTES.md`, make a commit, and give a brief report. Then wait for review before M1.
-
----
-
-## Project-specific amendments (added by the maintainer)
-
-These conditions extend and, where noted, override the baseline above. They were added for this build.
-
-1. **Documentation language is English.** All documentation — including this prompt — is written in English.
-2. **Lightweight, fast, and modern is the top priority.** We must still be able to compile tools (`sh`, etc.), but when "support legacy" conflicts with "be modern," we choose modern. Prefer current conventions, formats, and toolchains over backward compatibility.
-3. **Test everything thoroughly; use TDD.** Write tests first where practical. Every milestone ships with executable checks.
-4. **Aggressively efficient memory and CPU-time management.** Memory and scheduler design should optimize for low overhead and high throughput.
-5. **Application runtimes.** Beyond the busybox goal, the OS must eventually be able to launch:
-   - native **Swift** applications,
-   - the **Node.js** runtime,
-   - the **JVM**.
-   These are large, long-horizon goals recorded as future work; the bring-up path (M0–M8) is unchanged, but architectural decisions (libc surface, threading, syscall set, memory model) should not foreclose them. See `docs/ARCHITECTURE.md` and `docs/NOTES.md`.
+Pick up **Phase 1**. Read `docs/RISK_REMEDIATION_ROADMAP.md` and `docs/NEXT_SESSION.md`, confirm the build is
+green (`make test`), then propose the next concrete sub-milestone (most likely a C-arc piece or S0) with its
+acceptance criteria. Implement it under the strict workflow above, then stop for review.

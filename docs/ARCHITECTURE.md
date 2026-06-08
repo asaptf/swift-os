@@ -5,7 +5,7 @@ How swift-os is structured, and how the long-horizon goals shape early decisions
 ## Layers
 
 ```
-EL0  userland      busybox · static C programs · (future) Swift apps, Node.js, JVM
+EL0  userland      native Swift coreutils + net tools · (future) Swift apps, Node.js, JVM · busybox (legacy bring-up)
       ───────────  syscall boundary (SVC) — our own POSIX-like ABI, NOT Linux
 EL1  kernel        Embedded Swift: runtime · mm · sched · vfs · drivers
       arch/aarch64 boot stub (asm) · exception vectors · context switch
@@ -13,8 +13,8 @@ EL1  kernel        Embedded Swift: runtime · mm · sched · vfs · drivers
 
 ## Architecture support policy
 
-swift-os is an **aarch64-first** operating system. The implementation target through M8 is QEMU `virt` on
-aarch64 only.
+swift-os is an **aarch64-first** operating system. The current implementation target is QEMU `virt` on
+aarch64 only (with a UEFI+GPT disk boot path).
 
 Rationale:
 
@@ -25,9 +25,9 @@ Rationale:
 - focusing one architecture keeps tests, documentation, and milestone acceptance criteria sharp.
 
 The kernel should still keep architecture-specific code behind `arch/<target>/` boundaries, and generic
-subsystems should not bake in aarch64 details unnecessarily. However, amd64/x86-64 is not a supported target
-for the bring-up roadmap. It may be reconsidered after M8, once the syscall model, VFS, scheduler, process
-model, and driver strategy are stable.
+subsystems should not bake in aarch64 details unnecessarily. However, amd64/x86-64 is not a supported target.
+It may be reconsidered once the Phase 1 hardening arc (capabilities + SMP + service-ization) is stable, since
+the syscall model, VFS, scheduler, process model, and driver strategy are still in flux there.
 
 ## Kernel module map (`kernel/`)
 
@@ -268,8 +268,9 @@ Stage responsibilities:
   namespace.
 - **Default cell/session.** Create the default/global cell and boot session, then grant only the capabilities
   needed for the first shell or init process.
-- **First user process.** For M8 this may be an auto-login busybox `sh` in the default cell. Later it should be
-  a small `/sbin/init` supervisor.
+- **First user process.** Today this is `/bin/console-login` (init), which authenticates a principal and
+  `execve`s the shell with the adopted context in the default cell. Later it should become a small
+  `/sbin/init` supervisor.
 
 `/sbin/init` should remain small. It is not a systemd-style orchestration layer and should not become part of
 the boot-critical kernel path. Its long-term responsibilities are:
@@ -447,11 +448,11 @@ Initial implementation constraints:
 - M5 VFS lookup should be designed around process/cell `root` and `cwd`, not global path state.
 - M6 process launch should be shaped like `spawn(image, argv, env, inheritedHandles, limits)`.
 - M7 signals, process groups, and terminal control should be cell-aware once multiple cells exist.
-- M8 busybox runs inside the default cell; full cells remain future work.
+- the bring-up userland runs inside the default cell; full cells remain future work.
 
-Explicitly postponed until after the busybox milestone: network isolation, OCI image compatibility, image
-registries, overlay layers, seccomp-like policy VMs, multi-user accounting, nested cells, live migration, and
-SMP-aware resource scheduling.
+Explicitly postponed beyond bring-up (future cells / Phase 2 work): network isolation, OCI image
+compatibility, image registries, overlay layers, seccomp-like policy VMs, multi-user accounting, nested cells,
+live migration, and SMP-aware resource scheduling.
 
 ## Identity and login model
 
@@ -483,23 +484,39 @@ Kernel authorization should be based on explicit capabilities and object ownersh
 `uid == 0`. Example capability categories include filesystem rights, console/TTY access, process spawning,
 cell management, clock access, IPC endpoints, and later network rights.
 
-Early milestones keep this deliberately simple:
+The implemented model (M12/M13):
 
-- M8 may use a single auto-login console session in the default/global cell.
-- `/etc/passwd` and `/etc/group` may be absent or minimal generated compatibility files if busybox/newlib
-  expects them.
-- Real authentication, identity storage, roles, policy files, and multi-session management are post-M8 work.
+- `/bin/console-login` is init: it authenticates a principal against `/etc/swos/passwd` (SHA-256-hashed
+  passwords), adopts its principal/session/capabilities via `SYS_LOGIN`, and `execve`s the shell.
+- `/etc/passwd` and `/etc/group` are generated compatibility views (for tools that expect them), not the
+  security policy.
+- Still future work: roles, policy files, richer multi-session management, and a stronger password KDF.
 
 Future identity data should live in a simple structured store in the immutable base image, with writable
 session state in tmpfs or a dedicated service. Compatibility files such as `/etc/passwd` should be generated
 from that store when needed, not treated as kernel security policy.
 
-## Future AI-hosting model (important; record, don't build yet)
+## Product profiles
 
-AI-hosting is an important long-horizon product profile for swift-os. The target is not to become a general
-Linux-compatible CUDA host early on. The target is a small, immutable, capability-based inference appliance OS:
-model bundles, isolated serving cells, fast boot, strong observability, hot model reload, and explicit resource
-accounting.
+swift-os serves three profiles from one minimalist core. They differ in which optional services and devices
+are present, not in the kernel.
+
+- **Application & AI hosting (flagship).** Isolated serving cells, fast boot, strong observability, explicit
+  resource accounting, and hot reload — detailed below.
+- **Embedded / appliance (co-primary).** A single-purpose deployment of the same core: a small static base
+  image, deterministic fast boot, an immutable signed base + A/B updates with rollback, capability-confined
+  drivers, predictable memory (no hidden allocation on hot paths), and only the services the appliance needs.
+  Most hosting requirements (small TCB, immutable images, capability isolation, fast boot) are exactly the
+  embedded requirements, so the two profiles share almost all of the roadmap.
+- **Desktop (not excluded).** A basic VT100 framebuffer console + virtio-input keyboard already exist for
+  QEMU graphical mode. Desktop use is not a goal we design *against*, but a rich display/input stack is Phase 2
+  work, not a current target; serial/headless remains the primary path.
+
+### Flagship hosting model (important; record, don't build yet)
+
+The target is not to become a general Linux-compatible CUDA host early on. The target is a small, immutable,
+capability-based hosting/inference appliance OS: model and application bundles, isolated serving cells, fast
+boot, strong observability, hot reload, and explicit resource accounting.
 
 The practical first AI target should be CPU-only inference:
 
@@ -572,11 +589,12 @@ Accelerator support should be designed as explicit device authority, not ambient
 - userland accelerator driver services where practical;
 - accelerator capabilities such as `accel:use`, `accel:memory`, and `accel:queue`.
 
-AI-hosting requires networking after the busybox milestone:
+AI-hosting requires networking — much of which now exists (virtio-net driver, sans-IO TCP/IP stack,
+capability-gated sockets, a poll()-driven HTTP server). The remaining pieces are Phase 1/2 work:
 
-- virtio-net or another minimal NIC path;
-- TCP/IP stack;
-- async accept/read/write;
+- virtio-net or another minimal NIC path; **(done)**
+- TCP/IP stack; **(done — in-kernel today, service-ization is Phase 1)**
+- async accept/read/write; **(done via `poll()`)**
 - backpressure;
 - graceful reload and drain;
 - TLS in userland;
@@ -593,7 +611,7 @@ Observability should include AI-serving metrics:
 - cell restarts;
 - accelerator errors and utilization when accelerators exist.
 
-Post-M8 priority order:
+Hosting build-out priority order (Phase 1/2):
 
 1. CPU-only static inference server with mmap-backed model files.
 2. Network serving and metrics.
@@ -766,9 +784,10 @@ Design constraints that keep hot updates possible:
 
 ## Long-horizon goals and what they require (record, don't build yet)
 
-These are **future work**. M0–M8 (and the M9–M13/N follow-ups) do not implement them, but we avoid decisions
-that foreclose them. The post-M13 risk remediation arc (SMP + completion of the C-capabilities plan) is the
-first deliberate step toward making several of these items practical rather than theoretical.
+These are **future work** (Phase 2). The bring-up arc (Phase 0) and the active hardening arc (Phase 1) do not
+implement them, but we avoid decisions that foreclose them. The Phase 1 risk remediation arc (SMP + completion
+of the C-capabilities plan) is the first deliberate step toward making several of these items practical rather
+than theoretical.
 
 See `docs/RISK_REMEDIATION_ROADMAP.md` for the current sequencing and decision record.
 
@@ -780,16 +799,18 @@ See `docs/RISK_REMEDIATION_ROADMAP.md` for the current sequencing and decision r
 
 Common denominators to keep on the roadmap: **threads + a futex-like primitive**, **`mmap` with executable
 permission (W^X) for JIT**, an **event/poll syscall**, and a **TLS** mechanism. The syscall ABI and memory
-model are designed with these in mind even though only the bring-up subset is implemented now.
+model are designed with these in mind even though only a subset is implemented now.
 
-## Explicit non-goals (this stage)
+## Explicit non-goals
 
-Network stack (in the long term — a sans-IO core and capability-gated sockets exist today), the Swift server
-app itself, graphics, amd64/x86-64 support, dynamic linking, Linux ABI, FS crash-consistency, full Cells,
-Docker/OCI compatibility, a broad kernel-module ABI, and hot kernel updates.
+These are deliberate boundaries — minimalism by removing legacy surface, not gaps to fill: the Swift server
+app itself (as part of the OS), graphics as the primary display path, amd64/x86-64 support, dynamic linking,
+Linux ABI, FS crash-consistency, full Cells, Docker/OCI compatibility, a broad kernel-module ABI, and hot
+kernel updates. (A network stack is *not* a non-goal — a sans-IO core and capability-gated sockets exist
+today.)
 
 **SMP and restartable driver services are no longer blanket non-goals.** They are the subject of the active
-post-M13 risk remediation roadmap (see `docs/RISK_REMEDIATION_ROADMAP.md`). The first phase of that work
-completes the C-arc (explicit handles + IPC) and then delivers basic SMP (S0–S5) while moving at least one
-driver out of the kernel. Until those milestones land, the practical system remains effectively single-core
-and the in-kernel drivers/network stack remain the bring-up reality.
+Phase 1 risk remediation roadmap (see `docs/RISK_REMEDIATION_ROADMAP.md`). That work completes the C-arc
+(explicit handles + IPC) and then delivers basic SMP (S0–S5) while moving at least one driver out of the
+kernel. Until those milestones land, the practical system remains effectively single-core and the in-kernel
+drivers/network stack remain the current reality.

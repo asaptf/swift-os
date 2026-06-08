@@ -1,8 +1,12 @@
 # PHILOSOPHY
 
-swift-os is a small, modern operating system built to host server applications with a clear security and
-performance model. The project is not trying to become a general-purpose legacy-compatible Unix. It chooses
-clarity, speed, isolation, and testable correctness over broad compatibility.
+swift-os is a full-fledged, modern operating system with a clear security and performance model. Its flagship
+profile is **application & AI hosting**; **embedded/appliance** deployment is a co-primary profile; **desktop
+use is not excluded**. The same minimalist core serves all three — they differ in which optional services and
+devices are present, not in the kernel. The project is not trying to become a general-purpose
+legacy-compatible Unix. Its guiding value is *efficient, reliable minimalism*: it chooses clarity, speed,
+isolation, and testable correctness over broad compatibility, and it pursues minimalism by **removing legacy**
+rather than emulating it.
 
 ## Core priorities
 
@@ -136,8 +140,18 @@ When choosing between designs:
 
 ## Current focus
 
-The current bring-up target is aarch64 QEMU `virt`. The minimum viable system is a statically linked busybox
-`sh` that can run `ls`, `cat`, and `echo` on the swift-os filesystem inside QEMU.
+The implementation target is aarch64 (QEMU `virt`, plus a UEFI+GPT disk path). Work is organized in phases:
 
-Everything else is either support for that path or a recorded long-horizon constraint. AI-hosting is an
-important future product profile, but it starts after the base OS can run ordinary static userland reliably.
+- **Phase 0 — bring-up (done, historical).** M0–M13 + the N-series network stack. The system boots,
+  isolates each process with the MMU, runs a native Swift userland, and has an in-kernel TCP/IP stack. The
+  bring-up userland was a statically linked busybox `sh`; the native Swift userland is now the direction.
+- **Phase 1 — hardening for the product profile (active).** Complete the capability/handle model, deliver
+  SMP, and move drivers and the network stack toward restartable userland services. See
+  `docs/RISK_REMEDIATION_ROADMAP.md`.
+- **Phase 2 — full-OS capabilities (forward).** Observability and metrics, A/B signed-image updates with
+  rollback, the native Swift application runtime plus Node.js/JVM hosting, and the embedded footprint profile.
+  Recorded, not built early.
+
+AI-hosting is the flagship hosting workload, and embedded/appliance use is a co-primary profile; both build on
+the same core. The base userland and networking already exist — the focus now is making the core
+concurrency-safe and capability-honest enough to carry these profiles credibly.

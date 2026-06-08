@@ -1,27 +1,34 @@
 # swift-os
 
-swift-os is a minimal, modern operating system written in **Embedded Swift** for
-`aarch64` on QEMU `virt`. It is built for one focused bring-up goal: boot a
-small kernel, launch statically linked userland programs, and reach a busybox
-`sh` that can run `ls`, `cat`, and `echo` on the swift-os filesystem. That goal
-is complete; development has continued into portability, security, a native
-Swift userland coreutils set, and a userland-facing network stack.
+swift-os is a full-fledged, modern operating system written in **Embedded
+Swift** for `aarch64`. Its flagship profile is **application & AI hosting**;
+**embedded/appliance** deployment is a co-primary profile; **desktop use is not
+excluded**. The design value is *efficient, reliable minimalism* — a small
+trusted core, capability-based isolation, fast deterministic boot, immutable
+signed images, and testable correctness, achieved by **removing legacy** rather
+than emulating it.
 
-The project is not a Linux clone, not a legacy Unix compatibility exercise, and
-not a general-purpose desktop OS. It chooses a small trusted core, fast boot,
-explicit isolation, and testable correctness over broad compatibility.
+The project is not a Linux clone and not a legacy Unix compatibility exercise.
+The same minimalist core serves all three profiles; they differ mainly in which
+optional services and devices are present, not in the kernel.
 
 ## Current Status
 
-The kernel is well past M8. The current state, in order of what was completed:
+The bring-up phase is complete and the system runs a native Swift userland with
+networking. Development is now in **Phase 1**: hardening the system for the
+product profile (capability/handle model, SMP, restartable userland services —
+see [docs/RISK_REMEDIATION_ROADMAP.md](docs/RISK_REMEDIATION_ROADMAP.md)).
 
-- **M0–M8 (busybox bring-up):** the kernel boots at EL1 on QEMU `virt`; UART,
-  exceptions, GIC timer interrupts, the MMU, and preemptive EL0 scheduling are
-  up; each process has its own address space; fork/exec/waitpid work; a VFS
-  exposes a read-only base FS plus a writable tmpfs; static ELF64 programs load
-  and execute from the VFS; and a statically linked busybox `sh` (ash + ls/cat/
-  echo/pwd) runs on the filesystem. `make test` covers host-side unit checks and
-  QEMU boot assertions.
+What exists today, in the order it was built:
+
+- **Phase 0 — bring-up (historical, M0–M8):** the kernel boots at EL1 on QEMU
+  `virt`; UART, exceptions, GIC timer interrupts, the MMU, and preemptive EL0
+  scheduling are up; each process has its own address space; fork/exec/waitpid
+  work; a VFS exposes a read-only base FS plus a writable tmpfs; static ELF64
+  programs load and execute from the VFS. The bring-up userland was a statically
+  linked busybox `sh` (a legacy tool used to prove the syscall surface); the
+  **native Swift userland is now the direction** (see below). `make test` covers
+  host-side unit checks and QEMU boot assertions.
 
 - **M9 — HAL + device tree:** the kernel reads its own DTB at boot and populates
   a global `Platform` struct; UART/GIC/RAM addresses come from the device tree
@@ -112,7 +119,7 @@ See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 ## Architecture
 
 ```text
-EL0  userland      busybox, native Swift coreutils+network tools, future Swift apps, Node.js, JVM
+EL0  userland      native Swift coreutils + network tools; future Swift apps, Node.js, JVM (busybox: legacy bring-up)
       ----------   syscall boundary: swift-os POSIX-like ABI, not Linux ABI
 EL1  kernel        Embedded Swift: runtime, mm, sched, vfs, drivers, net, security, tty
       arch/aarch64 boot (UEFI loader + direct -kernel fallback), exception vectors, context switch
@@ -254,8 +261,14 @@ Embedded Swift flags across toolchain versions.
 
 ## Roadmap
 
-Milestones are developed in order; each must remain buildable, bootable, tested,
-and reviewable before moving on.
+Work is organized in phases. Each milestone must remain buildable, bootable,
+tested, and reviewable before moving on.
+
+### Phase 0 — bring-up (done, historical)
+
+The bring-up arc proved the kernel and syscall surface end to end. busybox was
+the bring-up userland (a legacy tool); the native Swift userland is now the
+direction.
 
 - **M0:** boot skeleton and UART output. **Done.**
 - **M1:** runtime hooks, exception vectors, heap, page allocator. **Done.**
@@ -287,20 +300,31 @@ and reviewable before moving on.
   HTTP server), `/bin/nslookup`, DNS resolver, TCP robustness + ephemeral-port
   allocator, ChaCha20-Poly1305 AEAD (TLS groundwork). **Done.**
 
-**Post-M13 risk remediation (new focus as of 2026-06):** A dedicated plan exists in
-`docs/RISK_REMEDIATION_ROADMAP.md`. It treats SMP as a required deliverable (S0–S5 series)
-together with completing the capability/handle model (C-arc), moving drivers and the network
-stack toward the documented restartable userland service model, and making global kernel
-state concurrent-safe. Each sub-milestone will still follow the strict rule: builds, boots
-(including `-smp N`), has tests, is committed, then review. SMP and "restartable services"
-have been removed from the blanket non-goals list; they are now tracked work.
+### Phase 1 — hardening for the product profile (active)
 
-Longer-horizon goals are recorded, not implemented early: TLS 1.3 record layer
-and handshake; Cells (kernel-native capability-based isolated execution domains);
-native Swift application runtime; Node.js; the JVM; richer observability;
-hot-update-friendly kernel structure; A/B image updates with rollback.
+The dedicated plan lives in `docs/RISK_REMEDIATION_ROADMAP.md`. It completes the
+capability/handle model (C-arc), treats **SMP** as a required deliverable (S0–S5
+series), moves drivers and the network stack toward the documented restartable
+userland service model, and makes global kernel state concurrent-safe. Each
+sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
+tests, is committed, then review. SMP and "restartable services" are tracked
+work, not non-goals.
 
-## Non-Goals At This Stage (and how the risk remediation arc changes them)
+### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
+
+Toward a complete hosting/embedded OS: richer observability and metrics; A/B
+signed-image updates with rollback; the native Swift application runtime plus
+Node.js and JVM hosting; the embedded footprint profile (small static image,
+deterministic boot, fewer services); TLS 1.3 record layer and handshake; Cells
+(kernel-native capability-based isolated execution domains); and a
+hot-update-friendly kernel structure. Recorded, not implemented early.
+
+## Non-Goals (minimalism by removing legacy)
+
+These boundaries are deliberate. They are how the OS stays minimal — it removes
+legacy surface rather than carrying it. They are not constraints on the
+hosting/embedded/desktop profiles, which the same core already serves; they
+constrain *how* it serves them.
 
 - Linux ABI compatibility;
 - dynamic linking;
@@ -311,8 +335,9 @@ hot-update-friendly kernel structure; A/B image updates with rollback.
 - journaling or persistent writable filesystem guarantees;
 - broad loadable kernel-module ABI;
 - GPU/NPU acceleration;
-- graphics as a first-class target (a basic VT100 framebuffer console exists for
-  QEMU graphical mode, but it is not the primary display path).
+- graphics as the *primary* display path (a basic VT100 framebuffer console +
+  virtio-input keyboard exist for QEMU graphical mode; desktop use is not
+  excluded, but a rich display stack is Phase 2 work, not a current target).
 
 (See the risk remediation roadmap for the current status of SMP and restartable
 driver services — they are no longer blanket non-goals.)

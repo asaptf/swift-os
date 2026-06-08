@@ -3,6 +3,17 @@
 Working notes for picking up swift-os development. Authoritative milestone history lives in
 `docs/NOTES.md`; this file is the short-lived "where we are / what to do next" scratchpad.
 
+## Current focus: Phase 1 hardening
+
+Phase 0 (bring-up: M0–M13 + the N-series network stack) is **done**. The active plan is **Phase 1** in
+`docs/RISK_REMEDIATION_ROADMAP.md`: complete the capability/handle model (C-arc), deliver SMP (S0–S5), and
+move drivers + the network stack toward restartable userland services. This advances swift-os toward its
+product profiles — application/AI hosting (flagship) and embedded/appliance (co-primary), desktop not
+excluded. The next concrete sub-milestone is most likely a C-arc piece or S0; write its acceptance criteria,
+implement, test, commit, report — one (sub)milestone at a time.
+
+The detailed dated notes below are a **historical log** of how Phase 0 was built; keep them for reference.
+
 ## Where we are (2026-06-06)
 
 - **Network stack — net-a..g DONE (2026-06-06/07).** Own Swift, sans-IO. Serves files over HTTP + DNS.
