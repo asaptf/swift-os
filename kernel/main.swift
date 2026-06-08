@@ -700,6 +700,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     // A .debug line that is suppressed by the L2 default (.info). This proves
     // the filter is active without polluting normal boot logs or test output.
     klog(.debug, "log", "this debug line should be filtered by default")
+    klog(.info, "log", "source filtering active")
+    klogSetSourceMinLevel("log_filter", .error)
+    klog(.info, "log_filter", "this source-filtered info line should be hidden")
+    klog(.error, "log_filter", "source override allows error")
+    klogClearSourceMinLevels()
     schedulerInit()
     processInit()
     securityInit()
