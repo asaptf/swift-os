@@ -83,6 +83,8 @@ PID PPID STAT CMD
 ps OK: Swift ps exited, code 0
 L0 kernel logger active
 level filtering active (min INFO)
+source filtering active
+source override allows error
 log: recent
 detail=100
 detail=4
@@ -90,7 +92,8 @@ pid=1 principal=1}"
 
 FORBIDS="${FORBIDS:-SPAWN-ISO-LEAK
 SPAWN-ISO-SETUP-FAIL
-SPAWN-EXPLICIT-FAIL}"
+SPAWN-EXPLICIT-FAIL
+this source-filtered info line should be hidden}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

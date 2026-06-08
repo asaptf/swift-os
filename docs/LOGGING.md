@@ -19,8 +19,9 @@ The current tree has the first logging foundation:
 - `logDumpRecent` renders nonzero structured payloads as `detail=...` and non-kernel context as `pid=... principal=...`; live UART lines stay text-only for now.
 - `kpanic` records a panic entry and dumps the recent ring tail before halting.
 - Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
+- Per-source runtime filtering is present via `klogSetSourceMinLevel` / `klogClearSourceMinLevels`; an exact source override wins over the global minimum, while `.panic` is still never filtered.
 - Early adoption has moved or mirrored a small set of core boot events onto `klog`: platform discovery (mirrored after timer init), scheduler online/context-switch markers, disk/base mount success, reclaim success, the Swift `ps` launch marker, and a process syscall event stored ring-only.
-- `tests/boot_test.sh` asserts the L0 line, the L2 filtering announcement, representative structured details, a userland context suffix, and the ring dump header.
+- `tests/boot_test.sh` asserts the L0 line, the L2/L4 filtering announcements, representative structured details, a userland context suffix, and the ring dump header; it also forbids the intentionally filtered per-source demo line.
 
 Most legacy milestone/probe output is still emitted by direct UART calls:
 
@@ -128,7 +129,7 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 
 - Done in this slice: a global minimum level (`.info` by default), `klogSetMinLevel`, and a boot assertion that `.debug` is suppressed.
 - Deferred follow-ups:
-- Global + per-source runtime level mask (a small table or bitmask).
+- Richer filtering policy beyond the L4b exact-source override table.
 - `klogSetLevel(.warn)` etc. (or a single "consoleLogLevel" for the UART sink).
 - Compile-time `DEBUG` vs release stripping of `.debug` (or a simple `#if`).
 - Source taxonomy documented (vfs, mm, sched, timer, net, security, user, ...).
@@ -151,7 +152,15 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - `klogRing` records accepted events without rendering a live UART line; `psinfo` uses it to populate the ring from real EL0 process context without perturbing foreground console stdout/prompt behavior.
 - Boot acceptance checks both the old structured detail fields and the new context suffix.
 
-### L4b — Kernel log sink indirection + capability hook
+### L4b — Per-Source Filtering (DONE, 2026-06-08)
+
+- A tiny fixed table holds exact source-tag minimum-level overrides.
+- `klogSetSourceMinLevel(source, level)` sets or replaces an override; `klogClearSourceMinLevels()` removes all source overrides.
+- Filtering now uses per-source override first, then the global `minLogLevel`; `.panic` bypasses both.
+- The same filtering path applies to live `klog` and ring-only `klogRing`, so suppressed records are absent from both UART and the ring.
+- Boot acceptance proves a `.info` record from `log_filter` is suppressed while a `.error` record from the same source passes.
+
+### L4c — Kernel Log Sink Indirection + Capability Hook
 
 - The UART is no longer hard-coded inside `klog`. A `LogSink` protocol (or a tiny vtable because we avoid existentials on hot paths) with a current global sink.
 - Default sink = UART renderer.

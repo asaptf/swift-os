@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// log.swift — minimal kernel logging facade (L0 + L1 ring + L2 filtering + L3 structured + L4 context).
+// log.swift — minimal kernel logging facade (L0 + L1 ring + L2 filtering + L3 structured + L4 context/filtering).
 //
 // Provides klog(level, source, message) that renders timestamped, leveled,
 // source-tagged records to the UART (and the framebuffer mirror via uartPutc).
@@ -18,6 +18,8 @@
 // L4 (context slice) captures process/security context into the ring: pid=0 and
 // principal=1 mean kernel/boot context; non-kernel entries print their compact
 // context suffix in logDumpRecent.
+// L4 (filter slice) adds a tiny per-source min-level override table on top of
+// the global min level. Overrides match exact StaticString source tags.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -66,8 +68,44 @@ private var ringFull = false // set once we have wrapped at least once
 // capability-gated service later).
 private var minLogLevel: LogLevel = .info
 
+// L4b: per-source min-level overrides. Kept deliberately small and fixed-size:
+// no heap traffic, no dictionaries, exact StaticString byte match.
+private let maxSourceOverrides = 8
+
+private struct SourceMin {
+    var source: StaticString = ""
+    var minLevel: LogLevel = .debug
+}
+
+private var sourceMins: [SourceMin] = .init(
+    repeating: SourceMin(),
+    count: maxSourceOverrides
+)
+private var sourceMinCount = 0
+
 private func currentLogContext() -> (pid: Int32, principal: UInt32) {
     (Int32(truncatingIfNeeded: processCurrentPid()), processCurrentPrincipal())
+}
+
+private func staticStringsEqual(_ a: StaticString, _ b: StaticString) -> Bool {
+    a.withUTF8Buffer { ab in
+        b.withUTF8Buffer { bb in
+            if ab.count != bb.count { return false }
+            for i in 0..<ab.count {
+                if ab[i] != bb[i] { return false }
+            }
+            return true
+        }
+    }
+}
+
+private func effectiveMinLevel(for source: StaticString) -> LogLevel {
+    for i in 0..<sourceMinCount {
+        if staticStringsEqual(sourceMins[i].source, source) {
+            return sourceMins[i].minLevel
+        }
+    }
+    return minLogLevel
 }
 
 private func ringStore(_ entry: LogEntry) {
@@ -78,8 +116,8 @@ private func ringStore(_ entry: LogEntry) {
     if ringNext == 0 { ringFull = true }
 }
 
-private func klogAccepts(_ level: LogLevel) -> Bool {
-    level == .panic || level.rawValue >= minLogLevel.rawValue
+private func klogAccepts(_ level: LogLevel, _ source: StaticString) -> Bool {
+    level == .panic || level.rawValue >= effectiveMinLevel(for: source).rawValue
 }
 
 private func ringStoreContext(_ tick: UInt64, _ level: LogLevel,
@@ -153,11 +191,35 @@ func klogGetMinLevel() -> LogLevel {
     minLogLevel
 }
 
+// MARK: - L4b per-source level control
+
+/// Set the minimum accepted level for one exact source tag. Re-setting a source
+/// replaces the existing override. If the tiny table is full, extra sources are
+/// ignored; global filtering still applies to them.
+func klogSetSourceMinLevel(_ source: StaticString, _ level: LogLevel) {
+    for i in 0..<sourceMinCount {
+        if staticStringsEqual(sourceMins[i].source, source) {
+            sourceMins[i].minLevel = level
+            return
+        }
+    }
+    if sourceMinCount < maxSourceOverrides {
+        sourceMins[sourceMinCount] = SourceMin(source: source, minLevel: level)
+        sourceMinCount += 1
+    }
+}
+
+/// Clear all per-source overrides; the global minimum level becomes the only
+/// filter again.
+func klogClearSourceMinLevels() {
+    sourceMinCount = 0
+}
+
 /// Record an accepted log event into the in-memory ring without rendering a
 /// live UART line. Use this for useful-but-chatty foreground process events
 /// where writing to the console would perturb user-visible stdout/prompt tests.
 func klogRing(_ level: LogLevel, _ source: StaticString, _ message: StaticString, _ detail: UInt64 = 0) {
-    if !klogAccepts(level) { return }
+    if !klogAccepts(level, source) { return }
     ringStoreContext(timerGetTicks(), level, source, message, detail)
 }
 
@@ -183,9 +245,9 @@ func klogRing(_ level: LogLevel, _ source: StaticString, _ message: StaticString
 /// - from IRQ handlers (the underlying uartPut* are polled);
 /// - with IRQs masked (no locks are taken).
 func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString, _ detail: UInt64 = 0) {
-    // L2 filtering: drop everything below the current min level.
+    // L2 + L4b filtering: per-source override wins over the global min level.
     // .panic is never filtered (always want the message + ring tail).
-    if !klogAccepts(level) { return }
+    if !klogAccepts(level, source) { return }
 
     let tick = timerGetTicks()
 
