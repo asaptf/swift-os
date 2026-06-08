@@ -20,6 +20,8 @@
 // context suffix in logDumpRecent.
 // L4 (filter slice) adds a tiny per-source min-level override table on top of
 // the global min level. Overrides match exact StaticString source tags.
+// L4 (wire slice) adds allocation-free key=value formatting for recent ring
+// entries. This is the stable shape future log export can consume.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -174,6 +176,130 @@ func logDumpRecent(_ maxCount: Int = 32) {
         }
         uartPuts("\n")
     }
+}
+
+// MARK: - L4c wire-format serialization
+
+private func appendByte(_ byte: UInt8, into buffer: UnsafeMutablePointer<UInt8>,
+                        capacity: Int, offset: inout Int) {
+    if offset < capacity {
+        buffer[offset] = byte
+        offset += 1
+    }
+}
+
+private func appendStatic(_ string: StaticString, into buffer: UnsafeMutablePointer<UInt8>,
+                          capacity: Int, offset: inout Int) {
+    string.withUTF8Buffer { bytes in
+        for i in 0..<bytes.count {
+            if offset >= capacity { break }
+            buffer[offset] = bytes[i]
+            offset += 1
+        }
+    }
+}
+
+private func appendUInt64(_ value: UInt64, into buffer: UnsafeMutablePointer<UInt8>,
+                          capacity: Int, offset: inout Int) {
+    if value == 0 {
+        appendByte(0x30, into: buffer, capacity: capacity, offset: &offset)
+        return
+    }
+
+    var divisor: UInt64 = 1
+    while value / divisor >= 10 {
+        divisor *= 10
+    }
+
+    var remaining = value
+    while divisor > 0 {
+        let digit = UInt8(remaining / divisor)
+        appendByte(0x30 + digit, into: buffer, capacity: capacity, offset: &offset)
+        remaining %= divisor
+        divisor /= 10
+    }
+}
+
+private func appendQuotedStatic(_ string: StaticString, into buffer: UnsafeMutablePointer<UInt8>,
+                                capacity: Int, offset: inout Int) {
+    appendByte(0x22, into: buffer, capacity: capacity, offset: &offset) // "
+    string.withUTF8Buffer { bytes in
+        for i in 0..<bytes.count {
+            if offset >= capacity { break }
+            let byte = bytes[i]
+            if byte == 0x5C { // backslash
+                appendByte(0x5C, into: buffer, capacity: capacity, offset: &offset)
+                appendByte(0x5C, into: buffer, capacity: capacity, offset: &offset)
+            } else if byte == 0x22 { // "
+                appendByte(0x5C, into: buffer, capacity: capacity, offset: &offset)
+                appendByte(0x22, into: buffer, capacity: capacity, offset: &offset)
+            } else {
+                appendByte(byte, into: buffer, capacity: capacity, offset: &offset)
+            }
+        }
+    }
+    appendByte(0x22, into: buffer, capacity: capacity, offset: &offset)
+}
+
+/// Format one log entry as a stable key=value record with no trailing newline.
+/// The caller owns the buffer; the formatter never allocates and never writes
+/// to UART. Fields:
+///   tick=N level=I source=tag msg="text" [detail=N] [pid=N principal=N]
+private func logFormatEntry(_ entry: LogEntry, into buffer: UnsafeMutablePointer<UInt8>,
+                            capacity: Int) -> Int {
+    if capacity <= 0 { return 0 }
+    var offset = 0
+
+    appendStatic("tick=", into: buffer, capacity: capacity, offset: &offset)
+    appendUInt64(entry.tick, into: buffer, capacity: capacity, offset: &offset)
+    appendStatic(" level=", into: buffer, capacity: capacity, offset: &offset)
+    let ch = levelChar.withUTF8Buffer { bytes in bytes[Int(entry.level.rawValue)] }
+    appendByte(ch, into: buffer, capacity: capacity, offset: &offset)
+    appendStatic(" source=", into: buffer, capacity: capacity, offset: &offset)
+    appendStatic(entry.source, into: buffer, capacity: capacity, offset: &offset)
+    appendStatic(" msg=", into: buffer, capacity: capacity, offset: &offset)
+    appendQuotedStatic(entry.message, into: buffer, capacity: capacity, offset: &offset)
+
+    if entry.detail != 0 {
+        appendStatic(" detail=", into: buffer, capacity: capacity, offset: &offset)
+        appendUInt64(entry.detail, into: buffer, capacity: capacity, offset: &offset)
+    }
+    if entry.pid != 0 || entry.principal != 1 {
+        appendStatic(" pid=", into: buffer, capacity: capacity, offset: &offset)
+        appendUInt64(UInt64(UInt32(bitPattern: entry.pid)), into: buffer,
+                     capacity: capacity, offset: &offset)
+        appendStatic(" principal=", into: buffer, capacity: capacity, offset: &offset)
+        appendUInt64(UInt64(entry.principal), into: buffer, capacity: capacity, offset: &offset)
+    }
+
+    return offset
+}
+
+/// Format up to `maxCount` recent ring entries (oldest first in the selected
+/// window) as newline-separated key=value records. Returns bytes written.
+func logFormatRecentTail(_ maxCount: Int, into buffer: UnsafeMutablePointer<UInt8>,
+                         capacity: Int) -> Int {
+    if capacity <= 0 || maxCount <= 0 { return 0 }
+
+    let available = ringFull ? ringCapacity : ringNext
+    if available == 0 { return 0 }
+
+    var count = maxCount
+    if count > available { count = available }
+
+    var offset = 0
+    let oldest = ringFull ? ringNext : 0
+    let start = (oldest + available - count) % ringCapacity
+    for i in 0..<count {
+        if offset >= capacity { break }
+        let idx = (start + i) % ringCapacity
+        let written = logFormatEntry(ring[idx], into: buffer.advanced(by: offset),
+                                     capacity: capacity - offset)
+        offset += written
+        appendByte(0x0A, into: buffer, capacity: capacity, offset: &offset)
+    }
+
+    return offset
 }
 
 // MARK: - L2 runtime level control
