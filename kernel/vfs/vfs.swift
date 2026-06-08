@@ -364,7 +364,7 @@ func vfsInit() {
     // attached; otherwise fall back to the compiled-in literals (the -kernel
     // test paths and UEFI GPT boot, where the disk is not a SWOSBASE image).
     if buildBaseFromDisk(root) {
-        uartPuts("M11c: read-only base mounted from disk\n")
+        klog(.info, "vfs", "M11c: read-only base mounted from disk")
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")

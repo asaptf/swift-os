@@ -151,7 +151,7 @@ private func runSchedulerDemo() {
     schedYield()
 
     if schedAllThreadsDone() {
-        uartPuts("M4.5 sched: real context switch OK\n")
+        klog(.info, "sched", "M4.5 sched: real context switch OK")
     } else {
         uartPuts("panic: scheduler demo did not complete\n")
         while true {}
@@ -332,7 +332,7 @@ private func runReclaimRound() -> Int {
 /// returned to the allocator. Regression guard for the ~2 MiB-per-command leak
 /// that previously exhausted RAM after ~100 commands.
 private func runReclaimDemo() {
-    uartPuts("swift-os reclaim: process teardown frees frames\n")
+    klog(.info, "boot", "swift-os reclaim: process teardown frees frames")
     // A warm-up round settles any one-time lazy state (e.g. the ELF staging
     // buffer) so the baseline measures steady-state frame use only.
     if runReclaimRound() == 0 {
@@ -352,14 +352,14 @@ private func runReclaimDemo() {
     uartPutUInt(UInt64(after))
     uartPuts("\n")
     if after == baseline {
-        uartPuts("reclaim OK: no frame leak across fork/exec/exit/reap\n")
+        klog(.info, "boot", "reclaim OK: no frame leak across fork/exec/exit/reap")
     } else {
         uartPuts("reclaim FAIL: leaked frames across process teardown\n")
     }
 }
 
 private func runPsDemo() {
-    uartPuts("swift-os userland: Swift ps\n")
+    klog(.info, "boot", "swift-os userland: Swift ps")
     let (img, sz) = demoImage("/bin/ps")
     if img == 0 { return }
     let (p, n, argc) = packArgs(["ps"])
@@ -408,7 +408,7 @@ private func runVirtioBlkProbe() {
         for i in 0..<m.count where sector[i] != m[i] { isBase = false }
     }
     if isBase {
-        uartPuts("M11b OK: sector 0 read from disk, SWOSBASE magic verified\n")
+        klog(.info, "disk", "M11b OK: sector 0 read from disk, SWOSBASE magic verified")
     } else {
         uartPuts("M11b: sector 0 read from disk, first bytes ")
         for i in 0..<8 {
@@ -689,6 +689,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     klog(.info, "timer", "tick rate (Hz)", 100)
+    klog(.info, "platform", "M9 OK: hardware discovered from device tree")
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
@@ -731,7 +732,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
-        logDumpRecent(5)
+        logDumpRecent(16)
         runTtyDemo()
         runInit() // console-login (init) — interactive, last
     }

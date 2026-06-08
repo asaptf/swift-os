@@ -19,7 +19,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 # give the full demo sequence room to finish.
 TIMEOUT="${TIMEOUT:-90}"
 
-EXPECTS="${EXPECTS:-M9 OK: hardware discovered from device tree
+EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha
@@ -66,8 +66,8 @@ identitydemo: boot principal/session/caps OK
 identitydemo: child inherited security context
 identitydemo: parent observed inherited context
 M12a OK: identity demo exited, code 0
-reclaim OK: no frame leak across fork/exec/exit/reap
-swift-os userland: Swift ps
+[I] boot: reclaim OK: no frame leak across fork/exec/exit/reap
+[I] boot: swift-os userland: Swift ps
  PID PPID STATE CMD
    1    0 RUN   ps
 UID   PID  PPID STATE CMD
