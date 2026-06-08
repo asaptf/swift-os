@@ -40,6 +40,7 @@ QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
+SWPKG     := $(BUILD)/swpkg
 BASE_ROOT := $(BUILD)/base-root
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
@@ -289,7 +290,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image
+.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -629,11 +630,13 @@ debug: build $(QEMU_DTB) base-image
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build $(QEMU_DTB) disk base-image
+test: build $(QEMU_DTB) disk base-image $(SWPKG)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
+	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
+	$(BUILD)/swpkg_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(BUILD)/virt.dtb
 	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/ipv6.swift kernel/net/icmp.swift kernel/net/icmp6.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
@@ -740,8 +743,13 @@ run-gfx: disk base-image
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
-$(BASEPACK): tools/basepack.swift Makefile | $(BUILD)/.dir
-	$(HOST_SWIFTC) tools/basepack.swift -o $@
+$(BASEPACK): tools/basepack.swift tools/packfs.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/basepack.swift tools/packfs.swift -o $@
+
+$(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
+
+swpkg: $(SWPKG)
 
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	rm -rf $(BASE_ROOT)
@@ -810,7 +818,7 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/basepack $(BUILD)/base_image_test $(BASE_ROOT) $(ESP_DIR)
+		$(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/base_image_test $(BUILD)/swpkg_tool_test $(BASE_ROOT) $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

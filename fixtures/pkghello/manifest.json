@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "name": "pkghello",
+  "version": "1.0.0",
+  "revision": 1,
+  "summary": "Small package-format smoke test",
+  "license": ["swift-os-test"],
+  "arch": "aarch64",
+  "target": "swift-os",
+  "abi": {
+    "os": "swos-0",
+    "syscall": 1,
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "depends": [],
+  "provides": ["pkghello"],
+  "conflicts": [],
+  "files": [
+    {
+      "path": "/usr/bin/pkghello",
+      "mode": "0755",
+      "sha256": "",
+      "size": 0
+    }
+  ],
+  "capabilities": {
+    "default": [],
+    "services": []
+  }
+}
