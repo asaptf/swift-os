@@ -53,6 +53,10 @@ struct HandleTest {
         let allRights: Rights = [.read, .write, .execute, .map, .duplicate, .transfer, .getattr, .setattr]
         check(attenuate(allRights, to: allRights) == allRights,
               "attenuate to all rights preserves held rights")
+        check(attenuate([.transfer], to: [.read, .write, .transfer]) == [.transfer],
+              "attenuate preserves transfer when explicitly allowed")
+        check(attenuate([.read], to: [.read, .write, .transfer]) == [.read],
+              "attenuate cannot add endpoint write or transfer rights")
 
         // ---- 4. rights(read:write:) constructor ----------------------------
         check(rights(read: false, write: false) == [],
@@ -109,6 +113,18 @@ struct HandleTest {
         check(fd.object == 7, "HandleEntry records its object index")
         check(fd.rights == [.read, .duplicate], "HandleEntry records per-handle rights")
         check(fd.cloexec, "HandleEntry records close-on-exec per slot")
+
+        // ---- 9. C4a endpoint handle vocabulary -------------------------------
+        let sendEndpoint = HandleEntry(inUse: true, kind: .endpoint, object: 11,
+                                       rights: [.write, .transfer])
+        check(sendEndpoint.kind == .endpoint, "send endpoint is an endpoint handle")
+        check(sendEndpoint.rights == [.write, .transfer],
+              "send endpoint carries write+transfer rights")
+        let recvEndpoint = HandleEntry(inUse: true, kind: .endpoint, object: 12,
+                                       rights: [.read, .transfer])
+        check(recvEndpoint.kind == .endpoint, "recv endpoint is an endpoint handle")
+        check(recvEndpoint.rights == [.read, .transfer],
+              "recv endpoint carries read+transfer rights")
 
         if failed {
             FileHandle.standardError.write(Data("handle_test: FAILURES\n".utf8))

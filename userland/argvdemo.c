@@ -79,5 +79,46 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+    if (argc >= 2 && streq(argv[1], "endpointcheck")) {
+        char b[8];
+        int received = -2;
+        long r = ipc_send(3, "W", 1, -1);
+        if (r == -9) {
+            puts_raw("C4A-ENDPOINT-WRITE-DENY-OK err=-9\n");
+        } else {
+            puts_raw(r >= 0 ? "C4A-ENDPOINT-WRITE-DENY-LEAK\n"
+                            : "C4A-ENDPOINT-WRITE-DENY-FAIL\n");
+            return 1;
+        }
+
+        r = ipc_recv(4, b, sizeof(b), &received);
+        if (r == -9) {
+            puts_raw("C4A-ENDPOINT-READ-DENY-OK err=-9\n");
+        } else {
+            puts_raw(r >= 0 ? "C4A-ENDPOINT-READ-DENY-LEAK\n"
+                            : "C4A-ENDPOINT-READ-DENY-FAIL\n");
+            return 1;
+        }
+
+        r = ipc_send(5, "T", 1, 6);
+        if (r == -13) {
+            puts_raw("C4A-ENDPOINT-SEND-XFER-DENY-OK err=-13\n");
+        } else {
+            puts_raw(r >= 0 ? "C4A-ENDPOINT-SEND-XFER-DENY-LEAK\n"
+                            : "C4A-ENDPOINT-SEND-XFER-DENY-FAIL\n");
+            return 1;
+        }
+
+        r = ipc_recv(7, b, sizeof(b), &received);
+        if (r == -13) {
+            puts_raw("C4A-ENDPOINT-RECV-XFER-DENY-OK err=-13\n");
+        } else {
+            puts_raw(r >= 0 ? "C4A-ENDPOINT-RECV-XFER-DENY-LEAK\n"
+                            : "C4A-ENDPOINT-RECV-XFER-DENY-FAIL\n");
+            return 1;
+        }
+
+        puts_raw("C4A-XFER-RIGHTS-OK\n");
+    }
     return argc;
 }

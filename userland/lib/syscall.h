@@ -147,7 +147,7 @@ static inline int confine(const char *path) {
     return (int)__syscall3(SYS_CONFINE, (long)path, 0, 0);
 }
 
-// C4a/C4b: message-passing IPC. endpoint_create fills ends[2] = {send, recv}.
+// C4a: message-passing IPC. endpoint_create fills ends[2] = {send, recv}.
 // ipc_send copies `len` bytes from `buf` and, if handle_fd >= 0, transfers that
 // handle to the peer; ipc_recv blocks until a message arrives, copies up to `cap`
 // bytes into `buf`, stores any received handle's new fd in *out_handle_fd (else -1),

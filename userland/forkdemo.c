@@ -141,10 +141,12 @@ int main(void) {
             return 1;
         }
         puts_raw("forkdemo: IPC-MSG-OK\n");
+        puts_raw("C4A-BYTES-OK\n");
         if (rh < 0) { puts_raw("forkdemo: no handle transferred\n"); return 1; }
         long m = read(rh, buf, sizeof(buf) - 1);
         if (m <= 0) { puts_raw("forkdemo: transferred handle unreadable\n"); return 1; }
         puts_raw("forkdemo: IPC-XFER-OK\n");
+        puts_raw("C4A-XFER-READ-OK\n");
         close(rh);
         return 42;
     }
@@ -160,6 +162,16 @@ int main(void) {
     int xf = open("/etc/hostname", O_RDONLY);
     if (xf < 0 || ipc_send(ep[0], "PING\n", 5, xf) != 0) {
         puts_raw("forkdemo: ipc_send failed\n");
+        return 1;
+    }
+    char moved_probe;
+    long moved = read(xf, &moved_probe, 1);
+    if (moved == -9) {
+        puts_raw("forkdemo: IPC-MOVE-ONLY-OK err=-9\n");
+        puts_raw("C4A-XFER-MOVE-OK\n");
+    } else {
+        puts_raw(moved >= 0 ? "forkdemo: IPC-MOVE-ONLY-LEAK\n"
+                            : "forkdemo: IPC-MOVE-ONLY-FAIL\n");
         return 1;
     }
 

@@ -24,6 +24,7 @@ final class HeapProbe {
 private var retainedProbe: HeapProbe? = nil
 private var c2SpawnExplicitPassed = false
 private var c3HandleRightsPassed = false
+private var c4aEndpointRightsPassed = false
 
 /// Enable the MMU using the static boot page tables (kernel/mm/vm.c — these do
 /// not draw from the PMM). DTB parsing runs before this, so the parser avoids
@@ -206,6 +207,7 @@ private func runSpawnDemo() {
     if code == 0 {
         c2SpawnExplicitPassed = true
         c3HandleRightsPassed = true
+        c4aEndpointRightsPassed = true
     }
 }
 
@@ -250,6 +252,9 @@ private func runForkDemo() {
     uartPuts("\n")
     if code == 0 && c2SpawnExplicitPassed {
         uartPuts("C2 OK: explicit handle inheritance preserved\n")
+    }
+    if code == 0 && c4aEndpointRightsPassed {
+        uartPuts("C4a OK: endpoint IPC moved handles safely\n")
     }
 }
 
