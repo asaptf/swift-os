@@ -215,6 +215,7 @@ USER_HELLO_ELF := $(BUILD)/hello.elf
 USER_TTYDEMO_ELF := $(BUILD)/ttydemo.elf
 USER_ARGVDEMO_ELF := $(BUILD)/argvdemo.elf
 USER_SPAWNDEMO_ELF := $(BUILD)/spawndemo.elf
+USER_SELFEXECDEMO_ELF := $(BUILD)/selfexecdemo.elf
 USER_FSDEMO_ELF := $(BUILD)/fsdemo.elf
 USER_BRKDEMO_ELF := $(BUILD)/brkdemo.elf
 USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
@@ -287,6 +288,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
 	$(USER_SPAWNDEMO_ELF) \
+	$(USER_SELFEXECDEMO_ELF) \
 	$(USER_FSDEMO_ELF) \
 	$(USER_BRKDEMO_ELF) \
 	$(USER_NEWLIBTEST_ELF) \
@@ -366,6 +368,9 @@ $(BUILD)/user_argvdemo.o: userland/argvdemo.c userland/lib/syscall.h Makefile | 
 
 $(BUILD)/user_spawndemo.o: userland/spawndemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/spawndemo.c -o $@
+
+$(BUILD)/user_selfexecdemo.o: userland/selfexecdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/selfexecdemo.c -o $@
 
 $(BUILD)/user_fsdemo.o: userland/fsdemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/fsdemo.c -o $@
@@ -495,6 +500,9 @@ $(USER_ARGVDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ar
 
 $(USER_SPAWNDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_spawndemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_spawndemo.o -o $@
+
+$(USER_SELFEXECDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_selfexecdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_selfexecdemo.o -o $@
 
 $(USER_FSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fsdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fsdemo.o -o $@
@@ -677,6 +685,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/tls_handshake_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	./tests/spawn_self_exec_test.sh
 	bash ./tests/cow_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
@@ -797,6 +806,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
 	cp $(USER_SPAWNDEMO_ELF) $(BASE_ROOT)/bin/spawndemo
+	cp $(USER_SELFEXECDEMO_ELF) $(BASE_ROOT)/bin/selfexecdemo
 	cp $(USER_FSDEMO_ELF) $(BASE_ROOT)/bin/fsdemo
 	cp $(USER_BRKDEMO_ELF) $(BASE_ROOT)/bin/brkdemo
 	cp $(USER_NEWLIBTEST_ELF) $(BASE_ROOT)/bin/newlibtest

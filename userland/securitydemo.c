@@ -1,8 +1,8 @@
 // securitydemo.c — adversarial syscall smoke tests.
 //
-// This deliberately sends invalid-but-non-faulting arguments across the EL0/EL1
-// boundary. Faulting user pointers belong in a later copyin/copyout harness; the
-// regular boot test must remain deterministic and keep QEMU alive.
+// This deliberately sends invalid arguments across the EL0/EL1 boundary and
+// asserts the kernel rejects them with an errno instead of faulting. Bad user
+// pointers must never panic EL1.
 
 #include "lib/syscall.h"
 #include "lib/fs.h"
@@ -28,6 +28,7 @@ int main(void) {
     expect_eq("open NULL path", open((const char *)0, O_RDONLY), -22);
     expect_eq("open kernel path", open((const char *)0x40000000, O_RDONLY), -22);
     expect_eq("open unmapped path", open((const char *)0x88000000, O_RDONLY), -22);
+    expect_eq("open wraparound path", open((const char *)-1L, O_RDONLY), -22);
     expect_eq("read bad fd", read(-1, buf, 1), -9);
     expect_eq("write bad fd", write(-1, buf, 1), -9);
     expect_eq("close bad fd", close(-1), -9);
@@ -35,10 +36,12 @@ int main(void) {
     expect_eq("stat NULL buf", stat("/etc/motd", (struct stat *)0), -22);
     expect_eq("stat kernel buf", stat("/etc/motd", (struct stat *)0x40000000), -22);
     expect_eq("stat unmapped buf", stat("/etc/motd", (struct stat *)0x88000000), -22);
+    expect_eq("stat wraparound path", stat((const char *)-1L, &st), -22);
     expect_eq("fstat bad fd", fstat(-1, &st), -9);
     expect_eq("getcwd NULL buf", getcwd((char *)0, sizeof(buf)), -22);
     expect_eq("getcwd kernel buf", getcwd((char *)0x40000000, sizeof(buf)), -22);
     expect_eq("getcwd unmapped buf", getcwd((char *)0x88000000, sizeof(buf)), -22);
+    expect_eq("getcwd wraparound buf", getcwd((char *)-1L, sizeof(buf)), -22);
     expect_eq("getcwd tiny buf", getcwd(buf, 1), -28);
     expect_eq("chdir file", chdir("/etc/motd"), -20);
     expect_eq("waitpid no child", __syscall3(SYS_WAITPID, -1, (long)&st, 0), -10);
@@ -53,12 +56,14 @@ int main(void) {
         expect_eq("read NULL buf", read(fd, (void *)0, 1), -22);
         expect_eq("read kernel buf", read(fd, (void *)0x40000000, 1), -22);
         expect_eq("read unmapped buf", read(fd, (void *)0x88000000, 1), -22);
+        expect_eq("read wraparound buf", read(fd, (void *)-1L, 1), -22);
         expect_eq("negative lseek", lseek(fd, -1, 0), -22);
         close(fd);
     }
 
     expect_eq("write unmapped stdout", write(1, (const void *)0x88000000, 1), -22);
     expect_eq("write kernel stdout", write(1, (const void *)0x40000000, 1), -22);
+    expect_eq("write wraparound stdout", write(1, (const void *)-1L, 1), -22);
 
     fd = open("/etc/motd", O_WRONLY);
     if (fd < 0) {

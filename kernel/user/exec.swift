@@ -81,6 +81,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/argvdemo") { return loadProgramImage("/bin/argvdemo") }
     if userPathEquals(pathVA, "/bin/ttydemo") { return loadProgramImage("/bin/ttydemo") }
     if userPathEquals(pathVA, "/bin/spawndemo") { return loadProgramImage("/bin/spawndemo") }
+    if userPathEquals(pathVA, "/bin/selfexecdemo") { return loadProgramImage("/bin/selfexecdemo") }
     if userPathEquals(pathVA, "/bin/fsdemo") { return loadProgramImage("/bin/fsdemo") }
     if userPathEquals(pathVA, "/bin/brkdemo") { return loadProgramImage("/bin/brkdemo") }
     if userPathEquals(pathVA, "/bin/newlibtest") { return loadProgramImage("/bin/newlibtest") }
@@ -144,9 +145,11 @@ func packUserArgv(_ argvVA: UInt) -> (UInt, UInt, Int) {
     // First pass: count args and total byte length.
     var argc = 0
     var total = 0
-    while argc < 64, arr[argc] != 0 {
-        guard userReadableBuffer(argvVA + UInt(argc * 8), 8) != nil,
-              let s = userCString(arr[argc]) else { break }
+    while argc < 64 {
+        guard userReadableBuffer(argvVA + UInt(argc) * 8, 8) != nil else { break }
+        let entry = arr[argc]
+        if entry == 0 { break }
+        guard let s = userCString(entry) else { break }
         var len = 0
         while s[len] != 0 { len += 1 }
         total += len + 1

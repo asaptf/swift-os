@@ -15,9 +15,11 @@ let userAccessMaxCString = 4096
 private func userRangeMapped(_ va: UInt, _ count: UInt) -> Bool {
     if count == 0 { return true }
     if count > UInt(Int.max) { return false }
-    if va < userAccessMinVA { return false }
+    // Bound before forming `va + count`: malformed user pointers must return an
+    // errno, not trigger a Swift overflow trap in EL1.
+    if va < userAccessMinVA || va >= userAccessMaxVA { return false }
+    if count > userAccessMaxVA - va { return false }
     let last = va + count - 1
-    if last < va || last >= userAccessMaxVA { return false }
 
     let ttbr0 = processCurrentAddressSpace()
     if ttbr0 == 0 { return false }
@@ -35,9 +37,10 @@ private func userRangeMapped(_ va: UInt, _ count: UInt) -> Bool {
 private func userRangeWritable(_ va: UInt, _ count: UInt) -> Bool {
     if count == 0 { return true }
     if count > UInt(Int.max) { return false }
-    if va < userAccessMinVA { return false }
+    // Same overflow discipline as userRangeMapped for copyout/COW paths.
+    if va < userAccessMinVA || va >= userAccessMaxVA { return false }
+    if count > userAccessMaxVA - va { return false }
     let last = va + count - 1
-    if last < va || last >= userAccessMaxVA { return false }
 
     let ttbr0 = processCurrentAddressSpace()
     if ttbr0 == 0 { return false }

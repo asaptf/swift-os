@@ -325,6 +325,12 @@ because `fork` needs parent and child alive at once. Staged:
   addresses, unmapped user pages, integer-overflowed ranges, and huge lengths before copying or scanning
   user buffers. `securitydemo` now exercises faulting-class inputs (`0x4000_0000` kernel identity map and
   unmapped user VAs) without panicking the kernel.
+- **User pointer hardening follow-up (2026-06-09) — DONE.** Tightened the range checks so wraparound user
+  pointers such as `(char *)-1` are rejected before forming `va + count` on both readable and writable
+  copy paths. `packUserArgv` now validates each argv pointer slot before reading it, so an argv array
+  without a NULL terminator before an unmapped page cannot fault EL1. Added `/bin/selfexecdemo` plus
+  `tests/spawn_self_exec_test.sh`, which opens and spawns the same disk-backed file and feeds malformed
+  argv shapes, then proves the shell survives. `securitydemo` also covers wraparound open/stat/getcwd/read/write.
 - **d2 — `fork()` + first real `waitpid` — DONE.** `SYS_fork` (20) eager-copies the current process
   address space, preserving user page permissions, and clones the saved trap frame onto a fresh child
   kernel stack with child `x0=0`; the parent gets the child pid. `waitpid` can now block on a direct
