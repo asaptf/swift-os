@@ -16,6 +16,7 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MSG="swos-udp"
+HOST_PORT="${UDP_ECHO_HOST_PORT:-$((20000 + ($$ % 20000)))}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -35,7 +36,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -74,7 +75,7 @@ send_after() {  # send_after MARKER MAXSEC TEXT
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,hostfwd=udp:127.0.0.1:5555-:5555 \
+  -netdev "user,id=n0,hostfwd=udp:127.0.0.1:${HOST_PORT}-:5555" \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
@@ -93,9 +94,10 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 if [[ "$listening" -eq 1 ]]; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
 fi
 sleep 2
+exec 3>&-
 stop_qemu
 QP=""
 

@@ -13,6 +13,7 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 PORT=5566
+HOST_PORT="${C4B_SOCK_HOST_PORT:-$((25000 + ($$ % 20000)))}"
 MSG="c4b-sock"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
@@ -33,7 +34,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -55,7 +56,15 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
+}
+
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -64,22 +73,22 @@ send_after() {  # send_after MARKER MAXSEC TEXT
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev "user,id=n0,hostfwd=udp:127.0.0.1:${PORT}-:${PORT}" \
+  -netdev "user,id=n0,hostfwd=udp:127.0.0.1:${HOST_PORT}-:${PORT}" \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
-send_after "Welcome to swift-os, root" 60 '/bin/c4b-sockxfer\n'
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
+send_after "Welcome to swift-os, root" 60 $'/bin/c4b-sockxfer\n'
 
 if await "c4b-sockxfer: listening on 5566" 60; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$PORT" >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
 fi
-send_after "C4b OK: endpoint IPC moved socket handle safely" 60 'exit\n'
+send_after "C4b OK: endpoint IPC moved socket handle safely" 60 $'exit\n'
 
 exec 3>&-
 stop_qemu

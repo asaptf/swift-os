@@ -15,6 +15,7 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MSG="swos-tcp"
+HOST_PORT="${TCP_ECHO_HOST_PORT:-$((21000 + ($$ % 20000)))}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -49,6 +50,13 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (tcpecho driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M7 tty:/,$p' >&2 || true
+  exit 1
+}
+
 # Boot QEMU with its console read from a FIFO that we hold open on fd 3, so the
 # main script can drive the login *reactively* (below) instead of on a fixed
 # timeline. Opening the FIFO read-write (3<>) never blocks and keeps it open; QEMU
@@ -59,7 +67,7 @@ await() {  # await MARKER [MAXSEC]
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,hostfwd=tcp:127.0.0.1:5555-:5555 \
+  -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:5555" \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
@@ -68,13 +76,19 @@ exec 3<>"$INFIFO"
 # Wait for each stage's prompt before sending its input, rather than using fixed
 # sleeps: on a cold `make test` boot a fixed schedule can lag enough that a line
 # lands in the wrong reader and the guest never reaches tcpecho ("never reported
-# listening"). tty input is line-buffered, so sending the instant the prompt
-# appears is safe. Skip the M7 tty demo, log in as root, then run tcpecho.
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
-await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
-await "swift-os login:"                20 && printf 'root\n'         >&3
-await "Password:"                      15 && printf 'swordfish\n'    >&3
-await "Welcome to swift-os, root"      15 && printf '/bin/tcpecho\n' >&3
+# listening"). A short guard delay after each prompt avoids racing console mode
+# transitions around login/password. Skip the M7 tty demo, log in as root, then
+# run tcpecho.
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+sleep 0.2; printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+sleep 0.2; printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+sleep 0.2; printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+sleep 0.2; printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+sleep 0.2; printf '/bin/tcpecho\n' >&3
 
 # Wait for the guest to listen, then connect + send a line from the host.
 listening=0
@@ -99,7 +113,7 @@ done
 if [[ "$listening" -eq 1 ]]; then
   for _ in $(seq 1 4); do
     : > "$NCOUT"
-    printf '%s\n' "$MSG" | nc -w8 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+    printf '%s\n' "$MSG" | nc -w8 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
     grep -qF "$MSG" "$NCOUT" && break                      # echo came back → done
     grep -Eq "tcpecho: got [0-9]+ bytes" "$LOG" && break   # one-shot server spent
     sleep 1                                                # brief backoff, then retry

@@ -18,6 +18,7 @@ KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
+HOST_PORT="${HTTPD_HOST_PORT:-$((23000 + ($$ % 20000)))}"
 INDEX_MARK="swift-os httpd"
 HELLO_MARK="hello from the swift-os static file server"
 
@@ -46,17 +47,17 @@ stop_qemu() {
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$O1" "$O2" "$OH" "$OHH" "$OD" "$PIDFILE" "$INFIFO"' EXIT
 
 USE_V6=0
-NETDEV="user,id=n0,hostfwd=tcp:127.0.0.1:8080-:8080"
+NETDEV="user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080"
 HTTPD_CMD="/bin/httpd"
 LISTEN_MARK="httpd: listening on 8080"
-URL_ROOT="http://127.0.0.1:8080"
+URL_ROOT="http://127.0.0.1:${HOST_PORT}"
 CURL=(curl -s -m 5)
 if [[ "$(uname -s)" != "Darwin" ]]; then
   USE_V6=1
-  NETDEV="user,id=n0,ipv6=on,hostfwd=tcp:127.0.0.1:8080-:8080,hostfwd=tcp:[::1]:8080-:8080"
+  NETDEV="user,id=n0,ipv6=on,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080,hostfwd=tcp:[::1]:${HOST_PORT}-:8080"
   HTTPD_CMD="/bin/httpd 6"
   LISTEN_MARK="httpd: listening on 8080 (IPv6)"
-  URL_ROOT="http://[::1]:8080"
+  URL_ROOT="http://[::1]:${HOST_PORT}"
   CURL=(curl -g -6 -s -m 5)
 fi
 
