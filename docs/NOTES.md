@@ -583,6 +583,21 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   issued, no secondary stacks are allocated, no secondary enters Swift/kernel
   code, and no scheduler/GIC/timer/C4/VFS/process state changes are made.
 
+### S0h — full-test parked SMP gate (DONE, 2026-06-09)
+
+- **Default gate coverage.** The normal `make test` suite now runs
+  `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb tests/smp_boot_test.sh` after the
+  classic single-core boot smoke. This makes the roadmap's S-series rule
+  executable: the default gate covers both the 1-CPU path and QEMU
+  `virt -smp 4` parked-SMP path.
+- **Reuse existing smoke.** The integrated smoke is the same S0 harness used by
+  `make smp-test` / `make s0-test`: it asserts the S0/S0b/S0d/S0e/S0f/S0g
+  markers and fails on missing/incomplete DTB discovery. The full suite reuses
+  the already-dumped `-smp 4` DTB; explicit `SMP_CPUS=1` and `SMP_CPUS=8`
+  remain useful focused checks.
+- **Non-goals.** No secondary release, no new scheduler/GIC/timer behavior, and
+  no C4/VFS/process changes. This is test-gate hardening only.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

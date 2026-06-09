@@ -669,6 +669,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/tls_handshake_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 	bash ./tests/cow_test.sh
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
