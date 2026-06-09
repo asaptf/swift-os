@@ -745,6 +745,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   behavior, kernel behavior, C4/VFS/process behavior, or S1 release behavior is
   changed.
 
+### S0s — serial vi harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven vi session.** `tests/vi_test.sh` now drives QEMU through FIFO
+  stdin, waits for the tty demo, login shell, vi alternate-screen entry,
+  inserted text echo, saved-file readback, and trailing shell marker instead of
+  relying on fixed serial input sleeps.
+- **Assertions unchanged.** The test still verifies busybox vi enters the
+  alternate screen, saves `/tmp/vitest`, returns a clean `hello-from-vi` line via
+  `cat`, keeps the shell alive, and avoids kernel panics.
+- **Non-goals.** No vi behavior, terminal behavior, filesystem behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
