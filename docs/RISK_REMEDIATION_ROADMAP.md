@@ -119,6 +119,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   scheduling before S2 intentionally enables secondary EL0 work. A post-userland
   boot check records CPU0 EL0 switches and verifies every secondary CPU still
   has zero EL0 switch activity.
+- Pre-S2 readiness checkpoint (S2c, 2026-06-09): the kernel-thread scheduler is
+  explicitly CPU0-owned, marks the CPU0 kernel scheduler ready in per-CPU
+  state, records per-CPU kernel scheduler activity for real kernel-thread
+  switches, and verifies after the scheduler demo that no secondary CPU ran
+  kernel scheduler work. This keeps the M4.5 scheduler boundary executable
+  until S2 introduces real per-CPU run queues.
 - Give each CPU its own scheduler context / runqueue (or a carefully designed global structure with per-CPU current-thread). The old global `currentThread` / round-robin array must be replaced or indexed by CPU.
 - Timer tick on every CPU drives local preemption (`schedulerTick` / `processOnTick` equivalents become per-CPU).
 - Cross-CPU wake (a thread blocked on one CPU must be made runnable on another) requires an IPI or a shared ready queue + reschedule IPI. Start with the simplest thing that works.

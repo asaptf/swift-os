@@ -931,6 +931,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   active yet, no cross-CPU wake/IPI path is added, and scheduler/process/VFS/PMM
   locking policy remains S2+ work.
 
+### S2c — kernel-thread scheduler ownership guard (DONE, 2026-06-09)
+
+- **Kernel scheduler owner guard.** The M4.5 kernel-thread scheduler now has an
+  explicit CPU0 owner check at its public and internal scheduler boundaries.
+  `schedulerInit`, `threadCreate`, `schedule`, `schedYield`, `schedulerTick`,
+  `schedAllThreadsDone`, and `thread_exit` panic if they are reached from any
+  non-owner CPU, so the existing global `currentThread` / `states` scheduler
+  cannot silently appear per-CPU-safe before S2 proper.
+- **Per-CPU ownership evidence.** The fixed per-CPU state keeps its 64-byte
+  stride: the former reserved 32-bit slot is now
+  `kernelSchedulerActivityCount`, while the S2b EL0 switch counter remains a
+  full 64-bit counter. CPU0 marks the kernel scheduler ready in per-CPU flags,
+  and real kernel-thread context switches increment the current CPU's kernel
+  scheduler activity counter.
+- **Runtime acceptance.** Boot runs `kernelSchedulerOwnershipSelfTest` and
+  `smpS2cKernelSchedulerReadinessSelfTest` after `schedulerInit`, then logs
+  `S2c OK: kernel scheduler owner ready`. After the M4.5 scheduler demo and
+  before any EL0 demos, boot verifies CPU0 recorded kernel scheduler activity
+  and every secondary still has zero kernel scheduler activity, then logs
+  `S2c OK: no secondary kernel scheduler execution`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the kernel
+  scheduler owner helper, per-CPU kernel scheduler ready/activity state, CPU0
+  timer IRQ gating for `schedulerTick`, and the S2c boot-order contract.
+- **Non-goals.** No per-CPU run queues are active yet, no kernel thread can run
+  on a secondary CPU, no cross-CPU wake/IPI path is added, and PMM/VFS/process
+  locking policy remains S2+ work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

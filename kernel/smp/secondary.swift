@@ -119,6 +119,40 @@ func smpS2bNoSecondaryEl0Execution() -> Bool {
     return true
 }
 
+func smpS2cKernelSchedulerReadinessSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || primary >= smpMaxCpuCount() { return false }
+    if !smpPerCpuKernelSchedulerReady(primary) { return false }
+    if !smpPerCpuCurrentThreadIs(primary, 0) { return false }
+    if smpPerCpuKernelSchedulerActivityCount(primary) != 0 { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && !smpPerCpuSchedulerIdle(cpu) { return false }
+        i += 1
+    }
+    return true
+}
+
+func smpS2cNoSecondaryKernelSchedulerExecution() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+    if !smpPerCpuKernelSchedulerReady(primary) { return false }
+    if smpPerCpuKernelSchedulerActivityCount(primary) == 0 { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && smpPerCpuKernelSchedulerReady(cpu) { return false }
+        if cpu != primary && smpPerCpuKernelSchedulerActivityCount(cpu) != 0 { return false }
+        i += 1
+    }
+    return true
+}
+
 func smpBringupSecondaries() -> Bool {
     if platform.cpuCount == 0 { return false }
     if platform.cpuCount > smpMaxCpuCount() { return false }

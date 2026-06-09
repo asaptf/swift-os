@@ -52,7 +52,17 @@ private var currentThread = 0
 private var threadCount = 0
 private var schedulerReady = false
 
+private func schedulerCpuIndex() -> Int {
+    let cpu = currentCpuId()
+    if cpu != 0 || cpu >= smpMaxCpuCount() {
+        uartPuts("panic: kernel scheduler entered on non-owner CPU\n")
+        while true {}
+    }
+    return Int(cpu)
+}
+
 func schedulerInit() {
+    _ = schedulerCpuIndex()
     let bytes = UInt(MemoryLayout<CPUContext>.stride * maxThreads)
     guard let raw = swiftos_kernel_alloc(bytes, 16) else {
         uartPuts("panic: scheduler context allocation failed\n")
@@ -71,12 +81,24 @@ func schedulerInit() {
     smpSetCurrentThreadForCurrentCpu(Int32(currentThread))
     threadCount = 1
     schedulerReady = true
+    smpMarkKernelSchedulerReadyForCurrentCpu()
     // L3 adoption: keep the old boot marker text, with maxThreads as detail.
     klog(.info, "sched", "M4.5 sched: scheduler online", UInt64(maxThreads))
 }
 
+func kernelSchedulerOwnershipSelfTest() -> Bool {
+    if !schedulerReady { return false }
+    if currentCpuId() != 0 { return false }
+    if currentThread != 0 { return false }
+    if !smpPerCpuCurrentThreadIs(0, 0) { return false }
+    if !smpPerCpuKernelSchedulerReady(0) { return false }
+    if smpPerCpuKernelSchedulerActivityCount(0) != 0 { return false }
+    return true
+}
+
 /// Create a ready kernel thread that runs `entry(arg)`. Returns its id, or -1.
 func threadCreate(_ entry: @convention(c) (UInt) -> Void, _ arg: UInt) -> Int {
+    _ = schedulerCpuIndex()
     if threadCount >= maxThreads { return -1 }
     let slot = threadCount
 
@@ -100,6 +122,7 @@ func threadCreate(_ entry: @convention(c) (UInt) -> Void, _ arg: UInt) -> Int {
 
 /// Pick the next runnable thread and switch to it. Assumes IRQs are masked.
 private func schedule() {
+    _ = schedulerCpuIndex()
     if !schedulerReady { return }
     let prev = currentThread
 
@@ -123,6 +146,7 @@ private func schedule() {
     states[next] = stateRunning
     currentThread = next
     smpSetCurrentThreadForCurrentCpu(Int32(currentThread))
+    smpRecordKernelSchedulerActivityForCurrentCpu()
 
     let base = UnsafeMutableRawPointer(contexts!)
     let stride = MemoryLayout<CPUContext>.stride
@@ -132,6 +156,7 @@ private func schedule() {
 
 /// Cooperatively yield the CPU to another runnable thread.
 func schedYield() {
+    _ = schedulerCpuIndex()
     if !schedulerReady { return }
     disable_irq()
     schedule()
@@ -140,6 +165,7 @@ func schedYield() {
 
 /// Called from the timer IRQ (IRQs already masked) to drive preemption.
 func schedulerTick() {
+    _ = schedulerCpuIndex()
     schedule()
 }
 
@@ -147,6 +173,7 @@ func schedulerTick() {
 @_cdecl("thread_exit")
 func threadExit() {
     disable_irq()
+    _ = schedulerCpuIndex()
     states[currentThread] = stateDone
     schedule()
     // The switch never returns to a done thread.
@@ -155,6 +182,7 @@ func threadExit() {
 
 /// True once every spawned (non-idle) thread has finished.
 func schedAllThreadsDone() -> Bool {
+    _ = schedulerCpuIndex()
     for i in 1..<maxThreads where states[i] != stateFree {
         if states[i] != stateDone { return false }
     }
