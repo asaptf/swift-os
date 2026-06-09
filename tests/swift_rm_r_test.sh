@@ -20,6 +20,7 @@ fi
 
 LOG="$(mktemp -t swiftos-rmr.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-rmr-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-rmr-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -28,7 +29,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -42,38 +43,54 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (rm-r driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -100 >&2 || true
+  exit 1
+}
+
 # Sequence (all under /tmp, the writable tmpfs):
 #   mkdir /tmp/d, /tmp/d/sub; populate with files at two depths.
 #   rm /tmp/d        -> refuses (is a directory); ls /tmp still shows d.
 #   rm -r /tmp/d     -> removes the whole tree; ls /tmp no longer shows d.
-(
-  sleep 8;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 3;  printf 'root\n'
-  sleep 1.5;  printf 'swordfish\n'
-  sleep 3;  printf '/bin/mkdir /tmp/d\n'
-  sleep 2;  printf '/bin/mkdir /tmp/d/sub\n'
-  sleep 2;  printf 'echo hi > /tmp/d/f\n'
-  sleep 2;  printf 'echo deep > /tmp/d/sub/g\n'
-  sleep 2;  printf '/bin/rm /tmp/d\n'                 # refuses: is a directory
-  sleep 2;  printf 'echo RC1=$?\n'                    # expect non-zero
-  sleep 2;  printf '/bin/ls /tmp\n'                   # expect: d still present
-  sleep 2;  printf '/bin/rm -r /tmp/d\n'              # removes the tree
-  sleep 2;  printf 'echo RC2=$?\n'                    # expect 0
-  sleep 2;  printf '/bin/ls /tmp\n'                   # expect: no d
-  sleep 2;  printf 'echo RMR-DONE\n'
-  sleep 2;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-await "RMR-DONE" 90 || true
-sleep 5
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+{
+  printf '/bin/mkdir /tmp/d\n'
+  printf '/bin/mkdir /tmp/d/sub\n'
+  printf 'echo hi > /tmp/d/f\n'
+  printf 'echo deep > /tmp/d/sub/g\n'
+  printf '/bin/rm /tmp/d\n'
+  printf 'echo RC1=$?\n'
+  printf '/bin/ls /tmp\n'
+  printf '/bin/rm -r /tmp/d\n'
+  printf 'echo RC2=$?\n'
+  printf '/bin/ls /tmp\n'
+  printf 'echo RMR-DONE\n'
+  printf 'exit\n'
+} >&3
+await "RMR-DONE" 180 || drive_fail "shell did not survive the rm-r ops"
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 
@@ -83,12 +100,12 @@ ok=1
 grep -qxF "RC1=0" <<<"$clean" && { echo "FAIL: rm of a directory without -r unexpectedly succeeded" >&2; ok=0; }
 grep -q "is a directory" <<<"$clean" || { echo "FAIL: rm did not report 'is a directory'" >&2; ok=0; }
 # After the refusal, /tmp/d is still listed.
-awk '/# \/bin\/ls \/tmp$/{c++} c==1&&/^# \/bin\/ls/{next} c==1&&/^# /{c=2} c==1' <<<"$clean" | grep -qxF "d" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==1&&/^# /{c=0} c==1' <<<"$clean" | grep -qxF "d" \
   || { echo "FAIL: /tmp/d missing after a refused (no -r) rm" >&2; ok=0; }
 # `rm -r /tmp/d` succeeds (status 0).
 grep -qxF "RC2=0" <<<"$clean" || { echo "FAIL: rm -r did not exit 0" >&2; ok=0; }
 # After rm -r, the *second* `ls /tmp` no longer lists d.
-awk '/# \/bin\/ls \/tmp$/{c++} c==2&&/^# \/bin\/ls/{next} c==2&&/^# /{c=3} c==2' <<<"$clean" | grep -qxF "d" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==2&&/^# /{c=0} c==2' <<<"$clean" | grep -qxF "d" \
   && { echo "FAIL: /tmp/d still present after rm -r" >&2; ok=0; }
 grep -qxF "RMR-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the rm -r ops" >&2; ok=0; }
 

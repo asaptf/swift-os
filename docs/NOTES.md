@@ -697,6 +697,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
   behavior, or S1 release behavior is changed.
 
+### S0o — timed Swift tool harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven timed tool tests.** The native Swift recursive `rm`,
+  `head`/`wc`/`touch`, `date`, and sleep smoke tests now drive QEMU through FIFO
+  stdin and wait for login prompts plus existing output markers instead of
+  relying on fixed serial sleeps.
+- **Assertions unchanged.** The tests still verify recursive removal semantics,
+  head/wc/touch output, RTC-backed `/bin/date`, and timer-backed
+  nanosleep/busybox sleep behavior.
+- **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
+  behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
