@@ -760,6 +760,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klogClearSourceMinLevels()
     schedulerInit()
     processInit()
+    if !smpS2ReadinessSelfTest() {
+        uartPuts("panic: S2a scheduler readiness self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2a OK: scheduler owner ready", UInt64(currentCpuId()) + 1)
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present

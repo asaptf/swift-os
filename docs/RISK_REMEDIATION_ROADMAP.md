@@ -107,6 +107,12 @@ measurement justifies adding one.
 Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real silicon and sometimes in emulation. Record the maximum we intend to support for the first SMP release and the GIC version assumptions.
 
 ### S2 — Per-CPU scheduling and timer-driven preemption on all CPUs
+- Pre-S2 readiness checkpoint (S2a, 2026-06-09): S1 now makes the banked
+  timer heartbeat evidence explicit for every discovered CPU and verifies that
+  secondary CPUs still have no scheduler/process ownership. After
+  `schedulerInit` / `processInit`, CPU0 also records the scheduler-owner state
+  in the per-CPU scaffold before S2 proper starts assigning EL0 or
+  kernel-thread work away from CPU0.
 - Give each CPU its own scheduler context / runqueue (or a carefully designed global structure with per-CPU current-thread). The old global `currentThread` / round-robin array must be replaced or indexed by CPU.
 - Timer tick on every CPU drives local preemption (`schedulerTick` / `processOnTick` equivalents become per-CPU).
 - Cross-CPU wake (a thread blocked on one CPU must be made runnable on another) requires an IPI or a shared ready queue + reschedule IPI. Start with the simplest thing that works.

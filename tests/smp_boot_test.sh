@@ -43,6 +43,7 @@ $PSCI_EXPECT
 if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   cpu=0
   while (( cpu < SMP_CPU_COUNT )); do
+    EXPECTS+=$'\n'"[I] smp: S2a OK: per-CPU timer heartbeat ready detail=$((cpu + 1))"
     if (( cpu == 0 )); then
       EXPECTS+=$'\n'"[I] smp: S1 CPU online"
     else
@@ -50,6 +51,8 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
     fi
     cpu=$((cpu + 1))
   done
+  EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler boundary held detail=$SMP_CPU_COUNT"
+  EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler owner ready"
 fi
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -132,7 +135,7 @@ done
 stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
-  echo "PASS: SMP boot smoke produced expected S1 markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

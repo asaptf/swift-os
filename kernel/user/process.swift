@@ -363,12 +363,14 @@ private func schedule(until done: () -> Bool) {
             continue
         }
         currentProc = s
+        smpSetCurrentProcessForCurrentCpu(Int32(s))
         pState[s] = pRunning
         // cpu_switch_context swaps registers only — install the process's
         // address space so its EL0 user VAs resolve when it eret's.
         address_space_switch(pTtbr0[s])
         cpu_switch_context(UnsafeMutableRawPointer(schedCtx),
                            UnsafeMutableRawPointer(procCtx.advanced(by: s)))
+        smpSetCurrentProcessForCurrentCpu(-1)
         currentProc = -1
     }
     irq_restore(daif)

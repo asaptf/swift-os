@@ -867,6 +867,34 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   PMM/VFS/driver locking policy, no IPIs, and no cross-CPU TLB work. Those are
   S2/S3+ work.
 
+### S2a — secondary timer / scheduler-boundary readiness gate (DONE, 2026-06-09)
+
+- **Timer evidence is now explicit.** S1 already required each discovered CPU to
+  record at least one banked physical-timer tick before declaring bring-up
+  complete. S2a logs one `S2a OK: per-CPU timer heartbeat ready` marker per CPU
+  after that condition is true, using `detail = cpu_id + 1` so CPU0 also has an
+  explicit payload.
+- **Scheduler boundary guard.** Before logging `S1 OK`, the bring-up path now
+  verifies that every secondary per-CPU scheduler slot still has no current
+  thread, no current process, no run queue, and no scheduler context pointer.
+  This preserves the S1/S2 boundary: secondary CPUs can take timer PPIs, but
+  scheduler, process, VFS, PMM, drivers, and EL0 work remain CPU0-only until S2
+  deliberately changes that contract.
+- **CPU0 ownership seam.** After `schedulerInit` and `processInit`, boot runs an
+  S2a self-test that requires the primary CPU to be online, to own a scheduler
+  thread slot in the per-CPU scaffold, and to have no active EL0 process yet.
+  The EL0 scheduler loop now mirrors `currentProc` into the current CPU's
+  per-CPU state while a process is switched in, then clears it on return to the
+  scheduler. Today that only records CPU0 state; S2 will use the same seam when
+  scheduler ownership becomes per-CPU.
+- **Tests / acceptance.** `tests/smp_boot_test.sh` now asserts the S2a heartbeat
+  markers for every `-smp N` CPU plus `S2a OK: scheduler boundary held` and
+  `S2a OK: scheduler owner ready`. `make s1-test` exercises those checks for
+  the default `-smp 4`, headroom `-smp 1` / `-smp 8`, and UEFI `-smp 4` paths
+  through the existing S1 gate.
+- **Non-goals.** No EL0 work moves to secondary CPUs, no run queues are added,
+  and no scheduler/process/VFS/PMM locking policy changes in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
