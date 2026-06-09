@@ -2046,3 +2046,23 @@ in `execResolve`; busybox `CONFIG_SLEEP=y` ships a real `/bin/sleep`. `tests/sle
 signal delivery to EL0, a supervisor/init daemon, and crontab storage — none on the critical path. Follow-on
 timing surface if a scheduler daemon is ever wanted: `SIGALRM`/`alarm`, `setitimer`/POSIX timers,
 signal-interruptible sleep (`EINTR` + a real `rem`), then crond/`at`.
+
+### I0 — host-verified tiny Llama2 inference core (DONE, 2026-06-09)
+
+**Scope.** This is the smallest AI-hosting proof slice: a portable, I/O-free
+`userland/lib/llama2.swift` implementation of the llama2.c checkpoint format,
+transformer forward pass, SentencePiece-style BPE tokenizer, and deterministic
+greedy generation. It is written so the same source can compile in the host
+test runner now and later link into an EL0 `/bin/llm` demo.
+
+**Test model.** `scripts/fetch-model.sh` fetches the tiny TinyStories
+`stories260K.bin` checkpoint and `tok512.bin` tokenizer on demand into
+`models/` (gitignored). `make model` is idempotent and `make test` depends on
+those artifacts before running the host inference test.
+
+**Acceptance.** `tests/llm_engine_test.swift` loads the tiny checkpoint,
+checks the parsed config (`dim=64`, `layers=5`, `heads=8`, `kv=4`,
+`vocab=512`, `seq=512`), and asserts that temperature-0 generation for
+`Once upon a time` matches the upstream llama2.c reference output byte-for-byte
+for 64 steps. This pins both tokenizer behavior and the floating-point forward
+path without adding a kernel ABI or an in-guest `/bin/llm` yet.

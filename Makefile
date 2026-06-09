@@ -302,7 +302,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-test s0-test s0c-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -660,7 +660,21 @@ debug: build $(QEMU_DTB) base-image
 gdb:
 	$(GDB) $(KERNEL_ELF) -ex 'target remote :1234'
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
+# ---- Inference test model (I-series) --------------------------------------
+# Tiny TinyStories checkpoint (stories260K) + tokenizer (tok512) used by the
+# llm engine test and the /bin/llm demo. Fetched on demand (small, permissively
+# published llama2.c test artifacts), kept out of git like the newlib sysroot.
+MODEL_DIR := models
+MODEL_BIN := $(MODEL_DIR)/stories260K.bin
+MODEL_TOK := $(MODEL_DIR)/tok512.bin
+
+$(MODEL_BIN): scripts/fetch-model.sh
+	scripts/fetch-model.sh
+$(MODEL_TOK): $(MODEL_BIN)
+
+model: $(MODEL_BIN) $(MODEL_TOK)
+
+test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $(MODEL_TOK)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
@@ -683,6 +697,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/x25519_test
 	$(HOST_SWIFTC) tests/tls_handshake_test.swift userland/lib/tls13.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/tls_handshake_test
 	$(BUILD)/tls_handshake_test
+	$(HOST_SWIFTC) tests/llm_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_engine_test
+	$(BUILD)/llm_engine_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh

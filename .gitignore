@@ -13,6 +13,9 @@
 /userland/busybox/busybox-*/
 /userland/busybox/*.tar.*
 
+# Test model checkpoints (small, fetched on demand by scripts/fetch-model.sh)
+/models/
+
 # Editor / OS cruft
 .DS_Store
 *.swp
