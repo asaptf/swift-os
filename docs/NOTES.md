@@ -791,6 +791,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No `/bin/ls` behavior, VFS behavior, filesystem behavior,
   kernel behavior, C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0w — TCP echo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven TCP server smoke.** `tests/tcp_echo_test.sh` now writes serial
+  input immediately after awaited tty/login markers, waits for
+  `tcpecho: listening on 5555`, and uses a bounded regex wait for the guest's
+  receive marker instead of serial guard sleeps and hand-written polling loops.
+- **Assertions unchanged.** The test still preserves the one-shot TCP retry
+  model, verifies guest receive logging, and verifies that host `nc` receives
+  the echoed `swos-tcp` payload.
+- **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
