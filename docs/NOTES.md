@@ -531,6 +531,29 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   changes, no secondary CPU release, and no resolution of the S0 uniprocessor
   fast-path decision.
 
+### S0d — fixed per-CPU state scaffold (DONE, 2026-06-09)
+
+- **Heap-free per-CPU storage.** Added `kernel/smp/percpu.swift` with an
+  `InlineArray<8, SMPPerCpuState>` so the first per-CPU state is fixed storage,
+  not a Swift heap array. The scaffold records initialization, logical CPU id,
+  per-CPU timer ticks, the mirrored kernel-thread id, and a reserved process id
+  slot for later S2 work.
+- **Primary-CPU init + self-test.** CPU0 now runs `smpEarlyInitCurrentCpu()` and
+  `smpPerCpuSelfTest()` during boot, then logs
+  `[I] smp: S0d OK: per-CPU state ready`. The self-test validates CPU indexing,
+  timer-tick recording, current-thread mirroring, current-process mirroring, and
+  barrier calls before interrupts are enabled.
+- **Toward S2 without behavior change.** The generic timer mirrors ticks into
+  the current CPU's per-CPU slot, and the kernel-thread scheduler mirrors
+  `currentThread` after initialization and context-switch selection. The old
+  single-CPU scheduler/process tables remain authoritative in S0.
+- **Tests / acceptance.** `make s0-test` asserts the S0d marker under `-smp 4`;
+  the normal 1-CPU boot path also runs the self-test and panics before userland
+  on failure.
+- **Non-goals.** No secondary CPU release, no per-CPU run queues, no process
+  scheduler conversion, no locking protocol, no VFS/C4 work, and no
+  uniprocessor fast-path decision.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

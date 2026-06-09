@@ -101,6 +101,7 @@ SWIFT_SRCS := \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/smp/atomic.swift \
+	kernel/smp/percpu.swift \
 	kernel/log/log.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \

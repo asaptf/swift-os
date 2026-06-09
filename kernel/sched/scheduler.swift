@@ -68,6 +68,7 @@ func schedulerInit() {
     // Thread 0 = the current kernel_main / idle context.
     states[0] = stateRunning
     currentThread = 0
+    smpSetCurrentThreadForCurrentCpu(Int32(currentThread))
     threadCount = 1
     schedulerReady = true
     // L3 adoption: keep the old boot marker text, with maxThreads as detail.
@@ -121,6 +122,7 @@ private func schedule() {
     if states[prev] == stateRunning { states[prev] = stateReady }
     states[next] = stateRunning
     currentThread = next
+    smpSetCurrentThreadForCurrentCpu(Int32(currentThread))
 
     let base = UnsafeMutableRawPointer(contexts!)
     let stride = MemoryLayout<CPUContext>.stride
