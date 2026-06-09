@@ -901,6 +901,36 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No EL0 work moves to secondary CPUs, no run queues are added,
   and no scheduler/process/VFS/PMM locking policy changes in this checkpoint.
 
+### S2b — per-CPU EL0 scheduler-context scaffold (DONE, 2026-06-09)
+
+- **Process scheduler context storage.** The EL0 process scheduler context is no
+  longer a singleton `schedCtx[1]`. `processInit` now allocates one fixed
+  `CPUContext` per supported SMP CPU (`smpMaxCpuCount()`), initializes every
+  slot, and all process scheduler switches select the slot for `currentCpuId()`.
+  Today only CPU0 reaches those switch paths, so this is a storage/readiness
+  scaffold rather than a scheduling policy change.
+- **Runtime readiness marker.** Boot runs `processSchedulerContextSelfTest`
+  immediately after the S2a scheduler-owner check. The self-test verifies the
+  context array size, `CPUContext` stride, alignment, primary CPU index
+  validity, CPU0's published per-CPU process scheduler context, and zeroed
+  initial contexts before the first EL0 process switch, then logs
+  `S2b OK: process scheduler context scaffold ready`.
+- **Secondary EL0 guard.** Each EL0 process switch increments the current CPU's
+  per-CPU EL0 switch counter. After the Swift `ps` demo has run, boot verifies
+  that CPU0 recorded EL0 switches and every secondary CPU still has zero EL0
+  switches, then logs `S2b OK: no secondary EL0 execution`.
+- **Owner guard.** Until S2 proper deliberately moves EL0 scheduling off CPU0,
+  the process scheduler context helper and `processOnTick` panic if entered on
+  any non-owner CPU. This keeps the per-CPU storage scaffold from hiding an
+  accidental secondary scheduler entry.
+- **Static guard.** `tests/smp_release_guard_test.sh` now rejects a return to
+  singleton process scheduler context usage, verifies the S2b helper/self-test
+  hooks, checks the CPU0 owner guard, verifies that `irqHandler` still gates
+  `processOnTick` to CPU0, and checks that S2b runs after S2a in the boot order.
+- **Non-goals.** No EL0 work moves to secondary CPUs, no per-CPU run queues are
+  active yet, no cross-CPU wake/IPI path is added, and scheduler/process/VFS/PMM
+  locking policy remains S2+ work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

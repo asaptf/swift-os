@@ -58,7 +58,8 @@ private let waitAny = -1  // any child
 
 // Stable context storage for cpu_switch_context.
 private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [maxProc]
-private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [1]
+private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [smpMaxCpuCount()]
+private var schedCtxCpuCount: UInt32 = 0
 
 // Per-process metadata (parallel arrays; not address-sensitive).
 private var pState = [Int32](repeating: 0, count: maxProc)
@@ -107,15 +108,58 @@ private var lastReapedKilled = false
 
 func processInit() {
     let n = MemoryLayout<CPUContext>.stride
+    let cpuCount = smpMaxCpuCount()
     guard let c = swiftos_kernel_alloc(UInt(n * maxProc), 16),
-          let s = swiftos_kernel_alloc(UInt(n), 16) else {
+          let s = swiftos_kernel_alloc(UInt(n) * UInt(cpuCount), 16) else {
         uartPuts("panic: process context allocation failed\n")
         while true {}
     }
     procCtx = c.bindMemory(to: CPUContext.self, capacity: maxProc)
-    schedCtx = s.bindMemory(to: CPUContext.self, capacity: 1)
-    schedCtx.pointee = CPUContext()
+    schedCtx = s.bindMemory(to: CPUContext.self, capacity: Int(cpuCount))
+    schedCtxCpuCount = cpuCount
+    var cpu: UInt32 = 0
+    while cpu < cpuCount {
+        schedCtx[Int(cpu)] = CPUContext()
+        cpu += 1
+    }
+    smpSetProcessSchedulerContextForCurrentCpu(UInt(bitPattern: schedCtx))
     for i in 0..<maxProc { pState[i] = pUnused }
+}
+
+private func processSchedulerCpuIndex() -> Int {
+    let cpu = currentCpuId()
+    if cpu != 0 || cpu >= schedCtxCpuCount {
+        uartPuts("panic: EL0 process scheduler entered on non-owner CPU\n")
+        while true {}
+    }
+    return Int(cpu)
+}
+
+private func schedulerContextForCurrentCpu() -> UnsafeMutableRawPointer {
+    UnsafeMutableRawPointer(schedCtx.advanced(by: processSchedulerCpuIndex()))
+}
+
+func processSchedulerContextSelfTest() -> Bool {
+    if schedCtx == nil { return false }
+    if MemoryLayout<CPUContext>.stride != 104 { return false }
+    if schedCtxCpuCount != smpMaxCpuCount() { return false }
+    if currentCpuId() >= schedCtxCpuCount { return false }
+    if (UInt(bitPattern: schedCtx) & 0xF) != 0 { return false }
+    if !smpPerCpuProcessSchedulerContextReady(currentCpuId()) { return false }
+    if smpPerCpuEl0SwitchCount(currentCpuId()) != 0 { return false }
+
+    var cpu: UInt32 = 0
+    while cpu < schedCtxCpuCount {
+        let ctx = schedCtx[Int(cpu)]
+        if ctx.x19 != 0 || ctx.x20 != 0 || ctx.x21 != 0 || ctx.x22 != 0 ||
+           ctx.x23 != 0 || ctx.x24 != 0 || ctx.x25 != 0 || ctx.x26 != 0 ||
+           ctx.x27 != 0 || ctx.x28 != 0 || ctx.fp != 0 || ctx.lr != 0 ||
+           ctx.sp != 0 {
+            return false
+        }
+        cpu += 1
+    }
+    return true
 }
 
 func processIsActive() -> Bool { currentProc >= 0 }
@@ -308,8 +352,9 @@ private func pickReady() -> Int {
 // cooperative callers in a blocking syscall entered with them enabled.
 private func yieldToScheduler() {
     let daif = irq_save()
+    let schedulerContext = schedulerContextForCurrentCpu()
     cpu_switch_context(UnsafeMutableRawPointer(procCtx.advanced(by: currentProc)),
-                       UnsafeMutableRawPointer(schedCtx))
+                       schedulerContext)
     irq_restore(daif)
 }
 
@@ -368,7 +413,9 @@ private func schedule(until done: () -> Bool) {
         // cpu_switch_context swaps registers only — install the process's
         // address space so its EL0 user VAs resolve when it eret's.
         address_space_switch(pTtbr0[s])
-        cpu_switch_context(UnsafeMutableRawPointer(schedCtx),
+        smpRecordEl0SwitchForCurrentCpu()
+        let schedulerContext = schedulerContextForCurrentCpu()
+        cpu_switch_context(schedulerContext,
                            UnsafeMutableRawPointer(procCtx.advanced(by: s)))
         smpSetCurrentProcessForCurrentCpu(-1)
         currentProc = -1
@@ -823,6 +870,11 @@ func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
 /// `fromEL0` is true when the timer interrupted user code, false at EL1.
 func processOnTick(fromEL0: Bool) {
+    if currentCpuId() != 0 {
+        uartPuts("panic: processOnTick entered on non-owner CPU\n")
+        while true {}
+    }
+
     // Wake any sleepers whose deadline has passed. Runs first and unconditionally
     // (even when currentProc == -1 during the scheduler's idle wfi) so a sleep
     // resumes promptly on an otherwise idle system. Only nanosleep blockers carry

@@ -765,6 +765,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S2a OK: scheduler owner ready", UInt64(currentCpuId()) + 1)
+    if !processSchedulerContextSelfTest() {
+        uartPuts("panic: S2b process scheduler context self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2b OK: process scheduler context scaffold ready", UInt64(smpMaxCpuCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
@@ -800,6 +805,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
+        if !smpS2bNoSecondaryEl0Execution() {
+            uartPuts("panic: S2b secondary EL0 execution guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2b OK: no secondary EL0 execution", UInt64(platform.cpuCount))
         klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in
