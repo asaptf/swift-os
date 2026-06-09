@@ -74,6 +74,14 @@ await_line() {  # await_line LINE [MAXSEC]
   return 1
 }
 
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
+}
+
 send_after() {  # send_after MARKER MAXSEC TEXT
   local marker="$1" max="$2" text="$3"
   if ! await "$marker" "$max"; then
@@ -82,11 +90,11 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
 }
 
 send_line() {
-  printf '%s\n' "$1" >&3
+  send_text "$1"$'\n'
 }
 
 abort() {
@@ -101,21 +109,19 @@ abort() {
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
 send_after "Welcome to swift-os, root" 60 ''
 
-send_line 'COWV=before'
-send_line 'echo COW-SET-BEFORE-DONE'
+send_line "COWV=before; echo COW''-SET-BEFORE-DONE"
 await_line 'COW-SET-BEFORE-DONE' 30 || abort "initial COW variable assignment did not complete"
-send_line '( COWV=child; echo cow-child-after:$COWV )'
+send_line "( COWV=child; echo cow-child-after:\$COWV )"
 await_line 'cow-child-after:child' 30 || abort "child shell write was not observed"
-send_line 'echo cow-parent-before:$COWV'
+send_line "echo cow-parent-before:\$COWV"
 await_line 'cow-parent-before:before' 30 || abort "parent shell value was not isolated"
-send_line 'COWV=parent'
-send_line 'echo cow-parent-after:$COWV'
+send_line "COWV=parent; echo cow-parent-after:\$COWV"
 await_line 'cow-parent-after:parent' 30 || abort "parent post-fork write was not observed"
 send_line '/bin/forkdemo'
 await "forkdemo: parent waited child" 60 || abort "forkdemo parent wait marker did not arrive"
