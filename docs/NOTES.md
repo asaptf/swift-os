@@ -814,6 +814,16 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No SMP release behavior, locking policy, kernel behavior,
   C4/VFS/process behavior, or S1 design decision is changed.
 
+### S0y — hermetic S1 preflight target (DONE, 2026-06-09)
+
+- **Direct target hygiene.** `make smp-s1-preflight` now has an order-only
+  dependency on `$(BUILD)/.dir` before writing `build/fdt_test`, so the focused
+  preflight target is hermetic from a clean checkout/build directory.
+- **Assertions unchanged.** The target still builds the host FDT parser and runs
+  the same QEMU virt DTB PSCI/GIC/timer/topology preflight.
+- **Non-goals.** No preflight semantics, SMP release behavior, kernel behavior,
+  C4/VFS/process behavior, or S1 design decision is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

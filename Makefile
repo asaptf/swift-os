@@ -725,7 +725,7 @@ smp-mailbox-layout: build
 smp-release-guard: build
 	./tests/smp_release_guard_test.sh
 
-smp-s1-preflight:
+smp-s1-preflight: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	FDT_TEST=$(BUILD)/fdt_test ./tests/smp_s1_preflight_test.sh
 
