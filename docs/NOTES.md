@@ -543,6 +543,24 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   size and 64-byte alignment. The normal 1-CPU boot path also runs the self-test
   and panics before userland on failure.
 
+### S0f — DTB CPU topology scaffold (DONE, 2026-06-09)
+
+- **CPU topology parsing.** The pure FDT reader now records `/cpus/cpu@N`
+  topology from QEMU `virt` DTBs into fixed 8-slot Aff0 storage. No heap-backed
+  arrays are introduced, and secondary CPUs still remain parked below kernel
+  Swift code.
+- **Platform handoff + self-test.** After the MMU is enabled, the platform layer
+  compares the bootloader-provided DTB with the direct-boot injected DTB address
+  (`0x4FF0_0000`) and copies the richest discovered CPU count/Aff0 map into the
+  global platform record. The boot path validates the count against the S0
+  per-CPU/mailbox limit and logs
+  `[I] smp: S0f OK: CPU topology ready` with the discovered CPU count.
+- **DTB-consistent SMP smoke.** `tests/smp_boot_test.sh` now dumps a QEMU DTB
+  with the same `-smp ${SMP_CPUS}` value it boots, then asserts the S0f count
+  marker. The host FDT test covers both 1-CPU and `-smp 4` DTBs.
+- **Non-goals.** No PSCI/spin-table choice, no secondary release, no scheduler
+  conversion, no GIC/timer work on secondaries, no C4/VFS/process changes.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

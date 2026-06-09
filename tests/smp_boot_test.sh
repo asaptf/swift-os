@@ -8,23 +8,28 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
-DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPUS="${SMP_CPUS:-4}"
 TIMEOUT="${TIMEOUT:-90}"
+
+if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
+  echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
+  exit 2
+fi
+SMP_CPU_COUNT=$((10#$SMP_CPUS))
+if (( SMP_CPU_COUNT > 8 )); then
+  echo "FAIL: SMP_CPUS must be <= 8 for S0 mailbox/topology scaffolding, got '$SMP_CPUS'." >&2
+  exit 2
+fi
 
 EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] smp: S0 OK: foundations ready
 [I] smp: S0b OK: atomics and barriers ready
 [I] smp: S0d OK: per-CPU state ready
 [I] smp: S0e OK: secondary park mailbox ready
+[I] smp: S0f OK: CPU topology ready detail=$SMP_CPU_COUNT
 [I] boot: swift-os userland: Swift ps}"
-
-if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
-  echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
-  exit 2
-fi
 
 if [[ ! -f "$KERNEL" ]]; then
   echo "FAIL: $KERNEL not found - run 'make build' first." >&2
@@ -55,16 +60,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-dtb_args=()
-if [[ -f "$DTB" ]]; then
-  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+DTB="${SMP_DTB:-$ROOT/build/virt-smp-${SMP_CPU_COUNT}.dtb}"
+if [[ -z "${SMP_DTB:-}" ]]; then
+  tmp_dtb="$DTB.tmp"
+  mkdir -p "$(dirname "$DTB")"
+  "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic >/dev/null 2>&1
+  mv "$tmp_dtb" "$DTB"
+elif [[ ! -f "$DTB" ]]; then
+  echo "FAIL: SMP_DTB points to missing file: $DTB" >&2
+  exit 2
 fi
+
+dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 blk_args=(-global virtio-mmio.force-legacy=false
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
           -device virtio-blk-device,drive=swosbase)
 
-"$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPUS" -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic -no-reboot \
   "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QEMU_PID=$!
 
@@ -83,6 +96,11 @@ for _ in $(seq 1 "$((TIMEOUT * 10))"); do
     found=2
     break
   fi
+  if grep -qF "M9 platform: no valid device tree" "$LOG" 2>/dev/null ||
+     grep -qF "M9 WARN: device tree incomplete" "$LOG" 2>/dev/null; then
+    found=2
+    break
+  fi
   if all_found; then
     found=1
     break
@@ -93,7 +111,7 @@ done
 stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
-  echo "PASS: SMP boot smoke produced expected markers with -smp $SMP_CPUS:"
+  echo "PASS: SMP boot smoke produced expected markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

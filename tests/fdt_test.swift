@@ -21,9 +21,10 @@ struct FdtTest {
     static func main() {
         let args = CommandLine.arguments
         guard args.count >= 2 else {
-            FileHandle.standardError.write(Data("usage: fdt_test <dtb-file>\n".utf8))
+            FileHandle.standardError.write(Data("usage: fdt_test <dtb-file> [expected-cpus]\n".utf8))
             exit(2)
         }
+        let expectedCpus = args.count >= 3 ? UInt32(args[2])! : 1
 
         let data = try! Data(contentsOf: URL(fileURLWithPath: args[1]))
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -49,7 +50,15 @@ struct FdtTest {
             check(info.virtioStride == 0x200, "virtio stride 0x200, got 0x\(String(info.virtioStride, radix: 16))")
             check(info.virtioCount == 32, "virtio slot count 32, got \(info.virtioCount)")
 
-            print("PASS: fdt parser extracted the QEMU virt hardware map")
+            check(info.haveCpuTopology, "should find /cpus topology")
+            check(info.cpuCount == expectedCpus, "cpu count \(expectedCpus), got \(info.cpuCount)")
+            var cpu: UInt32 = 0
+            while cpu < expectedCpus {
+                check(info.cpuAff0(cpu) == cpu, "cpu[\(cpu)] Aff0 \(cpu), got \(info.cpuAff0(cpu))")
+                cpu += 1
+            }
+
+            print("PASS: fdt parser extracted the QEMU virt hardware map and \(expectedCpus) CPUs")
         }
     }
 }

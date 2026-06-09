@@ -12,7 +12,7 @@ private let smpNoThread: Int32 = -1
 private let smpNoProcess: Int32 = -1
 private let smpUninitializedCpu: UInt32 = 0xFFFF_FFFF
 
-private struct SMPPerCpuState {
+@_alignment(16) private struct SMPPerCpuState {
     var flags: UInt64 = 0
     var logicalId: UInt32 = smpUninitializedCpu
     var reserved0: UInt32 = 0

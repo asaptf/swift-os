@@ -29,7 +29,17 @@
     // virtio-mmio transport window (QEMU-style layout; informational on VBox).
     var virtioMmioBase: UInt = 0x0A00_0000
     var virtioMmioStride: UInt = 0x200
+    var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    var cpuCount: UInt32 = 1
+    var cpuAff0_0: UInt32 = 0
+    var cpuAff0_1: UInt32 = 0
+    var cpuAff0_2: UInt32 = 0
+    var cpuAff0_3: UInt32 = 0
+    var cpuAff0_4: UInt32 = 0
+    var cpuAff0_5: UInt32 = 0
+    var cpuAff0_6: UInt32 = 0
+    var cpuAff0_7: UInt32 = 0
     // PL031 RTC: unknown on VBox; 0 disables the clock (rtcNow returns 0).
     var rtcBase: UInt = 0
 #else
@@ -47,13 +57,27 @@
     // virtio-mmio transport window (QEMU virt: 32 slots of 0x200 at 0x0A000000).
     var virtioMmioBase: UInt = 0x0A00_0000
     var virtioMmioStride: UInt = 0x200
+    var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    // S0f CPU topology. CPU0 is the only compiled-in default; the DTB parser
+    // replaces this with the QEMU `-smp N` `/cpus` map when available.
+    var cpuCount: UInt32 = 1
+    var cpuAff0_0: UInt32 = 0
+    var cpuAff0_1: UInt32 = 0
+    var cpuAff0_2: UInt32 = 0
+    var cpuAff0_3: UInt32 = 0
+    var cpuAff0_4: UInt32 = 0
+    var cpuAff0_5: UInt32 = 0
+    var cpuAff0_6: UInt32 = 0
+    var cpuAff0_7: UInt32 = 0
     // PL031 RTC (QEMU virt): data register at base holds Unix time in seconds.
     var rtcBase: UInt = 0x0901_0000
 #endif
 }
 
 var platform = Platform()
+
+private let qemuDirectBootDtbAddr: UInt = 0x4FF0_0000
 
 /// Discover the hardware map from the device tree and update `platform`.
 ///
@@ -62,10 +86,13 @@ var platform = Platform()
 /// compiled-in defaults - the kernel never regresses on a board it already knew.
 func platformInit(_ dtbPhys: UInt) {
     var info = PlatformInfo()
+    var parsedDtb: UInt = 0
 
     // 1. The pointer the boot stub preserved from x0 (how a UEFI loader and some
     //    boot paths hand off the DTB).
-    _ = tryParse(dtbPhys, into: &info)
+    if tryParse(dtbPhys, into: &info) {
+        parsedDtb = dtbPhys
+    }
 
     // 2. QEMU's direct ELF `-kernel` path does not reliably pass the DTB in x0,
     //    and our run/test harness injects a dumped DTB at a fixed RAM address.
@@ -76,7 +103,10 @@ func platformInit(_ dtbPhys: UInt) {
         var addr = platform.ramBase
         let end = platform.ramBase + platform.ramSize
         while addr + 0x1000 <= end {
-            if tryParse(addr, into: &info) { break }
+            if tryParse(addr, into: &info) {
+                parsedDtb = addr
+                break
+            }
             addr += 0x1000
         }
     }
@@ -85,6 +115,8 @@ func platformInit(_ dtbPhys: UInt) {
         uartPuts("M9 platform: no valid device tree, using QEMU virt defaults\n")
         return
     }
+
+    platform.dtbBase = parsedDtb
 
     if info.haveRam {
         platform.ramBase = info.ramBase
@@ -138,4 +170,52 @@ private func tryParse(_ addr: UInt, into info: inout PlatformInfo) -> Bool {
     }
     fdtParseInto(p, &info)
     return info.valid
+}
+
+// S0f: copy CPU topology after the MMU is enabled. The early `platformInit`
+// deliberately leaves this for later because Swift may combine adjacent UInt32
+// fields into SIMD loads/stores, which are unsafe while RAM is still Device-typed.
+func platformInitCpuTopology() {
+    var info = PlatformInfo()
+    considerCpuTopology(platform.dtbBase, into: &info)
+    considerCpuTopology(qemuDirectBootDtbAddr, into: &info)
+
+    if info.haveCpuTopology && info.cpuCount > 0 {
+        platform.cpuCount = info.cpuCount
+        platform.cpuAff0_0 = info.cpuAff0_0
+        platform.cpuAff0_1 = info.cpuAff0_1
+        platform.cpuAff0_2 = info.cpuAff0_2
+        platform.cpuAff0_3 = info.cpuAff0_3
+        platform.cpuAff0_4 = info.cpuAff0_4
+        platform.cpuAff0_5 = info.cpuAff0_5
+        platform.cpuAff0_6 = info.cpuAff0_6
+        platform.cpuAff0_7 = info.cpuAff0_7
+    }
+}
+
+private func considerCpuTopology(_ addr: UInt, into best: inout PlatformInfo) {
+    if addr == 0 { return }
+    if addr < platform.ramBase { return }
+    if addr + 0x1000 > platform.ramBase + platform.ramSize { return }
+
+    var candidate = PlatformInfo()
+    if tryParse(addr, into: &candidate) &&
+       candidate.haveCpuTopology &&
+       candidate.cpuCount > best.cpuCount {
+        best = candidate
+    }
+}
+
+func platformCpuAff0(_ index: UInt32) -> UInt32 {
+    switch index {
+    case 0: return platform.cpuAff0_0
+    case 1: return platform.cpuAff0_1
+    case 2: return platform.cpuAff0_2
+    case 3: return platform.cpuAff0_3
+    case 4: return platform.cpuAff0_4
+    case 5: return platform.cpuAff0_5
+    case 6: return platform.cpuAff0_6
+    case 7: return platform.cpuAff0_7
+    default: return UInt32.max
+    }
 }
