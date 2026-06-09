@@ -117,6 +117,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/tlsget") { return loadProgramImage("/bin/tlsget") }
     if userPathEquals(pathVA, "/bin/httpd") { return loadProgramImage("/bin/httpd") }
     if userPathEquals(pathVA, "/bin/nslookup") { return loadProgramImage("/bin/nslookup") }
+    if userPathEquals(pathVA, "/bin/c4b-sockxfer") { return loadProgramImage("/bin/c4b-sockxfer") }
     if userPathEquals(pathVA, "/bin/console-login") { return loadProgramImage("/bin/console-login") }
     if userPathEquals(pathVA, "/bin/sleepprobe") { return loadProgramImage("/bin/sleepprobe") }
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or

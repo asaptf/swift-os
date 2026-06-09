@@ -245,6 +245,7 @@ USER_TCPGET_ELF := $(BUILD)/tcpget.elf
 USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
+USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_KV_ELF) \
@@ -260,6 +261,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TLSGET_ELF) \
 	$(USER_HTTPD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
+	$(USER_C4B_SOCKXFER_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -362,6 +364,9 @@ $(BUILD)/user_coproc.o: userland/coproc.c userland/lib/syscall.h Makefile | $(BU
 
 $(BUILD)/user_forkdemo.o: userland/forkdemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/forkdemo.c -o $@
+
+$(BUILD)/user_c4b_sockxfer.o: userland/c4b_sockxfer.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/c4b_sockxfer.c -o $@
 
 $(BUILD)/user_execdemo.o: userland/execdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/execdemo.c -o $@
@@ -488,6 +493,9 @@ $(USER_COPROC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_copr
 
 $(USER_FORKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_forkdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_forkdemo.o -o $@
+
+$(USER_C4B_SOCKXFER_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o -o $@
 
 $(USER_EXECDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_execdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_execdemo.o -o $@
@@ -664,6 +672,7 @@ test: build $(QEMU_DTB) disk base-image $(SWPKG)
 	./tests/ipv6_udp_echo_test.sh
 	./tests/ipv6_tcp_echo_test.sh
 	./tests/udp_echo_test.sh
+	./tests/ipc_socket_transfer_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
 	./tests/tls_test.sh
@@ -798,6 +807,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
+	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 
