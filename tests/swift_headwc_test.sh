@@ -22,6 +22,7 @@ fi
 
 LOG="$(mktemp -t swiftos-headwc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-headwc-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-headwc-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -30,35 +31,61 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 7;  printf 'tty-line\n'           # M7 ttydemo
-  sleep 1;  printf '\003'                 # Ctrl-C -> login (init) prompt
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'echo one > /tmp/t\n'  # build a 3-line, 14-byte file
-  sleep 1;  printf 'echo two >> /tmp/t\n'
-  sleep 1;  printf 'echo three >> /tmp/t\n'
-  sleep 1;  printf '/bin/wc /tmp/t\n'           # -> 3 3 14 /tmp/t
-  sleep 2;  printf '/bin/head -n 2 /tmp/t | /bin/wc\n'  # head stops at 2 -> 2 2 8
-  sleep 2;  printf '/bin/touch /tmp/empty\n'    # create empty tmpfs file
-  sleep 1;  printf '/bin/wc /tmp/empty\n'       # -> 0 0 0 /tmp/empty
-  sleep 2;  printf 'echo HEADWC-DONE\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (head/wc driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -100 >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 40
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+{
+  printf 'echo one > /tmp/t\n'
+  printf 'echo two >> /tmp/t\n'
+  printf 'echo three >> /tmp/t\n'
+  printf '/bin/wc /tmp/t\n'
+  printf '/bin/head -n 2 /tmp/t | /bin/wc\n'
+  printf '/bin/touch /tmp/empty\n'
+  printf '/bin/wc /tmp/empty\n'
+  printf 'echo HEADWC-DONE\n'
+  printf 'exit\n'
+} >&3
+await "HEADWC-DONE" 180 || drive_fail "shell did not survive head/wc/touch"
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

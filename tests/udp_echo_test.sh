@@ -41,7 +41,7 @@ trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$NCOUT" "$PIDFILE"
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-await() {  # await MARKER [MAXSEC]
+await() {
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
     grep -qF "$marker" "$LOG" 2>/dev/null && return 0
@@ -50,23 +50,11 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
-send_after() {  # send_after MARKER MAXSEC TEXT
-  local marker="$1" max="$2" text="$3"
-  if ! await "$marker" "$max"; then
-    echo "FAIL: timed out waiting for marker: $marker" >&2
-    echo "--- serial tail ---" >&2
-    sed 's/\r//' "$LOG" | tail -80 >&2
-    exit 1
-  fi
-  send_text "$text"
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (udpecho driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M7 tty:/,$p' >&2 || true
+  exit 1
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -81,22 +69,24 @@ send_after() {  # send_after MARKER MAXSEC TEXT
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
-send_after "swift-os login:" 60 $'root\n'
-send_after "Password:" 40 $'swordfish\n'
-send_after "Welcome to swift-os, root" 60 $'/bin/udpecho\n'
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+printf '/bin/udpecho\n' >&3
 
 # Wait for the guest to bind the socket, then send a datagram from the host.
 listening=0
-for _ in $(seq 1 40); do
-  if grep -qF "udpecho: listening on 5555" "$LOG"; then listening=1; break; fi
-  sleep 1
-done
+await "udpecho: listening on 5555" 80 && listening=1
 if [[ "$listening" -eq 1 ]]; then
   printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
+  await "udpecho: got 8 bytes" 20 || true
 fi
-sleep 2
 exec 3>&-
 stop_qemu
 QP=""

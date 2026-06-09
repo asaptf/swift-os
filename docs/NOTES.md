@@ -656,6 +656,186 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   stacks, no GIC/timer initialization on secondaries, and no C4/VFS/process
   changes. This milestone preserves the review boundary before S1.
 
+### S0j — S1 preflight gates (DONE, 2026-06-09)
+
+- **Fresh QEMU topology evidence.** `tests/smp_s1_preflight_test.sh` dumps
+  current QEMU `virt` DTBs for `-smp 1`, `2`, `4`, and `8`, then runs the same
+  host `fdt_test` parser the kernel shares. This validates the DTB-visible S1
+  inputs: CPU Aff0 slots, `enable-method = "psci"` for secondary-capable
+  topologies, PSCI method/function ID, the existing GICv2/UART/virtio map, and
+  the ARM generic timer's non-secure physical PPI (INTID 30) with the expected
+  per-CPU PPI target mask.
+- **UEFI parked-SMP smoke.** `tests/uefi_boot_test.sh` now accepts
+  `SMP_CPUS`, boots the real GPT disk through AAVMF with `-smp 4` in the new
+  `smp-uefi-test` target, and asserts the S0 markers, CPU topology count, and
+  PSCI enable mask before reaching busybox. This covers the S0 parked-SMP path
+  for both direct `-kernel` and UEFI/disk boot.
+- **Gate integration.** `make test` runs the preflight next to the existing FDT
+  checks and adds the UEFI `-smp 4` smoke after the single-CPU UEFI boot.
+  `make s0-test` includes the preflight and UEFI SMP smoke around the direct
+  parked boot smokes. This keeps the S0/S1 handoff executable.
+- **Non-goals.** No C4/VFS/process behavior changes.
+
+### S0l — full-gate mailbox ABI guard (DONE, 2026-06-09)
+
+- **Full gate coverage.** The normal `make test` suite now runs
+  `tests/smp_mailbox_layout_test.sh` before the release guard, so the secondary
+  mailbox ABI (`.data`, 512 bytes, 64-byte alignment) is checked in the same
+  overnight/product gate that would catch accidental release-path regressions.
+- **Verifier hardening.** The mailbox layout script now fails clearly when the
+  expected `llvm-objdump` tool is unavailable.
+- **Non-goals.** No mailbox layout change, no kernel/C4/VFS/process behavior
+  changes.
+
+### S0m — legacy QEMU smoke harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven legacy drivers.** Older QEMU smoke tests that still drove
+  serial input with fixed sleeps now use FIFO stdin plus bounded waits for the
+  relevant prompts or acceptance markers. This covers the tty, disk exec,
+  console-login, cap enforcement, and throwaway disk VFS tests.
+- **Early-probe waits.** The virtio-blk and virtio-net smoke tests now wait for
+  their boot-time success markers before cleanup instead of killing QEMU after a
+  fixed delay.
+- **Non-goals.** No kernel, filesystem, process, capability, or userland
+  behavior is changed.
+
+### S0n — native Swift file-tool harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven Swift tool tests.** The native Swift coreutils, fileops, and
+  chmod/chown smoke tests now drive QEMU through FIFO stdin and wait for login
+  prompts plus existing output markers instead of relying on fixed serial
+  sleeps.
+- **Assertions unchanged.** The tests still verify the same `/bin/echo`,
+  `/bin/cat`, `/bin/pwd`, tmpfs mutation, chmod, and chown behavior.
+- **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
+  behavior, or S1 release behavior is changed.
+
+### S0o — timed Swift tool harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven timed tool tests.** The native Swift recursive `rm`,
+  `head`/`wc`/`touch`, `date`, and sleep smoke tests now drive QEMU through FIFO
+  stdin and wait for login prompts plus existing output markers instead of
+  relying on fixed serial sleeps.
+- **Assertions unchanged.** The tests still verify recursive removal semantics,
+  head/wc/touch output, RTC-backed `/bin/date`, and timer-backed
+  nanosleep/busybox sleep behavior.
+- **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
+  behavior, or S1 release behavior is changed.
+
+### S0p — runtime demo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven runtime demos.** The userland threads/futex and
+  mmap/munmap/mprotect/W^X smoke tests now drive QEMU through FIFO stdin and
+  wait for login prompts plus their existing `threadsdemo` / `mmapdemo` success
+  markers instead of relying on fixed serial sleeps.
+- **Assertions unchanged.** The tests still verify `counter=4000` for the futex
+  thread demo and the same B1/B2/W^X mmap markers.
+- **Non-goals.** No runtime behavior, kernel behavior, C4/VFS/process behavior,
+  or S1 release behavior is changed.
+
+### S0q — calc REPL harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven calc REPL.** `tests/calc_test.sh` now drives QEMU through FIFO
+  stdin, waits for the login shell and `/bin/calc` banner, then feeds the same
+  REPL session without fixed serial sleeps.
+- **Assertions unchanged.** The test still verifies precedence, parentheses,
+  assignment, lookup, modulo, unary minus, division-by-zero reporting, `:sum`,
+  and bounded heap break across churn.
+- **Non-goals.** No calc behavior, Swift runtime behavior, kernel behavior,
+  C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0r — HTTP server harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven httpd launch.** `tests/httpd_test.sh` now drives QEMU through
+  FIFO stdin, waits for the tty demo, login shell, and `httpd: listening on
+  8080` marker, then runs the existing curl acceptance checks without fixed
+  serial input sleeps.
+- **Assertions unchanged.** The test still verifies concurrent index requests,
+  `/hello.txt` serving plus `text/plain`, generated `/sub/` directory listings,
+  404 on missing paths, and multiple `httpd: 200` serial markers.
+- **Non-goals.** No HTTP server behavior, networking behavior, filesystem
+  behavior, kernel behavior, C4/VFS/process behavior, or S1 release behavior is
+  changed.
+
+### S0s — serial vi harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven vi session.** `tests/vi_test.sh` now drives QEMU through FIFO
+  stdin, waits for the tty demo, login shell, vi alternate-screen entry,
+  inserted text echo, saved-file readback, and trailing shell marker instead of
+  relying on fixed serial input sleeps.
+- **Assertions unchanged.** The test still verifies busybox vi enters the
+  alternate screen, saves `/tmp/vitest`, returns a clean `hello-from-vi` line via
+  `cat`, keeps the shell alive, and avoids kernel panics.
+- **Non-goals.** No vi behavior, terminal behavior, filesystem behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0t — UDP echo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven UDP smoke.** `tests/udp_echo_test.sh` now writes serial input
+  immediately after awaited tty/login markers, waits for `udpecho: listening on
+  5555`, sends the host datagram, and waits for the guest receive marker instead
+  of relying on short fixed guard sleeps.
+- **Assertions unchanged.** The test still verifies that `/bin/udpecho` binds,
+  receives eight bytes from the slirp host, and echoes `swos-udp` back to host
+  `nc`.
+- **Non-goals.** No UDP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0u — TCP connect harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven TCP client smoke.** `tests/tcp_connect_test.sh` now writes
+  serial input immediately after awaited tty/login markers and waits for the
+  `srv-reply` client output instead of sleeping after launching `/bin/tcpget`.
+- **Assertions unchanged.** The test still verifies that `/bin/tcpget` connects
+  to the slirp host, receives `srv-reply`, and transmits `GET swos` on the
+  captured pcap path.
+- **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0v — Swift ls harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven native ls smoke.** `tests/swift_ls_test.sh` now writes serial
+  input immediately after awaited tty/login and command-output markers instead
+  of using short fixed guard sleeps before `/bin/ls` invocations.
+- **Assertions unchanged.** The test still verifies plain `/etc` listing,
+  long-format `/etc/motd`, `/etc/swos`, and single-file `/bin/busybox` owner,
+  group, mode, size, and timestamp formatting.
+- **Non-goals.** No `/bin/ls` behavior, VFS behavior, filesystem behavior,
+  kernel behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0w — TCP echo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven TCP server smoke.** `tests/tcp_echo_test.sh` now writes serial
+  input immediately after awaited tty/login markers, waits for
+  `tcpecho: listening on 5555`, and uses a bounded regex wait for the guest's
+  receive marker instead of serial guard sleeps and hand-written polling loops.
+- **Assertions unchanged.** The test still preserves the one-shot TCP retry
+  model, verifies guest receive logging, and verifies that host `nc` receives
+  the echoed `swos-tcp` payload.
+- **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
+### S0x — SMP audit freshness guard (DONE, 2026-06-09)
+
+- **Bidirectional manifest check.** `tests/smp_state_audit_test.sh` now records
+  the scanner output once, verifies every scanned mutable global is documented,
+  and also rejects stale backticked `kernel/...:symbol` entries that no longer
+  appear in `scripts/smp-global-audit.py` output.
+- **Audit contract clarified.** `docs/SMP_STATE_AUDIT.md` now states that the
+  executable check covers both missing and stale manifest entries.
+- **Non-goals.** No SMP release behavior, locking policy, kernel behavior,
+  C4/VFS/process behavior, or S1 design decision is changed.
+
+### S0y — hermetic S1 preflight target (DONE, 2026-06-09)
+
+- **Direct target hygiene.** `make smp-s1-preflight` now has an order-only
+  dependency on `$(BUILD)/.dir` before writing `build/fdt_test`, so the focused
+  preflight target is hermetic from a clean checkout/build directory.
+- **Assertions unchanged.** The target still builds the host FDT parser and runs
+  the same QEMU virt DTB PSCI/GIC/timer/topology preflight.
+- **Non-goals.** No preflight semantics, SMP release behavior, kernel behavior,
+  C4/VFS/process behavior, or S1 design decision is changed.
+
 ### S1 — secondary CPU bring-up and per-CPU early init (DONE, 2026-06-09)
 
 - **Policy decision.** S1 records the S0 decision point as "always use the

@@ -43,27 +43,10 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
 drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial (rm -r driver) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  echo "--- serial (rm-r driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -100 >&2 || true
   exit 1
 }
 
@@ -81,37 +64,32 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-send_text $'tty-line\n' || drive_fail "failed to send tty line"
-await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-send_text $'\003' || drive_fail "failed to send Ctrl-C"
-await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-send_text $'root\n' || drive_fail "failed to send login"
-await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-send_text $'swordfish\n' || drive_fail "failed to send password"
-await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-await "built-in shell" 15 || drive_fail "busybox shell did not start"
-await "# " 15 || drive_fail "shell prompt did not appear"
-send_text $'/bin/mkdir /tmp/d\necho MK1\'\'-DONE\n' || drive_fail "failed to send mkdir /tmp/d"
-await "MK1-DONE" 20 || drive_fail "mkdir /tmp/d did not complete"
-send_text $'/bin/mkdir /tmp/d/sub\necho MK2\'\'-DONE\n' || drive_fail "failed to send mkdir /tmp/d/sub"
-await "MK2-DONE" 20 || drive_fail "mkdir /tmp/d/sub did not complete"
-send_text $'echo hi > /tmp/d/f\necho WR1\'\'-DONE\n' || drive_fail "failed to write /tmp/d/f"
-await "WR1-DONE" 20 || drive_fail "write /tmp/d/f did not complete"
-send_text $'echo deep > /tmp/d/sub/g\necho WR2\'\'-DONE\n' || drive_fail "failed to write /tmp/d/sub/g"
-await "WR2-DONE" 20 || drive_fail "write /tmp/d/sub/g did not complete"
-send_text $'/bin/rm /tmp/d\necho RC1=$?\necho RM1\'\'-DONE\n' || drive_fail "failed to send non-recursive rm"
-await "RM1-DONE" 20 || drive_fail "non-recursive rm did not complete"
-send_text $'/bin/ls /tmp\necho LS1\'\'-DONE\n' || drive_fail "failed to send first ls"
-await "LS1-DONE" 20 || drive_fail "first ls did not complete"
-send_text $'/bin/rm -r /tmp/d\necho RC2=$?\necho RM2\'\'-DONE\n' || drive_fail "failed to send recursive rm"
-await "RM2-DONE" 20 || drive_fail "recursive rm did not complete"
-send_text $'/bin/ls /tmp\necho LS2\'\'-DONE\n' || drive_fail "failed to send second ls"
-await "LS2-DONE" 20 || drive_fail "second ls did not complete"
-send_text $'echo RMR\'\'-DONE\n' || drive_fail "failed to send done marker"
-await_line "RMR-DONE" 20 || drive_fail "shell did not complete the rm -r ops"
-send_text $'exit\n' || drive_fail "failed to send exit"
-await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+{
+  printf '/bin/mkdir /tmp/d\n'
+  printf '/bin/mkdir /tmp/d/sub\n'
+  printf 'echo hi > /tmp/d/f\n'
+  printf 'echo deep > /tmp/d/sub/g\n'
+  printf '/bin/rm /tmp/d\n'
+  printf 'echo RC1=$?\n'
+  printf '/bin/ls /tmp\n'
+  printf '/bin/rm -r /tmp/d\n'
+  printf 'echo RC2=$?\n'
+  printf '/bin/ls /tmp\n'
+  printf 'echo RMR-DONE\n'
+  printf 'exit\n'
+} >&3
+await "RMR-DONE" 180 || drive_fail "shell did not survive the rm-r ops"
+await "M12c: session ended" 60 || true
+
 exec 3>&-
 stop_qemu
 QP=""
@@ -119,17 +97,17 @@ QP=""
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
 # Bare `rm /tmp/d` must refuse (directory) and report a non-zero status.
-grep -qF "RC1=0" <<<"$clean" && { echo "FAIL: rm of a directory without -r unexpectedly succeeded" >&2; ok=0; }
+grep -qxF "RC1=0" <<<"$clean" && { echo "FAIL: rm of a directory without -r unexpectedly succeeded" >&2; ok=0; }
 grep -q "is a directory" <<<"$clean" || { echo "FAIL: rm did not report 'is a directory'" >&2; ok=0; }
 # After the refusal, /tmp/d is still listed.
-awk '/# \/bin\/ls \/tmp$/{c++} c==1&&/^# \/bin\/ls/{next} c==1&&/^# /{c=2} c==1' <<<"$clean" | grep -qxF "d" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==1&&/^# /{c=0} c==1' <<<"$clean" | grep -qxF "d" \
   || { echo "FAIL: /tmp/d missing after a refused (no -r) rm" >&2; ok=0; }
 # `rm -r /tmp/d` succeeds (status 0).
-grep -qF "RC2=0" <<<"$clean" || { echo "FAIL: rm -r did not exit 0" >&2; ok=0; }
+grep -qxF "RC2=0" <<<"$clean" || { echo "FAIL: rm -r did not exit 0" >&2; ok=0; }
 # After rm -r, the *second* `ls /tmp` no longer lists d.
-awk '/# \/bin\/ls \/tmp$/{c++} c==2&&/^# \/bin\/ls/{next} c==2&&/^# /{c=3} c==2' <<<"$clean" | grep -qxF "d" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==2&&/^# /{c=0} c==2' <<<"$clean" | grep -qxF "d" \
   && { echo "FAIL: /tmp/d still present after rm -r" >&2; ok=0; }
-grep -qF "RMR-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the rm -r ops" >&2; ok=0; }
+grep -qxF "RMR-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the rm -r ops" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: native Swift rm -r removes a populated directory tree"

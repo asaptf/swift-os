@@ -28,11 +28,15 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
+# Sequence (all under /tmp, the writable tmpfs):
+#   mkdir /tmp/d      -> ls shows d
+#   echo > /tmp/d/f   -> ls shows f
+#   mv f -> g, rm g, rmdir d, then ls /tmp to confirm they are gone.
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -42,49 +46,13 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
-send_after() {  # send_after MARKER MAXSEC TEXT
-  local marker="$1" max="$2" text="$3"
-  if ! await "$marker" "$max"; then
-    echo "FAIL: timed out waiting for marker: $marker" >&2
-    echo "--- serial tail ---" >&2
-    sed 's/\r//' "$LOG" | tail -80 >&2
-    exit 1
-  fi
-  send_text "$text"
-}
-
-send_line() {
-  send_text "$1"$'\n'
-}
-
-abort() {
+drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial tail ---" >&2
-  sed 's/\r//' "$LOG" | tail -80 >&2
+  echo "--- serial (fileops driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:\|\/bin\/mkdir/,$p' >&2 || true
   exit 1
 }
 
-# Sequence (all under /tmp, the writable tmpfs):
-#   mkdir /tmp/d      -> ls shows d
-#   echo > /tmp/d/f   -> ls shows f
-#   mv f -> g, rm g, rmdir d, then ls /tmp to confirm they are gone.
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -95,57 +63,42 @@ abort() {
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
-send_after "swift-os login:" 60 $'root\n'
-send_after "Password:" 40 $'swordfish\n'
-send_after "Welcome to swift-os, root" 60 ''
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+{
+  printf '/bin/mkdir /tmp/d\n'
+  printf 'echo hi > /tmp/d/f\n'
+  printf '/bin/mv /tmp/d/f /tmp/d/g\n'
+  printf '/bin/ls /tmp/d\n'
+  printf '/bin/cat /tmp/d/g\n'
+  printf '/bin/rm /tmp/d/g\n'
+  printf '/bin/rmdir /tmp/d\n'
+  printf '/bin/ls /tmp\n'
+  printf 'echo FILEOPS-DONE\n'
+  printf 'exit\n'
+} >&3
+await "FILEOPS-DONE" 180 || drive_fail "shell did not survive the file ops"
+await "M12c: session ended" 60 || true
 
-send_line "/bin/mkdir /tmp/d; echo FILEOPS''-MKDIR-DONE"
-await_line 'FILEOPS-MKDIR-DONE' 30 || abort "mkdir step did not complete"
-send_line "echo hi > /tmp/d/f; echo FILEOPS''-WRITE-DONE"
-await_line 'FILEOPS-WRITE-DONE' 30 || abort "file write step did not complete"
-send_line "/bin/mv /tmp/d/f /tmp/d/g; echo FILEOPS''-MV-DONE"
-await_line 'FILEOPS-MV-DONE' 30 || abort "mv step did not complete"
-send_line "echo FILEOPS''-LS1-BEGIN; /bin/ls /tmp/d; echo FILEOPS''-LS1-DONE"
-await_line 'FILEOPS-LS1-BEGIN' 30 || abort "ls /tmp/d step did not start"
-await_line 'g' 30 || abort "ls /tmp/d did not show renamed file"
-await_line 'FILEOPS-LS1-DONE' 30 || abort "ls /tmp/d step did not complete"
-send_line "echo FILEOPS''-CAT-BEGIN; /bin/cat /tmp/d/g; echo FILEOPS''-CAT-DONE"
-await_line 'FILEOPS-CAT-BEGIN' 30 || abort "cat step did not start"
-await_line 'hi' 30 || abort "cat /tmp/d/g did not show file content"
-await_line 'FILEOPS-CAT-DONE' 30 || abort "cat step did not complete"
-send_line "/bin/rm /tmp/d/g; echo FILEOPS''-RM-DONE"
-await_line 'FILEOPS-RM-DONE' 30 || abort "rm step did not complete"
-send_line "/bin/rmdir /tmp/d; echo FILEOPS''-RMDIR-DONE"
-await_line 'FILEOPS-RMDIR-DONE' 30 || abort "rmdir step did not complete"
-send_line "echo FILEOPS''-LS2-BEGIN; /bin/ls /tmp; echo FILEOPS''-LS2-DONE"
-await_line 'FILEOPS-LS2-BEGIN' 30 || abort "ls /tmp step did not start"
-await_line 'FILEOPS-LS2-DONE' 30 || abort "ls /tmp step did not complete"
-send_line "echo FILEOPS''-DONE"
-await_line 'FILEOPS-DONE' 30 || abort "shell did not survive the file ops"
-send_line 'exit'
-
-sleep 1
+exec 3>&-
 stop_qemu
 QP=""
 
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
-section_between() {
-  local begin="$1" end="$2"
-  awk -v begin="$begin" -v end="$end" '
-    $0 == begin { inside = 1; next }
-    $0 == end { inside = 0 }
-    inside { print }
-  ' <<<"$clean"
-}
 # After `mv f g`, ls /tmp/d shows g (and not f).
-section_between "FILEOPS-LS1-BEGIN" "FILEOPS-LS1-DONE" | grep -qxF "g" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==1&&/^# /{c=0} c==1' <<<"$clean" | grep -qxF "g" \
   || { echo "FAIL: mv did not rename f->g in /tmp/d" >&2; ok=0; }
 grep -qxF "hi" <<<"$clean"        || { echo "FAIL: mv did not preserve file content (cat g != hi)" >&2; ok=0; }
 # After rm g + rmdir d, ls /tmp must not list d (but keeps the boot-created note).
-section_between "FILEOPS-LS2-BEGIN" "FILEOPS-LS2-DONE" | grep -qxF "d" \
+awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==2&&/^# /{c=0} c==2' <<<"$clean" | grep -qxF "d" \
   && { echo "FAIL: /tmp/d still present after rmdir" >&2; ok=0; }
 grep -qxF "FILEOPS-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the file ops" >&2; ok=0; }
 

@@ -20,6 +20,7 @@ fi
 
 LOG="$(mktemp -t swiftos-tty.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-tty-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-tty-in.XXXXXX)"; mkfifo "$INFIFO"
 QEMU_PID=""
 stop_qemu() {
     if [[ -f "$PIDFILE" ]]; then
@@ -37,7 +38,8 @@ stop_qemu() {
 }
 cleanup() {
     stop_qemu
-    rm -f "$LOG" "$PIDFILE"
+    exec 3>&- 2>/dev/null || true
+    rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -56,17 +58,41 @@ if [[ -f "$DISK" ]]; then
               -device virtio-blk-device,drive=swosbase)
 fi
 
+await() {  # await MARKER [MAXSEC]
+    local marker="$1" max="${2:-30}" n=0
+    while (( n < max * 10 )); do
+        grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+        sleep 0.1; n=$((n + 1))
+    done
+    return 1
+}
+
+drive_fail() {
+    echo "FAIL: $1" >&2
+    echo "Serial log was:" >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+}
+
 # Boot → (tty demo blocks on read) → type "pinXg", then move the cursor left
 # (ESC[D) and backspace to delete the stray 'X', committing "ping" → (loop) →
 # Ctrl-C. Asserting read(0) returns "ping" exercises the cooked line editor's
 # movable cursor and mid-line delete, not just plain appending.
-( sleep 4; printf 'pinXg\033[D\177\n'; sleep 1.5; printf '\003'; sleep 2 ) | \
-    "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
     -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" \
-    >"$LOG" 2>&1 &
+    <"$INFIFO" >"$LOG" 2>&1 &
 QEMU_PID=$!
+exec 3<>"$INFIFO"
 
-sleep 10
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'pinXg\033[D\177\n' >&3
+await "you typed: ping" 30 || drive_fail "typed line was not echoed back by read(0)"
+await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for Ctrl-C prompt"
+printf '\003' >&3
+await "M7 OK: foreground interrupted by Ctrl-C (SIGINT)" 30 || true
+exec 3>&-
 stop_qemu
 QEMU_PID=""
 

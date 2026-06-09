@@ -24,6 +24,7 @@ fi
 
 LOG="$(mktemp -t swiftos-sleep.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-sleep-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-sleep-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -32,30 +33,64 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 12;  printf 'tty-line\n'
-  sleep 2;   printf '\003'
-  sleep 5;   printf 'root\n'
-  sleep 2;   printf 'swordfish\n'
-  sleep 5;   printf '/bin/sleepprobe\n'
-  sleep 6;   printf 'busybox sleep 1\n'
-  sleep 4;   printf 'echo BUSYBOX-SLEEP-DONE\n'
-  sleep 3;   printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (sleep driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -80 >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 46
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf '/bin/sleepprobe\n' >&3
+await_regex 'SLEEP_DELTA=[0-9]+' 120 || drive_fail "/bin/sleepprobe printed no SLEEP_DELTA line"
+printf 'busybox sleep 1\n' >&3
+printf 'echo BUSYBOX-SLEEP-DONE\n' >&3
+await "BUSYBOX-SLEEP-DONE" 120 || true
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

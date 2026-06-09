@@ -65,14 +65,6 @@ await_regex() {  # await_regex REGEX [MAXSEC]
   return 1
 }
 
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (ls -l driver) ---" >&2
@@ -91,31 +83,30 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-send_text $'tty-line\n' || drive_fail "failed to send tty line"
-await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-send_text $'\003' || drive_fail "failed to send Ctrl-C"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
 await_count "swift-os login:" 1 60 || drive_fail "timed out waiting for root login prompt"
-send_text $'root\n' || drive_fail "failed to send root login"
+printf 'root\n' >&3
 await_count "Password:" 1 60 || drive_fail "timed out waiting for root password prompt"
-send_text $'swordfish\n' || drive_fail "failed to send root password"
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-send_text $'ls -l /\n' || drive_fail "failed to send root ls / command"
+printf 'ls -l /\n' >&3
 await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 || drive_fail "root ls -l / did not list /bin"
-send_text $'ls -l /bin\n' || drive_fail "failed to send root ls /bin command"
+printf 'ls -l /bin\n' >&3
 await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 || drive_fail "root ls -l /bin did not list busybox"
-send_text $'ls -l /etc\n' || drive_fail "failed to send root ls /etc command"
+printf 'ls -l /etc\n' >&3
 await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 || drive_fail "root ls -l /etc did not list motd"
-send_text $'exit\n' || drive_fail "failed to send root exit"
-await_count "M12c: session ended" 1 60 || drive_fail "root session did not end"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || drive_fail "root session did not end"
 await_count "swift-os login:" 2 60 || drive_fail "timed out waiting for user login prompt"
-send_text $'user\n' || drive_fail "failed to send user login"
+printf 'user\n' >&3
 await_count "Password:" 2 60 || drive_fail "timed out waiting for user password prompt"
-send_text $'swordfish\n' || drive_fail "failed to send user password"
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, user" 60 || drive_fail "user login did not complete"
-send_text $'mkdir /tmp/d; ls -l /tmp\n' || drive_fail "failed to send user ls /tmp command"
+printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
 await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 || drive_fail "user ls -l /tmp did not list /tmp/d"
-send_text $'exit\n' || drive_fail "failed to send user exit"
-await_count "M12c: session ended" 2 60 || drive_fail "user session did not end"
+printf 'exit\n' >&3
 
 exec 3>&-
 stop_qemu

@@ -47,6 +47,15 @@ if [[ -f "$DTB" ]]; then
   dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 # force-legacy=false selects the modern (v2) virtio-mmio interface our driver
 # speaks. The probe runs early in boot, so a short Ctrl-C just stops the kernel.
 ( sleep 9; printf '\003'; sleep 1 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -57,7 +66,8 @@ fi
   -device virtio-blk-device,drive=disk0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 12
+await "M11b OK: sector 0 read from disk, SWOSBASE magic verified" 60 || true
+sleep 1
 stop_qemu
 QP=""
 

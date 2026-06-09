@@ -22,6 +22,8 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 
 LOG="$(mktemp -t swiftos-vi.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-vi-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-vi-in.XXXXXX)"
+mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -32,7 +34,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-cleanup() { stop_qemu; rm -f "$LOG" "$PIDFILE"; }
+cleanup() { stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"; }
 trap cleanup EXIT
 
 dtb_args=()
@@ -41,27 +43,70 @@ blk_args=(-global virtio-mmio.force-legacy=false \
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
           -device virtio-blk-device,drive=swosbase)
 
-(
-  sleep 8;  printf 'tty-line\n'          # M7 ttydemo: a line
-  sleep 1;  printf '\003'                # Ctrl-C -> ttydemo exits, console-login starts
-  sleep 2;  printf 'root\n'              # log in
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'vi /tmp/vitest\n'    # open vi on a new tmpfs file
-  sleep 2;  printf 'ihello-from-vi'      # insert mode + text
-  sleep 1;  printf '\033'                # ESC -> command mode
-  sleep 1;  printf ':wq\n'               # write + quit
-  sleep 2;  printf 'cat /tmp/vitest\n'   # read the saved file back
-  sleep 1;  printf 'echo VI-DONE-MARKER\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_count() {  # await_count MARKER COUNT [MAXSEC]
+  local marker="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(grep -aoF -- "$marker" "$LOG" 2>/dev/null | wc -l | tr -d ' ')"
+    [[ "$got" -ge "$want" ]] && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_clean_regex() {  # await_clean_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qE "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (vi driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -160 >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-for _ in $(seq 1 1200); do
-  grep -Eq $'^VI-DONE-MARKER\r?$' "$LOG" 2>/dev/null && break
-  kill -0 "$QP" 2>/dev/null || break
-  sleep 0.1
-done
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+printf 'tty-line\n' >&3                 # M7 ttydemo: a line
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
+printf '\003' >&3                       # Ctrl-C -> ttydemo exits, console-login starts
+await "swift-os login:" 90 || drive_fail "login prompt did not appear"
+printf 'root\n' >&3                     # log in
+await "Password:" 90 || drive_fail "password prompt did not appear"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf 'vi /tmp/vitest\n' >&3           # open vi on a new tmpfs file
+await $'\x1b[?1049h' 120 || drive_fail "vi did not enter the alternate screen"
+printf 'ihello-from-vi' >&3             # insert mode + text
+await "hello-from-vi" 60 || drive_fail "vi did not echo inserted text"
+printf '\033' >&3                       # ESC -> command mode
+await_count "- /tmp/vitest" 2 60 || drive_fail "vi did not return to command mode"
+printf ':wq\n' >&3                      # write + quit
+await $'\x1b[?1049l' 120 || drive_fail "vi did not leave the alternate screen"
+printf 'cat /tmp/vitest\n' >&3          # read the saved file back
+await_clean_regex '^hello-from-vi$' 120 || drive_fail "saved file content was not read back"
+printf 'echo VI-DONE-MARKER\n' >&3
+await "VI-DONE-MARKER" 90 || drive_fail "shell did not survive vi"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+exec 3>&-
 stop_qemu
 QP=""
 
@@ -72,7 +117,7 @@ grep -qaF $'\x1b[?1049h' "$LOG"     || { echo "FAIL: vi did not enter the altern
 # inserted text (which is embedded in cursor-positioning escapes) — so this
 # truly asserts the file was saved, not merely typed.
 grep -qE '^hello-from-vi$' <<<"$clean" || { echo "FAIL: saved file content not read back (vi :wq / ftruncate)" >&2; ok=0; }
-grep -qE '^VI-DONE-MARKER$' <<<"$clean" || { echo "FAIL: shell did not survive vi (kernel panic in poll?)" >&2; ok=0; }
+grep -qa "VI-DONE-MARKER" "$LOG"    || { echo "FAIL: shell did not survive vi (kernel panic in poll?)" >&2; ok=0; }
 grep -qa "panic" "$LOG"             && { echo "FAIL: kernel panic during vi" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then

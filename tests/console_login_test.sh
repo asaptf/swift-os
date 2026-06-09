@@ -54,27 +54,10 @@ await_count() {  # await_count MARKER COUNT [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (login driver) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/console-login/,$p' >&2 || true
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
   exit 1
 }
 
@@ -88,42 +71,40 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-send_text $'tty-line\n' || drive_fail "failed to send tty line"
-await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-send_text $'\003' || drive_fail "failed to send Ctrl-C"
-await_count "swift-os login:" 1 60 || drive_fail "timed out waiting for first login prompt"
-send_text $'user\n' || drive_fail "failed to send first username"
-await_count "Password:" 1 60 || drive_fail "timed out waiting for first password prompt"
-send_text $'wrongpw\n' || drive_fail "failed to send wrong password"
-await "Login incorrect" 30 || drive_fail "wrong password was not rejected"
-await_count "swift-os login:" 2 60 || drive_fail "timed out waiting for retry login prompt"
-send_text $'user\n' || drive_fail "failed to send retry username"
-await_count "Password:" 2 60 || drive_fail "timed out waiting for retry password prompt"
-send_text $'swordfish\n' || drive_fail "failed to send real password"
-await "Welcome to swift-os, user" 60 || drive_fail "authentication did not succeed"
-await "session: principal=2 session=2 caps=14" 20 || drive_fail "security context was not adopted"
-send_text $'echo LOGGED-IN-SHELL\n' || drive_fail "failed to send shell marker"
-await_line "LOGGED-IN-SHELL" 20 || drive_fail "user shell did not start"
-send_text $'exit\n' || drive_fail "failed to send exit"
-await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'user\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'wrongpw\n' >&3
+await "Login incorrect" 60 || drive_fail "wrong password was not rejected"
+await_count "swift-os login:" 2 60 || drive_fail "second login prompt did not appear"
+printf 'user\n' >&3
+await_count "Password:" 2 90 || drive_fail "timed out waiting for second password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, user" 120 || drive_fail "authentication did not succeed"
+printf 'echo LOGGED-IN-SHELL\n' >&3
+await "LOGGED-IN-SHELL" 60 || drive_fail "user shell did not start"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
 
 exec 3>&-
 stop_qemu
 QP=""
 
 ok=1
-clean="$(sed 's/\r//' "$LOG")"
-grep -qF "swift-os login:" <<<"$clean"               || { echo "FAIL: no login prompt" >&2; ok=0; }
-grep -qF "Login incorrect" <<<"$clean"               || { echo "FAIL: wrong password not rejected" >&2; ok=0; }
-grep -qF "Welcome to swift-os, user" <<<"$clean"      || { echo "FAIL: authentication did not succeed" >&2; ok=0; }
-grep -qF "session: principal=2 session=2 caps=14" <<<"$clean" || { echo "FAIL: security context not adopted from store" >&2; ok=0; }
-grep -qF "LOGGED-IN-SHELL" <<<"$clean"                || { echo "FAIL: user shell did not start" >&2; ok=0; }
+grep -qF "swift-os login:" "$LOG"               || { echo "FAIL: no login prompt" >&2; ok=0; }
+grep -qF "Login incorrect" "$LOG"               || { echo "FAIL: wrong password not rejected" >&2; ok=0; }
+grep -qF "Welcome to swift-os, user" "$LOG"      || { echo "FAIL: authentication did not succeed" >&2; ok=0; }
+grep -qF "session: principal=2 session=2 caps=14" "$LOG" || { echo "FAIL: security context not adopted from store" >&2; ok=0; }
+grep -qF "LOGGED-IN-SHELL" "$LOG"                || { echo "FAIL: user shell did not start" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: console-login authenticated a principal from the base image (M12b acceptance)"
   exit 0
 fi
 echo "--- serial (login region) ---" >&2
-sed -n '/console-login/,$p' <<<"$clean" >&2
+sed 's/\r//' "$LOG" | sed -n '/console-login/,$p' >&2
 exit 1

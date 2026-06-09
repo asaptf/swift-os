@@ -25,6 +25,7 @@ fi
 
 LOG="$(mktemp -t swiftos-mmap.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-mmap-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-mmap-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -42,7 +43,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -f "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null || true
+  rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -58,18 +60,42 @@ if [[ -f "$DISK" ]]; then
             -device virtio-blk-device,drive=swosbase)
 fi
 
-(
-  sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
-  sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, console-login starts
-  sleep 2;  printf 'root\n'            # log in at the init prompt
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf '/bin/mmapdemo\n'
-  sleep 3;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (mmapdemo driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -80 >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 27
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf '/bin/mmapdemo\n' >&3
+await "mmapdemo: ALL-OK" 90 || drive_fail "mmapdemo did not finish cleanly"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

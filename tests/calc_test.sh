@@ -27,7 +27,8 @@ fi
 
 LOG="$(mktemp -t swiftos-calc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-calc-pid.XXXXXX)"
-INFIFO="$(mktemp -u -t swiftos-calc-in.XXXXXX)"; mkfifo "$INFIFO"
+INFIFO="$(mktemp -u -t swiftos-calc-in.XXXXXX)"
+mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -36,7 +37,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -50,54 +51,10 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-await_line_count() {  # await_line_count LINE COUNT [MAXSEC]
-  local line="$1" want="$2" max="${3:-30}" n=0 seen=0
-  while (( n < max * 10 )); do
-    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -cxF -- "$line" || true)"
-    [[ "$seen" -ge "$want" ]] && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
-  local regex="$1" want="$2" max="${3:-30}" n=0 seen=0
-  while (( n < max * 10 )); do
-    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -Ec -- "$regex" || true)"
-    [[ "$seen" -ge "$want" ]] && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-send_after() {  # send_after MARKER MAXSEC TEXT
-  local marker="$1" max="$2" text="$3"
-  if ! await "$marker" "$max"; then
-    echo "FAIL: timed out waiting for marker: $marker" >&2
-    echo "--- serial tail ---" >&2
-    sed 's/\r//' "$LOG" | tail -80 >&2
-    exit 1
-  fi
-  printf '%b' "$text" >&3
-}
-
-send_line() {
-  printf '%s\n' "$1" >&3
-}
-
-abort() {
+drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial tail ---" >&2
-  sed 's/\r//' "$LOG" | tail -80 >&2
+  echo "--- serial (calc driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -120 >&2 || true
   exit 1
 }
 
@@ -113,53 +70,40 @@ abort() {
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
-send_after "Welcome to swift-os, root" 60 '/bin/calc\n'
-send_after "swift-os calc" 60 ''
+await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+printf 'tty-line\n' >&3                 # M7 ttydemo
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
+printf '\003' >&3                       # Ctrl-C -> login (init) prompt
+await "swift-os login:" 90 || drive_fail "login prompt did not appear"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "password prompt did not appear"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf '/bin/calc\n' >&3
+await "swift-os calc" 120 || drive_fail "calc did not start"
 
-send_line '2+3*4'                 # precedence -> 14
-await_line '= 14' 30 || abort "precedence result did not arrive"
-send_line '(2+3)*4'               # parens -> 20
-await_line '= 20' 30 || abort "parentheses result did not arrive"
-send_line 'x = 10'                # assignment -> 10
-await_line '= 10' 30 || abort "assignment result did not arrive"
-send_line 'x*x'                   # variable lookup -> 100
-await_line '= 100' 30 || abort "variable lookup result did not arrive"
-send_line '17 % 5'                # modulo -> 2
-await_line '= 2' 30 || abort "modulo result did not arrive"
-send_line '-(3+4)*2'              # unary minus + precedence -> -14
-await_line '= -14' 30 || abort "unary minus result did not arrive"
-send_line '10 / 0'                # division by zero -> error
-await 'error: division by zero' 30 || abort "division-by-zero result did not arrive"
-send_line ':sum'                  # generic fold over history
-await 'sum of 6 results:' 30 || abort ":sum result did not arrive"
-send_line ':mem'                  # heap break A (after warmup)
-await_regex_count 'heap break: [0-9]+' 1 30 || abort "first :mem result did not arrive"
-for i in $(seq 1 24); do          # churn: build + drop an AST per line
-  send_line '(1+2)*(3+4)-x'
-  await_line_count '= 11' "$i" 30 || abort "churn result $i did not arrive"
-done
-send_line ':mem'                  # heap break B (must equal A)
-await_regex_count 'heap break: [0-9]+' 2 30 || abort "second :mem result did not arrive"
-send_line ':q'
-await_line 'bye' 30 || abort "calc did not quit cleanly"
-printf 'echo BACK-IN-SHELL\n' >&3
-printf 'exit\n' >&3
+{
+  printf '%s\n' '2+3*4'                 # precedence -> 14
+  printf '%s\n' '(2+3)*4'               # parens -> 20
+  printf '%s\n' 'x = 10'                # assignment -> 10
+  printf '%s\n' 'x*x'                   # variable lookup -> 100
+  printf '%s\n' '17 % 5'                # modulo -> 2
+  printf '%s\n' '-(3+4)*2'              # unary minus + precedence -> -14
+  printf '%s\n' '10 / 0'                # division by zero -> error
+  printf '%s\n' ':sum'                  # generic fold over history
+  printf '%s\n' ':mem'                  # heap break A (after warmup)
+  for _ in $(seq 1 24); do              # churn: build + drop an AST per line
+    printf '%s\n' '(1+2)*(3+4)-x'
+  done
+  printf '%s\n' ':mem'                  # heap break B (must equal A)
+  printf '%s\n' ':q'
+  printf 'echo BACK-IN-SHELL\n'
+  printf 'exit\n'
+} >&3
 
-# Wait for the shell marker that proves calc exited cleanly, then stop QEMU for
-# log inspection.
-CALC_TIMEOUT="${CALC_TIMEOUT:-300}"
-returned=0
-for _ in $(seq 1 "$CALC_TIMEOUT"); do
-  if grep -qF "BACK-IN-SHELL" "$LOG"; then returned=1; break; fi
-  sleep 1
-done
-if [[ "$returned" -eq 1 ]]; then
-  sleep 1
-fi
+await "BACK-IN-SHELL" 360 || drive_fail "did not return to a working shell"
+await "M12c: session ended" 60 || true
+exec 3>&-
 stop_qemu
 QP=""
 

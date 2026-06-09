@@ -42,7 +42,7 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  exec 3>&- 2>/dev/null
+  exec 3>&- 2>/dev/null || true
   rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
@@ -65,69 +65,43 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
-  done
-}
-
-send_after() {  # send_after MARKER MAXSEC TEXT
-  local marker="$1" max="$2" text="$3"
-  if ! await "$marker" "$max"; then
-    echo "FAIL: timed out waiting for marker: $marker" >&2
-    echo "--- serial tail ---" >&2
-    sed 's/\r//' "$LOG" | tail -80 >&2
-    exit 1
-  fi
-  send_text "$text"
-}
-
-send_line() {
-  send_text "$1"$'\n'
-}
-
-abort() {
+drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial tail ---" >&2
-  sed 's/\r//' "$LOG" | tail -80 >&2
+  echo "--- serial (COW driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:\|cow-parent\|cow-child\|forkdemo/,$p' >&2 || true
   exit 1
 }
+
+send_line() { printf '%s\n' "$1" >&3; }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
-send_after "swift-os login:" 60 $'root\n'
-send_after "Password:" 40 $'swordfish\n'
-send_after "Welcome to swift-os, root" 60 ''
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+send_line "tty-line"
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+send_line "root"
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+send_line "swordfish"
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+send_line "COWV=before"
+send_line '( COWV=child; echo cow-child-after:$COWV )'
+await "cow-child-after:child" 60 || drive_fail "child shell did not print isolated value"
+send_line 'echo cow-parent-before:$COWV'
+await "cow-parent-before:before" 60 || drive_fail "parent shell did not keep pre-child value"
+send_line "COWV=parent"
+send_line 'echo cow-parent-after:$COWV'
+await "cow-parent-after:parent" 60 || drive_fail "parent shell did not print post-write value"
+send_line "/bin/forkdemo"
+await "forkdemo: parent waited child" 90 || drive_fail "forkdemo did not complete"
+send_line "exit"
+await "M12c: session ended" 60 || true
 
-send_line "COWV=before; echo COW''-SET-BEFORE-DONE"
-await_line 'COW-SET-BEFORE-DONE' 30 || abort "initial COW variable assignment did not complete"
-send_line "( COWV=child; echo cow-child-after:\$COWV )"
-await_line 'cow-child-after:child' 30 || abort "child shell write was not observed"
-send_line "echo cow-parent-before:\$COWV"
-await_line 'cow-parent-before:before' 30 || abort "parent shell value was not isolated"
-send_line "COWV=parent; echo cow-parent-after:\$COWV"
-await_line 'cow-parent-after:parent' 30 || abort "parent post-fork write was not observed"
-send_line '/bin/forkdemo'
-await "forkdemo: parent waited child" 60 || abort "forkdemo parent wait marker did not arrive"
-send_line 'exit'
-
-sleep 1
+exec 3>&-
 stop_qemu
 QP=""
 

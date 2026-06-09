@@ -50,6 +50,15 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (tcpecho driver) ---" >&2
@@ -76,26 +85,21 @@ exec 3<>"$INFIFO"
 # Wait for each stage's prompt before sending its input, rather than using fixed
 # sleeps: on a cold `make test` boot a fixed schedule can lag enough that a line
 # lands in the wrong reader and the guest never reaches tcpecho ("never reported
-# listening"). A short guard delay after each prompt avoids racing console mode
-# transitions around login/password. Skip the M7 tty demo, log in as root, then
-# run tcpecho.
+# listening"). Skip the M7 tty demo, log in as root, then run tcpecho.
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-sleep 0.2; printf 'tty-line\n' >&3
+printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-sleep 0.2; printf '\003' >&3
+printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-sleep 0.2; printf 'root\n' >&3
+printf 'root\n' >&3
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-sleep 0.2; printf 'swordfish\n' >&3
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-sleep 0.2; printf '/bin/tcpecho\n' >&3
+printf '/bin/tcpecho\n' >&3
 
 # Wait for the guest to listen, then connect + send a line from the host.
 listening=0
-for _ in $(seq 1 40); do
-  if grep -qF "tcpecho: listening on 5555" "$LOG"; then listening=1; break; fi
-  sleep 1
-done
+await "tcpecho: listening on 5555" 80 && listening=1
 
 # Connect with a patient timeout + bounded retry. The virtio-net driver is polled,
 # so the guest only services the wire while blocked in a syscall; tcpecho prints
@@ -122,10 +126,7 @@ fi
 
 # Let the guest flush its "got N bytes" line before we tear QEMU down (bounded;
 # emitted right after the echo we just received, so it normally returns at once).
-for _ in $(seq 1 20); do
-  grep -Eq "tcpecho: got [0-9]+ bytes" "$LOG" && break
-  sleep 0.1
-done
+await_regex "tcpecho: got [0-9]+ bytes" 20 || true
 exec 3>&-          # close the guest's console stdin (QEMU survives the EOF)
 stop_qemu
 QP=""

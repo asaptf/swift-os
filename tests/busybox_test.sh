@@ -64,15 +64,6 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
-await_line() {  # await_line LINE [MAXSEC]
-  local line="$1" max="${2:-30}" n=0
-  while (( n < max * 10 )); do
-    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
-    sleep 0.1; n=$((n + 1))
-  done
-  return 1
-}
-
 await_regex() {  # await_regex REGEX [MAXSEC]
   local regex="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -82,12 +73,13 @@ await_regex() {  # await_regex REGEX [MAXSEC]
   return 1
 }
 
-send_text() {  # send_text TEXT
-  local text="$1" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3 || return 1
-    sleep 0.02
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
   done
+  return 1
 }
 
 drive_fail() {
@@ -102,27 +94,27 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-send_text $'tty-line\n' || drive_fail "failed to send tty line"
-await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-send_text $'\003' || drive_fail "failed to send Ctrl-C"
-await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-send_text $'root\n' || drive_fail "failed to send login"
-await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-send_text $'swordfish\n' || drive_fail "failed to send password"
-await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 await "built-in shell (ash)" 30 || drive_fail "busybox ash did not start"
-send_text $'echo M8-BUSYBOX-OK\n' || drive_fail "failed to send echo command"
+printf 'echo M8-BUSYBOX-OK\n' >&3
 await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"
-send_text $'ls /\n' || drive_fail "failed to send ls command"
+printf 'ls /\n' >&3
 await "readme.txt" 20 || drive_fail "ls / did not list readme.txt"
-send_text $'cat /etc/motd\n' || drive_fail "failed to send cat command"
+printf 'cat /etc/motd\n' >&3
 await_line "Welcome to swift-os." 20 || drive_fail "cat /etc/motd did not print motd"
-send_text $'ps\n' || drive_fail "failed to send ps command"
+printf 'ps\n' >&3
 await_regex '^ *PID +PPID +STATE +CMD$' 20 || drive_fail "ps output missing"
-send_text $'/bin/id\n' || drive_fail "failed to send id command"
+printf '/bin/id\n' >&3
 await "principal=1(root) session=1 caps=0x3f" 20 || drive_fail "/bin/id output missing"
-send_text $'exit\n' || drive_fail "failed to send exit"
+printf 'exit\n' >&3
 await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-

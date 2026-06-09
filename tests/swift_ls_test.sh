@@ -73,21 +73,21 @@ exec 3<>"$INFIFO"
 D='20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]'
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-sleep 0.2; printf 'tty-line\n' >&3
+printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-sleep 0.2; printf '\003' >&3
+printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-sleep 0.2; printf 'root\n' >&3
+printf 'root\n' >&3
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-sleep 0.2; printf 'swordfish\n' >&3
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-sleep 0.2; printf '/bin/ls /etc\n' >&3
+printf '/bin/ls /etc\n' >&3
 await_regex '^motd$' 20 || drive_fail "plain /bin/ls did not list /etc/motd"
-sleep 0.2; printf '/bin/ls -l /etc\n' >&3
+printf '/bin/ls -l /etc\n' >&3
 await_regex "^-rw-r--r-- +1 +root +root +21 +$D +motd\$" 20 || drive_fail "ls -l did not show /etc/motd"
-sleep 0.2; printf '/bin/ls -l /bin/busybox\n' >&3
+printf '/bin/ls -l /bin/busybox\n' >&3
 await_regex "^-rwxr-xr-x +1 +root +root +[0-9]+ +$D +/bin/busybox\$" 20 || drive_fail "single-file /bin/ls -l did not show busybox"
-sleep 0.2; printf 'exit\n' >&3
+printf 'exit\n' >&3
 await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-
