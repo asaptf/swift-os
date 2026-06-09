@@ -619,6 +619,29 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   stacks, no GIC/timer initialization on secondaries, and no C4/VFS/process
   changes. This milestone preserves the review boundary before S1.
 
+### S0j — S1 preflight gates (DONE, 2026-06-09)
+
+- **Fresh QEMU topology evidence.** `tests/smp_s1_preflight_test.sh` dumps
+  current QEMU `virt` DTBs for `-smp 1`, `2`, `4`, and `8`, then runs the same
+  host `fdt_test` parser the kernel shares. This validates the DTB-visible S1
+  inputs: CPU Aff0 slots, `enable-method = "psci"` for secondary-capable
+  topologies, PSCI method/function ID, the existing GICv2/UART/virtio map, and
+  the ARM generic timer's non-secure physical PPI (INTID 30) with the expected
+  per-CPU PPI target mask.
+- **UEFI parked-SMP smoke.** `tests/uefi_boot_test.sh` now accepts
+  `SMP_CPUS`, boots the real GPT disk through AAVMF with `-smp 4` in the new
+  `smp-uefi-test` target, and asserts the S0 markers, CPU topology count, and
+  PSCI enable mask before reaching busybox. This covers the S0 parked-SMP path
+  for both direct `-kernel` and UEFI/disk boot.
+- **Gate integration.** `make test` runs the preflight next to the existing FDT
+  checks and adds the UEFI `-smp 4` smoke after the single-CPU UEFI boot.
+  `make s0-test` now includes the preflight and UEFI SMP smoke around the
+  direct parked boot smokes. This keeps the S0/S1 handoff executable without
+  issuing any CPU_ON call.
+- **Non-goals.** No S1 protocol decision, no uniprocessor-fast-path decision,
+  no `hvc`/`smc` instruction, no secondary stacks, no GIC/timer work on
+  secondaries, and no C4/VFS/process changes.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

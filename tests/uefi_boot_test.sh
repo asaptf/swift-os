@@ -16,8 +16,14 @@ DISK_IMG="$ROOT/build/swift-os.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
 UEFI_BOOT="${UEFI_BOOT:-disk}"
+SMP_CPUS="${SMP_CPUS:-1}"
 
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }
+if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 || 10#$SMP_CPUS > 8 )); then
+    echo "FAIL: SMP_CPUS must be 1..8 for the parked-SMP UEFI smoke, got '$SMP_CPUS'." >&2
+    exit 2
+fi
+SMP_CPU_COUNT=$((10#$SMP_CPUS))
 
 drive_args=()
 if [[ "$UEFI_BOOT" == "disk" ]]; then
@@ -63,7 +69,7 @@ wait_for() {
 }
 
 # acpi=off -> firmware publishes the FDT table the loader hands to the kernel.
-"$QEMU" -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt,acpi=off -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic -no-reboot \
         -bios "$AAVMF_CODE" \
         "${drive_args[@]}" <"$IN" >"$LOG" 2>&1 &
 QP=$!
@@ -100,13 +106,23 @@ check "swift-os UEFI loader (M10)"            # loader ran under firmware
 check "UEFI: kernel staged, launching"        # ExitBootServices handoff
 check "Hello from Swift kernel"               # kernel entered via UEFI
 check "M9 OK: hardware discovered from device tree"  # DTB the loader passed
+check "[I] smp: S0 OK: foundations ready"       # primary still owns kernel work
+check "[I] smp: S0b OK: atomics and barriers ready"
+check "[I] smp: S0d OK: per-CPU state ready"
+check "[I] smp: S0e OK: secondary park mailbox ready"
+check "[I] smp: S0f OK: CPU topology ready detail=$SMP_CPU_COUNT"
+check "[I] smp: S0g OK: PSCI discovery ready"
+if (( SMP_CPU_COUNT > 1 )); then
+    psci_mask=$(((1 << SMP_CPU_COUNT) - 1))
+    check "[I] smp: S0g OK: PSCI discovery ready detail=$psci_mask"
+fi
 check "built-in shell (ash)"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT (M10 acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S0 acceptance)"
     exit 0
 fi
 echo "--- serial log ---" >&2

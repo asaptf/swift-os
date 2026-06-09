@@ -298,7 +298,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -654,6 +654,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(QEMU_DTB) 1
 	$(BUILD)/fdt_test $(QEMU_DTB_SMP4) 4
+	FDT_TEST=$(BUILD)/fdt_test ./tests/smp_s1_preflight_test.sh
 	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/ipv6.swift kernel/net/icmp.swift kernel/net/icmp6.swift kernel/net/udp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
 	$(HOST_SWIFTC) tests/crypto_test.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/crypto_test
@@ -710,6 +711,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	./tests/mmap_test.sh
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -721,13 +723,20 @@ smp-mailbox-layout: build
 smp-release-guard: build
 	./tests/smp_release_guard_test.sh
 
+smp-s1-preflight:
+	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
+	FDT_TEST=$(BUILD)/fdt_test ./tests/smp_s1_preflight_test.sh
+
 smp-test: build base-image
 	./tests/smp_boot_test.sh
 
 smp-headroom-test: build base-image
 	./tests/smp_headroom_test.sh
 
-s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test
+smp-uefi-test: disk base-image
+	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+
+s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
 
 # ---- UEFI loader build + boot ----------------------------------------------
