@@ -757,6 +757,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No vi behavior, terminal behavior, filesystem behavior, kernel
   behavior, C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0t — UDP echo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven UDP smoke.** `tests/udp_echo_test.sh` now writes serial input
+  immediately after awaited tty/login markers, waits for `udpecho: listening on
+  5555`, sends the host datagram, and waits for the guest receive marker instead
+  of relying on short fixed guard sleeps.
+- **Assertions unchanged.** The test still verifies that `/bin/udpecho` binds,
+  receives eight bytes from the slirp host, and echoes `swos-udp` back to host
+  `nc`.
+- **Non-goals.** No UDP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

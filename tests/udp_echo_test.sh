@@ -70,26 +70,23 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-sleep 0.2; printf 'tty-line\n' >&3
+printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-sleep 0.2; printf '\003' >&3
+printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-sleep 0.2; printf 'root\n' >&3
+printf 'root\n' >&3
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-sleep 0.2; printf 'swordfish\n' >&3
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-sleep 0.2; printf '/bin/udpecho\n' >&3
+printf '/bin/udpecho\n' >&3
 
 # Wait for the guest to bind the socket, then send a datagram from the host.
 listening=0
-for _ in $(seq 1 40); do
-  if grep -qF "udpecho: listening on 5555" "$LOG"; then listening=1; break; fi
-  sleep 1
-done
+await "udpecho: listening on 5555" 80 && listening=1
 if [[ "$listening" -eq 1 ]]; then
   printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
+  await "udpecho: got 8 bytes" 20 || true
 fi
-sleep 2
 exec 3>&-
 stop_qemu
 QP=""
