@@ -26,6 +26,7 @@ command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to send the 
 LOG="$(mktemp -t swiftos-udp.XXXXXX)"
 NCOUT="$(mktemp -t swiftos-udp-nc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-udp-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-udp-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -34,21 +35,40 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$NCOUT" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-# Feed the console: skip the M7 tty demo, log in as root, then run udpecho. Keep
-# stdin open afterwards so udpecho can block on recvfrom and QEMU stays alive.
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/udpecho\n'
-  sleep 20
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
+}
+
+send_after() {  # send_after MARKER MAXSEC TEXT
+  local marker="$1" max="$2" text="$3"
+  if ! await "$marker" "$max"; then
+    echo "FAIL: timed out waiting for marker: $marker" >&2
+    echo "--- serial tail ---" >&2
+    sed 's/\r//' "$LOG" | tail -80 >&2
+    exit 1
+  fi
+  send_text "$text"
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
@@ -56,8 +76,15 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0,hostfwd=udp:127.0.0.1:5555-:5555 \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
+exec 3<>"$INFIFO"
+
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
+send_after "Welcome to swift-os, root" 60 $'/bin/udpecho\n'
 
 # Wait for the guest to bind the socket, then send a datagram from the host.
 listening=0
