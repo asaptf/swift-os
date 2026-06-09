@@ -523,6 +523,26 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   scheduler conversion, no locking protocol, no VFS/C4 work, and no
   uniprocessor fast-path decision.
 
+### S0e — secondary park mailbox scaffold (DONE, 2026-06-09)
+
+- **Mailbox-aware park loop.** Secondary CPUs now branch to a dedicated
+  `boot.S` park loop instead of the generic hang loop. The loop bounds-checks
+  `Aff0`, selects a fixed 64-byte per-CPU mailbox slot, acquire-loads a release
+  flag, and waits with `wfe`, making it safe for a later S1 release path to wake
+  CPUs with a mailbox write plus `sev`.
+- **No secondary release yet.** The S0e path deliberately stays parked even if a
+  non-zero entry appears: secondary stacks, allocator policy, and shared-state
+  locks are still S1/S2 work. The self-test asserts both mailbox words are zero
+  and emits `[I] smp: S0e OK: secondary park mailbox ready`.
+- **Audit visibility.** The mailbox table lives in `kernel/smp/secondary.c` and
+  is forced into `.data.smp_mailbox`, not `.bss`, because secondary CPUs may
+  reach the park loop before CPU0 clears BSS. The S0c mutable-state audit now
+  records the table.
+- **Tests / acceptance.** `make s0-test` asserts the S0e marker under `-smp 4`
+  and checks the mailbox table is linked into `.data` with the expected 8-slot
+  size and 64-byte alignment. The normal 1-CPU boot path also runs the self-test
+  and panics before userland on failure.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

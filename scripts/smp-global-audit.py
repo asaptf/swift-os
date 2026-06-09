@@ -95,7 +95,7 @@ def c_globals(path: Path) -> list[str]:
         line = strip_gnu_attributes(strip_line_comment(raw).strip())
         if not line:
             continue
-        if line.startswith(("#", "/*", "extern ", "typedef ", "struct ", "enum ")):
+        if line.startswith(("#", "/*", "}", "extern ", "typedef ", "struct ", "enum ")):
             continue
         if "const " in line or "(" in line or ";" not in line:
             continue
