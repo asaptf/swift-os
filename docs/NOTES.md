@@ -803,6 +803,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
   behavior, C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0x — SMP audit freshness guard (DONE, 2026-06-09)
+
+- **Bidirectional manifest check.** `tests/smp_state_audit_test.sh` now records
+  the scanner output once, verifies every scanned mutable global is documented,
+  and also rejects stale backticked `kernel/...:symbol` entries that no longer
+  appear in `scripts/smp-global-audit.py` output.
+- **Audit contract clarified.** `docs/SMP_STATE_AUDIT.md` now states that the
+  executable check covers both missing and stale manifest entries.
+- **Non-goals.** No SMP release behavior, locking policy, kernel behavior,
+  C4/VFS/process behavior, or S1 design decision is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
