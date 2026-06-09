@@ -64,6 +64,45 @@ private func smpAllDiscoveredCpusReady() -> Bool {
     return true
 }
 
+private func smpSecondariesRemainSchedulerIdle() -> Bool {
+    var i: UInt32 = 1
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if !smpPerCpuSchedulerIdle(cpu) { return false }
+        i += 1
+    }
+    return true
+}
+
+private func smpLogS2ReadinessMarkers() {
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        // Detail is CPU id + 1 so CPU0 still has an explicit nonzero payload.
+        klog(.info, "smp", "S2a OK: per-CPU timer heartbeat ready", UInt64(cpu) + 1)
+        i += 1
+    }
+    klog(.info, "smp", "S2a OK: scheduler boundary held", UInt64(platform.cpuCount))
+}
+
+func smpS2ReadinessSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+    if !smpCpuOnline(primary) { return false }
+    if !smpPerCpuHasCurrentThread(primary) { return false }
+    if !smpPerCpuProcessIdle(primary) { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && !smpPerCpuSchedulerIdle(cpu) { return false }
+        i += 1
+    }
+    return true
+}
+
 func smpBringupSecondaries() -> Bool {
     if platform.cpuCount == 0 { return false }
     if platform.cpuCount > smpMaxCpuCount() { return false }
@@ -96,6 +135,8 @@ func smpBringupSecondaries() -> Bool {
     if timeout == 0 { timeout = 100_000_000 }
     while read_cntpct_el0() &- start < timeout {
         if smpAllDiscoveredCpusReady() {
+            if !smpSecondariesRemainSchedulerIdle() { return false }
+            smpLogS2ReadinessMarkers()
             var i: UInt32 = 0
             while i < platform.cpuCount {
                 klog(.info, "smp", "S1 CPU online", UInt64(platformCpuAff0(i)))

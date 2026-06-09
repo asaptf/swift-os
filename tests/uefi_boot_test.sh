@@ -123,13 +123,26 @@ if (( SMP_CPU_COUNT > 1 )); then
     psci_mask=$(((1 << SMP_CPU_COUNT) - 1))
     check "[I] smp: S0g OK: PSCI discovery ready detail=$psci_mask"
 fi
+cpu=0
+while (( cpu < SMP_CPU_COUNT )); do
+    check "[I] smp: S2a OK: per-CPU timer heartbeat ready detail=$((cpu + 1))"
+    if (( cpu == 0 )); then
+        check "[I] smp: S1 CPU online"
+    else
+        check "[I] smp: S1 CPU online detail=$cpu"
+    fi
+    cpu=$((cpu + 1))
+done
+check "[I] smp: S2a OK: scheduler boundary held detail=$SMP_CPU_COUNT"
+check "[I] smp: S1 OK: secondary CPUs online detail=$SMP_CPU_COUNT"
+check "[I] smp: S2a OK: scheduler owner ready"
 check "built-in shell (ash)"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S0 acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a acceptance)"
     exit 0
 fi
 echo "--- serial log ---" >&2

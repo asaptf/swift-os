@@ -114,6 +114,26 @@ func smpPerCpuTimerTicks(_ cpu: UInt32) -> UInt64 {
     return smpCpuState[Int(cpu)].timerTicks
 }
 
+func smpPerCpuHasCurrentThread(_ cpu: UInt32) -> Bool {
+    if !smpValidCpu(cpu) { return false }
+    return smpCpuState[Int(cpu)].currentThread != smpNoThread
+}
+
+func smpPerCpuProcessIdle(_ cpu: UInt32) -> Bool {
+    if !smpValidCpu(cpu) { return false }
+    return smpCpuState[Int(cpu)].currentProcess == smpNoProcess
+}
+
+func smpPerCpuSchedulerIdle(_ cpu: UInt32) -> Bool {
+    if !smpValidCpu(cpu) { return false }
+    let state = smpCpuState[Int(cpu)]
+    return state.currentThread == smpNoThread &&
+           state.currentProcess == smpNoProcess &&
+           state.runQueueHead == smpNoThread &&
+           state.runQueueTail == smpNoThread &&
+           state.schedulerContext == 0
+}
+
 func smpPerCpuSelfTest() -> Bool {
     if smpMaxCpuCount() != 8 { return false }
     if MemoryLayout<SMPPerCpuState>.stride != 64 { return false }
