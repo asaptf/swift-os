@@ -27,6 +27,8 @@ fi
 
 LOG="$(mktemp -t swiftos-calc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-calc-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-calc-in.XXXXXX)"
+mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -35,7 +37,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -49,41 +51,59 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (calc driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -120 >&2 || true
+  exit 1
+}
+
 # `printf '%s\n'` for every calc line so shell metacharacters (notably `%`) pass
 # through verbatim.
-(
-  sleep 7;  printf 'tty-line\n'           # M7 ttydemo
-  sleep 1;  printf '\003'                 # Ctrl-C -> login (init) prompt
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf '/bin/calc\n'
-  sleep 2;  printf '%s\n' '2+3*4'         # precedence -> 14
-  sleep 1;  printf '%s\n' '(2+3)*4'       # parens -> 20
-  sleep 1;  printf '%s\n' 'x = 10'        # assignment -> 10
-  sleep 1;  printf '%s\n' 'x*x'           # variable lookup -> 100
-  sleep 1;  printf '%s\n' '17 % 5'        # modulo -> 2
-  sleep 1;  printf '%s\n' '-(3+4)*2'      # unary minus + precedence -> -14
-  sleep 1;  printf '%s\n' '10 / 0'        # division by zero -> error
-  sleep 1;  printf '%s\n' ':sum'          # generic fold over history
-  sleep 1;  printf '%s\n' ':mem'          # heap break A (after warmup)
-  for _ in $(seq 1 24); do                # churn: build + drop an AST per line
-    sleep 0.25; printf '%s\n' '(1+2)*(3+4)-x'
-  done
-  sleep 1;  printf '%s\n' ':mem'          # heap break B (must equal A)
-  sleep 1;  printf '%s\n' ':q'
-  sleep 1;  printf 'echo BACK-IN-SHELL\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-await "BACK-IN-SHELL" 360 || true
-sleep 5
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+printf 'tty-line\n' >&3                 # M7 ttydemo
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
+printf '\003' >&3                       # Ctrl-C -> login (init) prompt
+await "swift-os login:" 90 || drive_fail "login prompt did not appear"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "password prompt did not appear"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf '/bin/calc\n' >&3
+await "swift-os calc" 120 || drive_fail "calc did not start"
+
+{
+  printf '%s\n' '2+3*4'                 # precedence -> 14
+  printf '%s\n' '(2+3)*4'               # parens -> 20
+  printf '%s\n' 'x = 10'                # assignment -> 10
+  printf '%s\n' 'x*x'                   # variable lookup -> 100
+  printf '%s\n' '17 % 5'                # modulo -> 2
+  printf '%s\n' '-(3+4)*2'              # unary minus + precedence -> -14
+  printf '%s\n' '10 / 0'                # division by zero -> error
+  printf '%s\n' ':sum'                  # generic fold over history
+  printf '%s\n' ':mem'                  # heap break A (after warmup)
+  for _ in $(seq 1 24); do              # churn: build + drop an AST per line
+    printf '%s\n' '(1+2)*(3+4)-x'
+  done
+  printf '%s\n' ':mem'                  # heap break B (must equal A)
+  printf '%s\n' ':q'
+  printf 'echo BACK-IN-SHELL\n'
+  printf 'exit\n'
+} >&3
+
+await "BACK-IN-SHELL" 360 || drive_fail "did not return to a working shell"
+await "M12c: session ended" 60 || true
+exec 3>&-
 stop_qemu
 QP=""
 

@@ -721,6 +721,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No runtime behavior, kernel behavior, C4/VFS/process behavior,
   or S1 release behavior is changed.
 
+### S0q — calc REPL harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven calc REPL.** `tests/calc_test.sh` now drives QEMU through FIFO
+  stdin, waits for the login shell and `/bin/calc` banner, then feeds the same
+  REPL session without fixed serial sleeps.
+- **Assertions unchanged.** The test still verifies precedence, parentheses,
+  assignment, lookup, modulo, unary minus, division-by-zero reporting, `:sum`,
+  and bounded heap break across churn.
+- **Non-goals.** No calc behavior, Swift runtime behavior, kernel behavior,
+  C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
