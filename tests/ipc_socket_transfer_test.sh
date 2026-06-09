@@ -30,7 +30,14 @@ QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
     local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
-    [[ -n "$pid" ]] && { kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true; }
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
@@ -43,6 +50,12 @@ await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
     grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    if [[ -n "$QP" ]] && ! jobs -pr | grep -qx "$QP"; then
+      echo "FAIL: QEMU exited while waiting for marker: $marker" >&2
+      echo "--- serial tail ---" >&2
+      sed 's/\r//' "$LOG" | tail -80 >&2
+      exit 1
+    fi
     sleep 0.1; n=$((n + 1))
   done
   return 1
@@ -86,7 +99,7 @@ send_after "Password:" 40 $'swordfish\n'
 send_after "Welcome to swift-os, root" 60 $'/bin/c4b-sockxfer\n'
 
 if await "c4b-sockxfer: listening on 5566" 60; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -u -w5 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
 fi
 send_after "C4b OK: endpoint IPC moved socket handle safely" 60 $'exit\n'
 

@@ -8,7 +8,10 @@ KERNEL="$ROOT/build/kernel.elf"
 BOOT_OBJ="$ROOT/build/boot.o"
 BOOT_SRC="$ROOT/kernel/arch/aarch64/boot.S"
 IO_HDR="$ROOT/kernel/arch/aarch64/io.h"
+MAIN_SWIFT="$ROOT/kernel/main.swift"
+PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
 SECONDARY_SWIFT="$ROOT/kernel/smp/secondary.swift"
+PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
@@ -58,4 +61,39 @@ if rg -n 'schedulerInit|schedYield|processInit|processRun|vfsInit|virtio' "$SECO
   exit 1
 fi
 
-echo "PASS: S1 secondary release contract holds (PSCI CPU_ON + mailbox entry + early timer path only)"
+for needle in \
+  'smpSecondariesRemainSchedulerIdle' \
+  'smpLogS2ReadinessMarkers' \
+  'smpS2ReadinessSelfTest'; do
+  if ! grep -q "$needle" "$SECONDARY_SWIFT"; then
+    echo "FAIL: S2a readiness guard missing $needle in secondary bring-up contract." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'smpPerCpuHasCurrentThread' \
+  'smpPerCpuProcessIdle' \
+  'smpPerCpuSchedulerIdle'; do
+  if ! grep -q "$needle" "$PERCPU_SWIFT"; then
+    echo "FAIL: S2a per-CPU readiness accessor missing $needle." >&2
+    exit 1
+  fi
+done
+
+if ! grep -q 'smpSetCurrentProcessForCurrentCpu(Int32(s))' "$PROCESS_SWIFT" ||
+   ! grep -q 'smpSetCurrentProcessForCurrentCpu(-1)' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2a requires the EL0 scheduler loop to mirror currentProc into per-CPU state." >&2
+  exit 1
+fi
+
+sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2a_line="$(rg -n 'smpS2ReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+if [[ -z "$sched_line" || -z "$proc_line" || -z "$s2a_line" ||
+      "$sched_line" -ge "$proc_line" || "$proc_line" -ge "$s2a_line" ]]; then
+  echo "FAIL: S2a scheduler readiness self-test must run after schedulerInit and processInit." >&2
+  exit 1
+fi
+
+echo "PASS: S1/S2a release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"

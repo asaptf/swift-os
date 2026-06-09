@@ -892,6 +892,12 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   `S2a OK: scheduler owner ready`. `make s1-test` exercises those checks for
   the default `-smp 4`, headroom `-smp 1` / `-smp 8`, and UEFI `-smp 4` paths
   through the existing S1 gate.
+- **Harness / guard hardening.** A follow-up tightened the cheap release guard
+  so it also verifies the S2a accessors, boot ordering
+  (`schedulerInit` -> `processInit` -> `smpS2ReadinessSelfTest`), and EL0
+  `currentProc` mirroring into per-CPU state. `tests/smp_boot_test.sh` now
+  escalates QEMU cleanup from TERM to KILL after a bounded grace period, so a
+  failed expectation cannot strand the expensive `make s1-test` gate in `wait`.
 - **Non-goals.** No EL0 work moves to secondary CPUs, no run queues are added,
   and no scheduler/process/VFS/PMM locking policy changes in this checkpoint.
 
@@ -1011,7 +1017,9 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Tests / acceptance.** `tests/ipc_socket_transfer_test.sh` boots with
   virtio-net + slirp UDP hostfwd, runs `/bin/c4b-sockxfer`, sends a host datagram
   to the bound port, asserts the child received/echoed through the moved socket,
-  and is wired into `make test` after the UDP smoke.
+  and is wired into `make test` after the UDP smoke. A harness-hardening follow-up
+  makes the host UDP receive window more patient and fails fast with the serial
+  tail if QEMU exits while the script is waiting for a marker.
 - **Still deferred.** VMOs, async rings, batched descriptors, `ipc_call`, badges,
   service supervisor, userland drivers, Cells/resource domains, endpoint
   close-on-exec policy change, and SMP work remain later C/S milestones.
