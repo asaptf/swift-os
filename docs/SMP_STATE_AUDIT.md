@@ -17,6 +17,7 @@ labels.
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. |
 | Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
+| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints | Shared fixed tables; C4 work may change them. | Do not change in S0c. Later protect table mutation and handle refcount paths after C4 settles. |
 | Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
@@ -139,6 +140,7 @@ labels.
 - `kernel/sched/scheduler.swift:threadCount`
 - `kernel/signal/signal.swift:dispositions`
 - `kernel/signal/signal.swift:pendingMask`
+- `kernel/smp/percpu.swift:smpCpuState`
 - `kernel/timer/generic_timer.swift:systemTicks`
 - `kernel/timer/generic_timer.swift:timerHz`
 - `kernel/timer/generic_timer.swift:timerIntervalTicks`

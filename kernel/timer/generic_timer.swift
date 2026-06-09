@@ -37,6 +37,7 @@ func rtcNow() -> UInt64 {
 
 func timerHandleTick() {
     systemTicks += 1
+    smpRecordTimerTickForCurrentCpu()
     // Per-tick logging is silenced (it spammed the console once we run at a high
     // tick rate for preemption). systemTicks remains available for accounting.
 

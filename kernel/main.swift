@@ -708,6 +708,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S0b OK: atomics and barriers ready")
+    if !smpEarlyInitCurrentCpu() || !smpPerCpuSelfTest() {
+        uartPuts("panic: S0d per-CPU self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S0d OK: per-CPU state ready", UInt64(smpMaxCpuCount()))
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
