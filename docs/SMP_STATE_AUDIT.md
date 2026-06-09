@@ -83,6 +83,7 @@ labels.
 - `kernel/drivers/virtio_net.swift:txStaged`
 - `kernel/drivers/virtio_net.swift:txState`
 - `kernel/drivers/virtio_net.swift:txq`
+- `kernel/log/log.swift:currentLogSink`
 - `kernel/log/log.swift:minLogLevel`
 - `kernel/log/log.swift:ring`
 - `kernel/log/log.swift:ringFull`
@@ -91,6 +92,7 @@ labels.
 - `kernel/log/log.swift:sourceMins`
 - `kernel/main.swift:c2SpawnExplicitPassed`
 - `kernel/main.swift:c3HandleRightsPassed`
+- `kernel/main.swift:c4aEndpointRightsPassed`
 - `kernel/main.swift:retainedProbe`
 - `kernel/mm/pmm.swift:pmm`
 - `kernel/mm/vm_early.c:l0_table`
