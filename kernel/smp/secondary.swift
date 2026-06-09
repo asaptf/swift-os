@@ -91,6 +91,7 @@ func smpS2ReadinessSelfTest() -> Bool {
     if primary >= smpMaxCpuCount() { return false }
     if !smpCpuOnline(primary) { return false }
     if !smpPerCpuHasCurrentThread(primary) { return false }
+    if !smpPerCpuProcessSchedulerContextReady(primary) { return false }
     if !smpPerCpuProcessIdle(primary) { return false }
 
     var i: UInt32 = 0
@@ -98,6 +99,21 @@ func smpS2ReadinessSelfTest() -> Bool {
         let cpu = platformCpuAff0(i)
         if cpu >= smpMaxCpuCount() { return false }
         if cpu != primary && !smpPerCpuSchedulerIdle(cpu) { return false }
+        i += 1
+    }
+    return true
+}
+
+func smpS2bNoSecondaryEl0Execution() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+    if smpPerCpuEl0SwitchCount(primary) == 0 { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         i += 1
     }
     return true

@@ -53,6 +53,8 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   done
   EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler boundary held detail=$SMP_CPU_COUNT"
   EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler owner ready"
+  EXPECTS+=$'\n'"[I] smp: S2b OK: process scheduler context scaffold ready"
+  EXPECTS+=$'\n'"[I] smp: S2b OK: no secondary EL0 execution"
 fi
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -140,7 +142,18 @@ done
 stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
-  echo "PASS: SMP boot smoke produced expected S1/S2a markers with -smp $SMP_CPU_COUNT:"
+  userland_line="$(grep -nF "[I] boot: swift-os userland: Swift ps" "$LOG" | head -1 | cut -d: -f1)"
+  no_secondary_line="$(grep -nF "[I] smp: S2b OK: no secondary EL0 execution" "$LOG" | head -1 | cut -d: -f1)"
+  if [[ -z "$userland_line" || -z "$no_secondary_line" ||
+        "$userland_line" -ge "$no_secondary_line" ]]; then
+    echo "FAIL: S2b no-secondary-EL0 marker must appear after the Swift ps userland marker." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

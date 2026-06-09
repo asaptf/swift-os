@@ -56,8 +56,8 @@ if ! grep -q 'psci_cpu_on_hvc' "$SECONDARY_SWIFT" ||
   exit 1
 fi
 
-if rg -n 'schedulerInit|schedYield|processInit|processRun|vfsInit|virtio' "$SECONDARY_SWIFT" >/dev/null; then
-  echo "FAIL: S1 secondary path touched scheduler/process/VFS/driver work; leave that for S2+." >&2
+if rg -n 'schedulerInit|schedYield|processInit|processRun|vfsInit|virtio|processOnTick|yieldToScheduler|cpu_switch_context|address_space_switch|smpSetCurrentProcessForCurrentCpu|smpSetProcessSchedulerContextForCurrentCpu|smpRecordEl0SwitchForCurrentCpu|user_thread_launch|trap_return' "$SECONDARY_SWIFT" >/dev/null; then
+  echo "FAIL: S1/S2b secondary path touched scheduler/process/VFS/driver work; leave that for S2+." >&2
   exit 1
 fi
 
@@ -87,13 +87,49 @@ if ! grep -q 'smpSetCurrentProcessForCurrentCpu(Int32(s))' "$PROCESS_SWIFT" ||
   exit 1
 fi
 
+for needle in \
+  'private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [smpMaxCpuCount()]' \
+  'private var schedCtxCpuCount: UInt32 = 0' \
+  'processSchedulerCpuIndex' \
+  'schedulerContextForCurrentCpu' \
+  'processSchedulerContextSelfTest'; do
+  if ! grep -Fq "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S2b process scheduler context scaffold missing: $needle." >&2
+    exit 1
+  fi
+done
+
+if grep -Fq 'schedCtx = s.bindMemory(to: CPUContext.self, capacity: 1)' "$PROCESS_SWIFT" ||
+   grep -Fq 'cpu_switch_context(UnsafeMutableRawPointer(schedCtx),' "$PROCESS_SWIFT" ||
+   grep -Fq 'UnsafeMutableRawPointer(schedCtx))' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2b must not keep using a singleton process scheduler context." >&2
+  exit 1
+fi
+
+if ! grep -q 'cpu != 0 || cpu >= schedCtxCpuCount' "$PROCESS_SWIFT" ||
+   ! grep -q 'processOnTick entered on non-owner CPU' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2b process scheduler paths must panic if entered from a non-owner CPU." >&2
+  exit 1
+fi
+
+if ! grep -q 'interruptId == physicalTimerIrq && currentCpuId() == 0' "$MAIN_SWIFT" ||
+   ! grep -q 'processOnTick(fromEL0: fromEL0)' "$MAIN_SWIFT"; then
+  echo "FAIL: S2b requires irqHandler to keep processOnTick gated to CPU0." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2a_line="$(rg -n 'smpS2ReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2b_line="$(rg -n 'processSchedulerContextSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$proc_line" || "$proc_line" -ge "$s2a_line" ]]; then
   echo "FAIL: S2a scheduler readiness self-test must run after schedulerInit and processInit." >&2
   exit 1
 fi
+if [[ -z "$s2b_line" || "$s2a_line" -ge "$s2b_line" ]]; then
+  echo "FAIL: S2b process scheduler context self-test must run after the S2a scheduler readiness check." >&2
+  exit 1
+fi
 
-echo "PASS: S1/S2a release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
+echo "PASS: S1/S2a/S2b release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"

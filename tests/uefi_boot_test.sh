@@ -136,13 +136,15 @@ done
 check "[I] smp: S2a OK: scheduler boundary held detail=$SMP_CPU_COUNT"
 check "[I] smp: S1 OK: secondary CPUs online detail=$SMP_CPU_COUNT"
 check "[I] smp: S2a OK: scheduler owner ready"
+check "[I] smp: S2b OK: process scheduler context scaffold ready"
+check "[I] smp: S2b OK: no secondary EL0 execution"
 check "built-in shell (ash)"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a/S2b acceptance)"
     exit 0
 fi
 echo "--- serial log ---" >&2
