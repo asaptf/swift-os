@@ -78,16 +78,16 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-sleep 0.2; printf 'tty-line\n' >&3
+printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
-sleep 0.2; printf '\003' >&3
+printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-sleep 0.2; printf 'root\n' >&3
+printf 'root\n' >&3
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-sleep 0.2; printf 'swordfish\n' >&3
+printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-sleep 0.2; printf '/bin/tcpget 10.0.2.2 %s\n' "$PORT" >&3
-sleep 10
+printf '/bin/tcpget 10.0.2.2 %s\n' "$PORT" >&3
+await "srv-reply" 80 || true
 stop_all
 QP=""; NCPID=""
 

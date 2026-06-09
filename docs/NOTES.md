@@ -769,6 +769,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No UDP behavior, socket behavior, networking behavior, kernel
   behavior, C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0u — TCP connect harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven TCP client smoke.** `tests/tcp_connect_test.sh` now writes
+  serial input immediately after awaited tty/login markers and waits for the
+  `srv-reply` client output instead of sleeping after launching `/bin/tcpget`.
+- **Assertions unchanged.** The test still verifies that `/bin/tcpget` connects
+  to the slirp host, receives `srv-reply`, and transmits `GET swos` on the
+  captured pcap path.
+- **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
+  behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
