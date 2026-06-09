@@ -19,6 +19,7 @@ fi
 
 LOG="$(mktemp -t swiftos-fo.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-fo-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-fo-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -27,40 +28,102 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+send_after() {  # send_after MARKER MAXSEC TEXT
+  local marker="$1" max="$2" text="$3"
+  if ! await "$marker" "$max"; then
+    echo "FAIL: timed out waiting for marker: $marker" >&2
+    echo "--- serial tail ---" >&2
+    sed 's/\r//' "$LOG" | tail -80 >&2
+    exit 1
+  fi
+  printf '%b' "$text" >&3
+}
+
+send_line() {
+  printf '%s\n' "$1" >&3
+}
+
+abort() {
+  echo "FAIL: $1" >&2
+  echo "--- serial tail ---" >&2
+  sed 's/\r//' "$LOG" | tail -80 >&2
+  exit 1
+}
 
 # Sequence (all under /tmp, the writable tmpfs):
 #   mkdir /tmp/d      -> ls shows d
 #   echo > /tmp/d/f   -> ls shows f
 #   mv f -> g, rm g, rmdir d, then ls /tmp to confirm they are gone.
-(
-  sleep 8;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 3;  printf 'root\n'
-  sleep 1.5;  printf 'swordfish\n'
-  sleep 3;  printf '/bin/mkdir /tmp/d\n'
-  sleep 2;  printf 'echo hi > /tmp/d/f\n'
-  sleep 2;  printf '/bin/mv /tmp/d/f /tmp/d/g\n'
-  sleep 2;  printf '/bin/ls /tmp/d\n'                 # expect: g
-  sleep 2;  printf '/bin/cat /tmp/d/g\n'              # expect: hi (mv preserved content)
-  sleep 2;  printf '/bin/rm /tmp/d/g\n'
-  sleep 2;  printf '/bin/rmdir /tmp/d\n'
-  sleep 2;  printf '/bin/ls /tmp\n'                   # expect: no d (note remains)
-  sleep 2;  printf 'echo FILEOPS-DONE\n'
-  sleep 2;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 40
+exec 3<>"$INFIFO"
+
+send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 '\003'
+send_after "swift-os login:" 60 'root\n'
+send_after "Password:" 40 'swordfish\n'
+send_after "Welcome to swift-os, root" 60 ''
+
+send_line '/bin/mkdir /tmp/d'
+send_line 'echo FILEOPS-MKDIR-DONE'
+await_line 'FILEOPS-MKDIR-DONE' 30 || abort "mkdir step did not complete"
+send_line 'echo hi > /tmp/d/f'
+send_line 'echo FILEOPS-WRITE-DONE'
+await_line 'FILEOPS-WRITE-DONE' 30 || abort "file write step did not complete"
+send_line '/bin/mv /tmp/d/f /tmp/d/g'
+send_line 'echo FILEOPS-MV-DONE'
+await_line 'FILEOPS-MV-DONE' 30 || abort "mv step did not complete"
+send_line '/bin/ls /tmp/d'                 # expect: g
+send_line 'echo FILEOPS-LS1-DONE'
+await_line 'g' 30 || abort "ls /tmp/d did not show renamed file"
+await_line 'FILEOPS-LS1-DONE' 30 || abort "ls /tmp/d step did not complete"
+send_line '/bin/cat /tmp/d/g'              # expect: hi (mv preserved content)
+send_line 'echo FILEOPS-CAT-DONE'
+await_line 'hi' 30 || abort "cat /tmp/d/g did not show file content"
+await_line 'FILEOPS-CAT-DONE' 30 || abort "cat step did not complete"
+send_line '/bin/rm /tmp/d/g'
+send_line 'echo FILEOPS-RM-DONE'
+await_line 'FILEOPS-RM-DONE' 30 || abort "rm step did not complete"
+send_line '/bin/rmdir /tmp/d'
+send_line 'echo FILEOPS-RMDIR-DONE'
+await_line 'FILEOPS-RMDIR-DONE' 30 || abort "rmdir step did not complete"
+send_line '/bin/ls /tmp'                   # expect: no d (note remains)
+send_line 'echo FILEOPS-LS2-DONE'
+await_line 'FILEOPS-LS2-DONE' 30 || abort "ls /tmp step did not complete"
+send_line 'echo FILEOPS-DONE'
+await_line 'FILEOPS-DONE' 30 || abort "shell did not survive the file ops"
+send_line 'exit'
+
+sleep 1
 stop_qemu
 QP=""
 
