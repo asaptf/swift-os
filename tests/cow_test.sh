@@ -24,6 +24,7 @@ fi
 
 LOG="$(mktemp -t swiftos-cow.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-cow-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-cow-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -41,7 +42,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -f "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null
+  rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -54,31 +56,72 @@ blk_args=(-global virtio-mmio.force-legacy=false \
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
           -device virtio-blk-device,drive=swosbase)
 
-(
-  sleep 7;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'COWV=before\n'
-  sleep 2;  printf '( COWV=child; echo cow-child-after:$COWV )\n'
-  sleep 2;  printf 'echo cow-parent-before:$COWV\n'
-  sleep 1;  printf 'COWV=parent\n'
-  sleep 1;  printf 'echo cow-parent-after:$COWV\n'
-  sleep 2;  printf '/bin/forkdemo\n'
-  sleep 3;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
-QP=$!
-for _ in $(seq 1 450); do
-  partial="$(sed 's/\r//' "$LOG" 2>/dev/null || true)"
-  if grep -qF "cow-parent-after:parent" <<<"$partial" &&
-     grep -qF "cow-child-after:child" <<<"$partial" &&
-     grep -qF "forkdemo: parent waited child" <<<"$partial"; then
-    break
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+send_after() {  # send_after MARKER MAXSEC TEXT
+  local marker="$1" max="$2" text="$3"
+  if ! await "$marker" "$max"; then
+    echo "FAIL: timed out waiting for marker: $marker" >&2
+    echo "--- serial tail ---" >&2
+    sed 's/\r//' "$LOG" | tail -80 >&2
+    exit 1
   fi
-  sleep 0.2
-done
+  printf '%b' "$text" >&3
+}
+
+send_line() {
+  printf '%s\n' "$1" >&3
+}
+
+abort() {
+  echo "FAIL: $1" >&2
+  echo "--- serial tail ---" >&2
+  sed 's/\r//' "$LOG" | tail -80 >&2
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+QP=$!
+exec 3<>"$INFIFO"
+
+send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 '\003'
+send_after "swift-os login:" 60 'root\n'
+send_after "Password:" 40 'swordfish\n'
+send_after "Welcome to swift-os, root" 60 ''
+
+send_line 'COWV=before'
+send_line 'echo COW-SET-BEFORE-DONE'
+await_line 'COW-SET-BEFORE-DONE' 30 || abort "initial COW variable assignment did not complete"
+send_line '( COWV=child; echo cow-child-after:$COWV )'
+await_line 'cow-child-after:child' 30 || abort "child shell write was not observed"
+send_line 'echo cow-parent-before:$COWV'
+await_line 'cow-parent-before:before' 30 || abort "parent shell value was not isolated"
+send_line 'COWV=parent'
+send_line 'echo cow-parent-after:$COWV'
+await_line 'cow-parent-after:parent' 30 || abort "parent post-fork write was not observed"
+send_line '/bin/forkdemo'
+await "forkdemo: parent waited child" 60 || abort "forkdemo parent wait marker did not arrive"
+send_line 'exit'
+
+sleep 1
 stop_qemu
 QP=""
 

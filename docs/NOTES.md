@@ -577,6 +577,24 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   userland drivers, Cells/resource domains, socket-transfer smoke, endpoint
   close-on-exec policy change, or SMP work.
 
+### C4b — socket handle transfer smoke (DONE, 2026-06-09)
+
+- **Socket objects now have endpoint-transfer coverage.** No kernel ABI change
+  was needed: C4a already moves a full `HandleEntry`; this slice proves that the
+  same move works for `.socket` descriptions and preserves the socket table
+  object/lifetime across process ownership transfer.
+- **Executable smoke.** Added `/bin/c4b-sockxfer`: the parent binds a UDP socket
+  after `fork`, moves that socket handle over an endpoint to the child, verifies
+  the source fd is invalidated (`-EBADF`), and waits for the child to receive and
+  echo a host datagram through the transferred socket.
+- **Tests / acceptance.** `tests/ipc_socket_transfer_test.sh` boots with
+  virtio-net + slirp UDP hostfwd, runs `/bin/c4b-sockxfer`, sends a host datagram
+  to the bound port, asserts the child received/echoed through the moved socket,
+  and is wired into `make test` after the UDP smoke.
+- **Still deferred.** VMOs, async rings, batched descriptors, `ipc_call`, badges,
+  service supervisor, userland drivers, Cells/resource domains, endpoint
+  close-on-exec policy change, and SMP work remain later C/S milestones.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
