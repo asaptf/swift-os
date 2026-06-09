@@ -685,6 +685,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   behavior is changed; this only reduces false negatives in the overnight gate
   under slow host scheduling.
 
+### S0n — native Swift file-tool harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven Swift tool tests.** The native Swift coreutils, fileops, and
+  chmod/chown smoke tests now drive QEMU through FIFO stdin and wait for login
+  prompts plus existing output markers instead of relying on fixed serial
+  sleeps.
+- **Assertions unchanged.** The tests still verify the same `/bin/echo`,
+  `/bin/cat`, `/bin/pwd`, tmpfs mutation, chmod, and chown behavior; only the
+  harness timing model changed.
+- **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
+  behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
