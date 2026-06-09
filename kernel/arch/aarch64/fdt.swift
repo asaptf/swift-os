@@ -8,8 +8,9 @@
 //
 // This reader is deliberately pure: it touches no MMIO, no UART, and no heap,
 // so the same code compiles for the kernel (Embedded Swift) and for a host unit
-// test (full Swift) - see tests/fdt_test.swift. It extracts only what M9 needs:
-// the /memory reg, the PL011 UART reg + IRQ, and the GICv2 dist/CPU regs.
+// test (full Swift) - see tests/fdt_test.swift. It extracts only what bring-up
+// needs: the /memory reg, the PL011 UART reg + IRQ, the GICv2 dist/CPU regs,
+// virtio-mmio slots, and the S0f /cpus Aff0 topology scaffold.
 //
 // FDT format reference: the Devicetree Specification, section "Flattened
 // Devicetree (DTB) Format". All header and token fields are big-endian u32.
@@ -29,6 +30,9 @@ private let platformInfoHaveUart: UInt32 = 1 << 2
 private let platformInfoHaveUartIrq: UInt32 = 1 << 3
 private let platformInfoHaveGic: UInt32 = 1 << 4
 private let platformInfoHaveVirtio: UInt32 = 1 << 5
+private let platformInfoHaveCpuTopology: UInt32 = 1 << 6
+
+private let platformMaxCpuSlots = 8
 
 /// Hardware constants discovered from the device tree. Fields are only valid
 /// when their matching `have*` flag is set; the caller keeps its defaults
@@ -54,6 +58,15 @@ struct PlatformInfo {
     // aligned or a wide unaligned load would fault.
     var uartIrq: UInt32 = 0
     var virtioCount: UInt32 = 0
+    var cpuCount: UInt32 = 0
+    var cpuAff0_0: UInt32 = 0
+    var cpuAff0_1: UInt32 = 0
+    var cpuAff0_2: UInt32 = 0
+    var cpuAff0_3: UInt32 = 0
+    var cpuAff0_4: UInt32 = 0
+    var cpuAff0_5: UInt32 = 0
+    var cpuAff0_6: UInt32 = 0
+    var cpuAff0_7: UInt32 = 0
     private var flags: UInt32 = 0
 
     var valid: Bool {
@@ -80,12 +93,58 @@ struct PlatformInfo {
         get { (flags & platformInfoHaveVirtio) != 0 }
         set { setFlag(platformInfoHaveVirtio, newValue) }
     }
+    var haveCpuTopology: Bool {
+        get { (flags & platformInfoHaveCpuTopology) != 0 }
+        set { setFlag(platformInfoHaveCpuTopology, newValue) }
+    }
+
+    func cpuAff0(_ index: UInt32) -> UInt32 {
+        switch index {
+        case 0: return cpuAff0_0
+        case 1: return cpuAff0_1
+        case 2: return cpuAff0_2
+        case 3: return cpuAff0_3
+        case 4: return cpuAff0_4
+        case 5: return cpuAff0_5
+        case 6: return cpuAff0_6
+        case 7: return cpuAff0_7
+        default: return UInt32.max
+        }
+    }
+
+    mutating func appendCpuAff0(_ aff0: UInt32) {
+        if cpuCount >= UInt32(platformMaxCpuSlots) { return }
+
+        var i: UInt32 = 0
+        while i < cpuCount {
+            if cpuAff0(i) == aff0 { return }
+            i += 1
+        }
+
+        setCpuAff0(cpuCount, aff0)
+        cpuCount += 1
+        haveCpuTopology = true
+    }
 
     private mutating func setFlag(_ flag: UInt32, _ enabled: Bool) {
         if enabled {
             flags |= flag
         } else {
             flags &= ~flag
+        }
+    }
+
+    private mutating func setCpuAff0(_ index: UInt32, _ aff0: UInt32) {
+        switch index {
+        case 0: cpuAff0_0 = aff0
+        case 1: cpuAff0_1 = aff0
+        case 2: cpuAff0_2 = aff0
+        case 3: cpuAff0_3 = aff0
+        case 4: cpuAff0_4 = aff0
+        case 5: cpuAff0_5 = aff0
+        case 6: cpuAff0_6 = aff0
+        case 7: cpuAff0_7 = aff0
+        default: break
         }
     }
 
@@ -99,6 +158,15 @@ struct PlatformInfo {
         virtioBase = 0
         virtioStride = 0
         virtioCount = 0
+        cpuCount = 0
+        cpuAff0_0 = 0
+        cpuAff0_1 = 0
+        cpuAff0_2 = 0
+        cpuAff0_3 = 0
+        cpuAff0_4 = 0
+        cpuAff0_5 = 0
+        cpuAff0_6 = 0
+        cpuAff0_7 = 0
         flags = 0
     }
 }
@@ -240,6 +308,12 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     var devRegPtr: UnsafePointer<UInt8>? = nil
     var devIrqPtr: UnsafePointer<UInt8>? = nil
     var devIrqLen = 0
+    var inCpus = false
+    var inCpu = false
+    var cpuIsCpu = false
+    var cpuHaveReg = false
+    var cpuReg: UInt = 0
+    var cpuAddrCells = 1
 
     var cursor = structOff
     var depth = 0
@@ -255,6 +329,8 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
             depth += 1
             if depth == 2 {
                 inDevice = true
+                inCpus = cstrEquals(namePtr, "cpus")
+                if inCpus { cpuAddrCells = 1 }
                 devIsMemory = nameStartsWith(namePtr, "memory")
                 devIsPl011 = false
                 devIsGic = false
@@ -262,17 +338,29 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                 devRegPtr = nil
                 devIrqPtr = nil
                 devIrqLen = 0
+            } else if depth == 3 && inCpus {
+                inCpu = true
+                cpuIsCpu = false
+                cpuHaveReg = false
+                cpuReg = 0
             }
             cursor += 4 + align4(nameLen + 1)
             continue
         }
 
         if token == fdtEndNode {
+            if depth == 3 && inCpus && inCpu {
+                if cpuHaveReg && cpuIsCpu {
+                    info.appendCpuAff0(UInt32(cpuReg & 0xFF))
+                }
+                inCpu = false
+            }
             if depth == 2 && inDevice {
                 finalizeDevice(&info, addrCells, sizeCells,
                                devIsMemory, devIsPl011, devIsGic, devIsVirtio,
                                devRegPtr, devIrqPtr, devIrqLen)
                 inDevice = false
+                inCpus = false
             }
             depth -= 1
             cursor += 4
@@ -295,6 +383,10 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                     } else if cstrEquals(propName, "#size-cells") {
                         sizeCells = Int(be32(valPtr))
                     }
+                } else if depth == 2 && inCpus {
+                    if cstrEquals(propName, "#address-cells") && len >= 4 {
+                        cpuAddrCells = Int(be32(valPtr))
+                    }
                 } else if depth == 2 && inDevice {
                     if cstrEquals(propName, "reg") {
                         devRegPtr = valPtr
@@ -306,6 +398,15 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                     } else if cstrEquals(propName, "interrupts") {
                         devIrqPtr = valPtr
                         devIrqLen = len
+                    }
+                } else if depth == 3 && inCpus && inCpu {
+                    if cstrEquals(propName, "reg") &&
+                       cpuAddrCells > 0 && cpuAddrCells <= 2 &&
+                       len >= cpuAddrCells * 4 {
+                        cpuReg = readCells(valPtr, cpuAddrCells)
+                        cpuHaveReg = true
+                    } else if cstrEquals(propName, "device_type") {
+                        cpuIsCpu = cstrEquals(valPtr, "cpu")
                     }
                 }
             }

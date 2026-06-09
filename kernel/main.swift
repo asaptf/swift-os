@@ -660,6 +660,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
 
     swiftos_heap_init()
     enableMMU()
+    platformInitCpuTopology()
 
     pmmInit()
     if let raw = swiftos_kernel_alloc(32, 16) {
@@ -723,6 +724,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S0e OK: secondary park mailbox ready")
+    if !smpTopologySelfTest() {
+        uartPuts("panic: S0f CPU topology self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S0f OK: CPU topology ready", UInt64(platform.cpuCount))
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
