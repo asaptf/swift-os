@@ -81,6 +81,7 @@ Goal: make the kernel "SMP-aware in data structures and primitives" while still 
 - Introduce per-CPU data structures (array indexed by CPU id, or a small struct with one entry per possible CPU). Move at least scheduler current-thread / runqueue state and timer tick counters toward per-CPU.
 - Provide (or expose) atomic operations and the necessary barriers (`dmb`, `dsb sy`, `isb`) that Swift code and C bridges can use. PageAllocator bitmap operations and VFS pool refcounts will need them later.
 - Update boot.S: keep the secondary park path, but make the "park" code a clean WFE loop that can later be woken by an IPI or mailbox write. Add early per-CPU init hooks that are safe to call on secondaries (they must not touch global allocator state yet).
+- Discover the QEMU `virt` secondary CPU release facts from the DTB (CPU Aff0 list, per-CPU `enable-method`, and PSCI call method/function IDs) without issuing CPU_ON yet. This is the S0/S1 handoff contract, not secondary bring-up.
 - Audit and annotate every global `current*`, `systemTicks`, scheduler table, etc. with "SMP: will become per-CPU or protected".
 - Add a host or early-boot unit test that exercises the new atomic/barrier shims if they are non-trivial.
 - Acceptance: the system still boots and passes the full existing `make test` suite on 1 CPU. A new "S0" line appears in the boot log. No behavior change for userland.
@@ -90,6 +91,9 @@ Decision point (ask before leaving S0): Do we want a compile-time or boot-time "
 ### S1 — Secondary CPU bring-up and per-CPU early init (QEMU virt)
 - On `-smp 2` / `-smp 4`, discover secondary CPUs and bring at least one (preferably all) to a state where they can execute kernel C/Swift code (EL1, MMU on, own stack, own vector table if needed, IRQs unmasked but no work yet).
 - For QEMU virt the common mechanisms are a spin-table / mailbox or PSCI CPU_ON. Choose one, document the exact protocol and the addresses used, and verify against the QEMU version in use (see NOTES.md discipline).
+  Current S0g evidence from QEMU 11.0.1 DTBs shows PSCI via `method = "hvc"` and
+  `cpu_on = <0xc4000003>`, with `enable-method = "psci"` on secondary-capable
+  CPU nodes. The actual S1 release path still needs review before enabling it.
 - Per-CPU GIC CPU interface initialization (GICC for each core). PPIs are already banked — good. SPIs still need routing policy.
 - Per-CPU generic timer enable (the PPI is banked; each core can have its own periodic tick).
 - A reliable "CPU N online" log line (or counter) visible on the console.

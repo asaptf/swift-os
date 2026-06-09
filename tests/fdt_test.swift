@@ -52,13 +52,21 @@ struct FdtTest {
 
             check(info.haveCpuTopology, "should find /cpus topology")
             check(info.cpuCount == expectedCpus, "cpu count \(expectedCpus), got \(info.cpuCount)")
+            check(info.havePsci, "should find a PSCI node")
+            check(info.psciMethod == platformPsciMethodHvc, "PSCI method should be hvc, got \(info.psciMethod)")
+            check(info.psciCpuOn == 0xC400_0003, "PSCI CPU_ON should be 0xc4000003, got 0x\(String(info.psciCpuOn, radix: 16))")
             var cpu: UInt32 = 0
             while cpu < expectedCpus {
                 check(info.cpuAff0(cpu) == cpu, "cpu[\(cpu)] Aff0 \(cpu), got \(info.cpuAff0(cpu))")
+                if expectedCpus > 1 {
+                    check(info.cpuUsesPsci(cpu), "cpu[\(cpu)] should advertise enable-method psci")
+                } else {
+                    check(!info.cpuUsesPsci(cpu), "single CPU DTB should not need per-CPU enable-method")
+                }
                 cpu += 1
             }
 
-            print("PASS: fdt parser extracted the QEMU virt hardware map and \(expectedCpus) CPUs")
+            print("PASS: fdt parser extracted the QEMU virt hardware map, PSCI, and \(expectedCpus) CPUs")
         }
     }
 }

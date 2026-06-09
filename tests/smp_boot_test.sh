@@ -22,6 +22,13 @@ if (( SMP_CPU_COUNT > 8 )); then
   echo "FAIL: SMP_CPUS must be <= 8 for S0 mailbox/topology scaffolding, got '$SMP_CPUS'." >&2
   exit 2
 fi
+if (( SMP_CPU_COUNT == 1 )); then
+  PSCI_ENABLE_MASK=0
+  PSCI_EXPECT="[I] smp: S0g OK: PSCI discovery ready"
+else
+  PSCI_ENABLE_MASK=$(((1 << SMP_CPU_COUNT) - 1))
+  PSCI_EXPECT="[I] smp: S0g OK: PSCI discovery ready detail=$PSCI_ENABLE_MASK"
+fi
 
 EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] smp: S0 OK: foundations ready
@@ -29,6 +36,7 @@ EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] smp: S0d OK: per-CPU state ready
 [I] smp: S0e OK: secondary park mailbox ready
 [I] smp: S0f OK: CPU topology ready detail=$SMP_CPU_COUNT
+$PSCI_EXPECT
 [I] boot: swift-os userland: Swift ps}"
 
 if [[ ! -f "$KERNEL" ]]; then

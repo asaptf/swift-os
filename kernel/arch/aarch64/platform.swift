@@ -40,6 +40,9 @@
     var cpuAff0_5: UInt32 = 0
     var cpuAff0_6: UInt32 = 0
     var cpuAff0_7: UInt32 = 0
+    var cpuPsciEnableMask: UInt32 = 0
+    var psciMethod: UInt32 = platformPsciMethodNone
+    var psciCpuOn: UInt32 = 0
     // PL031 RTC: unknown on VBox; 0 disables the clock (rtcNow returns 0).
     var rtcBase: UInt = 0
 #else
@@ -70,6 +73,11 @@
     var cpuAff0_5: UInt32 = 0
     var cpuAff0_6: UInt32 = 0
     var cpuAff0_7: UInt32 = 0
+    // S0g PSCI discovery. This records what the DTB advertises; S0 still never
+    // issues CPU_ON or lets secondaries enter Swift/kernel code.
+    var cpuPsciEnableMask: UInt32 = 0
+    var psciMethod: UInt32 = platformPsciMethodNone
+    var psciCpuOn: UInt32 = 0
     // PL031 RTC (QEMU virt): data register at base holds Unix time in seconds.
     var rtcBase: UInt = 0x0901_0000
 #endif
@@ -172,9 +180,10 @@ private func tryParse(_ addr: UInt, into info: inout PlatformInfo) -> Bool {
     return info.valid
 }
 
-// S0f: copy CPU topology after the MMU is enabled. The early `platformInit`
-// deliberately leaves this for later because Swift may combine adjacent UInt32
-// fields into SIMD loads/stores, which are unsafe while RAM is still Device-typed.
+// S0f/S0g: copy CPU topology and PSCI discovery after the MMU is enabled. The
+// early `platformInit` deliberately leaves this for later because Swift may
+// combine adjacent UInt32 fields into SIMD loads/stores, which are unsafe while
+// RAM is still Device-typed.
 func platformInitCpuTopology() {
     var info = PlatformInfo()
     considerCpuTopology(platform.dtbBase, into: &info)
@@ -190,6 +199,9 @@ func platformInitCpuTopology() {
         platform.cpuAff0_5 = info.cpuAff0_5
         platform.cpuAff0_6 = info.cpuAff0_6
         platform.cpuAff0_7 = info.cpuAff0_7
+        platform.cpuPsciEnableMask = info.cpuPsciEnableMask
+        platform.psciMethod = info.psciMethod
+        platform.psciCpuOn = info.psciCpuOn
     }
 }
 
@@ -199,11 +211,23 @@ private func considerCpuTopology(_ addr: UInt, into best: inout PlatformInfo) {
     if addr + 0x1000 > platform.ramBase + platform.ramSize { return }
 
     var candidate = PlatformInfo()
-    if tryParse(addr, into: &candidate) &&
+    if tryParseSmp(addr, into: &candidate) &&
        candidate.haveCpuTopology &&
-       candidate.cpuCount > best.cpuCount {
+       (candidate.cpuCount > best.cpuCount ||
+        (candidate.cpuCount == best.cpuCount &&
+         candidate.havePsci && !best.havePsci)) {
         best = candidate
     }
+}
+
+private func tryParseSmp(_ addr: UInt, into info: inout PlatformInfo) -> Bool {
+    if !tryParse(addr, into: &info) { return false }
+    guard let p = UnsafePointer<UInt8>(bitPattern: addr) else {
+        info.reset()
+        return false
+    }
+    fdtParseSmpInto(p, &info)
+    return info.valid
 }
 
 func platformCpuAff0(_ index: UInt32) -> UInt32 {
@@ -218,4 +242,10 @@ func platformCpuAff0(_ index: UInt32) -> UInt32 {
     case 7: return platform.cpuAff0_7
     default: return UInt32.max
     }
+}
+
+func platformCpuUsesPsci(_ index: UInt32) -> Bool {
+    let aff0 = platformCpuAff0(index)
+    if aff0 >= smpMaxCpuCount() { return false }
+    return (platform.cpuPsciEnableMask & (UInt32(1) << aff0)) != 0
 }
