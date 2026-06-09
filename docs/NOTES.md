@@ -642,6 +642,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   no `hvc`/`smc` instruction, no secondary stacks, no GIC/timer work on
   secondaries, and no C4/VFS/process changes.
 
+### S0k — executable S1 review packet (DONE, 2026-06-09)
+
+- **Review handoff.** `docs/S1_REVIEW_PACKET.md` records the S0 evidence, the
+  exact decisions required before any S1 CPU_ON work, and the pre-S1 gates that
+  must pass before a reviewer considers a secondary bring-up branch.
+- **Executable coverage.** `tests/smp_s1_review_packet_test.sh` checks that the
+  packet keeps the required decision headings, evidence links, and gate
+  commands. `make test` and `make s0-test` both run it, so the S0/S1 review
+  boundary stays visible as code and docs evolve.
+- **Non-goals.** No S1 decision is made here, no CPU is released, no guard is
+  relaxed, and no kernel/C4/VFS/process behavior changes.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

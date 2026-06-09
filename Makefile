@@ -298,7 +298,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-s1-review-packet smp-test smp-headroom-test smp-uefi-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -663,6 +663,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/handle_test
 	./tests/smp_release_guard_test.sh
 	./tests/smp_state_audit_test.sh
+	./tests/smp_s1_review_packet_test.sh
 	$(HOST_SWIFTC) tests/hkdf_test.swift kernel/crypto/sha256.swift -o $(BUILD)/hkdf_test
 	$(BUILD)/hkdf_test
 	$(HOST_SWIFTC) tests/x25519_test.swift kernel/crypto/x25519.swift -o $(BUILD)/x25519_test
@@ -727,6 +728,9 @@ smp-s1-preflight:
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	FDT_TEST=$(BUILD)/fdt_test ./tests/smp_s1_preflight_test.sh
 
+smp-s1-review-packet:
+	./tests/smp_s1_review_packet_test.sh
+
 smp-test: build base-image
 	./tests/smp_boot_test.sh
 
@@ -736,7 +740,7 @@ smp-headroom-test: build base-image
 smp-uefi-test: disk base-image
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
-s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
+s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-s1-preflight smp-s1-review-packet smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
 
 # ---- UEFI loader build + boot ----------------------------------------------
