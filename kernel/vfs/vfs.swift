@@ -107,8 +107,8 @@ private struct Pipe {
     var writeRefs = 0
 }
 
-// C4a/C4b: an IPC endpoint — a channel carrying a single in-flight message that
-// pairs BYTES (C4b) with an optionally transferred Handle (C4a, the capability).
+// C4a: an IPC endpoint — a channel carrying a single in-flight message that
+// pairs BYTES with an optionally transferred Handle (the capability).
 // Modeled on Pipe: a heap message buffer plus a one-slot handle, with
 // sendRefs/recvRefs tracking open ends. See docs/CAPABILITIES.md §4.
 private struct Endpoint {
@@ -664,10 +664,10 @@ private func releaseDescription(_ d: Int) {
             if endpoints[ep].hasHandle && endpoints[ep].handle.inUse {
                 releaseDescription(endpoints[ep].handle.object)
             }
-            // Drop the message buffer, mirroring the .pipe block: the kernel heap is
-            // a bump allocator (runtime/heap.c free() is a no-op), so resetting the
-            // struct is exactly how a freed pipe relinquishes its bufPtr.
-            endpoints[ep] = Endpoint()
+            // Keep the heap-backed message buffer attached to this slot for reuse:
+            // the kernel heap is a bump allocator, so dropping bufPtr would leak
+            // endpointMsgCap bytes on every create/close cycle.
+            resetEndpointSlotForReuse(ep)
         }
     }
     openDescriptions[d] = OpenDescription()
@@ -699,6 +699,39 @@ private func posixRights(read: Bool, write: Bool) -> Rights {
     r.insert(.getattr)
     r.insert(.setattr)
     return r
+}
+
+private func endpointRights(read: Bool, write: Bool) -> Rights {
+    var r = rights(read: read, write: write)
+    r.insert(.transfer)
+    return r
+}
+
+private func discardUninstalledDescription(_ d: Int) {
+    if d >= 0 && d < maxOpenDescriptions {
+        openDescriptions[d] = OpenDescription()
+    }
+}
+
+private func resetEndpointSlotForReuse(_ ep: Int) {
+    let bufPtr = endpoints[ep].bufPtr
+    endpoints[ep] = Endpoint()
+    endpoints[ep].bufPtr = bufPtr
+}
+
+private func discardEndpoint(_ ep: Int) {
+    if ep >= 0 && ep < maxEndpoints {
+        resetEndpointSlotForReuse(ep)
+    }
+}
+
+private func rollbackEndpointCreate(proc: Int, sfd: Int, rfd: Int,
+                                    endpoint ep: Int, sendDesc sd: Int, recvDesc rd: Int) {
+    if sfd >= 0 && sfd < maxFDs { setFDEntry(proc, sfd, HandleEntry()) }
+    if rfd >= 0 && rfd < maxFDs { setFDEntry(proc, rfd, HandleEntry()) }
+    discardUninstalledDescription(sd)
+    discardUninstalledDescription(rd)
+    discardEndpoint(ep)
 }
 
 // ---- kernel-internal handle API (C1) --------------------------------------
@@ -1127,7 +1160,7 @@ func vfsPipe(fdsVA: UInt) -> Int {
 // ---- C4a: handle-passing IPC endpoints ------------------------------------
 //
 // A minimal capability-passing primitive (docs/CAPABILITIES.md §4): endpoint_create
-// returns a (send, recv) fd pair; ipc_send copies BYTES (C4b) and MOVES an optional
+// returns a (send, recv) fd pair; ipc_send copies BYTES and MOVES an optional
 // handle into the channel; ipc_recv blocks until a message arrives, copies the bytes
 // out and installs any transferred handle as a new fd in the receiver. This is the
 // keystone for restartable services and cells (request/reply rides the bytes); a
@@ -1136,8 +1169,12 @@ func vfsPipe(fdsVA: UInt) -> Int {
 
 private func allocEndpoint() -> Int {
     for i in 0..<maxEndpoints where !endpoints[i].inUse {
-        guard let buf = swiftos_kernel_alloc(UInt(endpointMsgCap), 16) else { return -1 }
-        endpoints[i] = Endpoint(inUse: true, hasMsg: false, bufPtr: UInt(bitPattern: buf),
+        var bufPtr = endpoints[i].bufPtr
+        if bufPtr == 0 {
+            guard let buf = swiftos_kernel_alloc(UInt(endpointMsgCap), 16) else { return -1 }
+            bufPtr = UInt(bitPattern: buf)
+        }
+        endpoints[i] = Endpoint(inUse: true, hasMsg: false, bufPtr: bufPtr,
                                 msgLen: 0, hasHandle: false, handle: HandleEntry(),
                                 sendRefs: 1, recvRefs: 1)
         return i
@@ -1153,14 +1190,31 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     if sfd == -1 { return errNoSpace }
     setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve
     let rfd = allocFDInProcess(proc, from: 0)
-    setFDEntry(proc, sfd, HandleEntry())
-    if rfd == -1 { return errNoSpace }
+    if rfd == -1 {
+        rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: -1,
+                               endpoint: -1, sendDesc: -1, recvDesc: -1)
+        return errNoSpace
+    }
+    setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
 
     let ep = allocEndpoint()
-    if ep == -1 { return errNoMem }
+    if ep == -1 {
+        rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
+                               endpoint: -1, sendDesc: -1, recvDesc: -1)
+        return errNoMem
+    }
     let sd = allocDescription()
+    if sd == -1 {
+        rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
+                               endpoint: ep, sendDesc: -1, recvDesc: -1)
+        return errNoSpace
+    }
     let rd = allocDescription()
-    if sd == -1 || rd == -1 { return errNoSpace }
+    if rd == -1 {
+        rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
+                               endpoint: ep, sendDesc: sd, recvDesc: -1)
+        return errNoSpace
+    }
 
     openDescriptions[sd].kind = .endpoint
     openDescriptions[sd].node = ep
@@ -1169,8 +1223,8 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     openDescriptions[rd].node = ep
     openDescriptions[rd].pipeEnd = endpointRecvEnd
 
-    installDescription(proc, sfd, sd, rights: [.write, .transfer])
-    installDescription(proc, rfd, rd, rights: [.read, .transfer])
+    installDescription(proc, sfd, sd, rights: endpointRights(read: false, write: true))
+    installDescription(proc, rfd, rd, rights: endpointRights(read: true, write: false))
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: Int32(sfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(rfd), toByteOffset: 4, as: Int32.self)
@@ -1183,6 +1237,13 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
 //   RECV  off 0: buf (u64 user VA)  off 8: cap (u64)  off 16: out_handle_fd (u64 user VA → int)
 private let ipcSendMsgSize: UInt = 20  // buf(8) + len(8) + handle_fd(4)
 private let ipcRecvMsgSize: UInt = 24  // buf(8) + cap(8) + out_handle_fd(8)
+
+private func handleNamesEndpoint(_ entry: HandleEntry, endpoint ep: Int) -> Bool {
+    if entry.kind != .endpoint { return false }
+    let d = entry.object
+    if d < 0 || d >= maxOpenDescriptions || !openDescriptions[d].inUse { return false }
+    return openDescriptions[d].node == ep
+}
 
 /// ipc_send(fd, &msg): copy up to endpointMsgCap message BYTES into the endpoint and,
 /// if msg.handle_fd >= 0, MOVE that handle to the peer. The handle's source fd is
@@ -1211,7 +1272,9 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     // The handle (if any) must be a distinct, valid fd before we commit the message.
     if handleFd >= 0 {
         guard validFD(proc, handleFd), handleFd != fd else { return errBadFD }
-        guard fdEntry(proc, handleFd).rights.contains(.transfer) else { return errAccess }
+        let moved = fdEntry(proc, handleFd)
+        guard moved.rights.contains(.transfer) else { return errAccess }
+        guard !handleNamesEndpoint(moved, endpoint: ep) else { return errInvalid }
     }
 
     let n = min(len, endpointMsgCap)
@@ -1258,16 +1321,19 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     }
 
     let n = min(endpoints[ep].msgLen, cap)
+    var newfd: Int32 = -1
+    var installed = -1
+    if endpoints[ep].hasHandle {
+        guard fdEntryHasRights(proc, fd, .transfer) else { return errAccess }
+        installed = allocFDInProcess(proc, from: 0)
+        if installed == -1 { return errNoSpace }
+    }
     if n > 0 {
         guard let dst = userWritableBuffer(buf, UInt(n)) else { return errInvalid }
         let src = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
         for i in 0..<n { dst[i] = src[i] }
     }
-
-    var newfd: Int32 = -1
     if endpoints[ep].hasHandle {
-        let installed = allocFDInProcess(proc, from: 0)
-        if installed == -1 { return errNoSpace }
         setFDEntry(proc, installed, endpoints[ep].handle)
         newfd = Int32(installed)
     }
@@ -1607,14 +1673,17 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
         let ep = desc.node
         if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse { return pollNval }
         if desc.pipeEnd == endpointRecvEnd {
-            if (events & pollIn) != 0 && rights.contains(.read) {
+            let canReceivePending = rights.contains(.read) &&
+                (!endpoints[ep].hasHandle || rights.contains(.transfer))
+            if (events & pollIn) != 0 && canReceivePending {
                 if endpoints[ep].hasMsg || endpoints[ep].sendRefs == 0 { revents |= pollIn }
             }
             if endpoints[ep].sendRefs == 0 { revents |= pollHup }
         } else {
             if endpoints[ep].recvRefs == 0 {
                 revents |= pollErr
-            } else if (events & pollOut) != 0 && rights.contains(.write) && !endpoints[ep].hasMsg {
+            } else if (events & pollOut) != 0 && rights.contains(.write) &&
+                        rights.contains(.transfer) && !endpoints[ep].hasMsg {
                 revents |= pollOut
             }
         }

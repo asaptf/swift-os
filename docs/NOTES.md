@@ -516,6 +516,36 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   endpoint handle policy beyond existing fd rights, VMOs, async rings, userland
   drivers, Cells/resource domains, cap-stripping spawn policy, or SMP work.
 
+### C4a — minimal endpoint handle-passing IPC hardening (DONE, 2026-06-08)
+
+- **Reviewed endpoint slice.** The existing `endpoint_create` / `ipc_send` /
+  `ipc_recv` path is now treated as the first C4 sub-milestone: a pollable
+  single-slot endpoint can carry bytes plus one moved handle between processes.
+  The sender's source fd is cleared without releasing the open description, and
+  the receiver installs the same attenuated `HandleEntry` rights into a fresh fd.
+- **Rights and lifetime hardening.** `ipc_send` requires endpoint `.write` and
+  `.transfer`, and the moved source handle must have `.transfer`. `ipc_recv`
+  requires endpoint `.read` and, when a handle is pending, endpoint `.transfer`
+  before importing it. Same-endpoint self-transfer is rejected, endpoint creation
+  rolls back reserved fd/description/object slots on failure, and receive checks
+  fd-space before consuming a pending moved handle.
+- **Poll and teardown behavior.** Endpoint poll readiness now mirrors the rights
+  `ipc_send`/`ipc_recv` enforce: send readiness needs write+transfer, receive
+  readiness for a pending handle needs read+transfer, and peer close still reports
+  HUP/ERR-style readiness. Closing the last endpoint references still releases an
+  in-flight unreceived handle, and endpoint slots retain their heap-backed message
+  buffers for reuse so repeated create/close tests do not burn the bump heap.
+- **Tests / acceptance.** `tests/handle_test.swift` covers the C4a endpoint
+  vocabulary. `/bin/spawndemo` passes attenuated endpoint handles to
+  `/bin/argvdemo`, proving missing endpoint write/read/transfer rights are
+  denied. `/bin/forkdemo` proves bytes, received-handle readback, and move-only
+  source fd invalidation. The boot acceptance marker is `C4a OK: endpoint IPC
+  moved handles safely`.
+- **Non-goals left for later C4 milestones.** No VMOs, async rings, batched
+  descriptors, `ipc_call`, badges, multi-handle vectors, service supervisor,
+  userland drivers, Cells/resource domains, socket-transfer smoke, endpoint
+  close-on-exec policy change, or SMP work.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
