@@ -86,19 +86,23 @@ Goal: make the kernel "SMP-aware in data structures and primitives" while still 
 - Add a host or early-boot unit test that exercises the new atomic/barrier shims if they are non-trivial.
 - Acceptance: the system still boots and passes the full existing `make test` suite on 1 CPU. A new "S0" line appears in the boot log. No behavior change for userland.
 
-Decision point (ask before leaving S0): Do we want a compile-time or boot-time "uniprocessor fast path" that elides some barriers and per-CPU indirection, or do we always go through the general SMP paths (simpler, at a small constant cost)?
+Decision recorded at S1 (2026-06-09): always go through the general SMP paths.
+No compile-time or boot-time uniprocessor fast path exists unless later
+measurement justifies adding one.
 
 ### S1 — Secondary CPU bring-up and per-CPU early init (QEMU virt)
 - On `-smp 2` / `-smp 4`, discover secondary CPUs and bring at least one (preferably all) to a state where they can execute kernel C/Swift code (EL1, MMU on, own stack, own vector table if needed, IRQs unmasked but no work yet).
 - For QEMU virt the common mechanisms are a spin-table / mailbox or PSCI CPU_ON. Choose one, document the exact protocol and the addresses used, and verify against the QEMU version in use (see NOTES.md discipline).
   Current S0g evidence from QEMU 11.0.1 DTBs shows PSCI via `method = "hvc"` and
   `cpu_on = <0xc4000003>`, with `enable-method = "psci"` on secondary-capable
-  CPU nodes. The actual S1 release path still needs review before enabling it.
+  CPU nodes. S1 uses that PSCI `CPU_ON` path and also publishes the existing
+  mailbox release slot before `sev`, so eager parked secondaries and PSCI-started
+  secondaries converge on the same `smp_secondary_entry`.
 - Per-CPU GIC CPU interface initialization (GICC for each core). PPIs are already banked — good. SPIs still need routing policy.
 - Per-CPU generic timer enable (the PPI is banked; each core can have its own periodic tick).
 - A reliable "CPU N online" log line (or counter) visible on the console.
 - Secondaries must be able to take a timer IRQ and EOI it without crashing, even if they do no scheduling yet.
-- Acceptance: boot with `-smp 4` shows N "CPU x online" messages, all CPUs can see their own timer ticks (a cheap per-CPU counter is enough), the 1-CPU path is unaffected, and `make test` (both configurations) is green. Existing single-threaded demos and busybox still work.
+- Acceptance: boot with `-smp 4` shows N "CPU x online" messages, all CPUs can see their own timer ticks (a cheap per-CPU counter is enough), the 1-CPU path is unaffected, and `make test` (both configurations) is green. Existing single-threaded demos and busybox still work. S1 keeps scheduler/process/VFS/driver work on CPU0; broad multi-CPU EL0 execution starts in S2.
 
 Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real silicon and sometimes in emulation. Record the maximum we intend to support for the first SMP release and the GIC version assumptions.
 
