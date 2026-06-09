@@ -108,6 +108,8 @@ L0 kernel logger active
 level filtering active (min INFO)
 source filtering active
 source override allows error
+sink indirection active
+sink capability hook active
 log: recent
 detail=100
 detail=4

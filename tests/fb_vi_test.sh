@@ -22,14 +22,15 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$AAVMF" ]] || { echo "SKIP: AAVMF firmware $AAVMF not found" >&2; exit 0; }
 command -v python3 >/dev/null || { echo "SKIP: python3 not found" >&2; exit 0; }
 
-SER="$(mktemp -u /tmp/swos-fbser.XXXXXX.sock)"
-QMP="$(mktemp -u /tmp/swos-fbqmp.XXXXXX.sock)"
-PPM="$(mktemp -u /tmp/swos-fbvi.XXXXXX.ppm)"
-PIDFILE="$(mktemp -t swos-fb-pid.XXXXXX)"
+WORK="$(mktemp -d -t swos-fb.XXXXXX)"
+SER="$WORK/ser.sock"
+QMP="$WORK/qmp.sock"
+PPM="$WORK/fbvi.ppm"
+PIDFILE="$WORK/pid"
 cleanup() {
   local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
   [[ -n "$pid" ]] && { kill "$pid" 2>/dev/null; sleep 0.2; kill -9 "$pid" 2>/dev/null; }
-  rm -f "$SER" "$QMP" "$PPM" "$PIDFILE"
+  rm -rf "$WORK"
 }
 trap cleanup EXIT
 

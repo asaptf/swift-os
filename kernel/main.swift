@@ -716,6 +716,13 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klogSetSourceMinLevel("log_filter", .error)
     klog(.info, "log_filter", "this source-filtered info line should be hidden")
     klog(.error, "log_filter", "source override allows error")
+    if klogCurrentSinkKind() == .uart {
+        klog(.info, "log", "sink indirection active")
+    }
+    if !klogCanInstallSink(capabilities: 0) &&
+        klogCanExportRing(capabilities: capLogExport) {
+        klog(.info, "log", "sink capability hook active")
+    }
     klogClearSourceMinLevels()
     schedulerInit()
     processInit()
