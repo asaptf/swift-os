@@ -709,6 +709,18 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No Swift userland behavior, kernel behavior, C4/VFS/process
   behavior, or S1 release behavior is changed.
 
+### S0p — runtime demo harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven runtime demos.** The userland threads/futex and
+  mmap/munmap/mprotect/W^X smoke tests now drive QEMU through FIFO stdin and
+  wait for login prompts plus their existing `threadsdemo` / `mmapdemo` success
+  markers instead of relying on fixed serial sleeps.
+- **Assertions unchanged.** The tests still verify `counter=4000` for the futex
+  thread demo and the same B1/B2/W^X mmap markers; only the harness timing model
+  changed.
+- **Non-goals.** No runtime behavior, kernel behavior, C4/VFS/process behavior,
+  or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
