@@ -7,6 +7,7 @@
 #define TIOCGPGRP 0x540F
 #define TIOCSPGRP 0x5410
 #define FIONREAD 0x541B
+#define FIOASYNC 0x5452
 struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 int ioctl(int fd, unsigned long request, ...);
 #endif

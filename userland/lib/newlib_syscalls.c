@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/times.h>
+#include <sys/time.h>
 #include <errno.h>
 
 #define SYS_OPEN  1
@@ -24,6 +25,7 @@
 #define SYS_GETPID 11
 #define SYS_SBRK  19
 #define SYS_UNLINK 27
+#define SYS_TIME 37
 
 static long sys3(long n, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = n;
@@ -136,5 +138,15 @@ int _unlink(const char *a) {
     return (int)r;
 }
 int _times(struct tms *t) { (void)t; return -1; }
-int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; return -1; }
+int _gettimeofday(struct timeval *tv, void *tz) {
+    if (!tv) { errno = EFAULT; return -1; }
+    tv->tv_sec = (time_t)sys3(SYS_TIME, 0, 0, 0);
+    tv->tv_usec = 0;
+    if (tz) {
+        struct timezone *zone = (struct timezone *)tz;
+        zone->tz_minuteswest = 0;
+        zone->tz_dsttime = DST_NONE;
+    }
+    return 0;
+}
 int _wait(int *status) { (void)status; errno = ECHILD; return -1; }

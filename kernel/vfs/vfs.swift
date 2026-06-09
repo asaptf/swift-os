@@ -32,6 +32,9 @@ let oCreat = 0x40
 let oTrunc = 0x80
 let oAppend = 0x100
 let oCloexec = 0x200
+// newlib's O_NONBLOCK is passed through fcntl(F_SETFL) directly (not via
+// _open's kernel-ABI translation), so keep the newlib/POSIX-style bit here.
+let oNonblock = 0x4000
 
 // stat st_mode type bits.
 private let sIFIFO: UInt32 = 0x1000
@@ -908,6 +911,10 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
 
     if entry.kind == .socket {
         if socketIsTCP(file.node) {
+            if (file.flags & oNonblock) != 0 {
+                netPump()
+                if !socketPollReadable(file.node) { return errAgain }
+            }
             return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
                            timeoutMs: socketRecvTimeoutMs)
         }
@@ -975,6 +982,9 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
 
     if entry.kind == .socket {
         if socketIsTCP(file.node) {
+            // There is no socketPollWritable/TCP send-space helper yet. Keep the
+            // existing tcpSend path for O_NONBLOCK sockets rather than peeking
+            // into TCP internals from VFS.
             return tcpSend(file.node, src: UnsafeRawPointer(src), len: Int(count))
         }
         return errInvalid   // UDP: use sendto
@@ -1087,6 +1097,7 @@ private let fGetFL = 3
 private let fSetFL = 4
 private let fDupFDCloexec = 14
 private let fdCloexecFlag = 1
+private let mutableStatusFlags = oNonblock
 
 func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
     let proc = currentVFSProcess()
@@ -1117,6 +1128,9 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         return openDescriptions[fdEntry(proc, fd).object].flags
     case fSetFL:
         guard fdEntryHasRights(proc, fd, .setattr) else { return errAccess }
+        let d = fdEntry(proc, fd).object
+        openDescriptions[d].flags = (openDescriptions[d].flags & ~mutableStatusFlags)
+            | (arg & mutableStatusFlags)
         return 0
     default:
         return errInvalid
@@ -1790,7 +1804,7 @@ func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
 }
 
 /// Bind an allocated socket index to a fresh fd backed by a socket description.
-private func installSocketFD(_ s: Int) -> Int {
+private func installSocketFD(_ s: Int, flags: Int = 0) -> Int {
     let proc = currentVFSProcess()
     let fd = allocFDInProcess(proc, from: 3)
     if fd < 0 { socketClose(s); return errNoSpace }
@@ -1798,6 +1812,7 @@ private func installSocketFD(_ s: Int) -> Int {
     if d < 0 { socketClose(s); return errNoSpace }
     openDescriptions[d].kind = .socket
     openDescriptions[d].node = s
+    openDescriptions[d].flags = flags
     installDescription(proc, fd, d, rights: posixRights(read: true, write: true))
     return fd
 }
@@ -1812,11 +1827,20 @@ func vfsListen(fd: Int, backlog: Int) -> Int {
 }
 
 func vfsAccept(fd: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .read)
+    let proc = currentVFSProcess()
+    let s = socketIndexForFD(proc, fd, required: .read)
     if s < 0 { return errBadFD }
+    let d = fdEntry(proc, fd).object
+    let listener = openDescriptions[d]
+    guard socketIsTCP(s) && socketIsListener(s) else { return errInvalid }
+    let childFlags = listener.flags & mutableStatusFlags
+    if (listener.flags & oNonblock) != 0 {
+        netPump()
+        if !socketPollReadable(s) { return errAgain }
+    }
     let c = tcpAccept(s, timeoutMs: socketAcceptTimeoutMs)
     if c < 0 { return c }
-    return installSocketFD(c)
+    return installSocketFD(c, flags: childFlags)
 }
 
 func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
