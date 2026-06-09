@@ -51,6 +51,14 @@ await_line() {  # await_line LINE [MAXSEC]
   return 1
 }
 
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
+}
+
 send_after() {  # send_after MARKER MAXSEC TEXT
   local marker="$1" max="$2" text="$3"
   if ! await "$marker" "$max"; then
@@ -59,11 +67,11 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
 }
 
 send_line() {
-  printf '%s\n' "$1" >&3
+  send_text "$1"$'\n'
 }
 
 abort() {
@@ -87,39 +95,34 @@ abort() {
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
 send_after "Welcome to swift-os, root" 60 ''
 
-send_line '/bin/mkdir /tmp/d'
-send_line 'echo FILEOPS-MKDIR-DONE'
+send_line "/bin/mkdir /tmp/d; echo FILEOPS''-MKDIR-DONE"
 await_line 'FILEOPS-MKDIR-DONE' 30 || abort "mkdir step did not complete"
-send_line 'echo hi > /tmp/d/f'
-send_line 'echo FILEOPS-WRITE-DONE'
+send_line "echo hi > /tmp/d/f; echo FILEOPS''-WRITE-DONE"
 await_line 'FILEOPS-WRITE-DONE' 30 || abort "file write step did not complete"
-send_line '/bin/mv /tmp/d/f /tmp/d/g'
-send_line 'echo FILEOPS-MV-DONE'
+send_line "/bin/mv /tmp/d/f /tmp/d/g; echo FILEOPS''-MV-DONE"
 await_line 'FILEOPS-MV-DONE' 30 || abort "mv step did not complete"
-send_line '/bin/ls /tmp/d'                 # expect: g
-send_line 'echo FILEOPS-LS1-DONE'
+send_line "echo FILEOPS''-LS1-BEGIN; /bin/ls /tmp/d; echo FILEOPS''-LS1-DONE"
+await_line 'FILEOPS-LS1-BEGIN' 30 || abort "ls /tmp/d step did not start"
 await_line 'g' 30 || abort "ls /tmp/d did not show renamed file"
 await_line 'FILEOPS-LS1-DONE' 30 || abort "ls /tmp/d step did not complete"
-send_line '/bin/cat /tmp/d/g'              # expect: hi (mv preserved content)
-send_line 'echo FILEOPS-CAT-DONE'
+send_line "echo FILEOPS''-CAT-BEGIN; /bin/cat /tmp/d/g; echo FILEOPS''-CAT-DONE"
+await_line 'FILEOPS-CAT-BEGIN' 30 || abort "cat step did not start"
 await_line 'hi' 30 || abort "cat /tmp/d/g did not show file content"
 await_line 'FILEOPS-CAT-DONE' 30 || abort "cat step did not complete"
-send_line '/bin/rm /tmp/d/g'
-send_line 'echo FILEOPS-RM-DONE'
+send_line "/bin/rm /tmp/d/g; echo FILEOPS''-RM-DONE"
 await_line 'FILEOPS-RM-DONE' 30 || abort "rm step did not complete"
-send_line '/bin/rmdir /tmp/d'
-send_line 'echo FILEOPS-RMDIR-DONE'
+send_line "/bin/rmdir /tmp/d; echo FILEOPS''-RMDIR-DONE"
 await_line 'FILEOPS-RMDIR-DONE' 30 || abort "rmdir step did not complete"
-send_line '/bin/ls /tmp'                   # expect: no d (note remains)
-send_line 'echo FILEOPS-LS2-DONE'
+send_line "echo FILEOPS''-LS2-BEGIN; /bin/ls /tmp; echo FILEOPS''-LS2-DONE"
+await_line 'FILEOPS-LS2-BEGIN' 30 || abort "ls /tmp step did not start"
 await_line 'FILEOPS-LS2-DONE' 30 || abort "ls /tmp step did not complete"
-send_line 'echo FILEOPS-DONE'
+send_line "echo FILEOPS''-DONE"
 await_line 'FILEOPS-DONE' 30 || abort "shell did not survive the file ops"
 send_line 'exit'
 
@@ -129,12 +132,20 @@ QP=""
 
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
+section_between() {
+  local begin="$1" end="$2"
+  awk -v begin="$begin" -v end="$end" '
+    $0 == begin { inside = 1; next }
+    $0 == end { inside = 0 }
+    inside { print }
+  ' <<<"$clean"
+}
 # After `mv f g`, ls /tmp/d shows g (and not f).
-awk '/# \/bin\/ls \/tmp\/d$/{f=1;next} f&&/^# /{f=0} f' <<<"$clean" | grep -qxF "g" \
+section_between "FILEOPS-LS1-BEGIN" "FILEOPS-LS1-DONE" | grep -qxF "g" \
   || { echo "FAIL: mv did not rename f->g in /tmp/d" >&2; ok=0; }
 grep -qxF "hi" <<<"$clean"        || { echo "FAIL: mv did not preserve file content (cat g != hi)" >&2; ok=0; }
 # After rm g + rmdir d, ls /tmp must not list d (but keeps the boot-created note).
-awk '/# \/bin\/ls \/tmp$/{f=1;next} f&&/^# /{f=0} f' <<<"$clean" | grep -qxF "d" \
+section_between "FILEOPS-LS2-BEGIN" "FILEOPS-LS2-DONE" | grep -qxF "d" \
   && { echo "FAIL: /tmp/d still present after rmdir" >&2; ok=0; }
 grep -qxF "FILEOPS-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the file ops" >&2; ok=0; }
 
