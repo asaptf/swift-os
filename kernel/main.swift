@@ -759,6 +759,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     }
     klogClearSourceMinLevels()
     schedulerInit()
+    if !kernelSchedulerOwnershipSelfTest() || !smpS2cKernelSchedulerReadinessSelfTest() {
+        uartPuts("panic: S2c kernel scheduler owner self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2c OK: kernel scheduler owner ready", UInt64(currentCpuId()) + 1)
     processInit()
     if !smpS2ReadinessSelfTest() {
         uartPuts("panic: S2a scheduler readiness self-test failed\n")
@@ -791,6 +796,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runInit()
     } else {
         runSchedulerDemo()
+        if !smpS2cNoSecondaryKernelSchedulerExecution() {
+            uartPuts("panic: S2c secondary kernel scheduler execution guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2c OK: no secondary kernel scheduler execution", UInt64(platform.cpuCount))
         runProcessDemo()
         runArgvDemo()
         runSpawnDemo()
