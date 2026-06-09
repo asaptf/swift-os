@@ -131,6 +131,34 @@ static inline void dsb_sy(void) {
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
+// S0b: SMP memory-order primitives exposed to Swift. The first users are
+// self-tests and future PMM/VFS synchronization; no secondary CPU is released
+// yet. Keep these as tiny C inlines so Embedded Swift does not need inline asm.
+static inline void smp_dmb_ish(void) {
+    __asm__ volatile("dmb ish" ::: "memory");
+}
+static inline void smp_dmb_ishld(void) {
+    __asm__ volatile("dmb ishld" ::: "memory");
+}
+static inline void smp_dmb_ishst(void) {
+    __asm__ volatile("dmb ishst" ::: "memory");
+}
+static inline uint64_t smp_atomic_load_u64(uint64_t *ptr) {
+    return __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
+}
+static inline void smp_atomic_store_u64(uint64_t *ptr, uint64_t value) {
+    __atomic_store_n(ptr, value, __ATOMIC_RELEASE);
+}
+static inline uint64_t smp_atomic_fetch_add_u64(uint64_t *ptr, uint64_t value) {
+    return __atomic_fetch_add(ptr, value, __ATOMIC_ACQ_REL);
+}
+static inline bool smp_atomic_compare_exchange_u64(uint64_t *ptr,
+                                                   uint64_t *expected,
+                                                   uint64_t desired) {
+    return __atomic_compare_exchange_n(ptr, expected, desired, false,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
 // --- C2: low-level barriers/TLB/TTBR0 bridges for the Swift VM port ---------
 // kernel/mm/vm.swift (the per-process address-space half) drives stage-1 page
 // tables but cannot emit `isb`/`tlbi`/`msr ttbr0_el1` directly in Embedded

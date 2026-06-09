@@ -494,6 +494,25 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   PPIs on secondaries, no IPIs, no atomics/locking policy, no TLB shootdown.
   Those remain S0b/S1+ work after review.
 
+### S0b — barrier and atomic primitive shims (DONE, 2026-06-09)
+
+- **C bridge primitives.** Added Swift-callable `dmb ish/ishld/ishst` wrappers
+  and a minimal u64 atomic vocabulary (`load`, `store`, `fetch_add`,
+  `compare_exchange`) in `io.h`, backed by LLVM/C11 `__atomic` builtins with
+  acquire/release or acquire-release ordering. These are the primitives future
+  PMM bitmap operations, VFS refcounts, and scheduler cross-CPU state will build
+  on; no subsystem is migrated to them in this checkpoint.
+- **Swift facade + early self-test.** Added `kernel/smp/atomic.swift` with small
+  Embedded Swift wrappers and `smpAtomicSelfTest()`. The boot path runs the
+  self-test after timer/log startup and logs
+  `[I] smp: S0b OK: atomics and barriers ready` only after load/store,
+  fetch-add, successful CAS, failed CAS, and barrier calls all complete.
+- **Tests / acceptance.** `make smp-test` asserts the S0b marker while booting
+  QEMU with `-smp 4` and parked secondaries. The normal 1-CPU boot path also runs
+  the self-test; failures panic before userland.
+- **Non-goals.** No locks, no PMM/VFS conversion, no scheduler changes, no
+  secondary CPU release, and no performance policy choice for a UP fast path.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

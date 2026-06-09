@@ -708,6 +708,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klog(.info, "timer", "tick rate (Hz)", 100)
     klog(.info, "platform", "M9 OK: hardware discovered from device tree")
     klog(.info, "smp", "S0 OK: foundations ready", UInt64(currentCpuId()))
+    if !smpAtomicSelfTest() {
+        uartPuts("panic: S0b atomic self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S0b OK: atomics and barriers ready")
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
