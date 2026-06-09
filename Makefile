@@ -298,7 +298,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -660,6 +660,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
 	$(BUILD)/handle_test
+	./tests/smp_release_guard_test.sh
 	./tests/smp_state_audit_test.sh
 	$(HOST_SWIFTC) tests/hkdf_test.swift kernel/crypto/sha256.swift -o $(BUILD)/hkdf_test
 	$(BUILD)/hkdf_test
@@ -717,10 +718,16 @@ smp-state-audit:
 smp-mailbox-layout: build
 	./tests/smp_mailbox_layout_test.sh
 
+smp-release-guard: build
+	./tests/smp_release_guard_test.sh
+
 smp-test: build base-image
 	./tests/smp_boot_test.sh
 
-s0-test: smp-state-audit smp-mailbox-layout smp-test
+smp-headroom-test: build base-image
+	./tests/smp_headroom_test.sh
+
+s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test
 s0c-test: smp-state-audit
 
 # ---- UEFI loader build + boot ----------------------------------------------

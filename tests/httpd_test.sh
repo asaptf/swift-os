@@ -15,6 +15,7 @@ KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
+HOST_PORT="${HTTPD_HOST_PORT:-$((23000 + ($$ % 20000)))}"
 INDEX_MARK="swift-os httpd"
 HELLO_MARK="hello from the swift-os static file server"
 
@@ -57,7 +58,7 @@ dtb_args=()
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:8080 \
+  -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080" \
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
@@ -70,16 +71,16 @@ done
 code404=""
 if [[ "$listening" -eq 1 ]]; then
   # Two concurrent requests for the index page.
-  curl -s -m 5 http://127.0.0.1:8080/ > "$O1" 2>/dev/null & p1=$!
-  curl -s -m 5 http://127.0.0.1:8080/index.html > "$O2" 2>/dev/null & p2=$!
+  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/" > "$O1" 2>/dev/null & p1=$!
+  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/index.html" > "$O2" 2>/dev/null & p2=$!
   wait "$p1" "$p2" 2>/dev/null || true
   # A non-index file (body + headers, for the net-h2 Content-Type check).
-  curl -s -m 5 http://127.0.0.1:8080/hello.txt > "$OH" 2>/dev/null || true
-  curl -s -m 5 -D - -o /dev/null http://127.0.0.1:8080/hello.txt > "$OHH" 2>/dev/null || true
+  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/hello.txt" > "$OH" 2>/dev/null || true
+  curl -s -m 5 -D - -o /dev/null "http://127.0.0.1:${HOST_PORT}/hello.txt" > "$OHH" 2>/dev/null || true
   # A directory with no index → generated listing (net-h2).
-  curl -s -m 5 http://127.0.0.1:8080/sub/ > "$OD" 2>/dev/null || true
+  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/sub/" > "$OD" 2>/dev/null || true
   # A missing path → 404.
-  code404="$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/nope 2>/dev/null || true)"
+  code404="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HOST_PORT}/nope" 2>/dev/null || true)"
 fi
 sleep 2
 stop_qemu

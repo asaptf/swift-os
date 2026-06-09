@@ -16,7 +16,7 @@ KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-PORT=5555
+PORT="${TCP_CONNECT_HOST_PORT:-$((22000 + ($$ % 20000)))}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -27,6 +27,7 @@ command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed for the host
 LOG="$(mktemp -t swiftos-tcpc.XXXXXX)"
 PCAP="$(mktemp -t swiftos-tcpc-pcap.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-tcpc-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-tcpc-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""; NCPID=""
 stop_all() {
   if [[ -f "$PIDFILE" ]]; then
@@ -36,7 +37,23 @@ stop_all() {
   [[ -n "$NCPID" ]] && kill "$NCPID" 2>/dev/null || true
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_all; rm -f "$LOG" "$PCAP" "$PIDFILE"' EXIT
+trap 'stop_all; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PCAP" "$PIDFILE" "$INFIFO"' EXIT
+
+await() {
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (tcp connect driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M7 tty:/,$p' >&2 || true
+  exit 1
+}
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
@@ -48,14 +65,7 @@ NCPID=$!
 disown "$NCPID" 2>/dev/null || true   # silence the job-control "Terminated" notice on cleanup
 sleep 0.5
 
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/tcpget 10.0.2.2 5555\n'
-  sleep 10
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
@@ -63,9 +73,21 @@ sleep 0.5
   -device virtio-blk-device,drive=swosbase \
   -netdev user,id=n0 -object "filter-dump,id=f0,netdev=n0,file=$PCAP" \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 32
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+sleep 0.2; printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+sleep 0.2; printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+sleep 0.2; printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+sleep 0.2; printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+sleep 0.2; printf '/bin/tcpget 10.0.2.2 %s\n' "$PORT" >&3
+sleep 10
 stop_all
 QP=""; NCPID=""
 

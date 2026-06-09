@@ -16,6 +16,7 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MSG="swos-udp"
+HOST_PORT="${UDP_ECHO_HOST_PORT:-$((20000 + ($$ % 20000)))}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -26,6 +27,7 @@ command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to send the 
 LOG="$(mktemp -t swiftos-udp.XXXXXX)"
 NCOUT="$(mktemp -t swiftos-udp-nc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-udp-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-udp-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -34,30 +36,49 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$NCOUT" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-# Feed the console: skip the M7 tty demo, log in as root, then run udpecho. Keep
-# stdin open afterwards so udpecho can block on recvfrom and QEMU stays alive.
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/udpecho\n'
-  sleep 20
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (udpecho driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M7 tty:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,hostfwd=udp:127.0.0.1:5555-:5555 \
+  -netdev "user,id=n0,hostfwd=udp:127.0.0.1:${HOST_PORT}-:5555" \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+sleep 0.2; printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+sleep 0.2; printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+sleep 0.2; printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+sleep 0.2; printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+sleep 0.2; printf '/bin/udpecho\n' >&3
 
 # Wait for the guest to bind the socket, then send a datagram from the host.
 listening=0
@@ -66,9 +87,10 @@ for _ in $(seq 1 40); do
   sleep 1
 done
 if [[ "$listening" -eq 1 ]]; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT" >"$NCOUT" 2>/dev/null || true
 fi
 sleep 2
+exec 3>&-
 stop_qemu
 QP=""
 

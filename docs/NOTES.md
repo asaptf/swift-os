@@ -598,6 +598,27 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No secondary release, no new scheduler/GIC/timer behavior, and
   no C4/VFS/process changes. This is test-gate hardening only.
 
+### S0i — pre-S1 release guard and SMP headroom (DONE, 2026-06-09)
+
+- **Executable no-release guard.** `tests/smp_release_guard_test.sh` now
+  disassembles the built kernel/boot object and fails if pre-S1 code contains
+  `hvc`/`smc` PSCI calls, an indirect secondary-entry branch from `boot.S`, or
+  writes to the parked secondary mailbox release fields. The full `make test`
+  suite runs this cheap guard before the mutable-state audit.
+- **Parked headroom smoke.** `tests/smp_headroom_test.sh` reuses the existing
+  parked-SMP boot harness for `-smp 1` and `-smp 8`; `make s0-test` now covers
+  the audit, mailbox layout, release guard, default `-smp 4`, and headroom
+  boots. This keeps the S0/S1 handoff executable without lengthening the full
+  product gate beyond the S0h `-smp 4` check.
+- **Verifier stability.** During S0i validation, the network smoke drivers were
+  moved toward fail-fast FIFO marker waits and dynamic host ports, and the Swift
+  `ls` smoke now drives the serial console by markers instead of fixed sleeps.
+  This keeps full-gate failures diagnosable and avoids parallel-worktree port
+  conflicts without changing kernel or network behavior.
+- **Non-goals.** No S1 protocol choice, no CPU_ON/HVC/SMC call, no secondary
+  stacks, no GIC/timer initialization on secondaries, and no C4/VFS/process
+  changes. This milestone preserves the review boundary before S1.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
