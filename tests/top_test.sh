@@ -21,6 +21,7 @@ fi
 
 LOG="$(mktemp -t swiftos-top.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-top-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-top-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -29,29 +30,73 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 8;    printf 'tty-line\n'
-  sleep 1;    printf '\003'
-  sleep 3;    printf 'root\n'
-  sleep 1.5;  printf 'swordfish\n'
-  sleep 3;    printf '/bin/top -b -n 2 -d 1\n'
-  sleep 6;    printf 'echo TOP-SHELL-ALIVE\n'
-  sleep 2;    printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
+  local regex="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -Ec -- "$regex" || true)"
+    (( got >= want )) && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (top driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 45
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+printf '/bin/top -b -n 2 -d 1\n' >&3
+await_regex_count '^top - up ' 2 40 || drive_fail "top did not render two frames"
+printf 'echo TOP-SHELL-ALIVE\n' >&3
+await_line "TOP-SHELL-ALIVE" 20 || drive_fail "shell did not respond after top"
+printf 'exit\n' >&3
+await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+
+exec 3>&-
 stop_qemu
 QP=""
 

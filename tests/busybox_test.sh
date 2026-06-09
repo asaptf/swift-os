@@ -14,6 +14,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 
 LOG="$(mktemp -t swiftos-bb.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-bb-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-bb-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -31,7 +32,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -f "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null || true
+  rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -43,6 +45,9 @@ fi
 # Attach the packed base image (modern virtio-mmio) so the shell and /bin/*
 # come off disk.
 DISK="$ROOT/build/base.img"
+if [[ ! -f "$DISK" ]]; then
+  ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
+fi
 blk_args=()
 if [[ -f "$DISK" ]]; then
   blk_args=(-global virtio-mmio.force-legacy=false \
@@ -50,38 +55,85 @@ if [[ -f "$DISK" ]]; then
             -device virtio-blk-device,drive=swosbase)
 fi
 
-(
-  sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
-  sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, console-login starts
-  sleep 2;  printf 'root\n'            # M12c: log in at the init prompt
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'echo M8-BUSYBOX-OK\n'
-  sleep 1;  printf 'ls /\n'
-  sleep 1;  printf 'cat /etc/motd\n'
-  sleep 1;  printf 'ps\n'                # native /bin/ps (not a busybox applet)
-  sleep 1;  printf '/bin/id\n'           # native Swift /bin/id (explicit path)
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (busybox driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M7 tty:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 25
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+await "built-in shell (ash)" 30 || drive_fail "busybox ash did not start"
+printf 'echo M8-BUSYBOX-OK\n' >&3
+await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"
+printf 'ls /\n' >&3
+await "readme.txt" 20 || drive_fail "ls / did not list readme.txt"
+printf 'cat /etc/motd\n' >&3
+await_line "Welcome to swift-os." 20 || drive_fail "cat /etc/motd did not print motd"
+printf 'ps\n' >&3
+await_regex '^ *PID +PPID +STATE +CMD$' 20 || drive_fail "ps output missing"
+printf '/bin/id\n' >&3
+await "principal=1(root) session=1 caps=0x3f" 20 || drive_fail "/bin/id output missing"
+printf 'exit\n' >&3
+await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+
+exec 3>&-
 stop_qemu
 QP=""
 
 ok=1
-grep -qF "built-in shell (ash)" "$LOG" || { echo "FAIL: no busybox ash banner" >&2; ok=0; }
-grep -qF "M8-BUSYBOX-OK" "$LOG"        || { echo "FAIL: echo applet" >&2; ok=0; }
-grep -qF "readme.txt" "$LOG"           || { echo "FAIL: ls applet (dir listing)" >&2; ok=0; }
-grep -qF "Welcome to swift-os." "$LOG" | true
-grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
-grep -qE "PID +PPID +STATE +CMD" "$LOG" || { echo "FAIL: ps (PATH exec of /bin/ps)" >&2; ok=0; }
-grep -qF "principal=1(root) session=1 caps=0x3f" "$LOG" || { echo "FAIL: /bin/id (Swift) context + name" >&2; ok=0; }
+clean="$(sed 's/\r//' "$LOG")"
+grep -qF "built-in shell (ash)" <<<"$clean" || { echo "FAIL: no busybox ash banner" >&2; ok=0; }
+grep -qF "M8-BUSYBOX-OK" <<<"$clean"        || { echo "FAIL: echo applet" >&2; ok=0; }
+grep -qF "readme.txt" <<<"$clean"           || { echo "FAIL: ls applet (dir listing)" >&2; ok=0; }
+grep -qF "Welcome to swift-os." <<<"$clean" || { echo "FAIL: cat applet" >&2; ok=0; }
+grep -qE "PID +PPID +STATE +CMD" <<<"$clean" || { echo "FAIL: ps (PATH exec of /bin/ps)" >&2; ok=0; }
+grep -qF "principal=1(root) session=1 caps=0x3f" <<<"$clean" || { echo "FAIL: /bin/id (Swift) context + name" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: busybox ash ran echo/ls/cat on swift-os (M8 acceptance)"
   exit 0
 fi
 echo "--- serial (busybox region) ---" >&2
-sed 's/\r//' "$LOG" | sed -n '/launching busybox/,$p' >&2
+sed -n '/built-in shell/,$p' <<<"$clean" >&2
 exit 1

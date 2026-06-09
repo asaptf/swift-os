@@ -28,6 +28,7 @@ fi
 
 LOG="$(mktemp -t swiftos-kv.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-kv-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-kv-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -36,47 +37,125 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 7;  printf 'tty-line\n'             # M7 ttydemo
-  sleep 1;  printf '\003'                   # Ctrl-C -> login (init) prompt
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf '/bin/kv\n'
-  sleep 2;  printf '%s\n' 'SET name swift os'   # multi-word value
-  sleep 1;  printf '%s\n' 'GET name'            # -> "swift os"
-  sleep 1;  printf '%s\n' 'GET missing'         # -> "(nil)"
-  sleep 1;  printf '%s\n' 'SET zebra 1'
-  sleep 1;  printf '%s\n' 'SET apple 2'
-  sleep 1;  printf '%s\n' 'COUNT'               # -> 3
-  sleep 1;  printf '%s\n' 'DEL missing'         # -> "(nil)"
-  sleep 1;  printf '%s\n' 'DEL zebra'           # -> "deleted"
-  sleep 1;  printf '%s\n' 'COUNT'               # -> 2
-  sleep 1;  printf '%s\n' 'KEYS'                # sorted: apple, name
-  sleep 1;  printf '%s\n' ':stats'              # keys + value bytes
-  sleep 1;  printf '%s\n' ':mem'                # heap break A (after warmup)
-  for _ in $(seq 1 12); do                      # churn: set then delete a key
-    sleep 0.25; printf '%s\n' 'SET churn hello world'
-    sleep 0.25; printf '%s\n' 'DEL churn'
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
   done
-  sleep 1;  printf '%s\n' ':mem'                # heap break B (must equal A)
-  sleep 1;  printf '%s\n' ':q'
-  sleep 1;  printf 'echo BACK-IN-SHELL\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  return 1
+}
+
+await_line_count() {  # await_line_count LINE COUNT [MAXSEC]
+  local line="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -cxF -- "$line" || true)"
+    (( got >= want )) && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
+  local regex="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -Ec -- "$regex" || true)"
+    (( got >= want )) && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (kv driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os kv/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 105
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+printf '/bin/kv\n' >&3
+await "swift-os kv" 60 || drive_fail "kv did not start"
+
+printf '%s\n' 'SET name swift os' >&3
+await_line_count "OK" 1 20 || drive_fail "SET name did not acknowledge"
+printf '%s\n' 'GET name' >&3
+await_line_count "swift os" 1 20 || drive_fail "GET name returned wrong value"
+printf '%s\n' 'GET missing' >&3
+await_line_count "(nil)" 1 20 || drive_fail "GET missing did not report nil"
+printf '%s\n' 'SET zebra 1' >&3
+await_line_count "OK" 2 20 || drive_fail "SET zebra did not acknowledge"
+printf '%s\n' 'SET apple 2' >&3
+await_line_count "OK" 3 20 || drive_fail "SET apple did not acknowledge"
+printf '%s\n' 'COUNT' >&3
+await_line_count "3" 1 20 || drive_fail "COUNT after three SETs was wrong"
+printf '%s\n' 'DEL missing' >&3
+await_line_count "(nil)" 2 20 || drive_fail "DEL missing did not report nil"
+printf '%s\n' 'DEL zebra' >&3
+await_line_count "deleted" 1 20 || drive_fail "DEL zebra did not report deleted"
+printf '%s\n' 'COUNT' >&3
+await_line_count "2" 1 20 || drive_fail "COUNT after delete was wrong"
+printf '%s\n' 'KEYS' >&3
+await_line_count "apple" 1 20 || drive_fail "KEYS did not list apple"
+await_line_count "name" 1 20 || drive_fail "KEYS did not list name"
+printf '%s\n' ':stats' >&3
+await "keys: 2, value bytes:" 20 || drive_fail ":stats did not report store stats"
+printf '%s\n' ':mem' >&3
+await_regex_count 'heap break: [0-9]+' 1 20 || drive_fail "first :mem did not report heap break"
+ok_want=3
+deleted_want=1
+for _ in $(seq 1 12); do
+  sleep 0.25
+  printf '%s\n' 'SET churn hello world' >&3
+  ok_want=$((ok_want + 1))
+  await_line_count "OK" "$ok_want" 60 || drive_fail "churn SET did not acknowledge"
+  sleep 0.25
+  printf '%s\n' 'DEL churn' >&3
+  deleted_want=$((deleted_want + 1))
+  await_line_count "deleted" "$deleted_want" 60 || drive_fail "churn DEL did not delete"
+done
+printf '%s\n' ':mem' >&3
+await_regex_count 'heap break: [0-9]+' 2 20 || drive_fail "second :mem did not report heap break"
+printf '%s\n' ':q' >&3
+await_line_count "bye" 1 20 || drive_fail "kv did not exit"
+printf 'echo BACK-IN-SHELL\n' >&3
+await_line_count "BACK-IN-SHELL" 1 20 || drive_fail "shell did not run after kv"
+printf 'exit\n' >&3
+await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+
+exec 3>&-
 stop_qemu
 QP=""
 

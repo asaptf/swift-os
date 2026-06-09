@@ -65,6 +65,13 @@ await_regex() {  # await_regex REGEX [MAXSEC]
   return 1
 }
 
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (ls -l driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  exit 1
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -75,18 +82,31 @@ await_regex() {  # await_regex REGEX [MAXSEC]
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
-await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
-await_count "swift-os login:" 1 60 && printf 'root\n' >&3
-await_count "Password:" 1 60 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 60 && printf 'ls -l /\n' >&3
-await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 && printf 'ls -l /bin\n' >&3
-await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 && printf 'ls -l /etc\n' >&3
-await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 && printf 'exit\n' >&3
-await_count "swift-os login:" 2 60 && printf 'user\n' >&3
-await_count "Password:" 2 60 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, user" 60 && printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
-await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 && printf 'exit\n' >&3
+await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await_count "swift-os login:" 1 60 || drive_fail "timed out waiting for root login prompt"
+printf 'root\n' >&3
+await_count "Password:" 1 60 || drive_fail "timed out waiting for root password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+printf 'ls -l /\n' >&3
+await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 || drive_fail "root ls -l / did not list /bin"
+printf 'ls -l /bin\n' >&3
+await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 || drive_fail "root ls -l /bin did not list busybox"
+printf 'ls -l /etc\n' >&3
+await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 || drive_fail "root ls -l /etc did not list motd"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || drive_fail "root session did not end"
+await_count "swift-os login:" 2 60 || drive_fail "timed out waiting for user login prompt"
+printf 'user\n' >&3
+await_count "Password:" 2 60 || drive_fail "timed out waiting for user password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, user" 60 || drive_fail "user login did not complete"
+printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
+await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 || drive_fail "user ls -l /tmp did not list /tmp/d"
+printf 'exit\n' >&3
 
 exec 3>&-
 stop_qemu
