@@ -222,6 +222,14 @@ static inline uint64_t read_cpacr_el1(void) {
     return value;
 }
 
+// Multiprocessor affinity. The S0 Swift helper uses Aff0 as the QEMU virt CPU
+// index; secondary CPUs still remain parked by boot.S.
+static inline uint64_t read_mpidr_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(value));
+    return value;
+}
+
 static inline uint64_t read_daif(void) {
     uint64_t value;
     __asm__ volatile("mrs %0, daif" : "=r"(value));

@@ -707,6 +707,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     klog(.info, "timer", "tick rate (Hz)", 100)
     klog(.info, "platform", "M9 OK: hardware discovered from device tree")
+    klog(.info, "smp", "S0 OK: foundations ready", UInt64(currentCpuId()))
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
