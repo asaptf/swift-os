@@ -22,7 +22,7 @@ _start:
     // Single-core bring-up: park every CPU whose affinity != 0.
     mrs     x0, mpidr_el1
     and     x0, x0, #0xFF
-    cbnz    x0, .Lhang
+    cbnz    x0, .Lsecondary_park
 
     // Install the initial stack pointer (top-of-stack, 16-byte aligned).
     ldr     x0, =__stack_top
@@ -83,3 +83,27 @@ _start:
 .Lhang:
     wfe
     b       .Lhang
+
+.Lsecondary_park:
+    // S0e: secondary CPUs stay below Swift/allocator/scheduler code. The
+    // mailbox lives in .data (not .bss), so it is safe to poll before CPU0
+    // clears BSS. S1 will replace the disabled branch with a real secondary
+    // entry once stacks and shared-state policy exist.
+    cmp     x0, #8
+    b.hs    .Lhang
+    ldr     x1, =smp_secondary_mailboxes
+    lsl     x5, x0, #6
+    add     x1, x1, x5
+    add     x2, x1, #8
+    sevl
+.Lsecondary_wait:
+    ldar    x3, [x1]
+    cbnz    x3, .Lsecondary_release_seen
+    wfe
+    b       .Lsecondary_wait
+.Lsecondary_release_seen:
+    ldr     x4, [x2]
+    cbz     x4, .Lsecondary_wait
+.Lsecondary_release_disabled:
+    wfe
+    b       .Lsecondary_release_disabled

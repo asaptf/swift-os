@@ -159,6 +159,63 @@ static inline bool smp_atomic_compare_exchange_u64(uint64_t *ptr,
                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
+// S0e: secondary CPUs poll per-CPU mailbox slots in boot.S while staying
+// parked. The table lives in .data so secondary cores can safely read it before
+// CPU0 clears .bss. S0 intentionally exposes read-only probes to Swift; S1 will
+// add a controlled release path after per-CPU stacks and shared-state locks
+// exist.
+enum {
+    SMP_SECONDARY_MAILBOX_COUNT = 8,
+    SMP_SECONDARY_MAILBOX_STRIDE = 64
+};
+
+typedef struct {
+    uint64_t release_flag;
+    uint64_t entry;
+    uint64_t stack_top;
+    uint64_t argument;
+    uint64_t reserved0;
+    uint64_t reserved1;
+    uint64_t reserved2;
+    uint64_t reserved3;
+} SMPSecondaryMailbox;
+
+extern SMPSecondaryMailbox smp_secondary_mailboxes[SMP_SECONDARY_MAILBOX_COUNT];
+
+static inline uint64_t smp_secondary_mailbox_count(void) {
+    return SMP_SECONDARY_MAILBOX_COUNT;
+}
+static inline uint64_t smp_secondary_mailbox_stride(void) {
+    return sizeof(SMPSecondaryMailbox);
+}
+static inline uintptr_t smp_secondary_mailbox_base(void) {
+    return (uintptr_t)smp_secondary_mailboxes;
+}
+static inline uint64_t smp_secondary_release_flag_load(uint32_t cpu) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return UINT64_MAX;
+    }
+    return __atomic_load_n(&smp_secondary_mailboxes[cpu].release_flag, __ATOMIC_ACQUIRE);
+}
+static inline uint64_t smp_secondary_release_entry_load(uint32_t cpu) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return UINT64_MAX;
+    }
+    return __atomic_load_n(&smp_secondary_mailboxes[cpu].entry, __ATOMIC_ACQUIRE);
+}
+static inline uint64_t smp_secondary_release_stack_load(uint32_t cpu) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return UINT64_MAX;
+    }
+    return __atomic_load_n(&smp_secondary_mailboxes[cpu].stack_top, __ATOMIC_ACQUIRE);
+}
+static inline uint64_t smp_secondary_release_argument_load(uint32_t cpu) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return UINT64_MAX;
+    }
+    return __atomic_load_n(&smp_secondary_mailboxes[cpu].argument, __ATOMIC_ACQUIRE);
+}
+
 // --- C2: low-level barriers/TLB/TTBR0 bridges for the Swift VM port ---------
 // kernel/mm/vm.swift (the per-process address-space half) drives stage-1 page
 // tables but cannot emit `isb`/`tlbi`/`msr ttbr0_el1` directly in Embedded

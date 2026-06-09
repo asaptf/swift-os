@@ -18,6 +18,7 @@ EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] smp: S0 OK: foundations ready
 [I] smp: S0b OK: atomics and barriers ready
 [I] smp: S0d OK: per-CPU state ready
+[I] smp: S0e OK: secondary park mailbox ready
 [I] boot: swift-os userland: Swift ps}"
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then

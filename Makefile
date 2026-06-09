@@ -102,6 +102,7 @@ SWIFT_SRCS := \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
+	kernel/smp/secondary.swift \
 	kernel/log/log.swift \
 	kernel/timer/generic_timer.swift \
 	kernel/sched/scheduler.swift \
@@ -201,6 +202,7 @@ HEAP_OBJ   := $(BUILD)/heap.o
 STRING_OBJ := $(BUILD)/string.o
 VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
+SMP_SECONDARY_OBJ := $(BUILD)/smp_secondary.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
@@ -296,7 +298,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -330,6 +332,9 @@ $(VM_OBJ): kernel/mm/vm_early.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(EL0_OBJ): kernel/user/el0.c $(BRIDGE) Makefile | $(BUILD)/.dir
+	$(CLANG) $(C_FLAGS) $< -o $@
+
+$(SMP_SECONDARY_OBJ): kernel/smp/secondary.c $(BRIDGE) Makefile | $(BUILD)/.dir
 	$(CLANG) $(C_FLAGS) $< -o $@
 
 $(USER_ENTRY_OBJ): $(ARCH_DIR)/user_entry.S Makefile | $(BUILD)/.dir
@@ -625,7 +630,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(EL0_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(EL0_OBJ) $(SMP_SECONDARY_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -711,10 +716,13 @@ test: build $(QEMU_DTB) disk base-image $(SWPKG)
 smp-state-audit:
 	./tests/smp_state_audit_test.sh
 
+smp-mailbox-layout: build
+	./tests/smp_mailbox_layout_test.sh
+
 smp-test: build $(QEMU_DTB) base-image
 	./tests/smp_boot_test.sh
 
-s0-test: smp-state-audit smp-test
+s0-test: smp-state-audit smp-mailbox-layout smp-test
 s0c-test: smp-state-audit
 
 # ---- UEFI loader build + boot ----------------------------------------------
