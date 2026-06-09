@@ -33,6 +33,15 @@ trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
+await_regex() {  # await_regex REGEX [MAXSEC]
+  local regex="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -Eq -- "$regex" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 (
   sleep 8;  printf 'tty-line\n'
   sleep 1;  printf '\003'
@@ -49,7 +58,8 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 28
+await_regex '^20[0-9][0-9]-[01][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9] UTC$' 60 || true
+sleep 5
 stop_qemu
 QP=""
 

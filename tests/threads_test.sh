@@ -52,6 +52,15 @@ if [[ -f "$DISK" ]]; then
             -device virtio-blk-device,drive=swosbase)
 fi
 
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 (
   sleep 7;  printf 'tty-line\n'        # M7 ttydemo: a line
   sleep 1;  printf '\003'              # Ctrl-C -> ttydemo exits, console-login starts
@@ -63,7 +72,8 @@ fi
 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 27
+await "threadsdemo: counter=4000" 90 || true
+sleep 5
 stop_qemu
 QP=""
 

@@ -661,6 +661,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG)
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
 	$(BUILD)/handle_test
+	./tests/smp_mailbox_layout_test.sh
 	./tests/smp_release_guard_test.sh
 	./tests/smp_state_audit_test.sh
 	./tests/smp_s1_review_packet_test.sh

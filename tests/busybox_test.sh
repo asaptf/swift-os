@@ -94,15 +94,15 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
 printf 'tty-line\n' >&3
-await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
-await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 printf 'root\n' >&3
-await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 await "built-in shell (ash)" 30 || drive_fail "busybox ash did not start"
 printf 'echo M8-BUSYBOX-OK\n' >&3
 await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"

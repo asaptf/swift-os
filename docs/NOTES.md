@@ -654,6 +654,24 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No S1 decision is made here, no CPU is released, no guard is
   relaxed, and no kernel/C4/VFS/process behavior changes.
 
+### S0l — full-gate mailbox ABI guard (DONE, 2026-06-09)
+
+- **Full gate coverage.** The normal `make test` suite now runs
+  `tests/smp_mailbox_layout_test.sh` before the no-release guard, so the parked
+  secondary mailbox ABI (`.data`, 512 bytes, 64-byte alignment) is checked in
+  the same overnight/product gate that would catch accidental release-path code.
+- **Verifier hardening.** The mailbox layout script now fails clearly when the
+  expected `llvm-objdump` tool is unavailable, matching the S0i release guard's
+  fail-fast behavior.
+- **Serial test stability.** While validating the full gate, older scripted
+  serial drivers that already had success markers stopped using blind fixed
+  sleeps before killing QEMU and now wait for those markers with bounded
+  timeouts. The COW driver now uses FIFO + prompt waits for login/input, and the
+  heavier Swift REPL tests have bounded per-step waits that tolerate slow
+  full-suite host scheduling without weakening their assertions.
+- **Non-goals.** No mailbox layout change, no release writes, no CPU_ON path,
+  and no kernel/C4/VFS/process behavior changes.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

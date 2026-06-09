@@ -83,7 +83,13 @@ await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (kv driver) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os kv/,$p' >&2 || true
+  local clean
+  clean="$(sed 's/\r//' "$LOG" 2>/dev/null || true)"
+  if grep -qF "swift-os login:" <<<"$clean"; then
+    sed -n '/swift-os login:/,$p' <<<"$clean" >&2
+  else
+    tail -80 <<<"$clean" >&2
+  fi
   exit 1
 }
 
@@ -97,63 +103,65 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
 printf 'tty-line\n' >&3
-await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
-await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 printf 'root\n' >&3
-await "Password:" 60 || drive_fail "timed out waiting for password prompt"
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 printf '/bin/kv\n' >&3
 await "swift-os kv" 60 || drive_fail "kv did not start"
 
+STEP_WAIT=180
+
 printf '%s\n' 'SET name swift os' >&3
-await_line_count "OK" 1 20 || drive_fail "SET name did not acknowledge"
+await_line_count "OK" 1 "$STEP_WAIT" || drive_fail "SET name did not acknowledge"
 printf '%s\n' 'GET name' >&3
-await_line_count "swift os" 1 20 || drive_fail "GET name returned wrong value"
+await_line_count "swift os" 1 "$STEP_WAIT" || drive_fail "GET name returned wrong value"
 printf '%s\n' 'GET missing' >&3
-await_line_count "(nil)" 1 20 || drive_fail "GET missing did not report nil"
+await_line_count "(nil)" 1 "$STEP_WAIT" || drive_fail "GET missing did not report nil"
 printf '%s\n' 'SET zebra 1' >&3
-await_line_count "OK" 2 20 || drive_fail "SET zebra did not acknowledge"
+await_line_count "OK" 2 "$STEP_WAIT" || drive_fail "SET zebra did not acknowledge"
 printf '%s\n' 'SET apple 2' >&3
-await_line_count "OK" 3 20 || drive_fail "SET apple did not acknowledge"
+await_line_count "OK" 3 "$STEP_WAIT" || drive_fail "SET apple did not acknowledge"
 printf '%s\n' 'COUNT' >&3
-await_line_count "3" 1 20 || drive_fail "COUNT after three SETs was wrong"
+await_line_count "3" 1 "$STEP_WAIT" || drive_fail "COUNT after three SETs was wrong"
 printf '%s\n' 'DEL missing' >&3
-await_line_count "(nil)" 2 20 || drive_fail "DEL missing did not report nil"
+await_line_count "(nil)" 2 "$STEP_WAIT" || drive_fail "DEL missing did not report nil"
 printf '%s\n' 'DEL zebra' >&3
-await_line_count "deleted" 1 20 || drive_fail "DEL zebra did not report deleted"
+await_line_count "deleted" 1 "$STEP_WAIT" || drive_fail "DEL zebra did not report deleted"
 printf '%s\n' 'COUNT' >&3
-await_line_count "2" 1 20 || drive_fail "COUNT after delete was wrong"
+await_line_count "2" 1 "$STEP_WAIT" || drive_fail "COUNT after delete was wrong"
 printf '%s\n' 'KEYS' >&3
-await_line_count "apple" 1 20 || drive_fail "KEYS did not list apple"
-await_line_count "name" 1 20 || drive_fail "KEYS did not list name"
+await_line_count "apple" 1 "$STEP_WAIT" || drive_fail "KEYS did not list apple"
+await_line_count "name" 1 "$STEP_WAIT" || drive_fail "KEYS did not list name"
 printf '%s\n' ':stats' >&3
-await "keys: 2, value bytes:" 20 || drive_fail ":stats did not report store stats"
+await "keys: 2, value bytes:" "$STEP_WAIT" || drive_fail ":stats did not report store stats"
 printf '%s\n' ':mem' >&3
-await_regex_count 'heap break: [0-9]+' 1 20 || drive_fail "first :mem did not report heap break"
+await_regex_count 'heap break: [0-9]+' 1 "$STEP_WAIT" || drive_fail "first :mem did not report heap break"
 ok_want=3
 deleted_want=1
 for _ in $(seq 1 12); do
   sleep 0.25
   printf '%s\n' 'SET churn hello world' >&3
   ok_want=$((ok_want + 1))
-  await_line_count "OK" "$ok_want" 60 || drive_fail "churn SET did not acknowledge"
+  await_line_count "OK" "$ok_want" "$STEP_WAIT" || drive_fail "churn SET did not acknowledge"
   sleep 0.25
   printf '%s\n' 'DEL churn' >&3
   deleted_want=$((deleted_want + 1))
-  await_line_count "deleted" "$deleted_want" 60 || drive_fail "churn DEL did not delete"
+  await_line_count "deleted" "$deleted_want" "$STEP_WAIT" || drive_fail "churn DEL did not delete"
 done
 printf '%s\n' ':mem' >&3
-await_regex_count 'heap break: [0-9]+' 2 20 || drive_fail "second :mem did not report heap break"
+await_regex_count 'heap break: [0-9]+' 2 "$STEP_WAIT" || drive_fail "second :mem did not report heap break"
 printf '%s\n' ':q' >&3
-await_line_count "bye" 1 20 || drive_fail "kv did not exit"
+await_line_count "bye" 1 "$STEP_WAIT" || drive_fail "kv did not exit"
 printf 'echo BACK-IN-SHELL\n' >&3
-await_line_count "BACK-IN-SHELL" 1 20 || drive_fail "shell did not run after kv"
+await_line_count "BACK-IN-SHELL" 1 "$STEP_WAIT" || drive_fail "shell did not run after kv"
 printf 'exit\n' >&3
-await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
+await "M12c: session ended" 60 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-
 stop_qemu

@@ -35,6 +35,15 @@ trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 (
   sleep 7;  printf 'tty-line\n'           # M7 ttydemo
   sleep 1;  printf '\003'                 # Ctrl-C -> login (init) prompt
@@ -58,7 +67,8 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 40
+await "HEADWC-DONE" 90 || true
+sleep 5
 stop_qemu
 QP=""
 

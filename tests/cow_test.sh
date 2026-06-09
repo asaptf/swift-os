@@ -24,6 +24,7 @@ fi
 
 LOG="$(mktemp -t swiftos-cow.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-cow-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-cow-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -41,7 +42,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -f "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null || true
+  rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -54,31 +56,52 @@ blk_args=(-global virtio-mmio.force-legacy=false \
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
           -device virtio-blk-device,drive=swosbase)
 
-(
-  sleep 7;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'COWV=before\n'
-  sleep 2;  printf '( COWV=child; echo cow-child-after:$COWV )\n'
-  sleep 2;  printf 'echo cow-parent-before:$COWV\n'
-  sleep 1;  printf 'COWV=parent\n'
-  sleep 1;  printf 'echo cow-parent-after:$COWV\n'
-  sleep 2;  printf '/bin/forkdemo\n'
-  sleep 3;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (COW driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:\|cow-parent\|cow-child\|forkdemo/,$p' >&2 || true
+  exit 1
+}
+
+send_line() { printf '%s\n' "$1" >&3; }
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-for _ in $(seq 1 450); do
-  partial="$(sed 's/\r//' "$LOG" 2>/dev/null || true)"
-  if grep -qF "cow-parent-after:parent" <<<"$partial" &&
-     grep -qF "cow-child-after:child" <<<"$partial" &&
-     grep -qF "forkdemo: parent waited child" <<<"$partial"; then
-    break
-  fi
-  sleep 0.2
-done
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+send_line "tty-line"
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+send_line "root"
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+send_line "swordfish"
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+send_line "COWV=before"
+send_line '( COWV=child; echo cow-child-after:$COWV )'
+await "cow-child-after:child" 60 || drive_fail "child shell did not print isolated value"
+send_line 'echo cow-parent-before:$COWV'
+await "cow-parent-before:before" 60 || drive_fail "parent shell did not keep pre-child value"
+send_line "COWV=parent"
+send_line 'echo cow-parent-after:$COWV'
+await "cow-parent-after:parent" 60 || drive_fail "parent shell did not print post-write value"
+send_line "/bin/forkdemo"
+await "forkdemo: parent waited child" 90 || drive_fail "forkdemo did not complete"
+send_line "exit"
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 
