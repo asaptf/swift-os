@@ -32,6 +32,8 @@ OH="$(mktemp -t swiftos-httpd-oh.XXXXXX)"
 OHH="$(mktemp -t swiftos-httpd-ohh.XXXXXX)"   # /hello.txt response headers
 OD="$(mktemp -t swiftos-httpd-od.XXXXXX)"     # /sub/ directory listing body
 PIDFILE="$(mktemp -t swiftos-httpd-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-httpd-in.XXXXXX)"
+mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -40,19 +42,28 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$O1" "$O2" "$OH" "$OHH" "$OD" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$O1" "$O2" "$OH" "$OHH" "$OD" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 8;   printf 'tty-line\n'
-  sleep 1;   printf '\003'
-  sleep 3;   printf 'root\n'
-  sleep 1.5; printf 'swordfish\n'
-  sleep 3;   printf '/bin/httpd\n'
-  sleep 22
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (httpd driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -120 >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
@@ -60,14 +71,23 @@ dtb_args=()
   -device virtio-blk-device,drive=swosbase \
   -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080" \
   -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "login prompt did not appear"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "password prompt did not appear"
+printf 'swordfish\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+printf '/bin/httpd\n' >&3
 
 listening=0
-for _ in $(seq 1 40); do
-  if grep -qF "httpd: listening on 8080" "$LOG"; then listening=1; break; fi
-  sleep 1
-done
+await "httpd: listening on 8080" 120 && listening=1
 code404=""
 if [[ "$listening" -eq 1 ]]; then
   # Two concurrent requests for the index page.
@@ -82,7 +102,7 @@ if [[ "$listening" -eq 1 ]]; then
   # A missing path → 404.
   code404="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HOST_PORT}/nope" 2>/dev/null || true)"
 fi
-sleep 2
+exec 3>&-
 stop_qemu
 QP=""
 

@@ -732,6 +732,19 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No calc behavior, Swift runtime behavior, kernel behavior,
   C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0r — HTTP server harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven httpd launch.** `tests/httpd_test.sh` now drives QEMU through
+  FIFO stdin, waits for the tty demo, login shell, and `httpd: listening on
+  8080` marker, then runs the existing curl acceptance checks without fixed
+  serial input sleeps.
+- **Assertions unchanged.** The test still verifies concurrent index requests,
+  `/hello.txt` serving plus `text/plain`, generated `/sub/` directory listings,
+  404 on missing paths, and multiple `httpd: 200` serial markers.
+- **Non-goals.** No HTTP server behavior, networking behavior, filesystem
+  behavior, kernel behavior, C4/VFS/process behavior, or S1 release behavior is
+  changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
