@@ -34,6 +34,12 @@ C3-GETDENTS-DENY-OK
 C3-FSTAT-DENY-OK
 spawndemo: child exit status 2
 spawndemo: explicit child exit status 2
+C4A-ENDPOINT-WRITE-DENY-OK err=-9
+C4A-ENDPOINT-READ-DENY-OK err=-9
+C4A-ENDPOINT-SEND-XFER-DENY-OK err=-13
+C4A-ENDPOINT-RECV-XFER-DENY-OK err=-13
+C4A-XFER-RIGHTS-OK
+spawndemo: C4A endpoint rights child exit status 2
 M8a OK: spawn parent exited, code 0
 cat /etc/motd: Welcome to swift-os.
 cwd2=/etc
@@ -61,10 +67,15 @@ forkdemo: IPC-POLL-CLOSED-OK
 forkdemo: IPC-POLL-OUT-OK
 forkdemo: IPC-POLL-IN-OK
 forkdemo: IPC-MSG-OK
+C4A-BYTES-OK
 forkdemo: IPC-XFER-OK
+C4A-XFER-READ-OK
+forkdemo: IPC-MOVE-ONLY-OK err=-9
+C4A-XFER-MOVE-OK
 forkdemo: parent waited child
 M8d OK: fork demo exited, code 0
 C2 OK: explicit handle inheritance preserved
+C4a OK: endpoint IPC moved handles safely
 execdemo: before execve
 argv[1]=exec-alpha
 argv[2]=exec-beta
@@ -116,7 +127,18 @@ C3-SCOPE-IN-FAIL
 C3-SCOPE-OPEN-OUT-LEAK
 C3-SCOPE-STAT-OUT-LEAK
 C3-SCOPE-WIDEN-LEAK
-C3-SCOPE-CREATE-OUT-LEAK}"
+C3-SCOPE-CREATE-OUT-LEAK
+C4A-ENDPOINT-RIGHTS-SETUP-FAIL
+C4A-ENDPOINT-WRITE-DENY-LEAK
+C4A-ENDPOINT-WRITE-DENY-FAIL
+C4A-ENDPOINT-READ-DENY-LEAK
+C4A-ENDPOINT-READ-DENY-FAIL
+C4A-ENDPOINT-SEND-XFER-DENY-LEAK
+C4A-ENDPOINT-SEND-XFER-DENY-FAIL
+C4A-ENDPOINT-RECV-XFER-DENY-LEAK
+C4A-ENDPOINT-RECV-XFER-DENY-FAIL
+forkdemo: IPC-MOVE-ONLY-LEAK
+forkdemo: IPC-MOVE-ONLY-FAIL}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
