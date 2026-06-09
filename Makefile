@@ -295,7 +295,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-test s0-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-test s0-test s0c-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -656,6 +656,7 @@ test: build $(QEMU_DTB) disk base-image $(SWPKG)
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
 	$(BUILD)/handle_test
+	./tests/smp_state_audit_test.sh
 	$(HOST_SWIFTC) tests/hkdf_test.swift kernel/crypto/sha256.swift -o $(BUILD)/hkdf_test
 	$(BUILD)/hkdf_test
 	$(HOST_SWIFTC) tests/x25519_test.swift kernel/crypto/x25519.swift -o $(BUILD)/x25519_test
@@ -706,10 +707,14 @@ test: build $(QEMU_DTB) disk base-image $(SWPKG)
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	./tests/fb_vi_test.sh
 
+smp-state-audit:
+	./tests/smp_state_audit_test.sh
+
 smp-test: build $(QEMU_DTB) base-image
 	./tests/smp_boot_test.sh
 
-s0-test: smp-test
+s0-test: smp-state-audit smp-test
+s0c-test: smp-state-audit
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the

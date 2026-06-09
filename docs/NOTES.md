@@ -513,6 +513,24 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No locks, no PMM/VFS conversion, no scheduler changes, no
   secondary CPU release, and no performance policy choice for a UP fast path.
 
+### S0c — executable SMP mutable-state audit (DONE, 2026-06-09)
+
+- **Audit manifest.** Added `docs/SMP_STATE_AUDIT.md`, recording the top-level
+  mutable kernel storage that must become per-CPU, protected, IRQ/boot-only, or
+  driver/service-owned before S1/S2 can safely run kernel work on secondary
+  CPUs. This is intentionally a review artifact, not a behavior change.
+- **Executable coverage check.** Added `scripts/smp-global-audit.py` and
+  `tests/smp_state_audit_test.sh`. The scanner lists top-level Swift stored
+  globals plus top-level C mutable definitions; the test fails if the audit doc
+  does not cover a scanned `path:symbol` entry. Current coverage is 160 entries,
+  including `systemTicks`, process/scheduler globals, VFS tables, virtio state,
+  network socket/TCP globals, PMM/heap state, and early MMU tables.
+- **Test integration.** `make test` now runs the audit check with the host
+  checks, and `make s0-test` runs `smp-state-audit` before the parked SMP smoke.
+- **Non-goals.** No locks, no per-CPU conversion, no C4/VFS/process behavior
+  changes, no secondary CPU release, and no resolution of the S0 uniprocessor
+  fast-path decision.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
