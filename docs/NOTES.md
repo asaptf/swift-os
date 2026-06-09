@@ -3,6 +3,35 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## nginx compile probe (2026-06-08)
+
+- Added `scripts/build-nginx.sh` as an out-of-band compile probe. It fetches official nginx source,
+  defaults to stable `NGINX_VERSION=1.30.2`, allows env override, extracts under `userland/nginx`,
+  logs to `build/nginx-build.log`, and configures a minimal static HTTP build with poll events while
+  disabling PCRE/rewrite, gzip/zlib, OpenSSL, cache, proxy/upstream-heavy modules, mail/stream, and
+  dynamic-module paths where upstream options allow it. The script builds a local compiler wrapper so
+  nginx links with `crt0_newlib.o`, `newlib_syscalls.o`, `compat_stubs.o`, newlib, libm, and libgcc.
+- The nginx-local overlay in `userland/nginx/swiftos/` keeps the scaffold out of the shared compat ABI:
+  a tiny patch preserves `aarch64` in nginx `--crossbuild=SwiftOS:0:aarch64`, and local headers describe
+  source-level shapes for `glob.h`, `sys/uio.h`, and `netinet/tcp.h` so future probes reach link/syscall
+  gaps instead of first failing on missing headers.
+- Local run result in this worktree: after `make newlib`, `NGINX_CLEAN=1 ./scripts/build-nginx.sh`
+  downloads/extracts/configures/builds nginx and emits `build/nginx.elf` (ELF64 AArch64 EXEC,
+  entry `0x80000000`, no undefined symbols in `aarch64-elf-nm -u`). The probe forces
+  `NGX_HAVE_MAP_ANON` after configure because swift-os has anonymous `SYS_MMAP`, but nginx cannot run
+  its mmap feature test while cross-building.
+- API gaps closed for the compile probe: vectored I/O (`readv`, `writev`, `pwritev`), IPv4 socket and
+  DNS wrappers, minimal IPv6 header helpers, TCP options including `TCP_NODELAY`, low-water socket
+  options, `O_NONBLOCK` on TCP accept/read via `fcntl(F_SETFL)`, UTC-only time aliases and
+  `_gettimeofday`, `getrlimit`/`setrlimit`, process/signal shape expected by nginx, anonymous
+  `mmap`/`munmap`, `chown`, `utimes`, `setitimer`, `gethostname`, `initgroups`, and nginx control-message
+  header shapes.
+- Runtime caveats: `sendmsg`/`recvmsg` fd passing still returns `ENOSYS`, `sleep`/`usleep`/`nanosleep`
+  are compatibility no-ops, `setitimer` is a no-op, write-side socket nonblocking readiness is not yet
+  modeled, and nginx has not been added to the boot image or exercised under QEMU. The expected first
+  runtime configuration should still be single-process (`daemon off; master_process off;`) until
+  master/worker channel fd passing is real.
+
 ## Environment (host) — captured 2026-06-04
 
 Host: macOS (Darwin 25.5.0), Apple Silicon (arm64, T6050).
@@ -813,7 +842,8 @@ newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
 - **Kernel.** `SYS_FCNTL` (34) → `vfsFcntl` (kernel/vfs/vfs.swift): `F_DUPFD`/`F_DUPFD_CLOEXEC`
   duplicate to the lowest free fd ≥ arg (sharing the open description, like `dup`); `F_GETFD`/`F_SETFD`
   read/write a per-fd close-on-exec flag (`FDEntry.cloexec`); `F_GETFL` returns the stored open flags;
-  `F_SETFL` is a no-op; anything else is `EINVAL`. A plain `dup`/`dup2` clears cloexec; fork copies it.
+  `F_SETFL` updates mutable status flags; anything else is `EINVAL`. A plain `dup`/`dup2` clears cloexec;
+  fork copies it.
 - **close-on-exec honored.** `vfsCloseCloexec(slot:)` drops cloexec fds, called from `processExec`
   (kernel/user/process.swift) — POSIX exec semantics, so ash's relocated/redirect-saved fds (it uses
   `F_DUPFD_CLOEXEC`) don't leak into exec'd applets. `O_CLOEXEC` (newlib 0x40000 → kernel `oCloexec`
@@ -826,7 +856,14 @@ newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
   shell **survives** the redirects (the exact regression that caused the M13c revert). `tests/vi_test.sh`
   hardened to match the saved content as a clean line (`^hello-from-vi$`) rather than vi's on-screen
   echo, since the M13c `_open` fix made vi genuinely save (previously a false positive).
-- Out of scope: `dup3`, `O_NONBLOCK` toggling via `F_SETFL`, file locking (`F_GETLK`/`F_SETLK`).
+- **Follow-up (2026-06-08): nonblocking socket fd status.** `O_NONBLOCK` uses newlib's `_FNONBLOCK`
+  value (`0x4000`) because compat `fcntl` passes `F_SETFL` flags directly. `F_SETFL` currently records
+  only that mutable status bit in the shared open description; `F_GETFL` reports it with the stored flags.
+  TCP `accept`/`read` on nonblocking fds return `EAGAIN` when `socketPollReadable` says no child/data is
+  ready, and accepted TCP children inherit `O_NONBLOCK` from the listener. TCP write-side readiness is still
+  intentionally limited: there is no `socketPollWritable`/send-space helper, so VFS keeps the existing
+  `tcpSend` path instead of peeking into TCP internals.
+- Out of scope: `dup3`, file locking (`F_GETLK`/`F_SETLK`).
 
 ## Native Swift `/bin/ls` (DONE, 2026-06-05)
 
@@ -1333,10 +1370,11 @@ in `docs/ARCHITECTURE.md` ("Future network stack model"). Decisions locked at ne
   connection-readable it reads the request, sends a fixed `HTTP/1.0 200 OK` + `Hello from swift-os`
   (built via `StaticString.withUTF8Buffer` — no String/Array/unicode-table dependency), and closes
   (Connection: close). Concurrency is real: several connections are in flight across poll iterations.
-- **Kernel: no change needed.** `vfsPoll` already pumps the NIC and reports socket readiness
+- **Kernel at the time: no change needed.** `vfsPoll` already pumps the NIC and reports socket readiness
   (`socketPollReadable`: a listener is readable when a connection awaits accept, a connection when it has
   data or peer-closed), and `socketDeliverTCP` spawns a connection socket per SYN. The calls are
-  *poll-gated*, so the existing blocking `accept`/`read` return immediately — no O_NONBLOCK needed.
+  *poll-gated*, so the existing blocking `accept`/`read` returned immediately; later nginx work added
+  minimal `O_NONBLOCK` handling for direct nonblocking socket calls.
 - **Only new plumbing:** a `swiftos_poll(fds, nfds, timeout_ms)` userland bridge over the existing
   `SYS_POLL` (26); the Swift caller builds the 8-byte `pollfd` records (fd@0/events@4/revents@6) in a
   scratch buffer. Reached by absolute path (`/bin/httpd`).
