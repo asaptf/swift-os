@@ -97,6 +97,14 @@ await_regex() {  # await_regex REGEX [MAXSEC]
   return 1
 }
 
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
+}
+
 send_after() {  # send_after MARKER MAXSEC TEXT
   local marker="$1" max="$2" text="$3"
   if ! await "$marker" "$max"; then
@@ -105,7 +113,7 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
 }
 
 send_after_regex() {  # send_after_regex REGEX MAXSEC TEXT
@@ -116,7 +124,7 @@ send_after_regex() {  # send_after_regex REGEX MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -130,13 +138,13 @@ send_after_regex() {  # send_after_regex REGEX MAXSEC TEXT
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
-send_after "Welcome to swift-os, root" 60 '/bin/nslookup test.swos 10.0.2.2 5354\n'
-send_after "$EXPECT" 90 '/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\n'
-send_after_regex 'test6\.swos -> .*:' 90 'exit\n'
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
+send_after "Welcome to swift-os, root" 60 $'/bin/nslookup test.swos 10.0.2.2 5354\n'
+send_after "$EXPECT" 90 $'/bin/nslookup test6.swos 10.0.2.2 5354 AAAA\n'
+send_after_regex 'test6\.swos -> .*:' 90 $'exit\n'
 
 exec 3>&-
 stop_all

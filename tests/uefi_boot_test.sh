@@ -47,6 +47,7 @@ mkfifo "$IN"
 QP=""
 cleanup() {
     [[ -n "$QP" ]] && kill "$QP" 2>/dev/null
+    exec 3>&- 2>/dev/null || true
     rm -f "$LOG" "$IN"
 }
 trap cleanup EXIT
@@ -62,32 +63,38 @@ wait_for() {
     return 1
 }
 
+send_text() {  # send_text TEXT
+    local text="$1" i
+    for (( i = 0; i < ${#text}; i++ )); do
+        printf '%s' "${text:i:1}" >&3 || return 1
+        sleep 0.02
+    done
+}
+
 # acpi=off -> firmware publishes the FDT table the loader hands to the kernel.
 "$QEMU" -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
         -bios "$AAVMF_CODE" \
         "${drive_args[@]}" <"$IN" >"$LOG" 2>&1 &
 QP=$!
 
-exec 3>"$IN"
-if wait_for "M7 tty: type a line then Enter" 350; then
-    printf 'tty-line\n' >&3
-fi
-sleep 0.5
-printf '\003' >&3
+exec 3<>"$IN"
+wait_for "M7 tty: type a line then Enter" 350 && send_text $'tty-line\n'
+wait_for "M7 tty: running; press Ctrl-C" 120 && send_text $'\003'
 # M12c: console-login is the init program — authenticate before the shell.
 if wait_for "swift-os login:" 120; then
-    printf 'root\n' >&3
+    send_text $'root\n'
     wait_for "Password:" 60 || true
-    printf 'swordfish\n' >&3
+    send_text $'swordfish\n'
 fi
 if wait_for "built-in shell (ash)" 120; then
-    printf 'echo M10-UEFI-OK\n' >&3
-    printf 'ls /\n' >&3
-    printf 'cat /etc/motd\n' >&3
-    printf 'exit\n' >&3
+    send_text $'echo M10\'\'-UEFI-OK\n'
+    wait_for "M10-UEFI-OK" 80 || true
+    send_text $'ls /\n'
+    wait_for "readme.txt" 80 || true
+    send_text $'cat /etc/motd\n'
+    wait_for "Welcome to swift-os." 80 || true
+    send_text $'exit\n'
 fi
-wait_for "M10-UEFI-OK" 80 || true
-wait_for "Welcome to swift-os." 80 || true
 exec 3>&-
 
 kill "$QP" 2>/dev/null

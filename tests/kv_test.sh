@@ -80,6 +80,14 @@ await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
   return 1
 }
 
+send_text() {  # send_text TEXT
+  local text="$1" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3 || return 1
+    sleep 0.02
+  done
+}
+
 send_after() {  # send_after MARKER MAXSEC TEXT
   local marker="$1" max="$2" text="$3"
   if ! await "$marker" "$max"; then
@@ -88,11 +96,11 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -80 >&2
     exit 1
   fi
-  printf '%b' "$text" >&3
+  send_text "$text"
 }
 
 send_line() {
-  printf '%s\n' "$1" >&3
+  send_text "$1"$'\n'
 }
 
 abort() {
@@ -112,11 +120,11 @@ abort() {
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
-send_after "M7 tty: running; press Ctrl-C" 40 '\003'
-send_after "swift-os login:" 60 'root\n'
-send_after "Password:" 40 'swordfish\n'
-send_after "Welcome to swift-os, root" 60 '/bin/kv\n'
+send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
+send_after "swift-os login:" 60 $'root\n'
+send_after "Password:" 40 $'swordfish\n'
+send_after "Welcome to swift-os, root" 60 $'/bin/kv\n'
 send_after "swift-os kv" 60 ''
 
 send_line 'SET name swift os'             # multi-word value
@@ -154,20 +162,10 @@ send_line ':mem'                          # heap break B (must equal A)
 await_regex_count 'heap break: [0-9]+' 2 30 || abort "second :mem result did not arrive"
 send_line ':q'
 await_line 'bye' 30 || abort "kv did not quit cleanly"
-printf 'echo BACK-IN-SHELL\n' >&3
-printf 'exit\n' >&3
-
-# Wait for the shell marker that proves kv exited cleanly, then stop QEMU for
-# log inspection.
-KV_TIMEOUT="${KV_TIMEOUT:-300}"
-returned=0
-for _ in $(seq 1 "$KV_TIMEOUT"); do
-  if grep -qF "BACK-IN-SHELL" "$LOG"; then returned=1; break; fi
-  sleep 1
-done
-if [[ "$returned" -eq 1 ]]; then
-  sleep 1
-fi
+send_line "echo BACK''-IN-SHELL"
+await_line 'BACK-IN-SHELL' 30 || abort "shell did not run after kv"
+send_line 'exit'
+await 'M12c: session ended' 30 || abort "shell did not exit cleanly"
 stop_qemu
 QP=""
 
