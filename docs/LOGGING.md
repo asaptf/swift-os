@@ -21,8 +21,9 @@ The current tree has the first logging foundation:
 - `kpanic` records a panic entry and dumps the recent ring tail before halting.
 - Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
 - Per-source runtime filtering is present via `klogSetSourceMinLevel` / `klogClearSourceMinLevels`; an exact source override wins over the global minimum, while `.panic` is still never filtered.
+- Live `klog` records now render through a tiny current-sink dispatch; the default sink is UART, and capability hook helpers reserve `capLogExport` for future ring export / sink install paths.
 - Early adoption has moved or mirrored a small set of core boot events onto `klog`: platform discovery (mirrored after timer init), scheduler online/context-switch markers, disk/base mount success, reclaim success, the Swift `ps` launch marker, and a process syscall event stored ring-only.
-- `tests/boot_test.sh` asserts the L0 line, the L2/L4 filtering announcements, representative structured details, a userland context suffix, the ring dump header, and a small LOG-EXPORT serialization sample; it also forbids the intentionally filtered per-source demo line.
+- `tests/boot_test.sh` asserts the L0 line, the L2/L4 filtering announcements, the sink/capability-hook markers, representative structured details, a userland context suffix, the ring dump header, and a small LOG-EXPORT serialization sample; it also forbids the intentionally filtered per-source demo line.
 
 Most legacy milestone/probe output is still emitted by direct UART calls:
 
@@ -169,12 +170,13 @@ All L work follows the project rule: **one (sub)milestone at a time**. After eac
 - A boot-time `log_export` ring-only marker plus `LOG-EXPORT-BEGIN` / `LOG-EXPORT-END` serial output prove the path is consumable and captures context-rich entries.
 - This is still an internal formatter, not a user-visible `/dev/klog` or remote protocol.
 
-### L4d — Kernel Log Sink Indirection + Capability Hook
+### L4d — Kernel Log Sink Indirection + Capability Hook (DONE, 2026-06-09)
 
-- The UART is no longer hard-coded inside `klog`. A `LogSink` protocol (or a tiny vtable because we avoid existentials on hot paths) with a current global sink.
-- Default sink = UART renderer.
-- Hook points for a future capability check when a userland service tries to install itself as the primary sink or to export the ring.
-- This is the seam that lets us move logging toward the "restartable userland driver/service" model in the architecture docs.
+- Live `klog` output now routes through a tiny current-sink dispatch rather than hard-coding the UART renderer inside `klog`.
+- The default and only current sink is UART; no protocol existential, class, heap allocation, userland service, or IPC path is introduced in this slice.
+- `capLogExport` is reserved as a future authority bit, but is not granted to the boot/root context by default.
+- `klogCanInstallSink(capabilities:)` and `klogCanExportRing(capabilities:)` are the hook points a future syscall/service path will use before installing a userland sink or exporting the ring.
+- Boot acceptance proves the default sink path and the capability hook shape without changing the live UART line format.
 
 ### L5+ (after C-arc + basic net service model) — Remote export path
 

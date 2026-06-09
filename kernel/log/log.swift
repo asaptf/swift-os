@@ -22,6 +22,8 @@
 // the global min level. Overrides match exact StaticString source tags.
 // L4 (wire slice) adds allocation-free key=value formatting for recent ring
 // entries. This is the stable shape future log export can consume.
+// L4 (sink slice) routes live records through a tiny current-sink dispatch and
+// adds capability hook helpers for future userland log export/sink install.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -85,6 +87,19 @@ private var sourceMins: [SourceMin] = .init(
 )
 private var sourceMinCount = 0
 
+// L4d: current live sink. Keep this tiny: no protocols/existentials/classes on
+// the hot klog path. Future slices can add a userland/IPC sink kind behind the
+// same switch once the service model exists.
+enum LogSinkKind: UInt8 {
+    case uart = 0
+}
+
+private struct LogSink {
+    var kind: LogSinkKind = .uart
+}
+
+private var currentLogSink = LogSink()
+
 private func currentLogContext() -> (pid: Int32, principal: UInt32) {
     (Int32(truncatingIfNeeded: processCurrentPid()), processCurrentPrincipal())
 }
@@ -128,6 +143,44 @@ private func ringStoreContext(_ tick: UInt64, _ level: LogLevel,
     let ctx = currentLogContext()
     ringStore(LogEntry(tick: tick, level: level, source: source, message: message,
                        detail: detail, pid: ctx.pid, principal: ctx.principal))
+}
+
+private func logSinkWrite(_ sink: LogSink, tick: UInt64, level: LogLevel,
+                          source: StaticString, message: StaticString) {
+    switch sink.kind {
+    case .uart:
+        uartRenderLogLine(tick: tick, level: level, source: source, message: message)
+    }
+}
+
+private func uartRenderLogLine(tick: UInt64, level: LogLevel,
+                               source: StaticString, message: StaticString) {
+    uartPutc(0x5B) // [
+    uartPutUInt(tick)
+    uartPuts("] [")
+
+    let ch = levelChar.withUTF8Buffer { buf in
+        buf[Int(level.rawValue)]
+    }
+    uartPutc(ch)
+
+    uartPuts("] ")
+    uartPuts(source)
+    uartPuts(": ")
+    uartPuts(message)
+    uartPuts("\n")
+}
+
+func klogCurrentSinkKind() -> LogSinkKind {
+    currentLogSink.kind
+}
+
+func klogCanExportRing(capabilities caps: UInt64) -> Bool {
+    (caps & capLogExport) != 0
+}
+
+func klogCanInstallSink(capabilities caps: UInt64) -> Bool {
+    (caps & capLogExport) != 0
 }
 
 /// Dump the most recent `maxCount` entries (or all available) to the UART.
@@ -377,20 +430,8 @@ func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString, _ 
 
     let tick = timerGetTicks()
 
-    uartPutc(0x5B) // [
-    uartPutUInt(tick)
-    uartPuts("] [")
-
-    let ch = levelChar.withUTF8Buffer { buf in
-        buf[Int(level.rawValue)]
-    }
-    uartPutc(ch)
-
-    uartPuts("] ")
-    uartPuts(source)
-    uartPuts(": ")
-    uartPuts(message)
-    uartPuts("\n")
+    logSinkWrite(currentLogSink, tick: tick, level: level,
+                 source: source, message: message)
 
     // L1: also record in the ring (cheap copy of StaticString).
     // L3: detail travels with the entry (0 = none).

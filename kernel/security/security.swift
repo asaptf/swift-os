@@ -27,6 +27,7 @@ let capFsRead: UInt64 = 1 << 2
 let capTmpWrite: UInt64 = 1 << 3
 let capProcessInspect: UInt64 = 1 << 4
 let capNet: UInt64 = 1 << 5         // open network sockets (net-b)
+let capLogExport: UInt64 = 1 << 6   // future log ring export / sink install authority
 
 private let bootPrincipal: UInt32 = 1
 private let bootSession: UInt32 = 1
@@ -41,4 +42,3 @@ func securityBootContext() -> ProcessSecurityContext {
                            caps: capConsole | capSpawn | capFsRead | capTmpWrite | capProcessInspect | capNet,
                            cell: globalCell)
 }
-
