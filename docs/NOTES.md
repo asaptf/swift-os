@@ -780,6 +780,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No TCP behavior, socket behavior, networking behavior, kernel
   behavior, C4/VFS/process behavior, or S1 release behavior is changed.
 
+### S0v — Swift ls harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven native ls smoke.** `tests/swift_ls_test.sh` now writes serial
+  input immediately after awaited tty/login and command-output markers instead
+  of using short fixed guard sleeps before `/bin/ls` invocations.
+- **Assertions unchanged.** The test still verifies plain `/etc` listing,
+  long-format `/etc/motd`, `/etc/swos`, and single-file `/bin/busybox` owner,
+  group, mode, size, and timestamp formatting.
+- **Non-goals.** No `/bin/ls` behavior, VFS behavior, filesystem behavior,
+  kernel behavior, C4/VFS/process behavior, or S1 release behavior is changed.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
