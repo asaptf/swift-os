@@ -27,6 +27,7 @@ fi
 
 LOG="$(mktemp -t swiftos-calc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-calc-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-calc-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -35,45 +36,130 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line_count() {  # await_line_count LINE COUNT [MAXSEC]
+  local line="$1" want="$2" max="${3:-30}" n=0 seen=0
+  while (( n < max * 10 )); do
+    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -cxF -- "$line" || true)"
+    [[ "$seen" -ge "$want" ]] && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
+  local regex="$1" want="$2" max="${3:-30}" n=0 seen=0
+  while (( n < max * 10 )); do
+    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -Ec -- "$regex" || true)"
+    [[ "$seen" -ge "$want" ]] && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+send_after() {  # send_after MARKER MAXSEC TEXT
+  local marker="$1" max="$2" text="$3"
+  if ! await "$marker" "$max"; then
+    echo "FAIL: timed out waiting for marker: $marker" >&2
+    echo "--- serial tail ---" >&2
+    sed 's/\r//' "$LOG" | tail -80 >&2
+    exit 1
+  fi
+  printf '%b' "$text" >&3
+}
+
+send_line() {
+  printf '%s\n' "$1" >&3
+}
+
+abort() {
+  echo "FAIL: $1" >&2
+  echo "--- serial tail ---" >&2
+  sed 's/\r//' "$LOG" | tail -80 >&2
+  exit 1
+}
+
 # `printf '%s\n'` for every calc line so shell metacharacters (notably `%`) pass
 # through verbatim.
-(
-  sleep 7;  printf 'tty-line\n'           # M7 ttydemo
-  sleep 1;  printf '\003'                 # Ctrl-C -> login (init) prompt
-  sleep 2;  printf 'root\n'
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf '/bin/calc\n'
-  sleep 2;  printf '%s\n' '2+3*4'         # precedence -> 14
-  sleep 1;  printf '%s\n' '(2+3)*4'       # parens -> 20
-  sleep 1;  printf '%s\n' 'x = 10'        # assignment -> 10
-  sleep 1;  printf '%s\n' 'x*x'           # variable lookup -> 100
-  sleep 1;  printf '%s\n' '17 % 5'        # modulo -> 2
-  sleep 1;  printf '%s\n' '-(3+4)*2'      # unary minus + precedence -> -14
-  sleep 1;  printf '%s\n' '10 / 0'        # division by zero -> error
-  sleep 1;  printf '%s\n' ':sum'          # generic fold over history
-  sleep 1;  printf '%s\n' ':mem'          # heap break A (after warmup)
-  for _ in $(seq 1 24); do                # churn: build + drop an AST per line
-    sleep 0.25; printf '%s\n' '(1+2)*(3+4)-x'
-  done
-  sleep 1;  printf '%s\n' ':mem'          # heap break B (must equal A)
-  sleep 1;  printf '%s\n' ':q'
-  sleep 1;  printf 'echo BACK-IN-SHELL\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 75
+exec 3<>"$INFIFO"
+
+send_after "M7 tty: type a line then Enter" 60 'tty-line\n'
+send_after "M7 tty: running; press Ctrl-C" 40 '\003'
+send_after "swift-os login:" 60 'root\n'
+send_after "Password:" 40 'swordfish\n'
+send_after "Welcome to swift-os, root" 60 '/bin/calc\n'
+send_after "swift-os calc" 60 ''
+
+send_line '2+3*4'                 # precedence -> 14
+await_line '= 14' 30 || abort "precedence result did not arrive"
+send_line '(2+3)*4'               # parens -> 20
+await_line '= 20' 30 || abort "parentheses result did not arrive"
+send_line 'x = 10'                # assignment -> 10
+await_line '= 10' 30 || abort "assignment result did not arrive"
+send_line 'x*x'                   # variable lookup -> 100
+await_line '= 100' 30 || abort "variable lookup result did not arrive"
+send_line '17 % 5'                # modulo -> 2
+await_line '= 2' 30 || abort "modulo result did not arrive"
+send_line '-(3+4)*2'              # unary minus + precedence -> -14
+await_line '= -14' 30 || abort "unary minus result did not arrive"
+send_line '10 / 0'                # division by zero -> error
+await 'error: division by zero' 30 || abort "division-by-zero result did not arrive"
+send_line ':sum'                  # generic fold over history
+await 'sum of 6 results:' 30 || abort ":sum result did not arrive"
+send_line ':mem'                  # heap break A (after warmup)
+await_regex_count 'heap break: [0-9]+' 1 30 || abort "first :mem result did not arrive"
+for i in $(seq 1 24); do          # churn: build + drop an AST per line
+  send_line '(1+2)*(3+4)-x'
+  await_line_count '= 11' "$i" 30 || abort "churn result $i did not arrive"
+done
+send_line ':mem'                  # heap break B (must equal A)
+await_regex_count 'heap break: [0-9]+' 2 30 || abort "second :mem result did not arrive"
+send_line ':q'
+await_line 'bye' 30 || abort "calc did not quit cleanly"
+printf 'echo BACK-IN-SHELL\n' >&3
+printf 'exit\n' >&3
+
+# Wait for the shell marker that proves calc exited cleanly, then stop QEMU for
+# log inspection.
+CALC_TIMEOUT="${CALC_TIMEOUT:-300}"
+returned=0
+for _ in $(seq 1 "$CALC_TIMEOUT"); do
+  if grep -qF "BACK-IN-SHELL" "$LOG"; then returned=1; break; fi
+  sleep 1
+done
+if [[ "$returned" -eq 1 ]]; then
+  sleep 1
+fi
 stop_qemu
 QP=""
 
