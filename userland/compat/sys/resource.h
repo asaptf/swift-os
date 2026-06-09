@@ -18,6 +18,9 @@ struct rlimit { rlim_t rlim_cur, rlim_max; };
 struct rusage { long ru_utime[2]; long ru_stime[2]; long ru_maxrss; long ru_pad[14]; };
 #define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)
+#define PRIO_PROCESS 0
+#define PRIO_PGRP    1
+#define PRIO_USER    2
 int getrlimit(int resource, struct rlimit *rlim);
 int setrlimit(int resource, const struct rlimit *rlim);
 int getrusage(int who, struct rusage *usage);
