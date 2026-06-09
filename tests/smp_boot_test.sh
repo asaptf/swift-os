@@ -73,6 +73,11 @@ QEMU_PID=""
 stop_qemu() {
   if [[ -n "$QEMU_PID" ]]; then
     kill "$QEMU_PID" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$QEMU_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -0 "$QEMU_PID" 2>/dev/null && kill -9 "$QEMU_PID" 2>/dev/null || true
     wait "$QEMU_PID" 2>/dev/null || true
     QEMU_PID=""
   fi
