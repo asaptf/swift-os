@@ -16,6 +16,15 @@ func timerInit(ticksPerSecond: UInt64) {
         timerIntervalTicks = 1
     }
 
+    timerInitCurrentCpu()
+}
+
+func timerInitCurrentCpu() {
+    if timerIntervalTicks == 0 {
+        let frequency = read_cntfrq_el0()
+        timerIntervalTicks = frequency / 100
+        if timerIntervalTicks == 0 { timerIntervalTicks = 1 }
+    }
     gicEnableInterrupt(physicalTimerIrq)
     timerScheduleNext()
 }

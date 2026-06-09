@@ -22,11 +22,16 @@ let gicSpuriousInterrupt: UInt32 = 1023
 
 func gicInit() {
     mmio_write32(gicdBase + gicdCtlr, 0)
-    mmio_write32(giccBase + giccCtlr, 0)
-    mmio_write32(giccBase + giccPmr, 0xFF)
+    gicInitCpuInterfaceForCurrentCpu()
 
     // Enable both groups. On the non-secure GICv2 view, bit 0 enables Group 1.
     mmio_write32(gicdBase + gicdCtlr, 0x3)
+    gicInitCpuInterfaceForCurrentCpu()
+}
+
+func gicInitCpuInterfaceForCurrentCpu() {
+    mmio_write32(giccBase + giccCtlr, 0)
+    mmio_write32(giccBase + giccPmr, 0xFF)
     mmio_write32(giccBase + giccCtlr, 0x3)
 }
 

@@ -568,7 +568,10 @@ func irqHandler() {
     let iar = gicAcknowledge()
     let interruptId = iar & 0x3FF
 
-    if interruptId == physicalTimerIrq {
+    if interruptId == physicalTimerIrq && currentCpuId() != 0 {
+        smpRecordTimerTickForCurrentCpu()
+        timerScheduleNext()
+    } else if interruptId == physicalTimerIrq {
         timerHandleTick()
     } else if interruptId == uartIrqId {
         uartHandleRx()
@@ -584,7 +587,7 @@ func irqHandler() {
 
     // Everything below runs after the EOI so a context switch / process
     // termination never leaves an interrupt active at the GIC.
-    if interruptId == physicalTimerIrq {
+    if interruptId == physicalTimerIrq && currentCpuId() == 0 {
         virtioKbdDrain() // poll the graphical-window keyboard into the tty
         fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
@@ -734,6 +737,10 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S0g OK: PSCI discovery ready", UInt64(platform.cpuPsciEnableMask))
+    if !smpBringupSecondaries() {
+        uartPuts("panic: S1 secondary CPU bring-up failed\n")
+        while true {}
+    }
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves

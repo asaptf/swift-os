@@ -159,14 +159,14 @@ static inline bool smp_atomic_compare_exchange_u64(uint64_t *ptr,
                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
-// S0e: secondary CPUs poll per-CPU mailbox slots in boot.S while staying
-// parked. The table lives in .data so secondary cores can safely read it before
-// CPU0 clears .bss. S0 intentionally exposes read-only probes to Swift; S1 will
-// add a controlled release path after per-CPU stacks and shared-state locks
-// exist.
+// S1: secondary CPUs can either poll per-CPU mailbox slots in boot.S (eager
+// QEMU `-kernel` starts) or enter through PSCI CPU_ON. The mailbox table lives
+// in .data so pre-BSS parked CPUs can read it; CPU0 publishes entry/stack data
+// with a release-store once the kernel translation regime is ready.
 enum {
     SMP_SECONDARY_MAILBOX_COUNT = 8,
-    SMP_SECONDARY_MAILBOX_STRIDE = 64
+    SMP_SECONDARY_MAILBOX_STRIDE = 64,
+    SMP_SECONDARY_STACK_SIZE = 32768
 };
 
 typedef struct {
@@ -181,6 +181,8 @@ typedef struct {
 } SMPSecondaryMailbox;
 
 extern SMPSecondaryMailbox smp_secondary_mailboxes[SMP_SECONDARY_MAILBOX_COUNT];
+extern uint8_t smp_secondary_stacks[SMP_SECONDARY_MAILBOX_COUNT][SMP_SECONDARY_STACK_SIZE];
+void smp_secondary_entry(void);
 
 static inline uint64_t smp_secondary_mailbox_count(void) {
     return SMP_SECONDARY_MAILBOX_COUNT;
@@ -214,6 +216,55 @@ static inline uint64_t smp_secondary_release_argument_load(uint32_t cpu) {
         return UINT64_MAX;
     }
     return __atomic_load_n(&smp_secondary_mailboxes[cpu].argument, __ATOMIC_ACQUIRE);
+}
+static inline uintptr_t smp_secondary_stack_top(uint32_t cpu) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return 0;
+    }
+    return (uintptr_t)&smp_secondary_stacks[cpu][SMP_SECONDARY_STACK_SIZE];
+}
+static inline uintptr_t smp_secondary_entry_addr(void) {
+    return (uintptr_t)smp_secondary_entry;
+}
+static inline void smp_secondary_prepare_release(uint32_t cpu,
+                                                 uintptr_t entry,
+                                                 uintptr_t stack_top,
+                                                 uintptr_t argument) {
+    if (cpu >= SMP_SECONDARY_MAILBOX_COUNT) {
+        return;
+    }
+    __atomic_store_n(&smp_secondary_mailboxes[cpu].entry, entry, __ATOMIC_RELAXED);
+    __atomic_store_n(&smp_secondary_mailboxes[cpu].stack_top, stack_top, __ATOMIC_RELAXED);
+    __atomic_store_n(&smp_secondary_mailboxes[cpu].argument, argument, __ATOMIC_RELAXED);
+    __atomic_store_n(&smp_secondary_mailboxes[cpu].release_flag, 1, __ATOMIC_RELEASE);
+}
+
+static inline void cpu_sev(void) {
+    __asm__ volatile("sev" ::: "memory");
+}
+
+static inline int64_t psci_cpu_on_hvc(uint64_t function_id,
+                                      uint64_t target_cpu,
+                                      uint64_t entry,
+                                      uint64_t context_id) {
+    register uint64_t x0 __asm__("x0") = function_id;
+    register uint64_t x1 __asm__("x1") = target_cpu;
+    register uint64_t x2 __asm__("x2") = entry;
+    register uint64_t x3 __asm__("x3") = context_id;
+    __asm__ volatile("hvc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
+    return (int64_t)x0;
+}
+
+static inline int64_t psci_cpu_on_smc(uint64_t function_id,
+                                      uint64_t target_cpu,
+                                      uint64_t entry,
+                                      uint64_t context_id) {
+    register uint64_t x0 __asm__("x0") = function_id;
+    register uint64_t x1 __asm__("x1") = target_cpu;
+    register uint64_t x2 __asm__("x2") = entry;
+    register uint64_t x3 __asm__("x3") = context_id;
+    __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
+    return (int64_t)x0;
 }
 
 // --- C2: low-level barriers/TLB/TTBR0 bridges for the Swift VM port ---------

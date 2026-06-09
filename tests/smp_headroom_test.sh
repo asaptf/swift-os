@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smp_headroom_test.sh - S0i parked-SMP smoke around the default -smp 4 gate.
+# smp_headroom_test.sh - SMP smoke around the default -smp 4 gate.
 
 set -euo pipefail
 
@@ -13,8 +13,8 @@ else
 fi
 
 for cpu in "${cpus[@]}"; do
-  echo "smp-headroom: checking parked boot with -smp $cpu"
+  echo "smp-headroom: checking S1 boot with -smp $cpu"
   SMP_CPUS="$cpu" SMP_DTB= TIMEOUT="$TIMEOUT" "$ROOT/tests/smp_boot_test.sh"
 done
 
-echo "PASS: SMP parked headroom smoke passed for -smp ${cpus[*]}"
+echo "PASS: SMP headroom smoke passed for -smp ${cpus[*]}"

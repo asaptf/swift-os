@@ -656,6 +656,37 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   stacks, no GIC/timer initialization on secondaries, and no C4/VFS/process
   changes. This milestone preserves the review boundary before S1.
 
+### S1 — secondary CPU bring-up and per-CPU early init (DONE, 2026-06-09)
+
+- **Policy decision.** S1 records the S0 decision point as "always use the
+  general SMP path." There is no compile-time or boot-time uniprocessor fast
+  path; the simpler single path is preferred until measured cost justifies a
+  later optimization.
+- **Release protocol.** CPU0 now publishes each secondary's mailbox slot
+  (`entry`, `stack_top`, `argument`, then a release-store flag), sends `sev`,
+  and issues the DTB-selected PSCI `CPU_ON` call (`hvc` or `smc`, `cpu_on =
+  0xc4000003` on the QEMU 11.0.1 `virt` DTB). This deliberately supports both
+  powered-off PSCI secondaries and eager `-kernel` secondaries that reached the
+  mailbox park loop first.
+- **Secondary entry.** `smp_secondary_entry` derives the real CPU id from
+  `MPIDR_EL1`, loads the fixed per-CPU stack from the mailbox table, installs
+  the EL1 vector table, enables FP/SIMD and the kernel identity MMU regime, then
+  enters `smp_secondary_main`. Secondary stacks are static, 32 KiB each, and
+  covered by `docs/SMP_STATE_AUDIT.md`.
+- **Early online + timer PPI only.** A secondary CPU initializes only its
+  per-CPU state, its GIC CPU interface, and its banked physical timer PPI. Its
+  IRQ path records per-CPU timer ticks and EOIs the interrupt; scheduler,
+  process, VFS, PMM allocation, drivers, and EL0 work remain CPU0/S2+ concerns.
+- **Tests / acceptance.** `tests/smp_release_guard_test.sh` is now an S1 release
+  contract guard instead of an S0 no-release guard. `tests/smp_boot_test.sh`
+  asserts `S1 CPU online` markers for every discovered CPU plus
+  `[I] smp: S1 OK: secondary CPUs online detail=N`; `make s1-test` covers the
+  mutable-state audit, mailbox layout, release contract, `-smp 4`, and headroom
+  `-smp 1` / `-smp 8` boots.
+- **Non-goals.** No EL0 process runs on a secondary, no per-CPU run queues, no
+  PMM/VFS/driver locking policy, no IPIs, and no cross-CPU TLB work. Those are
+  S2/S3+ work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

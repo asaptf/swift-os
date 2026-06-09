@@ -3,10 +3,13 @@
 // QEMU loads us via `-kernel` and enters here at EL1 with the MMU off and
 // caches in an undefined state. We do the absolute minimum needed to run
 // Swift: park secondary cores, set up a stack, zero BSS, then hand off to
-// the Swift entry point `kernel_main`.
+// the Swift entry point `kernel_main`. S1 also exposes `smp_secondary_entry`,
+// the PSCI/mailbox target used after CPU0 has built the kernel translation
+// regime and provisioned per-CPU stacks.
 
 .section ".text.boot", "ax"
 .global _start
+.global smp_secondary_entry
 
 _start:
     // Firmware/bootloaders may hand us a pointer to the flattened device tree
@@ -85,16 +88,15 @@ _start:
     b       .Lhang
 
 .Lsecondary_park:
-    // S0e: secondary CPUs stay below Swift/allocator/scheduler code. The
-    // mailbox lives in .data (not .bss), so it is safe to poll before CPU0
-    // clears BSS. S1 will replace the disabled branch with a real secondary
-    // entry once stacks and shared-state policy exist.
+    // S1: secondary CPUs that start eagerly before CPU0 is ready stay below
+    // Swift/allocator/scheduler code. The mailbox lives in .data (not .bss),
+    // so it is safe to poll before CPU0 clears .bss. CPU0 later publishes a
+    // stack and entry point, release-stores the flag, and sends SEV.
     cmp     x0, #8
     b.hs    .Lhang
     ldr     x1, =smp_secondary_mailboxes
     lsl     x5, x0, #6
     add     x1, x1, x5
-    add     x2, x1, #8
     sevl
 .Lsecondary_wait:
     ldar    x3, [x1]
@@ -102,8 +104,57 @@ _start:
     wfe
     b       .Lsecondary_wait
 .Lsecondary_release_seen:
-    ldr     x4, [x2]
+    ldr     x4, [x1, #8]   // entry
     cbz     x4, .Lsecondary_wait
-.Lsecondary_release_disabled:
-    wfe
-    b       .Lsecondary_release_disabled
+    ldr     x6, [x1, #16]  // stack_top
+    cbz     x6, .Lsecondary_wait
+    ldr     x0, [x1, #24]  // argument/context id
+    mov     sp, x6
+    br      x4
+
+smp_secondary_entry:
+    // PSCI CPU_ON lands here with MMU/caches off. The eager-start mailbox path
+    // also branches here after loading a stack. In both cases derive the actual
+    // CPU id from MPIDR and use the mailbox stack CPU0 published for that slot.
+    mrs     x9, mpidr_el1
+    and     x9, x9, #0xFF
+    cmp     x9, #8
+    b.hs    .Lhang
+    ldr     x10, =smp_secondary_mailboxes
+    lsl     x11, x9, #6
+    add     x10, x10, x11
+    ldr     x12, [x10, #16]
+    cbz     x12, .Lhang
+    mov     sp, x12
+
+    // Match the primary CPU's EL1 execution policy before entering Swift.
+    mrs     x0, sctlr_el1
+    bic     x0, x0, #(1 << 0)   // M:  MMU off while programming registers
+    bic     x0, x0, #(1 << 1)   // A:  alignment check off
+    bic     x0, x0, #(1 << 2)   // C:  data cache off
+    bic     x0, x0, #(1 << 3)   // SA: SP alignment check off
+    bic     x0, x0, #(1 << 4)   // SA0
+    bic     x0, x0, #(1 << 12)  // I:  instruction cache off
+    msr     sctlr_el1, x0
+    isb
+    tlbi    vmalle1
+    ic      iallu
+    dsb     sy
+    isb
+
+    mrs     x0, cpacr_el1
+    mov     x1, #(3 << 20)
+    orr     x0, x0, x1
+    msr     cpacr_el1, x0
+    isb
+
+    ldr     x0, =el1_vector_table
+    msr     vbar_el1, x0
+    isb
+
+    bl      mmu_configure_translation
+    bl      mmu_enable_sctlr
+
+    mov     x0, x9
+    bl      smp_secondary_main
+    b       .Lhang

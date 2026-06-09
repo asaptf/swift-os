@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# smp_boot_test.sh - S0 parked-SMP boot smoke harness.
+# smp_boot_test.sh - SMP boot smoke harness.
 #
-# S0a: secondary CPUs are expected to stay parked for now. The test asserts the
-# CPU0 S0 marker plus a late userland marker while QEMU exposes extra CPUs.
+# S1: secondary CPUs are released into the early online/heartbeat path while
+# scheduler and EL0 work still remain on CPU0.
 
 set -euo pipefail
 
@@ -37,7 +37,20 @@ EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] smp: S0e OK: secondary park mailbox ready
 [I] smp: S0f OK: CPU topology ready detail=$SMP_CPU_COUNT
 $PSCI_EXPECT
+[I] smp: S1 OK: secondary CPUs online detail=$SMP_CPU_COUNT
 [I] boot: swift-os userland: Swift ps}"
+
+if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
+  cpu=0
+  while (( cpu < SMP_CPU_COUNT )); do
+    if (( cpu == 0 )); then
+      EXPECTS+=$'\n'"[I] smp: S1 CPU online"
+    else
+      EXPECTS+=$'\n'"[I] smp: S1 CPU online detail=$cpu"
+    fi
+    cpu=$((cpu + 1))
+  done
+fi
 
 if [[ ! -f "$KERNEL" ]]; then
   echo "FAIL: $KERNEL not found - run 'make build' first." >&2
@@ -119,7 +132,7 @@ done
 stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
-  echo "PASS: SMP boot smoke produced expected markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1 markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

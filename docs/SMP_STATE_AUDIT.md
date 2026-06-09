@@ -16,7 +16,7 @@ labels.
 | Area | Current state | S1/S2 disposition |
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
-| Secondary park mailbox | Fixed 64-byte per-CPU mailbox slots are initialized in `.data` and remain zero in S0. | Keep release disabled until S1 supplies secondary stacks, per-CPU init, and shared-state policy; publish future writes with release/acquire ordering plus `sev`. |
+| Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
 | Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
@@ -145,6 +145,7 @@ labels.
 - `kernel/signal/signal.swift:pendingMask`
 - `kernel/smp/percpu.swift:smpCpuState`
 - `kernel/smp/secondary.c:smp_secondary_mailboxes`
+- `kernel/smp/secondary.c:smp_secondary_stacks`
 - `kernel/timer/generic_timer.swift:systemTicks`
 - `kernel/timer/generic_timer.swift:timerHz`
 - `kernel/timer/generic_timer.swift:timerIntervalTicks`

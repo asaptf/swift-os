@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// percpu.swift - fixed per-CPU state scaffold for S0d.
+// percpu.swift - fixed per-CPU state scaffold for SMP bring-up.
 //
-// Secondary CPUs still park in boot.S. This file only establishes heap-free
-// per-CPU storage and primary-CPU mirrors that S1/S2 can wire into real
-// secondary bring-up, timer ticks, and scheduling.
+// The storage stays heap-free and fixed-size so secondary CPUs can mark their
+// own early state without touching allocator-backed scheduler/VFS structures.
 
 private let smpMaxCpus = 8
 
 private let smpCpuFlagInitialized: UInt64 = 1 << 0
+private let smpCpuFlagOnline: UInt64 = 1 << 1
 private let smpNoThread: Int32 = -1
 private let smpNoProcess: Int32 = -1
 private let smpUninitializedCpu: UInt32 = 0xFFFF_FFFF
@@ -70,6 +70,25 @@ func smpCpuInitialized(_ cpu: UInt32) -> Bool {
         smpAtomicLoad(flags)
     }
     return (flags & smpCpuFlagInitialized) != 0 && smpCpuState[idx].logicalId == cpu
+}
+
+func smpMarkCurrentCpuOnline() {
+    let cpu = currentCpuId()
+    if !smpValidCpu(cpu) { return }
+    let idx = Int(cpu)
+    withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
+        let current = smpAtomicLoad(flags)
+        smpAtomicStore(flags, current | smpCpuFlagInitialized | smpCpuFlagOnline)
+    }
+}
+
+func smpCpuOnline(_ cpu: UInt32) -> Bool {
+    if !smpValidCpu(cpu) { return false }
+    let idx = Int(cpu)
+    let flags = withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
+        smpAtomicLoad(flags)
+    }
+    return (flags & smpCpuFlagOnline) != 0 && smpCpuState[idx].logicalId == cpu
 }
 
 func smpSetCurrentThreadForCurrentCpu(_ thread: Int32) {

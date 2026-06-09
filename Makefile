@@ -302,7 +302,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test s0-test s0c-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-test smp-headroom-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -755,14 +755,17 @@ smp-mailbox-layout: build
 smp-release-guard: build
 	./tests/smp_release_guard_test.sh
 
+smp-release-contract: smp-release-guard
+
 smp-test: build base-image
 	./tests/smp_boot_test.sh
 
 smp-headroom-test: build base-image
 	./tests/smp_headroom_test.sh
 
-s0-test: smp-state-audit smp-mailbox-layout smp-release-guard smp-test smp-headroom-test
+s0-test: smp-state-audit smp-mailbox-layout smp-test smp-headroom-test
 s0c-test: smp-state-audit
+s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-test smp-headroom-test
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the
