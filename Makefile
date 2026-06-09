@@ -6,6 +6,7 @@
 #   make run-gfx Boot the UEFI disk in a graphical window (ramfb framebuffer).
 #   make debug   Boot under QEMU's gdbstub (paused), for `make gdb` / lldb.
 #   make test    Build, then run the boot acceptance test(s).
+#   make smp-test Build, then run the pre-S0 SMP boot smoke.
 #   make clean   Remove build artifacts.
 #
 # Tool locations are overridable on the command line, e.g.
@@ -78,6 +79,7 @@ $(shell mkdir -p $(BUILD); \
 SWIFT_SRCS := \
 	kernel/main.swift \
 	kernel/arch/aarch64/platform.swift \
+	kernel/arch/aarch64/cpu.swift \
 	kernel/arch/aarch64/fdt.swift \
 	kernel/drivers/uart.swift \
 	kernel/drivers/fb.swift \
@@ -290,7 +292,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-test s0-test clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
 
 build: $(KERNEL_ELF)
 
@@ -693,6 +695,11 @@ test: build $(QEMU_DTB) disk base-image $(SWPKG)
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	./tests/fb_vi_test.sh
+
+smp-test: build $(QEMU_DTB) base-image
+	./tests/smp_boot_test.sh
+
+s0-test: smp-test
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the

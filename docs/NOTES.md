@@ -443,6 +443,26 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 
 ## C-arc checkpoints (post-M13)
 
+### S0a — current CPU id + parked-SMP smoke harness (DONE, 2026-06-08)
+
+- **Current CPU primitive.** Added an AArch64 `read_mpidr_el1()` bridge and a
+  small `currentCpuId()` Swift helper that returns MPIDR_EL1 Aff0. For the first
+  QEMU `virt` SMP release this records the assumption that Aff0 is the CPU index;
+  secondary CPUs still park in `boot.S` and do not execute Swift/kernel work yet.
+- **Boot marker.** Early boot now logs
+  `[I] smp: S0 OK: foundations ready` on the primary CPU after the timer/logger
+  are initialized. The log call carries `currentCpuId()` as its structured detail;
+  the current formatter omits zero-valued detail on CPU0, but the call site is
+  ready to become visible once nonzero secondary CPU paths exist.
+- **SMP smoke harness.** Added `tests/smp_boot_test.sh` plus `make smp-test`
+  / `make s0-test`. The harness boots the existing kernel with
+  `-smp ${SMP_CPUS:-4}` and the normal DTB/base-image virtio arguments, then
+  asserts stable boot markers. Pre-S1, this proves extra QEMU CPUs remain safely
+  parked and do not perturb the single-CPU path.
+- **Non-goals.** No secondary CPU release, no per-CPU scheduler state, no timer
+  PPIs on secondaries, no IPIs, no atomics/locking policy, no TLB shootdown.
+  Those remain S0b/S1+ work after review.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
