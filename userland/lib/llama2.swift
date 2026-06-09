@@ -83,8 +83,24 @@ enum Mathf {
     }
     static func cosf(_ x: Float) -> Float { return sinf(x + pi * 0.5) }
 
+    /// sqrt via a bit-trick seed + Heron iterations. Pure scalar Swift so it
+    /// links freestanding (the toolchain lowers Float.squareRoot() to a libm
+    /// `sqrtf` call, which EL0 has no libc for) and gives identical results on
+    /// host and Embedded. Four iterations reach ~Float precision.
     @inline(__always)
-    static func rsqrtf(_ x: Float) -> Float { return 1.0 / x.squareRoot() }
+    static func sqrtf(_ x: Float) -> Float {
+        if x <= 0 { return 0 }
+        let seed = UInt32(0x1fbd1df5) &+ (x.bitPattern >> 1)
+        var y = Float(bitPattern: seed)
+        y = 0.5 * (y + x / y)
+        y = 0.5 * (y + x / y)
+        y = 0.5 * (y + x / y)
+        y = 0.5 * (y + x / y)
+        return y
+    }
+
+    @inline(__always)
+    static func rsqrtf(_ x: Float) -> Float { return 1.0 / sqrtf(x) }
 }
 
 // MARK: - Model configuration + weights
@@ -279,7 +295,7 @@ final class Llama2 {
                     let kt = keyCache + loff + t * kvDim + (h / kvMul) * headSize
                     var score: Float = 0
                     for d in 0..<headSize { score += qh[d] * kt[d] }
-                    score /= Float(headSize).squareRoot()
+                    score /= Mathf.sqrtf(Float(headSize))
                     attH[t] = score
                 }
                 softmax(attH, pos + 1)

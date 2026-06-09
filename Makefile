@@ -255,8 +255,10 @@ USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
+USER_LLM_ELF := $(BUILD)/llm.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
+	$(USER_LLM_ELF) \
 	$(USER_KV_ELF) \
 	$(USER_HEAD_ELF) \
 	$(USER_TOUCH_ELF) \
@@ -450,6 +452,10 @@ $(BUILD)/user_calc.o: userland/calc.swift userland/lib/swift_user.h Makefile | $
 $(BUILD)/user_kv.o: userland/kv.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/kv.swift -o $@
 
+# /bin/llm: the app wrapper + the shared engine, compiled together (WMO).
+$(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llm.swift userland/lib/llama2.swift -o $@
+
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
 
@@ -582,6 +588,10 @@ $(USER_CALC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_
 
 $(USER_KV_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_kv.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_kv.o $(SWIFT_UNICODE_DATA) -o $@
+
+# /bin/llm links the Unicode data tables (the BPE tokenizer hashes String keys).
+$(USER_LLM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llm.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llm.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_HEAD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o -o $@
@@ -737,6 +747,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $
 	./tests/sleep_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
+	./tests/llm_run_test.sh
 	./tests/top_test.sh
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
@@ -814,11 +825,13 @@ $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefi
 
 swpkg: $(SWPKG)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
+	mkdir -p $(BASE_ROOT)/models
+	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
@@ -849,6 +862,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) Makefile
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
+	cp $(USER_LLM_ELF) $(BASE_ROOT)/bin/llm
 	cp $(USER_KV_ELF) $(BASE_ROOT)/bin/kv
 	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch

@@ -2066,3 +2066,30 @@ checks the parsed config (`dim=64`, `layers=5`, `heads=8`, `kv=4`,
 `Once upon a time` matches the upstream llama2.c reference output byte-for-byte
 for 64 steps. This pins both tokenizer behavior and the floating-point forward
 path without adding a kernel ABI or an in-guest `/bin/llm` yet.
+
+### I1 — /bin/llm runs the inference engine in QEMU (DONE, 2026-06-09)
+
+**Scope.** A native Embedded Swift EL0 app (`userland/llm.swift`, `/bin/llm`)
+links the I0 engine (`userland/lib/llama2.swift`), reads the stories260K
+checkpoint + tok512 tokenizer from the read-only base image into anonymous
+`mmap`'d RAM, greedily generates text to the console, and reports tokens/sec.
+This proves the engine runs end to end as an isolated EL0 process on the OS.
+
+**Pieces.** The model files are packed into the base image under `/models`
+(`make base-image` copies them from `./models`). `/bin/llm` is registered in the
+`execResolve` allow-list (`kernel/user/exec.swift`). The app links the Unicode
+data tables (the BPE tokenizer hashes `String` keys), like `/bin/calc`. One
+freestanding-math fix was needed for EL0 (no libm): `Float.squareRoot()` lowers
+to a `sqrtf` libcall, so `Mathf.sqrtf` is now a pure-Swift Heron iteration — the
+host test still matches the reference byte-for-byte, confirming the accuracy;
+`expf/sinf/cosf` were already hand-rolled in I0.
+
+**Acceptance.** `tests/llm_run_test.sh` (in `make test`) boots, logs in as root,
+runs `/bin/llm`, and asserts the generated story matches the llama2.c reference
+text and that a tokens/sec figure is reported. Measured ~640–710 tok/s for the
+260K model under QEMU TCG emulation with scalar FP and `-Osize` (an honest
+baseline, not native throughput).
+
+**Next.** I2 replaces the read-into-RAM load with a file-backed read-only `mmap`
+of the weights (the documented "mmap-backed weights" primitive; today's `mmap`
+is anonymous-only). I3 serves generated tokens over TCP via `poll()`.
