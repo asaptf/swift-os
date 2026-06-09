@@ -592,6 +592,28 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No PSCI/spin-table choice, no secondary release, no scheduler
   conversion, no GIC/timer work on secondaries, no C4/VFS/process changes.
 
+### S0g — PSCI discovery scaffold (DONE, 2026-06-09)
+
+- **QEMU DTB evidence.** Verified locally with QEMU 11.0.1 by dumping/decompiling
+  `virt` DTBs for `-smp 1`, `-smp 4`, and `-smp 8`. QEMU advertises a `/psci`
+  node with `compatible = "arm,psci-1.0", "arm,psci-0.2", "arm,psci"`,
+  `method = "hvc"`, and `cpu_on = <0xc4000003>`. Per-CPU
+  `enable-method = "psci"` appears when there are secondary CPUs (`-smp > 1`);
+  the single-CPU DTB omits it because there is no secondary to release.
+- **Fixed discovery fields.** The pure FDT reader now records PSCI presence,
+  call method, CPU_ON function ID, and a fixed 8-bit Aff0 mask of CPU nodes that
+  advertise `enable-method = "psci"`. This is heap-free and uses the existing
+  post-MMU platform handoff so early Device-typed RAM parsing still avoids wide
+  struct copies.
+- **Boot self-test + tests.** The S0 boot path validates PSCI discovery and logs
+  `[I] smp: S0g OK: PSCI discovery ready` with the PSCI enable mask. The host
+  FDT test checks the PSCI node and CPU enable-method behavior for both 1-CPU
+  and `-smp 4` DTBs; the SMP smoke test checks the S0g marker for arbitrary
+  `SMP_CPUS` up to the current 8-slot scaffold.
+- **Non-goals.** No S1 release mechanism is chosen here, no HVC/SMC call is
+  issued, no secondary stacks are allocated, no secondary enters Swift/kernel
+  code, and no scheduler/GIC/timer/C4/VFS/process state changes are made.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

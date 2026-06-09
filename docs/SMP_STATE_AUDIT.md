@@ -15,7 +15,7 @@ labels.
 
 | Area | Current state | S1/S2 disposition |
 | --- | --- | --- |
-| Boot/platform/MMU tables | Written during early boot, then read as platform truth. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. |
+| Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary park mailbox | Fixed 64-byte per-CPU mailbox slots are initialized in `.data` and remain zero in S0. | Keep release disabled until S1 supplies secondary stacks, per-CPU init, and shared-state policy; publish future writes with release/acquire ordering plus `sev`. |
 | Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. |

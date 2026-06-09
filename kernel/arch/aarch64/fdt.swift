@@ -10,7 +10,7 @@
 // so the same code compiles for the kernel (Embedded Swift) and for a host unit
 // test (full Swift) - see tests/fdt_test.swift. It extracts only what bring-up
 // needs: the /memory reg, the PL011 UART reg + IRQ, the GICv2 dist/CPU regs,
-// virtio-mmio slots, and the S0f /cpus Aff0 topology scaffold.
+// virtio-mmio slots, and the S0f/S0g /cpus + PSCI discovery scaffold.
 //
 // FDT format reference: the Devicetree Specification, section "Flattened
 // Devicetree (DTB) Format". All header and token fields are big-endian u32.
@@ -31,8 +31,16 @@ private let platformInfoHaveUartIrq: UInt32 = 1 << 3
 private let platformInfoHaveGic: UInt32 = 1 << 4
 private let platformInfoHaveVirtio: UInt32 = 1 << 5
 private let platformInfoHaveCpuTopology: UInt32 = 1 << 6
+private let platformInfoHavePsci: UInt32 = 1 << 7
 
 private let platformMaxCpuSlots = 8
+
+let platformCpuEnableUnknown: UInt32 = 0
+let platformCpuEnablePsci: UInt32 = 1
+
+let platformPsciMethodNone: UInt32 = 0
+let platformPsciMethodHvc: UInt32 = 1
+let platformPsciMethodSmc: UInt32 = 2
 
 /// Hardware constants discovered from the device tree. Fields are only valid
 /// when their matching `have*` flag is set; the caller keeps its defaults
@@ -67,6 +75,9 @@ struct PlatformInfo {
     var cpuAff0_5: UInt32 = 0
     var cpuAff0_6: UInt32 = 0
     var cpuAff0_7: UInt32 = 0
+    var cpuPsciEnableMask: UInt32 = 0
+    var psciMethod: UInt32 = platformPsciMethodNone
+    var psciCpuOn: UInt32 = 0
     private var flags: UInt32 = 0
 
     var valid: Bool {
@@ -97,6 +108,10 @@ struct PlatformInfo {
         get { (flags & platformInfoHaveCpuTopology) != 0 }
         set { setFlag(platformInfoHaveCpuTopology, newValue) }
     }
+    var havePsci: Bool {
+        get { (flags & platformInfoHavePsci) != 0 }
+        set { setFlag(platformInfoHavePsci, newValue) }
+    }
 
     func cpuAff0(_ index: UInt32) -> UInt32 {
         switch index {
@@ -124,6 +139,19 @@ struct PlatformInfo {
         setCpuAff0(cpuCount, aff0)
         cpuCount += 1
         haveCpuTopology = true
+    }
+
+    mutating func markCpuEnableMethod(_ aff0: UInt32, _ method: UInt32) {
+        if aff0 >= UInt32(platformMaxCpuSlots) { return }
+        if method == platformCpuEnablePsci {
+            cpuPsciEnableMask |= UInt32(1) << aff0
+        }
+    }
+
+    func cpuUsesPsci(_ index: UInt32) -> Bool {
+        let aff0 = cpuAff0(index)
+        if aff0 >= UInt32(platformMaxCpuSlots) { return false }
+        return (cpuPsciEnableMask & (UInt32(1) << aff0)) != 0
     }
 
     private mutating func setFlag(_ flag: UInt32, _ enabled: Bool) {
@@ -167,6 +195,9 @@ struct PlatformInfo {
         cpuAff0_5 = 0
         cpuAff0_6 = 0
         cpuAff0_7 = 0
+        cpuPsciEnableMask = 0
+        psciMethod = platformPsciMethodNone
+        psciCpuOn = 0
         flags = 0
     }
 }
@@ -259,11 +290,16 @@ private func regPair(_ base: UnsafePointer<UInt8>, _ index: Int,
 func fdtParse(_ base: UnsafePointer<UInt8>) -> PlatformInfo {
     var info = PlatformInfo()
     fdtParseInto(base, &info)
+    if info.valid {
+        fdtParseSmpInto(base, &info)
+    }
     return info
 }
 
-/// In-place form used by the kernel to avoid large struct return/copy code in
-/// the early boot path, where strict alignment checking is already enabled.
+/// In-place hardware-map form used by the kernel to avoid large struct
+/// return/copy code in the early boot path, where strict alignment checking is
+/// already enabled and RAM is still Device-typed. SMP/PSCI discovery is a
+/// separate pass that runs after the MMU is enabled.
 func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     info.reset()
     if be32(base) != fdtMagic { return }
@@ -308,12 +344,6 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     var devRegPtr: UnsafePointer<UInt8>? = nil
     var devIrqPtr: UnsafePointer<UInt8>? = nil
     var devIrqLen = 0
-    var inCpus = false
-    var inCpu = false
-    var cpuIsCpu = false
-    var cpuHaveReg = false
-    var cpuReg: UInt = 0
-    var cpuAddrCells = 1
 
     var cursor = structOff
     var depth = 0
@@ -329,8 +359,6 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
             depth += 1
             if depth == 2 {
                 inDevice = true
-                inCpus = cstrEquals(namePtr, "cpus")
-                if inCpus { cpuAddrCells = 1 }
                 devIsMemory = nameStartsWith(namePtr, "memory")
                 devIsPl011 = false
                 devIsGic = false
@@ -338,29 +366,17 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                 devRegPtr = nil
                 devIrqPtr = nil
                 devIrqLen = 0
-            } else if depth == 3 && inCpus {
-                inCpu = true
-                cpuIsCpu = false
-                cpuHaveReg = false
-                cpuReg = 0
             }
             cursor += 4 + align4(nameLen + 1)
             continue
         }
 
         if token == fdtEndNode {
-            if depth == 3 && inCpus && inCpu {
-                if cpuHaveReg && cpuIsCpu {
-                    info.appendCpuAff0(UInt32(cpuReg & 0xFF))
-                }
-                inCpu = false
-            }
             if depth == 2 && inDevice {
                 finalizeDevice(&info, addrCells, sizeCells,
                                devIsMemory, devIsPl011, devIsGic, devIsVirtio,
                                devRegPtr, devIrqPtr, devIrqLen)
                 inDevice = false
-                inCpus = false
             }
             depth -= 1
             cursor += 4
@@ -383,10 +399,6 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                     } else if cstrEquals(propName, "#size-cells") {
                         sizeCells = Int(be32(valPtr))
                     }
-                } else if depth == 2 && inCpus {
-                    if cstrEquals(propName, "#address-cells") && len >= 4 {
-                        cpuAddrCells = Int(be32(valPtr))
-                    }
                 } else if depth == 2 && inDevice {
                     if cstrEquals(propName, "reg") {
                         devRegPtr = valPtr
@@ -399,15 +411,6 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                         devIrqPtr = valPtr
                         devIrqLen = len
                     }
-                } else if depth == 3 && inCpus && inCpu {
-                    if cstrEquals(propName, "reg") &&
-                       cpuAddrCells > 0 && cpuAddrCells <= 2 &&
-                       len >= cpuAddrCells * 4 {
-                        cpuReg = readCells(valPtr, cpuAddrCells)
-                        cpuHaveReg = true
-                    } else if cstrEquals(propName, "device_type") {
-                        cpuIsCpu = cstrEquals(valPtr, "cpu")
-                    }
                 }
             }
             cursor += 12 + align4(len)
@@ -415,6 +418,169 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
         }
 
         // FDT_NOP or anything unexpected: skip the token word.
+        cursor += 4
+    }
+}
+
+/// Post-MMU SMP discovery pass. It reuses the same pure DTB byte helpers, but
+/// is intentionally separate from the early hardware-map parser so extra local
+/// state cannot perturb the MMU-off Device-memory stack layout.
+func fdtParseSmpInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
+    info.cpuCount = 0
+    info.cpuAff0_0 = 0
+    info.cpuAff0_1 = 0
+    info.cpuAff0_2 = 0
+    info.cpuAff0_3 = 0
+    info.cpuAff0_4 = 0
+    info.cpuAff0_5 = 0
+    info.cpuAff0_6 = 0
+    info.cpuAff0_7 = 0
+    info.cpuPsciEnableMask = 0
+    info.psciMethod = platformPsciMethodNone
+    info.psciCpuOn = 0
+    info.haveCpuTopology = false
+    info.havePsci = false
+
+    if be32(base) != fdtMagic { return }
+
+    let totalSize = Int(be32(base + 4))
+    let version = Int(be32(base + 20))
+    if totalSize < 0x40 || totalSize > 0x0040_0000 { return }
+    if version < 16 || version > 17 { return }
+
+    let structOff = Int(be32(base + 8))
+    let stringsOff = Int(be32(base + 12))
+    let structSize = Int(be32(base + 36))
+    let stringsSize = Int(be32(base + 32))
+    if structOff < 0 || stringsOff < 0 { return }
+    if structOff >= totalSize || stringsOff > totalSize { return }
+
+    var structLimit = structOff + structSize
+    if structSize <= 0 || structLimit > totalSize { structLimit = totalSize }
+    var stringsLimit = stringsOff + stringsSize
+    if stringsSize <= 0 || stringsLimit > totalSize { stringsLimit = totalSize }
+    if structOff >= structLimit { return }
+
+    let strings = base + stringsOff
+    var inCpus = false
+    var inCpu = false
+    var cpuIsCpu = false
+    var cpuHaveReg = false
+    var cpuAff0: UInt32 = 0
+    var cpuEnableMethod = platformCpuEnableUnknown
+    var cpuAddrCells = 1
+    var inPsci = false
+    var psciCompatible = false
+    var psciHaveMethod = false
+    var psciHaveCpuOn = false
+    var psciMethod = platformPsciMethodNone
+    var psciCpuOn: UInt32 = 0
+
+    var cursor = structOff
+    var depth = 0
+
+    while cursor + 4 <= structLimit {
+        let token = be32(base + cursor)
+        if token == fdtEnd { break }
+
+        if token == fdtBeginNode {
+            let namePtr = base + cursor + 4
+            var nameLen = 0
+            while cursor + 4 + nameLen < structLimit && rd8(namePtr, nameLen) != 0 { nameLen += 1 }
+            depth += 1
+            if depth == 2 {
+                inCpus = cstrEquals(namePtr, "cpus")
+                if inCpus { cpuAddrCells = 1 }
+                inPsci = cstrEquals(namePtr, "psci")
+                psciCompatible = false
+                psciHaveMethod = false
+                psciHaveCpuOn = false
+                psciMethod = platformPsciMethodNone
+                psciCpuOn = 0
+            } else if depth == 3 && inCpus {
+                inCpu = true
+                cpuIsCpu = false
+                cpuHaveReg = false
+                cpuAff0 = 0
+                cpuEnableMethod = platformCpuEnableUnknown
+            }
+            cursor += 4 + align4(nameLen + 1)
+            continue
+        }
+
+        if token == fdtEndNode {
+            if depth == 3 && inCpus && inCpu {
+                if cpuHaveReg && cpuIsCpu {
+                    info.appendCpuAff0(cpuAff0)
+                    info.markCpuEnableMethod(cpuAff0, cpuEnableMethod)
+                }
+                inCpu = false
+            }
+            if depth == 2 && inPsci {
+                if psciCompatible && psciHaveMethod && psciHaveCpuOn {
+                    info.havePsci = true
+                    info.psciMethod = psciMethod
+                    info.psciCpuOn = psciCpuOn
+                }
+                inPsci = false
+            }
+            if depth == 2 && inCpus {
+                inCpus = false
+            }
+            depth -= 1
+            cursor += 4
+            continue
+        }
+
+        if token == fdtProp {
+            if cursor + 12 > structLimit { break }
+            let len = Int(be32(base + cursor + 4))
+            let nameOff = Int(be32(base + cursor + 8))
+            if len < 0 || cursor + 12 + len > structLimit { break }
+            let valPtr = base + cursor + 12
+
+            if nameOff >= 0 && stringsOff + nameOff < stringsLimit {
+                let propName = strings + nameOff
+                if depth == 2 && inPsci {
+                    if cstrEquals(propName, "compatible") {
+                        psciCompatible = compatibleHas(valPtr, len, "arm,psci-1.0") ||
+                                         compatibleHas(valPtr, len, "arm,psci-0.2") ||
+                                         compatibleHas(valPtr, len, "arm,psci")
+                    } else if cstrEquals(propName, "method") && len >= 4 {
+                        if cstrEquals(valPtr, "hvc") {
+                            psciMethod = platformPsciMethodHvc
+                            psciHaveMethod = true
+                        } else if cstrEquals(valPtr, "smc") {
+                            psciMethod = platformPsciMethodSmc
+                            psciHaveMethod = true
+                        }
+                    } else if cstrEquals(propName, "cpu_on") && len >= 4 {
+                        psciCpuOn = be32(valPtr)
+                        psciHaveCpuOn = true
+                    }
+                } else if depth == 2 && inCpus {
+                    if cstrEquals(propName, "#address-cells") && len >= 4 {
+                        cpuAddrCells = Int(be32(valPtr))
+                    }
+                } else if depth == 3 && inCpus && inCpu {
+                    if cstrEquals(propName, "reg") &&
+                       cpuAddrCells > 0 && cpuAddrCells <= 2 &&
+                       len >= cpuAddrCells * 4 {
+                        cpuAff0 = UInt32(readCells(valPtr, cpuAddrCells) & 0xFF)
+                        cpuHaveReg = true
+                    } else if cstrEquals(propName, "device_type") {
+                        cpuIsCpu = cstrEquals(valPtr, "cpu")
+                    } else if cstrEquals(propName, "enable-method") && len >= 5 {
+                        if cstrEquals(valPtr, "psci") {
+                            cpuEnableMethod = platformCpuEnablePsci
+                        }
+                    }
+                }
+            }
+            cursor += 12 + align4(len)
+            continue
+        }
+
         cursor += 4
     }
 }

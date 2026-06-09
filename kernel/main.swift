@@ -729,6 +729,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S0f OK: CPU topology ready", UInt64(platform.cpuCount))
+    if !smpPsciDiscoverySelfTest() {
+        uartPuts("panic: S0g PSCI discovery self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S0g OK: PSCI discovery ready", UInt64(platform.cpuPsciEnableMask))
     klog(.info, "log", "L0 kernel logger active")
     klog(.info, "log", "level filtering active (min INFO)")
     // A .debug line that is suppressed by the L2 default (.info). This proves
