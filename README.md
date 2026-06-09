@@ -181,7 +181,7 @@ tools/
   basepack.swift  host-side packed base image packer
 scripts/          build-busybox.sh, build-newlib.sh, make-disk.sh, …
 tests/            host unit tests (Swift) + QEMU boot assertion scripts (bash)
-docs/             philosophy, architecture, package management, hardware/toolchain notes
+docs/             philosophy, architecture, package ecosystem, hardware/toolchain notes
 ```
 
 ## Build And Run
