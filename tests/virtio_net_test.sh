@@ -48,6 +48,15 @@ if [[ -f "$DTB" ]]; then
   dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 # A user-mode (slirp) NIC as a modern (v2) virtio-mmio device. The base image
 # rides along as a virtio-blk disk so the boot path is identical to the others.
 # The net-a probe runs early in boot; a short Ctrl-C just stops the kernel.
@@ -61,7 +70,8 @@ fi
   -device virtio-net-device,netdev=n0 \
   -kernel "$KERNEL" >"$LOG" 2>&1 &
 QP=$!
-sleep 12
+await "net-a OK: ICMP echo reply from 10.0.2.2" 60 || true
+sleep 1
 stop_qemu
 QP=""
 

@@ -672,6 +672,19 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No mailbox layout change, no release writes, no CPU_ON path,
   and no kernel/C4/VFS/process behavior changes.
 
+### S0m — legacy QEMU smoke harness hardening (DONE, 2026-06-09)
+
+- **Prompt-driven legacy drivers.** Older QEMU smoke tests that still drove
+  serial input with fixed sleeps now use FIFO stdin plus bounded waits for the
+  relevant prompts or acceptance markers. This covers the tty, disk exec,
+  console-login, cap enforcement, and throwaway disk VFS tests.
+- **Early-probe waits.** The virtio-blk and virtio-net smoke tests now wait for
+  their boot-time success markers before cleanup instead of killing QEMU after a
+  fixed delay.
+- **Non-goals.** No kernel, filesystem, process, capability, or userland
+  behavior is changed; this only reduces false negatives in the overnight gate
+  under slow host scheduling.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

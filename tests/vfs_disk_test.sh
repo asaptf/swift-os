@@ -23,6 +23,7 @@ fi
 WORK="$(mktemp -d -t swiftos-vfs.XXXXXX)"
 LOG="$(mktemp -t swiftos-vfs.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-vfs-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-vfs-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -40,7 +41,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -rf "$WORK" "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null || true
+  rm -rf "$WORK" "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -58,23 +60,45 @@ IMG="$WORK/disk.img"
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 7;  printf 'tty-line\n'        # satisfy the M7 ttydemo
-  sleep 1;  printf '\003'              # Ctrl-C -> busybox starts
-  sleep 2;  printf 'cat /etc/motd\n'
-  sleep 1;  printf 'ls /\n'
-  sleep 1;  printf 'cat /diskonly.txt\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (vfs disk driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M11c:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$IMG,format=raw,if=none,id=disk0,readonly=on" \
   -device virtio-blk-device,drive=disk0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 30
+exec 3<>"$INFIFO"
+
+# This throwaway disk intentionally carries only busybox plus test files. With
+# no /bin/ttydemo or /bin/console-login, init falls back directly to raw ash.
+await "built-in shell (ash)" 90 || drive_fail "busybox shell did not start"
+printf 'cat /etc/motd\n' >&3
+await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
+printf 'ls /\n' >&3
+await "diskonly.txt" 60 || drive_fail "disk-only file missing from ls /"
+printf 'cat /diskonly.txt\n' >&3
+await "only-on-disk" 60 || drive_fail "disk-only file contents not read"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

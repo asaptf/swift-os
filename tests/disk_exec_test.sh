@@ -20,6 +20,7 @@ fi
 
 LOG="$(mktemp -t swiftos-disk-exec.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-disk-exec-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-disk-exec-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -37,7 +38,8 @@ stop_qemu() {
 }
 cleanup() {
   stop_qemu
-  rm -f "$LOG" "$PIDFILE"
+  exec 3>&- 2>/dev/null || true
+  rm -f "$LOG" "$PIDFILE" "$INFIFO"
 }
 trap cleanup EXIT
 
@@ -46,23 +48,48 @@ if [[ -f "$DTB" ]]; then
   dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
-(
-  sleep 7;  printf 'tty-line\n'
-  sleep 1;  printf '\003'              # Ctrl-C -> console-login (init)
-  sleep 2;  printf 'root\n'            # M12c: log in
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'ps\n'              # native /bin/ps from disk
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (disk exec driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/M11c:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=disk0,readonly=on" \
   -device virtio-blk-device,drive=disk0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 30
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'root\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+printf 'ps\n' >&3
+await "M11d: exec loaded from disk /bin/ps" 60 || drive_fail "/bin/ps was not exec'd from disk"
+await "PID PPID STATE CMD" 60 || drive_fail "ps output missing"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

@@ -21,6 +21,7 @@ fi
 
 LOG="$(mktemp -t swiftos-login.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-login-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-login-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -29,30 +30,67 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 7;  printf 'tty-line\n'        # M7 ttydemo
-  sleep 1;  printf '\003'              # Ctrl-C -> console-login (init) prompt
-  sleep 2;  printf 'user\n'            # wrong password first
-  sleep 1;  printf 'wrongpw\n'
-  sleep 1;  printf 'user\n'            # then the real one
-  sleep 1;  printf 'swordfish\n'
-  sleep 2;  printf 'echo LOGGED-IN-SHELL\n'
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_count() {  # await_count MARKER COUNT [MAXSEC]
+  local marker="$1" want="$2" max="${3:-30}" n=0 got=0
+  while (( n < max * 10 )); do
+    got="$(grep -cF "$marker" "$LOG" 2>/dev/null || true)"
+    (( got >= want )) && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (login driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 30
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'user\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'wrongpw\n' >&3
+await "Login incorrect" 60 || drive_fail "wrong password was not rejected"
+await_count "swift-os login:" 2 60 || drive_fail "second login prompt did not appear"
+printf 'user\n' >&3
+await_count "Password:" 2 90 || drive_fail "timed out waiting for second password prompt"
+printf 'swordfish\n' >&3
+await "Welcome to swift-os, user" 120 || drive_fail "authentication did not succeed"
+printf 'echo LOGGED-IN-SHELL\n' >&3
+await "LOGGED-IN-SHELL" 60 || drive_fail "user shell did not start"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 

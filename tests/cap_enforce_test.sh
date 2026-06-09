@@ -22,6 +22,7 @@ fi
 
 LOG="$(mktemp -t swiftos-cap.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-cap-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-cap-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -30,31 +31,58 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-(
-  sleep 7;  printf 'tty-line\n'
-  sleep 1;  printf '\003'
-  sleep 2;  printf 'guest\n'
-  sleep 1;  printf 'guest\n'
-  sleep 2;  printf 'echo GUEST-ECHO-OK\n'   # builtin: no FS access, allowed
-  sleep 1;  printf 'cat /etc/motd\n'        # open for read: denied
-  sleep 1;  printf 'ls /\n'                 # open dir for read: denied
-  sleep 1;  printf '/bin/id\n'              # Swift id: numeric ctx, no name (no fsread)
-  sleep 1;  printf 'exit\n'
-  sleep 2
-) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+await() {  # await MARKER [MAXSEC]
+  local marker="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+drive_fail() {
+  echo "FAIL: $1" >&2
+  echo "--- serial (guest driver) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  exit 1
+}
+
+"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
-sleep 30
+exec 3<>"$INFIFO"
+
+await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+printf 'tty-line\n' >&3
+await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+printf '\003' >&3
+await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
+printf 'guest\n' >&3
+await "Password:" 90 || drive_fail "timed out waiting for password prompt"
+printf 'guest\n' >&3
+await "session: principal=3 session=3 caps=2" 120 || drive_fail "guest did not log in with the restricted context"
+printf 'echo GUEST-ECHO-OK\n' >&3
+await "GUEST-ECHO-OK" 60 || drive_fail "echo builtin should still work"
+printf 'cat /etc/motd\n' >&3
+await "can't open '/etc/motd'" 60 || drive_fail "reading /etc/motd was not denied"
+printf 'ls /\n' >&3
+await "can't open '/'" 60 || drive_fail "listing / was not denied"
+printf '/bin/id\n' >&3
+await "principal=3 session=3 caps=0x2" 60 || drive_fail "/bin/id did not report the guest context"
+printf 'exit\n' >&3
+await "M12c: session ended" 60 || true
+
+exec 3>&-
 stop_qemu
 QP=""
 
