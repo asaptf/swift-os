@@ -73,6 +73,43 @@ private var pBrk = [UInt](repeating: 0, count: maxProc)
 // Track B — descending mmap cursor. Next anonymous mmap is placed just below
 // pMmapTop[slot]; it starts at userMmapTop and shrinks toward userMmapFloor.
 private var pMmapTop = [UInt](repeating: 0, count: maxProc)
+
+// I2b: per-process file-backed mmap regions (lazy / demand-paged). A region
+// reserves VA but maps no frames until first touch; the page-fault handler
+// (processHandleFileFault) reads the backing disk extent into the faulting page.
+private struct FileVma {
+    var active = false
+    var base: UInt = 0       // region start VA (page-aligned)
+    var pages: UInt = 0      // region length in pages
+    var diskOffset: UInt = 0 // byte offset of the file's data on the virtio-blk device
+    var fileLen: UInt = 0    // content bytes (tail of the last page is zero-filled)
+    var prot: Int32 = 0
+}
+private let maxFileVmas = 8
+private var pFileVmas = [FileVma](repeating: FileVma(), count: maxProc * maxFileVmas)
+// Cumulative count of file-backed demand faults serviced (observability), and a
+// one-shot guard so the "demand paging active" marker is logged just once.
+var fileDemandFaults: UInt64 = 0
+private var fileDemandLogged = false
+
+private func fileVmasClear(_ slot: Int) {
+    for i in 0..<maxFileVmas { pFileVmas[slot * maxFileVmas + i].active = false }
+}
+private func fileVmasCopy(_ dst: Int, _ src: Int) {
+    for i in 0..<maxFileVmas { pFileVmas[dst * maxFileVmas + i] = pFileVmas[src * maxFileVmas + i] }
+}
+private func fileVmaAdd(_ slot: Int, _ base: UInt, _ pages: UInt,
+                        _ diskOffset: UInt, _ fileLen: UInt, _ prot: Int32) -> Bool {
+    for i in 0..<maxFileVmas {
+        let idx = slot * maxFileVmas + i
+        if !pFileVmas[idx].active {
+            pFileVmas[idx] = FileVma(active: true, base: base, pages: pages,
+                                     diskOffset: diskOffset, fileLen: fileLen, prot: prot)
+            return true
+        }
+    }
+    return false // table full
+}
 private var pNameLen = [Int](repeating: 0, count: maxProc)
 private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 // Principal / session / capability mask, plus the process's Cell tag, kept as
@@ -291,6 +328,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
     pMmapTop[slot] = userMmapTop
+    fileVmasClear(slot)
     pIsThread[slot] = false
     // elfLoad (above) recorded the image's mapped page count; stack mapping used
     // the PMM directly, so it is still valid. RES = image + user stack pages.
@@ -537,6 +575,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     // The COW clone preserves every mapped user page (including mmap'd regions),
     // so the child inherits the parent's mmap cursor verbatim.
     pMmapTop[child] = pMmapTop[parent]
+    fileVmasCopy(child, parent)
     pIsThread[child] = false
     // The COW address-space clone preserves the child's logical mapped
     // footprint; physical frames are copied lazily on write. CPU/time start
@@ -600,6 +639,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     // cursor. (Concurrent mmap from multiple threads sharing one TTBR0 would
     // need a shared cursor + lock — a follow-up; single-core today.)
     pMmapTop[slot] = pMmapTop[creator]
+    fileVmasCopy(slot, creator)
     pIsThread[slot] = true
     pWakeTick[slot] = 0
     copyProcessName(from: creator, to: slot)
@@ -700,6 +740,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     pTtbr0[me] = ttbr0
     pBrk[me] = userHeapBase
     pMmapTop[me] = userMmapTop // fresh image: empty mmap arena
+    fileVmasClear(me)
     // New image replaces the resident set (old pages are dropped with the old
     // address space); accumulated CPU time and the start tick survive the exec.
     pResPages[me] = Int(elfLastLoadPages()) + userStackPages
@@ -1010,16 +1051,19 @@ func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
     return base
 }
 
-/// I2a: file-backed read-only mmap. Map [0, len) bytes of the disk-backed file
-/// open on `fd` into the descending mmap arena, read-only, eagerly loaded from
-/// disk (the model-weights "mmap-backed bundle" path). Returns the base VA, or a
-/// negative errno encoded in the UInt result.
+/// I2: file-backed read-only mmap (demand-paged). Reserve [0, len) of the
+/// disk-backed file open on `fd` in the descending mmap arena and record its
+/// backing, but map NO frames now — pages fault in lazily on first access
+/// (processHandleFileFault), so resident memory grows only with pages actually
+/// touched. Returns the base VA, or a negative errno encoded in the UInt result.
+/// (NOTE: munmap of a lazily-reserved region is not yet wired to deactivate its
+/// VMA; the model-serving path maps once and exits, which is covered.)
 func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
     guard currentProc >= 0 else { return err(-22) } // EINVAL
     let me = currentProc
     if len == 0 { return err(-22) }
-    // I2a maps read-only file views only (model weights); write/exec is future work.
+    // Read-only file views only for now (model weights); write/exec is future work.
     if prot != PROT_READ { return err(-22) }
     let (ok, diskOff, dataLen) = vfsFileExtent(fd: fd)
     if !ok { return err(-13) } // EACCES: not a readable disk-backed file
@@ -1029,11 +1073,39 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     let bytes = pages * PageAllocator.pageSize
     if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
     let base = pMmapTop[me] - bytes
-    let rc2 = addressSpaceMmapFile(pTtbr0[me], base, pages, UInt(diskOff), mapLen, prot)
-    if rc2 != 0 { return err(Int(rc2)) }
+    if !fileVmaAdd(me, base, pages, UInt(diskOff), mapLen, prot) { return err(-12) }
     pMmapTop[me] = base
-    pResPages[me] += Int(pages)
     return base
+}
+
+/// I2b: service a demand fault on a lazily-reserved file-backed region. Returns
+/// true if `faultVA` fell in such a region and the missing page was mapped in
+/// read-only from disk; false otherwise (the caller treats that as a real fault,
+/// e.g. a write to a read-only page, which falls through to COW / panic).
+func processHandleFileFault(_ faultVA: UInt) -> Bool {
+    let me = currentProc
+    guard me >= 0 else { return false }
+    let pageSize = PageAllocator.pageSize
+    let pageVA = faultVA & ~(pageSize - 1)
+    for i in 0..<maxFileVmas {
+        let v = pFileVmas[me * maxFileVmas + i]
+        if !v.active { continue }
+        if pageVA < v.base || pageVA >= v.base + v.pages * pageSize { continue }
+        let contentStart = ((pageVA - v.base) / pageSize) * pageSize
+        let remaining = v.fileLen > contentStart ? v.fileLen - contentStart : 0
+        let contentLen = remaining < pageSize ? remaining : pageSize
+        if addressSpaceMapFilePage(pTtbr0[me], pageVA, v.diskOffset + contentStart, contentLen, v.prot) {
+            pResPages[me] += 1
+            fileDemandFaults += 1
+            if !fileDemandLogged {
+                fileDemandLogged = true
+                klog(.info, "vm", "demand-paged file mmap active")
+            }
+            return true
+        }
+        return false // region matched but the page was already mapped (real fault)
+    }
+    return false
 }
 
 /// munmap(addr, len): unmap and free `len` (rounded up) bytes at `addr`. addr

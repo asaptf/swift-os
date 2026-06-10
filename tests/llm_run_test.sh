@@ -99,6 +99,8 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 grep -qF "llm: stories260K" <<<"$CLEAN"                         || fail "llm banner missing"
 # I2: weights came in via file-backed mmap, not a read-into-anonymous copy.
 grep -qF "file-backed" <<<"$CLEAN"                              || fail "weights not loaded via file-backed mmap"
+# I2b: demand paging engaged — the kernel serviced lazy page faults from disk.
+grep -qF "demand-paged file mmap active" <<<"$CLEAN"            || fail "demand paging (I2b) did not engage"
 # Real inference: the reference llama2.c text for the default prompt.
 grep -qF "there was a little girl named Lily" <<<"$CLEAN"        || fail "generated story does not match the llama2.c reference output"
 grep -qF "She loved to play outside in the park" <<<"$CLEAN"     || fail "generated story diverged from reference"
