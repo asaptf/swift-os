@@ -896,6 +896,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/uefi_kernel_ab_test.sh
 	./tests/uefi_kstage_test.sh
 	./tests/uefi_kactivate_test.sh
+	./tests/uefi_kattempt_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
