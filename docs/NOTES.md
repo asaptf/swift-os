@@ -1365,9 +1365,9 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 ### S5a — per-CPU utilization export (DONE, 2026-06-10)
 
 - **Kernel accounting.** The existing per-CPU timer scaffold now also exposes
-  idle ticks through the S5a `SYS_sysinfo` extension. CPU0 and any active
-  scheduler CPU account idle from `processOnTick`; parked secondary CPUs account
-  their timer interrupts as idle in the IRQ path.
+  idle ticks through the S5a `SYS_sysinfo` extension. CPU0 mirrors its legacy
+  idle accounting from `processOnTick`; parked secondary CPUs account their
+  timer interrupts as idle in the IRQ path.
 - **Userland visibility.** The first 64 bytes of the `/bin/top` sysinfo record
   remain compatible with the previous layout. Userland that passes the extended
   record capacity receives `cpuCount`, `cpuCapacity`, `cpuTicks[8]`, and
@@ -1375,7 +1375,7 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   busy/idle from those deltas plus a per-CPU busy line.
 - **Executable checks.** Boot logs `S5a OK: per-CPU utilization counters ready`.
   `tests/top_test.sh` is parameterized by `SMP_CPUS`; `make
-  s5-cpu-util-test` runs `/bin/top -b -n 2` under `-smp 4` and requires
+  smp-cpu-utilization-test` runs `/bin/top -b -n 2` under `-smp 4` and requires
   the four per-CPU busy entries.
 - **Non-goals.** S5a is observability only. It does not broaden process
   placement, enable one address space on multiple CPUs, or change the restricted

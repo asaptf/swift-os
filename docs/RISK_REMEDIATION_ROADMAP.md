@@ -242,7 +242,7 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   through `SYS_sysinfo` and rendered by `/bin/top` as aggregate busy/idle plus
   a per-CPU busy line. The boot path validates the counter export for present
   CPUs, `tests/top_test.sh` can run under `-smp 4`, and
-  `make s5-cpu-util-test` is the runtime gate. This gives S5 a cheap
+  `make smp-cpu-utilization-test` is the runtime gate. This gives S5 a cheap
   utilization signal before broad secondary EL0 scheduling is enabled.
 - EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.

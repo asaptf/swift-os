@@ -105,9 +105,9 @@ printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 send_line '/bin/s4stress'
 await "M11d: exec loaded from disk /bin/s4stress" 60 || drive_fail "s4stress did not execute"

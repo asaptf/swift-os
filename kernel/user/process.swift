@@ -1679,8 +1679,10 @@ func processOnTick(fromEL0: Bool) {
     if fromEL0 && current >= 0 {
         pCpuTicks[current] &+= 1
     } else {
-        if cpu == 0 { idleTicks &+= 1 }
-        smpRecordIdleTickForCurrentCpu()
+        if cpu == 0 {
+            idleTicks &+= 1
+            smpRecordIdleTickForCurrentCpu()
+        }
     }
     if current >= 0 && pState[current] == pRunning {
         markProcessReadyOnHomeCpu(current)
