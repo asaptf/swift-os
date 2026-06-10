@@ -891,9 +891,14 @@ examples-verification-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/examples_verification_test.swift -o $(BUILD)/examples_verification_test
 	$(BUILD)/examples_verification_test
 
+page-allocator-refcount-lifecycle-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/page_allocator_refcount_lifecycle_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_refcount_lifecycle_test
+	$(BUILD)/page_allocator_refcount_lifecycle_test
+
 test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
+	$(MAKE) page-allocator-refcount-lifecycle-test
 	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/updatestore_test.swift kernel/fs/swosboot.swift -o $(BUILD)/updatestore_test
