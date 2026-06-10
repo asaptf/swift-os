@@ -227,7 +227,7 @@ Notes:
 - Interactive mode accepts `q` to quit.
 
 Acceptance coverage: `tests/top_test.sh`, `make smp-cpu-utilization-test`,
-`make s5-el0-fanout-test`.
+`make s5-el0-fanout-test`, `make s5-run-any-placement-test`.
 
 ## File And Tmpfs Commands
 

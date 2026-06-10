@@ -266,6 +266,14 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastS5eThreadSharedAddressSpaceCount`
 - `kernel/user/process.swift:lastS5eThreadTelemetryLockAcquireCount`
 - `kernel/user/process.swift:lastS5eThreadTelemetryLockContentionCount`
+- `kernel/user/process.swift:lastS5fRunAnyDispatchCount`
+- `kernel/user/process.swift:lastS5fRunAnyDispatchCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnyExactCpuMatchCount`
+- `kernel/user/process.swift:lastS5fRunAnyPolicySelectionCount`
+- `kernel/user/process.swift:lastS5fRunAnyProcessCount`
+- `kernel/user/process.swift:lastS5fRunAnySchedulerCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnySecondaryCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnyTelemetryValid`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
@@ -280,6 +288,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:s5eThreadTelemetryLockAcquireCount`
 - `kernel/user/process.swift:s5eThreadTelemetryLockContentionCount`
 - `kernel/user/process.swift:s5eThreadTelemetryLockWord`
+- `kernel/user/process.swift:s5fNextPlacementCpu`
+- `kernel/user/process.swift:s5fRunAnyPlacementActive`
+- `kernel/user/process.swift:s5fRunAnySlots`
 - `kernel/user/process.swift:pAddressSpaceCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pFileVmas`
@@ -350,9 +361,11 @@ manifest entries left behind after globals move or disappear.
   independent EL0 process per online scheduler CPU, with exact placement
   telemetry and idle-queue checks after all secondary schedulers stop. S5e adds
   a futex wait-table lock and a gated `/bin/threadsdemo` path where sibling EL0
-  threads sharing one TTBR0 run on secondary scheduler CPUs; arbitrary load
-  balancing and concurrent mmap/brk mutation in one shared address space remain
-  out of scope.
+  threads sharing one TTBR0 run on secondary scheduler CPUs. S5f adds a gated
+  run-any placement policy for independent EL0 processes that round-robins over
+  CPU0 plus active secondary scheduler CPUs while keeping migration, work
+  stealing, and concurrent mmap/brk mutation in one shared address space out of
+  scope.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple
