@@ -3195,3 +3195,39 @@ check that the loader's embedded pubkey matches the signing key.
 is still single-copy/no-CRC — runtime writes (CRC + double-buffering) come when
 the OS can flip the kernel slot. The kernel-image A/B trust chain (sign → verify →
 integrity → fallback) is now complete.
+
+### U1g-4a — kernel reaches + parses the ESP (GPT) boot disk (DONE, 2026-06-10)
+
+**Scope.** First slice of *runtime* kernel staging (the kernel analogue of U1f's
+stage/activate). For the OS to stage a new kernel it must reach the ESP the loader
+boots from. Two findings shaped this:
+1. **Transport.** The ESP/GPT disk was attached `if=virtio` = virtio-**PCI** on
+   `-M virt`; the kernel drives only virtio-**mmio**, so it never saw the ESP.
+   Verified AAVMF boots fine from a virtio-mmio disk, so the boot configs now
+   attach the ESP disk on mmio (`if=none,id=esp` + `-device virtio-blk-device`) —
+   both firmware and kernel can drive it.
+2. **Trust model (decided).** Runtime staging will follow U1f's *courier* model:
+   the OS writes pre-signed-offline artifacts (kernel image + signed manifest); it
+   never signs. (The signed-manifest-vs-writable-selection split is a later slice.)
+
+- `kernel/drivers/virtio_blk.swift`: the device scan now also recognizes a GPT
+  disk by the "EFI PART" magic at LBA 1 (`blkBounceIsEfiPart`), recording it as
+  `blkEspMmio`; `blkServedMmio` tracks the base/store device. Accessors
+  `virtioBlkHasEsp()`, `virtioBlkSelectEsp()` (re-bring-up, returns capacity),
+  `virtioBlkReselectServed()`. Two new SMP-audit globals.
+- `kernel/fs/esp.swift`: `espProbe()` (called after `vfsInit`) selects the ESP
+  disk, parses the GPT header (LBA 1) + partition array, finds the ESP-type-GUID
+  partition, logs "kernel-store: ESP partition found at LBA N, M sectors", then
+  re-selects the served disk. Read-only; no mutable globals.
+- Boot configs (Makefile UEFI flags, disk-run, run-gfx; uefi tests) moved the ESP
+  disk to virtio-mmio.
+
+**Acceptance.** `tests/uefi_boot_test.sh` (disk + SMP-4) now asserts the kernel
+locates the ESP partition, and still boots to busybox. `uefi_kernel_ab_test.sh`
+(4 cases) unchanged in behavior with the ESP on mmio.
+
+**Still future (U1g-4b/c/d).** FAT32 read of the kernel manifest from the kernel;
+FAT32 write to stage a kernel image + a pre-signed manifest into the inactive
+slot; a `/bin/` activate flow + reboot. Plus the signed-selection split (per-image
+signatures + CRC'd writable boot-state) so attempt-count/rollback can be written
+without re-signing.

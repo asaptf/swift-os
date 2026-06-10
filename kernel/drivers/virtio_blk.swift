@@ -110,6 +110,14 @@ private var blkFallbackByteOffset: UInt64 = blkNoFallback
 private var blkStoreMmio: UInt = 0
 private var blkPayloadMmio: UInt = 0
 
+// U1g-4: the GPT/ESP boot disk (sector 1 is the "EFI PART" GPT header), when one
+// is attached on virtio-mmio alongside the base/store. The kernel reads it to
+// find the kernel A/B manifest the loader uses (and, later, to stage kernels).
+// blkServedMmio is the device the base/store is served from, so we can re-select
+// it after a detour to the ESP disk. SMP: set once at boot before EL0 runs.
+private var blkEspMmio: UInt = 0
+private var blkServedMmio: UInt = 0
+
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
     var a = pa & ~UInt(63)
@@ -224,6 +232,23 @@ private func blkBounceIsSwosbase() -> Bool {
 private func blkBounceIsSwosboot() -> Bool {
     let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     let magic: StaticString = "SWOSBOOT"
+    var ok = true
+    magic.withUTF8Buffer { m in
+        var i = 0
+        while i < 8 {
+            if bounce.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }
+            i += 1
+        }
+    }
+    return ok
+}
+
+// True if the bounce buffer currently starts with the GPT header magic
+// "EFI PART" (the GPT header lives at LBA 1). Used to pick out the ESP/GPT boot
+// disk among several block devices (U1g-4).
+private func blkBounceIsEfiPart() -> Bool {
+    let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    let magic: StaticString = "EFI PART"
     var ok = true
     magic.withUTF8Buffer { m in
         var i = 0
@@ -445,6 +470,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkFallbackByteOffset = blkNoFallback
     blkStoreMmio = 0
     blkPayloadMmio = 0
+    blkEspMmio = 0
+    blkServedMmio = 0
     // The ring and data pages are allocated once and reused across bring-up
     // attempts, mirroring the C version's static buffers (no per-scan leak).
     if blkRingBase == 0 {
@@ -469,6 +496,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     var first: UInt = 0
     var baseDev: UInt = 0
     var storeDev: UInt = 0
+    var espDev: UInt = 0
     var i: UInt32 = 0
     while i < count {
         let m = base + UInt(i) * stride
@@ -481,18 +509,22 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         if blkDoRead(0) != 0 { continue }
         if storeDev == 0 && blkBounceIsSwosboot() { storeDev = m }
         else if baseDev == 0 && blkBounceIsSwosbase() { baseDev = m }
+        // U1g-4: a GPT disk (the firmware-boot ESP) carries "EFI PART" at LBA 1.
+        else if espDev == 0 && blkDoRead(1) == 0 && blkBounceIsEfiPart() { espDev = m }
     }
+    blkEspMmio = espDev
 
     if storeDev != 0 {
         // A/B update-store disk: serve the base from it; a SWOSBASE disk attached
         // alongside is the update payload (U1f).
         blkStoreMmio = storeDev
         blkPayloadMmio = baseDev
+        blkServedMmio = storeDev
         return blkBringUp(storeDev)
     }
     // No update-store disk: prefer a SWOSBASE base image, else the first device.
-    if baseDev != 0 { return blkBringUp(baseDev) }
-    if first != 0 { return blkBringUp(first) }
+    if baseDev != 0 { blkServedMmio = baseDev; return blkBringUp(baseDev) }
+    if first != 0 { blkServedMmio = first; return blkBringUp(first) }
     blkMmio = 0
     return 0
 }
@@ -537,6 +569,21 @@ func virtioBlkSelectPayload() -> UInt64 {
 // Re-select the update-store disk after using the payload.
 func virtioBlkReselectStore() {
     if blkStoreMmio != 0 { _ = blkBringUp(blkStoreMmio) }
+}
+
+// --- ESP/GPT boot disk (U1g-4) ----------------------------------------------
+// True if a GPT/ESP boot disk is attached on virtio-mmio (the loader's disk).
+func virtioBlkHasEsp() -> Bool { blkEspMmio != 0 }
+// Re-bring-up and select the ESP disk for absolute reads; returns its capacity in
+// sectors (0 if none). The caller reads what it needs, then calls
+// virtioBlkReselectServed() to return to the base/store. Serial on the one CPU.
+func virtioBlkSelectEsp() -> UInt64 {
+    if blkEspMmio == 0 { return 0 }
+    return blkBringUp(blkEspMmio)
+}
+// Re-select the device the base/store is served from (after an ESP detour).
+func virtioBlkReselectServed() {
+    if blkServedMmio != 0 { _ = blkBringUp(blkServedMmio) }
 }
 
 // Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.

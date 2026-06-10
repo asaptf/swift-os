@@ -778,6 +778,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
+    espProbe()          // U1g-4a: locate the ESP on the GPT boot disk (if attached on mmio)
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     ttyInit()
     signalReset()

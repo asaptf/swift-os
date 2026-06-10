@@ -128,6 +128,7 @@ SWIFT_SRCS := \
 	kernel/vfs/vfs.swift \
 	kernel/fs/swosboot.swift \
 	kernel/fs/updatestore.swift \
+	kernel/fs/esp.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift \
 	kernel/mm/vm.swift
@@ -198,9 +199,12 @@ ESP_DIR    := $(BUILD)/esp
 UEFI_BASE_DISK := -global virtio-mmio.force-legacy=false \
 	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 	-device virtio-blk-device,drive=swosbase
+# U1g-4: the ESP is on virtio-mmio (if=none + virtio-blk-device), not if=virtio
+# (PCI), so the running kernel — which drives only virtio-mmio — can also read it.
 UEFI_QEMU_FLAGS := -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
 	-bios $(AAVMF_CODE) \
-	-drive file=fat:rw:$(ESP_DIR),format=raw,if=virtio \
+	-drive file=fat:rw:$(ESP_DIR),format=raw,if=none,id=esp \
+	-device virtio-blk-device,drive=esp \
 	$(UEFI_BASE_DISK)
 
 # ---- Objects ---------------------------------------------------------------
@@ -956,10 +960,12 @@ DISK_IMG := $(BUILD)/swift-os.img
 disk: uefi
 	./scripts/make-disk.sh $(DISK_IMG)
 
-# Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT).
+# Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT). The
+# ESP/GPT disk is on virtio-mmio (U1g-4) so the kernel can read it too.
 disk-run: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
-		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-bios $(AAVMF_CODE) \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
 		$(UEFI_BASE_DISK)
 
 # Boot the UEFI disk in a graphical window. `ramfb` gives the firmware a linear
@@ -971,7 +977,8 @@ disk-run: disk base-image
 run-gfx: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
 		-global virtio-mmio.force-legacy=false \
-		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-bios $(AAVMF_CODE) \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
 		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio

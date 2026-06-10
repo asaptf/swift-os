@@ -53,10 +53,12 @@ await() {  # await MARKER [MAXSEC]
 }
 
 drive_args() {  # echoes the QEMU drive args for $WORK + the base disk
-  printf '%s\0' -drive "file=$WORK,format=raw,if=virtio"
+  # U1g-4: ESP/GPT disk on virtio-mmio (so AAVMF and the kernel can both reach it).
+  printf '%s\0' -global virtio-mmio.force-legacy=false \
+    -drive "file=$WORK,format=raw,if=none,id=esp" \
+    -device virtio-blk-device,drive=esp
   if [[ -f "$BASE" ]]; then
-    printf '%s\0' -global virtio-mmio.force-legacy=false \
-      -drive "file=$BASE,format=raw,if=none,id=swosbase,readonly=on" \
+    printf '%s\0' -drive "file=$BASE,format=raw,if=none,id=swosbase,readonly=on" \
       -device virtio-blk-device,drive=swosbase
   fi
 }

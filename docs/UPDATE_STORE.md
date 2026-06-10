@@ -244,9 +244,16 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   Signing stays host-side (`tools/kernelboot.swift`). The kernel-image A/B trust
   chain (sign → verify → integrity → fallback) is complete.
 
+- **U1g-4a (done):** runtime-staging foundation. The ESP/GPT boot disk is now on
+  virtio-mmio (not PCI) so the running kernel can reach it; the virtio-blk scan
+  recognizes it by the "EFI PART" GPT magic, and `kernel/fs/esp.swift` parses the
+  GPT to locate the ESP partition at boot. Trust model decided: runtime staging
+  follows U1f's courier model (the OS writes pre-signed artifacts; it never signs).
+
 ## Not implemented yet
 
-- Runtime kernel-manifest writes (CRC + double-buffering) so the OS can flip the
-  active kernel slot, plus staging a new kernel image into the inactive slot —
-  the kernel-image analogue of the base-image U1f stage/activate flow.
+- Runtime kernel staging continued (U1g-4b/c/d): FAT32 read/write from the kernel;
+  stage a kernel image + a pre-signed manifest into the inactive slot; activate +
+  reboot. Plus the signed-selection split (per-image signatures + CRC'd writable
+  boot-state) for attempt-count/rollback without re-signing.
 - Key rotation / revocation.

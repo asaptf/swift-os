@@ -26,24 +26,27 @@ fi
 SMP_CPU_COUNT=$((10#$SMP_CPUS))
 
 drive_args=()
+# U1g-4: the ESP/GPT boot disk is attached on virtio-MMIO (if=none + a modern
+# virtio-blk-device), not if=virtio (PCI). AAVMF boots from it, AND the kernel —
+# which only drives virtio-mmio — can reach it to read the kernel A/B manifest.
+drive_args=(-global virtio-mmio.force-legacy=false)
 if [[ "$UEFI_BOOT" == "disk" ]]; then
     [[ -f "$DISK_IMG" ]] || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
-    drive_args=(-drive "file=$DISK_IMG,format=raw,if=virtio")
+    drive_args+=(-drive "file=$DISK_IMG,format=raw,if=none,id=esp" -device virtio-blk-device,drive=esp)
 elif [[ "$UEFI_BOOT" == "fat" ]]; then
     [[ -f "$EFI_APP" ]] || { echo "FAIL: $EFI_APP missing (run 'make uefi')" >&2; exit 2; }
-    drive_args=(-drive "file=fat:rw:$ESP_DIR,format=raw,if=virtio")
+    drive_args+=(-drive "file=fat:rw:$ESP_DIR,format=raw,if=none,id=esp" -device virtio-blk-device,drive=esp)
 else
     echo "FAIL: unknown UEFI_BOOT=$UEFI_BOOT (use disk or fat)" >&2
     exit 2
 fi
 
-# Attach the packed base image as a second, modern virtio-blk disk: the firmware
-# still boots off the first (ESP/GPT) disk, while the kernel serves the
-# read-only base and /bin/* from this one (it picks the SWOSBASE disk).
+# Attach the packed base image as a second virtio-mmio disk: the firmware boots
+# off the ESP/GPT disk, while the kernel serves the read-only base and /bin/* from
+# this one (it picks the SWOSBASE disk).
 DISK="$ROOT/build/base.img"
 if [[ -f "$DISK" ]]; then
-    drive_args+=(-global virtio-mmio.force-legacy=false \
-                 -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+    drive_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
                  -device virtio-blk-device,drive=swosbase)
 fi
 
@@ -110,8 +113,13 @@ QP=""
 ok=1
 check() { grep -qF "$1" "$LOG" || { echo "FAIL: missing '$1'" >&2; ok=0; }; }
 check "swift-os UEFI loader (M10)"            # loader ran under firmware
-check "UEFI: kernel loaded from ESP file"     # U1g: kernel read from \EFI\swift-os\kernel.bin, not the embedded blob
+check "UEFI: kernel loaded from ESP file"     # U1g: kernel read from the ESP, not the embedded blob
 check "UEFI: kernel staged, launching"        # ExitBootServices handoff
+# U1g-4a: with the ESP/GPT disk on virtio-mmio, the kernel locates the ESP it
+# was booted from (only the real GPT disk has a GPT; the fat path has none).
+if [[ "$UEFI_BOOT" == "disk" ]]; then
+    check "kernel-store: ESP partition found at LBA"
+fi
 check "Hello from Swift kernel"               # kernel entered via UEFI
 check "M9 OK: hardware discovered from device tree"  # DTB the loader passed
 check "[I] smp: S0 OK: foundations ready"       # primary still owns kernel work
