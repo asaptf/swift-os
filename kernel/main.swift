@@ -822,6 +822,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runBrkDemo()
         runNewlibDemo()
         runConcurrentDemo()
+        if !processCoprocPairDispatchTelemetrySelfTest() {
+            uartPuts("panic: S2g coproc dispatch telemetry guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2g OK: coproc pair dispatch telemetry CPU0-owned", UInt64(platform.cpuCount))
         runForkDemo()
         runExecDemo()
         runFdOpsDemo()

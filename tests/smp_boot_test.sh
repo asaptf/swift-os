@@ -60,6 +60,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
+  EXPECTS+=$'\n'"[I] smp: S2g OK: coproc pair dispatch telemetry CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2d OK: process run queue stayed CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2e OK: secondary process scheduler contexts stayed dormant"
   EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry stayed CPU0-owned"
@@ -153,6 +154,8 @@ stop_qemu
 if [[ "$found" -eq 1 ]]; then
   userland_line="$(grep -nF "[I] boot: swift-os userland: Swift ps" "$LOG" | head -1 | cut -d: -f1)"
   no_secondary_line="$(grep -nF "[I] smp: S2b OK: no secondary EL0 execution" "$LOG" | head -1 | cut -d: -f1)"
+  coproc_line="$(grep -nF "M8d OK: two EL0 processes ran concurrently" "$LOG" | head -1 | cut -d: -f1)"
+  pair_telemetry_line="$(grep -nF "[I] smp: S2g OK: coproc pair dispatch telemetry CPU0-owned" "$LOG" | head -1 | cut -d: -f1)"
   kernel_demo_line="$(grep -nF "[I] sched: M4.5 sched: real context switch OK" "$LOG" | head -1 | cut -d: -f1)"
   no_secondary_kernel_line="$(grep -nF "[I] smp: S2c OK: no secondary kernel scheduler execution" "$LOG" | head -1 | cut -d: -f1)"
   runqueue_line="$(grep -nF "[I] smp: S2d OK: process run queue stayed CPU0-owned" "$LOG" | head -1 | cut -d: -f1)"
@@ -170,6 +173,15 @@ if [[ "$found" -eq 1 ]]; then
         "$kernel_demo_line" -ge "$no_secondary_kernel_line" ||
         "$no_secondary_kernel_line" -ge "$userland_line" ]]; then
     echo "FAIL: S2c no-secondary-kernel marker must appear after the kernel scheduler demo marker and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$coproc_line" || -z "$pair_telemetry_line" ||
+        "$coproc_line" -ge "$pair_telemetry_line" ||
+        "$pair_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S2g coproc dispatch telemetry marker must appear after the coproc pair and before Swift ps." >&2
     echo "---------------------------------------------" >&2
     cat -v "$LOG" >&2
     echo "---------------------------------------------" >&2
@@ -200,7 +212,7 @@ if [[ "$found" -eq 1 ]]; then
     exit 1
   fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

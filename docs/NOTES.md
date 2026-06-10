@@ -1034,6 +1034,29 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   EL0 work, no cross-CPU wake/IPI path is added, and no procstat/userland ABI is
   widened in this checkpoint.
 
+### S2g — coproc pair dispatch telemetry harness (DONE, 2026-06-10)
+
+- **Coproc pair evidence before reap.** `processRunPair` now captures each
+  process slot's dispatch count, last dispatch CPU, and dispatch CPU mask after
+  the pair has exited but before either slot is reaped. This preserves the exact
+  evidence the later S2 acceptance needs from the existing `coproc` demo, where
+  the target will become "the two processes ran on different CPUs".
+- **Current invariant remains CPU0-only.** The S2g guard requires both `coproc`
+  processes to have dispatched at least once and to have CPU0-only dispatch
+  masks. It does not migrate work, change the placement hook, add cross-CPU
+  wakeups, or enable secondary EL0 execution.
+- **Runtime acceptance.** After `runConcurrentDemo` prints
+  `M8d OK: two EL0 processes ran concurrently`, boot runs
+  `processCoprocPairDispatchTelemetrySelfTest` before later demos can reuse the
+  slots, then logs `S2g OK: coproc pair dispatch telemetry CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` checks the last-pair
+  telemetry fields, verifies `processRunPair` captures telemetry before
+  `reapProcess(a)`, and enforces that the S2g guard runs immediately after the
+  concurrent EL0 demo.
+- **Non-goals.** No secondary CPU dispatches EL0 work, no scheduler placement
+  policy changes, no IPI/cross-CPU wake path is added, and no userland ABI is
+  widened in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
