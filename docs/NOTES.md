@@ -983,6 +983,30 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No EL0 work moves to secondary CPUs, no cross-CPU wake/IPI
   path is added, and PMM/VFS/process locking policy remains S2+ work.
 
+### S2e — dormant per-CPU EL0 scheduler publication (DONE, 2026-06-10)
+
+- **Dormant scheduler contexts for every CPU.** `processInit` now publishes the
+  exact `schedCtx[cpu]` address and an empty process run queue mirror into every
+  fixed per-CPU state slot. CPU0 performs this publication during boot; it does
+  not require secondary CPUs to enter process scheduler code.
+- **Idle means no execution, not no resources.** `smpPerCpuSchedulerIdle` now
+  treats a nonzero dormant process scheduler context as allowed idle state. The
+  idle invariant remains strict about current thread/process ownership, run
+  queue emptiness, kernel scheduler activity, EL0 switch count, and the kernel
+  scheduler-ready flag.
+- **Runtime acceptance.** Boot runs `processDormantSchedulerCpusSelfTest` after
+  the S2d run queue scaffold check and logs
+  `S2e OK: dormant process scheduler CPUs published`. After the Swift `ps`
+  userland demo, boot verifies secondary scheduler contexts still point at
+  their dormant slots, secondary run queues remain empty, and secondary EL0
+  switch counts remain zero, then logs
+  `S2e OK: secondary process scheduler contexts stayed dormant`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the addressable
+  per-CPU scheduler context/runqueue publication helpers, rejects a CPU0-only
+  context publication regression, and verifies the S2e boot-order contract.
+- **Non-goals.** No secondary CPU dispatches EL0 work, no cross-CPU wake/IPI path
+  is added, and PMM/VFS/process locking policy remains S2+ work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
