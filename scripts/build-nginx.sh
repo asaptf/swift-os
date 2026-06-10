@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
-# build-nginx.sh - compile-probe a minimal static nginx for swift-os.
+# build-nginx.sh - cross-build minimal static nginx and publish a package.
 #
-# This is a scaffold, not yet part of the boot image.  It downloads the official
-# nginx source into userland/nginx, applies a tiny local cross-build overlay, and
-# tries to configure/build against the swift-os newlib sysroot.  The first useful
-# failure is the product: it tells us which POSIX/socket APIs are still missing.
+# Produces:
+#   build/nginx.swpkg
+#   build/nginx-repo-root/aarch64/current/catalog.signed
+#   build/nginx-repo-root.pub
 
-set -u -o pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${NGINX_VERSION:-1.30.2}"
-WORK="$ROOT/userland/nginx"
+DISTFILES="${NGINX_DISTFILES:-$ROOT/build/swport-distfiles}"
+WORK="$ROOT/build/nginx-port-work"
 SRC="$WORK/nginx-${VERSION}"
-TARBALL="$WORK/nginx-${VERSION}.tar.gz"
-URL="${NGINX_URL:-https://nginx.org/download/nginx-${VERSION}.tar.gz}"
+TARBALL="$DISTFILES/nginx-${VERSION}.tar.gz"
 LOG="$ROOT/build/nginx-build.log"
 BUILD_DIR="$ROOT/build/nginx"
 OBJS="$BUILD_DIR/objs"
-OVERLAY="$WORK/swiftos"
+OVERLAY="$ROOT/userland/nginx/swiftos"
 COMPAT="$ROOT/userland/compat"
+STAGE="$ROOT/build/nginx-root"
+PACKAGE="$ROOT/build/nginx.swpkg"
+REPO_ROOT="$ROOT/build/nginx-repo-root"
+REPO_PUB="$ROOT/build/nginx-repo-root.pub"
 CC="${NGINX_CC:-aarch64-elf-gcc}"
 JOBS="${NGINX_JOBS:-${JOBS:-4}}"
 
@@ -34,7 +38,7 @@ else
     SYSROOT="$ROOT/sysroot/newlib/aarch64-elf"
 fi
 
-mkdir -p "$WORK" "$ROOT/build" "$BUILD_DIR"
+mkdir -p "$DISTFILES" "$WORK" "$ROOT/build" "$BUILD_DIR"
 : >"$LOG"
 
 log() {
@@ -77,19 +81,17 @@ if [[ "${NGINX_CLEAN:-0}" = "1" ]]; then
     mkdir -p "$BUILD_DIR"
 fi
 
-log "nginx probe version: $VERSION"
-log "source url: $URL"
+log "nginx package version: $VERSION"
 log "sysroot: $SYSROOT"
 
-command -v curl >/dev/null 2>&1 || fail 2 "missing curl"
 command -v tar >/dev/null 2>&1 || fail 2 "missing tar"
 command -v patch >/dev/null 2>&1 || fail 2 "missing patch"
 command -v "$CC" >/dev/null 2>&1 || fail 2 "missing compiler: $CC"
+[[ -x "$ROOT/build/swport" ]] || fail 2 "missing build/swport; run make swport"
+[[ -x "$ROOT/build/swpkg" ]] || fail 2 "missing build/swpkg; run make swpkg"
+[[ -x "$ROOT/build/pkgrepo" ]] || fail 2 "missing build/pkgrepo; run make pkgrepo"
 
-if [[ ! -f "$TARBALL" ]]; then
-    run curl -fL --retry 3 -o "$TARBALL.tmp" "$URL"
-    run mv "$TARBALL.tmp" "$TARBALL"
-fi
+run "$ROOT/build/swport" recipe fetch www/nginx --cache "$DISTFILES"
 
 if [[ ! -d "$SRC" ]]; then
     run tar -xzf "$TARBALL" -C "$WORK"
@@ -157,9 +159,10 @@ CONFIGURE_ARGS=(
     "--build=swift-os-static-probe"
     "--crossbuild=SwiftOS:0:aarch64"
     "--builddir=$OBJS"
-    "--prefix=/"
-    "--sbin-path=/bin/nginx"
-    "--conf-path=/etc/nginx/nginx.conf"
+    "--prefix=/usr"
+    "--sbin-path=/usr/sbin/nginx"
+    "--conf-path=/usr/etc/nginx/nginx.conf"
+    "--http-log-path=/tmp/nginx-access.log"
     "--error-log-path=/tmp/nginx-error.log"
     "--pid-path=/tmp/nginx.pid"
     "--lock-path=/tmp/nginx.lock"
@@ -229,3 +232,51 @@ run_in_src make -f "$OBJS/Makefile" -j"$JOBS"
 run cp "$OBJS/nginx" "$ROOT/build/nginx.elf"
 log "Built $ROOT/build/nginx.elf"
 run aarch64-elf-readelf -h "$ROOT/build/nginx.elf"
+
+rm -rf "$STAGE" "$PACKAGE" "$REPO_ROOT" "$REPO_PUB"
+mkdir -p "$STAGE/usr/sbin" "$STAGE/usr/etc/nginx" \
+    "$STAGE/usr/share/nginx/html" "$STAGE/usr/share/nginx"
+cp "$ROOT/build/nginx.elf" "$STAGE/usr/sbin/nginx"
+cat >"$STAGE/usr/etc/nginx/nginx.conf" <<'EOF'
+daemon off;
+master_process off;
+error_log /tmp/nginx-error.log info;
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 16;
+}
+
+http {
+    access_log off;
+    server {
+        listen 8080;
+        root /usr/share/nginx/html;
+        index index.html;
+    }
+}
+EOF
+cat >"$STAGE/usr/share/nginx/html/index.html" <<'EOF'
+swift-os nginx package
+EOF
+printf 'nginx %s swift-os minimal-http\n' "$VERSION" \
+    >"$STAGE/usr/share/nginx/swiftos-nginx.version"
+chmod 0755 "$STAGE/usr/sbin/nginx"
+chmod 0644 "$STAGE/usr/etc/nginx/nginx.conf" \
+    "$STAGE/usr/share/nginx/html/index.html" \
+    "$STAGE/usr/share/nginx/swiftos-nginx.version"
+
+"$ROOT/build/swport" recipe package www/nginx \
+    --root "$STAGE" \
+    --output "$PACKAGE" \
+    --swpkg "$ROOT/build/swpkg"
+
+"$ROOT/build/swport" recipe repo-fixture www/nginx \
+    --root "$STAGE" \
+    --output "$REPO_ROOT" \
+    --pubkey "$REPO_PUB" \
+    --swpkg "$ROOT/build/swpkg" \
+    --pkgrepo "$ROOT/build/pkgrepo"
+
+printf 'Built %s\n' "$PACKAGE"
+printf 'Published signed repo fixture %s\n' "$REPO_ROOT/aarch64/current"

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "name": "nginx",
+  "version": "1.30.2",
+  "revision": 1,
+  "category": "www",
+  "summary": "Minimal static HTTP-only nginx web server for swift-os",
+  "homepage": "https://nginx.org/",
+  "license": ["BSD-2-Clause"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://nginx.org/download/nginx-1.30.2.tar.gz",
+    "sha256": "7df3090907fca3cc0e456d6dc00ceb230da74ea88026ceff0affc29dbbd9ac4c"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "nginx-auto-make",
+    "args": [
+      "--crossbuild=SwiftOS:0:aarch64",
+      "--prefix=/usr",
+      "--sbin-path=/usr/sbin/nginx",
+      "--conf-path=/usr/etc/nginx/nginx.conf",
+      "--http-log-path=/tmp/nginx-access.log",
+      "--error-log-path=/tmp/nginx-error.log",
+      "--pid-path=/tmp/nginx.pid",
+      "--lock-path=/tmp/nginx.lock",
+      "--with-poll_module",
+      "--without-select_module",
+      "--without-pcre",
+      "--without-pcre2",
+      "--without-http-cache",
+      "--without-http_gzip_module",
+      "--without-http_rewrite_module",
+      "--without-http_proxy_module",
+      "--without-http_fastcgi_module"
+    ],
+    "env": {
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/nginx/swiftos/include -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib",
+      "LIBS": "-Wl,--start-group -lc -lm -lgcc -Wl,--end-group"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "nginx", "nginx.conf", "index.html", "version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["nginx", "http-server"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/sbin/nginx", "to": "/usr/sbin/nginx", "mode": "0755" },
+      { "from": "destdir/usr/etc/nginx/nginx.conf", "to": "/usr/etc/nginx/nginx.conf", "mode": "0644" },
+      { "from": "destdir/usr/share/nginx/html/index.html", "to": "/usr/share/nginx/html/index.html", "mode": "0644" },
+      { "from": "destdir/usr/share/nginx/swiftos-nginx.version", "to": "/usr/share/nginx/swiftos-nginx.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": ["http"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/sbin/nginx -v",
+      "cat /usr/share/nginx/swiftos-nginx.version"
+    ]
+  },
+  "notes": "First nginx package is intentionally minimal and HTTP-only: static AArch64 ELF, poll events, no dynamic modules, no TLS, no rewrite, no gzip, and no proxy module yet. scripts/build-nginx.sh cross-builds official nginx with the local swift-os crossbuild overlay, stages a default read-only config under /usr/etc/nginx, and publishes a signed package repository. TLS, pcre2 rewrite support, gzip, reverse proxying, and service-supervisor integration are follow-up web-stack packages."
+}
