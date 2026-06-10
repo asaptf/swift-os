@@ -48,6 +48,11 @@ struct ModelManifest {
     var format: String = ""
     var model = ModelBundleFile()
     var tokenizer = ModelBundleFile()
+    // I7: detached Ed25519 signature (128 hex chars) over the manifest bytes
+    // BEFORE the [signature] table (see modelManifestSignedRange). Empty when
+    // the manifest is unsigned; whether that is acceptable is the caller's
+    // policy (llmd requires a signature when a trust root is provisioned).
+    var signatureHex: String = ""
 
     var isComplete: Bool {
         !name.isEmpty && generation >= 0 && model.isComplete && tokenizer.isComplete
@@ -128,6 +133,8 @@ func modelManifestParse(_ bytes: UnsafeRawBufferPointer) -> ModelManifest? {
             if k == "path", let s = strVal { m.tokenizer.path = s }
             else if k == "sha256", let s = strVal { m.tokenizer.sha256 = s }
             else if k == "size", let v = intVal { m.tokenizer.size = v }
+        case "signature":
+            if k == "sig", let s = strVal { m.signatureHex = s }
         default:
             break                                            // unknown table: ignore
         }
@@ -152,6 +159,48 @@ func modelBundleVerify(_ entry: ModelBundleFile, _ bytes: UnsafeRawPointer, _ le
         if hex[i] != w { return false }
     }
     return true
+}
+
+/// The byte range a manifest signature covers: everything before the line on
+/// which the `[signature]` table header starts (the signer appends that table
+/// last). Returns `bytes.count` for an unsigned manifest.
+func modelManifestSignedRange(_ bytes: UnsafeRawBufferPointer) -> Int {
+    let n = bytes.count
+    let header: [UInt8] = Array("[signature]".utf8)
+    var i = 0
+    while i < n {
+        let lineStart = i
+        var eol = i
+        while eol < n && bytes[eol] != 0x0A { eol += 1 }
+        var j = i
+        while j < eol, bytes[j] == 0x20 || bytes[j] == 0x09 { j += 1 }
+        if j + header.count <= eol {
+            var match = true
+            for k in 0..<header.count where bytes[j + k] != header[k] { match = false; break }
+            if match { return lineStart }
+        }
+        i = eol + 1
+    }
+    return n
+}
+
+/// Decode a 128-char hex string into 64 signature bytes. Nil on bad length or
+/// a non-hex character.
+func modelSignatureDecode(_ hexStr: String) -> [UInt8]? {
+    let h = Array(hexStr.utf8)
+    if h.count != 128 { return nil }
+    func nib(_ c: UInt8) -> UInt8? {
+        if c >= 0x30 && c <= 0x39 { return c - 0x30 }
+        if c >= 0x61 && c <= 0x66 { return c - 0x61 + 10 }
+        if c >= 0x41 && c <= 0x46 { return c - 0x41 + 10 }
+        return nil
+    }
+    var out = [UInt8](repeating: 0, count: 64)
+    for i in 0..<64 {
+        guard let hi = nib(h[2 * i]), let lo = nib(h[2 * i + 1]) else { return nil }
+        out[i] = (hi << 4) | lo
+    }
+    return out
 }
 
 /// Order candidate generation numbers newest-first (the load policy is "serve

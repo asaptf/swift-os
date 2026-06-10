@@ -113,6 +113,29 @@ struct LLMBundleTest {
         check(order == [7, 3, 2, 1], "generation order wrong: \(order)")
         check(modelGenerationsNewestFirst([]) == [], "empty generations mishandled")
 
+        // 7. I7 signature plumbing: the [signature] table parses into
+        // signatureHex, the signed range stops at the table header line, and
+        // the hex decoder round-trips / rejects malformed input.
+        let sigHex = String(repeating: "ab", count: 64)
+        let body = manifest(model, tok) + "\n"
+        let signed = body + "[signature]\nalgo = \"ed25519\"\nsig = \"\(sigHex)\"\n"
+        if let sm = parse(signed) {
+            check(sm.signatureHex == sigHex, "signatureHex not parsed")
+        } else {
+            check(false, "signed manifest did not parse")
+        }
+        let signedBytes = Array(signed.utf8)
+        let range = signedBytes.withUnsafeBytes { modelManifestSignedRange($0) }
+        check(range == body.utf8.count, "signed range wrong: \(range) != \(body.utf8.count)")
+        let unsignedBytes = Array(body.utf8)
+        let fullRange = unsignedBytes.withUnsafeBytes { modelManifestSignedRange($0) }
+        check(fullRange == unsignedBytes.count, "unsigned range should cover the whole file")
+        check(modelSignatureDecode(sigHex) == [UInt8](repeating: 0xab, count: 64),
+              "hex decode wrong")
+        check(modelSignatureDecode("zz" + String(sigHex.dropFirst(2))) == nil,
+              "non-hex accepted")
+        check(modelSignatureDecode("abcd") == nil, "short hex accepted")
+
         report()
     }
 

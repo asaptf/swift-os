@@ -143,17 +143,53 @@ private func scanGenerations(_ root: StaticString) -> [Int] {
     return gens
 }
 
-/// Read + parse "<root>/<gen>/manifest.toml". The manifest is small; payloads
-/// are mmap'd separately by the caller.
-private func readManifest(_ root: StaticString, _ gen: Int) -> ModelManifest? {
-    return withBundlePath(root, gen, "manifest.toml") { cpath -> ModelManifest? in
+// I7: trust root for manifest signatures. When the base image provisions
+// /etc/swos/model-signing.pub (32 raw bytes), every manifest MUST carry a
+// valid Ed25519 signature over its pre-[signature] bytes; without a trust
+// root the daemon runs in integrity-only mode (sha256 checks only).
+private var trustRoot = [UInt8](repeating: 0, count: 32)
+private var trustRootPresent = false
+
+private func loadTrustRoot() {
+    let fd = swiftos_open(staticPath("/etc/swos/model-signing.pub"), oRdOnly)
+    if fd < 0 { return }
+    let r = trustRoot.withUnsafeMutableBytes { swiftos_read(fd, $0.baseAddress!, 32) }
+    _ = swiftos_close(fd)
+    trustRootPresent = (r == 32)
+}
+
+private enum ManifestResult {
+    case ok(ModelManifest)
+    case malformed
+    case badSignature
+}
+
+/// Read + parse "<root>/<gen>/manifest.toml"; with a trust root provisioned,
+/// also require a valid Ed25519 manifest signature. Payloads are mmap'd
+/// separately by the caller.
+private func readManifest(_ root: StaticString, _ gen: Int) -> ManifestResult {
+    return withBundlePath(root, gen, "manifest.toml") { cpath -> ManifestResult in
         let fd = swiftos_open(cpath, oRdOnly)
-        if fd < 0 { return nil }
+        if fd < 0 { return .malformed }
         defer { _ = swiftos_close(fd) }
         return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: manifestCap) { buf in
             let r = swiftos_read(fd, buf.baseAddress!, UInt(manifestCap))
-            if r <= 0 { return nil }
-            return modelManifestParse(UnsafeRawBufferPointer(start: buf.baseAddress!, count: Int(r)))
+            if r <= 0 { return .malformed }
+            let raw = UnsafeRawBufferPointer(start: buf.baseAddress!, count: Int(r))
+            guard let m = modelManifestParse(raw) else { return .malformed }
+            if trustRootPresent {
+                guard !m.signatureHex.isEmpty,
+                      let sig = modelSignatureDecode(m.signatureHex) else { return .badSignature }
+                let range = modelManifestSignedRange(raw)
+                let okay = sig.withUnsafeBytes { sb in
+                    trustRoot.withUnsafeBytes { pb in
+                        ed25519Verify(message: raw.baseAddress!, range,
+                                      signature: sb.baseAddress!, publicKey: pb.baseAddress!)
+                    }
+                }
+                if !okay { return .badSignature }
+            }
+            return .ok(m)
         }
     }
 }
@@ -175,10 +211,18 @@ private func resolveBundle(_ root: StaticString)
     -> (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? {
     let gens = modelGenerationsNewestFirst(scanGenerations(root))
     for gen in gens {
-        guard let m = readManifest(root, gen) else {
+        let m: ModelManifest
+        switch readManifest(root, gen) {
+        case .malformed:
             swiftos_puts("llmd: generation "); putUInt(UInt(gen))
             swiftos_puts(" rejected (manifest missing or malformed)\n")
             continue
+        case .badSignature:
+            swiftos_puts("llmd: generation "); putUInt(UInt(gen))
+            swiftos_puts(" rejected (bad manifest signature)\n")
+            continue
+        case .ok(let parsed):
+            m = parsed
         }
         guard let (modelPtr, _) = loadVerified(root, gen, m.model) else {
             swiftos_puts("llmd: generation "); putUInt(UInt(gen))
@@ -439,6 +483,10 @@ func main(_ argc: Int32,
         }
         modelPtr = mp; tokPtr = kp
     } else {
+        loadTrustRoot()
+        swiftos_puts(trustRootPresent
+            ? "llmd: trust root loaded (/etc/swos/model-signing.pub)\n"
+            : "llmd: no trust root; integrity-only mode\n")
         guard let bundle = resolveBundle(bundleRoot) else {
             swiftos_puts("llmd: no verifiable model bundle generation\n")
             return 1
@@ -447,7 +495,7 @@ func main(_ argc: Int32,
         let nameBytes = Array(bundle.name.utf8)
         nameBytes.withUnsafeBytes { _ = swiftos_write(1, $0.baseAddress, UInt($0.count)) }
         swiftos_puts(" generation "); putUInt(UInt(bundle.gen))
-        swiftos_puts(" verified (sha256)\n")
+        swiftos_puts(trustRootPresent ? " verified (ed25519+sha256)\n" : " verified (sha256)\n")
         modelPtr = bundle.model; tokPtr = bundle.tok
     }
     swiftos_puts("llmd: weights mmap'd file-backed from /models\n")

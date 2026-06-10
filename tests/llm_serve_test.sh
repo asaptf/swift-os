@@ -123,8 +123,13 @@ grep -qF "llmd: model int8 Q8_0 GS=32" <<<"$CLEAN"      || fail "llmd did not se
 # verify-and-roll-back bundle flow, exercised on every boot.
 grep -qF "llmd: generation 2 rejected (model size/sha256 mismatch)" <<<"$CLEAN" \
                                                         || fail "corrupt generation 2 was not rejected"
-grep -qF "llmd: bundle stories15M generation 1 verified (sha256)" <<<"$CLEAN" \
-                                                        || fail "generation 1 was not verified"
+# I7: the trust root shipped in the base image makes manifest signatures
+# mandatory; gen 2's signature is valid (its payload hash is what fails), and
+# gen 1 verifies through both layers.
+grep -qF "llmd: trust root loaded (/etc/swos/model-signing.pub)" <<<"$CLEAN" \
+                                                        || fail "trust root was not loaded"
+grep -qF "llmd: bundle stories15M generation 1 verified (ed25519+sha256)" <<<"$CLEAN" \
+                                                        || fail "generation 1 was not signature-verified"
 grep -qE "requests [1-9]" "$OM"                         || fail "GET /metrics did not count the request"
 grep -qE "tokens_total [1-9][0-9]*" "$OM"               || fail "GET /metrics did not count generated tokens"
 grep -qE "last_tok_s [0-9]+" "$OM"                      || fail "GET /metrics missing a tok/s figure"

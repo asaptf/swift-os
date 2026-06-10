@@ -464,8 +464,8 @@ $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/s
 
 # /bin/llmd: the TCP model-serving daemon + the shared engine + bundle
 # verification (manifest parse + sha256), compiled together (WMO).
-$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift -o $@
+$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
@@ -722,6 +722,21 @@ MODELMANIFEST := $(BUILD)/modelmanifest
 $(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) -O tools/modelmanifest.swift kernel/crypto/sha256.swift -o $@
 
+# I7: Ed25519 manifest signing (keygen / sign / verify) + the dev keypair.
+# The dev key lives in models/ (gitignored, fetched-or-generated like the
+# checkpoints); the PUBLIC key ships in the base image as the trust root.
+MODELSIGN := $(BUILD)/modelsign
+$(MODELSIGN): tools/modelsign.swift userland/lib/modelbundle.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/modelsign.swift userland/lib/modelbundle.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift kernel/crypto/sha256.swift -o $@
+
+SIGNING_SEED := $(MODEL_DIR)/dev-signing.seed
+SIGNING_PUB := $(MODEL_DIR)/dev-signing.pub
+# One recipe creates both halves; order-only on the tool so rebuilding it does
+# not mint a new key. (make 3.81-compatible — no grouped targets.)
+$(SIGNING_PUB): | $(MODELSIGN)
+	$(MODELSIGN) keygen $(SIGNING_SEED) $@
+$(SIGNING_SEED): $(SIGNING_PUB)
+
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
 test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
@@ -756,6 +771,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	$(BUILD)/llm_q8_engine_test
 	$(HOST_SWIFTC) tests/llm_bundle_test.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift -o $(BUILD)/llm_bundle_test
 	$(BUILD)/llm_bundle_test
+	$(HOST_SWIFTC) -O tests/ed25519_test.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $(BUILD)/ed25519_test
+	$(BUILD)/ed25519_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
@@ -910,7 +927,7 @@ package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG)
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 	./tests/package_overlay_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -928,6 +945,11 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	$(MODELMANIFEST) stories15M 2 $(MODEL15_Q8) $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/2/manifest.toml
 	printf 'corrupt-model-payload' > $(BASE_ROOT)/models/stories15M/2/model.bin
 	cp $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/2/tokenizer.bin
+	# I7: sign both manifests (gen 2's signature is VALID — its payload hash is
+	# what fails, proving the layered checks) and ship the trust root.
+	$(MODELSIGN) sign $(BASE_ROOT)/models/stories15M/1/manifest.toml $(SIGNING_SEED)
+	$(MODELSIGN) sign $(BASE_ROOT)/models/stories15M/2/manifest.toml $(SIGNING_SEED)
+	cp $(SIGNING_PUB) $(BASE_ROOT)/etc/swos/model-signing.pub
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
