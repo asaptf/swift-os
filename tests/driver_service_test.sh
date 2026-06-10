@@ -52,6 +52,8 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
@@ -60,6 +62,7 @@ drvsvc: generation 2 stopped
 drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
+C5c OK: device discovery manifest matched pseudo input
 C5a driver service demo exited, code 0}"
 
 FORBIDS="${FORBIDS:-panic:
@@ -80,6 +83,9 @@ drvsvc: exec drvinputd failed
 drvsvc: ready message mismatch
 drvsvc: ping send failed
 drvsvc: event message mismatch
+drvsvc: device discovery failed
+drvsvc: device manifest mismatch
+drvsvc: device discovery exhaustion failed
 drvsvc: device claim failed
 drvsvc: device info mismatch
 drvsvc: device dup unexpectedly succeeded
@@ -113,7 +119,7 @@ while (( SECONDS < deadline )); do
       grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
     done <<<"$FORBIDS"
     if [[ "$ok" -eq 1 ]]; then
-      echo "PASS: C5 restartable driver-service/device-handle boot smoke passed under -smp $SMP_CPU_COUNT"
+      echo "PASS: C5 restartable driver-service/device-discovery boot smoke passed under -smp $SMP_CPU_COUNT"
       exit 0
     fi
     echo "--- serial tail ---" >&2

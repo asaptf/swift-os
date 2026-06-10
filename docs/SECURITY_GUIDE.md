@@ -33,7 +33,7 @@ The current system enforces security through several layers:
 | User/kernel boundary | EL0 enters the kernel only through the SwiftOS syscall ABI |
 | Identity | `console-login` authenticates a principal from `/etc/swos/passwd` |
 | Coarse capabilities | Filesystem read, tmpfs write, console login, and networking are gated |
-| Handle rights | File, pipe, tty, socket, and IPC endpoint handles carry read/write/transfer-style rights |
+| Handle rights | File, pipe, tty, socket, IPC endpoint, and device-grant handles carry read/write/transfer-style rights |
 | Immutable base | `/bin`, `/etc`, `/www`, and model files come from a read-only base image |
 | Writable scratch | Runtime writes go to tmpfs and are lost on reboot |
 | Memory permissions | `mmap`/`mprotect` reject writable-executable mappings |
@@ -64,7 +64,9 @@ The checked-in system currently provides these practical guarantees:
    source fd on success.
 9. `confine(path)` can narrow a process to a filesystem subtree and cannot widen
    an existing confinement.
-10. `mmap`/`mprotect` reject `PROT_WRITE | PROT_EXEC`.
+10. Device discovery and claiming are gated to the boot authority; claimed device
+    grants are inspectable and transferable but not duplicable.
+11. `mmap`/`mprotect` reject `PROT_WRITE | PROT_EXEC`.
 
 ## Current Limits
 

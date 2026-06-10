@@ -228,6 +228,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 61 | `pkg_info` | `index`, `buf`, `cap` | bytes copied or negative error |
 | 62 | `device_claim` | `name`, `device_info*` | device fd or negative error |
 | 63 | `device_info` | `fd`, `device_info*` | 0 or negative error |
+| 64 | `device_discover` | `index`, `device_info*` | 0 or negative error |
 
 Notes:
 
@@ -424,10 +425,11 @@ if rc >= 0 {
 
 ## Device Grants
 
-C5b adds an opaque device-handle scaffold for restartable driver services. The
-current registry has one pseudo device, `pseudo-input.0`, used by
-`/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over IPC.
-It is not a real MMIO, IRQ, or DMA grant yet.
+C5b adds an opaque device-handle scaffold for restartable driver services. C5c
+adds read-only discovery so a supervisor can match a device manifest before
+claiming it. The current registry has one pseudo device, `pseudo-input.0`, used
+by `/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over
+IPC. It is not a real MMIO, IRQ, or DMA grant yet.
 
 ```c
 struct swiftos_device_info {
@@ -444,10 +446,14 @@ struct swiftos_device_info {
 
 int device_claim(const char *name, struct swiftos_device_info *info);
 int device_info(int fd, struct swiftos_device_info *info);
+int device_discover(int index, struct swiftos_device_info *info);
 ```
 
 Contract:
 
+- `device_discover(index, &info)` enumerates the registry by stable manifest
+  ordinal. It writes the same 64-byte record as `device_info`; `claimed` reports
+  whether a live grant owns the device. An out-of-range ordinal returns `-2`.
 - `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
   `getattr`/`transfer` authority, or a negative error.
 - A second claim while a live handle owns the grant returns `-16`.

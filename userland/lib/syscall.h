@@ -70,6 +70,7 @@
 #define SYS_PKG_INFO      61
 #define SYS_DEVICE_CLAIM  62
 #define SYS_DEVICE_INFO   63
+#define SYS_DEVICE_DISCOVER 64
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -299,6 +300,10 @@ static inline int device_claim(const char *name, struct swiftos_device_info *inf
 
 static inline int device_info(int fd, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_INFO, fd, (long)info, 0);
+}
+
+static inline int device_discover(int index, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

@@ -133,6 +133,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
 | `make c5-driver-service-test` | Run the C5a driver-service supervisor smoke under `-smp 4`. |
 | `make c5-device-handle-test` | Run the C5b opaque device-handle handoff gate under `-smp 4`. |
+| `make c5-device-discovery-test` | Run the C5c device discovery/manifest handoff gate under `-smp 4`. |
 | `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |
@@ -484,7 +485,7 @@ make package-overlay-test
 | Static-host or hosted package repository | `make package-static-host-repo-install-test`, `make ports-hosted-url-verify-test`, or `make package-static-host-dns-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
-| C5a/C5b driver-service handoff path | `make c5-driver-service-test` or `make c5-device-handle-test` |
+| C5 driver-service discovery/handoff path | `make c5-driver-service-test`, `make c5-device-handle-test`, or `make c5-device-discovery-test` |
 | Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this

@@ -1670,6 +1670,26 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   virtio-input device claim, manifest matching, or driver replacement. C5b only
   makes the ownership/transfer/release contract executable.
 
+### C5c — device discovery manifest matching (DONE, 2026-06-10)
+
+- **Discovery ABI.** Added `device_discover(index, info*)` as syscall 64. It is
+  read-only, requires the same boot authority capability as `device_claim`, and
+  enumerates the device registry by manifest ordinal. It writes the same 64-byte
+  `swiftos_device_info` record as `device_info`; out-of-range enumeration returns
+  `-2`.
+- **Supervisor matching.** `/bin/drvsvcdemo` discovers registry metadata, matches
+  `pseudo-input.0` by kind, bus, `NO_MMIO_GRANT`, unclaimed state, and manifest
+  name, proves enumeration exhaustion, then claims the discovered name and runs
+  the existing C5b IPC transfer/release checks.
+- **Executable checks.** Boot now requires
+  `C5c OK: device discovery manifest matched pseudo input`; `make
+  c5-device-discovery-test` is the focused `-smp 4` gate, and
+  `c5-device-handle-test` remains a compatibility alias.
+- **Non-goals.** Still no MMIO mapping, IRQ endpoint, DMA window, real
+  device-tree/virtio-input metadata extraction, or userland replacement of the
+  in-kernel virtio-input driver. C5c only turns the pseudo registry into an
+  executable discovery/matching contract.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
