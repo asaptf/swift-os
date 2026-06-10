@@ -4013,3 +4013,33 @@ same build; staging a genuinely different signed kernel needs a payload disk or
 an update channel) + per-slot attempt-count/rollback for the kernel (the
 signed-selection split: per-image signatures + a CRC'd writable boot-state, so
 boot-state can be written without re-signing). Key rotation / revocation.
+
+### U1g-5a — loader boot-attempt counter on the ESP (DONE, 2026-06-10)
+
+**Scope.** First slice of kernel attempt-based rollback (the U1b analogue). The
+loader gains its first ESP *write*: a per-slot boot-attempt counter in a writable,
+hash-protected `kernel-state` file, persisted across reboots. This is the
+"writable boot-state" half of the signed-selection split — the kernel images stay
+independently signed/hashed, so the boot-state need not be (its SHA-256 only
+guards against torn/garbage writes, like SWOSBOOT's CRC).
+
+- `boot/efi/loader.c`: `loader_bump_attempt()` opens `\EFI\swift-os\kernel-state`
+  with READ|WRITE|CREATE (EFI File protocol), reads + validates the 512-byte record
+  ("SWOSKSTA", version, seq, attemptA/B, stateA/B, activeOverride, SHA-256 over
+  [0,480)), re-initializes it if absent/corrupt, increments the booted slot's
+  attempt + seq, rehashes, and writes it back (Close flushes). Self-managed — no
+  build/disk staging needed; the loader creates it on first boot. Best-effort: a
+  write failure logs but never blocks boot. Uses the existing `loader_sha256.h`.
+  `efi.h` gains `EFI_FILE_MODE_WRITE`/`CREATE`.
+
+**Acceptance.** `tests/uefi_kattempt_test.sh` (in `make test`): boots the SAME
+writable disk copy three times under AAVMF (ESP on mmio, `cache=writethrough`) and
+asserts the active slot's counter increments 1→2→3 across reboots — proving the
+loader's EFI write lands and persists. The signed manifest (v3) is untouched, so
+the existing kernel-A/B tests are unaffected.
+
+**Still future (U1g-5b/c).** Use the counter for attempt-based rollback (active
+slot unconfirmed + attempts exhausted → fail over to the other slot, persisted —
+the U1d analogue); a `/bin/swos-kconfirm` to mark the booted slot CONFIRMED (U1c
+analogue) so it stops accruing attempts; and move `active` into the writable
+boot-state so activate (U1g-4d) needs no pre-signed alternate manifest.

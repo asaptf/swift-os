@@ -264,11 +264,18 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   end-to-end** (operator flow: `swos-kstage` → `swos-kactivate` → reboot),
   mirroring the system-image U1f flow.
 
+- **U1g-5a (done):** the writable boot-state half of the signed-selection split.
+  The loader records a per-slot boot-attempt counter in a hash-protected
+  `\EFI\swift-os\kernel-state` file (its first EFI write; self-managed, created on
+  first boot), persisted across reboots. Kernel images stay independently signed,
+  so the boot-state is only hash-guarded (torn-write protection), not signed.
+  `tests/uefi_kattempt_test.sh` asserts the counter persists 1→2→3.
+
 ## Not implemented yet
 
-- A real new-kernel *payload* source (today both kernel slots are the same build;
-  staging a genuinely different signed kernel needs a payload disk / update
-  channel) + per-slot attempt-count/rollback for the kernel (the signed-selection
-  split: per-image signatures + a CRC'd writable boot-state).
+- U1g-5b/c: attempt-based kernel rollback (unconfirmed + attempts exhausted → fail
+  over, persisted) + `/bin/swos-kconfirm` (mark booted slot CONFIRMED) + move
+  `active` into the writable boot-state (so activate needs no pre-signed alternate).
+- A real new-kernel *payload* source (today both kernel slots are the same build).
 - Key rotation / revocation.
 - Key rotation / revocation.

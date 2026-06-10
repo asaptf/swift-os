@@ -160,9 +160,19 @@ static CHAR16 KERNEL_MANIFEST_PATH[] = {
     '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
     'k','e','r','n','e','l','-','b','o','o','t', 0
 };
+// U1g-5a: the writable boot-state (per-slot boot-attempt counter + state). Not
+// signed — only hash-protected against torn/garbage writes — so the loader and OS
+// can update it freely (the kernel images are independently signature/hash-checked).
+static CHAR16 KERNEL_STATE_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','-','s','t','a','t','e', 0
+};
 
 static UINT32 ld32(const UINT8 *p) {
     return (UINT32)p[0] | ((UINT32)p[1] << 8) | ((UINT32)p[2] << 16) | ((UINT32)p[3] << 24);
+}
+static void st32(UINT8 *p, UINT32 v) {
+    p[0] = (UINT8)v; p[1] = (UINT8)(v >> 8); p[2] = (UINT8)(v >> 16); p[3] = (UINT8)(v >> 24);
 }
 
 // Open a file on the volume the loader was loaded from (the ESP) and return its
@@ -283,6 +293,73 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
         hashB[i] = buf[72 + i];
     }
     return 1;
+}
+
+// U1g-5a: record a boot attempt for `slot` in the ESP kernel-state file. Layout
+// (512 bytes): "SWOSKSTA"(8) version(4) seq(4) attemptA(4) attemptB(4) stateA(4)
+// stateB(4) activeOverride(4) ... reserved ... sha256[0,480) at offset 480. Not
+// signed — the SHA-256 only guards against torn/garbage writes. Self-managed: the
+// loader creates the file on first boot and re-initializes it if corrupt. This is
+// the loader's first ESP write (EFI File protocol, write mode); the groundwork for
+// attempt-based kernel rollback (U1g-5b). Best-effort — a failure never blocks boot.
+static void loader_bump_attempt(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, int slot) {
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *li = 0;
+    if (bs->HandleProtocol(image_handle, &li_guid, (void **)&li) != EFI_SUCCESS || !li) return;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
+    if (bs->HandleProtocol(li->DeviceHandle, &fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) return;
+    EFI_FILE_PROTOCOL *root = 0;
+    if (fs->OpenVolume(fs, &root) != EFI_SUCCESS || !root) return;
+    EFI_FILE_PROTOCOL *f = 0;
+    EFI_STATUS os = root->Open(root, &f, KERNEL_STATE_PATH,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    root->Close(root);
+    if (os != EFI_SUCCESS || !f) return;
+
+    static UINT8 buf[512];
+    for (int i = 0; i < 512; i++) buf[i] = 0;
+    UINTN want = 512;
+    f->SetPosition(f, 0);
+    f->Read(f, &want, buf); // want := bytes actually read (0 for a freshly-created file)
+
+    static const char magic[8] = { 'S','W','O','S','K','S','T','A' };
+    int valid = (want >= 512);
+    if (valid) for (int i = 0; i < 8; i++) if (buf[i] != (UINT8)magic[i]) { valid = 0; break; }
+    if (valid && ld32(buf + 8) != 1) valid = 0;
+    if (valid) {
+        unsigned char h[32];
+        sha256_hash(buf, 480, h);
+        for (int i = 0; i < 32; i++) if (h[i] != buf[480 + i]) { valid = 0; break; }
+    }
+    if (!valid) { // (re)initialize a fresh state record
+        for (int i = 0; i < 512; i++) buf[i] = 0;
+        for (int i = 0; i < 8; i++) buf[i] = (UINT8)magic[i];
+        st32(buf + 8, 1);            // version
+        st32(buf + 32, 0xFFFFFFFF);  // activeOverride = none
+    }
+
+    int aoff = (slot == 0) ? 16 : 20; // attemptA / attemptB
+    st32(buf + aoff, ld32(buf + aoff) + 1);
+    st32(buf + 12, ld32(buf + 12) + 1); // seq++
+    unsigned char nh[32];
+    sha256_hash(buf, 480, nh);
+    for (int i = 0; i < 32; i++) buf[480 + i] = nh[i];
+
+    f->SetPosition(f, 0);
+    UINTN wlen = 512;
+    EFI_STATUS ws = f->Write(f, &wlen, buf);
+    f->Close(f); // Close flushes modified data per the UEFI spec
+    if (ws == EFI_SUCCESS && wlen == 512) {
+        puts16(st, "UEFI: kernel slot ");
+        puts16(st, slot == 0 ? "A" : "B");
+        puts16(st, " boot attempt ");
+        puthex(st, ld32(buf + aoff));
+        puts16(st, "\r\n");
+    } else {
+        puts16(st, "UEFI: kernel-state write failed\r\n");
+    }
 }
 
 // U1g-3a: load a kernel slot's image into KERNEL_LOAD_ADDR and, if a hash is
@@ -464,6 +541,8 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         puts16(st, " bytes\r\n");
         puts16(st, "UEFI: booted kernel slot ");
         puts16(st, loaded_slot == 0 ? "A\r\n" : "B\r\n");
+        // U1g-5a: record this boot attempt in the writable ESP kernel-state.
+        loader_bump_attempt(image_handle, st, loaded_slot);
     } else {
         // No slot file was usable: reserve and stage the embedded blob in place.
         UINTN npages = (blob_size + 0xFFF) / 0x1000;
