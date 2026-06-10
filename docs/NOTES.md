@@ -1628,6 +1628,48 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   service supervisor, userland drivers, Cells/resource domains, endpoint
   close-on-exec policy change, and SMP work remain later C/S milestones.
 
+### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)
+
+- **Supervisor/service shape.** Added `/bin/drvsvcdemo`, a tiny userland
+  supervisor, and `/bin/drvinputd`, a pseudo input-driver service. The supervisor
+  creates two endpoint pairs, forks/execs the service with only the service-side
+  endpoint fds left open, waits for a ready message, sends a command, receives an
+  event, stops the service, and repeats the sequence with a fresh generation.
+- **Restart evidence.** The service returns a generation-specific exit status
+  after `STOP`, so the supervisor proves both the old service stopped and a new
+  service instance recovered the endpoint protocol.
+- **Executable checks.** Boot now runs the smoke and prints
+  `C5a OK: restartable driver service recovered over IPC`; `make
+  c5-driver-service-test` runs the focused `-smp 4` direct-boot acceptance.
+- **Non-goals.** No real device handle, MMIO mapping, IRQ endpoint, DMA window, or
+  virtio-input ownership is moved to userland yet. This is the C5 supervisor/IPC
+  contract that the next device-handoff slice can attach hardware authority to.
+
+### C5b — opaque device-handle handoff scaffold (DONE, 2026-06-10)
+
+- **Device handle vocabulary.** `HandleKind.device` is now part of the typed
+  handle table. Device grants default to `getattr + transfer` only: they can be
+  inspected and moved over C4 IPC, but not duplicated, read, written, or mapped.
+- **Registry scaffold.** VFS owns a tiny device registry with `pseudo-input.0`,
+  a C5 scaffold entry marked `NO_MMIO_GRANT`. `device_claim(name, info*)`
+  creates a unique device handle for the boot authority and returns `-16` while
+  another live handle owns the grant. `device_info(fd, info*)` exposes fixed
+  metadata; the MMIO base/length and IRQ fields are zero because C5b does not
+  grant hardware access yet.
+- **Lifecycle and IPC transfer.** Open-description refcounts now release device
+  ownership on final close/process exit. `/bin/drvsvcdemo` claims the pseudo
+  device, transfers it to `/bin/drvinputd` with `ipc_send(..., handle_fd)`,
+  verifies the moved source fd becomes `-9`, observes `-16` on a concurrent
+  claim while the service owns it, stops the service, and successfully reclaims
+  the device.
+- **Executable checks.** Boot now requires
+  `C5b OK: opaque device handle transferred and released`; `make
+  c5-device-handle-test` is the focused direct-boot acceptance. The host
+  `handle_test` also covers `.device` kind stability and default rights.
+- **Non-goals.** Still no MMIO map syscall, IRQ endpoint, DMA window, real
+  virtio-input device claim, manifest matching, or driver replacement. C5b only
+  makes the ownership/transfer/release contract executable.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

@@ -854,6 +854,14 @@ private func captureLastS5eThreadFanoutTelemetry() {
     processS5eThreadTelemetryUnlock(daif)
 }
 
+private func s5eThreadFanoutWorkersExited() -> Bool {
+    let daif = processS5eThreadTelemetryLock()
+    let created = lastS5eThreadCreateCount
+    let exited = lastS5eThreadExitCount
+    processS5eThreadTelemetryUnlock(daif)
+    return created >= 2 && exited >= created
+}
+
 private func resetLastS5fRunAnyTelemetry() {
     lastS5fRunAnyTelemetryValid = false
     lastS5fRunAnyProcessCount = 0
@@ -2481,6 +2489,12 @@ func processRunS5eThreadFanout(_ image: UInt, _ size: UInt,
     }
 
     schedule(until: { pState[slot] == pZombie && pSchedulerQuiesced[slot] })
+    let code = pExit[slot]
+    if code == 0 {
+        // The parent observes worker completion through a futex before a worker
+        // necessarily reaches SYS_exit and records S5e telemetry.
+        schedule(until: { s5eThreadFanoutWorkersExited() })
+    }
 
     cpu = 1
     while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
@@ -2494,7 +2508,6 @@ func processRunS5eThreadFanout(_ image: UInt, _ size: UInt,
     smpLoadBarrier()
     s5eThreadPlacementActive = false
     captureLastS5eThreadFanoutTelemetry()
-    let code = pExit[slot]
     lastReapedKilled = pKilled[slot]
     reapProcess(slot)
     return code

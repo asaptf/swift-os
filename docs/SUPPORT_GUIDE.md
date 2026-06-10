@@ -31,7 +31,9 @@ Current supported support targets:
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
+| Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
+| Driver-service/device-handle smoke (`-smp 4`) | `make c5-device-handle-test` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
 Current non-support targets:
@@ -77,7 +79,9 @@ Then run the narrowest acceptance test that proves the failing path:
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
+| Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| Driver-service/device-handle smoke (`-smp 4`) | `make c5-device-handle-test` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
 If the narrow test passes, record that too. It narrows the problem and prevents
@@ -203,6 +207,8 @@ These markers help locate the failing subsystem.
 | `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt model generation was rejected |
 | `llmd: bundle stories15M generation 1 verified (ed25519+sha256)` | Signed model fallback selected generation 1 |
 | `llmd: served` | LLM request completed and metrics were logged |
+| `C5a OK: restartable driver service recovered over IPC` | C5a pseudo driver service restarted and recovered |
+| `C5b OK: opaque device handle transferred and released` | C5b pseudo device grant moved to the service and reclaimed |
 | `pkghello: hello from package overlay` | Package overlay was visible and executable |
 | `LOG-EXPORT-BEGIN` | Kernel log serialization smoke path ran |
 | `panic` | Fatal kernel path; include surrounding register/log lines |
@@ -350,13 +356,17 @@ make package-store-test
 make package-local-install-test
 make package-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
+make c5-device-handle-test
 ```
 
 Mention whether the guest saw `/usr/bin/pkghello`, whether `pkg list` reported
 `pkghello-1.0.0_1`, and whether the repository flow printed
 `pkg: catalog updated`. For the static-host ports fixture, mention whether
 `pkg install lua` and `pkg install zlib` succeeded, whether Lua printed `42`,
-and whether the `minigzip` round trip printed `static-host-ok`.
+whether the `minigzip` round trip printed `static-host-ok`, and whether the
+hosted-URL path used an IP literal or DNS hostname.
 
 ### SMP Readiness
 

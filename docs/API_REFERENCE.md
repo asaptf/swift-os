@@ -61,7 +61,7 @@ source, then follow its Makefile rule and acceptance test.
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
-| Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-static-host-repo-install-test` |
+| Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 
 When copying an example, keep the same API layer unless you are deliberately
 testing a lower layer. Mixing raw syscalls, native Swift bridge helpers, and
@@ -225,6 +225,8 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 59 | `mmap_file` | `fd`, `length`, `prot` | base VA or negative error |
 | 60 | `pkg_install` | `fd`, `name`, `version_revision` | 0 or negative error |
 | 61 | `pkg_info` | `index`, `buf`, `cap` | bytes copied or negative error |
+| 62 | `device_claim` | `name`, `device_info*` | device fd or negative error |
+| 63 | `device_info` | `fd`, `device_info*` | 0 or negative error |
 
 Notes:
 
@@ -418,6 +420,41 @@ if rc >= 0 {
     swiftos_puts("\n")
 }
 ```
+
+## Device Grants
+
+C5b adds an opaque device-handle scaffold for restartable driver services. The
+current registry has one pseudo device, `pseudo-input.0`, used by
+`/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over IPC.
+It is not a real MMIO, IRQ, or DMA grant yet.
+
+```c
+struct swiftos_device_info {
+    unsigned int kind;
+    unsigned int bus;
+    unsigned long mmio_base;
+    unsigned long mmio_len;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned int generation;
+    unsigned int claimed;
+    char name[24];
+};
+
+int device_claim(const char *name, struct swiftos_device_info *info);
+int device_info(int fd, struct swiftos_device_info *info);
+```
+
+Contract:
+
+- `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
+  transfer authority, or a negative error.
+- A second claim while a live handle owns the grant returns `-16`.
+- Moving the handle through `ipc_send` invalidates the sender's source fd.
+- Closing the final fd for the device releases the registry claim.
+- `device_info` fills the fixed 64-byte metadata record. `mmio_base`,
+  `mmio_len`, and `irq` are zero in C5b because hardware access is deliberately
+  not granted.
 
 ## Terminal API
 
@@ -1078,7 +1115,7 @@ one booting acceptance path:
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
-| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test` |
+| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,

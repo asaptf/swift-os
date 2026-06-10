@@ -127,7 +127,11 @@ Use `/tmp` for runtime scratch state.
 
 ## Programs In `/bin`
 
-The base image stages native Swift programs, C demos, and busybox.
+The base image stages native Swift programs, C demos, and busybox. The C5
+service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
+pseudo driver service `/bin/drvinputd` over endpoint IPC, then transfers an
+opaque `pseudo-input.0` device handle to prove device ownership can move to a
+restartable service.
 
 Common native Swift tools:
 
@@ -389,9 +393,10 @@ These are current implementation boundaries, not necessarily design goals:
   repository, installs all three by package name, and runs Lua, `minigzip`, and
   CA bundle marker smoke commands. The P8 static-host workflow publishes that
   seed into a deployable web root and proves the same install path from the
-  hosted layout. Remove, upgrade,
-  rollback, public hosted channels, version-constraint solving, and
-  large-package streaming downloads are not implemented yet.
+  hosted layout. The hosted-URL smoke proves that `/bin/pkg` can install from a
+  DNS-resolved HTTP repository hostname. Remove, upgrade, rollback, public
+  production channels, version-constraint solving, and large-package streaming
+  downloads are not implemented yet.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

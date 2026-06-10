@@ -50,6 +50,20 @@ has documented firmware/device-model limitations.
 See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) and
 [VIRTUALBOX.md](VIRTUALBOX.md).
 
+### Can SwiftOS use more than one CPU?
+
+The default interactive product profile remains conservative, but SMP is no
+longer only a boot experiment. The checked-in S5f gate boots QEMU with four
+CPUs and proves a gated run-any EL0 placement policy with:
+
+```sh
+make s5-run-any-placement-test
+```
+
+Do not treat this as a production load-balancing or capacity claim yet. Use it
+as readiness evidence while the roadmap finishes the broader SMP and service
+hardening work.
+
 ## Build And Installation
 
 ### What is the fastest way to boot it?
@@ -230,7 +244,8 @@ cross-builds zlib, packages ca-certificates, publishes all three into one
 signed local repository, boots SwiftOS with that default repo URL, installs
 them by name, and runs their smoke commands. P8 then publishes the same seed
 repository into a static-hostable web root and proves installs from that hosted
-layout:
+layout. The hosted URL smoke verifies that hosted root through URL fetching and
+proves target-side install through a DNS-resolved HTTP repository hostname:
 
 ```sh
 make ports-lua-repo-fixture
@@ -243,13 +258,16 @@ make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The seed test exercises `pkg install lua`, `pkg install zlib`,
 `pkg install ca-certificates`, Lua version and expression checks, a `minigzip`
 compression/decompression round trip, and the CA bundle marker. The static-host
-test serves `build/ports-static-host-root` and repeats that install path. This
-is still a local fixture, not a public hosted package channel.
+test serves `build/ports-static-host-root` and repeats that install path. The
+DNS smoke uses a hosted-style hostname URL. This is still a local fixture, not
+a public production package channel.
 
 ### Can package files write into `/bin` or `/etc`?
 
@@ -288,6 +306,20 @@ Current network-facing programs include `/bin/httpd`, `/bin/llmd`,
 
 See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md#networking-commands).
+
+### Does SwiftOS have restartable driver services yet?
+
+The C5a/C5b path provides the first checked-in restartable driver-service and
+opaque device-handle smoke. `/bin/drvsvcdemo` supervises the pseudo driver
+service `/bin/drvinputd`, exchanges endpoint IPC, transfers a pseudo-input
+device grant, restarts the service, and verifies recovery:
+
+```sh
+make c5-device-handle-test
+```
+
+This is not a real device handoff yet. MMIO, IRQ, DMA, and virtio-input
+ownership remain roadmap work.
 
 ### Why can only one of `httpd` and `llmd` run?
 

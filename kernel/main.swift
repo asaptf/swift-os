@@ -347,6 +347,17 @@ private func runFdOpsDemo() {
     }
 }
 
+private func runDriverServiceDemo() {
+    uartPuts("swift-os C5a: restartable driver-service supervisor\n")
+    let (img, sz) = demoImage("/bin/drvsvcdemo")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["drvsvcdemo"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C5a driver service demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1034,6 +1045,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runForkDemo()
         runExecDemo()
         runFdOpsDemo()
+        runDriverServiceDemo()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

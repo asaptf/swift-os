@@ -24,6 +24,7 @@ service-oriented.
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
 | Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the P6 Lua ports recipe/cross-build/repository scaffold |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
+| Driver services | C5a supervisor/service smoke plus C5b opaque device-handle handoff over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
 
@@ -93,8 +94,12 @@ service-oriented.
   `pkg install ca-certificates`, Lua smoke commands, a `minigzip` round trip,
   and the CA bundle marker with `make package-ports-seed-repo-install-test`.
 - Publishes that seed into a static-hostable web root with `hosted-repo.json`,
-  `repo-root.pub`, and SHA-256 sidecar checks, then verifies install from that
-  hosted layout with `make package-static-host-repo-install-test`.
+  `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua, zlib, and
+  ca-certificates install from that hosted layout with
+  `make package-static-host-repo-install-test`.
+- Verifies hosted static-root URLs from the host and proves target-side install
+  from a DNS-resolved HTTP repository hostname with
+  `make package-static-host-dns-repo-install-test`.
 - Does not yet provide public hosted package channels, version-constraint
   solving, broad source-port coverage, remove, upgrade, rollback, or streaming
   large-package downloads.
@@ -154,6 +159,8 @@ make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 make smp-cpu-utilization-test
 make s5-el0-fanout-test
 ./tests/llm_run_test.sh
@@ -190,13 +197,16 @@ llmd: served
   P6e/P6f can cross-build and install Lua in QEMU, and P7 can publish Lua plus
   zlib into one signed local seed repository and install both in QEMU. P8 can
   publish that seed into a static-hostable web root and install from that hosted
-  layout. Public hosted channels, broad source-port coverage,
+  layout. P9 verifies hosted static-root URLs and target-side DNS-resolved HTTP
+  repository URLs. Public production channels, broad source-port coverage,
   version-constraint solving, removal, upgrade, rollback, and streaming
   large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. Restartable
-  userland services are roadmap work.
+- Many drivers and the network stack still live in the kernel. C5a/C5b prove the
+  supervisor/service IPC shape and opaque device-handle ownership transfer; real
+  restartable userland driver services with MMIO/IRQ/DMA authority are still
+  roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

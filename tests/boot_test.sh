@@ -86,6 +86,21 @@ fdopsdemo: pipe-poll preemption stress OK
 fdopsdemo: rename/unlink/mkdir/rmdir OK
 M8e OK: fdops demo exited, code 0
 C1 OK: fds-as-handles preserved
+drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
+drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
+C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
+C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
 M12a security: boot principal console session 1
@@ -143,7 +158,35 @@ C4A-ENDPOINT-SEND-XFER-DENY-FAIL
 C4A-ENDPOINT-RECV-XFER-DENY-LEAK
 C4A-ENDPOINT-RECV-XFER-DENY-FAIL
 forkdemo: IPC-MOVE-ONLY-LEAK
-forkdemo: IPC-MOVE-ONLY-FAIL}"
+forkdemo: IPC-MOVE-ONLY-FAIL
+drvinputd: missing endpoint args
+drvinputd: invalid generation
+drvinputd: ready send failed
+drvinputd: command receive failed
+drvinputd: event send failed
+drvinputd: device handle missing
+drvinputd: duplicate device grant
+drvinputd: device info failed
+drvinputd: device info mismatch
+drvinputd: device ack send failed
+drvinputd: unknown command
+drvsvc: endpoint_create failed
+drvsvc: fork failed
+drvsvc: exec drvinputd failed
+drvsvc: ready message mismatch
+drvsvc: ping send failed
+drvsvc: event message mismatch
+drvsvc: device claim failed
+drvsvc: device info mismatch
+drvsvc: device dup unexpectedly succeeded
+drvsvc: device grant send failed
+drvsvc: moved device fd still valid
+drvsvc: device ack mismatch
+drvsvc: busy claim failed
+drvsvc: reclaim claim failed
+drvsvc: reclaim info mismatch
+drvsvc: stop send failed
+drvsvc: service wait failed}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2

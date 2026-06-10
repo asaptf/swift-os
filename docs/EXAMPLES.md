@@ -331,6 +331,8 @@ Host:
 ```sh
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The automated test serves `build/ports-static-host-root`, injects the default
@@ -368,6 +370,7 @@ Equivalent automated check:
 
 ```sh
 make package-static-host-repo-install-test
+make package-static-host-dns-repo-install-test
 ```
 
 ## 12. Run The Native Swift LLM Demo

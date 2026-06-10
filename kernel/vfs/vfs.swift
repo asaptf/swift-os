@@ -13,6 +13,7 @@ private let errNoEntry = -2
 private let errBadFD = -9
 private let errAccess = -13
 private let errAgain = -11
+private let errBusy = -16
 private let errNoMem = -12
 private let errExists = -17
 private let errNotDir = -20
@@ -76,6 +77,9 @@ private struct VNode {
     var nextSibling = -1
 }
 
+// Keep fixed-table tmpfs churn headroom above the packed base image. S4f runs
+// after normal boot/login demos, so it needs space for transient vnode names
+// even though unlink/rmdir only detach nodes in this simple VFS.
 private let maxNodes = 192
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
@@ -85,7 +89,8 @@ private var mountedPackageStorePayloads = 0
 
 // Handle kinds live in handle.swift (HandleKind): .none/.tty/.file/.pipe/.socket,
 // 1:1 with the former fdKind* constants (fdKindVNode → .file). net-b: a .socket
-// description's `node` field indexes the socket table.
+// description's `node` field indexes the socket table; C5b .device descriptions
+// index the opaque device grant registry below.
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
@@ -128,6 +133,21 @@ private struct Endpoint {
 }
 private let endpointMsgCap = 256
 
+// C5b: a tiny opaque device registry. This deliberately does not map MMIO,
+// route IRQs, or allocate DMA windows yet; it only mints a unique transferable
+// handle that names a future driver-owned device grant.
+private struct DeviceGrant {
+    var inUse = false
+    var claimed = false
+    var namePtr: UInt = 0
+    var nameLen = 0
+    var kind: UInt32 = 0
+    var bus: UInt32 = 0
+    var flags: UInt32 = 0
+    var generation: UInt32 = 0
+    var ownerProc = -1
+}
+
 private let maxFDs = 32
 private let maxOpenDescriptions = 96
 private let maxPipes = 16
@@ -141,6 +161,14 @@ private let maxEndpoints = 16
 private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
+private let maxDevices = 4
+private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
+private let deviceInfoSize: UInt = 64
+private let deviceInfoNameOffset = 40
+private let deviceInfoNameCap = 24
+private let deviceKindPseudoInput: UInt32 = 1
+private let deviceBusPseudo: UInt32 = 1
+private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // C3: the subtree a process is confined to — object-scoped fs authority. 0 means
 // unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
@@ -521,6 +549,24 @@ private func mountPackageImages(_ root: Int, baseImage: Int) {
     }
 }
 
+private func registerDevice(_ slot: Int, _ name: StaticString,
+                            kind: UInt32, bus: UInt32, flags: UInt32) {
+    if slot < 0 || slot >= maxDevices { return }
+    devices[slot] = DeviceGrant(inUse: true, claimed: false,
+                                namePtr: UInt(bitPattern: name.utf8Start),
+                                nameLen: name.utf8CodeUnitCount,
+                                kind: kind, bus: bus, flags: flags,
+                                generation: 0, ownerProc: -1)
+}
+
+private func resetDeviceRegistry() {
+    for i in 0..<maxDevices { devices[i] = DeviceGrant() }
+    registerDevice(0, "pseudo-input.0",
+                   kind: deviceKindPseudoInput,
+                   bus: deviceBusPseudo,
+                   flags: deviceFlagNoMmioGrant)
+}
+
 func vfsInit() {
     withUnsafeMutablePointer(to: &vfsLockWord) { word in
         smpAtomicStore(word, 0)
@@ -575,6 +621,8 @@ func vfsInit() {
     }
     for i in 0..<maxOpenDescriptions { openDescriptions[i] = OpenDescription() }
     for i in 0..<maxPipes { pipes[i] = Pipe() }
+    for i in 0..<maxEndpoints { resetEndpointSlotForReuse(i) }
+    resetDeviceRegistry()
 }
 
 func vfsMountActivePackageStore() -> Int {
@@ -885,6 +933,9 @@ private func releaseDescription(_ d: Int) {
             resetEndpointSlotForReuse(ep)
         }
     }
+    if desc.kind == .device {
+        releaseDeviceGrant(desc.node)
+    }
     openDescriptions[d] = OpenDescription()
 }
 
@@ -960,6 +1011,13 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
     return r
 }
 
+private func deviceRights() -> Rights {
+    var r = Rights()
+    r.insert(.getattr)
+    r.insert(.transfer)
+    return r
+}
+
 private func discardUninstalledDescription(_ d: Int) {
     if d >= 0 && d < maxOpenDescriptions {
         openDescriptions[d] = OpenDescription()
@@ -985,6 +1043,49 @@ private func rollbackEndpointCreate(proc: Int, sfd: Int, rfd: Int,
     discardUninstalledDescription(sd)
     discardUninstalledDescription(rd)
     discardEndpoint(ep)
+}
+
+private func releaseDeviceGrant(_ dev: Int) {
+    if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return }
+    devices[dev].claimed = false
+    devices[dev].ownerProc = -1
+}
+
+private func deviceNameMatches(_ dev: Int, _ name: UnsafePointer<UInt8>) -> Bool {
+    if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return false }
+    let len = devices[dev].nameLen
+    guard let expected = UnsafePointer<UInt8>(bitPattern: devices[dev].namePtr) else { return false }
+    var i = 0
+    while i < len {
+        if name[i] != expected[i] { return false }
+        i += 1
+    }
+    return name[len] == 0
+}
+
+private func findDeviceByName(_ name: UnsafePointer<UInt8>) -> Int {
+    for i in 0..<maxDevices where deviceNameMatches(i, name) { return i }
+    return -1
+}
+
+private func writeDeviceInfoLocked(_ dev: Int, _ out: UnsafeMutablePointer<UInt8>) {
+    for i in 0..<Int(deviceInfoSize) { out[i] = 0 }
+    let raw = UnsafeMutableRawPointer(out)
+    raw.storeBytes(of: devices[dev].kind, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].bus, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: UInt64(0), toByteOffset: 8, as: UInt64.self)   // MMIO base: not granted in C5b
+    raw.storeBytes(of: UInt64(0), toByteOffset: 16, as: UInt64.self)  // MMIO length: not granted in C5b
+    raw.storeBytes(of: UInt32(0), toByteOffset: 24, as: UInt32.self)  // IRQ: not granted in C5b
+    raw.storeBytes(of: devices[dev].flags, toByteOffset: 28, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].generation, toByteOffset: 32, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].claimed ? UInt32(1) : UInt32(0),
+                   toByteOffset: 36, as: UInt32.self)
+    if let name = UnsafePointer<UInt8>(bitPattern: devices[dev].namePtr) {
+        var n = devices[dev].nameLen
+        if n >= deviceInfoNameCap { n = deviceInfoNameCap - 1 }
+        for i in 0..<n { out[deviceInfoNameOffset + i] = name[i] }
+        out[deviceInfoNameOffset + n] = 0
+    }
 }
 
 // ---- kernel-internal handle API (C1) --------------------------------------
@@ -1179,6 +1280,12 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                                     if desc.node < 0 || desc.node >= nodeCount || !nodes[desc.node].inUse {
                                         return false
                                     }
+                                } else if desc.kind == .device {
+                                    let dev = desc.node
+                                    if dev < 0 || dev >= maxDevices || !devices[dev].inUse ||
+                                        !devices[dev].claimed {
+                                        return false
+                                    }
                                 }
                             } else if desc.refCount != 0 {
                                 return false
@@ -1235,6 +1342,59 @@ func vfsS4bLockBoundaryHeldSelfTest() -> Bool {
 }
 
 // ---- syscalls -------------------------------------------------------------
+
+func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
+    guard let name = userCString(nameVA, maxLen: deviceInfoNameCap) else { return errInvalid }
+    let out: UnsafeMutablePointer<UInt8>?
+    if infoVA == 0 {
+        out = nil
+    } else {
+        guard let buf = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+        out = buf
+    }
+
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let dev = findDeviceByName(name)
+    if dev < 0 { return errNoEntry }
+    if devices[dev].claimed { return errBusy }
+
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd < 0 { return errNoSpace }
+    let d = allocDescription()
+    if d < 0 { return errNoSpace }
+
+    devices[dev].claimed = true
+    devices[dev].ownerProc = proc
+    devices[dev].generation &+= 1
+    openDescriptions[d].kind = .device
+    openDescriptions[d].node = dev
+    installDescription(proc, fd, d, rights: deviceRights())
+    if let outBuf = out { writeDeviceInfoLocked(dev, outBuf) }
+    return fd
+}
+
+func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .device else { return errBadFD }
+    guard hasRights(entry.rights, .getattr) else { return errAccess }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return errBadFD }
+    let desc = openDescriptions[d]
+    guard desc.kind == .device else { return errBadFD }
+    let dev = desc.node
+    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return errInvalid }
+    writeDeviceInfoLocked(dev, out)
+    return 0
+}
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }

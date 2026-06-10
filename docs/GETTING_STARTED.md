@@ -276,6 +276,8 @@ Run the SMP smoke and readiness tests:
 make smp-test
 make s1-test
 make smp-cpu-utilization-test
+make s5-run-any-placement-test
+make c5-device-handle-test
 ```
 
 Run focused package and ports fixture gates:
@@ -292,6 +294,8 @@ make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The test suite includes host-side Swift unit tests and in-QEMU boot assertions.

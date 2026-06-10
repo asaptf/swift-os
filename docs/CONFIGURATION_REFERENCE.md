@@ -121,8 +121,19 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make package-store-fixture` | Build and inspect the sample package-store image. |
 | `make package-overlay-test` | Run the package overlay acceptance test. |
 | `make package-store-test` | Run the package-store boot activation acceptance test. |
+| `make package-static-host-repo-install-test` | Run the hosted-layout package repository install test. |
+| `make ports-hosted-url-verify-test` | Verify the static package host root through an HTTP URL from the host. |
+| `make package-static-host-dns-repo-install-test` | Run target-side package install from a DNS-resolved hosted repository URL. |
 | `make test` | Run host tests plus QEMU acceptance tests. |
 | `make smp-test` | Run the default SMP boot smoke. |
+| `make smp-release-guard` | Run static SMP release-readiness contract checks. |
+| `make smp-release-contract` | Alias for the SMP release-readiness guard. |
+| `make s4-resource-stress-test` | Run the SMP resource-boundary stress gate under `-smp 4`. |
+| `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
+| `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
+| `make c5-driver-service-test` | Run the C5a driver-service supervisor smoke under `-smp 4`. |
+| `make c5-device-handle-test` | Run the C5b opaque device-handle handoff gate under `-smp 4`. |
+| `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |
 | `make newlib` | Build the local newlib sysroot. |
@@ -153,6 +164,7 @@ inputs are missing or stale.
 | `build/pkghello.swpkg` | `make package-fixture` | Sample package file |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
 | `build/pkgstore-pkghello.img` | `make package-store-fixture` | Package-store bootstrap image |
+| `build/pkgstore-lua-install.img` | `make package-lua-install-fixture` | Writable package-store image used by Lua/ports install tests |
 
 ## Direct QEMU Profile
 
@@ -348,7 +360,7 @@ Most acceptance tests accept a small set of environment overrides.
 | `LLVM_OBJDUMP` | SMP object-layout tests | Select `llvm-objdump` |
 | `FDT_TEST` | SMP S1 preflight | Reuse a prebuilt FDT test binary |
 | `SMP_CPUS` | SMP and UEFI tests | Select CPU count, usually 1 to 8 |
-| `SMP_DTB` | SMP boot test | Provide a prebuilt SMP DTB |
+| `SMP_DTB` | SMP and C5 driver-service/device-handle tests | Provide a prebuilt SMP DTB |
 | `SMP_HEADROOM_CPUS` | SMP headroom test | Space-separated CPU counts to probe |
 | `SMP_S1_PREFLIGHT_CPUS` | SMP S1 preflight | Space-separated CPU counts to validate |
 | `UEFI_BOOT` | UEFI boot test | Select `disk` or `fat` boot mode |
@@ -370,6 +382,7 @@ TIMEOUT=180 ./tests/smp_boot_test.sh
 HTTPD_HOST_PORT=18080 ./tests/httpd_test.sh
 LLMD_HOST_PORT=18081 ./tests/llm_serve_test.sh
 SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/driver_service_test.sh
 ```
 
 ## Common Configuration Changes
@@ -468,8 +481,10 @@ make package-overlay-test
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
+| Static-host or hosted package repository | `make package-static-host-repo-install-test`, `make ports-hosted-url-verify-test`, or `make package-static-host-dns-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
-| SMP boot parameters | `make s1-test` or the milestone-specific SMP target |
+| SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
+| C5a/C5b driver-service handoff path | `make c5-driver-service-test` or `make c5-device-handle-test` |
 | Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this

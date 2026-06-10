@@ -790,6 +790,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
+| `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff over endpoint IPC. | `make c5-device-handle-test` (`-smp 4`) |
 | `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 
 Examples:
@@ -799,8 +800,16 @@ Examples:
 /bin/mmapdemo
 /bin/sleepprobe
 /bin/busybox vi /tmp/note.txt
+/bin/drvsvcdemo
 pkg list
 ```
+
+`drvsvcdemo` starts `/bin/drvinputd` twice, exchanges endpoint IPC messages,
+expects `C5a OK: restartable driver service recovered over IPC`, claims the
+`pseudo-input.0` device grant, transfers it to the restarted service, and
+expects `C5b OK: opaque device handle transferred and released`. It is a
+driver-service shape smoke with an opaque registry grant, not a real
+MMIO/IRQ/DMA device handoff.
 
 ## Package Commands
 
@@ -952,6 +961,7 @@ are not the primary operator interface.
 | `forkdemo` | fork compatibility demo. |
 | `execdemo` | exec compatibility demo. |
 | `fdopsdemo` | fd, dup, pipe, and fcntl operation demo. |
+| `drvinputd` / `drvsvcdemo` | C5 pseudo driver service, supervisor, and device-handle handoff demo. |
 | `securitydemo` | Capability and security-path demo. |
 | `identitydemo` | Principal and login identity demo. |
 

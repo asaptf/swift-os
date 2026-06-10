@@ -469,6 +469,8 @@ For the Lua/zlib/ca-certificates static-host path, use:
 ```sh
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The tested guest flow is:
@@ -499,9 +501,11 @@ static-host-ok
 If this path fails, inspect `build/ports-static-host-root`, verify that
 `hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS` exist, and rerun
 `make ports-static-host-publish`. The guest still needs virtio-net and a
-default repository URL pointing at the served `/aarch64/current` path. Public
-hosted package channels are not implemented yet; this is a local static-host
-fixture.
+default repository URL pointing at the served `/aarch64/current` path. If the
+DNS-hosted smoke fails, confirm that the fixture DNS server started, the URL is
+`http://host/aarch64/current`, and `/bin/pkg` did not print `pkg: bad URL`.
+Public production package channels are not implemented yet; these are local
+static-host and hosted-URL fixtures.
 
 ### `swpkg verify` Fails
 
@@ -600,6 +604,46 @@ and demand-pages the quantized `stories15M` checkpoint before or during the
 first request. Treat the current serving demo as a correctness and integration
 path, not as a throughput target.
 
+## Driver-Service Smoke Problems
+
+### `make c5-driver-service-test` Or `make c5-device-handle-test` Fails
+
+The C5 gate boots QEMU with `SMP_CPUS=4`, starts `/bin/drvsvcdemo`, and expects
+the pseudo service `/bin/drvinputd` to recover across two generations while an
+opaque pseudo-input device grant moves to the service and is reclaimed after
+exit. Rebuild the normal prerequisites and run the focused gate:
+
+```sh
+make build build/virt-smp4.dtb base-image
+make c5-device-handle-test
+```
+
+Expected serial markers include:
+
+```text
+drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
+drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
+C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
+```
+
+If the test fails, keep the serial tail printed by
+`tests/driver_service_test.sh`. A marker such as `drvinputd: missing endpoint
+args`, `drvsvc: ready message mismatch`, or `drvsvc: service wait failed`
+usually points at endpoint inheritance, IPC transfer, or process wait behavior
+rather than at real hardware; C5b still does not hand MMIO, IRQ, DMA, or
+virtio-input ownership to userland yet.
+
 ## Test Driver Problems
 
 Many acceptance tests drive an interactive serial login through a FIFO. A busy
@@ -626,6 +670,7 @@ Useful targeted tests:
 ./tests/udp_echo_test.sh
 ./tests/top_test.sh
 ./tests/llm_run_test.sh
+./tests/driver_service_test.sh
 ```
 
 ### Host Port Collisions

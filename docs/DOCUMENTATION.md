@@ -21,12 +21,12 @@ format details.
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
 | Administer accounts, capabilities, base configuration, packages, and services | [Administration Guide](ADMINISTRATION_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
-| Look up host-side package, repository, ports, static-host, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
+| Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
-| Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
+| Operate boot profiles, networking demos, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
-| Run, observe, test, and design SwiftOS services | [Service Guide](SERVICE_GUIDE.md) |
+| Run, observe, test, and design SwiftOS services and the C5a/C5b driver-service smoke | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
 | Measure resource usage, throughput guards, service metrics, and sizing limits | [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) |
 | Read boot health, service metrics, process snapshots, and log evidence | [Observability Guide](OBSERVABILITY_GUIDE.md) |
@@ -46,7 +46,7 @@ format details.
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Build, inspect, boot, test, and troubleshoot package, repository, ports, and static-host artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
-| Design package recipes, seed package fixtures, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
+| Design package recipes, seed package fixtures, CI smoke tests, static-host, and hosted URL publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
 | Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |
@@ -98,7 +98,7 @@ scratch space, run a small TCP/IP stack, and execute user programs through its
 own POSIX-like syscall surface. Package fixtures cover local `.swpkg`
 installation, signed static repository installation, Lua/zlib/ca-certificates
 port repository fixtures, and a static-hostable repository layout that can be
-served to QEMU.
+served to QEMU through a direct or DNS-resolved hosted-style repository URL.
 
 Current product-shaping work is tracked in
 [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The most important

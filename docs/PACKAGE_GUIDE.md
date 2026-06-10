@@ -613,6 +613,7 @@ Run the narrowest proof for the path you changed:
 | --- | --- |
 | Host `.swpkg` create/inspect/verify | `make package-fixture` |
 | Host package-store create/inspect | `make package-store-fixture` |
+| Writable Lua/ports install store image | `make package-lua-install-fixture` |
 | Direct payload overlay boot | `make package-overlay-test` |
 | Package-store activation boot | `make package-store-test` |
 | Local target-side `.swpkg` install | `make package-local-install-test` |

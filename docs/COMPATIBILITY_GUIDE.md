@@ -30,7 +30,8 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
-| Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, and local static-host ports fixture |
+| Driver-service model | C5a/C5b pseudo driver-service supervisor plus opaque device-handle smoke over endpoint IPC |
+| Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
 | x86-64 binaries | Not supported |
@@ -66,6 +67,7 @@ compatibility is not a goal.
 | QEMU `virt`, direct `-kernel` | Primary | Used by most development and acceptance tests |
 | QEMU `virt`, UEFI/AAVMF disk | Primary boot path | Uses `build/swift-os.img` plus read-only base image |
 | QEMU `virt`, virtio-net | Supported for network tests | Required for `httpd`, `llmd`, echo tools, DNS, TLS demos |
+| QEMU `virt`, `-smp 4` | Acceptance-tested hardening profile | Covers CPU bring-up, per-CPU telemetry, and gated S5f run-any EL0 placement |
 | QEMU `virt`, framebuffer/input | Smoke-tested | Used by graphical and busybox `vi` smoke paths |
 | VirtualBox ARM | Best effort | Board profile exists; see [VIRTUALBOX.md](VIRTUALBOX.md) |
 
@@ -77,7 +79,8 @@ compatibility is not a goal.
 | Raspberry Pi boards | Not supported |
 | PC BIOS boot | Not supported |
 | ACPI-first server hardware | Not supported |
-| SMP EL0 general execution | In hardening roadmap; use current SMP tests for readiness only |
+| Production SMP load balancing | Not a product contract yet; use current SMP tests for readiness only |
+| Real userland driver handoff | Not supported yet; C5b is an opaque pseudo-device handle smoke only |
 
 Example primary boot:
 
@@ -328,7 +331,8 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 
 SwiftOS package compatibility is currently image-based, with a narrow local
 target-side install path, a signed static HTTP repository fixture, and a local
-static-host ports fixture for Lua, zlib, and ca-certificates.
+static-host ports fixture for Lua, zlib, and ca-certificates, plus a
+hosted-style HTTP repository URL smoke.
 
 Supported now:
 
@@ -347,6 +351,9 @@ Supported now:
   published into one seed repository.
 - Static-hostable repository root under `build/ports-static-host-root`, proven
   by `make package-static-host-repo-install-test`.
+- Host-side hosted URL verification for a deployed static root.
+- Target-side HTTP repository URLs with DNS hostnames, proven by
+  `make package-static-host-dns-repo-install-test`.
 
 Not supported now:
 
@@ -365,6 +372,8 @@ make package-store-test
 make package-local-install-test
 make package-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See
@@ -451,6 +460,12 @@ image.
 Yes, with a virtio-net boot profile and `capNet`. Current examples are
 `/bin/httpd` and `/bin/llmd`.
 
+### Can I run userland drivers?
+
+Not real hardware drivers yet. C5a/C5b proves the supervisor, endpoint IPC, and
+opaque pseudo-device handle shape with `/bin/drvsvcdemo` and `/bin/drvinputd`,
+but real MMIO, IRQ, DMA, and virtio-input ownership are still roadmap work.
+
 ### Can I use TLS for production trust decisions?
 
 Not yet. `tlsget` proves the TLS runtime path, but certificate verification is
@@ -476,11 +491,13 @@ Use the narrowest test that proves the compatibility path you changed.
 | Native Swift user program | `make build base-image`, command-specific QEMU test |
 | C/newlib user program | `make newlib`, `make build base-image`, relevant QEMU test |
 | Base image content | `make base-image`, `./tests/vfs_disk_test.sh` |
-| Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test` |
+| Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
+| Driver-service/device-handle smoke | `make c5-device-handle-test` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| SMP run-any placement | `make s5-run-any-placement-test` |
 
 For broad release confidence, run:
 
