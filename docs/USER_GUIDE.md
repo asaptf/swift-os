@@ -197,6 +197,10 @@ Batch process summary:
 top -b -n 2 -d 1
 ```
 
+`top` shows uptime, task counts, CPU and memory summaries, kernel footprint,
+and a process table. In SMP boot profiles it also prints per-CPU busy/idle
+utilization lines. The host-side acceptance gate is `make s5-cpu-util-test`.
+
 Interactive `top` uses raw terminal mode. Press `q` to quit.
 
 ## Networking
@@ -377,9 +381,12 @@ These are current implementation boundaries, not necessarily design goals:
 - Static userland only; no dynamic loader.
 - No persistent writable filesystem.
 - Package install exists for local `.swpkg` files and P5c signed static HTTP
-  repository fixtures, including name-based dependency resolution. Remove,
-  upgrade, rollback, public hosted channels, version-constraint solving, and
-  large-package streaming downloads are not implemented yet.
+  repository fixtures, including name-based dependency resolution. The P6e
+  maintainer workflow can cross-build static Lua artifacts and publish them
+  into a signed local repository fixture, but target-side `pkg install lua`
+  smoke coverage is still future work. Remove, upgrade, rollback, public hosted
+  channels, version-constraint solving, and large-package streaming downloads
+  are not implemented yet.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

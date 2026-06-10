@@ -223,9 +223,10 @@ Notes:
 - `-b` uses batch mode. It does not clear the screen or use raw input.
 - `-d` sets the refresh delay in seconds.
 - `-n` exits after the selected number of refreshes.
+- SMP test profiles include per-CPU busy/idle utilization lines.
 - Interactive mode accepts `q` to quit.
 
-Acceptance coverage: `tests/top_test.sh`.
+Acceptance coverage: `tests/top_test.sh`, `make s5-cpu-util-test`.
 
 ## File And Tmpfs Commands
 

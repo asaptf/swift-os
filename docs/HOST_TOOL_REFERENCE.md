@@ -18,6 +18,7 @@ end-to-end package workflow, use
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
 | `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the Lua recipe scaffold. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
 | `build/quantize` | `make model` | Quantize TinyStories checkpoints for the AI demo. | `./tests/llm_run_test.sh` |
@@ -127,8 +128,10 @@ inside QEMU.
 ## Ports And Recipe Tool
 
 `swport` currently implements the P6a catalog subcommands and the P6b/P6c/P6d
-recipe subcommands for the first Lua recipe. Full cross-build and QEMU smoke
-commands remain planned.
+recipe subcommands for the first Lua recipe. P6e adds `make
+ports-lua-repo-fixture`, which wraps the Lua recipe with a real static AArch64
+cross-build and signed repository fixture. Generalized `swport build/test`
+commands and target-side Lua QEMU smoke remain planned.
 
 ```text
 swport catalog validate [catalog.json]
@@ -153,6 +156,7 @@ build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
+make ports-lua-repo-fixture
 ```
 
 Expected catalog inspection output includes fields such as package name,
@@ -167,7 +171,8 @@ fixture and verifies the generated catalog.
 
 Use `make ports-catalog-test` before changing `ports/catalog.json`, and
 `make ports-recipe-test` before changing `ports/lang/lua/Port.json` or recipe
-handling.
+handling. Use `make ports-lua-repo-fixture` before changing
+`scripts/build-lua.sh`, the Lua recipe, or the Lua packaging path.
 
 ## Model Bundle Tools
 

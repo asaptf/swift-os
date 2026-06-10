@@ -24,12 +24,13 @@ prove the package model locally:
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
 | P6d Lua recipe repository fixture | `ports/lang/lua/Port.json` validates against the catalog, emits a package manifest, packages a clean staged root, and publishes it into a signed local static repository fixture | `make ports-recipe-test` |
-| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; cross-build/QEMU smoke commands remain planned | `make swport` |
+| P6e Lua cross-build repository fixture | Static AArch64 `lua` and `luac` cross-build against the local newlib sysroot, package into `.swpkg`, and publish into a signed local repository fixture | `make ports-lua-repo-fixture` |
+| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
-repository path, P6a seed catalog, and P6b/P6c/P6d Lua recipe repository
+repository path, P6a seed catalog, and P6b/P6c/P6d/P6e Lua recipe repository
 scaffold. Until the separate `swift-os-ports` repository and public hosted
 channels exist, maintainers should use the local fixture commands in this
 repository.
@@ -70,6 +71,7 @@ make package-local-install-test
 make package-repo-install-test
 make ports-catalog-test
 make ports-recipe-test
+make ports-lua-repo-fixture
 ```
 
 Inspect the signed repository fixture:
@@ -97,15 +99,25 @@ build/swport recipe package lang/lua --root <staged-root> --output build/lua.swp
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
+Build the current real Lua package fixture:
+
+```sh
+make ports-lua-repo-fixture
+build/swpkg verify build/lua.swpkg
+build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+```
+
 For a new experimental port before full `swport` build/test commands exist,
 keep the same discipline:
 
 1. Cross-build the program statically against the current SwiftOS ABI.
 2. Stage the installed files under a clean package root.
 3. Generate and verify a `.swpkg` with `build/swport recipe package`.
-4. Inspect it with `build/swpkg inspect` if reviewing package metadata.
-5. Boot QEMU and run a command that proves the installed binary works.
-6. Record any missing syscall, libc, service, or filesystem requirement in the
+4. Publish it into a local signed repository fixture with
+   `build/swport recipe repo-fixture`.
+5. Inspect it with `build/swpkg inspect` if reviewing package metadata.
+6. Boot QEMU and run a command that proves the installed binary works.
+7. Record any missing syscall, libc, service, or filesystem requirement in the
    port notes before treating the package as publishable.
 
 ## Planned Maintainer Experience
