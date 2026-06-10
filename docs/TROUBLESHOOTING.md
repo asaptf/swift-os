@@ -366,6 +366,7 @@ Then run the focused gates:
 ./tests/uefi_kernel_ab_test.sh
 ./tests/uefi_kstage_test.sh
 ./tests/uefi_kactivate_test.sh
+./tests/uefi_kconfirm_test.sh
 ```
 
 Expected guest markers:
@@ -400,11 +401,19 @@ Verify boot-state persistence and rollback:
 
 ```sh
 ./tests/uefi_kattempt_test.sh
+./tests/uefi_kconfirm_test.sh
 ./tests/uefi_krollback_test.sh
 ```
 
-Kernel-slot health confirmation (`swos-kconfirm`) is not implemented yet. Until
-that lands, repeated unconfirmed trials are expected to exercise rollback.
+If the trial kernel is healthy, log in and run:
+
+```sh
+swos-kconfirm
+```
+
+That marks the booted slot `CONFIRMED` in `\EFI\swift-os\kernel-state`, resets
+its attempt counter, and prevents later healthy boots from exercising rollback.
+Repeated unconfirmed trials are expected to roll back.
 
 ## Networking Problems
 

@@ -303,8 +303,8 @@ Then reboot through the UEFI disk profile. The loader verifies the signed
 manifest's slot hashes, reads the selected slot from `kernel-state`, and checks
 the selected kernel image before handoff. Acceptance coverage:
 `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`,
-`./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, and
-`./tests/uefi_krollback_test.sh`.
+`./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`,
+`./tests/uefi_kconfirm_test.sh`, and `./tests/uefi_krollback_test.sh`.
 
 For the complete operator runbook and rollback boundaries, see
 [Update And Rollback Guide](UPDATE_GUIDE.md). For on-disk format and trust
@@ -591,7 +591,8 @@ Useful markers:
 | `swos-activate: inactive slot activated` | Inactive base-image slot was promoted for the next boot |
 | `swos-confirm: active slot confirmed healthy` | Booted base-image slot was confirmed healthy |
 | `swos-kstage: active kernel image staged into the inactive ESP slot` | Active ESP kernel image was copied and verified in the inactive kernel slot |
-| `swos-kactivate: inactive kernel slot activated` | Pre-signed alternate ESP kernel manifest was installed for the next boot |
+| `swos-kactivate: inactive kernel slot activated` | Inactive ESP kernel slot was selected in loader-managed `kernel-state` for the next boot |
+| `swos-kconfirm: booted kernel slot confirmed healthy` | Booted ESP kernel slot was marked healthy in loader-managed `kernel-state` |
 | `llm: done` | Inference demo completed and returned to userland |
 
 The kernel has a structured in-memory log ring and sink indirection groundwork;
@@ -624,7 +625,7 @@ Run the narrowest test that proves the path you touched:
 | Signed repository install | `make package-repo-install-test` |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` |
 | Base-image rollback/durability | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_kconfirm_test.sh`, `./tests/uefi_krollback_test.sh` |
 | Console login | `./tests/console_login_test.sh` |
 | Capability enforcement | `./tests/cap_enforce_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |

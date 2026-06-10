@@ -1053,6 +1053,45 @@ private func checkSupportFirstResponseReferences() {
                                           verificationHeader: "First test")
 }
 
+private func checkKernelSlotGuideCoverage() {
+    let required = [
+        "./tests/uefi_kernel_ab_test.sh",
+        "./tests/uefi_kstage_test.sh",
+        "./tests/uefi_kactivate_test.sh",
+        "./tests/uefi_kattempt_test.sh",
+        "./tests/uefi_kconfirm_test.sh",
+        "./tests/uefi_krollback_test.sh",
+    ]
+    let guidePaths = [
+        "docs/SUPPORT_GUIDE.md",
+        "docs/TESTING_GUIDE.md",
+        "docs/OPERATIONS_GUIDE.md",
+        "docs/UPDATE_GUIDE.md",
+    ]
+
+    for path in guidePaths {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            fail("\(path): could not read")
+            ok = false
+            continue
+        }
+        for test in required where !text.contains(test) {
+            fail("\(path): missing kernel-image A/B coverage reference `\(test)`")
+            ok = false
+        }
+    }
+
+    if let trouble = try? String(contentsOfFile: "docs/TROUBLESHOOTING.md", encoding: .utf8) {
+        if trouble.contains("Kernel-slot health confirmation (`swos-kconfirm`) is not implemented yet") {
+            fail("docs/TROUBLESHOOTING.md: stale claim that swos-kconfirm is not implemented")
+            ok = false
+        }
+    } else {
+        fail("docs/TROUBLESHOOTING.md: could not read")
+        ok = false
+    }
+}
+
 private func hostToolExecutables() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -1339,6 +1378,7 @@ checkOperationsVerificationMatrixReferences()
 checkUpdateValidationMatrixReferences()
 checkSupportScopeReferences()
 checkSupportFirstResponseReferences()
+checkKernelSlotGuideCoverage()
 checkHostToolReferenceCoverage()
 checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
