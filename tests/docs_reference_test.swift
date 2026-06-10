@@ -382,6 +382,68 @@ private func checkHostToolReferenceCoverage() {
     }
 }
 
+private func checkedPortRecipePaths() -> [String] {
+    guard let categories = try? FileManager.default.contentsOfDirectory(atPath: "ports") else {
+        fail("ports: could not list ports directory")
+        ok = false
+        return []
+    }
+
+    var paths: [String] = []
+    for category in categories.sorted() {
+        let categoryPath = "ports/\(category)"
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: categoryPath, isDirectory: &isDir),
+              isDir.boolValue,
+              let ports = try? FileManager.default.contentsOfDirectory(atPath: categoryPath) else {
+            continue
+        }
+        for port in ports.sorted() {
+            let recipePath = "\(categoryPath)/\(port)/Port.json"
+            if FileManager.default.fileExists(atPath: recipePath) {
+                paths.append(recipePath)
+            }
+        }
+    }
+
+    if paths.isEmpty {
+        fail("ports: no checked Port.json recipes found")
+        ok = false
+    }
+    return paths
+}
+
+private func checkPortRecipeDocumentationCoverage() {
+    let docs = [
+        "ports/README.md",
+        "docs/PACKAGE_GUIDE.md",
+        "docs/PACKAGE_BUILD_AUTOMATION.md",
+        "docs/HOST_TOOL_REFERENCE.md",
+    ]
+    var texts: [String: String] = [:]
+    for path in docs {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            fail("\(path): could not read")
+            ok = false
+            continue
+        }
+        texts[path] = text
+    }
+
+    for recipePath in checkedPortRecipePaths() {
+        let shortPath = recipePath
+            .replacingOccurrences(of: "ports/", with: "")
+            .replacingOccurrences(of: "/Port.json", with: "")
+        for doc in docs {
+            guard let text = texts[doc] else { continue }
+            if !text.contains(recipePath) && !text.contains(shortPath) {
+                fail("\(doc): missing checked port recipe `\(recipePath)`")
+                ok = false
+            }
+        }
+    }
+}
+
 private func checkSwiftBridgeCoverage() {
     let headerPath = "userland/lib/swift_user.h"
     guard let headerText = try? String(contentsOfFile: headerPath, encoding: .utf8) else {
@@ -474,10 +536,11 @@ checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
+checkPortRecipeDocumentationCoverage()
 checkSwiftBridgeCoverage()
 
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map coverage, command coverage, and host tool coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map coverage, command coverage, host tool coverage, and port recipe coverage are valid")
