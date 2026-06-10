@@ -36,7 +36,7 @@ Current supported support targets:
 | Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_kconfirm_test.sh`, `./tests/uefi_krollback_test.sh` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
-| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` |
+| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` and the aggregate S5 gate `make s5-test` |
 
 Current non-support targets:
 
@@ -86,7 +86,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, then `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_kconfirm_test.sh`, or `./tests/uefi_krollback_test.sh` for runtime staging, boot-state persistence, confirmation, and rollback |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
-| SMP readiness | `make s1-test` or the active milestone target |
+| SMP readiness | `make s1-test`, `make s5-test`, or the active milestone target |
 
 If the narrow test passes, record that too. It narrows the problem and prevents
 the next person from retesting the wrong layer.

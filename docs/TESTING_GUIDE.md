@@ -213,7 +213,7 @@ Run the narrowest test that proves the path you changed.
 | Device authority envelope | `make c5-device-authority-test` |
 | Metadata-only device grant rights | `make c5-device-rights-test` |
 | Phase 1 roadmap/test alignment | `make phase1-roadmap-test` |
-| SMP readiness | `make s1-test` or the active milestone target, for example `make s5-run-any-placement-test` |
+| SMP readiness | `make s1-test`, `make s5-test`, or the active milestone target |
 
 When a focused test passes but the full gate fails, the failure is probably in a
 neighboring subsystem or in integration ordering. Keep both results.
@@ -424,9 +424,10 @@ make s5-scheduler-placement-test
 make s5-placement-stress-test
 make s5-el0-fanout-test
 make s5-thread-fanout-test
+make s5-run-any-placement-test
+make s5-test
 make s0c-test
 make s1-test
-make s5-run-any-placement-test
 make c5-driver-service-test
 make c5-device-handle-test
 make c5-device-metadata-test
@@ -436,8 +437,8 @@ make c5-device-rights-test
 
 Use the active roadmap milestone to choose the exact target. `smp-release-contract`
 is the review-facing alias for `smp-release-guard`; `s0c-test` is the narrow
-state-audit target. For broad SMP readiness, `make s1-test` is the current
-aggregate gate.
+state-audit target. For broad SMP readiness, `make s1-test` covers the S0/S1
+foundation gates and `make s5-test` is the aggregate S5 runtime readiness gate.
 
 ## Reading Failures
 

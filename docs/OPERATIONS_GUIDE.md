@@ -617,6 +617,7 @@ Run the narrowest test that proves the path you touched:
 | Restricted S5 EL0 fanout | `make s5-el0-fanout-test` |
 | S5 shared-address-space thread fanout | `make s5-thread-fanout-test` |
 | S5 run-any EL0 placement | `make s5-run-any-placement-test` |
+| Aggregate S5 runtime readiness | `make s5-test` |
 | C5a-C5e driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |

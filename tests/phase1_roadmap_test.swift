@@ -105,6 +105,15 @@ private let milestones: [Milestone] = [
         docsNeedles: ["make s5-run-any-placement-test"]
     ),
     Milestone(
+        id: "S5",
+        roadmapNeedle: "S5 aggregate readiness gate (2026-06-10)",
+        notesNeedle: "### S5 aggregate readiness gate (DONE, 2026-06-10)",
+        target: "s5-test",
+        targetFragments: ["s5-run-any-placement-test"],
+        markerNeedles: ["S5f OK: run-any placement policy completed"],
+        docsNeedles: ["make s5-test"]
+    ),
+    Milestone(
         id: "C5a",
         roadmapNeedle: "### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)",
         notesNeedle: "### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)",

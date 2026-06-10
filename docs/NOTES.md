@@ -1512,6 +1512,20 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   production scheduler heuristic. It proves that the default placement path can
   select any active scheduler CPU under the existing restricted SMP boundary.
 
+### S5 aggregate readiness gate (DONE, 2026-06-10)
+
+- **Scope.** Added `make s5-test` as the review-facing aggregate for S5 runtime
+  readiness. It runs the existing S5a-S5f focused gates in order:
+  `smp-cpu-utilization-test`, `s5-scheduler-placement-test`,
+  `s5-placement-stress-test`, `s5-el0-fanout-test`, `s5-thread-fanout-test`, and
+  `s5-run-any-placement-test`.
+- **Why.** S0/S1 already had aggregate targets (`s0-test`, `s1-test`), but S5
+  required reviewers to remember the full focused-gate list. The aggregate target
+  preserves the narrow gates and gives broader reviews a single command.
+- **Guard.** `tests/phase1_roadmap_test.swift` checks the Makefile target and
+  docs references so future S5 docs do not drift back to only naming the final
+  focused gate.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

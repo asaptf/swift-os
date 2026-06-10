@@ -156,6 +156,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make s5-el0-fanout-test` | Run the S5d independent EL0 fanout gate under `-smp 4`. |
 | `make s5-thread-fanout-test` | Run the S5e shared-address-space thread fanout gate under `-smp 4`. |
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
+| `make s5-test` | Run the aggregate S5 readiness gate (`S5a` through `S5f`) under `-smp 4`. |
 | `make c5-driver-service-test` | Run the C5 driver-service/device-discovery smoke under `-smp 4`. |
 | `make c5-device-handle-test` | Compatibility alias for the C5 driver-service/device-metadata gate under `-smp 4`. |
 | `make c5-device-discovery-test` | Compatibility alias for the C5 driver-service/device-metadata gate under `-smp 4`. |

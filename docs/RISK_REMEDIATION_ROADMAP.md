@@ -283,6 +283,9 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   selection count matched process creation, the dispatch CPU mask exactly matched
   the scheduler CPU mask, every process stayed on its selected home CPU, and all
   queues/gates were idle after stop.
+- S5 aggregate readiness gate (2026-06-10): `make s5-test` now runs the S5a-S5f
+  focused gates in order, giving reviews one aggregate runtime-readiness command
+  while preserving the narrow milestone targets.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
 - Full `make test` (1-CPU and `-smp 4`, both -kernel and UEFI paths) is green, plus new dedicated SMP stress suites (`tests/smp_*`).
 - The system is now "SMP complete" for the current workload class. Higher-level policy (load balancing, CPU hotplug awareness, cgroups-like limits) can come later.
