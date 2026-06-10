@@ -79,6 +79,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${VFS_DISK_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${VFS_DISK_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -92,13 +102,13 @@ exec 3<>"$INFIFO"
 # This throwaway disk intentionally carries only busybox, ps, and test files.
 # With no /bin/ttydemo or /bin/console-login, init falls back directly to raw ash.
 await "built-in shell (ash)" 90 || drive_fail "busybox shell did not start"
-printf 'cat /etc/motd\n' >&3
+send_line 'cat /etc/motd'
 await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
-printf 'ls /\n' >&3
+send_line 'ls /'
 await "diskonly.txt" 60 || drive_fail "disk-only file missing from ls /"
-printf 'cat /diskonly.txt\n' >&3
+send_line 'cat /diskonly.txt'
 await "only-on-disk" 60 || drive_fail "disk-only file contents not read"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

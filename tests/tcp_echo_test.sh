@@ -66,6 +66,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${TCP_ECHO_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${TCP_ECHO_SEND_DELAY:-0.08}"
+}
+
 # Boot QEMU with its console read from a FIFO that we hold open on fd 3, so the
 # main script can drive the login *reactively* (below) instead of on a fixed
 # timeline. Opening the FIFO read-write (3<>) never blocks and keeps it open; QEMU
@@ -87,15 +97,16 @@ exec 3<>"$INFIFO"
 # lands in the wrong reader and the guest never reaches tcpecho ("never reported
 # listening"). Skip the M7 tty demo, log in as root, then run tcpecho.
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-printf '/bin/tcpecho\n' >&3
+await "built-in shell (ash)" 60 || drive_fail "root shell did not start"
+send_line '/bin/tcpecho'
 
 # Wait for the guest to listen, then connect + send a line from the host.
 listening=0

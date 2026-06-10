@@ -110,6 +110,16 @@ require_await() {  # require_await MARKER [MAXSEC]
   fi
 }
 
+send_line() {
+  local line="$1" delay="${TLS_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${TLS_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -122,11 +132,13 @@ require_await() {  # require_await MARKER [MAXSEC]
 QP=$!
 exec 3<>"$INFIFO"
 
-require_await "M7 tty: type a line then Enter" 60; printf 'tty-line\n' >&3
+require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
-require_await "swift-os login:" 40; printf 'root\n' >&3
-require_await "Password:" 30; printf 'swordfish\n' >&3
-require_await "Welcome to swift-os, root" 40; printf '/bin/tlsget 10.0.2.2 %s\n' "$PORT" >&3
+require_await "swift-os login:" 40; send_line 'root'
+require_await "Password:" 30; send_line 'swordfish'
+require_await "Welcome to swift-os, root" 40
+require_await "built-in shell (ash)" 60
+send_line "/bin/tlsget 10.0.2.2 $PORT"
 await "HTTP/1.0 200 ok" 90 || true
 exec 3>&-
 stop_all
