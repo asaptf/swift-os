@@ -22,7 +22,7 @@ service-oriented.
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts and read-only package payload overlays |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, and P3a package-store boot activation |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
 
 ## Highlights
@@ -65,7 +65,8 @@ service-oriented.
   bundle files.
 - Keeps the base filesystem read-only by design.
 - Provides tmpfs mutation under `/tmp` for writable runtime state.
-- Builds sample `.swpkg` artifacts and read-only package payload overlays.
+- Builds sample `.swpkg` artifacts, read-only package payload overlays, and a
+  preseeded package-store image.
 - Does not yet provide target-side persistent package install/remove.
 
 ### Networking And Services
@@ -111,6 +112,7 @@ Focused gates:
 ./tests/console_login_test.sh
 ./tests/httpd_test.sh
 ./tests/package_overlay_test.sh
+./tests/pkg_store_boot_test.sh
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```
@@ -140,9 +142,9 @@ llmd: served
 - User programs are statically linked. There is no dynamic loader.
 - The base filesystem is read-only. Persistent writable storage is not part of
   the current product surface.
-- Package overlays are read-only payload images. Target-side package
-  installation, removal, activation generations, and rollback remain roadmap
-  work.
+- Package overlays and package-store boot activation are read-only at runtime.
+  Target-side package installation, removal, live activation, and rollback
+  remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable

@@ -156,6 +156,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   programs, port C/newlib programs, and stage binaries into the base image.
 - [Application Cookbook](docs/APPLICATION_COOKBOOK.md): copy-paste recipes for
   SwiftOS commands, C utilities, package overlays, and tests.
+- [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
+  troubleshoot `.swpkg`, payload overlay, and package-store artifacts.
 - [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,
   handle rights, native Swift bridge, and compatibility API notes.
 

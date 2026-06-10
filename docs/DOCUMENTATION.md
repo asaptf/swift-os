@@ -33,6 +33,7 @@ format details.
 | Understand the system architecture and non-goals | [Architecture](ARCHITECTURE.md) |
 | Understand handles, capabilities, and the isolation roadmap | [Capabilities](CAPABILITIES.md) |
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
+| Build, inspect, boot, test, and troubleshoot package artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |

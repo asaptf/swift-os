@@ -220,6 +220,14 @@ private func writeAtomically(_ data: Data, to output: URL) throws {
     try data.write(to: output, options: .atomic)
 }
 
+private func paddedForBlockDevice(_ data: Data, sectorSize: Int = 512) -> Data {
+    let remainder = data.count % sectorSize
+    guard remainder != 0 else { return data }
+    var out = data
+    out.append(Data(repeating: 0, count: sectorSize - remainder))
+    return out
+}
+
 private func value(after flag: String, in args: [String]) throws -> String {
     guard let i = args.firstIndex(of: flag), i + 1 < args.count else {
         throw ToolError.message("missing \(flag)")
@@ -274,7 +282,7 @@ struct SWPackageTool {
                 let manifest = try verifyPackage(input)
                 let (_, _, payload, _) = try readPackage(input)
                 let output = URL(fileURLWithPath: args[3])
-                try writeAtomically(payload, to: output)
+                try writeAtomically(paddedForBlockDevice(payload), to: output)
                 print("extracted payload for \(str(manifest, "name") ?? "") to \(output.path)")
             default:
                 throw ToolError.message(usage())

@@ -823,11 +823,13 @@ pkghello: hello from package overlay
 Notes:
 
 - This command is not in the base image. It is provided by the package overlay
-  acceptance fixture.
-- See [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) and
+  acceptance fixture or package-store fixture.
+- See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for package boot workflows,
+  [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) for package design, and
   [SWPKG_FORMAT.md](SWPKG_FORMAT.md) for package format details.
 
-Acceptance coverage: `tests/package_overlay_test.sh`.
+Acceptance coverage: `tests/package_overlay_test.sh` and
+`tests/pkg_store_boot_test.sh`.
 
 ## Bring-up Demo Commands
 

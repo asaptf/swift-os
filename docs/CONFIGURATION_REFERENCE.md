@@ -9,6 +9,8 @@ Use this with:
 
 - [GETTING_STARTED.md](GETTING_STARTED.md) for the first boot.
 - [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for operator workflows.
+- [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for package artifact and package-store
+  workflows.
 - [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) for in-guest command syntax.
 - [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for adding userland programs.
 
@@ -31,6 +33,7 @@ Use this with:
 | Login shell | `/bin/busybox` `ash` |
 | Writable guest storage | `/tmp` tmpfs only |
 | Package overlay fixture | `build/pkghello-payload.img` |
+| Package-store fixture | `build/pkgstore-pkghello.img` |
 | LLM model files | `stories260K.bin` and `tok512.bin` staged directly under `/models`; verified `stories15M` serving generations staged under `/models/stories15M` |
 
 The target is static and intentionally small. There is no Linux syscall ABI, no
@@ -111,8 +114,11 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
 | `make model` | Fetch LLM demo checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
+| `make pkgstore` | Build the host-side package-store image tool. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
+| `make package-store-fixture` | Build and inspect the sample package-store image. |
 | `make package-overlay-test` | Run the package overlay acceptance test. |
+| `make package-store-test` | Run the package-store boot activation acceptance test. |
 | `make test` | Run host tests plus QEMU acceptance tests. |
 | `make smp-test` | Run the default SMP boot smoke. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
@@ -141,8 +147,10 @@ inputs are missing or stale.
 | `build/base-root` | `make base-image` | Staging tree before packing |
 | `build/basepack` | host Swift tool | Packs the base image |
 | `build/swpkg` | host Swift tool | Creates, verifies, and extracts packages |
+| `build/pkgstore` | host Swift tool | Creates and inspects package-store images |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample package file |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
+| `build/pkgstore-pkghello.img` | `make package-store-fixture` | Package-store bootstrap image |
 
 ## Direct QEMU Profile
 
@@ -280,8 +288,9 @@ The package fixture builds:
 
 | Artifact | Meaning |
 | --- | --- |
-| `build/pkghello.swpkg` | Signed-format sample package container |
+| `build/pkghello.swpkg` | Sample package container |
 | `build/pkghello-payload.img` | Extracted read-only payload image |
+| `build/pkgstore-pkghello.img` | Package-store image with active generation 1 |
 | `/usr/bin/pkghello` | Guest-visible executable from the payload |
 
 Build and verify it:
@@ -311,6 +320,9 @@ Inside the guest:
 
 Package overlays are read-only. Target-side package installation is future
 package-manager work, not current behavior.
+
+For the package-store boot profile and current package limits, see
+[PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 ## Test Harness Knobs
 

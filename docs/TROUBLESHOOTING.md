@@ -27,7 +27,7 @@ Then identify the failing layer:
 | Password accepted nowhere | [Login Problems](#login-problems) |
 | `open`, `cat`, `ls`, or writes fail | [Filesystem Problems](#filesystem-problems) |
 | Socket tools fail | [Networking Problems](#networking-problems) |
-| `/usr/bin/pkghello` is missing | [Package Overlay Problems](#package-overlay-problems) |
+| `/usr/bin/pkghello` is missing | [Package Problems](#package-problems) |
 | `/bin/llm` cannot load files | [LLM Demo Problems](#llm-demo-problems) |
 | A QEMU smoke test flakes | [Test Driver Problems](#test-driver-problems) |
 
@@ -377,7 +377,7 @@ The test suite still validates the IPv6 protocol core and link-local smoke path.
 Treat skipped Darwin IPv6 hostfwd echo tests as host-environment limitations
 unless the protocol-core unit tests fail too.
 
-## Package Overlay Problems
+## Package Problems
 
 ### `/usr/bin/pkghello` Is Missing
 
@@ -404,6 +404,20 @@ make package-overlay-test
 
 Remember: `.swpkg` creation and payload extraction are host-side today.
 Target-side `pkg install` is future P4 work.
+
+For the P3a package-store boot path, use:
+
+```sh
+make package-store-fixture
+make package-store-test
+```
+
+The serial log should include:
+
+```text
+P3: package store active generation
+P3: package store payload mounted
+```
 
 ### `swpkg verify` Fails
 

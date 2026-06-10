@@ -22,7 +22,7 @@ Current supported support targets:
 | Serial console login | `./tests/console_login_test.sh` |
 | Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
 | Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
-| Package overlay | `make package-overlay-test` |
+| Package overlay/store | `make package-overlay-test`; `make package-store-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
@@ -62,7 +62,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | tmpfs mutation | `./tests/swift_fileops_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |
-| Package overlay | `make package-overlay-test` |
+| Package overlay/store | `make package-overlay-test`; `make package-store-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
@@ -223,7 +223,7 @@ acceptance path.
 | Linux binaries | Do not run |
 | Dynamic linking | Not supported |
 | `tlsget` trust | TLS runtime demo only; no production certificate verification |
-| Package install inside guest | Not implemented; overlays are attached at boot |
+| Package install inside guest | Not implemented; package payloads/stores are attached at boot |
 | General x86-64 boot | Not supported |
 
 ## Area-Specific Evidence
@@ -325,13 +325,14 @@ curl -v -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
 curl -v http://127.0.0.1:8080/metrics
 ```
 
-### Package Overlays
+### Package Overlays And Stores
 
 Attach:
 
 ```sh
 make package-fixture
 make package-overlay-test
+make package-store-test
 ```
 
 Mention whether the guest saw `/usr/bin/pkghello`.

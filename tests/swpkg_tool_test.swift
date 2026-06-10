@@ -110,6 +110,7 @@ defer { try? FileManager.default.removeItem(at: temp) }
 
 let packageA = temp.appendingPathComponent("pkghello-a.swpkg")
 let packageB = temp.appendingPathComponent("pkghello-b.swpkg")
+let payloadImage = temp.appendingPathComponent("pkghello-payload.img")
 let manifestCorrupt = temp.appendingPathComponent("pkghello-manifest-corrupt.swpkg")
 let payloadCorrupt = temp.appendingPathComponent("pkghello-payload-corrupt.swpkg")
 
@@ -133,6 +134,12 @@ guard dataA == dataB else {
 }
 
 requireSuccess(run(tool, ["verify", packageA.path]), "verify valid package")
+requireSuccess(run(tool, ["extract-payload", packageA.path, payloadImage.path]), "extract payload")
+
+let payloadImageData = readData(payloadImage, "extracted payload image")
+guard payloadImageData.count % 512 == 0 else {
+    fail("extracted payload image is not sector-aligned")
+}
 
 let inspect = run(tool, ["inspect", packageA.path])
 requireSuccess(inspect, "inspect package")

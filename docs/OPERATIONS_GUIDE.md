@@ -12,6 +12,8 @@ Use this guide with:
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.
+- [Package Guide](PACKAGE_GUIDE.md) for `.swpkg` artifacts, payload overlays,
+  package-store images, and package verification workflows.
 - [Networking Guide](NETWORKING_GUIDE.md) for virtio-net profiles, host
   forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network test coverage.
 - [Service Guide](SERVICE_GUIDE.md) for service lifecycle, readiness markers,
@@ -131,7 +133,9 @@ Inside the guest, log in as `root` before running socket programs. The seeded
 ### Package Overlay Boot
 
 Package payload overlays are current P2 functionality. They are read-only VFS
-overlays attached at boot, not target-side `pkg install` yet.
+overlays attached at boot, not target-side `pkg install` yet. For the complete
+package runbook, including package-store activation, see
+[PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 Build the sample package and boot with the payload image:
 
@@ -162,6 +166,27 @@ pkghello: hello from package overlay
 
 For package format details, see [SWPKG_FORMAT.md](SWPKG_FORMAT.md) and
 [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md).
+
+### Package Store Boot
+
+Package-store boot activation is current P3a functionality. Build the sample
+store and boot with it attached:
+
+```sh
+make package-store-fixture
+
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=build/virt.dtb,addr=0x4FF00000,force-raw=on \
+  -drive file=build/base.img,format=raw,if=none,id=swosbase,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -drive file=build/pkgstore-pkghello.img,format=raw,if=none,id=swpkgstore \
+  -device virtio-blk-device,drive=swpkgstore \
+  -kernel build/kernel.elf
+```
+
+Inside the guest, `/usr/bin/pkghello` should produce the same output as the
+direct overlay path. Acceptance coverage: `make package-store-test`.
 
 ## Access And Accounts
 

@@ -802,14 +802,19 @@ Acceptance:
 - VFS selects the base image by contents rather than virtio-mmio scan order.
 - QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
-### P3: Package Store
+### P3: Package Store (P3a Boot Activation DONE)
 
-- Add a narrow persistent package-store block format.
-- Store package blobs and activation manifests.
-- Select active activation atomically at boot.
+P3a adds the read-only boot side of the package store:
 
-Acceptance:
+- `tools/pkgstore.swift` creates and inspects `SWPKGST1` package-store images.
+- `kernel/pkg/store.swift` reads payload records, activation records, and the
+  active-generation pointer at boot.
+- `tests/pkg_store_boot_test.sh` boots a preseeded store image and runs
+  `/usr/bin/pkghello` from the active package generation.
 
+Remaining P3/P4 work:
+
+- Target-side writes to the package store.
 - Installing/removing a local package changes the active generation.
 - Rollback restores the previous namespace.
 

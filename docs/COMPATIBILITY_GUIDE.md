@@ -25,9 +25,9 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | C apps | Source ports through newlib and project-owned compatibility shims |
 | Shell | Busybox `ash` for login and bring-up compatibility |
 | Filesystem writes | `/tmp` tmpfs only |
-| Installed software | Immutable base image plus read-only package overlays |
+| Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
-| Packages | Host-built `.swpkg` format and read-only payload overlays |
+| Packages | Host-built `.swpkg` format, read-only payload overlays, and P3a package-store boot activation |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
 | x86-64 binaries | Not supported |
@@ -321,7 +321,7 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 
 ## Package And Distribution Compatibility
 
-SwiftOS package compatibility is currently host-side and overlay-based.
+SwiftOS package compatibility is currently host-side and boot-activation based.
 
 Supported now:
 
@@ -329,6 +329,7 @@ Supported now:
 - Package manifests.
 - Payload extraction.
 - Read-only package payload image attachment at boot.
+- Preseeded package-store image attachment at boot.
 - Guest execution from attached package namespace, proven by `/usr/bin/pkghello`.
 
 Not supported now:
@@ -343,10 +344,12 @@ Example:
 ```sh
 make package-fixture
 make package-overlay-test
+make package-store-test
 ```
 
-See [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) and
-[SWPKG_FORMAT.md](SWPKG_FORMAT.md).
+For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See
+[PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) and [SWPKG_FORMAT.md](SWPKG_FORMAT.md)
+for design and format details.
 
 ## Porting Decision Tree
 
@@ -450,7 +453,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Native Swift user program | `make build base-image`, command-specific QEMU test |
 | C/newlib user program | `make newlib`, `make build base-image`, relevant QEMU test |
 | Base image content | `make base-image`, `./tests/vfs_disk_test.sh` |
-| Package overlay | `make package-overlay-test` |
+| Package overlay/store | `make package-overlay-test`; `make package-store-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |
