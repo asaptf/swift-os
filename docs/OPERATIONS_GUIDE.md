@@ -148,7 +148,7 @@ Inside the guest, log in as `root` before running socket programs. The seeded
 
 ### Package Overlay Boot
 
-Package payload overlays are current P2 functionality. They are read-only VFS
+Package payload overlays are current functionality. They are read-only VFS
 overlays attached at boot. For the complete package runbook, including
 package-store activation, local `pkg install FILE`, and signed repository
 install, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
@@ -186,8 +186,8 @@ For package format details, see [SWPKG_FORMAT.md](SWPKG_FORMAT.md),
 
 ### Package Store Boot
 
-Package-store boot activation is current P3a functionality. Build the sample
-store and boot with it attached:
+Package-store boot activation is current functionality. Build the sample store
+and boot with it attached:
 
 ```sh
 make package-store-fixture
@@ -207,8 +207,8 @@ direct overlay path. Acceptance coverage: `make package-store-test`.
 
 ### Local Package Install
 
-Local target-side install is current P3b functionality. It installs a local
-`.swpkg` into a writable package-store image and live-mounts the payload.
+Local target-side install is current functionality. It installs a local `.swpkg`
+into a writable package-store image and live-mounts the payload.
 
 Build and test the fixture:
 
@@ -228,7 +228,7 @@ pkg list
 
 ### Signed Repository Install
 
-Signed static HTTP repository install is current P5c functionality. It verifies
+Signed static HTTP repository install is current functionality. It verifies
 `catalog.signed`, resolves dependency names, downloads content-addressed
 `.swpkg` files, verifies SHA-256, then reuses the local package-store install
 path.
@@ -663,7 +663,7 @@ Current limits that matter during operation:
 - No persistent writable filesystem.
 - No remove, upgrade, rollback, public hosted package channel, version-constraint
   solver, or streaming large-package install path yet.
-  Local `pkg install FILE` and P5c `pkg repo set`/`pkg update [URL]`/
+  Local `pkg install FILE` and signed `pkg repo set`/`pkg update [URL]`/
   `pkg install NAME` exist for `.swpkg` fixtures, including name-based
   dependency resolution.
 - No dynamic linker or Linux ABI.

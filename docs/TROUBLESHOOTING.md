@@ -535,15 +535,15 @@ make package-overlay-test
 ```
 
 Remember: `.swpkg` creation and payload extraction are host-side today. Guest
-install works through the local-file form, `pkg install FILE`, through the P5c
+install works through the local-file form, `pkg install FILE`, through the
 signed static HTTP repository fixture, `pkg repo set URL && pkg update` or
-`pkg update URL` followed by `pkg install NAME`, and through the P8 static-host
-ports fixture for Lua, zlib, ca-certificates, and pcre2. Name-based dependency
-resolution is implemented for signed catalogs. Remove, upgrade, rollback,
-version-constraint solving, public hosted channels, and large-package streaming
-downloads are future work.
+`pkg update URL` followed by `pkg install NAME`, and through the static-host
+ports fixture for Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite.
+Name-based dependency resolution is implemented for signed catalogs. Remove,
+upgrade, rollback, version-constraint solving, public hosted channels, and
+large-package streaming downloads are future work.
 
-For the P3a package-store boot path, use:
+For the package-store boot path, use:
 
 ```sh
 make package-store-fixture
@@ -589,9 +589,10 @@ pkg: installed pkghello-1.0.0_1
 
 If `pkg update [URL]` fails, confirm that the base image contains
 `/etc/pkg/repo-root.pub`, the host HTTP server is serving the same fixture that
-produced the key, and the guest was booted with virtio-net. P5c also rejects
-expired catalogs, catalogs whose package entries target the wrong architecture,
-target, ABI, or linkage, and catalogs with invalid dependency entries.
+produced the key, and the guest was booted with virtio-net. The repository
+client also rejects expired catalogs, catalogs whose package entries target the
+wrong architecture, target, ABI, or linkage, and catalogs with invalid
+dependency entries.
 
 If `pkg install NAME` fails after a successful update, inspect
 `build/pkgrepo-root/aarch64/current`, check whether the guest printed

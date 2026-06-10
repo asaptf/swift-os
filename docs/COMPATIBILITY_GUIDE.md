@@ -331,7 +331,8 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 
 SwiftOS package compatibility is currently image-based, with a narrow local
 target-side install path, a signed static HTTP repository fixture, and a local
-static-host ports fixture for Lua, zlib, ca-certificates, pcre2, tzdata, and nginx, plus ahosted-style HTTP repository URL smoke.
+static-host ports fixture for Lua, zlib, ca-certificates, pcre2, tzdata, nginx,
+and sqlite, plus a hosted-style HTTP repository URL smoke.
 
 Supported now:
 
