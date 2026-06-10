@@ -40,7 +40,7 @@ format details.
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |
 | Evaluate and port source-built applications to SwiftOS | [Porting Guide](PORTING_GUIDE.md) |
 | Follow copy-paste application build and test recipes | [Application Cookbook](APPLICATION_COOKBOOK.md) |
-| Call the EL0 syscall ABI or Swift bridge directly | [API Reference](API_REFERENCE.md) |
+| Find API recipes, call the EL0 syscall ABI, or use the Swift bridge directly | [API Reference](API_REFERENCE.md) |
 | Understand the system architecture and non-goals | [Architecture](ARCHITECTURE.md) |
 | Understand handles, capabilities, and the isolation roadmap | [Capabilities](CAPABILITIES.md) |
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |

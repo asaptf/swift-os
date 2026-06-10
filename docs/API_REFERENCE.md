@@ -42,6 +42,32 @@ when porting existing C code that expects POSIX-shaped declarations. Avoid
 calling raw syscalls from application code unless you need an ABI test or a
 feature that has no bridge helper yet.
 
+## API Recipe Index
+
+The fastest path to a correct program is to start from a shipped userland
+example that already boots in QEMU. Use this index to find the closest working
+source, then follow its Makefile rule and acceptance test.
+
+| Task | Start from | Main API surface | Verification |
+| --- | --- | --- | --- |
+| Minimal native Swift command | `userland/echo.swift`, `userland/pwd.swift` | `swiftos_puts`, `swiftos_write`, `swiftos_getcwd` | `./tests/swift_coreutils_test.sh` |
+| Files, directories, and metadata | `userland/ls.swift`, `userland/touch.swift`, `userland/rm.swift` | `swiftos_open`, `swiftos_getdents`, `swiftos_stat`, mutation helpers | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/swift_rm_r_test.sh` |
+| Raw C syscall and fd behavior | `userland/hello.c`, `userland/fdopsdemo.c` | `userland/lib/syscall.h`, `userland/lib/fs.h`, `pipe`, `poll`, `dup2` | `./tests/boot_test.sh` |
+| Process launch and explicit handles | `userland/argvdemo.c`, `userland/spawndemo.c` | `spawn`, `spawn_handles`, `swiftos_spawn_handle`, handle rights | `./tests/boot_test.sh`, `./tests/spawn_self_exec_test.sh` |
+| Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
+| IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
+| UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
+| DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
+| Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
+| Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
+| System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
+| Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-static-host-repo-install-test` |
+
+When copying an example, keep the same API layer unless you are deliberately
+testing a lower layer. Mixing raw syscalls, native Swift bridge helpers, and
+newlib wrappers in one small program usually makes error handling harder to
+reason about.
+
 ## Building Against The API
 
 Use the Makefile as the source of truth for toolchain flags. The Embedded Swift
