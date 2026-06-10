@@ -24,7 +24,7 @@ service-oriented.
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
 | Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the seven-package seed ports repository fixture |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
-| Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5e virtio-input discovery metadata plus withheld-authority matching over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
+| Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
 
@@ -205,11 +205,12 @@ llmd: served
   rollback, and streaming large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. C5a-C5e prove
+- Many drivers and the network stack still live in the kernel. C5a-C5f prove
   the supervisor/service IPC shape, opaque device-handle ownership transfer,
   discovered virtio-input metadata/manifest matching, surfaced virtio-mmio
-  metadata, and withheld hardware authority; real restartable userland driver
-  services with MMIO/IRQ/DMA authority are still roadmap work.
+  metadata, withheld hardware authority, and metadata-only grant rights; real
+  restartable userland driver services with MMIO/IRQ/DMA authority are still
+  roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

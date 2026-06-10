@@ -132,9 +132,11 @@ service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
 driver-service worker `/bin/drvinputd` over endpoint IPC, then transfers an
 opaque input-device handle to prove device ownership can move to a restartable
 service. In the focused C5 gate that handle is discovered as `virtio-input.0`
-when QEMU exposes a keyboard device, and the C5d metadata gate confirms its
-virtio-mmio base and length are visible as discovery metadata only. Headless
-boots use the `pseudo-input.0` fallback so the same lifecycle remains testable.
+when QEMU exposes a keyboard device, the C5d metadata gate confirms its
+virtio-mmio base and length are visible as discovery metadata only, and C5e/C5f
+prove that current grants still carry no real MMIO, IRQ, DMA, or queue
+authority. Headless boots use the `pseudo-input.0` fallback so the same
+lifecycle remains testable.
 
 Common native Swift tools:
 

@@ -17,7 +17,7 @@ Use it with:
 
 ## Current Service Model
 
-SwiftOS can run network-facing EL0 programs today, and C5a-C5e adds a narrow
+SwiftOS can run network-facing EL0 programs today, and C5a-C5f adds a narrow
 restartable driver-service plus device-discovery and opaque device-handle
 smoke. It does not yet have a general service manager. Most services are static
 user programs started from the serial shell after login. Long-running services
@@ -466,7 +466,7 @@ make test
 ## Known Limits
 
 - There is no general service manager, restart policy, dependency graph, or
-  background service registry yet. C5a-C5e only prove a focused
+  background service registry yet. C5a-C5f only prove a focused
   driver-service supervisor/restart/discovery/device-grant authority path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.
