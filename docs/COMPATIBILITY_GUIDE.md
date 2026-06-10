@@ -30,6 +30,7 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
+| Driver-service model | C5a pseudo driver-service supervisor smoke over endpoint IPC |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
@@ -66,6 +67,7 @@ compatibility is not a goal.
 | QEMU `virt`, direct `-kernel` | Primary | Used by most development and acceptance tests |
 | QEMU `virt`, UEFI/AAVMF disk | Primary boot path | Uses `build/swift-os.img` plus read-only base image |
 | QEMU `virt`, virtio-net | Supported for network tests | Required for `httpd`, `llmd`, echo tools, DNS, TLS demos |
+| QEMU `virt`, `-smp 4` | Acceptance-tested hardening profile | Covers CPU bring-up, per-CPU telemetry, and gated S5f run-any EL0 placement |
 | QEMU `virt`, framebuffer/input | Smoke-tested | Used by graphical and busybox `vi` smoke paths |
 | VirtualBox ARM | Best effort | Board profile exists; see [VIRTUALBOX.md](VIRTUALBOX.md) |
 
@@ -77,7 +79,8 @@ compatibility is not a goal.
 | Raspberry Pi boards | Not supported |
 | PC BIOS boot | Not supported |
 | ACPI-first server hardware | Not supported |
-| SMP EL0 general execution | In hardening roadmap; use current SMP tests for readiness only |
+| Production SMP load balancing | Not a product contract yet; use current SMP tests for readiness only |
+| Real userland driver handoff | Not supported yet; C5a is a pseudo service/supervisor smoke only |
 
 Example primary boot:
 
@@ -456,6 +459,12 @@ image.
 Yes, with a virtio-net boot profile and `capNet`. Current examples are
 `/bin/httpd` and `/bin/llmd`.
 
+### Can I run userland drivers?
+
+Not real hardware drivers yet. C5a proves the supervisor and endpoint IPC shape
+with `/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
+virtio-input ownership are still roadmap work.
+
 ### Can I use TLS for production trust decisions?
 
 Not yet. `tlsget` proves the TLS runtime path, but certificate verification is
@@ -484,8 +493,10 @@ Use the narrowest test that proves the compatibility path you changed.
 | Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
+| Driver-service supervisor smoke | `make c5-driver-service-test` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| SMP run-any placement | `make s5-run-any-placement-test` |
 
 For broad release confidence, run:
 

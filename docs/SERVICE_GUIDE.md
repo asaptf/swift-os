@@ -17,10 +17,11 @@ Use it with:
 
 ## Current Service Model
 
-SwiftOS can run network-facing EL0 programs today, but it does not yet have a
-general service manager. Services are static user programs started from the
-serial shell after login. Long-running services run in the foreground and report
-readiness through deterministic serial log markers.
+SwiftOS can run network-facing EL0 programs today, and C5a adds a narrow
+restartable driver-service smoke. It does not yet have a general service
+manager. Most services are static user programs started from the serial shell
+after login. Long-running services run in the foreground and report readiness
+through deterministic serial log markers.
 
 | Property | Current behavior |
 | --- | --- |
@@ -50,6 +51,7 @@ network services.
 | `/bin/tcpget` | Guest-to-host TCP client | Client-chosen | Request output | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | DNS client | UDP client | Query output | `./tests/dns_test.sh` |
 | `/bin/tlsget` | TLS client demo | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
+| `/bin/drvsvcdemo` | C5a driver-service supervisor smoke | n/a | `C5a OK: restartable driver service recovered over IPC` | `make c5-driver-service-test` |
 
 `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080. Run one of them at a
 time.
@@ -57,6 +59,39 @@ time.
 The echo servers are intentionally one-shot demos: they serve one request and
 exit. Start them again for another request. `httpd` and `llmd` are long-running
 servers that keep accepting connections.
+
+## Restartable Driver-Service Smoke
+
+C5a proves the service shape that future userland drivers need before real
+device ownership moves out of the kernel. The demo supervisor starts
+`/bin/drvinputd` with only endpoint file descriptors, exchanges a pseudo input
+event, stops it, starts a fresh generation, and verifies that communication
+recovers.
+
+Focused host gate:
+
+```sh
+make c5-driver-service-test
+```
+
+The target boots QEMU with `SMP_CPUS=4` and uses
+`tests/driver_service_test.sh` to assert the supervisor markers.
+
+Manual guest command:
+
+```sh
+/bin/drvsvcdemo
+```
+
+Expected serial output includes:
+
+```text
+drvsvc: C5a supervisor starting
+C5a OK: restartable driver service recovered over IPC
+```
+
+This is not a production device manager yet. It does not grant MMIO ranges, IRQ
+endpoints, DMA windows, or real virtio-input ownership to userland.
 
 ## Network Launch Profile
 
@@ -412,14 +447,15 @@ make test
 ## Known Limits
 
 - There is no general service manager, restart policy, dependency graph, or
-  background service registry yet.
+  background service registry yet. C5a only proves a focused pseudo
+  driver-service supervisor/restart path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.
 - `/tmp` is the only writable runtime area and is lost on reboot.
 - Package service manifests are documented as future package-manager behavior;
   they are not activated by the target yet.
-- The TCP/IP stack and virtio-net driver are still in the kernel. Moving them to
-  restartable userland services is tracked in
+- The TCP/IP stack and real virtio drivers are still in the kernel. Moving them
+  to restartable userland services is tracked in
   [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md).
 - Production TLS trust, certificate bundle management, and long-running HTTPS
   policy are not complete.

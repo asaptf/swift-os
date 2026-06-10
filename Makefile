@@ -934,8 +934,8 @@ s5-thread-fanout-test: build $(QEMU_DTB_SMP4) base-image
 s5-run-any-placement-test: build $(QEMU_DTB_SMP4) base-image
 	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 
-c5-driver-service-test: build base-image
-	./tests/boot_test.sh
+c5-driver-service-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
 
 c5-device-handle-test: c5-driver-service-test
 

@@ -50,6 +50,20 @@ has documented firmware/device-model limitations.
 See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) and
 [VIRTUALBOX.md](VIRTUALBOX.md).
 
+### Can SwiftOS use more than one CPU?
+
+The default interactive product profile remains conservative, but SMP is no
+longer only a boot experiment. The checked-in S5f gate boots QEMU with four
+CPUs and proves a gated run-any EL0 placement policy with:
+
+```sh
+make s5-run-any-placement-test
+```
+
+Do not treat this as a production load-balancing or capacity claim yet. Use it
+as readiness evidence while the roadmap finishes the broader SMP and service
+hardening work.
+
 ## Build And Installation
 
 ### What is the fastest way to boot it?
@@ -290,6 +304,19 @@ Current network-facing programs include `/bin/httpd`, `/bin/llmd`,
 
 See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md#networking-commands).
+
+### Does SwiftOS have restartable driver services yet?
+
+C5a has the first checked-in restartable driver-service smoke. `/bin/drvsvcdemo`
+supervises the pseudo driver service `/bin/drvinputd`, exchanges endpoint IPC,
+restarts the service, and verifies recovery:
+
+```sh
+make c5-driver-service-test
+```
+
+This is not a real device handoff yet. MMIO, IRQ, DMA, and virtio-input
+ownership remain roadmap work.
 
 ### Why can only one of `httpd` and `llmd` run?
 

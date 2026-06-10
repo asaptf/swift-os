@@ -289,7 +289,7 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   readiness message, sends a command, receives an event, stops the service, and
   repeats the flow with a fresh generation.
 - The boot path requires `C5a OK: restartable driver service recovered over IPC`;
-  `make c5-driver-service-test` is the focused direct-boot gate.
+  `make c5-driver-service-test` is the focused `-smp 4` direct-boot gate.
 - Non-goals: C5a does not grant MMIO, IRQ, DMA, or real virtio-input ownership to
   userland yet. C5b/C5 proper still owns the device-handle and real driver
   extraction work.

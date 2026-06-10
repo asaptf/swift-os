@@ -276,6 +276,8 @@ Run the SMP smoke and readiness tests:
 make smp-test
 make s1-test
 make smp-cpu-utilization-test
+make s5-run-any-placement-test
+make c5-driver-service-test
 ```
 
 Run focused package and ports fixture gates:
