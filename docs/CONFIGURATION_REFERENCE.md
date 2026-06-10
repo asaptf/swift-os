@@ -156,6 +156,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make c5-device-discovery-test` | Compatibility alias for the C5 driver-service/device-metadata gate under `-smp 4`. |
 | `make c5-device-metadata-test` | Run the focused C5d virtio-input discovery metadata gate under `-smp 4`. |
 | `make c5-device-authority-test` | Run the focused C5e device authority envelope gate under `-smp 4`. |
+| `make c5-device-rights-test` | Run the focused C5f metadata-only device grant rights guard. |
 | `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |

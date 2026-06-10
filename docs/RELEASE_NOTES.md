@@ -205,11 +205,12 @@ llmd: served
   large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. C5a-C5e prove
+- Many drivers and the network stack still live in the kernel. C5a-C5f prove
   the supervisor/service IPC shape, opaque device-handle ownership transfer,
   discovered virtio-input metadata/manifest matching, surfaced virtio-mmio
-  metadata, and withheld hardware authority; real restartable userland driver
-  services with MMIO/IRQ/DMA authority are still roadmap work.
+  metadata, withheld hardware authority, and metadata-only grant rights; real
+  restartable userland driver services with MMIO/IRQ/DMA authority are still
+  roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

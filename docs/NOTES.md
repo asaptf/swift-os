@@ -1737,6 +1737,21 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   with `virtio-keyboard-device` attached and asserts
   `C5e OK: device authority withheld until explicit handoff`.
 
+### C5f — metadata-only device grant rights contract (DONE, 2026-06-10)
+
+- **Shared rights helper.** `kernel/vfs/handle.swift` now defines
+  `deviceMetadataGrantRights()` as the single metadata-only device grant shape:
+  `.getattr + .transfer`. The VFS device claim path uses that helper instead of
+  assembling device rights locally.
+- **No implicit hardware authority.** The host handle test and static C5f guard
+  reject accidental `.read`, `.write`, `.execute`, `.map`, `.duplicate`, or
+  `.setattr` rights on current device grants. Runtime C5 still proves the grant
+  can be inspected, moved over IPC, and not duplicated.
+- **Acceptance.** `make c5-device-rights-test` runs the host handle vocabulary
+  check plus `tests/device_authority_guard_test.sh`. The focused and broad C5
+  boot smokes now require
+  `C5f OK: device grant rights stayed metadata-only`.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

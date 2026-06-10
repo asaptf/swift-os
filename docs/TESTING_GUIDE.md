@@ -200,6 +200,7 @@ Run the narrowest test that proves the path you changed.
 | Opaque device-handle handoff | `make c5-device-handle-test` |
 | Virtio-input discovery metadata | `make c5-device-metadata-test` |
 | Device authority envelope | `make c5-device-authority-test` |
+| Metadata-only device grant rights | `make c5-device-rights-test` |
 | SMP readiness | `make s1-test` or the active milestone target, for example `make s5-run-any-placement-test` |
 
 When a focused test passes but the full gate fails, the failure is probably in a
@@ -380,6 +381,7 @@ make c5-driver-service-test
 make c5-device-handle-test
 make c5-device-metadata-test
 make c5-device-authority-test
+make c5-device-rights-test
 ```
 
 Use the active roadmap milestone to choose the exact target. `smp-release-contract`
