@@ -35,7 +35,8 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 For exact build variables and QEMU profiles, see
 [CONFIGURATION_REFERENCE.md](CONFIGURATION_REFERENCE.md). For install and boot
 profile selection, see [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md). For
-syscall details, see [API_REFERENCE.md](API_REFERENCE.md).
+syscall details, see [API_REFERENCE.md](API_REFERENCE.md). For quick answers to
+common compatibility questions, see [FAQ.md](FAQ.md).
 
 ## What Compatibility Means
 

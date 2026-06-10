@@ -149,6 +149,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   network, package overlay, LLM, and QEMU test failure diagnosis.
 - [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,
   severity levels, report templates, and handoff checklists.
+- [FAQ](docs/FAQ.md): common product, install, compatibility, package,
+  networking, AI, and support questions.
 - [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
 - [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
   application paths, porting constraints, packages, and non-goals.

@@ -38,6 +38,7 @@ For the complete set of build, boot, QEMU, board, and test configuration knobs,
 see [CONFIGURATION_REFERENCE.md](CONFIGURATION_REFERENCE.md).
 For a profile-by-profile install and verification guide, see
 [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md).
+For common product and compatibility questions, see [FAQ.md](FAQ.md).
 
 The current pinned flags are in the Makefile and recorded in
 [NOTES.md](NOTES.md). Do not reuse flags from memory; Embedded Swift target

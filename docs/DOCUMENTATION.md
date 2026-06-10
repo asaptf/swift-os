@@ -25,6 +25,7 @@ format details.
 | Read boot health, service metrics, process snapshots, and log evidence | [Observability Guide](OBSERVABILITY_GUIDE.md) |
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
+| Answer common product, install, compatibility, package, networking, AI, and support questions | [FAQ](FAQ.md) |
 | Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
 | Check hardware, application, package, runtime, and network compatibility | [Compatibility Guide](COMPATIBILITY_GUIDE.md) |
 | Understand current login, capabilities, handle rights, and security limits | [Security Guide](SECURITY_GUIDE.md) |

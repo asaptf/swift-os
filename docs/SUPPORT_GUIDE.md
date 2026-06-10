@@ -11,6 +11,9 @@ SwiftOS is early product software. A useful support report should distinguish
 current design limits from regressions, include the exact repository revision,
 and attach the serial or test output that proves the failure.
 
+For common product and support questions before opening a report, see
+[FAQ.md](FAQ.md).
+
 ## Support Scope
 
 Current supported support targets:
