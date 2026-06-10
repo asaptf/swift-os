@@ -57,7 +57,7 @@ SwiftOS is intentionally small and static.
 | Networking | virtio-net plus capability-gated socket syscalls |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
 | SMP status | Single-core is still the default profile; SMP tests cover CPU bring-up, per-CPU telemetry, restricted EL0 fanout, shared-address-space threads, and gated S5f run-any placement |
-| Driver-service status | C5a/C5b/C5c/C5d supervisor, opaque device handle, and virtio-input discovery metadata smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
+| Driver-service status | C5a-C5d supervisor, opaque device handle, and virtio-input discovery metadata smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
 
 The most important operational consequence is that a running guest has no
 persistent writable root. Rebuild the base image or attach a package payload to

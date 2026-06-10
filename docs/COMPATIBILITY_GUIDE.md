@@ -462,10 +462,10 @@ Yes, with a virtio-net boot profile and `capNet`. Current examples are
 
 ### Can I run userland drivers?
 
-Not real hardware drivers yet. C5a/C5b/C5c/C5d prove the supervisor, endpoint IPC,
-opaque device handle, and discovered virtio-input manifest shape with
-`/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
-virtio-input queue ownership are still roadmap work.
+Not real hardware drivers yet. C5a-C5d prove the supervisor, endpoint IPC,
+opaque device handle, discovered virtio-input manifest shape, and surfaced
+virtio-mmio metadata with `/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO,
+IRQ, DMA, and virtio-input queue ownership are still roadmap work.
 
 ### Can I use TLS for production trust decisions?
 

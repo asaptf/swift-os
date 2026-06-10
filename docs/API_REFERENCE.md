@@ -427,12 +427,11 @@ if rc >= 0 {
 
 C5b added an opaque device-handle scaffold for restartable driver services, and
 C5c connects that scaffold to real virtio-input discovery when QEMU exposes a
-`virtio-keyboard-device`. The focused C5c gate claims `virtio-input.0`, checks
-its fixed manifest metadata, transfers the handle to `/bin/drvinputd`, and
-reclaims it after service exit. C5d keeps that virtio-mmio location visible as
-metadata through the public device-info ABI and the focused
-`make c5-device-metadata-test` gate. Headless boots without an input device keep
-the `pseudo-input.0` fallback so the supervisor path remains testable.
+`virtio-keyboard-device`. C5d is the current focused gate: it claims
+`virtio-input.0`, checks the manifest metadata plus the surfaced virtio-mmio
+base/length, transfers the handle to `/bin/drvinputd`, and reclaims it after
+service exit. Headless boots without an input device keep the `pseudo-input.0`
+fallback so the supervisor path remains testable.
 
 ```c
 struct swiftos_device_info {
