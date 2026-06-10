@@ -13,19 +13,19 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b-P10 add checked Lua, zlib, and ca-certificates `Port.json` recipes with
+> P6b-P11 add checked Lua, zlib, ca-certificates, and pcre2 `Port.json` recipes with
 > recipe validation, manifest generation, checksum-verified source fetch,
 > `.swpkg` creation from clean staged roots, signed local repository fixture
 > generation, real AArch64 static cross-builds where applicable, and a
-> three-package signed seed repository fixture. The
+> four-package signed seed repository fixture. The
 > `package-lua-repo-install-test` installs and runs Lua from its signed
 > repository inside QEMU. The `package-ports-seed-repo-install-test` boots
 > SwiftOS with a default repository URL, runs `pkg update`, installs `lua`,
-> `zlib`, and `ca-certificates`, and runs the package smoke commands. `make ports-static-host-publish`
+> `zlib`, `ca-certificates`, and `pcre2`, and runs the package smoke commands. `make ports-static-host-publish`
 > now emits a static-hostable web root for that seed repository, and
 > `make package-static-host-repo-install-test` proves installs from that layout.
 > P9 adds host-side hosted URL verification and a QEMU smoke where `/bin/pkg`
-> installs Lua, zlib, and ca-certificates from a DNS-resolved HTTP repository URL. Public
+> installs Lua, zlib, ca-certificates, and pcre2 from a DNS-resolved HTTP repository URL. Public
 > production domains/channels, target-side HTTPS, remove, upgrade,
 > version-constraint solving, and rollback flows are still roadmap work.
 
@@ -55,14 +55,15 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, and ca-certificates recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, and pcre2 recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, and ca-certificates into one signed local repository and install all three from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all three packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, and ca-certificates from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
+| Ports seed repository fixture | Publish Lua, zlib, ca-certificates, and pcre2 into one signed local repository and install all four from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all four packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, ca-certificates, and pcre2 from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -83,9 +84,12 @@ pkg update
 pkg install lua
 pkg install zlib
 pkg install ca-certificates
+pkg install pcre2
 /usr/bin/lua -e 'print(21 * 2)'
 /usr/bin/minigzip /tmp/zlib.txt
 cat /usr/share/certs/swiftos-ca-bundle.version
+echo nginx-lighttpd > /tmp/pcre2.txt
+/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
 ```
 
 The package priority data in this document is mirrored into the checked
@@ -97,6 +101,7 @@ make ports-recipe-test
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
+make ports-pcre2-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make ports-hosted-url-verify-test
@@ -108,9 +113,11 @@ build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
 build/swport recipe validate archivers/zlib
 build/swport recipe validate security/ca-certificates
+build/swport recipe validate devel/pcre2
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
+build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
@@ -140,8 +147,9 @@ pkg install web-basic postgresql nodejs
 Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
-inspection, `build/swport recipe ...` for the checked Lua, zlib, and
-ca-certificates recipes, and the host package tooling for package construction.
+inspection, `build/swport recipe ...` for the checked Lua, zlib,
+ca-certificates, and pcre2 recipes, and the host package tooling for package
+construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
@@ -199,6 +207,7 @@ possible. They should be the first real ports after `pkghello` and `lua`.
 | `bzip2` | Legacy archive support for many upstream distfiles. | Sourceware bzip2 or maintained distribution mirror. | S | libc. | `base-posix`. | Static build is simple. Keep library packaging minimal. | `bzip2 -c fixture > fixture.bz2 && bzip2 -dc fixture.bz2`. |
 | `libarchive` | Unified `tar`, `cpio`, and archive extraction for ports tooling and target admin use. | libarchive/bsdtar. | M | zlib, zstd, xz, bzip2. | `base-posix`; large-file support. | Static build is feasible but pulls many compression libs. Disable formats not needed initially. | `bsdtar -cf test.tar dir && bsdtar -tf test.tar`. |
 | `curl` | HTTP(S) client for admin workflows, diagnostics, package repo debugging, and many scripts. | curl project. | M | TLS library, zlib optional, ca-certificates. | `base-posix`, `net-client`, `tls-base`. | Prefer static `curl` plus `libcurl.a`. Disable protocols beyond HTTP/HTTPS at first to reduce dependencies. | Start a host HTTP server in QEMU test; run `curl http://server/file` and compare content. |
+| `pcre2` | Regex library needed by nginx, lighttpd, text tools, and scripting runtimes. | PCRE2. | S | None. | `base-posix`; full recursive `pcre2grep` mode waits for the dirent libc surface. | Packaged as static `libpcre2-8.a`, `libpcre2-posix.a`, headers, pkgconf metadata, and `pcre2grep`; JIT is disabled until executable mappings and W^X policy are settled. | Install from the seed repository and run `pcre2grep 'nginx\|lighttpd' /tmp/pcre2.txt` in QEMU. |
 | `busybox-extra` | Temporary collection of admin utilities beyond the base busybox set. | BusyBox. | M | libc. | `base-posix`, `proc-basic`; selected applets may need `net-client`, `term-ui`, or `service`. | Single static binary works well. Applet symlink/hardlink behavior must match swift-os package image rules. | Run `busybox --list`; execute selected applets: `awk`, `sed`, `find`, `tar`, `wget` if enabled. |
 | `pkg-tools` | Host and target helper tools for inspecting `.swpkg`, catalogs, signatures, and repo state. | swift-os first-party. | S | libc, crypto library if signatures are external. | `base-posix`; `net-client` for remote inspection later. | Keep parsers small and static. Avoid pulling large JSON/TLS stacks into base unless already accepted. | `pkg inspect sample.swpkg` prints deterministic manifest fields. |
 
@@ -495,9 +504,9 @@ published only to an experimental channel.
 
 ## Key Porting Recommendations
 
-1. Port `zstd`, `patch`, and `pkgconf` next after the checked `lua`, `zlib`,
-   and `ca-certificates` packages. They test the package system without
-   forcing network, threads, or VM semantics.
+1. Port `zstd`, `bzip2`, `patch`, and `pkgconf` next after the checked `lua`,
+   `zlib`, `ca-certificates`, and `pcre2` packages. They test the package
+   system without forcing network, threads, or VM semantics.
 2. Make `curl` the first serious network client. It will quickly expose DNS,
    sockets, timeouts, TLS, entropy, and CA-store problems.
 3. Choose either OpenSSL or LibreSSL as the first blessed TLS provider before

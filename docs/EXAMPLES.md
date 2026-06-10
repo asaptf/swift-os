@@ -321,10 +321,10 @@ make package-repo-install-test
 
 ## 11. Install Source-Built Packages From A Static-Host Fixture
 
-The current ports fixture cross-builds Lua and zlib, packages ca-certificates,
-publishes them into one signed seed repository, copies that repository into a
-static-hostable web root, and proves that the guest can install from the hosted
-layout.
+The current ports fixture cross-builds Lua, zlib, and pcre2, packages
+ca-certificates, publishes them into one signed seed repository, copies that
+repository into a static-hostable web root, and proves that the guest can
+install from the hosted layout.
 
 Host:
 
@@ -344,27 +344,32 @@ pkg update
 pkg search lua
 pkg search zlib
 pkg search ca-certificates
+pkg search pcre2
 pkg install lua
 pkg install zlib
 pkg install ca-certificates
+pkg install pcre2
 /usr/bin/lua -e 'print(21 * 2)'
 echo static-host-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
 cat /usr/share/certs/swiftos-ca-bundle.version
+echo nginx-lighttpd > /tmp/pcre2.txt
+/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
 ```
 
 Expected signals:
 
 - `pkg update` accepts the static-hosted signed catalog.
-- `pkg search lua`, `pkg search zlib`, and `pkg search ca-certificates` find
-  the current seed packages.
-- `pkg install lua`, `pkg install zlib`, and `pkg install ca-certificates`
-  activate all three packages.
+- `pkg search lua`, `pkg search zlib`, `pkg search ca-certificates`, and
+  `pkg search pcre2` find the current seed packages.
+- `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`, and
+  `pkg install pcre2` activate all four packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; the CA
-  marker prints `curl-ca-bundle 2026-05-14 121 certificates`.
+  marker prints `curl-ca-bundle 2026-05-14 121 certificates`; `pcre2grep`
+  prints `nginx-lighttpd`.
 
 Equivalent automated check:
 

@@ -125,14 +125,14 @@
       "portPath": "devel/pcre2",
       "tier": 0,
       "category": "regex",
-      "status": "candidate",
+      "status": "packages",
       "difficulty": "S",
       "upstream": "PCRE2",
       "summary": "Regex library needed by nginx, many text tools, and scripting runtimes.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix"],
-      "smokeTest": "run pcre2grep or a small test binary against known patterns",
-      "notes": "Disable JIT until executable mappings and W^X policy are settled."
+      "smokeTest": "install from the seed repository and run pcre2grep against known nginx/lighttpd patterns in QEMU",
+      "notes": "Packaged as static libpcre2-8, libpcre2-posix, headers, pkgconf metadata, and pcre2grep. JIT and pcre2grep recursive directory traversal are disabled until executable mappings/W^X and the dirent libc surface are ready."
     },
     {
       "name": "libarchive",

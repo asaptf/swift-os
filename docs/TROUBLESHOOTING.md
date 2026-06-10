@@ -464,7 +464,7 @@ If `pkg install NAME` fails after a successful update, inspect
 `build/pkgrepo-root/aarch64/current`, check whether the guest printed
 `pkg: package SHA-256 mismatch`, and rerun `make package-repo-install-test`.
 
-For the Lua/zlib/ca-certificates static-host path, use:
+For the Lua/zlib/ca-certificates/pcre2 static-host path, use:
 
 ```sh
 make ports-static-host-publish

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "name": "pcre2",
+  "version": "10.47",
+  "revision": 1,
+  "category": "devel",
+  "summary": "Perl-compatible regular expression library required by web servers and text tools",
+  "homepage": "https://github.com/PCRE2Project/pcre2",
+  "license": ["BSD-3-Clause"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz",
+    "sha256": "c08ae2388ef333e8403e670ad70c0a11f1eed021fd88308d7e02f596fcd9dc16"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "autotools-make",
+    "args": [
+      "--host=aarch64-elf",
+      "--prefix=/usr",
+      "--disable-shared",
+      "--enable-static",
+      "--disable-jit",
+      "--disable-pcre2-16",
+      "--disable-pcre2-32",
+      "--disable-pcre2grep-jit",
+      "--disable-pcre2grep-callout",
+      "--disable-pcre2grep-callout-fork",
+      "--disable-pcre2test-libreadline",
+      "--disable-pcre2test-libedit",
+      "--disable-dependency-tracking"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CONFIGURE_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o -L${SYSROOT}/lib",
+      "FINAL_LIBTOOL_LDFLAGS": "-static -L${SYSROOT}/lib",
+      "FINAL_PROGRAM_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o -L${SYSROOT}/lib",
+      "LIBS": "-Wl,--start-group -lc -lgcc -Wl,--end-group",
+      "RANLIB": "aarch64-elf-ranlib",
+      "ac_cv_header_dirent_h": "no"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "pcre2grep", "libpcre2-8.a", "libpcre2-posix.a", "pcre2.h", "pcre2posix.h", "pkgconfig"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["pcre2", "libpcre2-8", "libpcre2-posix"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/pcre2grep", "to": "/usr/bin/pcre2grep", "mode": "0755" },
+      { "from": "destdir/usr/include/pcre2.h", "to": "/usr/include/pcre2.h", "mode": "0644" },
+      { "from": "destdir/usr/include/pcre2posix.h", "to": "/usr/include/pcre2posix.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libpcre2-8.a", "to": "/usr/lib/libpcre2-8.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/libpcre2-posix.a", "to": "/usr/lib/libpcre2-posix.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/libpcre2-8.pc", "to": "/usr/lib/pkgconfig/libpcre2-8.pc", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/libpcre2-posix.pc", "to": "/usr/lib/pkgconfig/libpcre2-posix.pc", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/pcre2grep --version",
+      "/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt"
+    ]
+  },
+  "notes": "Tier-0 web-stack dependency for nginx and lighttpd. scripts/build-pcre2.sh cross-builds static libpcre2-8, libpcre2-posix, headers, pkgconf metadata, and pcre2grep. JIT and recursive directory traversal are disabled for the first package because swift-os does not yet expose executable mappings or a complete dirent libc surface."
+}

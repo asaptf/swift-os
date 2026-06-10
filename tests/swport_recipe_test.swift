@@ -67,6 +67,7 @@ let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
+let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
     fail("missing executable build/swport; build swport first")
@@ -85,6 +86,9 @@ guard FileManager.default.isReadableFile(atPath: zlibRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: caRecipe.path) else {
     fail("missing ports/security/ca-certificates/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: pcre2Recipe.path) else {
+    fail("missing ports/devel/pcre2/Port.json")
 }
 
 let temp = FileManager.default.temporaryDirectory
@@ -364,6 +368,97 @@ guard output(caRepoInspect).contains("ca-certificates-2026.05.14_1") else {
     fail("repo fixture catalog did not include ca-certificates package: \(output(caRepoInspect))")
 }
 
+let pcre2Validate = run(swport, ["recipe", "validate", "devel/pcre2"])
+requireSuccess(pcre2Validate, "validate pcre2 recipe")
+guard output(pcre2Validate).contains("recipe: OK pcre2-10.47_1") else {
+    fail("validate output did not confirm pcre2 recipe: \(output(pcre2Validate))")
+}
+
+let pcre2ManifestURL = temp.appendingPathComponent("pcre2-manifest.json")
+let pcre2Manifest = run(swport, ["recipe", "manifest", "devel/pcre2", "--output", pcre2ManifestURL.path])
+requireSuccess(pcre2Manifest, "generate pcre2 manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: pcre2ManifestURL)) as? [String: Any] else {
+        fail("generated pcre2 manifest is not a JSON object")
+    }
+    requireString(object, "name", "pcre2")
+    requireString(object, "version", "10.47")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["pcre2", "libpcre2-8", "libpcre2-posix"] else {
+        fail("pcre2 manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/pcre2grep",
+        "/usr/include/pcre2.h",
+        "/usr/include/pcre2posix.h",
+        "/usr/lib/libpcre2-8.a",
+        "/usr/lib/libpcre2-posix.a",
+        "/usr/lib/pkgconfig/libpcre2-8.pc",
+        "/usr/lib/pkgconfig/libpcre2-posix.pc",
+    ] else {
+        fail("unexpected pcre2 manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated pcre2 manifest: \(error)")
+}
+
+let pcre2Root = temp.appendingPathComponent("pcre2-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/pcre2grep", Data("#!/bin/sh\necho pcre2grep\n".utf8), 0o755),
+        ("usr/include/pcre2.h", Data("/* pcre2 */\n".utf8), 0o644),
+        ("usr/include/pcre2posix.h", Data("/* pcre2 posix */\n".utf8), 0o644),
+        ("usr/lib/libpcre2-8.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/libpcre2-posix.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/libpcre2-8.pc", Data("Name: libpcre2-8\nVersion: 10.47\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/libpcre2-posix.pc", Data("Name: libpcre2-posix\nVersion: 10.47\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = pcre2Root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy pcre2 package root: \(error)")
+}
+
+let pcre2PackageURL = temp.appendingPathComponent("pcre2.swpkg")
+let pcre2PackageResult = run(swport, [
+    "recipe", "package", "devel/pcre2",
+    "--root", pcre2Root.path,
+    "--output", pcre2PackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(pcre2PackageResult, "package dummy pcre2 root")
+let pcre2Verify = run(swpkg, ["verify", pcre2PackageURL.path])
+requireSuccess(pcre2Verify, "verify dummy pcre2 package")
+guard output(pcre2Verify).contains("OK: pcre2-10.47_1") else {
+    fail("swpkg verify did not identify pcre2 package: \(output(pcre2Verify))")
+}
+
+let pcre2RepoRoot = temp.appendingPathComponent("pcre2-repo-root", isDirectory: true)
+let pcre2Pubkey = temp.appendingPathComponent("pcre2-repo-root.pub")
+let pcre2RepoFixture = run(swport, [
+    "recipe", "repo-fixture", "devel/pcre2",
+    "--root", pcre2Root.path,
+    "--output", pcre2RepoRoot.path,
+    "--pubkey", pcre2Pubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(pcre2RepoFixture, "create pcre2 repository fixture")
+let pcre2Catalog = pcre2RepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let pcre2RepoVerify = run(pkgrepo, ["verify", "--catalog-signed", pcre2Catalog.path, "--pubkey", pcre2Pubkey.path])
+requireSuccess(pcre2RepoVerify, "verify pcre2 repository fixture")
+let pcre2RepoInspect = run(pkgrepo, ["inspect", pcre2Catalog.path])
+requireSuccess(pcre2RepoInspect, "inspect pcre2 repository fixture")
+guard output(pcre2RepoInspect).contains("pcre2-10.47_1") else {
+    fail("repo fixture catalog did not include pcre2 package: \(output(pcre2RepoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
@@ -417,4 +512,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, and ca-certificates recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, and pcre2 recipe fixtures")

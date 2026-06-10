@@ -23,20 +23,20 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| P6d/P7/P10 recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, and `ports/security/ca-certificates/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures | `make ports-recipe-test` |
-| Lua and zlib cross-build repository fixtures | Static AArch64 Lua and zlib cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture` |
+| P6d/P7/P10/P11 recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`, and `ports/devel/pcre2/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures | `make ports-recipe-test` |
+| Lua, zlib, and pcre2 cross-build repository fixtures | Static AArch64 Lua, zlib, and pcre2 cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-pcre2-repo-fixture` |
 | ca-certificates repository fixture | The pinned Mozilla CA bundle is packaged as data and published into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | P6f Lua repository install smoke | QEMU installs real Lua from the signed local repository fixture and runs `lua -v` plus a small expression | `make package-lua-repo-install-test` |
-| Ports seed repository fixture | Lua, zlib, and ca-certificates publish into one signed local repository; SwiftOS boots with a default repo URL and installs all three with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
+| Ports seed repository fixture | Lua, zlib, ca-certificates, and pcre2 publish into one signed local repository; SwiftOS boots with a default repo URL and installs all four with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | The ports seed repository is copied into a deployable web root with a sidecar manifest, public key, and SHA-256 manifest suitable for nginx, object storage, or GitHub Pages | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | Hosted URL verifier | A deployed static-host root can be fetched and checked from the host, including `hosted-repo.json`, `SHA256SUMS`, package hashes, and catalog signature | `make ports-hosted-url-verify`, `make ports-hosted-url-verify-test` |
-| DNS-resolved target repository URL | `/bin/pkg` accepts HTTP repository URLs with DNS hostnames and installs Lua, zlib, and ca-certificates from a hosted-style URL in QEMU | `make package-static-host-dns-repo-install-test` |
+| DNS-resolved target repository URL | `/bin/pkg` accepts HTTP repository URLs with DNS hostnames and installs Lua, zlib, ca-certificates, and pcre2 from a hosted-style URL in QEMU | `make package-static-host-dns-repo-install-test` |
 | `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
 | Public production repository | External deployment remains planned; production hosting, channels, key ceremony, target-side HTTPS, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
-repository path, P6a seed catalog, checked Lua/zlib/ca-certificates recipe
+repository path, P6a seed catalog, checked Lua/zlib/ca-certificates/pcre2 recipe
 repository scaffold, and P8 static-host publish root. Until the separate
 `swift-os-ports` repository
 and public hosted channels exist, maintainers should use the local fixture
@@ -82,6 +82,7 @@ make ports-lua-repo-fixture
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
+make ports-pcre2-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make ports-hosted-url-verify-test
@@ -111,9 +112,11 @@ Inspect the checked source recipes and generate `.swpkg` manifests:
 build/swport recipe validate lang/lua
 build/swport recipe validate archivers/zlib
 build/swport recipe validate security/ca-certificates
+build/swport recipe validate devel/pcre2
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
+build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
@@ -125,11 +128,13 @@ Build the current real package fixtures:
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
+make ports-pcre2-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 build/swpkg verify build/lua.swpkg
 build/swpkg verify build/zlib.swpkg
 build/swpkg verify build/ca-certificates.swpkg
+build/swpkg verify build/pcre2.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
@@ -813,7 +818,7 @@ hash matches, then publish the new catalog. A catalog must never reference a
 blob that is not already reachable.
 
 The current bootstrap implementation can already produce a deployable static
-web root from the checked Lua, zlib, and ca-certificates ports:
+web root from the checked Lua, zlib, ca-certificates, and pcre2 ports:
 
 ```sh
 make ports-static-host-publish
@@ -841,7 +846,7 @@ make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://pkg.swift-os.org
 ```
 
 The local acceptance gates serve this publish root over HTTP and prove that
-SwiftOS can install Lua, zlib, and ca-certificates from both numeric and
+SwiftOS can install Lua, zlib, ca-certificates, and pcre2 from both numeric and
 DNS-resolved repository URLs:
 
 ```sh
