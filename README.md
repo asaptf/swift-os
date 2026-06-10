@@ -91,19 +91,21 @@ What exists today, in the order it was built:
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 
-- **Restartable driver-service and device-discovery smoke:** the C5a-C5d path
+- **Restartable driver-service and device-discovery smoke:** the C5a-C5f path
   stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts an
   input-driver service, exchanges endpoint IPC messages, discovers and claims
   `virtio-input.0` when QEMU exposes a keyboard device, falls back to
   `pseudo-input.0` in headless boots, surfaces virtio-mmio base/length as
-  discovery metadata, transfers an opaque device handle, proves the grant moves,
-  stays busy while the service owns it, is reclaimed after exit, and recovers
-  with `C5a OK: restartable driver service recovered over IPC`, `C5b OK: opaque
-  device handle transferred and released`, `C5c OK: virtio-input device grant
-  discovered and matched`, and `C5d OK: virtio input discovery metadata
-  surfaced`. The focused acceptance gate is `make c5-device-metadata-test`
-  under `-smp 4`; real MMIO, IRQ, DMA, and virtio-input queue ownership are
-  still roadmap work.
+  discovery metadata, proves future hardware-authority bits stay clear, keeps
+  the current device grant metadata-only, transfers an opaque device handle,
+  proves the grant moves, stays busy while the service owns it, is reclaimed
+  after exit, and recovers with `C5a OK: restartable driver service recovered
+  over IPC`, `C5b OK: opaque device handle transferred and released`, `C5c OK:
+  virtio-input device grant discovered and matched`, `C5d OK: virtio input
+  discovery metadata surfaced`, `C5e OK: device authority withheld until
+  explicit handoff`, and `C5f OK: device grant rights stayed metadata-only`.
+  The aggregate acceptance gate is `make c5-test`; real MMIO, IRQ, DMA, and
+  virtio-input queue ownership are still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves
@@ -177,7 +179,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
-  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5d
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5f
   driver-service smoke.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
@@ -432,10 +434,10 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals; C5a-C5d now prove the supervisor/service IPC shape,
+work, not non-goals; C5a-C5f now prove the supervisor/service IPC shape,
 virtio-input discovery metadata, fallback pseudo-device discovery, surfaced
-virtio-mmio metadata, and opaque device-handle transfer before real device
-handoff lands.
+virtio-mmio metadata, opaque device-handle transfer, withheld hardware
+authority, and metadata-only grant rights before real device handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 

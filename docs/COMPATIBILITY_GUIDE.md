@@ -80,7 +80,7 @@ compatibility is not a goal.
 | PC BIOS boot | Not supported |
 | ACPI-first server hardware | Not supported |
 | Production SMP load balancing | Not a product contract yet; use current SMP tests for readiness only |
-| Real userland driver handoff | Not supported yet; C5d surfaces discovered virtio-input metadata but does not grant MMIO/IRQ/DMA ownership |
+| Real userland driver handoff | Not supported yet; C5a-C5f surface discovery metadata and keep device grants metadata-only, but do not grant MMIO/IRQ/DMA ownership |
 
 Example primary boot:
 
@@ -462,11 +462,11 @@ Yes, with a virtio-net boot profile and `capNet`. Current examples are
 
 ### Can I run userland drivers?
 
-Not real hardware drivers yet. C5a-C5e prove the supervisor, endpoint IPC,
+Not real hardware drivers yet. C5a-C5f prove the supervisor, endpoint IPC,
 opaque device handle, discovered virtio-input manifest shape, surfaced
-virtio-mmio metadata, and withheld hardware-authority envelope with
-`/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
-virtio-input queue ownership are still roadmap work.
+virtio-mmio metadata, withheld hardware-authority envelope, and metadata-only
+grant rights with `/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ,
+DMA, and virtio-input queue ownership are still roadmap work.
 
 ### Can I use TLS for production trust decisions?
 

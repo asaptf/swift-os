@@ -62,11 +62,13 @@ The checked-in system currently provides these practical guarantees:
    exactly the handles requested by the parent, with attenuated rights.
 8. IPC handle passing moves one handle to the receiver and clears the sender's
    source fd on success.
-9. C5b-C5d device discovery and opaque grants are metadata-only handles: the
+9. C5b-C5f device discovery and opaque grants are metadata-only handles: the
    supervisor can discover `virtio-input.0` when QEMU exposes it or the
    `pseudo-input.0` fallback on headless boots, inspect the grant, observe
-   virtio-mmio base/length as discovery metadata, and prove ownership movement,
-   but cannot use it for MMIO, IRQ, DMA, or real virtio-input queue access.
+   virtio-mmio base/length as discovery metadata, prove future authority bits
+   stay clear, prove current grant rights remain metadata-only, and prove
+   ownership movement, but cannot use it for MMIO, IRQ, DMA, or real
+   virtio-input queue access.
 10. Device discovery and claiming are gated to the boot authority; claimed
     device grants are inspectable and transferable but not duplicable.
 11. `confine(path)` can narrow a process to a filesystem subtree and cannot widen
@@ -346,8 +348,10 @@ Acceptance evidence:
 ### Opaque Device Grants
 
 C5b adds the first device-shaped handle, C5c adds discovery metadata/manifest
-matching, and C5d keeps the discovered virtio-mmio base and length visible as
-non-authoritative metadata for the checked-in driver-service smoke. The
+matching, C5d keeps the discovered virtio-mmio base and length visible as
+non-authoritative metadata, C5e proves future hardware-authority bits stay
+clear, and C5f proves the current grant rights remain metadata-only for the
+checked-in driver-service smoke. The
 supervisor discovers the current input grant with `device_discover`, claims the
 discovered name with `device_claim`, checks its metadata with `device_info`,
 moves it to `/bin/drvinputd` over an IPC endpoint, and then proves the registry
@@ -366,6 +370,8 @@ Security properties:
   the `SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY` mask clear.
   `virtio-input.0` includes MMIO base/length as manifest metadata only; there is
   still no userland mapping, IRQ endpoint, DMA window, or queue ownership.
+- C5f keeps the grant's runtime rights at metadata-only authority: no accidental
+  read, write, transfer, or map expansion is accepted as real hardware access.
 - Closing the final device fd releases the claim.
 
 This is a security boundary smoke, not a production driver sandbox. Real device

@@ -269,7 +269,7 @@ packages should prove the machinery, not stress every missing POSIX surface.
 
 Every package in the catalog should carry one of these maturity states:
 
-- `scaffolded`: recipe exists, known TODOs remain.
+- `scaffolded`: recipe exists, known blockers or review markers remain.
 - `fetches`: distfiles and checksums are valid.
 - `builds`: cross-build completes.
 - `packages`: `.swpkg` is produced and verified.
@@ -637,7 +637,7 @@ Automatic rewrites should be conservative:
 - disable shared libraries and dynamic modules by default;
 - prefer bundled or sysroot libraries only when declared;
 - remove Linux/FreeBSD-specific service scripts;
-- translate plist paths into `[package].paths` TODOs;
+- translate plist paths into `[package].paths` review markers;
 - refuse to claim `smoke-tested` maturity.
 
 The importer should support a local checkout or shallow cache of the FreeBSD

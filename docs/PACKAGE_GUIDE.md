@@ -242,7 +242,7 @@ make package-repo-fixture
 
 ## Boot A Direct Package Payload
 
-This is the P2 overlay path. Build the fixture:
+This is the direct read-only package payload path. Build the fixture:
 
 ```sh
 make build base-image build/virt.dtb
@@ -332,10 +332,10 @@ make package-store-test
 
 ## Install A Local Package In The Guest
 
-This is the current P3b local install path. It does not fetch from a repository
-and it does not resolve dependencies. It verifies a local `.swpkg`, appends its
-payload to a writable package-store disk, activates a new generation, and
-live-mounts the payload under `/usr`.
+This is the current local package install path. It does not fetch from a
+repository and it does not resolve dependencies. It verifies a local `.swpkg`,
+appends its payload to a writable package-store disk, activates a new
+generation, and live-mounts the payload under `/usr`.
 
 Build the package fixture, base image, and writable package-store image:
 

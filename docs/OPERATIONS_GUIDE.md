@@ -4,7 +4,7 @@ This guide is for people who boot, test, demo, or operate a SwiftOS image. It
 describes the current checked-in system: QEMU `virt` on AArch64, serial console
 first, immutable base image, RAM scratch space, capability-scoped user sessions,
 native Swift tools, networking demos, package payload overlays, A/B update
-stores, and the AI inference demo, plus the C5a-C5e restartable
+stores, and the AI inference demo, plus the C5a-C5f restartable
 driver-service/device-authority smoke.
 
 Use this guide with:
@@ -58,7 +58,7 @@ SwiftOS is intentionally small and static.
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
 | A/B updates | Checked SWOSBOOT base-image slots plus UEFI ESP kernel slots; see [Update And Rollback Guide](UPDATE_GUIDE.md) |
 | SMP status | Single-core is still the default profile; SMP tests cover CPU bring-up, per-CPU telemetry, restricted EL0 fanout, shared-address-space threads, and gated S5f run-any placement |
-| Driver-service status | C5a-C5e supervisor, opaque device handle, virtio-input discovery metadata, and withheld-authority smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
+| Driver-service status | C5a-C5f supervisor, opaque device handle, virtio-input discovery metadata, withheld-authority smoke, and metadata-only rights guard exist; real MMIO/IRQ/DMA handoff remains roadmap work |
 
 The most important operational consequence is that a running guest has no
 persistent writable root. Rebuild the base image or attach a package payload to
