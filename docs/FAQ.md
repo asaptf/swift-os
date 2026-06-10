@@ -222,22 +222,27 @@ future work.
 
 See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
-### Can I install Lua from the guest package manager?
+### Can I install real source-built packages from the guest package manager?
 
-Yes, through the checked-in signed local repository fixture. P6e cross-builds
-static AArch64 `lua` and `luac`; P6f serves that repository to QEMU, installs
-`lua` by package name, and runs it:
+Yes, through checked-in signed local repository fixtures. The Lua path
+cross-builds static AArch64 `lua` and `luac`; the P7 seed repository also
+cross-builds zlib, publishes Lua and zlib into one signed local repository,
+boots SwiftOS with that default repo URL, installs both packages by name, and
+runs their smoke commands:
 
 ```sh
 make ports-lua-repo-fixture
 build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 ```
 
-The test exercises `pkg install lua`, `/usr/bin/lua -v`, and
-`/usr/bin/lua -e 'print(21 * 2)'`. This is still a local fixture, not a public
-hosted package channel.
+The seed test exercises `pkg install lua`, `pkg install zlib`, Lua version and
+expression checks, and a `minigzip` compression/decompression round trip. This
+is still a local fixture, not a public hosted package channel.
 
 ### Can package files write into `/bin` or `/etc`?
 
@@ -250,9 +255,9 @@ The current `.swpkg` format verifies hashes and deterministic structure, but
 package-level publisher signatures are future milestones. Signed static HTTP
 repositories verify `catalog.signed` with Ed25519, reject expired or
 incompatible catalogs, validate dependency entries, and verify downloaded
-package blobs with SHA-256 before install. The Lua repository fixture uses the
-same signed catalog path on the host. Model serving bundles have their own
-Ed25519 manifest verification path.
+package blobs with SHA-256 before install. The Lua and ports seed repository
+fixtures use the same signed catalog path on the host. Model serving bundles
+have their own Ed25519 manifest verification path.
 
 See [SWPKG_FORMAT.md](SWPKG_FORMAT.md),
 [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md),

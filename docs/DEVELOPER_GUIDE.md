@@ -11,8 +11,8 @@ For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
 For copy-paste application recipes, see
 [APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md). For validation strategy,
 see [TESTING_GUIDE.md](TESTING_GUIDE.md).
-For package artifacts, signed repository fixtures, and the current Lua source
-port, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) and
+For package artifacts, signed repository fixtures, and the current Lua/zlib
+source-port fixtures, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) and
 [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md).
 
 ## Development Model
@@ -43,7 +43,7 @@ Choose the delivery path before wiring the build:
 | Base image `/bin` | The command is part of the default OS image | `make build base-image` plus a QEMU command test |
 | Local `.swpkg` install | The command is optional but should install inside the guest from a package file | `make package-local-install-test` |
 | Signed repository fixture | The command should be resolved by package name through `/bin/pkg` | `make package-repo-install-test` |
-| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make package-lua-repo-install-test` for the current Lua example |
+| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make package-ports-seed-repo-install-test` |
 
 Packages install under `/usr` today. Keep boot-critical tools in the immutable
 base image, and use package workflows for optional commands and maintainer-side

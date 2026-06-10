@@ -262,7 +262,7 @@ make package-repo-install-test
 Package content is read-only at runtime. Put binaries under `/usr/bin` in the
 payload namespace unless the package guide says otherwise.
 
-For source ports, use the ports tool and the current Lua fixture:
+For source ports, use the ports tool and the current Lua/zlib seed fixtures:
 
 ```sh
 make ports-catalog-test
@@ -271,11 +271,15 @@ make ports-lua-repo-fixture
 build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 ```
 
-`ports/lang/lua/Port.json` is the reference recipe shape today. It proves a
-static AArch64 build, signed local repository fixture, guest `pkg install lua`,
-`lua -v`, and a small Lua expression smoke.
+`ports/lang/lua/Port.json` and `ports/archivers/zlib/Port.json` are the checked
+recipe shapes today. Together they prove static AArch64 builds, signed local
+repository fixtures, guest `pkg install lua`, guest `pkg install zlib`, Lua
+runtime checks, and a `minigzip` compression/decompression smoke.
 
 Before publishing a package recipe, record:
 

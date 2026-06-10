@@ -21,7 +21,7 @@ SwiftOS user programs are static EL0 binaries. The normal workflow is:
 | Native Embedded Swift | New first-party tools and modern SwiftOS apps | Preferred path. Uses `userland/lib/swift_user.h` as the bridge. |
 | Raw C syscall app | Tiny low-level utilities and ABI probes | Uses `userland/lib/syscall.h` directly. Negative errno-like returns are exposed. |
 | C/newlib port | Porting larger C software | Uses newlib, `userland/lib/newlib_syscalls.c`, and `userland/compat/*`. |
-| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua repository install smoke. |
+| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua/zlib seed repository install smoke. |
 
 ## Recipe: Native Swift Command
 
@@ -326,7 +326,7 @@ The current checked-in fixtures cover five levels:
 | Package-store activation | A package-store image can activate a payload at boot | `make package-store-test` |
 | Guest local install | `/bin/pkg install FILE` installs into a writable package-store disk | `make package-local-install-test` |
 | Signed repository install | `/bin/pkg install NAME` resolves dependencies and verifies a signed catalog | `make package-repo-install-test` |
-| Real source-port repository install | `/bin/pkg install lua` installs and runs a real upstream package | `make package-lua-repo-install-test` |
+| Real source-port repository install | `/bin/pkg install lua` and `pkg install zlib` install real upstream packages | `make package-ports-seed-repo-install-test` |
 
 The sample fixture builds `/usr/bin/pkghello`:
 
@@ -372,18 +372,23 @@ pkg install pkghello
 Public hosted repositories, remove, upgrade, rollback, and version-constraint
 solving are not current behavior.
 
-### Recipe: Build And Install The Lua Source Port
+### Recipe: Build And Install Source Ports
 
-Lua is the current real source-port fixture. It proves checksum-verified source
-fetch, static AArch64 cross-build, `.swpkg` creation, and signed local
-repository publication for `lua` and `luac`. The QEMU smoke installs Lua from
-that repository and runs it in the guest.
+Lua and zlib are the current real source-port fixtures. They prove
+checksum-verified source fetch, static AArch64 cross-build, `.swpkg` creation,
+signed local repository publication, and target-side install from a default
+repository URL. The Lua-only smoke remains useful for the interpreter path; the
+seed repository smoke installs both Lua and zlib and runs the `minigzip` round
+trip in the guest.
 
 ```sh
 make ports-lua-repo-fixture
 build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 ```
 
 The guest-side flow exercised by the test is:
@@ -394,6 +399,11 @@ pkg update
 pkg install lua
 /usr/bin/lua -v
 /usr/bin/lua -e 'print(21 * 2)'
+pkg install zlib
+echo zlib-ok > /tmp/zlib.txt
+/usr/bin/minigzip /tmp/zlib.txt
+/usr/bin/minigzip -d /tmp/zlib.txt.gz
+cat /tmp/zlib.txt
 ```
 
 Use this recipe as the maintainer-side and guest-smoke reference for new source
@@ -411,7 +421,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, and `make package-lua-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, and `make package-ports-seed-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.

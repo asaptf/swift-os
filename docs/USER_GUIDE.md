@@ -383,10 +383,11 @@ These are current implementation boundaries, not necessarily design goals:
 - No persistent writable filesystem.
 - Package install exists for local `.swpkg` files and P5c signed static HTTP
   repository fixtures, including name-based dependency resolution. The P6e/P6f
-  workflow can cross-build static Lua artifacts, publish them into a signed
-  local repository fixture, install `lua` in QEMU, and run it. Remove, upgrade,
-  rollback, public hosted channels, version-constraint solving, and
-  large-package streaming downloads are not implemented yet.
+  workflow can cross-build static Lua artifacts and install `lua` in QEMU; the
+  P7 seed workflow publishes Lua and zlib into one signed local repository,
+  installs both by package name, and runs Lua plus `minigzip` smoke commands.
+  Remove, upgrade, rollback, public hosted channels, version-constraint
+  solving, and large-package streaming downloads are not implemented yet.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

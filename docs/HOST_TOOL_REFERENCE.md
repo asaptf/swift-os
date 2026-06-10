@@ -1,9 +1,9 @@
 # SwiftOS Host Tool Reference
 
 This reference describes the host-side tools that build SwiftOS images,
-packages, repositories, model bundles, and the P6 ports seed catalog/recipe
-scaffold. These commands run on the development host, not inside the SwiftOS
-guest.
+packages, repositories, model bundles, and the P6-P8 ports seed catalog,
+recipe, and repository-publish scaffolding. These commands run on the
+development host, not inside the SwiftOS guest.
 
 For guest commands, use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md). For the
 end-to-end package workflow, use
@@ -17,8 +17,10 @@ end-to-end package workflow, use
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
-| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the Lua recipe scaffold. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua and zlib recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
+| `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
+| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua and zlib packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the Lua+zlib ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
@@ -129,12 +131,12 @@ inside QEMU.
 ## Ports And Recipe Tool
 
 `swport` currently implements the P6a catalog subcommands and the P6b/P6c/P6d
-recipe subcommands for the first Lua recipe. P6e adds `make
-ports-lua-repo-fixture`, which wraps the Lua recipe with a real static AArch64
-cross-build and signed repository fixture. P6f adds
-`make package-lua-repo-install-test`, which serves that repository to QEMU,
-installs `lua`, and runs it. P8 adds `make ports-static-host-publish`, which
-turns the Lua+zlib seed repository into a deployable static web root, and
+recipe subcommands for the checked Lua and zlib recipes. P6e/P6f prove the Lua
+cross-build and target install path. P7 adds zlib and a multi-package seed
+repository fixture: `make package-ports-seed-repo-install-test` boots SwiftOS
+with a default repository URL, installs Lua and zlib by package name, and runs
+their smoke commands. P8 adds `make ports-static-host-publish`, which turns the
+Lua+zlib seed repository into a deployable static web root, and
 `make package-static-host-repo-install-test`, which installs from that web-root
 layout in QEMU. Generalized `swport build/test` commands remain planned.
 
@@ -162,8 +164,11 @@ build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 make ports-lua-repo-fixture
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-lua-repo-install-test
+make package-ports-seed-repo-install-test
 make package-static-host-repo-install-test
 ```
 
@@ -178,11 +183,12 @@ root, calls `build/swpkg create`, and verifies the resulting package;
 fixture and verifies the generated catalog.
 
 Use `make ports-catalog-test` before changing `ports/catalog.json`, and
-`make ports-recipe-test` before changing `ports/lang/lua/Port.json` or recipe
-handling. Use `make ports-lua-repo-fixture` and
-`make package-lua-repo-install-test` before changing `scripts/build-lua.sh`,
-the Lua recipe, or the Lua packaging path. Use `make ports-static-host-publish`
-and `make package-static-host-repo-install-test` before changing the static
+`make ports-recipe-test` before changing `ports/lang/lua/Port.json`,
+`ports/archivers/zlib/Port.json`, or recipe handling. Use
+`make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, and
+`make package-ports-seed-repo-install-test` before changing the checked source
+port packaging path. Use `make ports-static-host-publish` and
+`make package-static-host-repo-install-test` before changing the static
 repository publishing path.
 
 ## Model Bundle Tools

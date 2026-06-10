@@ -436,11 +436,11 @@ The same test later points the guest at a bad-hash repository and expects
 
 ## Build The Lua Port Repository Fixture
 
-This is the current P6e/P6f source-port path. It cross-builds real
-static AArch64 `lua` and `luac` binaries against the local newlib sysroot,
-packages them into `build/lua.swpkg`, and publishes a signed local repository
-fixture under `build/lua-repo-root`. The P6f QEMU smoke then installs `lua`
-from that repository and runs it inside SwiftOS.
+This is the Lua-specific P6e/P6f source-port path. It cross-builds real static
+AArch64 `lua` and `luac` binaries against the local newlib sysroot, packages
+them into `build/lua.swpkg`, and publishes a signed local repository fixture
+under `build/lua-repo-root`. The P6f QEMU smoke then installs `lua` from that
+repository and runs it inside SwiftOS.
 
 If the generated sysroot is missing, build it first:
 
@@ -491,6 +491,46 @@ pkg install lua
 /usr/bin/lua -e 'print(21 * 2)'
 ```
 
+## Build The Ports Seed Repository Fixture
+
+P7 adds zlib and publishes the checked Lua and zlib source-port packages into
+one signed local seed repository. This is the closest current stand-in for the
+future hosted package channel: the guest boots with a default repository URL,
+runs `pkg update`, installs both packages by name, and exercises the installed
+programs.
+
+```sh
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+build/swpkg verify build/zlib.swpkg
+build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
+make package-ports-seed-repo-install-test
+```
+
+Expected additional artifacts:
+
+| Artifact | Purpose |
+| --- | --- |
+| `build/zlib.swpkg` | `.swpkg` containing zlib headers, pkgconf metadata, and `/usr/bin/minigzip` |
+| `build/zlib-repo-root` | Signed local repository fixture for the standalone zlib package |
+| `build/ports-seed-repo-root` | Signed local repository fixture containing both Lua and zlib |
+
+The seed smoke reuses `build/pkgstore-lua-install.img` as its writable
+package-store image.
+
+The guest-side flow exercised by the seed smoke is:
+
+```sh
+pkg update
+pkg install lua
+pkg install zlib
+/usr/bin/lua -e 'print(21 * 2)'
+echo zlib-ok > /tmp/zlib.txt
+/usr/bin/minigzip /tmp/zlib.txt
+/usr/bin/minigzip -d /tmp/zlib.txt.gz
+cat /tmp/zlib.txt
+```
+
 ## Package Fixture Anatomy
 
 The sample fixture is intentionally small so it can run in every acceptance
@@ -509,6 +549,9 @@ gate.
 | `build/lua.swpkg` | P6e/P6f Lua package artifact from the source-port workflow |
 | `build/lua-repo-root` | P6e/P6f signed local repository fixture for Lua |
 | `build/pkgstore-lua-install.img` | Writable package-store image used by the Lua repository install smoke |
+| `build/zlib.swpkg` | P7 zlib package artifact from the source-port workflow |
+| `build/zlib-repo-root` | P7 signed local repository fixture for zlib |
+| `build/ports-seed-repo-root` | P7 signed local repository fixture containing Lua and zlib |
 
 Package files install under `/usr`. The current package verifier rejects package
 payload paths outside `/usr`.
@@ -552,9 +595,11 @@ Run the narrowest proof for the path you changed:
 | Package-store activation boot | `make package-store-test` |
 | Local target-side `.swpkg` install | `make package-local-install-test` |
 | Signed static HTTP repository install | `make package-repo-install-test` |
-| Ports catalog and Lua recipe validation | `make ports-catalog-test`; `make ports-recipe-test` |
+| Ports catalog and checked recipe validation | `make ports-catalog-test`; `make ports-recipe-test` |
 | Lua cross-build repository fixture | `make ports-lua-repo-fixture` |
 | Target-side Lua repository install/run smoke | `make package-lua-repo-install-test` |
+| zlib cross-build repository fixture | `make ports-zlib-repo-fixture` |
+| Target-side ports seed repository install/run smoke | `make package-ports-seed-repo-install-test` |
 | Static-host repository publish root | `make ports-static-host-publish` |
 | Target-side install from static-host publish root | `make package-static-host-repo-install-test` |
 | Full package tooling in the full gate | `make test` |
@@ -574,6 +619,7 @@ The QEMU tests are:
 - [tests/pkg_local_install_test.sh](../tests/pkg_local_install_test.sh)
 - [tests/pkg_repo_install_test.sh](../tests/pkg_repo_install_test.sh)
 - [tests/pkg_lua_repo_install_test.sh](../tests/pkg_lua_repo_install_test.sh)
+- [tests/pkg_ports_seed_repo_install_test.sh](../tests/pkg_ports_seed_repo_install_test.sh)
 - [tests/pkg_static_host_repo_install_test.sh](../tests/pkg_static_host_repo_install_test.sh)
 
 ## Troubleshooting
@@ -592,6 +638,7 @@ The QEMU tests are:
 | `pkg: package SHA-256 mismatch` | The downloaded package blob does not match the signed catalog entry | Rebuild the repository fixture with `make package-repo-fixture` and rerun `make package-repo-install-test` |
 | `make ports-lua-repo-fixture` cannot find newlib | The generated cross sysroot is missing | Run `make newlib`, then rerun `make ports-lua-repo-fixture` |
 | `pkg install lua` fails in the guest | The Lua repository was not served, `pkg update` did not cache its catalog, or the writable Lua package-store image is missing | Rebuild with `make ports-lua-repo-fixture package-lua-install-fixture`, then run `make package-lua-repo-install-test` |
+| `pkg install zlib` fails in the seed smoke | The seed repository was not rebuilt, the default repository URL was not injected, or the writable seed package-store image is missing | Rebuild with `make ports-seed-repo-fixture package-lua-install-fixture`, then run `make package-ports-seed-repo-install-test` |
 | `make ports-static-host-publish` fails SHA-256 checks | The seed repository was modified after signing or a copied package blob is stale | Rebuild with `make ports-seed-repo-fixture ports-static-host-publish` |
 | Package content disappears after reboot | The package image or writable package-store image was not attached to the new boot | Attach the same package payload, package-store, or writable install-store image each time |
 
@@ -605,9 +652,11 @@ Current limits that matter for package use:
 - Package content is read-only in the guest.
 - The current target-side write paths are local `.swpkg` install and P5c
   repository install into a writable package-store disk.
-- The Lua port fixture proves source packaging, signed repository publication,
-  target-side repository install, and guest execution through
-  `make package-lua-repo-install-test`.
+- The Lua/zlib port fixtures and static-host publish path prove source
+  packaging, signed repository publication, target-side repository install, and
+  guest execution through `make package-lua-repo-install-test`,
+  `make package-ports-seed-repo-install-test`, and
+  `make package-static-host-repo-install-test`.
 - `.swpkg` hashes prove container integrity. P5c catalog signatures prove the
   repository metadata used to find and hash package blobs; package SHA-256
   checks prove the downloaded blob matches the catalog.

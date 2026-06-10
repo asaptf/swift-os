@@ -907,32 +907,30 @@ Remaining repository work:
 - replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.
 
-### P6: Ports Tree Bootstrap
+### P6/P7: Ports Tree Bootstrap
 
-Current state: P6a/P6b/P6c/P6d/P6e/P6f have started inside `swift-os` with a
-checked machine-readable seed catalog, `ports/catalog.json`, the host-side
-`build/swport catalog validate/list/inspect` commands, and the first
-`ports/lang/lua/Port.json` recipe scaffold. `swport recipe validate`,
-`swport recipe manifest`, checksum-verified `swport recipe fetch`, and
-staged-root `swport recipe package` exist for the Lua path. P6d also adds
-`swport recipe repo-fixture`, which creates and verifies a signed local static
-repository from the staged recipe package. P6e adds `make
-ports-lua-repo-fixture`, which cross-builds real AArch64 static Lua, packages
-the runtime interpreter, and publishes a signed local repository fixture. P6f
-adds `make package-lua-repo-install-test`, which installs Lua from that
-repository in QEMU and runs `lua -v` plus an expression smoke. This is
-deliberately not the full ports tree yet; it makes package priorities,
-dependency names, OS prerequisite bundles, blockers, and the
+Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7 have started inside `swift-os` with
+a checked machine-readable seed catalog, `ports/catalog.json`, the host-side
+`build/swport catalog validate/list/inspect` commands, and checked
+`ports/lang/lua/Port.json` plus `ports/archivers/zlib/Port.json` recipe
+scaffolds. `swport recipe validate`, `swport recipe manifest`,
+checksum-verified `swport recipe fetch`, staged-root `swport recipe package`,
+and signed `swport recipe repo-fixture` exist for those checked paths. P6e/P6f
+prove the Lua cross-build and target install path. P7 adds zlib and
+`make package-ports-seed-repo-install-test`, which installs Lua and zlib from
+one signed local seed repository in QEMU and runs Lua plus `minigzip` smoke
+commands. This is deliberately not the full ports tree yet; it makes package
+priorities, dependency names, OS prerequisite bundles, blockers, and the
 recipe-to-repository contract reviewable before the separate `swift-os-ports`
 repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
-- Keep the first source recipe workflow valid with `make ports-recipe-test`.
-- Keep the first real Lua binary package path valid with `make
-  ports-lua-repo-fixture` when `make newlib` has populated the generated
-  sysroot.
-- Keep the first real Lua target install/run path valid with
-  `make package-lua-repo-install-test`.
+- Keep the checked source recipe workflow valid with `make ports-recipe-test`.
+- Keep the real Lua and zlib binary package paths valid with
+  `make ports-lua-repo-fixture` and `make ports-zlib-repo-fixture` when
+  `make newlib` has populated the generated sysroot.
+- Keep the first multi-package target install/run path valid with
+  `make package-ports-seed-repo-install-test`.
 - Move the seed catalog and recipes into `swift-os-ports` once real package
   builds land.
 - Add full `swport` recipe commands: `new`, `build`, `test`, `package`, and
@@ -951,13 +949,15 @@ Good early candidates:
 Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
-- `make ports-recipe-test` validates the first Lua recipe and proves the
-  generated manifest can feed `swport recipe package`, `swpkg verify`, and a
-  signed local `pkgrepo` repository fixture.
+- `make ports-recipe-test` validates the checked Lua and zlib recipes and proves
+  the generated manifest can feed `swport recipe package`, `swpkg verify`, and
+  a signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
   the runtime interpreter into a signed local repository fixture.
-- `make package-lua-repo-install-test` installs Lua from that repository and
-  runs it inside QEMU.
+- `make ports-zlib-repo-fixture` builds real static AArch64 zlib, headers,
+  pkgconf metadata, and `minigzip`.
+- `make package-ports-seed-repo-install-test` installs Lua and zlib from one
+  signed local seed repository and runs both package smoke paths inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

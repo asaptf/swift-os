@@ -61,21 +61,27 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make package-repo-install-test` proves negative catalog rejection,
     dependency installation, package SHA-256 rejection, and execution of
     `/usr/bin/pkghello`.
-- P6a/P6b/P6c/P6d/P6e/P6f ports scaffolding is implemented in this repository:
+- P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 ports scaffolding is implemented in this
+  repository:
   - `ports/catalog.json` records the first package priorities, prerequisite
     bundles, runtime dependency names, and blockers;
-  - `ports/lang/lua/Port.json` is the first source recipe scaffold;
+  - `ports/lang/lua/Port.json` and `ports/archivers/zlib/Port.json` are the
+    checked source recipe scaffolds;
   - `build/swport catalog validate/list/inspect` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
-  - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`
-    against the local newlib sysroot;
+  - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`, and
+    `scripts/build-zlib.sh` cross-builds static zlib plus `minigzip`, against
+    the local newlib sysroot;
   - `make ports-catalog-test` and `make ports-recipe-test` keep the catalog and
-    Lua recipe package/repository path machine-readable;
+    checked recipe package/repository paths machine-readable;
   - `make ports-lua-repo-fixture` proves the Lua cross-build package and signed
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
+  - `make ports-seed-repo-fixture` publishes Lua and zlib into one signed local
+    seed repository, and `make package-ports-seed-repo-install-test` proves
+    installing both packages plus the `minigzip` round trip inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the Lua+zlib seed repository, and `make package-static-host-repo-install-test`
     proves SwiftOS can install from that published layout.
@@ -105,9 +111,9 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The P6a/P6b/P6c/P6d/P6e/P6f seed lives in this repository under `ports/`; the full
-ports tree should move to `swift-os-ports` once cross-building, testing,
-publishing, and broader package maintenance are ready.
+The P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 seed lives in this repository under `ports/`;
+the full ports tree should move to `swift-os-ports` once cross-building,
+testing, publishing, and broader package maintenance are ready.
 
 Outputs:
 

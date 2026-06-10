@@ -52,11 +52,11 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Lua recipe repository path | Validate the first source recipe and prove its staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua and zlib source recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
-| Ports seed repository fixture | Publish Lua and zlib into one signed local repository and install both from SwiftOS using a default repo URL | `make package-ports-seed-repo-install-test` |
+| Ports seed repository fixture | Publish Lua and zlib into one signed local repository and install both from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | Publish the Lua+zlib seed repository into a deployable web root and install both from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
