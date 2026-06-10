@@ -679,7 +679,7 @@ Notes:
 
 Acceptance coverage: `tests/dns_test.sh`.
 
-## Interactive And Application Demos
+## Interactive And Application Commands
 
 ### `calc`
 
@@ -768,7 +768,7 @@ Notes:
 - The default step count is 64.
 - The command reads `/models/stories260K.bin` and `/models/tok512.bin`.
 - Build or fetch the model files with the repository model target before using
-  the demo in a fresh checkout.
+  this command in a fresh checkout.
 
 Acceptance coverage: `tests/llm_run_test.sh`.
 
@@ -1078,7 +1078,7 @@ Notes:
 Acceptance coverage: `tests/package_overlay_test.sh` and
 `tests/pkg_store_boot_test.sh`.
 
-## Bring-up Demo Commands
+## Bring-up Diagnostic Commands
 
 The following programs remain staged in `/bin` because they prove specific
 kernel and userland paths. They are valuable to developers and tests, but they
@@ -1104,7 +1104,7 @@ are not the primary operator interface.
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |
 
-Prefer the commands in the earlier sections for normal use. Use these demo
+Prefer the commands in the earlier sections for normal use. Use these diagnostic
 commands when validating a specific milestone or investigating a regression.
 
 ## Troubleshooting Command Failures
