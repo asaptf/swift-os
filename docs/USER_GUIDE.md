@@ -466,8 +466,8 @@ These are current implementation boundaries, not necessarily design goals:
 - No persistent writable filesystem.
 - Package install exists for local `.swpkg` files and signed static HTTP
   repository fixtures, including name-based dependency resolution. The checked
-  ports seed publishes Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx,
-  and sqlite into one signed local repository, installs all nine by package
+  ports seed publishes Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx,
+  and sqlite into one signed local repository, installs all ten by package
   name, and runs Lua, `minigzip`, bzip2, the CA bundle marker, `pcre2grep`,
   zoneinfo, nginx, and SQLite smoke commands in QEMU. The static-host workflow publishes that
   seed into a deployable web root and proves the same install path from the

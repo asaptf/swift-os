@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "name": "xz",
+  "version": "5.8.3",
+  "revision": 1,
+  "category": "archivers",
+  "summary": "XZ Utils compressor, decompressor, and liblzma static library",
+  "homepage": "https://tukaani.org/xz/",
+  "license": ["0BSD", "GPL-2.0-or-later", "GPL-3.0-or-later", "LGPL-2.1-or-later"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz",
+    "sha256": "3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "autotools-make",
+    "args": [
+      "--host=aarch64-elf",
+      "--prefix=/usr",
+      "--disable-shared",
+      "--enable-static",
+      "--disable-nls",
+      "--disable-scripts",
+      "--disable-doc",
+      "--disable-xzdec",
+      "--disable-lzmadec",
+      "--disable-lzmainfo",
+      "--disable-lzma-links",
+      "--disable-sandbox",
+      "--disable-assembler",
+      "--disable-clmul-crc",
+      "--disable-arm64-crc32",
+      "--disable-symbol-versions",
+      "--enable-threads=no",
+      "--disable-dependency-tracking",
+      "--enable-small",
+      "--enable-assume-ram=128"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -include ${RUNTIME}/swiftos_xz_compat.h -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CPPFLAGS": "-D_FORTIFY_SOURCE=0",
+      "CONFIGURE_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o ${RUNTIME}/swiftos_xz_compat.o -L${SYSROOT}/lib",
+      "FINAL_LIBTOOL_LDFLAGS": "-static -L${SYSROOT}/lib",
+      "FINAL_PROGRAM_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o ${RUNTIME}/swiftos_xz_compat.o -L${SYSROOT}/lib",
+      "LIBS": "-lc -lgcc",
+      "RANLIB": "aarch64-elf-ranlib",
+      "ac_cv_func_getrlimit": "no",
+      "ac_cv_func_vasprintf": "no",
+      "ac_cv_func_wcwidth": "no"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "xz", "unxz", "xzcat", "liblzma.a", "lzma.h", "lzma-headers", "pkgconfig", "version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["xz", "unxz", "xzcat", "liblzma"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/xz", "to": "/usr/bin/xz", "mode": "0755" },
+      { "from": "destdir/usr/bin/unxz", "to": "/usr/bin/unxz", "mode": "0755" },
+      { "from": "destdir/usr/bin/xzcat", "to": "/usr/bin/xzcat", "mode": "0755" },
+      { "from": "destdir/usr/include/lzma.h", "to": "/usr/include/lzma.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/base.h", "to": "/usr/include/lzma/base.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/bcj.h", "to": "/usr/include/lzma/bcj.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/block.h", "to": "/usr/include/lzma/block.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/check.h", "to": "/usr/include/lzma/check.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/container.h", "to": "/usr/include/lzma/container.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/delta.h", "to": "/usr/include/lzma/delta.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/filter.h", "to": "/usr/include/lzma/filter.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/hardware.h", "to": "/usr/include/lzma/hardware.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/index.h", "to": "/usr/include/lzma/index.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/index_hash.h", "to": "/usr/include/lzma/index_hash.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/lzma12.h", "to": "/usr/include/lzma/lzma12.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/stream_flags.h", "to": "/usr/include/lzma/stream_flags.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/version.h", "to": "/usr/include/lzma/version.h", "mode": "0644" },
+      { "from": "destdir/usr/include/lzma/vli.h", "to": "/usr/include/lzma/vli.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/liblzma.a", "to": "/usr/lib/liblzma.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/liblzma.pc", "to": "/usr/lib/pkgconfig/liblzma.pc", "mode": "0644" },
+      { "from": "destdir/usr/share/xz/swiftos-xz.version", "to": "/usr/share/xz/swiftos-xz.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "echo xz-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c",
+      "cat /usr/share/xz/swiftos-xz.version"
+    ]
+  },
+  "notes": "Tier 0 archive package. scripts/build-xz.sh cross-builds a small static xz/unxz/xzcat CLI plus liblzma.a, headers, pkgconf metadata, and a version marker. NLS, helper scripts, sandboxing, threading, assembler, and dynamic-library paths are disabled for the first SwiftOS package."
+}

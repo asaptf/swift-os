@@ -94,4 +94,4 @@ grep -qF "$REPO_HOST" "$DNSLOG" || { echo "FAIL: DNS server did not resolve $REP
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; exit 1; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; exit 1; }
 
-echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite from a DNS-resolved hosted repository URL"
+echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite from a DNS-resolved hosted repository URL"

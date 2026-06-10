@@ -23,6 +23,7 @@ fail() {
 "$ROOT/scripts/build-zlib.sh"
 "$ROOT/scripts/build-bzip2.sh"
 "$ROOT/scripts/build-zstd.sh"
+"$ROOT/scripts/build-xz.sh"
 "$ROOT/scripts/build-ca-certificates.sh"
 "$ROOT/scripts/build-pcre2.sh"
 "$ROOT/scripts/build-tzdata.sh"
@@ -35,6 +36,7 @@ rm -rf "$REPO_ROOT" "$REPO_PUB"
     --package "$ROOT/build/zlib.swpkg" \
     --package "$ROOT/build/bzip2.swpkg" \
     --package "$ROOT/build/zstd.swpkg" \
+    --package "$ROOT/build/xz.swpkg" \
     --package "$ROOT/build/ca-certificates.swpkg" \
     --package "$ROOT/build/pcre2.swpkg" \
     --package "$ROOT/build/tzdata.swpkg" \

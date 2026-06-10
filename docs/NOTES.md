@@ -3,6 +3,21 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## P17 xz seed package (2026-06-10)
+
+- Added `ports/archivers/xz/Port.json` for upstream XZ Utils 5.8.3 as the next
+  checked archive-format package. It packages static `xz`/`unxz`/`xzcat`,
+  `liblzma.a`, public headers, pkgconf metadata, and a marker file.
+- Added `scripts/build-xz.sh`. The script cross-builds against the local newlib
+  sysroot with scripts, NLS, docs, sandboxing, threading, assembler,
+  dynamic-library paths, and CPU-specific CRC helpers disabled, then verifies
+  the AArch64 ELF and publishes both the `.swpkg` and signed local repository
+  fixture.
+- The ports seed repository now publishes Lua, zlib, bzip2, zstd, xz,
+  ca-certificates, pcre2, tzdata, nginx, and sqlite. Package seed,
+  static-host, hosted URL, catalog, recipe, and documentation tests were
+  extended to install xz and run a compression round trip.
+
 ## P16 zstd seed package (2026-06-10)
 
 - Added `ports/archivers/zstd/Port.json` for upstream zstd 1.5.7 as the next

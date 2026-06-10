@@ -97,14 +97,14 @@
       "portPath": "archivers/xz",
       "tier": 0,
       "category": "compression",
-      "status": "planned",
+      "status": "packages",
       "difficulty": "M",
       "upstream": "Tukaani XZ Utils",
       "summary": ".xz and liblzma support for upstream source tarballs and packages.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix"],
-      "smokeTest": "compress and decompress a fixture and compare hashes",
-      "notes": "Audit upstream release choice carefully because this is supply-chain-sensitive."
+      "smokeTest": "install from the seed repository and pipe a known string through xz -q -c | xz -q -dc in QEMU",
+      "notes": "Packaged from the signed upstream release track after the XZ supply-chain incident. scripts/build-xz.sh cross-builds a static small xz/unxz/xzcat CLI, liblzma.a, headers, pkgconf metadata, and a version marker with NLS, scripts, sandboxing, threading, assembler, and dynamic libraries disabled."
     },
     {
       "name": "openssl",

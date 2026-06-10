@@ -68,6 +68,7 @@ let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let bzip2Recipe = repo.appendingPathComponent("ports/archivers/bzip2/Port.json")
 let zstdRecipe = repo.appendingPathComponent("ports/archivers/zstd/Port.json")
+let xzRecipe = repo.appendingPathComponent("ports/archivers/xz/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
@@ -81,6 +82,9 @@ guard FileManager.default.isReadableFile(atPath: bzip2Recipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: zstdRecipe.path) else {
     fail("missing ports/archivers/zstd/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: xzRecipe.path) else {
+    fail("missing ports/archivers/xz/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -469,6 +473,125 @@ guard output(zstdRepoInspect).contains("zstd-1.5.7_1") else {
     fail("repo fixture catalog did not include zstd package: \(output(zstdRepoInspect))")
 }
 
+let xzValidate = run(swport, ["recipe", "validate", "archivers/xz"])
+requireSuccess(xzValidate, "validate xz recipe")
+guard output(xzValidate).contains("recipe: OK xz-5.8.3_1") else {
+    fail("validate output did not confirm xz recipe: \(output(xzValidate))")
+}
+
+let xzManifestURL = temp.appendingPathComponent("xz-manifest.json")
+let xzManifest = run(swport, ["recipe", "manifest", "archivers/xz", "--output", xzManifestURL.path])
+requireSuccess(xzManifest, "generate xz manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: xzManifestURL)) as? [String: Any] else {
+        fail("generated xz manifest is not a JSON object")
+    }
+    requireString(object, "name", "xz")
+    requireString(object, "version", "5.8.3")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["xz", "unxz", "xzcat", "liblzma"] else {
+        fail("xz manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/xz",
+        "/usr/bin/unxz",
+        "/usr/bin/xzcat",
+        "/usr/include/lzma.h",
+        "/usr/include/lzma/base.h",
+        "/usr/include/lzma/bcj.h",
+        "/usr/include/lzma/block.h",
+        "/usr/include/lzma/check.h",
+        "/usr/include/lzma/container.h",
+        "/usr/include/lzma/delta.h",
+        "/usr/include/lzma/filter.h",
+        "/usr/include/lzma/hardware.h",
+        "/usr/include/lzma/index.h",
+        "/usr/include/lzma/index_hash.h",
+        "/usr/include/lzma/lzma12.h",
+        "/usr/include/lzma/stream_flags.h",
+        "/usr/include/lzma/version.h",
+        "/usr/include/lzma/vli.h",
+        "/usr/lib/liblzma.a",
+        "/usr/lib/pkgconfig/liblzma.pc",
+        "/usr/share/xz/swiftos-xz.version",
+    ] else {
+        fail("unexpected xz manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated xz manifest: \(error)")
+}
+
+let xzRoot = temp.appendingPathComponent("xz-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/xz", Data("#!/bin/sh\necho xz\n".utf8), 0o755),
+        ("usr/bin/unxz", Data("#!/bin/sh\necho unxz\n".utf8), 0o755),
+        ("usr/bin/xzcat", Data("#!/bin/sh\necho xzcat\n".utf8), 0o755),
+        ("usr/include/lzma.h", Data("/* lzma */\n".utf8), 0o644),
+        ("usr/include/lzma/base.h", Data("/* lzma base */\n".utf8), 0o644),
+        ("usr/include/lzma/bcj.h", Data("/* lzma bcj */\n".utf8), 0o644),
+        ("usr/include/lzma/block.h", Data("/* lzma block */\n".utf8), 0o644),
+        ("usr/include/lzma/check.h", Data("/* lzma check */\n".utf8), 0o644),
+        ("usr/include/lzma/container.h", Data("/* lzma container */\n".utf8), 0o644),
+        ("usr/include/lzma/delta.h", Data("/* lzma delta */\n".utf8), 0o644),
+        ("usr/include/lzma/filter.h", Data("/* lzma filter */\n".utf8), 0o644),
+        ("usr/include/lzma/hardware.h", Data("/* lzma hardware */\n".utf8), 0o644),
+        ("usr/include/lzma/index.h", Data("/* lzma index */\n".utf8), 0o644),
+        ("usr/include/lzma/index_hash.h", Data("/* lzma index hash */\n".utf8), 0o644),
+        ("usr/include/lzma/lzma12.h", Data("/* lzma12 */\n".utf8), 0o644),
+        ("usr/include/lzma/stream_flags.h", Data("/* lzma stream flags */\n".utf8), 0o644),
+        ("usr/include/lzma/version.h", Data("/* lzma version */\n".utf8), 0o644),
+        ("usr/include/lzma/vli.h", Data("/* lzma vli */\n".utf8), 0o644),
+        ("usr/lib/liblzma.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/liblzma.pc", Data("Name: liblzma\nVersion: 5.8.3\n".utf8), 0o644),
+        ("usr/share/xz/swiftos-xz.version", Data("xz 5.8.3 swift-os static-small-no-threads\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = xzRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy xz package root: \(error)")
+}
+
+let xzPackageURL = temp.appendingPathComponent("xz.swpkg")
+let xzPackageResult = run(swport, [
+    "recipe", "package", "archivers/xz",
+    "--root", xzRoot.path,
+    "--output", xzPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(xzPackageResult, "package dummy xz root")
+let xzVerify = run(swpkg, ["verify", xzPackageURL.path])
+requireSuccess(xzVerify, "verify dummy xz package")
+guard output(xzVerify).contains("OK: xz-5.8.3_1") else {
+    fail("swpkg verify did not identify xz package: \(output(xzVerify))")
+}
+
+let xzRepoRoot = temp.appendingPathComponent("xz-repo-root", isDirectory: true)
+let xzPubkey = temp.appendingPathComponent("xz-repo-root.pub")
+let xzRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "archivers/xz",
+    "--root", xzRoot.path,
+    "--output", xzRepoRoot.path,
+    "--pubkey", xzPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(xzRepoFixture, "create xz repository fixture")
+let xzCatalog = xzRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let xzRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", xzCatalog.path, "--pubkey", xzPubkey.path])
+requireSuccess(xzRepoVerify, "verify xz repository fixture")
+let xzRepoInspect = run(pkgrepo, ["inspect", xzCatalog.path])
+requireSuccess(xzRepoInspect, "inspect xz repository fixture")
+guard output(xzRepoInspect).contains("xz-5.8.3_1") else {
+    fail("repo fixture catalog did not include xz package: \(output(xzRepoInspect))")
+}
+
 let caValidate = run(swport, ["recipe", "validate", "security/ca-certificates"])
 requireSuccess(caValidate, "validate ca-certificates recipe")
 guard output(caValidate).contains("recipe: OK ca-certificates-2026.05.14_1") else {
@@ -791,4 +914,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
