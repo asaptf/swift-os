@@ -257,6 +257,41 @@ private func checkCommandReferenceCoverage() {
     }
 }
 
+private func checkSwiftBridgeCoverage() {
+    let headerPath = "userland/lib/swift_user.h"
+    guard let headerText = try? String(contentsOfFile: headerPath, encoding: .utf8) else {
+        fail("\(headerPath): could not read")
+        ok = false
+        return
+    }
+    let apiPath = "docs/API_REFERENCE.md"
+    guard let apiText = try? String(contentsOfFile: apiPath, encoding: .utf8) else {
+        fail("\(apiPath): could not read")
+        ok = false
+        return
+    }
+
+    let functionRegex = try! NSRegularExpression(
+        pattern: #"\b(swiftos_[A-Za-z0-9_]+)\s*\("#
+    )
+    var functions = Set<String>()
+    for rawLine in headerText.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        if let groups = firstMatchGroups(functionRegex, in: line, groupCount: 1) {
+            functions.insert(groups[0])
+        }
+    }
+    if functions.isEmpty {
+        fail("\(headerPath): no swiftos_* bridge functions found")
+        ok = false
+    }
+
+    for name in functions.sorted() where !apiText.contains(name) {
+        fail("\(apiPath): missing Swift bridge function `\(name)` from \(headerPath)")
+        ok = false
+    }
+}
+
 let linkPattern = #"!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#
 let linkRegex = try! NSRegularExpression(pattern: linkPattern)
 
@@ -307,9 +342,10 @@ for file in markdownFiles() {
 checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkCommandReferenceCoverage()
+checkSwiftBridgeCoverage()
 
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links, API table, map coverage, and command coverage are valid")
+print("PASS: documentation markdown fences, local links, API table, Swift bridge, map coverage, and command coverage are valid")
