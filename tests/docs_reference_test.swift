@@ -294,6 +294,463 @@ private func checkDocumentationMapCoverage() {
     }
 }
 
+private func documentationMapTargets() -> [String] {
+    let mapPath = "docs/DOCUMENTATION.md"
+    guard let mapText = try? String(contentsOfFile: mapPath, encoding: .utf8) else {
+        fail("\(mapPath): could not read")
+        ok = false
+        return []
+    }
+
+    let linkRegex = try! NSRegularExpression(pattern: #"\(([^)#]+\.md)\)"#)
+    let nsText = mapText as NSString
+    let matches = linkRegex.matches(in: mapText, range: NSRange(location: 0, length: nsText.length))
+    var targets = Set<String>()
+    for match in matches {
+        let rawTarget = nsText.substring(with: match.range(at: 1))
+        if rawTarget.hasPrefix("../ports/") {
+            targets.insert(String(rawTarget.dropFirst(3)))
+        } else if !rawTarget.contains("/") {
+            targets.insert("docs/\(rawTarget)")
+        }
+    }
+    return targets.sorted()
+}
+
+private func checkReadmeDocumentationFrontDoorCoverage() {
+    let path = "README.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    for target in documentationMapTargets() where !text.contains(target) {
+        fail("\(path): missing front-door link for \(target) from docs/DOCUMENTATION.md")
+        ok = false
+    }
+}
+
+private func checkExampleVerificationCoverage() {
+    let path = "docs/EXAMPLES.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var currentHeading: String?
+    var currentStart = 0
+    var currentHasVerification = false
+
+    func finishCurrent(at line: Int) {
+        guard let heading = currentHeading else { return }
+        if !currentHasVerification {
+            fail("\(path):\(currentStart): numbered example `\(heading)` is missing a verification block before line \(line)")
+            ok = false
+        }
+    }
+
+    for (index, line) in lines.enumerated() {
+        if line.range(of: #"^## [0-9]+\. "#, options: .regularExpression) != nil {
+            finishCurrent(at: index + 1)
+            currentHeading = line
+            currentStart = index + 1
+            currentHasVerification = false
+            continue
+        }
+        if currentHeading != nil &&
+            (line == "Verification:" ||
+             line == "Equivalent automated check:" ||
+             line == "Automated checks:") {
+            currentHasVerification = true
+        }
+    }
+    finishCurrent(at: lines.count + 1)
+}
+
+private func makeTargetNames() -> Set<String> {
+    let path = "Makefile"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let targetRegex = try! NSRegularExpression(pattern: #"^([A-Za-z0-9_.-]+):"#)
+    var targets = Set<String>()
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        if line.hasPrefix(".PHONY:") {
+            for target in line.dropFirst(".PHONY:".count).split(separator: " ") {
+                targets.insert(String(target))
+            }
+            continue
+        }
+        if let groups = firstMatchGroups(targetRegex, in: line, groupCount: 1) {
+            targets.insert(groups[0])
+        }
+    }
+    if targets.isEmpty {
+        fail("\(path): no make targets found")
+        ok = false
+    }
+    return targets
+}
+
+private func validateVerificationCommand(_ line: String,
+                                         in path: String,
+                                         lineNumber: Int,
+                                         makeTargets: Set<String>) {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    if trimmed.isEmpty || trimmed.hasPrefix("#") {
+        return
+    }
+
+    let tokens = trimmed.split { $0 == " " || $0 == "\t" }.map(String.init)
+    var index = 0
+    while index < tokens.count &&
+          tokens[index].contains("=") &&
+          !tokens[index].hasPrefix("./") {
+        index += 1
+    }
+    guard index < tokens.count else { return }
+
+    let command = tokens[index]
+    if command == "make" {
+        for arg in tokens.dropFirst(index + 1) {
+            if arg.hasPrefix("-") || arg.contains("=") {
+                continue
+            }
+            if !makeTargets.contains(arg) {
+                fail("\(path):\(lineNumber): unknown make target `\(arg)` in verification block")
+                ok = false
+            }
+        }
+        return
+    }
+
+    if command.hasPrefix("./tests/") {
+        if !FileManager.default.fileExists(atPath: String(command.dropFirst(2))) {
+            fail("\(path):\(lineNumber): missing verification script `\(command)`")
+            ok = false
+        }
+        return
+    }
+
+    fail("\(path):\(lineNumber): verification command should be `make ...` or `./tests/...`, got `\(command)`")
+    ok = false
+}
+
+private func checkVerificationCommandCoverage(in path: String) {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var pendingVerificationFence = false
+    var inVerificationFence = false
+
+    for (index, line) in lines.enumerated() {
+        if line == "Verification:" ||
+            line == "Equivalent automated check:" ||
+            line == "Automated checks:" {
+            pendingVerificationFence = true
+            continue
+        }
+
+        if line.hasPrefix("```") {
+            if inVerificationFence {
+                inVerificationFence = false
+                continue
+            }
+            if pendingVerificationFence {
+                inVerificationFence = true
+                pendingVerificationFence = false
+                continue
+            }
+        }
+
+        if inVerificationFence {
+            validateVerificationCommand(line,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
+        }
+    }
+}
+
+private func checkApiCompleteExampleVerificationCoverage() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var currentHeading: String?
+    var currentStart = 0
+    var currentHasVerification = false
+
+    func finishCurrent(at line: Int) {
+        guard let heading = currentHeading else { return }
+        if !currentHasVerification {
+            fail("\(path):\(currentStart): complete API example `\(heading)` is missing a verification block before line \(line)")
+            ok = false
+        }
+    }
+
+    for (index, line) in lines.enumerated() {
+        if line.hasPrefix("## Complete Example: ") {
+            finishCurrent(at: index + 1)
+            currentHeading = line
+            currentStart = index + 1
+            currentHasVerification = false
+            continue
+        }
+        if currentHeading != nil && line == "Verification:" {
+            currentHasVerification = true
+        }
+    }
+    finishCurrent(at: lines.count + 1)
+}
+
+private func codeSpans(in text: String) -> [String] {
+    let regex = try! NSRegularExpression(pattern: #"`([^`]+)`"#)
+    let nsText = text as NSString
+    return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map {
+        nsText.substring(with: $0.range(at: 1))
+    }
+}
+
+private func markdownTableCells(_ line: String) -> [String] {
+    var cells: [String] = []
+    var current = ""
+    var previous: Character?
+    for char in line {
+        if char == "|" && previous != "\\" {
+            cells.append(current.trimmingCharacters(in: .whitespaces))
+            current = ""
+        } else {
+            current.append(char)
+        }
+        previous = char
+    }
+    cells.append(current.trimmingCharacters(in: .whitespaces))
+    return cells
+}
+
+private func verificationCommandToken(_ text: String) -> String? {
+    let tokens = text.trimmingCharacters(in: .whitespaces)
+        .split { $0 == " " || $0 == "\t" }
+        .map(String.init)
+    var index = 0
+    while index < tokens.count &&
+          tokens[index].contains("=") &&
+          !tokens[index].hasPrefix("./") {
+        index += 1
+    }
+    guard index < tokens.count else { return nil }
+    return tokens[index]
+}
+
+private func isRunnableVerificationCommand(_ ref: String) -> Bool {
+    guard let command = verificationCommandToken(ref) else { return false }
+    return command == "make" || command.hasPrefix("./tests/")
+}
+
+private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int) {
+    if ref.hasSuffix("/*") {
+        let dir = String(ref.dropLast(2))
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: dir, isDirectory: &isDir) ||
+            !isDir.boolValue {
+            fail("\(path):\(lineNumber): missing documented directory `\(dir)`")
+            ok = false
+            return
+        }
+        if (try? FileManager.default.contentsOfDirectory(atPath: dir).isEmpty) != false {
+            fail("\(path):\(lineNumber): documented directory `\(dir)` is empty")
+            ok = false
+        }
+        return
+    }
+
+    if !FileManager.default.fileExists(atPath: ref) {
+        fail("\(path):\(lineNumber): missing documented path `\(ref)`")
+        ok = false
+    }
+}
+
+private func isMachineVerificationReference(_ ref: String) -> Bool {
+    isRunnableVerificationCommand(ref) || ref.hasPrefix("tests/")
+}
+
+private func validateCoverageReferences(_ text: String,
+                                        in path: String,
+                                        lineNumber: Int,
+                                        makeTargets: Set<String>,
+                                        subject: String) {
+    let refs = codeSpans(in: text).filter(isMachineVerificationReference)
+    if refs.isEmpty {
+        fail("\(path):\(lineNumber): \(subject) has no machine-checkable coverage reference")
+        ok = false
+    }
+    for ref in refs {
+        validateApiVerificationReference(ref,
+                                         in: path,
+                                         lineNumber: lineNumber,
+                                         makeTargets: makeTargets)
+    }
+}
+
+private func validateApiVerificationReference(_ ref: String,
+                                              in path: String,
+                                              lineNumber: Int,
+                                              makeTargets: Set<String>) {
+    if isRunnableVerificationCommand(ref) {
+        validateVerificationCommand(ref,
+                                    in: path,
+                                    lineNumber: lineNumber,
+                                    makeTargets: makeTargets)
+        return
+    }
+
+    if ref.hasPrefix("tests/") {
+        checkDocumentedPath(ref, in: path, lineNumber: lineNumber)
+        return
+    }
+
+    fail("\(path):\(lineNumber): API verification reference should be `make ...`, `./tests/...`, or `tests/...`, got `\(ref)`")
+    ok = false
+}
+
+private func checkApiRecipeVerificationCoverage() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inRecipeIndex = false
+    for (index, line) in lines.enumerated() {
+        if line == "## API Recipe Index" {
+            inRecipeIndex = true
+            continue
+        }
+        if inRecipeIndex && line.hasPrefix("## ") {
+            break
+        }
+        guard inRecipeIndex,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 5 else { continue }
+        let task = cells[1]
+        let sources = cells[2]
+        let verification = cells[cells.count - 2]
+        if task == "Task" {
+            continue
+        }
+
+        let sourceRefs = codeSpans(in: sources)
+        if sourceRefs.isEmpty {
+            fail("\(path):\(index + 1): API recipe `\(task)` has no source reference")
+            ok = false
+        }
+        for source in sourceRefs where source.hasPrefix("userland/") {
+            if !FileManager.default.fileExists(atPath: source) {
+                fail("\(path):\(index + 1): API recipe `\(task)` references missing source `\(source)`")
+                ok = false
+            }
+        }
+
+        let commands = codeSpans(in: verification)
+        if commands.isEmpty {
+            fail("\(path):\(index + 1): API recipe `\(task)` has no verification command")
+            ok = false
+        }
+        for command in commands {
+            validateVerificationCommand(command,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
+        }
+    }
+}
+
+private func checkApiVerificationMapReferences() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inMap = false
+    for (index, line) in lines.enumerated() {
+        if line == "## API Verification Map" {
+            inMap = true
+            continue
+        }
+        if inMap && line.hasPrefix("## ") {
+            break
+        }
+        guard inMap,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 4 else { continue }
+        let area = cells[1]
+        let primaryFiles = cells[2]
+        let verification = cells[cells.count - 2]
+        if area == "API area" {
+            continue
+        }
+
+        let primaryRefs = codeSpans(in: primaryFiles)
+        if primaryRefs.isEmpty {
+            fail("\(path):\(index + 1): API verification area `\(area)` has no primary file reference")
+            ok = false
+        }
+        for ref in primaryRefs {
+            checkDocumentedPath(ref, in: path, lineNumber: index + 1)
+        }
+
+        let verificationRefs = codeSpans(in: verification)
+        if verificationRefs.isEmpty {
+            fail("\(path):\(index + 1): API verification area `\(area)` has no focused verification reference")
+            ok = false
+        }
+        for ref in verificationRefs {
+            validateApiVerificationReference(ref,
+                                           in: path,
+                                           lineNumber: index + 1,
+                                           makeTargets: makeTargets)
+        }
+    }
+}
+
 private func stagedBaseCommands() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -334,6 +791,259 @@ private func checkCommandReferenceCoverage() {
             ok = false
         }
     }
+}
+
+private func checkCommandReferenceAcceptanceCoverageRefs() {
+    let path = "docs/COMMAND_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var index = 0
+    while index < lines.count {
+        let line = lines[index]
+        if line.hasPrefix("Acceptance coverage:") {
+            let start = index
+            var block = line
+            index += 1
+            while index < lines.count &&
+                  !lines[index].isEmpty &&
+                  !lines[index].hasPrefix("#") {
+                block += " " + lines[index]
+                index += 1
+            }
+            validateCoverageReferences(block,
+                                       in: path,
+                                       lineNumber: start + 1,
+                                       makeTargets: makeTargets,
+                                       subject: "acceptance coverage block")
+            continue
+        }
+        index += 1
+    }
+
+    var inCoverageTable = false
+    var coverageColumn = -1
+    for (lineIndex, line) in lines.enumerated() {
+        if !line.hasPrefix("|") {
+            inCoverageTable = false
+            coverageColumn = -1
+            continue
+        }
+        let cells = markdownTableCells(line)
+        if cells.contains("Acceptance coverage") {
+            inCoverageTable = true
+            coverageColumn = cells.firstIndex(of: "Acceptance coverage") ?? -1
+            continue
+        }
+        if inCoverageTable && line.contains("---") {
+            continue
+        }
+        guard inCoverageTable,
+              coverageColumn >= 0,
+              coverageColumn < cells.count else {
+            continue
+        }
+        let subject = cells.count > 1 && !cells[1].isEmpty ? "`\(cells[1])` row" : "table row"
+        validateCoverageReferences(cells[coverageColumn],
+                                   in: path,
+                                   lineNumber: lineIndex + 1,
+                                   makeTargets: makeTargets,
+                                   subject: subject)
+    }
+}
+
+private func checkConfigurationBuildTargetReferences() {
+    let path = "docs/CONFIGURATION_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inBuildTargets = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Build Targets" {
+            inBuildTargets = true
+            continue
+        }
+        if inBuildTargets && line.hasPrefix("## ") {
+            break
+        }
+        guard inBuildTargets,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let targetCell = cells[1]
+        if targetCell == "Target" {
+            continue
+        }
+        validateCoverageReferences(targetCell,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "build target row")
+    }
+}
+
+private func checkConfigurationVerificationMatrixReferences() {
+    let path = "docs/CONFIGURATION_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inVerificationMatrix = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Verification Matrix" {
+            inVerificationMatrix = true
+            continue
+        }
+        if inVerificationMatrix && line.hasPrefix("## ") {
+            break
+        }
+        guard inVerificationMatrix,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let change = cells[1]
+        let verification = cells[2]
+        if change == "Change" {
+            continue
+        }
+        validateCoverageReferences(verification,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "`\(change)` verification row")
+    }
+}
+
+private func checkPackageGuideVerificationMatrixReferences() {
+    let path = "docs/PACKAGE_GUIDE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inVerificationMatrix = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Verification Matrix" {
+            inVerificationMatrix = true
+            continue
+        }
+        if inVerificationMatrix && line.hasPrefix("## ") {
+            break
+        }
+        guard inVerificationMatrix,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let pathName = cells[1]
+        let verification = cells[2]
+        if pathName == "Area" {
+            continue
+        }
+        validateCoverageReferences(verification,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "`\(pathName)` verification row")
+    }
+}
+
+private func checkGuideVerificationTableReferences(path: String,
+                                                   heading: String,
+                                                   labelHeader: String,
+                                                   verificationHeader: String) {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inTable = false
+    for (index, line) in lines.enumerated() {
+        if line == heading {
+            inTable = true
+            continue
+        }
+        if inTable && line.hasPrefix("## ") {
+            break
+        }
+        guard inTable,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let label = cells[1]
+        let verification = cells[2]
+        if label == labelHeader && verification == verificationHeader {
+            continue
+        }
+        validateCoverageReferences(verification,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "`\(label)` verification row")
+    }
+}
+
+private func checkDeploymentValidationMatrixReferences() {
+    checkGuideVerificationTableReferences(path: "docs/DEPLOYMENT_GUIDE.md",
+                                          heading: "## Validation Matrix",
+                                          labelHeader: "Candidate includes",
+                                          verificationHeader: "Required focused gate")
+}
+
+private func checkOperationsVerificationMatrixReferences() {
+    checkGuideVerificationTableReferences(path: "docs/OPERATIONS_GUIDE.md",
+                                          heading: "## Verification Matrix",
+                                          labelHeader: "Area",
+                                          verificationHeader: "Command")
+}
+
+private func checkSupportScopeReferences() {
+    checkGuideVerificationTableReferences(path: "docs/SUPPORT_GUIDE.md",
+                                          heading: "## Support Scope",
+                                          labelHeader: "Area",
+                                          verificationHeader: "Supported evidence path")
+}
+
+private func checkSupportFirstResponseReferences() {
+    checkGuideVerificationTableReferences(path: "docs/SUPPORT_GUIDE.md",
+                                          heading: "## First Response Checklist",
+                                          labelHeader: "Failure area",
+                                          verificationHeader: "First test")
 }
 
 private func hostToolExecutables() -> [String] {
@@ -379,6 +1089,77 @@ private func checkHostToolReferenceCoverage() {
     for tool in hostToolExecutables() where !text.contains("build/\(tool)") {
         fail("\(path): missing host tool reference entry for build/\(tool)")
         ok = false
+    }
+}
+
+private func checkHostToolQuickMapReferences() {
+    let path = "docs/HOST_TOOL_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inQuickMap = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Quick Map" {
+            inQuickMap = true
+            continue
+        }
+        if inQuickMap && line.hasPrefix("## ") {
+            break
+        }
+        guard inQuickMap,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 5 else { continue }
+        let tool = cells[1]
+        let buildTarget = cells[2]
+        let verification = cells[cells.count - 2]
+        if tool == "Tool or target" {
+            continue
+        }
+
+        let toolRefs = codeSpans(in: tool)
+        if toolRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row has no tool reference")
+            ok = false
+        }
+        for ref in toolRefs where ref.hasPrefix("scripts/") {
+            checkDocumentedPath(ref, in: path, lineNumber: index + 1)
+        }
+
+        let buildRefs = codeSpans(in: buildTarget)
+        if buildRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row for `\(tool)` has no build target")
+            ok = false
+        }
+        for ref in buildRefs {
+            validateVerificationCommand(ref,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
+        }
+
+        let verificationRefs = codeSpans(in: verification)
+        if verificationRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row for `\(tool)` has no verification reference")
+            ok = false
+        }
+        for ref in verificationRefs {
+            validateApiVerificationReference(ref,
+                                             in: path,
+                                             lineNumber: index + 1,
+                                             makeTargets: makeTargets)
+        }
     }
 }
 
@@ -534,8 +1315,24 @@ for file in markdownFiles() {
 
 checkSyscallTableSync()
 checkDocumentationMapCoverage()
+checkReadmeDocumentationFrontDoorCoverage()
+checkExampleVerificationCoverage()
+checkApiCompleteExampleVerificationCoverage()
+checkApiRecipeVerificationCoverage()
+checkApiVerificationMapReferences()
+checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
+checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
+checkCommandReferenceAcceptanceCoverageRefs()
+checkConfigurationBuildTargetReferences()
+checkConfigurationVerificationMatrixReferences()
+checkPackageGuideVerificationMatrixReferences()
+checkDeploymentValidationMatrixReferences()
+checkOperationsVerificationMatrixReferences()
+checkSupportScopeReferences()
+checkSupportFirstResponseReferences()
 checkHostToolReferenceCoverage()
+checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
 checkSwiftBridgeCoverage()
 

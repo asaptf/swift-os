@@ -1348,6 +1348,13 @@ int main(void) {
 }
 ```
 
+Verification:
+
+```sh
+./tests/boot_test.sh
+./tests/spawn_self_exec_test.sh
+```
+
 ## Complete Example: Native Swift Hello
 
 ```swift
@@ -1362,4 +1369,10 @@ func main(_ argc: Int32,
     swiftos_puts("hello from native Swift\n")
     return 0
 }
+```
+
+Verification:
+
+```sh
+./tests/swift_coreutils_test.sh
 ```

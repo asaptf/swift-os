@@ -155,6 +155,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   known limits, and upgrade notes for the current checked-in snapshot.
 - [Update And Rollback Guide](docs/UPDATE_GUIDE.md): rebuild immutable
   artifacts, update boot profiles, verify candidates, and roll back safely.
+- [Update Store](docs/UPDATE_STORE.md): A/B update-store image layout, target
+  commands, and rollback behavior.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
 - [Administration Guide](docs/ADMINISTRATION_GUIDE.md): maintain accounts,
@@ -212,6 +214,12 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
   recipe, Lua/zlib cross-build fixtures, CI smoke-test, and repository publishing
   workflow for maintainers.
+- [Package Ecosystem Goal](docs/PACKAGE_ECOSYSTEM_GOAL.md): end-state package
+  ecosystem goals and current package roadmap.
+- [Package Manager Implementation Plan](docs/PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md):
+  historical package-manager implementation plan.
+- [Package Manager Session Prompts](docs/PACKAGE_MANAGER_SESSION_PROMPTS.md):
+  reusable package-manager session and milestone prompts.
 - [SWPKG Format](docs/SWPKG_FORMAT.md): `.swpkg` container layout, manifest,
   payload, and verification rules.
 - [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
@@ -223,6 +231,12 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   notes.
 - [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
   server packages, current package limits, and porting prerequisites.
+- [Ports Seed Catalog](ports/README.md): seed ports catalog and recipe
+  validation rules.
+- [SMP Mutable State Audit](docs/SMP_STATE_AUDIT.md): machine-checked SMP
+  mutable-state inventory.
+- [Next Session](docs/NEXT_SESSION.md): current handoff notes for the next
+  engineering session.
 
 ## Architecture
 

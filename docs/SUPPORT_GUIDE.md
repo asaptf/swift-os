@@ -24,8 +24,8 @@ Current supported support targets:
 | Direct QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `./tests/boot_test.sh` |
 | UEFI QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Serial console login | `./tests/console_login_test.sh` |
-| Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
-| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
+| Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md), starting with `./tests/swift_coreutils_test.sh` |
+| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus `./tests/tcp_echo_test.sh`, `./tests/udp_echo_test.sh`, and `./tests/httpd_test.sh` |
 | Package payload overlay | `make package-overlay-test` |
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
@@ -34,7 +34,7 @@ Current supported support targets:
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
-| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
+| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` |
 
 Current non-support targets:
 
