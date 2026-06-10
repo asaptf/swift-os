@@ -100,10 +100,19 @@ publisher identity.
 
 ## Boundary With Later Milestones
 
-P1 is a host tooling and test milestone only. It creates and verifies package
-artifacts, then stops.
+The `.swpkg` container format began as the P1 host tooling milestone. It creates
+and verifies package artifacts; other milestones decide how those artifacts
+become visible in the guest.
 
-Later milestones add separate responsibilities: P2 mounts verified payload
-images as read-only VFS overlays, P3 adds the persistent package store, P4 adds
-target-side `pkg install ./name.swpkg`, and P5 adds signed repository catalogs
-and network fetch.
+Current related package milestones:
+
+- P2 mounts verified payload images as read-only VFS overlays.
+- P3a adds the persistent package-store image and boot activation.
+- P3b adds local target-side `pkg install FILE` and `pkg list` for `.swpkg`
+  files staged in the guest.
+- P4 completes the local package lifecycle with files, remove, rollback, and
+  stronger diagnostics.
+- P5 adds signed repository catalogs and network fetch.
+
+For the package-store image layout, see
+[PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md).

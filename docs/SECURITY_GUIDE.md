@@ -432,7 +432,10 @@ Operational consequences:
 1. A running guest cannot edit `/bin`, `/etc`, `/www`, or `/models`.
 2. Changing base content requires rebuilding `build/base.img`.
 3. Package overlay content is attached read-only at boot.
-4. Target-side package install/remove is not implemented yet.
+4. Local `pkg install FILE` can activate a local `.swpkg` through a writable
+   package-store image, but package payload content remains read-only once
+   active.
+5. Repository install, remove, upgrade, and rollback are not implemented yet.
 
 The host `.swpkg` tool verifies package structure and payload hashes. Package
 signatures and network repository policy are later package-management work.
@@ -442,6 +445,7 @@ Acceptance evidence:
 ```sh
 ./tests/vfs_disk_test.sh
 make package-overlay-test
+make package-local-install-test
 ```
 
 ## Security Checklist

@@ -220,7 +220,8 @@ The current `.swpkg` format verifies hashes and deterministic structure, but
 package signatures and signed online repositories are future milestones. Model
 serving bundles have their own Ed25519 manifest verification path.
 
-See [SWPKG_FORMAT.md](SWPKG_FORMAT.md) and
+See [SWPKG_FORMAT.md](SWPKG_FORMAT.md),
+[PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md), and
 [AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
 
 ## Networking And Services

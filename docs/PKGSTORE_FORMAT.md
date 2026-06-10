@@ -1,6 +1,17 @@
-# Package Store Format
+# SwiftOS Package Store Format
 
-Developer notes for the P3 package-store image.
+This reference describes the `SWPKGST1` package-store image used by SwiftOS
+package-store boot activation and the current local `pkg install FILE` path.
+Use it when writing package tools, debugging package-store images, or reviewing
+kernel package-store changes.
+
+Use this guide with:
+
+- [Package Guide](PACKAGE_GUIDE.md) for the operator-facing package workflows.
+- [Package Management](PACKAGE_MANAGEMENT.md) for the package manager design and
+  roadmap.
+- [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` package container.
+- [Base Image](BASE_IMAGE.md) for the packed `SWOSBASE` image family.
 
 P3a adds the first persistent-store substrate: a block image that carries package
 payload records, activation records, and an active-generation pointer. The

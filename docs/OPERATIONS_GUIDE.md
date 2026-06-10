@@ -175,7 +175,8 @@ Expected output:
 pkghello: hello from package overlay
 ```
 
-For package format details, see [SWPKG_FORMAT.md](SWPKG_FORMAT.md) and
+For package format details, see [SWPKG_FORMAT.md](SWPKG_FORMAT.md),
+[PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md), and
 [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md).
 
 ### Package Store Boot

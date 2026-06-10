@@ -478,7 +478,8 @@ These are intentional current limits:
 - No Linux ABI mode.
 - No dynamic loader.
 - No persistent writable filesystem.
-- No target-side package manager transaction flow.
+- No repository package transaction flow. Local `pkg install FILE` works for
+  local `.swpkg` files when a writable package-store image is attached.
 - No production certificate store for `tlsget`.
 - No default graphical desktop shell.
 

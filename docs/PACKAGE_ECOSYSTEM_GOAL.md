@@ -42,8 +42,18 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - QEMU can boot with a base SWOSBASE disk plus package payload disks;
   - VFS selects the base image by contents, independent of virtio scan order;
   - `/usr/bin/pkghello` executes from a package payload image.
-- No target-side `/bin/pkg`, package store, repository catalog, or hosted binary
-  repository exists yet.
+- P3a package-store boot activation is implemented:
+  - `docs/PKGSTORE_FORMAT.md` documents the `SWPKGST1` image layout;
+  - `build/pkgstore` can create and inspect package-store images;
+  - QEMU can boot a preseeded active package generation.
+- P3b local target-side install is implemented:
+  - `/bin/pkg install FILE` can install a local `.swpkg` into a writable
+    package-store image;
+  - `/bin/pkg list` reports active package-store records;
+  - `make package-local-install-test` proves the flow with
+    `/packages/pkghello.swpkg`.
+- Repository catalogs, hosted binary repository publishing, network fetch,
+  dependency solving, remove, upgrade, and rollback remain future work.
 
 ## Workstreams
 
@@ -57,9 +67,11 @@ Lives in `swift-os`.
 Milestones:
 
 1. P2: mount verified package payload images as read-only VFS overlays. (DONE)
-2. P3: persistent package store and activation generations.
-3. P4: target-side `/bin/pkg install ./name.swpkg`.
-4. P5: signed static HTTP repository catalogs and network fetch.
+2. P3a: persistent package store and boot activation generations. (DONE)
+3. P3b: local target-side `/bin/pkg install FILE` and `pkg list`. (DONE)
+4. P4: complete local package lifecycle: files, remove, rollback, and
+   diagnostics.
+5. P5: signed static HTTP repository catalogs and network fetch.
 
 ### 2. Ports Catalog
 

@@ -178,6 +178,10 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   SwiftOS commands, C utilities, package overlays, and tests.
 - [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
   troubleshoot `.swpkg`, payload overlay, and package-store artifacts.
+- [SWPKG Format](docs/SWPKG_FORMAT.md): `.swpkg` container layout, manifest,
+  payload, and verification rules.
+- [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
+  activation record, and local install layout.
 - [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,
   handle rights, native Swift bridge, and compatibility API notes.
 - [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
