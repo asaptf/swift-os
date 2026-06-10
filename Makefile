@@ -327,7 +327,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -976,6 +976,9 @@ $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 
 ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json
 	$(SWPORT_RECIPE_TEST)
+
+ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
+	./scripts/build-lua.sh
 
 $(PKGREPO_PUB): $(PKGREPO) Makefile
 	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
