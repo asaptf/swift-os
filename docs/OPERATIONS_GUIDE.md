@@ -290,7 +290,7 @@ rolls back to the fallback slot. Acceptance coverage:
 
 The UEFI disk carries signed kernel slot manifests and kernel slot files on the
 ESP. The running OS can reach the ESP, copy the active kernel image over the
-inactive slot, and install the pre-signed alternate manifest.
+inactive slot, and select that inactive slot in loader-managed `kernel-state`.
 
 Inside the guest as `root`:
 
@@ -299,8 +299,9 @@ swos-kstage
 swos-kactivate
 ```
 
-Then reboot through the UEFI disk profile. The loader verifies the selected
-manifest and kernel slot before handoff. Acceptance coverage:
+Then reboot through the UEFI disk profile. The loader verifies the signed
+manifest's slot hashes, reads the selected slot from `kernel-state`, and checks
+the selected kernel image before handoff. Acceptance coverage:
 `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`,
 `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, and
 `./tests/uefi_krollback_test.sh`.

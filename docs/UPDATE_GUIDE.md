@@ -127,9 +127,10 @@ swos-kactivate
 ```
 
 Then reboot through the UEFI disk profile. On the next boot, the loader verifies
-the alternate signed manifest and selected kernel slot before handoff. The
-loader also persists a per-slot boot-attempt counter in `kernel-state`; an
-unconfirmed kernel slot rolls back after the checked attempt window.
+the signed kernel manifest's slot hashes, reads the selected active slot from
+`kernel-state`, and checks the selected kernel image before handoff. The loader
+also persists a per-slot boot-attempt counter in `kernel-state`; an unconfirmed
+kernel slot rolls back after the checked attempt window.
 After a healthy trial boot, confirm that booted kernel slot:
 
 ```sh
@@ -147,9 +148,9 @@ Minimum verification:
 ./tests/uefi_krollback_test.sh
 ```
 
-Kernel-image A/B has end-to-end staging, activation, health confirmation, and
-attempt-based rollback for the checked ESP layout. A real new-kernel payload
-source is future work.
+Kernel-image A/B has end-to-end staging, boot-state activation, health
+confirmation, and attempt-based rollback for the checked ESP layout. A real
+new-kernel payload source is future work.
 
 ## Release Identity
 

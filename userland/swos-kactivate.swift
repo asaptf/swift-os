@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // swos-kactivate.swift — flip the active kernel slot for the next boot
-// (swift-os, U1g-4d).
+// (swift-os, U1g-5d).
 //
-// Calls the capConsole-gated kernel_activate syscall (69): the kernel installs
-// the pre-signed alternate manifest (\EFI\swift-os\kernel-boot-alt, which selects
-// the OTHER kernel slot and was signed offline at image build) over the live
-// kernel-boot on the ESP. On the next boot the loader verifies that manifest's
-// signature and boots the newly-activated slot. The OS never signs — it only
-// courier-copies an already-signed manifest. Operator flow: swos-kstage (write
-// the inactive slot) -> swos-kactivate -> reboot. Needs CAP_CONSOLE.
+// Calls the capConsole-gated kernel_activate syscall (69): the kernel updates
+// the loader-managed \EFI\swift-os\kernel-state file so the next boot tries the
+// OTHER kernel slot. The signed kernel-boot manifest still authenticates slot
+// hashes; active selection is mutable boot-state. Operator flow: swos-kstage
+// (write the inactive slot) -> swos-kactivate -> reboot. Needs CAP_CONSOLE.
 
 @_cdecl("main")
 func main(_ argc: Int32,
@@ -26,9 +24,9 @@ func main(_ argc: Int32,
     } else if rc == -19 {
         swiftos_puts("swos-kactivate: no ESP/GPT boot disk reachable\n")
     } else if rc == -2 {
-        swiftos_puts("swos-kactivate: kernel-boot / kernel-boot-alt not found on the ESP\n")
+        swiftos_puts("swos-kactivate: kernel-boot or kernel-state not found on the ESP\n")
     } else if rc == -22 {
-        swiftos_puts("swos-kactivate: the alternate manifest does not select the other slot\n")
+        swiftos_puts("swos-kactivate: kernel-state is invalid or active slot is unknown\n")
     } else {
         swiftos_puts("swos-kactivate: failed to activate the inactive slot\n")
     }

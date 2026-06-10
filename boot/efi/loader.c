@@ -295,8 +295,9 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
     return 1;
 }
 
-// U1g-5a/5b/5c: the ESP kernel-state record. Layout (512 bytes): "SWOSKSTA"(8)
-// version(4) seq(4) attemptA(4) attemptB(4) stateA(4) stateB(4) lastBooted(4)
+// U1g-5a/5b/5c/5d: the ESP kernel-state record. Layout (512 bytes):
+// "SWOSKSTA"(8) version(4) seq(4) attemptA(4) attemptB(4) stateA(4) stateB(4)
+// lastBooted(4) active(4)
 // ... reserved ... sha256[0,480) at offset 480. Not signed — the SHA-256 only
 // guards against torn/garbage writes (the kernel images are independently
 // signed/hashed, so the boot-state may be writable: the SWOSBOOT posture). The
@@ -305,6 +306,7 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
 #define KS_ATTEMPT(slot) ((slot) == 0 ? 16 : 20)
 #define KS_STATE(slot)   ((slot) == 0 ? 24 : 28)
 #define KS_LAST_BOOTED 32
+#define KS_ACTIVE 36
 #define KS_NO_SLOT 0xFFFFFFFF
 #define KS_UNTRIED   0
 #define KS_CONFIRMED 1
@@ -365,6 +367,7 @@ static int loader_read_kstate(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, UIN
         for (int i = 0; i < 8; i++) buf[i] = (UINT8)magic[i];
         st32(buf + 8, 1);           // version
         st32(buf + KS_LAST_BOOTED, KS_NO_SLOT);
+        st32(buf + KS_ACTIVE, KS_NO_SLOT);
         return 0;
     }
     return 1;
@@ -532,24 +535,44 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     UINTN ksize = 0;
     int loaded_slot = -1;
     if (trusted) {
+        int manifest_active = active;
         puts16(st, "UEFI: kernel A/B manifest active slot ");
-        puts16(st, active == 0 ? "A" : "B");
+        puts16(st, manifest_active == 0 ? "A" : "B");
         puts16(st, " gen ");
         puthex(st, kgen);
         puts16(st, " (signature OK)\r\n");
 
-        // Read the writable boot-state and apply attempt-based rollback (U1g-5b,
-        // the U1d analogue): an unconfirmed active slot that has exhausted its boot
-        // attempts is presumed unhealthy, so prefer the other slot. Otherwise try
-        // the active slot first and fall back on a load/hash failure.
+        // Read the writable boot-state. U1g-5d moves mutable active selection
+        // here: the signed manifest authenticates slot metadata and hashes, while
+        // kernel-state carries the current active slot so runtime activation no
+        // longer needs a pre-signed alternate manifest.
         UINT8 ks[512];
         loader_read_kstate(image_handle, st, ks);
+        UINT32 state_active = ld32(ks + KS_ACTIVE);
+        if (state_active <= 1) {
+            active = (int)state_active;
+        } else {
+            active = manifest_active;
+        }
+        fallback = active == 0 ? 1 : 0;
+        puts16(st, "UEFI: kernel boot-state active slot ");
+        puts16(st, active == 0 ? "A" : "B");
+        if (active != manifest_active) {
+            puts16(st, " (overrides manifest)\r\n");
+        } else {
+            puts16(st, "\r\n");
+        }
+
+        // Apply attempt-based rollback (U1g-5b, the U1d analogue): an
+        // unconfirmed active slot that has exhausted its boot attempts is presumed
+        // unhealthy, so prefer the other slot. Otherwise try the active slot first
+        // and fall back on a load/hash failure.
         UINT32 attemptS = ld32(ks + KS_ATTEMPT(active));
         UINT32 stateS = ld32(ks + KS_STATE(active));
 
-        int first = active, second = fallback, rolling = 0;
+        int first = active, second = fallback;
         if (stateS != KS_CONFIRMED && attemptS >= KS_MAX_ATTEMPTS && fallback != active) {
-            first = fallback; second = active; rolling = 1;
+            first = fallback; second = active;
             puts16(st, "UEFI: kernel slot ");
             puts16(st, active == 0 ? "A" : "B");
             puts16(st, " unconfirmed after ");
@@ -569,14 +592,16 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         }
 
         if (loaded_slot >= 0) {
-            // Persist boot-state: mark the rolled-over-from slot FAILED, count this
-            // attempt for the booted slot (a CONFIRMED slot stops counting).
-            if (rolling && loaded_slot == fallback) st32(ks + KS_STATE(active), KS_FAILED);
+            // Persist boot-state: mark the displaced active slot FAILED, publish
+            // the actually booted slot as active, and count this attempt (a
+            // CONFIRMED slot stops counting).
+            if (loaded_slot != active) st32(ks + KS_STATE(active), KS_FAILED);
             UINT32 attempt = ld32(ks + KS_ATTEMPT(loaded_slot));
             if (ld32(ks + KS_STATE(loaded_slot)) != KS_CONFIRMED) {
                 attempt += 1;
                 st32(ks + KS_ATTEMPT(loaded_slot), attempt);
             }
+            st32(ks + KS_ACTIVE, (UINT32)loaded_slot);
             st32(ks + KS_LAST_BOOTED, (UINT32)loaded_slot);
             st32(ks + KS_OFF_SEQ, ld32(ks + KS_OFF_SEQ) + 1);
             loader_write_kstate(image_handle, st, ks);

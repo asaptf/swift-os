@@ -94,7 +94,7 @@ cp "$DISK_IMG" "$WORK"
 "$MDEL" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernelB.bin \
   || fail "could not delete kernelB.bin for the fallback case"
 boot_work
-await "rolling back to slot A" 60 || fail "fallback: loader did not roll back to slot A"
+await "UEFI: kernel slot unusable, trying slot A" 60 || fail "fallback: loader did not try slot A after missing active slot"
 await "UEFI: booted kernel slot A" 30   || fail "fallback: loader did not boot slot A"
 await "Hello from Swift kernel" 60      || fail "fallback: kernel did not start from slot A"
 stop_qemu

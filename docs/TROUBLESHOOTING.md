@@ -377,7 +377,9 @@ swos-kactivate: inactive kernel slot activated; reboot to use it
 
 If a manual run still boots the old slot, confirm the QEMU command boots the
 same writable disk image that `swos-kactivate` modified. A fresh disk image has
-a fresh ESP and will not contain the previous activation.
+a fresh ESP and will not contain the previous activation. The current activate
+path writes `\EFI\swift-os\kernel-state`; the signed `kernel-boot` manifest may
+still report its default active slot while the boot-state selects the trial slot.
 
 ### UEFI Loader Rolls Back The Kernel Slot
 

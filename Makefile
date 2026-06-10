@@ -1093,11 +1093,11 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 	@mkdir -p $(ESP_DIR)/EFI/BOOT
 	cp $(EFI_APP) $@
 
-# U1g: stage the kernel A/B slots + boot manifest on the ESP under \EFI\swift-os.
-# The loader reads the manifest, picks the active slot (kernelA.bin / kernelB.bin),
-# and loads it (decoupled from the loader binary; the embedded blob is a fallback).
-# Both slots are the same image for now; A/B differentiation comes with staging a
-# new kernel into the inactive slot. make-disk.sh copies these into the GPT image.
+# U1g: stage the kernel A/B slots + signed slot-metadata manifest on the ESP
+# under \EFI\swift-os. The loader verifies the manifest for per-slot hashes, then
+# uses the writable kernel-state file for mutable active-slot selection. Both
+# slots are the same image for now; A/B differentiation comes with staging a new
+# kernel into the inactive slot. make-disk.sh copies these into the GPT image.
 $(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	cp $(KERNEL_BIN) $@
@@ -1107,17 +1107,12 @@ $(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
 $(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
-# U1g-4d: the pre-signed alternate manifest selecting slot B. /bin/swos-kactivate
-# courier-copies it over kernel-boot to flip the active slot (the OS never signs).
-$(ESP_DIR)/EFI/swift-os/kernel-boot-alt: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
-	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	$(KERNELBOOT) $@ B $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
       $(ESP_DIR)/EFI/swift-os/kernelA.bin \
       $(ESP_DIR)/EFI/swift-os/kernelB.bin \
-      $(ESP_DIR)/EFI/swift-os/kernel-boot \
-      $(ESP_DIR)/EFI/swift-os/kernel-boot-alt
+      $(ESP_DIR)/EFI/swift-os/kernel-boot
+	rm -f $(ESP_DIR)/EFI/swift-os/kernel-boot-alt
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
 uefi-run: uefi base-image

@@ -2,9 +2,9 @@
 // kernelboot.swift — build a SWOSKERN kernel A/B boot manifest for the ESP.
 //
 // The UEFI loader (boot/efi/loader.c) reads this file from
-// \EFI\swift-os\kernel-boot to choose which kernel slot to load (kernelA.bin /
-// kernelB.bin), falling back to the other slot if the active one is missing OR
-// fails its SHA-256 (U1g-3a).
+// \EFI\swift-os\kernel-boot for trusted kernel-slot metadata (kernelA.bin /
+// kernelB.bin sizes and hashes). The manifest's active slot is the default;
+// mutable activation is stored in the loader-managed kernel-state file.
 //
 // Layout (little-endian):
 //   0   u8[8] "SWOSKERN"
@@ -17,9 +17,8 @@
 //   104 u8[64] Ed25519 signature over bytes [0,104)          (168 bytes total)
 //
 // The signature uses the image-signing key (the same root the kernel embeds);
-// the loader verifies it against its compiled-in copy before trusting the slot
-// selection. Host-authored at image build for now (no CRC / double-buffering —
-// added when the OS writes it at runtime).
+// the loader verifies it against its compiled-in copy before trusting slot
+// metadata. Host-authored at image build for now.
 //
 // Usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> <signing-seed> [generation]
 

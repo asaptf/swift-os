@@ -69,7 +69,7 @@ private let sysUpdateConfirm: UInt = 65 // update_confirm() — mark the booted 
 private let sysUpdateActivate: UInt = 66 // update_activate() — promote the inactive A/B slot (U1e); needs capConsole
 private let sysUpdateStage: UInt = 67    // update_stage() — copy the payload disk into the inactive A/B slot (U1f-2b); needs capConsole
 private let sysKernelStage: UInt = 68    // kernel_stage() — copy the active kernel slot image into the inactive ESP slot (U1g-4c); needs capConsole
-private let sysKernelActivate: UInt = 69 // kernel_activate() — flip the active kernel slot via the pre-signed alternate manifest (U1g-4d); needs capConsole
+private let sysKernelActivate: UInt = 69 // kernel_activate() — flip the active kernel slot in kernel-state (U1g-5d); needs capConsole
 private let sysKernelConfirm: UInt = 70  // kernel_confirm() — mark the booted ESP kernel slot healthy (U1g-5c); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
@@ -267,7 +267,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysKernelStage {
         result = espStageActiveToInactive() // U1g-4c: capConsole-gated kernel-slot stage on the ESP
     } else if number == sysKernelActivate {
-        result = espActivateOtherKernel() // U1g-4d: capConsole-gated kernel-slot flip via signed manifest
+        result = espActivateOtherKernel() // U1g-5d: capConsole-gated kernel-slot flip via kernel-state
     } else if number == sysKernelConfirm {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
     } else {

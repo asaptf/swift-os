@@ -65,7 +65,7 @@ int  swiftos_update_stage(void);
 // U1g-4c: copy the active kernel slot's image into the inactive ESP slot. Needs
 // CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_kernel_stage(void);
-// U1g-4d: flip the active kernel slot via the pre-signed alternate manifest.
+// U1g-5d: flip the active kernel slot via the loader-managed kernel-state.
 // Needs CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_kernel_activate(void);
 // U1g-5c: mark the booted ESP kernel slot healthy (CONFIRMED). Needs
