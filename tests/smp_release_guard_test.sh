@@ -995,7 +995,7 @@ done
 for needle in \
   'SMP_CPUS="${SMP_CPUS:-1}"' \
   'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh' \
-  's5-cpu-util-test: build $(QEMU_DTB_SMP4) base-image' \
+  'smp-cpu-utilization-test: build $(QEMU_DTB_SMP4) base-image' \
   'CPUs: [0-9]+ present, per-CPU busy'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE" "$ROOT/tests/top_test.sh"; then
     echo "FAIL: S5a top/SMP utilization test wiring missing $needle." >&2
