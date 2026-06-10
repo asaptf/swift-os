@@ -242,6 +242,20 @@ private func runConcurrentDemo() -> Bool {
     return true
 }
 
+private func runS5bPlacementDemo() -> Bool {
+    uartPuts("swift-os S5b: EL0 scheduler placement batch\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (pa, na, ca) = packArgs(["coproc", "S5b-A"])
+    let (pb, nb, cb) = packArgs(["coproc", "S5b-B"])
+    let (pc, nc, cc) = packArgs(["coproc", "S5b-C"])
+    processRunS5bPlacementBatch(img, sz, pa, na, ca,
+                                pb, nb, cb,
+                                pc, nc, cc)
+    uartPuts("S5b OK: three EL0 processes ran with scheduler placement\n")
+    return true
+}
+
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
     let (img, sz) = demoImage("/bin/forkdemo")
@@ -906,6 +920,18 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 klog(.info, "smp", "S2h OK: coproc pair dispatched across scheduler CPUs", UInt64(platform.cpuCount))
             } else {
                 klog(.info, "smp", "S2h OK: coproc pair dispatch CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5bPlacementDemo = runS5bPlacementDemo()
+        if ranS5bPlacementDemo {
+            if !processS5bPlacementTelemetrySelfTest() {
+                uartPuts("panic: S5b scheduler placement telemetry guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5b OK: EL0 scheduler placed batch across CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5b OK: EL0 scheduler placement CPU0 fallback", UInt64(platform.cpuCount))
             }
         }
         runForkDemo()

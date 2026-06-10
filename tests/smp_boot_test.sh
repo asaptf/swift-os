@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # smp_boot_test.sh - SMP boot smoke harness.
 #
-# S2: secondary CPUs are released, keep kernel scheduler work on CPU0, and run
-# the restricted coproc EL0 pair across CPU0 plus one secondary scheduler CPU.
+# S2/S5: secondary CPUs are released, keep kernel scheduler work on CPU0, run
+# the restricted coproc EL0 pair, then an S5b placement batch under the same gate.
 
 set -euo pipefail
 
@@ -73,8 +73,10 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
   if (( SMP_CPU_COUNT > 1 )); then
     EXPECTS+=$'\n'"[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5b OK: EL0 scheduler placed batch across CPUs"
   else
     EXPECTS+=$'\n'"[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback"
   fi
   EXPECTS+=$'\n'"[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch"
   EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch"
@@ -178,10 +180,14 @@ if [[ "$found" -eq 1 ]]; then
   coproc_line="$(grep -nF "M8d OK: two EL0 processes ran concurrently" "$LOG" | head -1 | cut -d: -f1)"
   if (( SMP_CPU_COUNT > 1 )); then
     pair_marker="[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
+    s5b_marker="[I] smp: S5b OK: EL0 scheduler placed batch across CPUs"
   else
     pair_marker="[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
+    s5b_marker="[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback"
   fi
   pair_telemetry_line="$(grep -nF "$pair_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5b_demo_line="$(grep -nF "S5b OK: three EL0 processes ran with scheduler placement" "$LOG" | head -1 | cut -d: -f1)"
+  s5b_telemetry_line="$(grep -nF "$s5b_marker" "$LOG" | head -1 | cut -d: -f1)"
   kernel_demo_line="$(grep -nF "[I] sched: M4.5 sched: real context switch OK" "$LOG" | head -1 | cut -d: -f1)"
   no_secondary_kernel_line="$(grep -nF "[I] smp: S2c OK: no secondary kernel scheduler execution" "$LOG" | head -1 | cut -d: -f1)"
   quiesced_line="$(grep -nF "[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch" "$LOG" | head -1 | cut -d: -f1)"
@@ -216,6 +222,16 @@ if [[ "$found" -eq 1 ]]; then
         "$coproc_line" -ge "$pair_telemetry_line" ||
         "$pair_telemetry_line" -ge "$userland_line" ]]; then
     echo "FAIL: S2 coproc multi-CPU marker must appear after the coproc pair and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5b_demo_line" || -z "$s5b_telemetry_line" ||
+        "$pair_telemetry_line" -ge "$s5b_demo_line" ||
+        "$s5b_demo_line" -ge "$s5b_telemetry_line" ||
+        "$s5b_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5b placement marker must appear after the S2h pair marker and before Swift ps." >&2
     echo "---------------------------------------------" >&2
     cat -v "$LOG" >&2
     echo "---------------------------------------------" >&2
@@ -292,7 +308,7 @@ if [[ "$found" -eq 1 ]]; then
     exit 1
   fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5b markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

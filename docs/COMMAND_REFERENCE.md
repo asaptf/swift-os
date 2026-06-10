@@ -226,7 +226,7 @@ Notes:
 - SMP test profiles include per-CPU busy/idle utilization lines.
 - Interactive mode accepts `q` to quit.
 
-Acceptance coverage: `tests/top_test.sh`, `make s5-cpu-util-test`.
+Acceptance coverage: `tests/top_test.sh`, `make smp-cpu-utilization-test`.
 
 ## File And Tmpfs Commands
 

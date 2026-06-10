@@ -94,6 +94,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${TOP_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${TOP_SEND_DELAY:-0.08}"
+}
+
 qemu_args=("$QEMU" -M virt -cpu cortex-a72)
 if (( SMP_CPU_COUNT > 1 )); then
   qemu_args+=(-smp "$SMP_CPU_COUNT")
@@ -110,19 +120,19 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
-printf '/bin/top -b -n 2 -d 1\n' >&3
+send_line '/bin/top -b -n 2 -d 1'
 await_regex_count '^top - up ' 2 40 || drive_fail "top did not render two frames"
-printf 'echo TOP-SHELL-ALIVE\n' >&3
+send_line 'echo TOP-SHELL-ALIVE'
 await_line "TOP-SHELL-ALIVE" 20 || drive_fail "shell did not respond after top"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-

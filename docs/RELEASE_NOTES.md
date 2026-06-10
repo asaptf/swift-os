@@ -134,7 +134,7 @@ make package-repo-install-test
 make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
-make s5-cpu-util-test
+make smp-cpu-utilization-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```

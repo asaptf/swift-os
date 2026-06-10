@@ -224,6 +224,16 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastPairLastDispatchCpuA`
 - `kernel/user/process.swift:lastPairLastDispatchCpuB`
 - `kernel/user/process.swift:lastReapedKilled`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountC`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskC`
+- `kernel/user/process.swift:lastS5bBatchDispatchTelemetryValid`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuA`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuB`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuC`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
 - `kernel/user/process.swift:pDispatchCount`
@@ -290,9 +300,10 @@ manifest entries left behind after globals move or disappear.
   S4c lock boundary, but it remains a bump allocator with no free/reclaim. S4f
   adds a restricted-SMP resource churn smoke over mmap/munmap, pipes, tmpfs,
   fork/wait, and spawn/exec while secondary timers are active. S5a exports
-  per-CPU timer/idle counters through `SYS_sysinfo` and `/bin/top` so later S5
-  scheduler work has a visible utilization signal before broad secondary EL0
-  execution is enabled.
+  per-CPU timer/idle counters through `SYS_sysinfo` and `/bin/top`; S5b adds a
+  bounded three-process placement batch that preserves explicit home CPU
+  assignment under the restricted gate. Broad secondary EL0 scheduling,
+  migration, and shared-address-space multi-CPU execution remain future work.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple
