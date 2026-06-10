@@ -257,6 +257,52 @@ private func checkCommandReferenceCoverage() {
     }
 }
 
+private func hostToolExecutables() -> [String] {
+    let path = "Makefile"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let toolRegex = try! NSRegularExpression(
+        pattern: #"\btools/([A-Za-z0-9_-]+)\.swift\b"#
+    )
+    var tools = Set<String>()
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        if !line.contains("$(HOST_SWIFTC)") || !line.contains("-o $@") {
+            continue
+        }
+        let nsLine = line as NSString
+        let matches = toolRegex.matches(in: line, range: NSRange(location: 0, length: nsLine.length))
+        guard let first = matches.first else { continue }
+        let name = nsLine.substring(with: first.range(at: 1))
+        if name != "packfs" {
+            tools.insert(name)
+        }
+    }
+    if tools.isEmpty {
+        fail("\(path): no host tool build rules found")
+        ok = false
+    }
+    return tools.sorted()
+}
+
+private func checkHostToolReferenceCoverage() {
+    let path = "docs/HOST_TOOL_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    for tool in hostToolExecutables() where !text.contains("build/\(tool)") {
+        fail("\(path): missing host tool reference entry for build/\(tool)")
+        ok = false
+    }
+}
+
 private func checkSwiftBridgeCoverage() {
     let headerPath = "userland/lib/swift_user.h"
     guard let headerText = try? String(contentsOfFile: headerPath, encoding: .utf8) else {
@@ -342,10 +388,11 @@ for file in markdownFiles() {
 checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkCommandReferenceCoverage()
+checkHostToolReferenceCoverage()
 checkSwiftBridgeCoverage()
 
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links, API table, Swift bridge, map coverage, and command coverage are valid")
+print("PASS: documentation markdown fences, local links, API table, Swift bridge, map coverage, command coverage, and host tool coverage are valid")
