@@ -223,6 +223,14 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   boot net-a probe goes through locked helpers instead of touching `gNet`
   directly. Boot validates network invariants after the net probe and again
   after the userland demos.
+- S4f preflight (2026-06-10): `/bin/s4stress` now runs as a normal userland
+  program under the QEMU `-smp 4` boot harness, while secondary timer heartbeat
+  and restricted scheduler scaffolding are active. It repeatedly exercises
+  anonymous `mmap`/`munmap`, pipe create/dup/read/write/close, tmpfs
+  write/rename/read cycles plus bounded create/unlink/mkdir/rmdir smoke paths,
+  `fork`/`waitpid`, and `spawn`/exec of `/bin/argvdemo`. This is the
+  restricted-SMP stress slice for the current S2h gate and fixed-size tmpfs
+  vnode table; S5 still owns broad secondary EL0 execution.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase". S4e gives the current in-kernel engine a coarse correctness boundary; moving it to a userland service remains the architectural target.

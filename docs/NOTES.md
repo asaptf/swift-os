@@ -1341,6 +1341,27 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   for the current in-kernel polled engine; C5/network service work still owns
   the architectural move out of the kernel.
 
+### S4f — restricted-SMP resource stress (DONE, 2026-06-10)
+
+- **Userland workload.** `/bin/s4stress` is a small static C binary that drives
+  the kernel resource paths hardened during S4. Each run repeats anonymous
+  `mmap`/`munmap`, pipe create/dup/read/write/close, tmpfs
+  write/rename/read cycles plus bounded create/unlink/mkdir/rmdir smoke paths,
+  `fork`/`waitpid`, and `spawn`/exec of `/bin/argvdemo`, then prints `S4F-*`
+  completion markers.
+- **Runtime harness.** `tests/s4_resource_stress_test.sh` boots QEMU with
+  `-smp 4`, logs in through the normal console path, runs `/bin/s4stress` from
+  the packed base image, and requires the S2 timer heartbeat plus the S4e
+  post-run lock-balance marker before accepting the S4f markers. `make test`
+  runs the harness after the SMP boot smoke.
+- **Static guard.** `tests/smp_release_guard_test.sh` now requires the
+  `/bin/s4stress` Makefile wiring, base-image install step, executable harness,
+  and workload coverage markers so the S4f stress does not silently fall out of
+  the release contract.
+- **Non-goals.** S4f is intentionally a restricted-SMP stress pass for the
+  current S2h gate. It does not enable broad secondary EL0 execution or make one
+  address space execute concurrently on multiple CPUs; that remains S5.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

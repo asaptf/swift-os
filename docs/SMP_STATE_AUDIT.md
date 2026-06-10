@@ -287,7 +287,9 @@ manifest entries left behind after globals move or disappear.
 - PMM allocation/free/refcount entry points are now protected by the S4a lock
   boundary. VFS shared pools and handle/open-description lifetimes are protected
   by the S4b lock boundary. The small-object heap cursor is protected by the
-  S4c lock boundary, but it remains a bump allocator with no free/reclaim.
+  S4c lock boundary, but it remains a bump allocator with no free/reclaim. S4f
+  adds a restricted-SMP resource churn smoke over mmap/munmap, pipes, tmpfs,
+  fork/wait, and spawn/exec while secondary timers are active.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple

@@ -4,6 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MAKEFILE="$ROOT/Makefile"
 KERNEL="$ROOT/build/kernel.elf"
 BOOT_OBJ="$ROOT/build/boot.o"
 BOOT_SRC="$ROOT/kernel/arch/aarch64/boot.S"
@@ -20,6 +21,8 @@ PKG_SWIFT="$ROOT/kernel/pkg/store.swift"
 NET_SWIFT="$ROOT/kernel/net/socket.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
+S4_STRESS_C="$ROOT/userland/s4stress.c"
+S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
@@ -864,4 +867,54 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4e release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary)"
+for needle in \
+  'USER_S4STRESS_ELF := $(BUILD)/s4stress.elf' \
+  '$(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/lib/fs.h Makefile' \
+  '$(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o userland/user.ld Makefile' \
+  'cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress' \
+  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh' \
+  's4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S4f resource stress is not wired into Makefile: $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'S4F-ALLOC-OK' \
+  'S4F-PIPE-OK' \
+  'S4F-TMPFS-OK' \
+  'S4F-FORK-OK' \
+  'S4F-SPAWN-OK' \
+  'S4F-OK resource stress completed' \
+  'mmap(0, pageSize' \
+  'munmap(mem, pageSize)' \
+  'pipe(fds)' \
+  'fork()' \
+  'spawn("/bin/argvdemo", argv)' \
+  'rename(pathA, pathB)' \
+  'mkdir(dirPath, 0)'; do
+  if ! grep -Fq -- "$needle" "$S4_STRESS_C"; then
+    echo "FAIL: S4f /bin/s4stress workload missing resource exercise: $needle." >&2
+    exit 1
+  fi
+done
+
+if [[ ! -x "$S4_STRESS_TEST" ]]; then
+  echo "FAIL: S4f resource stress harness must be executable." >&2
+  exit 1
+fi
+
+for needle in \
+  'SMP_CPUS="${SMP_CPUS:-4}"' \
+  '-smp "$SMP_CPU_COUNT"' \
+  'await "S4F-OK resource stress completed"' \
+  '[I] smp: S2a OK: per-CPU timer heartbeat ready detail=$SMP_CPU_COUNT' \
+  '[I] smp: S4e OK: network lock boundary stayed balanced'; do
+  if ! grep -Fq -- "$needle" "$S4_STRESS_TEST"; then
+    echo "FAIL: S4f resource stress harness missing runtime guard: $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress)"

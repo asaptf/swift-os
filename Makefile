@@ -238,6 +238,7 @@ USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
+USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
@@ -318,13 +319,14 @@ BASE_EXEC_ELFS := \
 	$(USER_FORKDEMO_ELF) \
 	$(USER_EXECDEMO_ELF) \
 	$(USER_FDOPSDEMO_ELF) \
+	$(USER_S4STRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -414,6 +416,9 @@ $(BUILD)/user_execdemo.o: userland/execdemo.c userland/lib/syscall.h Makefile | 
 
 $(BUILD)/user_fdopsdemo.o: userland/fdopsdemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/fdopsdemo.c -o $@
+
+$(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/s4stress.c -o $@
 
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
@@ -562,6 +567,9 @@ $(USER_EXECDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ex
 
 $(USER_FDOPSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fdopsdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fdopsdemo.o -o $@
+
+$(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o -o $@
 
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
@@ -801,6 +809,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
 	./tests/spawn_self_exec_test.sh
 	bash ./tests/cow_test.sh
 	./tests/tty_test.sh
@@ -873,6 +882,9 @@ smp-headroom-test: build base-image
 
 smp-uefi-test: disk base-image
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+
+s4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
@@ -1050,6 +1062,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo
 	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
+	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
