@@ -114,7 +114,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make disk` | Build the bootable GPT image `build/swift-os.img`. |
 | `make disk-run` | Boot the GPT disk image through AAVMF. |
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
-| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map coverage, command references, and host tool references. |
+| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map/front-door coverage, example/API verification refs, command references, host tool references, and port recipe refs. |
 | `make model` | Fetch LLM demo checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
 | `make pkgstore` | Build the host-side package-store image tool. |

@@ -838,6 +838,45 @@ private func checkCommandReferenceAcceptanceCoverageRefs() {
     }
 }
 
+private func checkConfigurationBuildTargetReferences() {
+    let path = "docs/CONFIGURATION_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inBuildTargets = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Build Targets" {
+            inBuildTargets = true
+            continue
+        }
+        if inBuildTargets && line.hasPrefix("## ") {
+            break
+        }
+        guard inBuildTargets,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let targetCell = cells[1]
+        if targetCell == "Target" {
+            continue
+        }
+        validateCoverageReferences(targetCell,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "build target row")
+    }
+}
+
 private func hostToolExecutables() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -1116,6 +1155,7 @@ checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
 checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
 checkCommandReferenceAcceptanceCoverageRefs()
+checkConfigurationBuildTargetReferences()
 checkHostToolReferenceCoverage()
 checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()

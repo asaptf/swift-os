@@ -130,8 +130,9 @@ points to existing primary files and runnable focused checks, every executable
 host Swift tool built from `tools/*.swift` is covered by
 [HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md), every host-tool quick-map
 build and verification reference resolves, every command-reference acceptance
-coverage reference resolves, and every checked `ports/*/*/Port.json` recipe is
-visible from the ports/package reference docs.
+coverage reference resolves, every configuration build-target reference resolves,
+and every checked `ports/*/*/Port.json` recipe is visible from the ports/package
+reference docs.
 
 ## Full Gate
 
@@ -156,7 +157,7 @@ Current full-gate coverage includes:
   commands, API recipe source/verification references, complete API example
   verification, API verification map references, command reference, host tool
   reference and quick-map references, command acceptance coverage references,
-  and port recipe reference integrity.
+  configuration build-target references, and port recipe reference integrity.
 - Host tests for page allocation, base image format, packages, package store,
   FDT parsing, networking stack, crypto, handles, TLS primitives, LLM engine,
   model bundles, and Ed25519.
@@ -181,7 +182,7 @@ Run the narrowest test that proves the path you changed.
 
 | Changed area | First test |
 | --- | --- |
-| Documentation links/anchors, examples, API tables, Swift bridge coverage, map/front-door coverage, example/API recipe source and verification blocks/commands, API verification map references, command references/acceptance coverage refs, host tool references/quick-map refs, or port recipe references | `make docs-test` |
+| Documentation links/anchors, examples, API tables, Swift bridge coverage, map/front-door coverage, example/API recipe source and verification blocks/commands, API verification map references, command references/acceptance coverage refs, configuration build-target refs, host tool references/quick-map refs, or port recipe references | `make docs-test` |
 | Kernel build only | `make build` |
 | Base image format or contents | `make base-image`, `./tests/vfs_disk_test.sh` |
 | Direct serial boot | `./tests/boot_test.sh` |
