@@ -64,6 +64,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown IPI scaffold ready"
   EXPECTS+=$'\n'"[I] smp: S3d OK: address-space TLB flush facade ready"
   EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S4d OK: package-store lock boundary ready"
   EXPECTS+=$'\n'"[I] smp: S4b OK: VFS lock boundary ready"
   EXPECTS+=$'\n'"[I] smp: S4c OK: kernel heap lock boundary ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
@@ -82,6 +83,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary stayed balanced"
   EXPECTS+=$'\n'"[I] smp: S4b OK: VFS lock boundary stayed balanced"
   EXPECTS+=$'\n'"[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
+  EXPECTS+=$'\n'"[I] smp: S4d OK: package-store lock boundary stayed balanced"
 fi
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -188,6 +190,7 @@ if [[ "$found" -eq 1 ]]; then
   s4a_pmm_line="$(grep -nF "[I] smp: S4a OK: PMM lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
   s4b_vfs_line="$(grep -nF "[I] smp: S4b OK: VFS lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
   s4c_heap_line="$(grep -nF "[I] smp: S4c OK: kernel heap lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  s4d_pkg_line="$(grep -nF "[I] smp: S4d OK: package-store lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
   if [[ -z "$userland_line" || -z "$quiesced_line" ||
         "$userland_line" -ge "$quiesced_line" ]]; then
     echo "FAIL: S2 scheduler-quiesced marker must appear after the Swift ps userland marker." >&2
@@ -270,8 +273,15 @@ if [[ "$found" -eq 1 ]]; then
     echo "---------------------------------------------" >&2
     exit 1
   fi
+  if [[ -z "$s4d_pkg_line" || "$s4c_heap_line" -ge "$s4d_pkg_line" ]]; then
+    echo "FAIL: S4d package-store lock boundary marker must appear after S4c." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b/S4c markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b/S4c/S4d markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

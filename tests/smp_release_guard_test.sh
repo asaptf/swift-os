@@ -16,6 +16,7 @@ PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
 VM_SWIFT="$ROOT/kernel/mm/vm.swift"
 PMM_SWIFT="$ROOT/kernel/mm/pmm.swift"
 VFS_SWIFT="$ROOT/kernel/vfs/vfs.swift"
+PKG_SWIFT="$ROOT/kernel/pkg/store.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
@@ -489,6 +490,11 @@ if ! grep -q 'S4c OK: kernel heap lock boundary ready' "$MAIN_SWIFT" ||
   echo "FAIL: S4c must log kernel heap lock boundary readiness and balanced markers." >&2
   exit 1
 fi
+if ! grep -q 'S4d OK: package-store lock boundary ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S4d OK: package-store lock boundary stayed balanced' "$MAIN_SWIFT"; then
+  echo "FAIL: S4d must log package-store lock boundary readiness and balanced markers." >&2
+  exit 1
+fi
 
 for needle in \
   'private var vfsLockWord: UInt64 = 0' \
@@ -542,6 +548,38 @@ if ! grep -q 'swiftos_heap_lock_acquire_count' "$IO_HDR" ||
   exit 1
 fi
 
+for needle in \
+  'private var pkgStoreLockWord: UInt64 = 0' \
+  'private var pkgStoreLockAcquireCount: UInt64 = 0' \
+  'private var pkgStoreLockContentionCount: UInt64 = 0' \
+  'private var pkgStoreMutationInProgress = false' \
+  'private func pkgStoreLock() -> UInt64' \
+  'private func pkgStoreUnlock(_ daif: UInt64)' \
+  'private func pkgStoreBeginMutation() -> Bool' \
+  'private func pkgStoreEndMutation()' \
+  'private func pkgReserveRecord' \
+  'private func pkgCommitRecordNext' \
+  'private func pkgPublishInstalledPayload' \
+  'func pkgStoreS4dLockAcquireCount() -> UInt64' \
+  'func pkgStoreS4dLockContentionCount() -> UInt64' \
+  'func pkgStoreS4dReadinessSelfTest() -> Bool' \
+  'func pkgStoreS4dLockBoundaryHeldSelfTest() -> Bool'; do
+  if ! grep -q "$needle" "$PKG_SWIFT"; then
+    echo "FAIL: S4d package-store lock boundary missing $needle." >&2
+    exit 1
+  fi
+done
+
+if ! grep -q 'if !pkgStoreBeginMutation() { return -11 }' "$PKG_SWIFT" ||
+   ! grep -q 'defer { pkgStoreEndMutation() }' "$PKG_SWIFT" ||
+   ! grep -q 'let reserved = pkgReserveRecord(dataSize:' "$PKG_SWIFT" ||
+   ! grep -q 'pkgCommitRecordNext(reserved.next)' "$PKG_SWIFT" ||
+   ! grep -q 'payloadOffset = payload.offset' "$PKG_SWIFT" ||
+   ! grep -q 'return virtioBlkReadPackageStoreRange(payloadOffset + byteOff, buf, len)' "$PKG_SWIFT"; then
+  echo "FAIL: S4d package-store install/read paths must use writer gating, record reservation, and unlocked payload reads." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -557,6 +595,7 @@ s3c_line="$(rg -n 'smpTlbShootdownSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d
 s3d_line="$(rg -n 'processAddressSpaceTlbFlushFacadeSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4a_line="$(rg -n 'pmmS4aConcurrencySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4a_smp_line="$(rg -n 'smpPmmStressSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4d_line="$(rg -n 'pkgStoreS4dReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4b_line="$(rg -n 'vfsS4bReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4c_line="$(rg -n 'swiftos_heap_s4c_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -576,6 +615,7 @@ s4a_lock_boundary_line="$(rg -n 'pmmS4aLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIF
 s4a_stress_boundary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4b_lock_boundary_line="$(rg -n 'vfsS4bLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4c_lock_boundary_line="$(rg -n 'swiftos_heap_lock_boundary_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4d_lock_boundary_line="$(rg -n 'pkgStoreS4dLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
       "$proc_line" -ge "$s2a_line" ]]; then
@@ -625,10 +665,16 @@ if [[ -z "$s4a_line" || -z "$s4a_smp_line" ||
   echo "FAIL: S4a PMM lock and SMP stress self-tests must run after S3d readiness and before scheduler/userland demos." >&2
   exit 1
 fi
+if [[ -z "$s4d_line" ||
+      "$s4a_smp_line" -ge "$s4d_line" ||
+      "$s4d_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S4d package-store lock self-test must run after S4a readiness and before scheduler/userland demos." >&2
+  exit 1
+fi
 if [[ -z "$s4b_line" ||
-      "$s4a_smp_line" -ge "$s4b_line" ||
+      "$s4d_line" -ge "$s4b_line" ||
       "$s4b_line" -ge "$demo_line" ]]; then
-  echo "FAIL: S4b VFS lock self-test must run after S4a readiness and before scheduler/userland demos." >&2
+  echo "FAIL: S4b VFS lock self-test must run after S4d package-store readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$s4c_line" ||
@@ -693,6 +739,11 @@ fi
 if [[ -z "$s4c_lock_boundary_line" ||
       "$s4b_lock_boundary_line" -ge "$s4c_lock_boundary_line" ]]; then
   echo "FAIL: S4c kernel heap lock guard must run after S4b." >&2
+  exit 1
+fi
+if [[ -z "$s4d_lock_boundary_line" ||
+      "$s4c_lock_boundary_line" -ge "$s4d_lock_boundary_line" ]]; then
+  echo "FAIL: S4d package-store lock guard must run after S4c." >&2
   exit 1
 fi
 
@@ -762,4 +813,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4c release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap boundary)"
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4d release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store boundary)"

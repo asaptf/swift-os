@@ -18,6 +18,12 @@ if [[ ! -f "$STORE_DISK" ]]; then
     echo "FAIL: cannot build empty package store image" >&2; exit 2;
   }
 fi
+if [[ ! -f "$DTB" ]]; then
+  tmp_dtb="$DTB.tmp"
+  mkdir -p "$(dirname "$DTB")"
+  "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -m 256M -nographic >/dev/null 2>&1
+  mv "$tmp_dtb" "$DTB"
+fi
 
 LOG="$(mktemp -t swiftos-pkg-install.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-pkg-install-pid.XXXXXX)"
@@ -44,10 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-dtb_args=()
-if [[ -f "$DTB" ]]; then
-  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 await() {
   local marker="$1" max="${2:-30}" n=0

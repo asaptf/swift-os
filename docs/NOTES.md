@@ -1288,6 +1288,30 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   no small-object free/reclaim, no per-CPU heap cache, and no secondary EL0
   execution in this checkpoint.
 
+### S4d — package-store lock boundary (DONE, 2026-06-10)
+
+- **Package-store lock.** `kernel/pkg/store.swift` now protects package-store
+  payload/activation tables, active payload publication, record offsets, and
+  S4d counters with a short IRQ-save spinlock.
+- **Writer gate.** `pkgStoreInstall` uses a single-writer gate around the
+  target-side install transaction. Hashing and virtio-blk reads/writes happen
+  outside the spinlock; record reservation/commit and final active payload
+  publication happen through short locked helpers.
+- **Reader snapshot.** Active payload count/info/read paths copy the active
+  payload index/offset/size snapshot under the S4d lock, then perform package
+  store block I/O without holding it.
+- **Executable checks.** Boot runs `pkgStoreS4dReadinessSelfTest()` immediately
+  after `pkgStoreInit()` and before VFS consumes active package payloads, then
+  logs `S4d OK: package-store lock boundary ready`. After the userland demos it
+  runs `pkgStoreS4dLockBoundaryHeldSelfTest()` and logs
+  `S4d OK: package-store lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the S4d lock,
+  writer gate, record reservation/commit helpers, unlocked payload reads, and
+  S4d boot-marker order. SMP and UEFI boot smokes now require both S4d markers.
+- **Non-goals.** S4d does not add a package-store journal, multi-writer
+  transactions, or a package-management service. Install remains a serialized
+  operation.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

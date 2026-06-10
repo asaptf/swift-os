@@ -841,6 +841,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     pkgStoreInit()      // P3: read active package-store generation, if present
+    if !pkgStoreS4dReadinessSelfTest() {
+        uartPuts("panic: S4d package-store lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4d OK: package-store lock boundary ready", UInt64(pkgStoreS4dLockAcquireCount()))
     vfsInit()           // M11c: serves the read-only base from disk when present
     if !vfsS4bReadinessSelfTest() {
         uartPuts("panic: S4b VFS lock boundary self-test failed\n")
@@ -949,6 +954,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S4c OK: kernel heap lock boundary stayed balanced", UInt64(swiftos_heap_lock_contention_count()))
+        if !pkgStoreS4dLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4d package-store lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4d OK: package-store lock boundary stayed balanced", UInt64(pkgStoreS4dLockContentionCount()))
         klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in

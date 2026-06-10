@@ -209,6 +209,13 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   serializes cursor updates with an IRQ-save spinlock. Boot validates alignment,
   monotonic heap use, and lock balance before scheduler/userland demos and
   after them.
+- S4d preflight (2026-06-10): package-store activation/append state now has a
+  short IRQ-save lock around in-memory tables, active payload publication,
+  record offsets, and counters. Target-side installs use a writer gate so
+  hashing and virtio-blk writes do not run under the spinlock; readers copy an
+  active payload snapshot before doing block I/O. Boot validates the
+  package-store invariants before VFS consumes active package payloads and
+  again after the userland demos.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase".

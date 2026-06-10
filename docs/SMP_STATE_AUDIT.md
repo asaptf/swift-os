@@ -21,7 +21,7 @@ manifest entries left behind after globals move or disappear.
 | Runtime heap/PMM | S4c protects the small-object bump heap cursor/limit/init state with an IRQ-save C spinlock and boot-time boundary checks. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | The allocator strategy is still a minimal non-freeing bump heap; this only makes the shared cursor safe. Add a real small-object allocator later if profiles need reclaim or lower fragmentation. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
-| VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. Package-store append/activation and the network engine still need their own policy before multi-CPU service work. |
+| VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. S4d protects package-store activation/append tables, active payload publication, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. The network engine still needs its own policy before multi-CPU service work. |
 | Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. | Protect interrupt/poll paths and virtio queue selection before real concurrent drivers; longer term move at least one driver toward a service boundary. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
@@ -154,6 +154,10 @@ manifest entries left behind after globals move or disappear.
 - `kernel/pkg/store.swift:pkgMaxGeneration`
 - `kernel/pkg/store.swift:pkgNextRecordOffset`
 - `kernel/pkg/store.swift:pkgPayloads`
+- `kernel/pkg/store.swift:pkgStoreLockAcquireCount`
+- `kernel/pkg/store.swift:pkgStoreLockContentionCount`
+- `kernel/pkg/store.swift:pkgStoreLockWord`
+- `kernel/pkg/store.swift:pkgStoreMutationInProgress`
 - `kernel/runtime/heap.c:__stack_chk_guard`
 - `kernel/runtime/heap.c:heap_cursor`
 - `kernel/runtime/heap.c:heap_initialized`
@@ -284,8 +288,9 @@ manifest entries left behind after globals move or disappear.
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple
   CPUs.
-- Package-store activation/append state remains outside the VFS S4b boundary
-  and must be protected before package-management service work can run away
-  from CPU 0.
+- Package-store activation/append state is now protected by the S4d lock
+  boundary. Target-side installs are still serialized through one writer gate;
+  package-management service work should keep that single-writer contract unless
+  a later milestone adds a transactional store journal.
 - Device queues and network socket tables need an IRQ/poll locking policy before
   interrupts or service work are allowed away from CPU 0.
