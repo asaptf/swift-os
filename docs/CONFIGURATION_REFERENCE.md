@@ -114,17 +114,35 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make disk` | Build the bootable GPT image `build/swift-os.img`. |
 | `make disk-run` | Boot the GPT disk image through AAVMF. |
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
+| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map coverage, command references, and host tool references. |
 | `make model` | Fetch LLM demo checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
 | `make pkgstore` | Build the host-side package-store image tool. |
+| `make pkgrepo` | Build the signed static package repository tool. |
+| `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
 | `make package-store-fixture` | Build and inspect the sample package-store image. |
+| `make package-local-install-fixture` | Build the writable package-store image used by local target-side install tests. |
 | `make package-overlay-test` | Run the package overlay acceptance test. |
 | `make package-store-test` | Run the package-store boot activation acceptance test. |
+| `make package-local-install-test` | Run target-side local `.swpkg` install against a writable package-store disk. |
+| `make package-repo-fixture` | Build the signed sample package repository fixture. |
+| `make package-repo-install-test` | Run target-side install by package name from the signed sample repository fixture. |
+| `make ports-catalog-test` | Validate the seed ports catalog. |
+| `make ports-recipe-test` | Validate checked source-port recipes and recipe helper flows. |
+| `make ports-lua-repo-fixture` | Cross-build Lua and publish its signed local repository fixture. |
+| `make ports-zlib-repo-fixture` | Cross-build zlib/minigzip and publish its signed local repository fixture. |
 | `make ports-ca-certificates-repo-fixture` | Build the data-only CA certificate package and signed local repository fixture. |
+| `make package-lua-install-fixture` | Build the writable package-store image used by Lua/ports repository install tests. |
+| `make package-lua-repo-install-test` | Run target-side Lua install from the signed Lua repository fixture. |
+| `make ports-seed-repo-fixture` | Publish Lua, zlib, and ca-certificates into one signed seed repository. |
+| `make package-ports-seed-repo-install-test` | Run target-side install of the checked seed repository packages by name. |
+| `make ports-static-host-publish` | Copy the seed repository into a deployable static-host web root. |
 | `make package-static-host-repo-install-test` | Run the hosted-layout package repository install test. |
+| `make ports-hosted-url-verify` | Verify a deployed static package repository URL from the host. |
 | `make ports-hosted-url-verify-test` | Verify the static package host root through an HTTP URL from the host. |
 | `make package-static-host-dns-repo-install-test` | Run target-side package install from a DNS-resolved hosted repository URL. |
+| `make package-hosted-url-install-test` | Run target-side install from an explicitly supplied hosted repository URL. |
 | `make test` | Run host tests plus QEMU acceptance tests. |
 | `make smp-test` | Run the default SMP boot smoke. |
 | `make smp-release-guard` | Run static SMP release-readiness contract checks. |
