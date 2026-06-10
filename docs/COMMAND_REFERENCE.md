@@ -948,23 +948,25 @@ The following programs remain staged in `/bin` because they prove specific
 kernel and userland paths. They are valuable to developers and tests, but they
 are not the primary operator interface.
 
-| Command | Purpose |
-| --- | --- |
-| `hello` | Minimal user program smoke test. |
-| `ttydemo` | Early tty interaction demo. |
-| `argvdemo` | Argument passing demo. |
-| `spawndemo` | Spawn path demo. |
-| `selfexecdemo` | Self-exec path demo. |
-| `fsdemo` | Filesystem syscall demo. |
-| `brkdemo` | Program break and heap growth demo. |
-| `newlibtest` | newlib compatibility smoke test. |
-| `coproc` | Coprocess and pipe demo. |
-| `forkdemo` | fork compatibility demo. |
-| `execdemo` | exec compatibility demo. |
-| `fdopsdemo` | fd, dup, pipe, and fcntl operation demo. |
-| `drvinputd` / `drvsvcdemo` | C5 pseudo driver service, supervisor, discovery, and device-handle handoff demo. |
-| `securitydemo` | Capability and security-path demo. |
-| `identitydemo` | Principal and login identity demo. |
+| Command | What it proves | Run directly? | Acceptance coverage |
+| --- | --- | --- | --- |
+| `hello` | Minimal static ELF user program and exit-status path. | Yes, as a smoke test. | `tests/boot_test.sh`, `tests/userland_elf_test.sh` |
+| `ttydemo` | Canonical tty input, echo, and Ctrl-C signal delivery. | Usually only during scripted boot flows. | `tests/boot_test.sh`, `tests/vi_test.sh` |
+| `argvdemo` | `argc`/`argv` setup plus C2/C3/C4 handle-right denial probes when spawned with test arguments. | Yes for basic argv display; special modes are driven by `spawndemo`. | `tests/boot_test.sh` |
+| `spawndemo` | `spawn`, `spawn_handles`, explicit handle inheritance, and endpoint rights attenuation. | Yes, for process-launch diagnostics. | `tests/boot_test.sh` |
+| `selfexecdemo` | Open executable reuse and malformed argv pointer rejection without an EL1 panic. | Yes, for exec regression checks. | `tests/spawn_self_exec_test.sh` |
+| `fsdemo` | `getcwd`, `getdents`, `stat`, `chdir`, tmpfs I/O, and confinement checks. | Yes, for filesystem ABI diagnostics. | `tests/boot_test.sh` |
+| `brkdemo` | `sbrk` heap growth across page boundaries. | Yes, for allocator bring-up diagnostics. | `tests/boot_test.sh` |
+| `newlibtest` | newlib `printf`, `malloc`, `fopen`, and file I/O over the SwiftOS syscall port. | Yes, when validating C compatibility. | `tests/boot_test.sh` |
+| `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |
+| `forkdemo` | `fork`, `waitpid`, inherited cwd/fd state, IPC polling, and moved-handle receive. | Yes, for process and IPC diagnostics. | `tests/boot_test.sh`, `tests/cow_test.sh` |
+| `execdemo` | `execve` replacement of the current process image. | Yes, for exec diagnostics. | `tests/boot_test.sh` |
+| `fdopsdemo` | `dup`, `dup2`, shared offsets, pipes, `poll`, rename, unlink, mkdir, and rmdir. | Yes, for fd/VFS diagnostics. | `tests/boot_test.sh` |
+| `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
+| `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
+| `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
+| `drvsvcdemo` | C5a-C5c pseudo driver supervisor, discovery, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-device-discovery-test` |
+| `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-discovery-test` |
 
 Prefer the commands in the earlier sections for normal use. Use these demo
 commands when validating a specific milestone or investigating a regression.
