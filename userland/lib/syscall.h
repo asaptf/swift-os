@@ -66,6 +66,7 @@
 #define SYS_NANOSLEEP     57
 #define SYS_MMAP_FILE     59
 #define SYS_SPAWN_HANDLES 58
+#define SYS_UPDATE_CONFIRM 60
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -263,6 +264,13 @@ static inline int security_info(struct security_info *info) {
 // negative on error (e.g. -1 EPERM). The new context survives execve.
 static inline int login(unsigned int principal, unsigned int session, unsigned long caps) {
     return (int)__syscall3(SYS_LOGIN, (long)principal, (long)session, (long)caps);
+}
+
+// U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops
+// accruing boot attempts and is never rolled back. Privileged: needs CAP_CONSOLE.
+// 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
+static inline int update_confirm(void) {
+    return (int)__syscall3(SYS_UPDATE_CONFIRM, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

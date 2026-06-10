@@ -122,13 +122,23 @@ mid-flight leaves the previous copy intact — torn-write safe without journalin
 (outside the A/B slots, so it bypasses the slot offset). `tests/ab_persist_test.sh`
 boots the same store 3× and asserts the counter persists 1→2→3 across reboots.
 
+## Health-confirm (U1c)
+
+An operator confirms a freshly-activated slot healthy by running
+`/bin/swos-confirm` (capConsole-gated; root yes, guest EPERM). It calls
+`SYS_UPDATE_CONFIRM` (60) → `updateStoreConfirm()`, which marks the slot booted
+this session (tracked in `updateStoreActiveSlot`) `CONFIRMED` and resets its
+attempt counter, persisted via the same double-buffered write-back. A CONFIRMED
+slot is trusted: `updateStoreInit` stops recording boot attempts for it (and,
+once U1d lands, it is never rolled back). `tests/ab_confirm_test.sh` confirms a
+slot from a shell and verifies the state persists across a reboot with no new
+attempt recorded.
+
 ## Not implemented yet
 
 - Attempt-based rollback: switch active↔fallback when an unconfirmed slot exceeds
-  a max-attempts threshold (U1c).
-- Health confirm: a capability-gated `/bin/swos-confirm` + syscall that marks the
-  active slot CONFIRMED and resets its attempt counter (U1c).
-- Staging a new generation into the inactive slot + atomic active-slot flip (U1c).
+  a max-attempts threshold, marking the exhausted slot `FAILED` (U1d).
+- Staging a new generation into the inactive slot + atomic active-slot flip (U1d).
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.

@@ -86,6 +86,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/virtio_net.swift:txStaged`
 - `kernel/drivers/virtio_net.swift:txState`
 - `kernel/drivers/virtio_net.swift:txq`
+- `kernel/fs/updatestore.swift:updateStoreActiveSlot`
 - `kernel/log/log.swift:currentLogSink`
 - `kernel/log/log.swift:minLogLevel`
 - `kernel/log/log.swift:ring`

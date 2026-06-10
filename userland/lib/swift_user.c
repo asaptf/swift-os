@@ -165,6 +165,10 @@ int swiftos_login(unsigned int principal, unsigned int session, unsigned long ca
     return login(principal, session, caps);
 }
 
+int swiftos_update_confirm(void) {
+    return update_confirm();
+}
+
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
     struct security_info si;
     int rc = security_info(&si);

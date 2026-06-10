@@ -93,6 +93,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/identitydemo") { return loadProgramImage("/bin/identitydemo") }
     if userPathEquals(pathVA, "/bin/ps") { return loadProgramImage("/bin/ps") }
     if userPathEquals(pathVA, "/bin/id") { return loadProgramImage("/bin/id") }
+    if userPathEquals(pathVA, "/bin/swos-confirm") { return loadProgramImage("/bin/swos-confirm") }
     if userPathEquals(pathVA, "/bin/ls") { return loadProgramImage("/bin/ls") }
     if userPathEquals(pathVA, "/bin/cat") { return loadProgramImage("/bin/cat") }
     if userPathEquals(pathVA, "/bin/echo") { return loadProgramImage("/bin/echo") }

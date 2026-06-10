@@ -2771,3 +2771,34 @@ reboots — proving write + atomic double-buffered write-back + reboot persisten
 unconfirmed slot exceeds a max-attempts threshold) + health-confirm (a
 capability-gated /bin/swos-confirm + syscall that marks the active slot CONFIRMED
 and resets attempts). Then U1d = kernel-image A/B via the loader.
+
+### U1c — health-confirm: /bin/swos-confirm pins a slot CONFIRMED (DONE, 2026-06-10)
+
+**Scope.** The "confirm" half of the boot-state machine: an operator marks a
+freshly-activated slot healthy so it stops accruing boot attempts (and, once U1d
+lands, is never rolled back). Attempt-based rollback that consumes the counter is
+U1d.
+
+- New syscall `SYS_UPDATE_CONFIRM` (60), **capConsole-gated**, dispatched to
+  `updateStoreConfirm()` (`kernel/fs/updatestore.swift`): re-reads the manifest,
+  marks the slot booted this session (tracked in the new `updateStoreActiveSlot`
+  global) CONFIRMED + resets its attempt_count, persists via the U1b
+  double-buffered write-back. Bridge: `syscall.h` `update_confirm()` +
+  `swiftos_update_confirm()`.
+- `/bin/swos-confirm` (`userland/swos-confirm.swift`): calls it and prints the
+  result; registered in `execResolve` + staged in the base image. capConsole
+  means root can run it; a guest is refused (EPERM).
+- `updateStoreInit` refactored onto shared helpers (`updateStoreReadChosen` /
+  `updateStoreWriteBack`), now shared with the confirm path; the selection log
+  shows the slot state (untried/confirmed/failed). One new global
+  `updateStoreActiveSlot` (SMP audit → 174).
+
+**Acceptance.** `tests/ab_confirm_test.sh` (in `make test`): boot 1 drives to a
+root shell and runs `/bin/swos-confirm` → "active slot confirmed healthy" + kernel
+"slot A confirmed healthy"; boot 2 (same writable store) → the kernel sees
+"active slot A gen 1 confirmed" and records NO new boot attempt. U1a/U1b A/B
+tests + the legacy disk path are unaffected.
+
+**Still future (U1d).** Attempt-based rollback (switch active↔fallback past a
+max-attempts threshold; mark the exhausted slot FAILED) + stage-into-inactive-slot
++ atomic active flip; then kernel-image A/B via the loader (Ed25519 + EFI Block I/O).
