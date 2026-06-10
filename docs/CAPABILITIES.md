@@ -7,9 +7,10 @@ primitives rather than a fat in-kernel object.
 > **Status: living design and implementation map.** C1-C5c now have checked-in
 > slices: typed handle entries and rights, `spawn_handles`, object-scoped
 > filesystem confinement, endpoint IPC with handle move semantics, a
-> restartable pseudo driver-service smoke, pseudo-device discovery, and an
-> opaque pseudo-device handle grant. The later parts of this note remain the
-> target design for richer IPC rings/VMOs, real userland drivers, and Cells.
+> restartable driver-service smoke, pseudo or virtio-input discovery metadata,
+> and an opaque device-handle grant. The later parts of this note remain the
+> target design for richer IPC rings/VMOs, real MMIO/IRQ/DMA driver handoff,
+> and Cells.
 > Future C-series work still lands one milestone at a time, each building,
 > booting, passing a test, and stopping for review (per
 > [CLAUDE.md](../CLAUDE.md)).
