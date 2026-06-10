@@ -845,6 +845,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S4b OK: VFS lock boundary ready", UInt64(vfsS4bLockAcquireCount()))
+    if !swiftos_heap_s4c_self_test() {
+        uartPuts("panic: S4c kernel heap lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4c OK: kernel heap lock boundary ready", UInt64(swiftos_heap_lock_acquire_count()))
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     ttyInit()
     signalReset()
@@ -943,6 +948,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S4b OK: VFS lock boundary stayed balanced", UInt64(vfsS4bLockContentionCount()))
+        if !swiftos_heap_lock_boundary_self_test() {
+            uartPuts("panic: S4c kernel heap lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4c OK: kernel heap lock boundary stayed balanced", UInt64(swiftos_heap_lock_contention_count()))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

@@ -1250,6 +1250,27 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   small-object kernel heap concurrent, and does not protect package-store
   mutation or network engine state beyond keeping VFS socket descriptors alive.
 
+### S4c — kernel bump-heap lock boundary (DONE, 2026-06-10)
+
+- **C heap lock.** `kernel/runtime/heap.c` now protects `heap_cursor`,
+  `heap_limit`, and `heap_initialized` with an IRQ-save spinlock built from the
+  S0b C atomic bridge. `swiftos_kernel_alloc`, `swift_slowAlloc`,
+  `posix_memalign`, and `swiftos_kernel_heap_used_bytes` all pass through that
+  boundary.
+- **Idempotent init.** `swiftos_heap_init()` no longer rewinds the bump cursor
+  after the heap is already live. The lazy allocation path initializes under
+  the same lock if an early caller reaches it first.
+- **Executable checks.** Boot runs `swiftos_heap_s4c_self_test()` after the S4b
+  VFS readiness check and logs `S4c OK: kernel heap lock boundary ready`. After
+  userland demos it runs `swiftos_heap_lock_boundary_self_test()` and logs
+  `S4c OK: kernel heap lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the C heap lock,
+  counter/self-test exports through `io.h`, and S4c boot-marker order. SMP and
+  UEFI boot smokes now require both S4c markers.
+- **Non-goals.** This keeps the minimal bump allocator design. There is still
+  no small-object free/reclaim, no per-CPU heap cache, and no secondary EL0
+  execution in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

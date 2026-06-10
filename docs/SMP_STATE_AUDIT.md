@@ -18,7 +18,7 @@ manifest entries left behind after globals move or disappear.
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
-| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | Keep the small-object heap CPU0-owned for now; VFS/kernel object-pool protection begins at S4b, but heap allocations themselves still need a later policy before secondary CPUs can execute arbitrary allocation-heavy kernel/user work. |
+| Runtime heap/PMM | S4c protects the small-object bump heap cursor/limit/init state with an IRQ-save C spinlock and boot-time boundary checks. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | The allocator strategy is still a minimal non-freeing bump heap; this only makes the shared cursor safe. Add a real small-object allocator later if profiles need reclaim or lower fragmentation. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. Package-store append/activation and the network engine still need their own policy before multi-CPU service work. |
@@ -158,6 +158,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/runtime/heap.c:heap_cursor`
 - `kernel/runtime/heap.c:heap_initialized`
 - `kernel/runtime/heap.c:heap_limit`
+- `kernel/runtime/heap.c:heap_lock_acquire_count`
+- `kernel/runtime/heap.c:heap_lock_contention_count`
+- `kernel/runtime/heap.c:heap_lock_word`
 - `kernel/sched/futex.swift:futexAddr`
 - `kernel/sched/futex.swift:futexSlot`
 - `kernel/sched/scheduler.swift:contexts`
@@ -274,8 +277,8 @@ manifest entries left behind after globals move or disappear.
   concurrency-safe.
 - PMM allocation/free/refcount entry points are now protected by the S4a lock
   boundary. VFS shared pools and handle/open-description lifetimes are protected
-  by the S4b lock boundary. The small-object heap remains CPU0-owned until
-  later S4 work.
+  by the S4b lock boundary. The small-object heap cursor is protected by the
+  S4c lock boundary, but it remains a bump allocator with no free/reclaim.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple
