@@ -2834,3 +2834,43 @@ disk path are unaffected.
 build-out: stage-into-inactive-slot + atomic active flip from a running system,
 and kernel-image A/B via the loader (Ed25519 + EFI Block I/O); hardening:
 virtio-blk FLUSH (durability without cache=writethrough).
+
+### Fix — `vfs_disk_test.sh` red since I8 (signed base + sparse-disk S2b guard) (DONE, 2026-06-10)
+
+`tests/vfs_disk_test.sh` had been failing since the I8 commit ("signed base
+image"): I8 updated `signed_image_test.sh` / `base_image_test.swift` but not
+this one. Two layered causes, two layered fixes — both confined to the test
+fixture; no kernel, guard, or boot-path change.
+
+**1. Unsigned image refused at mount.** The test packed its throwaway disk with
+`basepack <root> <img>` (legacy v2, unsigned). Since I8 the kernel embeds an
+image-signing trust root and `buildBaseFromDisk` refuses anything but signed v3
+("unsigned base image refused — signed v3 required"), so it fell back to the
+compiled-in literals (no real busybox) and the shell never started. Fix: sign
+the disk with the same dev image key `make base-image` mints —
+`SEED="$ROOT/models/dev-image-signing.seed"`, require it, pass it as basepack's
+4th arg. Also fixed the stale standalone-build fallback (line ~20): basepack now
+needs `tools/packfs.swift` + the crypto sources, mirroring the Makefile
+`$(BASEPACK)` rule.
+
+**2. S2b guard panic on the sparse no-console-login disk.** Past the mount, the
+boot hit `panic: S2b secondary EL0 execution guard failed`. The cause is *not*
+an SMP bug: this sparse disk carries only busybox (no console-login/ttydemo), so
+init runs the milestone EL0 demos straight through, and the post-userland S2b
+guard (`smpS2bNoSecondaryEl0Execution`) requires CPU0 to have actually
+dispatched an EL0 process — `smpPerCpuEl0SwitchCount(primary) != 0`. With every
+demo binary missing from the disk ("demo: missing on disk /bin/…"), CPU0 ran
+zero EL0 work and the guard tripped. The full-base boot paths (boot_test,
+signed_image_test, ab_update_test) carry the demo binaries and pass. This
+matches how the same guard's owner resolved it on the parallel SMP line (seed a
+demo binary into the sparse disk). Fix: seed `/bin/ps`, the last demo before the
+guard, so `runPsDemo` supplies the EL0 switch. The guard is correct as designed.
+
+**Verification.** `./tests/vfs_disk_test.sh` green (3/3 stable). No SMP
+regression: `./tests/boot_test.sh` and `SMP_CPUS=4 ./tests/smp_boot_test.sh`
+both green (the latter logs "S2b OK: no secondary EL0 execution" at -smp 4).
+
+**Repo note.** Applied on a branch off `origin/main` (`a6391b1`), where the bug
+lives. The local `main` line had diverged (~100 commits of SMP S2c–S2h + package
+work) and never received I8 signing, so the test already passed there — the fix
+belongs on the I8 line.
