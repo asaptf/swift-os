@@ -132,11 +132,11 @@ capability mask
 cell tag
 ```
 
-The current checked-in image has three demo accounts:
+The current checked-in image has three seeded accounts:
 
 | Account | Role |
 | --- | --- |
-| `root` | Full demo authority, including networking |
+| `root` | Full seeded authority, including networking |
 | `user` | Filesystem read plus tmpfs write |
 | `guest` | Spawn-only confinement checks |
 

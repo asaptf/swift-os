@@ -154,7 +154,7 @@ cannot provide true IPv6 host forwarding.
 
 ## Login And Capability
 
-After boot, complete the tty demo and log in as `root`:
+After boot, complete the interactive TTY smoke prompt and log in as `root`:
 
 ```text
 swift-os login: root

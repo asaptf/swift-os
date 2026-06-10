@@ -10,8 +10,8 @@ make build base-image build/virt.dtb
 make run
 ```
 
-At boot, complete the tty demo, log in as `root` with password `swordfish`, and
-run the guest commands shown below.
+At boot, complete the interactive TTY smoke prompt, log in as `root` with
+password `swordfish`, and run the guest commands shown below.
 
 ## 1. Confirm A Healthy Boot
 

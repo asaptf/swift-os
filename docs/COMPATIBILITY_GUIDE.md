@@ -316,7 +316,7 @@ Seeded accounts:
 
 | Account | Principal | Capability mask | Compatibility meaning |
 | --- | ---: | ---: | --- |
-| `root` | 1 | `0x3f` | Full demo authority; not a Unix superuser contract |
+| `root` | 1 | `0x3f` | Full seeded authority; not a Unix superuser contract |
 | `user` | 2 | `0x0e` | Spawn, filesystem read, tmpfs write |
 | `guest` | 3 | `0x02` | Spawn-only restricted account |
 

@@ -316,7 +316,7 @@ The default identity store is `base/etc/swos/passwd`.
 
 | Login | Password | Principal | Operational use |
 | --- | --- | ---: | --- |
-| `root` | `swordfish` | 1 | Full demo and test authority, including networking |
+| `root` | `swordfish` | 1 | Full seeded and test authority, including networking |
 | `user` | `swordfish` | 2 | Filesystem read and tmpfs write without network authority |
 | `guest` | `guest` | 3 | Spawn-only capability tests |
 

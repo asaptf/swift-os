@@ -45,7 +45,7 @@ service-oriented.
 ### User Experience
 
 - Starts `/bin/console-login` on the serial console.
-- Seeds three demo accounts: `root`, `user`, and `guest`.
+- Seeds three accounts: `root`, `user`, and `guest`.
 - Provides a busybox `ash` shell for interactive use.
 - Ships native SwiftOS tools for common workflows: `ls`, `cat`, `echo`, `pwd`,
   `ps`, `top`, `id`, `mkdir`, `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`,

@@ -298,7 +298,7 @@ The seeded identity source is `base/etc/swos/passwd`.
 
 | Login | Password | Principal | Capability mask | Operational role |
 | --- | --- | ---: | ---: | --- |
-| `root` | `swordfish` | 1 | `0x3f` | Full demo and test authority |
+| `root` | `swordfish` | 1 | `0x3f` | Full seeded and test authority |
 | `user` | `swordfish` | 2 | `0x0e` | Spawn, filesystem read, tmpfs write |
 | `guest` | `guest` | 3 | `0x02` | Spawn-only capability checks |
 

@@ -61,9 +61,9 @@ The checked-in accounts are:
 
 | Login | Password | Principal | Session | Caps | Role |
 | --- | --- | ---: | ---: | ---: | --- |
-| `root` | `swordfish` | 1 | 1 | `63` / `0x3f` | Full demo authority except reserved log export |
+| `root` | `swordfish` | 1 | 1 | `63` / `0x3f` | Full seeded authority except reserved log export |
 | `user` | `swordfish` | 2 | 2 | `14` / `0x0e` | Filesystem read and tmpfs write without networking |
-| `guest` | `guest` | 3 | 3 | `2` / `0x02` | Spawn-only confinement demo |
+| `guest` | `guest` | 3 | 3 | `2` / `0x02` | Spawn-only confinement checks |
 
 Compatibility views live in:
 
@@ -98,7 +98,7 @@ Common masks:
 | `6` | Spawn plus filesystem read |
 | `14` | Spawn, filesystem read, tmpfs write |
 | `46` | Spawn, filesystem read, tmpfs write, networking |
-| `63` | Current full demo authority except reserved log export |
+| `63` | Current full seeded authority except reserved log export |
 
 Grant `capConsole` only to the boot/login context or to deliberately privileged
 admin flows. Ordinary service accounts should not need it.

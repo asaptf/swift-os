@@ -128,9 +128,9 @@ Seeded accounts:
 
 | Login | Password | Principal | Session | Caps decimal | Caps hex | Purpose |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| `root` | `swordfish` | 1 | 1 | 63 | `0x3f` | Full demo authority except reserved log export |
+| `root` | `swordfish` | 1 | 1 | 63 | `0x3f` | Full seeded authority except reserved log export |
 | `user` | `swordfish` | 2 | 2 | 14 | `0x0e` | Spawn, filesystem read, tmpfs write |
-| `guest` | `guest` | 3 | 3 | 2 | `0x02` | Restricted capability demo |
+| `guest` | `guest` | 3 | 3 | 2 | `0x02` | Restricted capability checks |
 
 Compatibility files:
 

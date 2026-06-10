@@ -75,7 +75,8 @@ make build base-image build/virt.dtb
 make run
 ```
 
-Complete the tty demo, then log in as `root` with password `swordfish`.
+Complete the interactive TTY smoke prompt, then log in as `root` with password
+`swordfish`.
 
 See [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -143,7 +144,7 @@ failure-reading workflow.
 
 | Login | Password | Use |
 | --- | --- | --- |
-| `root` | `swordfish` | Full demo authority, including networking |
+| `root` | `swordfish` | Full seeded authority, including networking |
 | `user` | `swordfish` | Filesystem read and tmpfs write without networking |
 | `guest` | `guest` | Spawn-only confinement checks |
 

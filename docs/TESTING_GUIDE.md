@@ -261,7 +261,7 @@ Typical script pattern:
 1. Verify required artifacts.
 2. Start `qemu-system-aarch64`.
 3. Capture serial output to a temp log.
-4. Drive the tty demo and console login when needed.
+4. Drive the TTY smoke prompt and console login when needed.
 5. Run a guest command or service.
 6. Use host tools such as `curl`.
 7. Assert serial markers and host outputs.
@@ -452,7 +452,7 @@ Useful questions:
 
 1. Did the artifact exist before QEMU started?
 2. Did the kernel reach the expected boot marker?
-3. Did the tty demo complete?
+3. Did the TTY smoke prompt complete?
 4. Did `swift-os login:` appear?
 5. Did the shell start?
 6. Did the guest command print its readiness marker?

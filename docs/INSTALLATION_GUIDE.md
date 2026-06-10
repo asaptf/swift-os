@@ -121,7 +121,8 @@ Expected user-facing result:
 swift-os login:
 ```
 
-Complete the tty demo, then log in as `root` with password `swordfish`.
+Complete the interactive TTY smoke prompt, then log in as `root` with password
+`swordfish`.
 
 ## Install Profile: UEFI GPT Disk
 
@@ -225,7 +226,7 @@ Seeded accounts:
 
 | Login | Password | Use |
 | --- | --- | --- |
-| `root` | `swordfish` | Full demo authority, including networking |
+| `root` | `swordfish` | Full seeded authority, including networking |
 | `user` | `swordfish` | Filesystem read and tmpfs write without networking |
 | `guest` | `guest` | Spawn-only confinement checks |
 
