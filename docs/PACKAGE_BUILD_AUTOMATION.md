@@ -23,7 +23,8 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| `swport` ports tool | P6a catalog validation/list/inspect implemented; recipe build/fetch/package commands remain planned | `make swport` |
+| P6b Lua recipe scaffold | `ports/lang/lua/Port.json` validates against the catalog and emits a package manifest | `make ports-recipe-test` |
+| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, and checksum-verified `recipe fetch`; build/package/QEMU smoke commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
@@ -65,6 +66,7 @@ make package-store-test
 make package-local-install-test
 make package-repo-install-test
 make ports-catalog-test
+make ports-recipe-test
 ```
 
 Inspect the signed repository fixture:
@@ -82,8 +84,16 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 ```
 
-For a new experimental port before full `swport` recipe commands exist, keep
-the same discipline:
+Inspect the first P6b source recipe and generate its `.swpkg` manifest:
+
+```sh
+build/swport recipe validate lang/lua
+build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe fetch lang/lua --cache build/swport-distfiles
+```
+
+For a new experimental port before full `swport` build/package/test commands
+exist, keep the same discipline:
 
 1. Cross-build the program statically against the current SwiftOS ABI.
 2. Stage the installed files under a clean package root.
@@ -100,7 +110,7 @@ user path:
 
 ```sh
 swport new lang/lua
-$EDITOR ports/lang/lua/Port.toml
+$EDITOR ports/lang/lua/Port.json
 swport test lang/lua
 git push
 ```
@@ -200,13 +210,13 @@ Every package in the catalog should carry one of these maturity states:
 ports/
   lang/
     lua/
-      Port.toml
+      Port.json
       patches/
       files/
       tests/
   www/
     nginx/
-      Port.toml
+      Port.json
       patches/
       files/
 Mk/
@@ -223,11 +233,11 @@ ci/
   publish.yml
 ```
 
-Only `Port.toml`, patches, files, and small helper scripts are maintained by
+Only `Port.json`, patches, files, and small helper scripts are maintained by
 humans. Generated manifests, work directories, distfiles, packages, and catalogs
 must not be committed to `swift-os-ports`.
 
-## `Port.toml` Lifecycle
+## Port Recipe Lifecycle
 
 A new port moves through a predictable lifecycle:
 
@@ -243,7 +253,7 @@ From FreeBSD metadata:
 
 ```sh
 swport import-freebsd www/nginx
-$EDITOR ports/www/nginx/Port.toml
+$EDITOR ports/www/nginx/Port.json
 swport lint www/nginx
 swport test www/nginx
 ```
@@ -337,6 +347,12 @@ Common commands:
 swport new <category/name> [--from-freebsd <origin>]
 swport import-freebsd <origin> [--as <category/name>]
 swport lint [<port>|--all]
+swport catalog validate [catalog.json]
+swport catalog list [catalog.json]
+swport catalog inspect <name> [catalog.json]
+swport recipe validate <port|Port.json> [--catalog catalog.json]
+swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
+swport recipe fetch <port|Port.json> [--cache dir]
 swport fetch <port> [--update-checksum]
 swport extract <port>
 swport patch <port>
@@ -433,7 +449,7 @@ Fetch order:
 
 1. local content-addressed cache;
 2. project mirror, if configured;
-3. upstream URLs from `Port.toml`;
+3. upstream URLs from `Port.json`;
 4. FreeBSD distcache URL, only when imported metadata declares a compatible
    distfile.
 
@@ -887,10 +903,12 @@ Common failure modes should have boring outcomes:
 ### A1: `swport` Skeleton
 
 - Create `swift-os-ports` layout.
-- Add recipe parser and `swport lint/new/fetch`.
-- Support `pkghello` and `lua` recipes.
+- Add recipe parser and initial recipe validate/manifest/fetch commands.
+- Support the `lua` recipe scaffold.
 
-Acceptance: `swport fetch lang/lua` verifies the distfile checksum.
+Acceptance: `make ports-recipe-test` validates `lang/lua`, emits a manifest,
+and proves that manifest can feed `swpkg create`; `swport recipe fetch lang/lua`
+verifies the distfile checksum.
 
 ### A2: Local Package Build
 

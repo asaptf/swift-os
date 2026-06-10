@@ -12,9 +12,11 @@ maintainers planning `swift-os-ports` recipes.
 > path. It also has a P5c signed static HTTP repository fixture with
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
-> checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> Public hosted repositories, remove, upgrade, version-constraint solving, and
-> rollback flows are still roadmap work.
+> checked `ports/catalog.json` seed catalog and `swport catalog` validator. P6b
+> adds the first Lua `Port.json` recipe scaffold with recipe validation,
+> manifest generation, and checksum-verified source fetch. Public hosted
+> repositories, remove, upgrade, version-constraint solving, and rollback flows
+> are still roadmap work.
 
 Use this guide with:
 
@@ -42,6 +44,7 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
+| Lua recipe scaffold | Validate the first source recipe and prove its generated manifest can feed `swpkg create` | `make ports-recipe-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path is the explicit test-fixture form:
@@ -60,8 +63,11 @@ machine-readable seed catalog:
 
 ```sh
 make ports-catalog-test
+make ports-recipe-test
 build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
+build/swport recipe validate lang/lua
+build/swport recipe manifest lang/lua --output build/lua-manifest.json
 ```
 
 The local-file form remains available:
@@ -89,7 +95,8 @@ pkg install web-basic postgresql nodejs
 Those commands describe the intended public repository experience. Today, use
 the signed repository fixture for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
-inspection, and the host package tooling for package construction.
+inspection, `build/swport recipe ...` for the first Lua recipe scaffold, and the
+host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
@@ -420,7 +427,7 @@ least:
 The CI path should be:
 
 ```text
-Port.toml changed
+Port.json changed
   -> fetch source by hash
   -> apply patches
   -> cross-build into DESTDIR

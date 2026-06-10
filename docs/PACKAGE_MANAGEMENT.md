@@ -151,12 +151,12 @@ Suggested shape:
 ports/
   shells/
     oksh/
-      Port.toml
+      Port.json
       patches/
       files/
   www/
     curl/
-      Port.toml
+      Port.json
       patches/
       files/
 Mk/
@@ -564,52 +564,61 @@ approval.
 
 A port recipe describes how to build a package from source for swift-os.
 
-Example `Port.toml`:
+Example `Port.json`:
 
-```toml
-name = "curl"
-version = "8.10.1"
-revision = 1
-category = "www"
-summary = "Command line URL transfer tool"
-homepage = "https://curl.se/"
-license = ["curl"]
-
-[source]
-url = "https://curl.se/download/curl-8.10.1.tar.xz"
-sha256 = "..."
-
-[target]
-arch = "aarch64"
-os = "swift-os"
-abi = "swos-0"
-libc = "newlib-4.6-swos"
-linkage = "static"
-
-[build]
-system = "configure"
-configure = [
-  "--host=aarch64-swiftos",
-  "--disable-shared",
-  "--enable-static"
-]
-env = {
-  "CC" = "swos-cc",
-  "AR" = "llvm-ar",
-  "RANLIB" = "llvm-ranlib"
+```json
+{
+  "schemaVersion": 1,
+  "name": "curl",
+  "version": "8.10.1",
+  "revision": 1,
+  "category": "www",
+  "summary": "Command line URL transfer tool",
+  "homepage": "https://curl.se/",
+  "license": ["curl"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://curl.se/download/curl-8.10.1.tar.xz",
+    "sha256": "..."
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "configure",
+    "args": ["--host=aarch64-swiftos", "--disable-shared", "--enable-static"],
+    "env": {
+      "AR": "llvm-ar",
+      "CC": "swos-cc",
+      "RANLIB": "llvm-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["make", "install", "DESTDIR=${DESTDIR}"]
+  },
+  "package": {
+    "depends": ["ca-certificates"],
+    "provides": ["curl"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/curl", "to": "/usr/bin/curl", "mode": "0755" },
+      { "from": "destdir/usr/share/man/man1/curl.1", "to": "/usr/share/man/man1/curl.1", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": ["net.client"],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": ["/usr/bin/curl --version"]
+  },
+  "notes": "Example only; exact curl flags depend on the selected TLS backend."
 }
-
-[package]
-paths = [
-  { from = "destdir/usr/bin/curl", to = "/usr/bin/curl", mode = "0755" },
-  { from = "destdir/usr/share/man/man1/curl.1", to = "/usr/share/man/man1/curl.1", mode = "0644" }
-]
-depends = ["ca-certificates"]
-
-[test]
-qemu = [
-  "curl --version"
-]
 ```
 
 The recipe format should be boring. Most ports should not need custom code.
@@ -670,7 +679,7 @@ swport package www/curl
 
 In the common case, the maintainer edits only:
 
-- `Port.toml`;
+- `Port.json`;
 - small patches under `patches/`;
 - optional files under `files/`;
 - the QEMU smoke test command.
@@ -770,7 +779,7 @@ This means making a package should usually be:
 ```sh
 git checkout -b ports/lua-5.4
 swport new lang/lua
-$EDITOR ports/lang/lua/Port.toml
+$EDITOR ports/lang/lua/Port.json
 swport test lang/lua
 git push
 ```
@@ -887,17 +896,22 @@ Remaining repository work:
 
 ### P6: Ports Tree Bootstrap
 
-Current state: P6a has started inside `swift-os` with a checked
-machine-readable seed catalog, `ports/catalog.json`, plus the host-side
-`build/swport catalog validate/list/inspect` commands. This is deliberately not
-the full ports tree yet; it makes package priorities, dependency names, OS
-prerequisite bundles, and blockers reviewable before the separate
-`swift-os-ports` repository exists.
+Current state: P6a/P6b have started inside `swift-os` with a checked
+machine-readable seed catalog, `ports/catalog.json`, the host-side
+`build/swport catalog validate/list/inspect` commands, and the first
+`ports/lang/lua/Port.json` recipe scaffold. `swport recipe validate`,
+`swport recipe manifest`, and checksum-verified `swport recipe fetch` exist for
+the Lua path. This is deliberately not the full ports tree yet; it makes
+package priorities, dependency names, OS prerequisite bundles, blockers, and
+the recipe-to-manifest contract reviewable before the separate `swift-os-ports`
+repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
-- Move the seed catalog into `swift-os-ports` once real recipes land.
-- Add full `swport` recipe commands: `new`, `fetch`, `build`, `test`,
-  `package`, and `publish`.
+- Keep the first source recipe workflow valid with `make ports-recipe-test`.
+- Move the seed catalog and recipes into `swift-os-ports` once real package
+  builds land.
+- Add full `swport` recipe commands: `new`, `build`, `test`, `package`, and
+  `publish`.
 - Port 3 to 5 small packages.
 - Publish a bootstrap/current repository.
 
@@ -912,6 +926,8 @@ Good early candidates:
 Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
+- `make ports-recipe-test` validates the first Lua recipe and proves the
+  generated manifest can feed `swpkg create`.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 
