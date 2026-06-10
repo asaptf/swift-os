@@ -518,8 +518,10 @@ Notes:
   `/models/stories15M`.
 - Bundle generations live under
   `/models/stories15M/<generation>/{manifest.toml,model.bin,tokenizer.bin}`.
-  The loader tries numeric generations newest-first, rejects malformed or
-  hash/size-mismatched payloads, and serves the newest verified generation.
+  The loader tries numeric generations newest-first, requires a valid Ed25519
+  manifest signature when `/etc/swos/model-signing.pub` is present, rejects
+  malformed manifests or hash/size-mismatched payloads, and serves the newest
+  verified generation.
 - The checked-in base image deliberately includes a corrupt generation 2 and a
   valid generation 1, so a healthy default boot logs the generation 2 rejection
   and then verifies generation 1.
@@ -527,8 +529,8 @@ Notes:
   `llmd: model int8 Q8_0 GS=32`.
 - Optional positional arguments select another checkpoint and tokenizer pair:
   `llmd [model.bin] [tokenizer.bin]`. Raw path overrides bypass bundle manifest
-  verification; the loader still detects supported fp32 and Q8 checkpoint
-  formats at runtime.
+  signature and payload-hash verification; the loader still detects supported
+  fp32 and Q8 checkpoint formats at runtime.
 - Model weights are mapped from the read-only base image with file-backed mmap.
 - The default generation length is 64 tokens.
 - Generation runs inline on the current single-core system. Other connections
@@ -536,6 +538,9 @@ Notes:
 - Socket creation still requires `capNet`.
 
 Acceptance coverage: `tests/llm_serve_test.sh`.
+
+For the full serving runbook, bundle layout, health and metrics semantics, and
+support evidence checklist, see [AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
 
 ### `tcpecho`
 
@@ -764,7 +769,8 @@ Notes:
 Acceptance coverage: `tests/llm_run_test.sh`.
 
 See also `llmd` for serving the same native Swift inference engine over TCP
-with the larger quantized default model.
+with the larger quantized default model. The complete AI runbook is in
+[AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
 
 ## Runtime And Diagnostic Commands
 

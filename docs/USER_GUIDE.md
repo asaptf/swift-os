@@ -232,6 +232,9 @@ curl http://127.0.0.1:8080/hello.txt
 
 ### AI Inference Server
 
+For the complete AI hosting guide, including model-bundle verification and
+service evidence, see [AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
+
 Start the model-serving daemon:
 
 ```sh
@@ -240,9 +243,10 @@ Start the model-serving daemon:
 
 It binds TCP port 8080 and serves the TinyStories model from `/models`.
 By default, it verifies the bundle rooted at `/models/stories15M`, rejects any
-bad newest generation, and falls back to the newest generation whose manifest,
-model, and tokenizer hashes match. Pass `llmd [model.bin] [tokenizer.bin]` to
-test another supported checkpoint/tokenizer pair without bundle verification.
+bad newest generation, and falls back to the newest generation whose signed
+manifest, model, and tokenizer hashes match. Pass
+`llmd [model.bin] [tokenizer.bin]` to test another supported
+checkpoint/tokenizer pair without signed-bundle verification.
 
 Host commands with TCP host forwarding:
 

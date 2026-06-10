@@ -483,7 +483,7 @@ Expected serial markers:
 
 ```text
 llmd: generation 2 rejected (model size/sha256 mismatch)
-llmd: bundle stories15M generation 1 verified (sha256)
+llmd: bundle stories15M generation 1 verified (ed25519+sha256)
 llmd: model int8 Q8_0 GS=32
 llmd: serving on 8080
 ```
@@ -497,10 +497,10 @@ Run the acceptance test:
 ### `/bin/llmd` Starts Or Completes Slowly
 
 This is expected under QEMU TCG. The default serving path verifies bundle
-manifests and payload hashes, parses the full 32000-entry tokenizer, and
-demand-pages the quantized `stories15M` checkpoint before or during the first
-request. Treat the current serving demo as a correctness and integration path,
-not as a throughput target.
+manifest signatures and payload hashes, parses the full 32000-entry tokenizer,
+and demand-pages the quantized `stories15M` checkpoint before or during the
+first request. Treat the current serving demo as a correctness and integration
+path, not as a throughput target.
 
 ## Test Driver Problems
 

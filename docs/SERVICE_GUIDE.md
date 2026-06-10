@@ -121,6 +121,10 @@ The acceptance test is [tests/httpd_test.sh](../tests/httpd_test.sh).
 
 ## Running LLM Serving
 
+For the full AI hosting runbook, including bundle format, raw model override,
+health and metrics semantics, and performance limits, see
+[AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
+
 Start the service in the guest:
 
 ```sh
@@ -133,7 +137,7 @@ so a healthy boot logs:
 
 ```text
 llmd: generation 2 rejected (model size/sha256 mismatch)
-llmd: bundle stories15M generation 1 verified (sha256)
+llmd: bundle stories15M generation 1 verified (ed25519+sha256)
 llmd: model int8 Q8_0 GS=32
 llmd: serving on 8080 (POST /completion, GET /health, GET /metrics)
 ```

@@ -127,7 +127,7 @@ Expected `/bin/llmd` serial markers include:
 
 ```text
 llmd: generation 2 rejected (model size/sha256 mismatch)
-llmd: bundle stories15M generation 1 verified (sha256)
+llmd: bundle stories15M generation 1 verified (ed25519+sha256)
 llmd: model int8 Q8_0 GS=32
 llmd: serving on 8080
 llmd: served
@@ -153,10 +153,12 @@ llmd: served
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,
   not a throughput target.
-- Model-bundle verification currently uses manifest size and SHA-256 checks.
-  Real signatures are future work.
 - The deliberately corrupt `/models/stories15M/2` generation is expected in the
-  checked-in demo image; it exists to prove fallback to generation 1.
+  checked-in demo image. Its manifest signature is valid, but its model payload
+  hash fails, proving fallback to generation 1.
+- Model-bundle manifests are signed with the development Ed25519 trust root
+  staged as `/etc/swos/model-signing.pub`. Production key rotation and
+  revocation are future work.
 
 ## Upgrade And Rollback Notes
 

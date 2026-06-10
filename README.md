@@ -136,6 +136,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   network demos, AI demo operation, logging evidence, and verification gates.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
   SwiftOS services such as `httpd`, `llmd`, `tcpecho`, and `udpecho`.
+- [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
+  inference, serve completions over HTTP, and operate verified model bundles.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
   network, package overlay, LLM, and QEMU test failure diagnosis.
 - [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,

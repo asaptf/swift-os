@@ -14,6 +14,8 @@ Use this guide with:
   boot defaults, QEMU profiles, and test knobs.
 - [Service Guide](SERVICE_GUIDE.md) for service lifecycle, readiness markers,
   ports, health checks, and service authoring rules.
+- [AI Hosting Guide](AI_HOSTING_GUIDE.md) for the local inference demo,
+  serving daemon, model bundles, health checks, and metrics.
 - [Troubleshooting](TROUBLESHOOTING.md) when a build, boot, login, or network
   path fails.
 - [Support Guide](SUPPORT_GUIDE.md) for evidence collection and handoff
@@ -320,6 +322,9 @@ SwiftOS has two native Swift TinyStories inference entry points:
 | `/bin/llm` | Run one local completion and print tokens plus timing on the serial console |
 | `/bin/llmd` | Serve Q8_0 TinyStories completions over TCP with health and metrics endpoints |
 
+For the complete AI runbook, bundle format, HTTP API, and support checklist, see
+[AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
+
 The local demo and the server intentionally use different default bundles:
 `/bin/llm` loads the small fp32 `stories260K` checkpoint and `tok512`
 tokenizer, while `/bin/llmd` serves the larger Q8_0 `stories15M` checkpoint
@@ -359,8 +364,8 @@ newest-first, verifies each generation's `manifest.toml`, `model.bin`, and
 pass. The checked-in image includes a deliberately corrupt generation 2 and a
 valid generation 1 to prove fallback behavior.
 
-To test another supported checkpoint/tokenizer pair without bundle verification,
-pass both paths explicitly:
+To test another supported checkpoint/tokenizer pair without signed-bundle
+verification, pass both paths explicitly:
 
 ```sh
 /bin/llmd /models/stories260K.bin /models/tok512.bin
@@ -374,8 +379,10 @@ curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
 curl http://127.0.0.1:8080/metrics
 ```
 
-`/bin/llmd` reports `llmd: generation 2 rejected (model size/sha256 mismatch)`
-for the intentionally corrupt demo generation, then `llmd: bundle stories15M generation 1 verified (sha256)`,
+`/bin/llmd` reports `llmd: trust root loaded (/etc/swos/model-signing.pub)`,
+`llmd: generation 2 rejected (model size/sha256 mismatch)` for the
+intentionally corrupt demo generation, then
+`llmd: bundle stories15M generation 1 verified (ed25519+sha256)`,
 `llmd: model int8 Q8_0 GS=32`, and `llmd: serving on 8080` when it is ready.
 `GET /health` reports the model shape, such as `ok model dim=288` for the
 default serving bundle. `POST /completion` uses the request body as the prompt
@@ -404,7 +411,7 @@ Useful markers:
 | `Welcome to swift-os, root` | Authentication succeeded |
 | `httpd: listening on 8080` | HTTP server bound and entered its event loop |
 | `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt demo generation was rejected |
-| `llmd: bundle stories15M generation 1 verified (sha256)` | Verified model-bundle fallback selected generation 1 |
+| `llmd: bundle stories15M generation 1 verified (ed25519+sha256)` | Signed model-bundle fallback selected generation 1 |
 | `llmd: model int8 Q8_0 GS=32` | Quantized serving engine selected |
 | `llmd: serving on 8080` | Inference server bound and entered its event loop |
 | `llmd: served` | Inference server completed a request and logged serving metrics |

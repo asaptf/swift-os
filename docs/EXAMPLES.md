@@ -361,7 +361,7 @@ Expected signals:
 - `/metrics` includes `requests`, `tokens_total`, `last_ttft_ms`, and
   `last_tok_s`.
 - The serial log includes `llmd: generation 2 rejected (model size/sha256 mismatch)`,
-  `llmd: bundle stories15M generation 1 verified (sha256)`,
+  `llmd: bundle stories15M generation 1 verified (ed25519+sha256)`,
   `llmd: model int8 Q8_0 GS=32`, and `llmd: served`.
 
 Equivalent automated check:
