@@ -320,12 +320,12 @@ static EFI_FILE_PROTOCOL *loader_open_kstate(EFI_HANDLE image_handle, EFI_SYSTEM
     if (bs->HandleProtocol(li->DeviceHandle, &fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) return 0;
     EFI_FILE_PROTOCOL *root = 0;
     if (fs->OpenVolume(fs, &root) != EFI_SUCCESS || !root) return 0;
-    EFI_FILE_PROTOCOL *f = 0;
     UINT64 attrs = (mode & EFI_FILE_MODE_CREATE) ? EFI_FILE_ARCHIVE : 0;
+    EFI_FILE_PROTOCOL *f = 0;
     EFI_STATUS s = root->Open(root, &f, KERNEL_STATE_PATH, mode, attrs);
     root->Close(root);
     if (s != EFI_SUCCESS || !f) {
-        if (mode & EFI_FILE_MODE_WRITE) {
+        if (mode & EFI_FILE_MODE_CREATE) {
             puts16(st, "UEFI: kernel-state open failed ");
             puthex(st, (UINT64)s);
             puts16(st, "\r\n");
