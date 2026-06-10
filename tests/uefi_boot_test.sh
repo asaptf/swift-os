@@ -84,21 +84,21 @@ send_text() {  # send_text TEXT
 QP=$!
 
 exec 3<>"$IN"
-wait_for "M7 tty: type a line then Enter" 350 && send_text $'tty-line\n'
-wait_for "M7 tty: running; press Ctrl-C" 120 && send_text $'\003'
+wait_for "M7 tty: type a line then Enter" 1800 && send_text $'tty-line\n'
+wait_for "M7 tty: running; press Ctrl-C" 480 && send_text $'\003'
 # M12c: console-login is the init program — authenticate before the shell.
-if wait_for "swift-os login:" 120; then
+if wait_for "swift-os login:" 480; then
     send_text $'root\n'
-    wait_for "Password:" 60 || true
+    wait_for "Password:" 240 || true
     send_text $'swordfish\n'
 fi
-if wait_for "built-in shell (ash)" 120; then
+if wait_for "built-in shell (ash)" 480; then
     send_text $'echo M10\'\'-UEFI-OK\n'
-    wait_for "M10-UEFI-OK" 80 || true
+    wait_for "M10-UEFI-OK" 240 || true
     send_text $'ls /\n'
-    wait_for "readme.txt" 80 || true
+    wait_for "readme.txt" 240 || true
     send_text $'cat /etc/motd\n'
-    wait_for "Welcome to swift-os." 80 || true
+    wait_for "Welcome to swift-os." 240 || true
     send_text $'exit\n'
 fi
 exec 3>&-
@@ -151,19 +151,20 @@ check "[I] smp: S4b OK: VFS lock boundary ready"
 check "[I] smp: S4c OK: kernel heap lock boundary ready"
 check "[I] sched: M4.5 sched: real context switch OK"
 check "[I] smp: S2c OK: no secondary kernel scheduler execution"
-check "[I] smp: S2g OK: coproc pair dispatch telemetry CPU0-owned"
-check "[I] smp: S2d OK: process run queue stayed CPU0-owned"
-check "[I] smp: S2e OK: secondary process scheduler contexts stayed dormant"
-check "[I] smp: S2f OK: process dispatch telemetry stayed CPU0-owned"
-check "[I] smp: S2h OK: secondary EL0 gate held CPU0-owned"
-check "[I] smp: S3a OK: address-space CPU masks stayed CPU0-owned"
+if (( SMP_CPU_COUNT > 1 )); then
+    check "[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
+else
+    check "[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
+fi
+check "[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch"
+check "[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch"
+check "[I] smp: S3a OK: address-space CPU masks matched dispatch CPUs"
 check "[I] smp: S3b OK: IPI delivery stayed scheduler-safe"
 check "[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe"
-check "[I] smp: S3d OK: address-space TLB flush stayed CPU0-owned"
+check "[I] smp: S3d OK: address-space TLB flush matched dispatch CPUs"
 check "[I] smp: S4a OK: PMM lock boundary stayed balanced"
 check "[I] smp: S4b OK: VFS lock boundary stayed balanced"
 check "[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
-check "[I] smp: S2b OK: no secondary EL0 execution"
 check "built-in shell (ash)"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet

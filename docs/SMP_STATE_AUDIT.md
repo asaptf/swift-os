@@ -205,7 +205,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/tty/tty.swift:lflag`
 - `kernel/user/elf.swift:elfLoadPages`
 - `kernel/user/exec.swift:elfBuf`
-- `kernel/user/process.swift:currentProc`
+- `kernel/user/process.swift:currentProcByCpu`
 - `kernel/user/process.swift:fileDemandFaults`
 - `kernel/user/process.swift:fileDemandLogged`
 - `kernel/user/process.swift:idleTicks`
@@ -235,6 +235,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pHomeCpu`
 - `kernel/user/process.swift:pRunNext`
 - `kernel/user/process.swift:pRunQueued`
+- `kernel/user/process.swift:pSchedulerQuiesced`
 - `kernel/user/process.swift:pResPages`
 - `kernel/user/process.swift:pSecurity`
 - `kernel/user/process.swift:pStartTick`
@@ -249,6 +250,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:processRunQueueEnqueueCount`
 - `kernel/user/process.swift:processRunQueueHead`
 - `kernel/user/process.swift:processRunQueueTail`
+- `kernel/user/process.swift:processSecondarySchedulerActiveMask`
+- `kernel/user/process.swift:processSecondarySchedulerRunMask`
+- `kernel/user/process.swift:processSecondarySchedulerStopMask`
 - `kernel/user/process.swift:procCtx`
 - `kernel/user/process.swift:schedCtx`
 - `kernel/user/process.swift:schedCtxCpuCount`
@@ -266,15 +270,12 @@ manifest entries left behind after globals move or disappear.
 
 ## Immediate S1/S2 Risks
 
-- `currentProc`, `currentThread`, the S2d/S2e process run queue/context
-  scaffold, the S2f/S2g dispatch telemetry counters, the S3a address-space CPU
-  mask scaffold, and timer accounting must become per-CPU or protected before
-  any secondary CPU can run scheduler code.
-  S2e publishes dormant secondary scheduler resources, S2f records CPU0
-  dispatch evidence, S2g snapshots the `coproc` pair before reap, S3a records
-  CPU0-only address-space activation evidence, and S3d wires VM TLB flushes to
-  that active-mask surface; none of these milestones make those structures
-  concurrency-safe.
+- `currentThread`, the general process run queue, timer accounting, and shared
+  process/VFS/PMM tables still need protection before broad secondary scheduler
+  execution. S2h makes `currentProc` per-CPU and permits a restricted `coproc`
+  pair on CPU0 plus one secondary scheduler CPU. S3a/S3d now feed that restricted
+  active-CPU evidence into the TLB-flush facade, but only for independent
+  top-level address spaces and with scheduler-stack quiescence before reap.
 - PMM allocation/free/refcount entry points are now protected by the S4a lock
   boundary. VFS shared pools and handle/open-description lifetimes are protected
   by the S4b lock boundary. The small-object heap cursor is protected by the

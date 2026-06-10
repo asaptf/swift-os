@@ -43,11 +43,30 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (rm-r driver) ---" >&2
   sed 's/\r//' "$LOG" 2>/dev/null | tail -100 >&2 || true
   exit 1
+}
+
+send_line() {
+  local line="$1" delay="${RMR_CHAR_DELAY:-0.02}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${RMR_SEND_DELAY:-0.12}"
 }
 
 # Sequence (all under /tmp, the writable tmpfs):
@@ -65,29 +84,35 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-{
-  printf '/bin/mkdir /tmp/d\n'
-  printf '/bin/mkdir /tmp/d/sub\n'
-  printf 'echo hi > /tmp/d/f\n'
-  printf 'echo deep > /tmp/d/sub/g\n'
-  printf '/bin/rm /tmp/d\n'
-  printf 'echo RC1=$?\n'
-  printf '/bin/ls /tmp\n'
-  printf '/bin/rm -r /tmp/d\n'
-  printf 'echo RC2=$?\n'
-  printf '/bin/ls /tmp\n'
-  printf 'echo RMR-DONE\n'
-  printf 'exit\n'
-} >&3
-await "RMR-DONE" 180 || drive_fail "shell did not survive the rm-r ops"
+send_line '/bin/mkdir /tmp/d'
+send_line '/bin/mkdir /tmp/d/sub'
+send_line 'echo hi > /tmp/d/f'
+send_line 'echo RMR-WROTE1'
+await_line "RMR-WROTE1" 40 || drive_fail "first redirected echo did not complete"
+send_line 'echo deep > /tmp/d/sub/g'
+send_line 'echo RMR-WROTE2'
+await_line "RMR-WROTE2" 40 || drive_fail "nested redirected echo did not complete"
+send_line '/bin/rm /tmp/d'
+send_line 'echo RC1=$?'
+await_line "RC1=1" 40 || drive_fail "rm without -r did not report the expected non-zero status"
+send_line '/bin/ls /tmp'
+send_line 'echo RMR-LS1-DONE'
+await_line "RMR-LS1-DONE" 40 || drive_fail "first ls did not complete"
+send_line '/bin/rm -r /tmp/d'
+send_line 'echo RC2=$?'
+await_line "RC2=0" 40 || drive_fail "rm -r did not report a zero status"
+send_line '/bin/ls /tmp'
+send_line 'echo RMR-DONE'
+await_line "RMR-DONE" 180 || drive_fail "shell did not survive the rm-r ops"
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

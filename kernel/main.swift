@@ -595,6 +595,8 @@ func irqHandler() {
         fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
         processOnTick(fromEL0: fromEL0)  // preempt the current EL0 process + CPU accounting
+    } else if interruptId == physicalTimerIrq && processSecondarySchedulerActiveForCurrentCpu() {
+        processOnTick(fromEL0: fromEL0)
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
     }
@@ -884,7 +886,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 uartPuts("panic: S2g coproc dispatch telemetry guard failed\n")
                 while true {}
             }
-            klog(.info, "smp", "S2g OK: coproc pair dispatch telemetry CPU0-owned", UInt64(platform.cpuCount))
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S2h OK: coproc pair dispatched across scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S2h OK: coproc pair dispatch CPU0 fallback", UInt64(platform.cpuCount))
+            }
         }
         runForkDemo()
         runExecDemo()
@@ -894,31 +900,21 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
-        if !processRunQueueNoSecondaryExecutionSelfTest() {
-            uartPuts("panic: S2d secondary process run queue guard failed\n")
+        if !processMultiCpuSchedulerPostRunSelfTest() {
+            uartPuts("panic: S2 multi-CPU process scheduler post-run guard failed\n")
             while true {}
         }
-        klog(.info, "smp", "S2d OK: process run queue stayed CPU0-owned", UInt64(platform.cpuCount))
-        if !processNoSecondarySchedulerDispatchSelfTest() {
-            uartPuts("panic: S2e secondary process scheduler dispatch guard failed\n")
-            while true {}
-        }
-        klog(.info, "smp", "S2e OK: secondary process scheduler contexts stayed dormant", UInt64(platform.cpuCount))
-        if !processDispatchTelemetryNoSecondarySelfTest() {
-            uartPuts("panic: S2f process dispatch telemetry guard failed\n")
-            while true {}
-        }
-        klog(.info, "smp", "S2f OK: process dispatch telemetry stayed CPU0-owned", UInt64(platform.cpuCount))
+        klog(.info, "smp", "S2h OK: process scheduler quiesced after multi-CPU dispatch", UInt64(platform.cpuCount))
         if !processSecondaryEl0GateHeldSelfTest() {
             uartPuts("panic: S2h secondary EL0 gate guard failed\n")
             while true {}
         }
-        klog(.info, "smp", "S2h OK: secondary EL0 gate held CPU0-owned", UInt64(platform.cpuCount))
-        if !processAddressSpaceCpuMaskNoSecondarySelfTest() {
+        klog(.info, "smp", "S2h OK: secondary EL0 gate closed after restricted dispatch", UInt64(platform.cpuCount))
+        if !processAddressSpaceCpuMaskPostRunSelfTest() {
             uartPuts("panic: S3a address-space CPU mask guard failed\n")
             while true {}
         }
-        klog(.info, "smp", "S3a OK: address-space CPU masks stayed CPU0-owned", UInt64(platform.cpuCount))
+        klog(.info, "smp", "S3a OK: address-space CPU masks matched dispatch CPUs", UInt64(platform.cpuCount))
         if !smpS3bIpiSchedulerBoundarySelfTest() {
             uartPuts("panic: S3b IPI scheduler boundary guard failed\n")
             while true {}
@@ -929,11 +925,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S3c OK: TLB shootdown path stayed scheduler-safe", UInt64(platform.cpuCount))
-        if !processAddressSpaceTlbFlushNoSecondarySelfTest() {
+        if !processAddressSpaceTlbFlushPostRunSelfTest() {
             uartPuts("panic: S3d address-space TLB flush facade guard failed\n")
             while true {}
         }
-        klog(.info, "smp", "S3d OK: address-space TLB flush stayed CPU0-owned", UInt64(platform.cpuCount))
+        klog(.info, "smp", "S3d OK: address-space TLB flush matched dispatch CPUs", UInt64(platform.cpuCount))
         if !pmmS4aLockBoundaryHeldSelfTest() {
             uartPuts("panic: S4a PMM lock boundary did not stay balanced\n")
             while true {}
@@ -953,11 +949,6 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S4c OK: kernel heap lock boundary stayed balanced", UInt64(swiftos_heap_lock_contention_count()))
-        if !smpS2bNoSecondaryEl0Execution() {
-            uartPuts("panic: S2b secondary EL0 execution guard failed\n")
-            while true {}
-        }
-        klog(.info, "smp", "S2b OK: no secondary EL0 execution", UInt64(platform.cpuCount))
         klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in

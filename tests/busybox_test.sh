@@ -89,32 +89,42 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${BUSYBOX_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${BUSYBOX_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 await "built-in shell (ash)" 30 || drive_fail "busybox ash did not start"
-printf 'echo M8-BUSYBOX-OK\n' >&3
+send_line 'echo M8-BUSYBOX-OK'
 await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"
-printf 'ls /\n' >&3
+send_line 'ls /'
 await "readme.txt" 20 || drive_fail "ls / did not list readme.txt"
-printf 'cat /etc/motd\n' >&3
+send_line 'cat /etc/motd'
 await_line "Welcome to swift-os." 20 || drive_fail "cat /etc/motd did not print motd"
-printf 'ps\n' >&3
+send_line 'ps'
 await_regex '^ *PID +PPID +STATE +CMD$' 20 || drive_fail "ps output missing"
-printf '/bin/id\n' >&3
+send_line '/bin/id'
 await "principal=1(root) session=1 caps=0x3f" 20 || drive_fail "/bin/id output missing"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 20 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-

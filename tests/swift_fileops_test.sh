@@ -53,6 +53,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${FILEOPS_CHAR_DELAY:-0.02}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${FILEOPS_SEND_DELAY:-0.12}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -72,19 +82,26 @@ printf 'root\n' >&3
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-{
-  printf '/bin/mkdir /tmp/d\n'
-  printf 'echo hi > /tmp/d/f\n'
-  printf '/bin/mv /tmp/d/f /tmp/d/g\n'
-  printf '/bin/ls /tmp/d\n'
-  printf '/bin/cat /tmp/d/g\n'
-  printf '/bin/rm /tmp/d/g\n'
-  printf '/bin/rmdir /tmp/d\n'
-  printf '/bin/ls /tmp\n'
-  printf 'echo FILEOPS-DONE\n'
-  printf 'exit\n'
-} >&3
+send_line '/bin/mkdir /tmp/d'
+await "M11d: exec loaded from disk /bin/mkdir" 40 || drive_fail "mkdir did not execute"
+send_line 'echo hi > /tmp/d/f'
+send_line 'echo REDIRECT-DONE'
+await "REDIRECT-DONE" 40 || drive_fail "redirected echo did not complete"
+send_line '/bin/mv /tmp/d/f /tmp/d/g'
+await "M11d: exec loaded from disk /bin/mv" 40 || drive_fail "mv did not execute"
+send_line '/bin/ls /tmp/d'
+await "M11d: exec loaded from disk /bin/ls" 40 || drive_fail "ls /tmp/d did not execute"
+await "g" 40 || drive_fail "ls /tmp/d did not show g"
+send_line '/bin/cat /tmp/d/g'
+await "hi" 40 || drive_fail "cat /tmp/d/g did not print hi"
+send_line '/bin/rm /tmp/d/g'
+await "M11d: exec loaded from disk /bin/rm" 40 || drive_fail "rm did not execute"
+send_line '/bin/rmdir /tmp/d'
+await "M11d: exec loaded from disk /bin/rmdir" 40 || drive_fail "rmdir did not execute"
+send_line '/bin/ls /tmp'
+send_line 'echo FILEOPS-DONE'
 await "FILEOPS-DONE" 180 || drive_fail "shell did not survive the file ops"
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

@@ -151,25 +151,48 @@ if [[ ! -f "$KERNEL" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-boot.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+QEMU_PID=""
 
-dtb_args=()
+stop_qemu() {
+    if [[ -n "$QEMU_PID" ]]; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        for _ in $(seq 1 20); do
+            kill -0 "$QEMU_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -0 "$QEMU_PID" 2>/dev/null && kill -9 "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+        QEMU_PID=""
+    fi
+}
+
+cleanup() {
+    stop_qemu
+    rm -f "$LOG"
+}
+trap cleanup EXIT
+
+qemu_args=(-M virt -cpu cortex-a72 -m 256M -nographic -no-reboot)
+if [[ ! -f "$DTB" ]]; then
+    tmp_dtb="$DTB.tmp"
+    mkdir -p "$(dirname "$DTB")"
+    "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -m 256M -nographic >/dev/null 2>&1
+    mv "$tmp_dtb" "$DTB"
+fi
 if [[ -f "$DTB" ]]; then
-    dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+    qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
 # Attach the packed base image (modern virtio-mmio transport) so /bin/* and the
 # read-only base are served from disk rather than the embedded blob.
 DISK="$ROOT/build/base.img"
-blk_args=()
 if [[ -f "$DISK" ]]; then
-    blk_args=(-global virtio-mmio.force-legacy=false \
-              -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-              -device virtio-blk-device,drive=swosbase)
+    qemu_args+=(-global virtio-mmio.force-legacy=false
+                -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+                -device virtio-blk-device,drive=swosbase)
 fi
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-        "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+"$QEMU" "${qemu_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QEMU_PID=$!
 
 all_found() {
@@ -198,8 +221,7 @@ for _ in $(seq 1 "$((TIMEOUT * 10))"); do
     sleep 0.1
 done
 
-kill "$QEMU_PID" 2>/dev/null
-wait "$QEMU_PID" 2>/dev/null
+stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
     echo "PASS: serial console produced all expected lines:"

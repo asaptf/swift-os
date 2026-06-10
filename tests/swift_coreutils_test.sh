@@ -58,6 +58,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${COREUTILS_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${COREUTILS_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -69,25 +79,25 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf '/bin/echo hello swift echo\n' >&3
+send_line '/bin/echo hello swift echo'
 await_line "hello swift echo" 60 || drive_fail "/bin/echo did not print its arguments"
-printf '/bin/cat /etc/motd\n' >&3
+send_line '/bin/cat /etc/motd'
 await_line "Welcome to swift-os." 60 || drive_fail "/bin/cat did not print /etc/motd"
-printf 'cd /etc\n' >&3
-printf '/bin/pwd\n' >&3
+send_line 'cd /etc'
+send_line '/bin/pwd'
 await_line "/etc" 60 || drive_fail "/bin/pwd did not print the cwd after cd /etc"
-printf '/bin/echo -n no-newline-here\n' >&3
+send_line '/bin/echo -n no-newline-here'
 await "no-newline-here" 60 || drive_fail "/bin/echo -n did not print marker"
-printf '\n' >&3
-printf 'exit\n' >&3
+send_line ''
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

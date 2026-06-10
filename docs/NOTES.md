@@ -1048,7 +1048,9 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Runtime acceptance.** After `runConcurrentDemo` prints
   `M8d OK: two EL0 processes ran concurrently`, boot runs
   `processCoprocPairDispatchTelemetrySelfTest` before later demos can reuse the
-  slots, then logs `S2g OK: coproc pair dispatch telemetry CPU0-owned`.
+  slots. S2h now owns the runtime dispatch marker and logs either
+  `S2h OK: coproc pair dispatched across scheduler CPUs` or the explicit CPU0
+  fallback marker.
 - **Static guard.** `tests/smp_release_guard_test.sh` checks the last-pair
   telemetry fields, verifies `processRunPair` captures telemetry before
   `reapProcess(a)`, and enforces that the S2g guard runs immediately after the
@@ -1057,30 +1059,43 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   policy changes, no IPI/cross-CPU wake path is added, and no userland ABI is
   widened in this checkpoint.
 
-### S2h — secondary EL0 gate contract (DONE, 2026-06-10)
+### S2h — restricted coproc multi-CPU EL0 dispatch (DONE, 2026-06-10)
 
-- **Explicit gate.** The EL0 process scheduler now routes placement, scheduler
-  entry, ready-queue admission, and dispatch telemetry through
-  `processSecondaryEl0GateAllowsCpu`. The gate is closed in this checkpoint, so
-  CPU0 remains the only legal EL0 scheduler/dispatch CPU, but the policy point
-  is now named and tested rather than spread across ad hoc `cpu != 0` checks.
-- **Readiness acceptance.** Boot runs `processSecondaryEl0GateSelfTest` after the
-  S2f dispatch telemetry readiness check and logs
-  `S2h OK: secondary EL0 gate ready`. The self-test proves the gate is closed,
-  CPU0 is accepted, secondary CPUs are rejected, and the current placement hook
-  still maps every valid process slot to CPU0.
-- **Runtime held guard.** After the userland demos and S2f telemetry guard, boot
-  runs `processSecondaryEl0GateHeldSelfTest` and logs
-  `S2h OK: secondary EL0 gate held CPU0-owned`. The guard checks that no
-  secondary has queued, dispatched, or switched an EL0 process and that process
-  dispatch masks/home CPUs stayed CPU0-only.
-- **Static guard.** `tests/smp_release_guard_test.sh` now requires the S2h gate
-  helpers, both runtime markers, and the boot-order contract (`S2f readiness ->
-  S2h readiness -> demos`, then `S2f no-secondary -> S2h held -> S2b
-  no-secondary`).
-- **Non-goals.** No secondary CPU dispatches EL0 work, no scheduler policy is
-  changed, no IPI/cross-CPU wake path is added, and no process migration is
-  enabled in this checkpoint.
+- **Secondary EL0 scheduler gate.** The S1 secondary loop now polls a process
+  scheduler service hook before returning to IRQ-enabled `wfi`. CPU0 can set a
+  run mask for one secondary CPU, wait for that CPU to enter its per-CPU process
+  scheduler context, and later set a stop mask so the secondary returns to its
+  idle loop. The hook is only enabled by the `processRunPair` acceptance path;
+  general secondary process scheduling remains off.
+- **Per-CPU current process state.** The old singleton `currentProc` is now a
+  per-CPU slot mirror, so syscalls, user access, VFS capability checks, logging,
+  timer accounting, and signal paths read the process running on the current
+  CPU. The kernel scheduler remains CPU0-owned; only the EL0 process scheduler
+  uses the restricted secondary hook.
+- **Safe cross-CPU reap boundary.** A process is not reapable until it has
+  returned to its scheduler stack. After every process context switch back to a
+  scheduler context, the scheduler switches TTBR0 back to the kernel address
+  space and marks the slot quiesced before another CPU may free the process
+  kernel stack or page tables.
+- **Runtime acceptance.** On `-smp 4`, the existing `coproc` pair runs with one
+  process on CPU0 and one on a secondary scheduler CPU, then logs
+  `S2h OK: coproc pair dispatched across scheduler CPUs`,
+  `S2h OK: process scheduler quiesced after multi-CPU dispatch`, and
+  `S2h OK: secondary EL0 gate closed after restricted dispatch`. On `-smp 1`,
+  the same path logs an explicit CPU0 fallback marker. `tests/smp_boot_test.sh`
+  covers both forms; `tests/uefi_boot_test.sh` checks the markers on firmware
+  boots.
+- **Harness hardening.** `tests/boot_test.sh` now builds a QEMU virt DTB when a
+  clean worktree lacks `build/virt.dtb`, assembles QEMU argv through a non-empty
+  array under `set -u`, and uses the same escalating QEMU cleanup style as the
+  SMP harness. Interactive Swift/userland smoke drivers send shell input with
+  short per-character pacing and explicit completion markers to avoid FIFO
+  overrun flakes under long full-suite runs.
+- **Non-goals.** No process migration, reschedule IPI, TLB shootdown protocol,
+  shared-address-space thread execution on secondary CPUs, or broad VFS/PMM
+  concurrency is enabled here. The remaining S2 work is the general stress path:
+  N runnable EL0 processes, cross-CPU wakeups, and no scheduler corruption under
+  sustained timer preemption.
 
 ### S3a — address-space active CPU mask preflight (DONE, 2026-06-10)
 
@@ -1090,22 +1105,22 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   `address_space_switch(pTtbr0[s])` and before accounting the EL0 switch. This
   is the cheap active-CPU evidence S3 needs before real TLB shootdown targeting
   can be implemented.
-- **Current invariant remains CPU0-only.** The recorder is still protected by
-  the S2h secondary-EL0 gate and cross-checks against the dispatch telemetry, so
-  any secondary address-space activation before S3 proper panics instead of
-  silently widening the execution model.
+- **Restricted-secondary invariant.** The recorder is still protected by the
+  S2h scheduler run mask and cross-checks against dispatch telemetry, so only
+  CPU0 and the explicitly started S2h secondary scheduler CPU may activate a
+  process address space in this checkpoint.
 - **Runtime acceptance.** Boot runs `processAddressSpaceCpuMaskSelfTest` after
   S2h readiness and logs `S3a OK: address-space CPU mask scaffold ready`. After
-  the userland demos, boot runs `processAddressSpaceCpuMaskNoSecondarySelfTest`
-  after the S2h held guard and logs
-  `S3a OK: address-space CPU masks stayed CPU0-owned`.
+  the userland demos, boot runs `processAddressSpaceCpuMaskPostRunSelfTest`
+  after the S2h gate-closed guard and logs
+  `S3a OK: address-space CPU masks matched dispatch CPUs`.
 - **Static guard.** `tests/smp_release_guard_test.sh` requires the S3a fields,
   recorder, self-tests, marker ordering, and the exact switch-path order:
   `address_space_switch(pTtbr0[s])` -> `recordProcessAddressSpaceActivation`
   -> `smpRecordEl0SwitchForCurrentCpu`.
-- **Non-goals.** No IPI/SGI is added, no TLB invalidation behavior changes, no
-  secondary CPU dispatches EL0 work, and no process migrates between CPUs in
-  this checkpoint.
+- **Non-goals.** No TLB invalidation behavior changes, no process migration, no
+  shared-address-space cross-CPU execution, and no broad scheduler placement is
+  enabled in this checkpoint.
 
 ### S3b — GIC SGI / IPI substrate preflight (DONE, 2026-06-10)
 
@@ -1116,23 +1131,25 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   checked against QEMU 11.0.1 `hw/intc/arm_gic.c`, whose `gic_dist_writel`
   handles offset `0xf00` by setting `sgi_pending[irq][target_cpu]`.
 - **Parked secondaries can receive IPIs.** After their early timer heartbeat,
-  secondary CPUs now remain in an IRQ-enabled `wfi` loop. Their IRQ path still
-  does no scheduler/process/VFS/driver work: timer PPIs only rearm the local
-  timer, and SGI ID 1 only records atomic per-CPU IPI counters and source CPU.
+  secondary CPUs poll the restricted S2h scheduler hook and then sleep in an
+  IRQ-enabled `wfi` loop. Their IRQ path still does no scheduler/VFS/driver
+  work: timer PPIs only rearm the local timer or drive an already-active S2h
+  process scheduler CPU, and SGI ID 1 only records atomic per-CPU IPI counters
+  and source CPU.
 - **Runtime acceptance.** Boot runs `smpIpiSubstrateSelfTest` after S3a
   readiness. On SMP boots CPU0 sends SGI ID 1 to every discovered secondary,
   waits for the delivered mask, verifies the source CPU, and logs
   `S3b OK: GIC SGI IPI substrate ready`. After userland demos, boot verifies the
-  IPI delivery mask stayed complete and secondary scheduler state stayed idle,
-  then logs `S3b OK: IPI delivery stayed scheduler-safe`.
+  IPI delivery mask stayed complete and secondary kernel scheduler state stayed
+  idle, then logs `S3b OK: IPI delivery stayed scheduler-safe`.
 - **Static guard.** `tests/smp_release_guard_test.sh` requires the SGIR offset,
-  SGI sender/source helpers, IPI counters, IRQ handler hook, IRQ-enabled
-  secondary park loop, and the boot-order contract (`S3a readiness -> S3b
-  readiness -> demos`, then `S3a no-secondary -> S3b scheduler-safe -> S2b
-  no-secondary`).
+  SGI sender/source helpers, IPI counters, IRQ handler hook, restricted S2h
+  service loop, and the boot-order contract (`S3a readiness -> S3b readiness ->
+  demos`, then `S2h quiesced -> S2h gate closed -> S3a matched -> S3b
+  scheduler-safe`).
 - **Non-goals.** No TLB shootdown protocol is implemented yet, no reschedule
-  IPI is consumed by the scheduler, no secondary CPU dispatches EL0 work, and
-  no PMM/VFS/process locking policy changes in this checkpoint.
+  IPI is consumed by the scheduler, and no PMM/VFS/process locking policy
+  changes in this checkpoint.
 
 ### S3c — TLB shootdown IPI scaffold (DONE, 2026-06-10)
 

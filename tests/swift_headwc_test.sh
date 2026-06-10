@@ -45,6 +45,15 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-30}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (head/wc driver) ---" >&2
@@ -53,8 +62,13 @@ drive_fail() {
 }
 
 send_line() {
-  printf '%s\n' "$1" >&3
-  sleep 0.05
+  local line="$1" delay="${HEADWC_CHAR_DELAY:-0.02}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${HEADWC_SEND_DELAY:-0.12}"
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -68,24 +82,36 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 send_line 'echo one > /tmp/t'
+send_line 'echo HEADWC-WROTE1'
+await_line "HEADWC-WROTE1" 40 || drive_fail "first redirected echo did not complete"
 send_line 'echo two >> /tmp/t'
+send_line 'echo HEADWC-WROTE2'
+await_line "HEADWC-WROTE2" 40 || drive_fail "second redirected echo did not complete"
 send_line 'echo three >> /tmp/t'
+send_line 'echo HEADWC-WROTE3'
+await_line "HEADWC-WROTE3" 40 || drive_fail "third redirected echo did not complete"
 send_line '/bin/wc /tmp/t'
+send_line 'echo HEADWC-WC1-DONE'
+await_line "HEADWC-WC1-DONE" 40 || drive_fail "wc /tmp/t did not complete"
 send_line '/bin/head -n 2 /tmp/t | /bin/wc'
+send_line 'echo HEADWC-PIPE-DONE'
+await_line "HEADWC-PIPE-DONE" 40 || drive_fail "head|wc pipeline did not complete"
 send_line '/bin/touch /tmp/empty'
+send_line 'echo HEADWC-TOUCH-DONE'
+await_line "HEADWC-TOUCH-DONE" 40 || drive_fail "touch did not complete"
 send_line '/bin/wc /tmp/empty'
 send_line 'echo HEADWC-DONE'
+await_line "HEADWC-DONE" 180 || drive_fail "shell did not survive head/wc/touch"
 send_line 'exit'
-await "HEADWC-DONE" 180 || drive_fail "shell did not survive head/wc/touch"
 await "M12c: session ended" 60 || true
 
 exec 3>&-

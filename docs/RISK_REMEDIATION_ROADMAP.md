@@ -147,12 +147,14 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   slots are reaped. The guard requires both processes to have run and to have
   CPU0-only masks today, turning the future "two EL0 processes ran on different
   CPUs" acceptance into a ready executable check rather than a new harness.
-- Pre-S2 readiness checkpoint (S2h, 2026-06-10): secondary EL0 execution is now
-  controlled by an explicit closed gate in the process scheduler. Placement,
-  dispatch telemetry, and scheduler-entry checks all go through that gate; boot
-  logs readiness and "gate held" markers while preserving CPU0-only behavior.
-  This makes the next S2 policy change a deliberate contract change instead of
-  a search-and-replace of scattered `cpu != 0` guards.
+- Restricted S2 execution checkpoint (S2h, 2026-06-10): `processRunPair` can
+  temporarily start one secondary EL0 scheduler CPU and place the independent
+  `coproc` pair across CPU0 and that secondary CPU. The process scheduler now
+  uses per-CPU `currentProc` state, records secondary dispatch telemetry, and
+  waits for scheduler-stack quiescence before reaping cross-CPU zombies. This
+  is deliberately limited to independent top-level address spaces; migration,
+  shared-address-space threads, cross-CPU wakeups, and broad VFS/PMM concurrency
+  remain below.
 - Give each CPU its own scheduler context / runqueue (or a carefully designed global structure with per-CPU current-thread). The old global `currentThread` / round-robin array must be replaced or indexed by CPU.
 - Timer tick on every CPU drives local preemption (`schedulerTick` / `processOnTick` equivalents become per-CPU).
 - Cross-CPU wake (a thread blocked on one CPU must be made runnable on another) requires an IPI or a shared ready queue + reschedule IPI. Start with the simplest thing that works.
@@ -162,23 +164,27 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 ### S3 — IPI, TLB shootdown, and cross-CPU address-space / page-table safety
 - S3a preflight (2026-06-10): the process scheduler now records a per-process
   address-space CPU mask and per-CPU activation counters on the real
-  `address_space_switch(pTtbr0[slot])` path. The gate remains CPU0-only, so the
-  marker proves no secondary address-space activation happened yet while giving
-  S3 a concrete mask source for future shootdown targeting.
+  `address_space_switch(pTtbr0[slot])` path. S2h permits only CPU0 plus one
+  explicitly started secondary scheduler CPU for the `coproc` acceptance path,
+  and the post-run marker cross-checks address-space activations against
+  dispatch telemetry while giving S3 a concrete mask source for future
+  shootdown targeting.
 - S3b preflight (2026-06-10): the GICv2 SGI path now provides a minimal IPI
-  substrate. Parked secondary CPUs remain IRQ-enabled after their timer
-  heartbeat, can receive the reserved SGI, and only update fixed atomic IPI
-  counters. Scheduler, VFS, PMM, and EL0 work remain gated to CPU0.
+  substrate. Parked secondary CPUs poll the restricted S2h scheduler hook, sleep
+  IRQ-enabled after their timer heartbeat, can receive the reserved SGI, and
+  only update fixed atomic IPI counters in the IPI handler. VFS, PMM, broad
+  process scheduling, and reschedule/TLB IPI work remain gated off.
 - S3c preflight (2026-06-10): TLB shootdown now has a fixed request/ack
   generation protocol on top of the S3b SGI path. CPU0 can publish a shootdown
   request to discovered secondaries, send the reserved IPI, and wait for each
   target to run a local `tlbi vmalle1` and atomically acknowledge it while the
-  scheduler and EL0 gates remain CPU0-owned.
+  kernel scheduler remains CPU0-owned.
 - S3d preflight (2026-06-10): VM TLB invalidation sites now route through an
   active-CPU-mask facade. Process-owned mmap/munmap/mprotect, demand paging,
   COW, and fork/COW parent rewrites pass the S3a address-space CPU mask into
-  the S3c shootdown substrate; today that mask remains CPU0-only, but the page
-  table mutation boundary is now the future cross-CPU hook.
+  the S3c shootdown substrate; today that mask is limited to CPU0 plus the
+  explicitly started S2h secondary scheduler CPU, but the page-table mutation
+  boundary is now the future cross-CPU hook.
 - Implement a minimal IPI / SGI mechanism (or use GIC SGI) for "reschedule this CPU", "TLB invalidate range on these CPUs", etc.
 - When a page table change (munmap, mprotect, process exec/exit) happens on CPU A for an address space that may be active on CPU B, we must shoot down the TLB on B (or the relevant set of CPUs). Single-CPU `tlbi vmalle1` / `tlbi vae1` is no longer sufficient.
 - `address_space_switch` and the TTBR0 install path must be safe when the same AS can be on multiple CPUs (or when we migrate a process).

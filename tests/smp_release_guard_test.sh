@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smp_release_guard_test.sh - S1 guard: secondary release stays explicit.
+# smp_release_guard_test.sh - SMP guard: secondary release and S2 scheduling stay explicit.
 
 set -euo pipefail
 
@@ -87,9 +87,11 @@ for needle in \
   fi
 done
 
-if ! grep -q 'smpSetCurrentProcessForCurrentCpu(Int32(s))' "$PROCESS_SWIFT" ||
-   ! grep -q 'smpSetCurrentProcessForCurrentCpu(-1)' "$PROCESS_SWIFT"; then
-  echo "FAIL: S2a requires the EL0 scheduler loop to mirror currentProc into per-CPU state." >&2
+if ! grep -q 'private var currentProcByCpu = \[Int\]' "$PROCESS_SWIFT" ||
+   ! grep -q 'setCurrentProcessSlot(s)' "$PROCESS_SWIFT" ||
+   ! grep -q 'setCurrentProcessSlot(-1)' "$PROCESS_SWIFT" ||
+   ! grep -q 'smpSetCurrentProcessForCurrentCpu(Int32(slot))' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2 requires the EL0 scheduler loop to mirror per-CPU current process state." >&2
   exit 1
 fi
 
@@ -134,12 +136,16 @@ for needle in \
   'private var pDispatchCount = \[UInt64\]' \
   'private var pDispatchCpuMask = \[UInt64\]' \
   'private var pAddressSpaceCpuMask = \[UInt64\]' \
+  'private var pSchedulerQuiesced = \[Bool\]' \
   'private var processRunQueueHead = \[Int32\]' \
   'private var processRunQueueTail = \[Int32\]' \
   'private var processRunQueueEnqueueCount = \[UInt64\]' \
   'private var processRunQueueDispatchCount = \[UInt64\]' \
   'private var processDispatchTelemetryCount = \[UInt64\]' \
   'private var processAddressSpaceActivationCount = \[UInt64\]' \
+  'private var processSecondarySchedulerRunMask: UInt64 = 0' \
+  'private var processSecondarySchedulerActiveMask: UInt64 = 0' \
+  'private var processSecondarySchedulerStopMask: UInt64 = 0' \
   'private var lastPairDispatchTelemetryValid = false' \
   'private var lastPairDispatchCountA: UInt64 = 0' \
   'private var lastPairDispatchCountB: UInt64 = 0' \
@@ -160,13 +166,18 @@ for needle in \
   'processSecondaryEl0GateSelfTest' \
   'processSecondaryEl0GateHeldSelfTest' \
   'processAddressSpaceCpuMaskSelfTest' \
-  'processAddressSpaceCpuMaskNoSecondarySelfTest' \
+  'processAddressSpaceCpuMaskPostRunSelfTest' \
   'processAddressSpaceTlbFlushFacadeSelfTest' \
-  'processAddressSpaceTlbFlushNoSecondarySelfTest' \
+  'processAddressSpaceTlbFlushPostRunSelfTest' \
   'processRunQueueScaffoldSelfTest' \
   'processDormantSchedulerCpusSelfTest' \
   'processDispatchTelemetrySelfTest' \
   'processCoprocPairDispatchTelemetrySelfTest' \
+  'processMultiCpuSchedulerPostRunSelfTest' \
+  'processSecondarySchedulerService' \
+  'processSecondarySchedulerActiveForCurrentCpu' \
+  'processStartSecondaryScheduler' \
+  'processStopSecondaryScheduler' \
   'processRunQueueNoSecondaryExecutionSelfTest' \
   'processNoSecondarySchedulerDispatchSelfTest' \
   'processDispatchTelemetryNoSecondarySelfTest'; do
@@ -197,11 +208,10 @@ if [[ -z "$dispatch_record_line" || -z "$el0_switch_line" ||
   exit 1
 fi
 
-if ! grep -q 'processSecondaryEl0GateAllowsCpu(cpu)' "$PROCESS_SWIFT" ||
-   ! grep -q 'EL0 process dispatched on secondary before S2' "$PROCESS_SWIFT" ||
+if ! grep -q 'EL0 process dispatched on inactive CPU' "$PROCESS_SWIFT" ||
    ! grep -q 'EL0 process dispatch CPU mismatch' "$PROCESS_SWIFT" ||
    ! grep -q 'pDispatchCpuMask\[slot\]' "$PROCESS_SWIFT"; then
-  echo "FAIL: S2f/S2h dispatch telemetry must keep the secondary-EL0 gate and mismatch guard." >&2
+  echo "FAIL: S2 dispatch telemetry must reject inactive CPUs and home/dispatch mismatches." >&2
   exit 1
 fi
 
@@ -214,10 +224,10 @@ if [[ -z "$address_switch_line" || -z "$as_mask_line" || -z "$el0_switch_line" |
   exit 1
 fi
 
-if ! grep -q 'address space activated on secondary before S3' "$PROCESS_SWIFT" ||
+if ! grep -q 'address space activated on inactive CPU' "$PROCESS_SWIFT" ||
    ! grep -q 'address-space CPU mask dispatch mismatch' "$PROCESS_SWIFT" ||
    ! grep -q 'processAddressSpaceActivationCount\[Int(cpu)\]' "$PROCESS_SWIFT"; then
-  echo "FAIL: S3a address-space CPU mask telemetry must keep secondary and dispatch-mismatch guards." >&2
+  echo "FAIL: S3a address-space CPU mask telemetry must keep inactive-CPU and dispatch-mismatch guards." >&2
   exit 1
 fi
 
@@ -313,17 +323,18 @@ if [[ "$ready_assignment_count" != "1" ]]; then
   exit 1
 fi
 
-if ! grep -q 'cpu >= schedCtxCpuCount || !processSecondaryEl0GateAllowsCpu(cpu)' "$PROCESS_SWIFT" ||
-   ! grep -q 'processOnTick entered on non-owner CPU' "$PROCESS_SWIFT"; then
-  echo "FAIL: S2b/S2h process scheduler paths must panic when the secondary-EL0 gate is closed." >&2
+if ! grep -q 'cpu >= schedCtxCpuCount || !processCpuCanSchedule(cpu)' "$PROCESS_SWIFT" ||
+   ! grep -q 'processOnTick entered on inactive scheduler CPU' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2 process scheduler paths must panic if entered from an inactive scheduler CPU." >&2
   exit 1
 fi
 
 cpu0_timer_block="$(sed -n '/if interruptId == physicalTimerIrq && currentCpuId() == 0 {/,/} else if interruptId == uartIrqId {/p' "$MAIN_SWIFT")"
 if [[ -z "$cpu0_timer_block" ]] ||
    ! grep -q 'schedulerTick()' <<<"$cpu0_timer_block" ||
-   ! grep -q 'processOnTick(fromEL0: fromEL0)' <<<"$cpu0_timer_block"; then
-  echo "FAIL: S2b/S2c requires irqHandler to keep schedulerTick/processOnTick gated to CPU0." >&2
+   ! grep -q 'processOnTick(fromEL0: fromEL0)' <<<"$cpu0_timer_block" ||
+   ! grep -q 'processSecondarySchedulerActiveForCurrentCpu()' <<<"$cpu0_timer_block"; then
+  echo "FAIL: S2 requires irqHandler to keep kernel scheduler ticks on CPU0 and gate secondary EL0 ticks on active scheduler CPUs." >&2
   exit 1
 fi
 
@@ -423,29 +434,29 @@ if ! grep -q 'smpS2cKernelSchedulerReadinessSelfTest' "$SECONDARY_SWIFT" ||
   exit 1
 fi
 
-if ! grep -q 'S2d OK: process run queue scaffold ready' "$MAIN_SWIFT" ||
-   ! grep -q 'S2d OK: process run queue stayed CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S2d must log process run queue scaffold and CPU0-owned acceptance markers." >&2
+if ! grep -q 'S2d OK: process run queue scaffold ready' "$MAIN_SWIFT"; then
+  echo "FAIL: S2d must log process run queue scaffold readiness." >&2
   exit 1
 fi
-if ! grep -q 'S2e OK: dormant process scheduler CPUs published' "$MAIN_SWIFT" ||
-   ! grep -q 'S2e OK: secondary process scheduler contexts stayed dormant' "$MAIN_SWIFT"; then
-  echo "FAIL: S2e must log dormant process scheduler publication and no-secondary-dispatch markers." >&2
+if ! grep -q 'S2e OK: dormant process scheduler CPUs published' "$MAIN_SWIFT"; then
+  echo "FAIL: S2e must log dormant process scheduler publication." >&2
   exit 1
 fi
-if ! grep -q 'S2f OK: process dispatch telemetry ready' "$MAIN_SWIFT" ||
-   ! grep -q 'S2f OK: process dispatch telemetry stayed CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S2f must log process dispatch telemetry readiness and CPU0-owned markers." >&2
+if ! grep -q 'S2f OK: process dispatch telemetry ready' "$MAIN_SWIFT"; then
+  echo "FAIL: S2f must log process dispatch telemetry readiness." >&2
   exit 1
 fi
 if ! grep -q 'S2h OK: secondary EL0 gate ready' "$MAIN_SWIFT" ||
-   ! grep -q 'S2h OK: secondary EL0 gate held CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S2h must log secondary EL0 gate readiness and held markers." >&2
+   ! grep -q 'S2h OK: coproc pair dispatched across scheduler CPUs' "$MAIN_SWIFT" ||
+   ! grep -q 'S2h OK: coproc pair dispatch CPU0 fallback' "$MAIN_SWIFT" ||
+   ! grep -q 'S2h OK: process scheduler quiesced after multi-CPU dispatch' "$MAIN_SWIFT" ||
+   ! grep -q 'S2h OK: secondary EL0 gate closed after restricted dispatch' "$MAIN_SWIFT"; then
+  echo "FAIL: S2h must log gate readiness, restricted coproc dispatch, quiescence, and gate closure." >&2
   exit 1
 fi
 if ! grep -q 'S3a OK: address-space CPU mask scaffold ready' "$MAIN_SWIFT" ||
-   ! grep -q 'S3a OK: address-space CPU masks stayed CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S3a must log address-space CPU mask readiness and CPU0-owned markers." >&2
+   ! grep -q 'S3a OK: address-space CPU masks matched dispatch CPUs' "$MAIN_SWIFT"; then
+  echo "FAIL: S3a must log address-space CPU mask readiness and post-run dispatch matching." >&2
   exit 1
 fi
 if ! grep -q 'S3b OK: GIC SGI IPI substrate ready' "$MAIN_SWIFT" ||
@@ -459,8 +470,8 @@ if ! grep -q 'S3c OK: TLB shootdown IPI scaffold ready' "$MAIN_SWIFT" ||
   exit 1
 fi
 if ! grep -q 'S3d OK: address-space TLB flush facade ready' "$MAIN_SWIFT" ||
-   ! grep -q 'S3d OK: address-space TLB flush stayed CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S3d must log address-space TLB flush facade readiness and CPU0-owned markers." >&2
+   ! grep -q 'S3d OK: address-space TLB flush matched dispatch CPUs' "$MAIN_SWIFT"; then
+  echo "FAIL: S3d must log address-space TLB flush facade readiness and post-run dispatch matching." >&2
   exit 1
 fi
 if ! grep -q 'S4a OK: PMM lock boundary ready' "$MAIN_SWIFT" ||
@@ -476,10 +487,6 @@ fi
 if ! grep -q 'S4c OK: kernel heap lock boundary ready' "$MAIN_SWIFT" ||
    ! grep -q 'S4c OK: kernel heap lock boundary stayed balanced' "$MAIN_SWIFT"; then
   echo "FAIL: S4c must log kernel heap lock boundary readiness and balanced markers." >&2
-  exit 1
-fi
-if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
-  echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
 fi
 
@@ -559,19 +566,16 @@ concurrent_demo_line="$(rg -n 'runConcurrentDemo\(\)' "$MAIN_SWIFT" | tail -1 | 
 s2g_pair_line="$(rg -n 'processCoprocPairDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 fork_demo_line="$(rg -n '^[[:space:]]*runForkDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 runps_line="$(rg -n '^[[:space:]]*runPsDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s2d_no_secondary_line="$(rg -n 'processRunQueueNoSecondaryExecutionSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s2e_no_secondary_line="$(rg -n 'processNoSecondarySchedulerDispatchSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s2f_no_secondary_line="$(rg -n 'processDispatchTelemetryNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s2h_no_secondary_line="$(rg -n 'processSecondaryEl0GateHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s3a_no_secondary_line="$(rg -n 'processAddressSpaceCpuMaskNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s3b_no_secondary_line="$(rg -n 'smpS3bIpiSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s3c_no_secondary_line="$(rg -n 'smpS3cTlbShootdownSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s3d_no_secondary_line="$(rg -n 'processAddressSpaceTlbFlushNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s4a_no_secondary_line="$(rg -n 'pmmS4aLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
-s4a_smp_no_secondary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s4b_no_secondary_line="$(rg -n 'vfsS4bLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s4c_no_secondary_line="$(rg -n 'swiftos_heap_lock_boundary_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
-s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2_quiesced_line="$(rg -n 'processMultiCpuSchedulerPostRunSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2h_gate_closed_line="$(rg -n 'processSecondaryEl0GateHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3a_postrun_line="$(rg -n 'processAddressSpaceCpuMaskPostRunSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3b_boundary_line="$(rg -n 'smpS3bIpiSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3c_boundary_line="$(rg -n 'smpS3cTlbShootdownSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3d_postrun_line="$(rg -n 'processAddressSpaceTlbFlushPostRunSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4a_lock_boundary_line="$(rg -n 'pmmS4aLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
+s4a_stress_boundary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4b_lock_boundary_line="$(rg -n 'vfsS4bLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4c_lock_boundary_line="$(rg -n 'swiftos_heap_lock_boundary_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
       "$proc_line" -ge "$s2a_line" ]]; then
@@ -645,71 +649,50 @@ if [[ -z "$concurrent_demo_line" || -z "$s2g_pair_line" || -z "$fork_demo_line" 
   echo "FAIL: S2g coproc telemetry guard must run immediately after the concurrent EL0 demo and before later demos can reuse slots." >&2
   exit 1
 fi
-if [[ -z "$runps_line" || -z "$s2d_no_secondary_line" || -z "$s2b_no_secondary_line" ||
-      "$runps_line" -ge "$s2d_no_secondary_line" ||
-      "$s2d_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S2d run queue CPU0-owned guard must run after Swift ps and before S2b no-secondary-EL0." >&2
+if [[ -z "$runps_line" || -z "$s2_quiesced_line" ||
+      "$runps_line" -ge "$s2_quiesced_line" ]]; then
+  echo "FAIL: S2 multi-CPU scheduler quiescence guard must run after Swift ps." >&2
   exit 1
 fi
-if [[ -z "$s2e_no_secondary_line" ||
-      "$s2d_no_secondary_line" -ge "$s2e_no_secondary_line" ||
-      "$s2e_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S2e dormant scheduler guard must run after S2d and before S2b no-secondary-EL0." >&2
+if [[ -z "$s2h_gate_closed_line" ||
+      "$s2_quiesced_line" -ge "$s2h_gate_closed_line" ]]; then
+  echo "FAIL: S2h secondary EL0 gate guard must run after scheduler quiescence." >&2
   exit 1
 fi
-if [[ -z "$s2f_no_secondary_line" ||
-      "$s2e_no_secondary_line" -ge "$s2f_no_secondary_line" ||
-      "$s2f_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S2f dispatch telemetry guard must run after S2e and before S2b no-secondary-EL0." >&2
+if [[ -z "$s3a_postrun_line" ||
+      "$s2h_gate_closed_line" -ge "$s3a_postrun_line" ]]; then
+  echo "FAIL: S3a address-space CPU mask guard must run after S2h gate closure." >&2
   exit 1
 fi
-if [[ -z "$s2h_no_secondary_line" ||
-      "$s2f_no_secondary_line" -ge "$s2h_no_secondary_line" ||
-      "$s2h_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S2h secondary EL0 gate guard must run after S2f and before S2b no-secondary-EL0." >&2
+if [[ -z "$s3b_boundary_line" ||
+      "$s3a_postrun_line" -ge "$s3b_boundary_line" ]]; then
+  echo "FAIL: S3b IPI scheduler-boundary guard must run after S3a post-run checks." >&2
   exit 1
 fi
-if [[ -z "$s3a_no_secondary_line" ||
-      "$s2h_no_secondary_line" -ge "$s3a_no_secondary_line" ||
-      "$s3a_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S3a address-space CPU mask guard must run after S2h and before S2b no-secondary-EL0." >&2
+if [[ -z "$s3c_boundary_line" ||
+      "$s3b_boundary_line" -ge "$s3c_boundary_line" ]]; then
+  echo "FAIL: S3c TLB shootdown scheduler-boundary guard must run after S3b." >&2
   exit 1
 fi
-if [[ -z "$s3b_no_secondary_line" ||
-      "$s3a_no_secondary_line" -ge "$s3b_no_secondary_line" ||
-      "$s3b_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S3b IPI scheduler-boundary guard must run after S3a and before S2b no-secondary-EL0." >&2
+if [[ -z "$s3d_postrun_line" ||
+      "$s3c_boundary_line" -ge "$s3d_postrun_line" ]]; then
+  echo "FAIL: S3d address-space TLB flush guard must run after S3c." >&2
   exit 1
 fi
-if [[ -z "$s3c_no_secondary_line" ||
-      "$s3b_no_secondary_line" -ge "$s3c_no_secondary_line" ||
-      "$s3c_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S3c TLB shootdown scheduler-boundary guard must run after S3b and before S2b no-secondary-EL0." >&2
+if [[ -z "$s4a_lock_boundary_line" || -z "$s4a_stress_boundary_line" ||
+      "$s3d_postrun_line" -ge "$s4a_lock_boundary_line" ||
+      "$s4a_lock_boundary_line" -ge "$s4a_stress_boundary_line" ]]; then
+  echo "FAIL: S4a PMM lock/stress guards must run after S3d." >&2
   exit 1
 fi
-if [[ -z "$s3d_no_secondary_line" ||
-      "$s3c_no_secondary_line" -ge "$s3d_no_secondary_line" ||
-      "$s3d_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S3d address-space TLB flush guard must run after S3c and before S2b no-secondary-EL0." >&2
+if [[ -z "$s4b_lock_boundary_line" ||
+      "$s4a_stress_boundary_line" -ge "$s4b_lock_boundary_line" ]]; then
+  echo "FAIL: S4b VFS lock guard must run after S4a." >&2
   exit 1
 fi
-if [[ -z "$s4a_no_secondary_line" || -z "$s4a_smp_no_secondary_line" ||
-      "$s3d_no_secondary_line" -ge "$s4a_no_secondary_line" ||
-      "$s4a_no_secondary_line" -ge "$s4a_smp_no_secondary_line" ||
-      "$s4a_smp_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S4a PMM lock/stress guards must run after S3d and before S2b no-secondary-EL0." >&2
-  exit 1
-fi
-if [[ -z "$s4b_no_secondary_line" ||
-      "$s4a_smp_no_secondary_line" -ge "$s4b_no_secondary_line" ||
-      "$s4b_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S4b VFS lock guard must run after S4a and before S2b no-secondary-EL0." >&2
-  exit 1
-fi
-if [[ -z "$s4c_no_secondary_line" ||
-      "$s4b_no_secondary_line" -ge "$s4c_no_secondary_line" ||
-      "$s4c_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
-  echo "FAIL: S4c kernel heap lock guard must run after S4b and before S2b no-secondary-EL0." >&2
+if [[ -z "$s4c_lock_boundary_line" ||
+      "$s4b_lock_boundary_line" -ge "$s4c_lock_boundary_line" ]]; then
+  echo "FAIL: S4c kernel heap lock guard must run after S4b." >&2
   exit 1
 fi
 
@@ -749,12 +732,34 @@ if [[ -z "$pmm_stress_handler_block" ]] ||
   exit 1
 fi
 
-secondary_irq_park_block="$(sed -n '/enable_irq()/,$p' "$SECONDARY_SWIFT")"
-if [[ -z "$secondary_irq_park_block" ]] ||
-   ! grep -q 'while true { wfi() }' <<<"$secondary_irq_park_block" ||
-   grep -q 'disable_irq()' <<<"$secondary_irq_park_block"; then
-  echo "FAIL: S3b parked secondaries must remain IRQ-enabled for SGI/IPI delivery." >&2
+s3b_boundary_block="$(sed -n '/^func smpS3bIpiSchedulerBoundarySelfTest/,/^}/p' "$SECONDARY_SWIFT")"
+if [[ -z "$s3b_boundary_block" ]] ||
+   ! grep -q 'smpS2cNoSecondaryKernelSchedulerExecution()' <<<"$s3b_boundary_block"; then
+  echo "FAIL: S3b post-run boundary must allow restricted S2h EL0 switches while still rejecting secondary kernel scheduler execution." >&2
   exit 1
 fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b/S4c release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB/PMM/VFS/heap boundary)"
+s3c_boundary_block="$(sed -n '/^func smpS3cTlbShootdownSchedulerBoundarySelfTest/,/^}/p' "$SECONDARY_SWIFT")"
+if [[ -z "$s3c_boundary_block" ]] ||
+   ! grep -q 'smpS2cNoSecondaryKernelSchedulerExecution()' <<<"$s3c_boundary_block"; then
+  echo "FAIL: S3c post-run boundary must allow restricted S2h EL0 switches while still rejecting secondary kernel scheduler execution." >&2
+  exit 1
+fi
+
+s4a_boundary_block="$(sed -n '/^func smpS4aPmmStressSchedulerBoundarySelfTest/,/^}/p' "$SECONDARY_SWIFT")"
+if [[ -z "$s4a_boundary_block" ]] ||
+   ! grep -q 'smpS2cNoSecondaryKernelSchedulerExecution()' <<<"$s4a_boundary_block"; then
+  echo "FAIL: S4a post-run boundary must allow restricted S2h EL0 switches while still rejecting secondary kernel scheduler execution." >&2
+  exit 1
+fi
+
+secondary_irq_park_block="$(sed -n '/enable_irq()/,$p' "$SECONDARY_SWIFT")"
+if [[ -z "$secondary_irq_park_block" ]] ||
+   ! grep -q 'processSecondarySchedulerService()' <<<"$secondary_irq_park_block" ||
+   ! grep -q 'enable_irq()' <<<"$secondary_irq_park_block" ||
+   ! grep -q 'wfi()' <<<"$secondary_irq_park_block"; then
+  echo "FAIL: S3b parked secondaries must poll the restricted S2h scheduler hook and sleep IRQ-enabled for SGI/IPI delivery." >&2
+  exit 1
+fi
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4c release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap boundary)"

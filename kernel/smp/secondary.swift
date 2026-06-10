@@ -321,18 +321,18 @@ func smpRequestPmmStressForCpuMask(_ requestedMask: UInt64) -> Bool {
 
 func smpS3bIpiSchedulerBoundarySelfTest() -> Bool {
     if smpIpiProbeDeliveredMask() != smpIpiProbeTargetMask() { return false }
-    return smpSecondariesRemainSchedulerIdle()
+    return smpS2cNoSecondaryKernelSchedulerExecution()
 }
 
 func smpS3cTlbShootdownSchedulerBoundarySelfTest() -> Bool {
     if smpTlbShootdownProbeAckMask() != smpTlbShootdownProbeTargetMask() { return false }
-    return smpSecondariesRemainSchedulerIdle()
+    return smpS2cNoSecondaryKernelSchedulerExecution()
 }
 
 func smpS4aPmmStressSchedulerBoundarySelfTest() -> Bool {
     if smpPmmStressProbeAckMask() != smpPmmStressProbeTargetMask() { return false }
     if smpPmmStressProbeFailureMask() != 0 { return false }
-    return smpSecondariesRemainSchedulerIdle()
+    return smpS2cNoSecondaryKernelSchedulerExecution()
 }
 
 private func smpLogS2ReadinessMarkers() {
@@ -481,5 +481,11 @@ func smpSecondaryMain(_ _: UInt) {
           read_cntpct_el0() &- startCounter < timeout {
         wfi()
     }
-    while true { wfi() }
+    disable_irq()
+    while true {
+        processSecondarySchedulerService()
+        enable_irq()
+        wfi()
+        disable_irq()
+    }
 }

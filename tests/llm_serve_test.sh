@@ -61,6 +61,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${LLMD_CHAR_DELAY:-0.02}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${LLMD_SEND_DELAY:-0.12}"
+}
+
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
   -global virtio-mmio.force-legacy=false)
@@ -77,15 +87,15 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "login prompt did not appear"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf '/bin/llmd\n' >&3
+send_line '/bin/llmd'
 # Startup parses the 32000-entry tokenizer into the lookup table under TCG.
 await "llmd: serving on 8080" 240 || drive_fail "llmd never reported serving"
 

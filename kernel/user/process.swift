@@ -153,6 +153,7 @@ private var pLastDispatchCpu = [UInt32](repeating: unassignedCpu, count: maxProc
 private var pDispatchCount = [UInt64](repeating: 0, count: maxProc)
 private var pDispatchCpuMask = [UInt64](repeating: 0, count: maxProc)
 private var pAddressSpaceCpuMask = [UInt64](repeating: 0, count: maxProc)
+private var pSchedulerQuiesced = [Bool](repeating: true, count: maxProc)
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
@@ -161,6 +162,9 @@ private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: process
 private var processDispatchTelemetryCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processAddressSpaceActivationCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueCpuCount: UInt32 = 0
+private var processSecondarySchedulerRunMask: UInt64 = 0
+private var processSecondarySchedulerActiveMask: UInt64 = 0
+private var processSecondarySchedulerStopMask: UInt64 = 0
 
 private var lastPairDispatchTelemetryValid = false
 private var lastPairDispatchCountA: UInt64 = 0
@@ -170,7 +174,7 @@ private var lastPairDispatchCpuMaskB: UInt64 = 0
 private var lastPairLastDispatchCpuA: UInt32 = unassignedCpu
 private var lastPairLastDispatchCpuB: UInt32 = unassignedCpu
 
-private var currentProc = -1 // running slot, or -1 while in the scheduler
+private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
 
 func processInit() {
@@ -185,6 +189,9 @@ func processInit() {
     schedCtx = s.bindMemory(to: CPUContext.self, capacity: Int(cpuCount))
     schedCtxCpuCount = cpuCount
     processRunQueueCpuCount = cpuCount
+    processAtomicStore(&processSecondarySchedulerRunMask, 0)
+    processAtomicStore(&processSecondarySchedulerActiveMask, 0)
+    processAtomicStore(&processSecondarySchedulerStopMask, 0)
     var cpu: UInt32 = 0
     while cpu < cpuCount {
         schedCtx[Int(cpu)] = CPUContext()
@@ -211,6 +218,10 @@ func processInit() {
         pDispatchCount[i] = 0
         pDispatchCpuMask[i] = 0
         pAddressSpaceCpuMask[i] = 0
+        pSchedulerQuiesced[i] = true
+    }
+    for cpuSlot in 0..<processSchedulerCpuSlots {
+        currentProcByCpu[cpuSlot] = -1
     }
     lastPairDispatchTelemetryValid = false
     lastPairDispatchCountA = 0
@@ -221,10 +232,131 @@ func processInit() {
     lastPairLastDispatchCpuB = unassignedCpu
 }
 
+private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
+    withUnsafeMutablePointer(to: &value) { smpAtomicLoad($0) }
+}
+
+private func processAtomicStore(_ value: inout UInt64, _ newValue: UInt64) {
+    withUnsafeMutablePointer(to: &value) { smpAtomicStore($0, newValue) }
+}
+
+private func processCpuBit(_ cpu: UInt32) -> UInt64 {
+    if cpu >= 64 { return 0 }
+    return UInt64(1) << Int(cpu)
+}
+
+private func processCurrentCpuIndex() -> Int {
+    let cpu = currentCpuId()
+    if cpu >= UInt32(processSchedulerCpuSlots) {
+        uartPuts("panic: invalid process CPU index\n")
+        while true {}
+    }
+    return Int(cpu)
+}
+
+private func currentProcessSlot() -> Int {
+    currentProcByCpu[processCurrentCpuIndex()]
+}
+
+private func setCurrentProcessSlot(_ slot: Int) {
+    currentProcByCpu[processCurrentCpuIndex()] = slot
+    smpSetCurrentProcessForCurrentCpu(Int32(slot))
+}
+
+private func processSecondaryRunMask() -> UInt64 {
+    processAtomicLoad(&processSecondarySchedulerRunMask)
+}
+
+private func processSecondaryActiveMask() -> UInt64 {
+    processAtomicLoad(&processSecondarySchedulerActiveMask)
+}
+
+private func processSecondaryStopMask() -> UInt64 {
+    processAtomicLoad(&processSecondarySchedulerStopMask)
+}
+
+private func processCpuCanSchedule(_ cpu: UInt32) -> Bool {
+    if cpu == 0 { return processValidSchedulerCpu(cpu) }
+    if !processValidSchedulerCpu(cpu) { return false }
+    return (processSecondaryRunMask() & processCpuBit(cpu)) != 0
+}
+
+private func processFirstSecondarySchedulerCpu() -> UInt32 {
+    if platform.cpuCount < 2 { return unassignedCpu }
+    var i: UInt32 = 1
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu != 0 && processValidSchedulerCpu(cpu) {
+            return cpu
+        }
+        i += 1
+    }
+    return unassignedCpu
+}
+
+private func processWaitForSecondaryActive(_ cpu: UInt32, active: Bool) -> Bool {
+    let bit = processCpuBit(cpu)
+    let start = read_cntpct_el0()
+    var timeout = read_cntfrq_el0() * 2
+    if timeout == 0 { timeout = 100_000_000 }
+    while read_cntpct_el0() &- start < timeout {
+        let isActive = (processSecondaryActiveMask() & bit) != 0
+        if isActive == active { return true }
+        cpu_sev()
+    }
+    return false
+}
+
+private func processStartSecondaryScheduler(cpu: UInt32) {
+    if cpu == 0 || !processValidSchedulerCpu(cpu) { return }
+    let bit = processCpuBit(cpu)
+    processAtomicStore(&processSecondarySchedulerStopMask, processSecondaryStopMask() & ~bit)
+    processAtomicStore(&processSecondarySchedulerRunMask, processSecondaryRunMask() | bit)
+    smpStoreBarrier()
+    cpu_sev()
+    if !processWaitForSecondaryActive(cpu, active: true) {
+        uartPuts("panic: secondary EL0 scheduler did not start\n")
+        while true {}
+    }
+}
+
+private func processStopSecondaryScheduler(cpu: UInt32) {
+    if cpu == 0 || !processValidSchedulerCpu(cpu) { return }
+    let bit = processCpuBit(cpu)
+    processAtomicStore(&processSecondarySchedulerStopMask, processSecondaryStopMask() | bit)
+    smpStoreBarrier()
+    cpu_sev()
+    if !processWaitForSecondaryActive(cpu, active: false) {
+        uartPuts("panic: secondary EL0 scheduler did not stop\n")
+        while true {}
+    }
+    processAtomicStore(&processSecondarySchedulerRunMask, processSecondaryRunMask() & ~bit)
+    processAtomicStore(&processSecondarySchedulerStopMask, processSecondaryStopMask() & ~bit)
+}
+
+func processSecondarySchedulerActiveForCurrentCpu() -> Bool {
+    let cpu = currentCpuId()
+    if cpu == 0 || !processValidSchedulerCpu(cpu) { return false }
+    return (processSecondaryActiveMask() & processCpuBit(cpu)) != 0
+}
+
+func processSecondarySchedulerService() {
+    let cpu = currentCpuId()
+    if cpu == 0 || !processValidSchedulerCpu(cpu) { return }
+    let bit = processCpuBit(cpu)
+    if (processSecondaryRunMask() & bit) == 0 { return }
+
+    processAtomicStore(&processSecondarySchedulerActiveMask, processSecondaryActiveMask() | bit)
+    smpStoreBarrier()
+    schedule(until: { (processSecondaryStopMask() & bit) != 0 })
+    processAtomicStore(&processSecondarySchedulerActiveMask, processSecondaryActiveMask() & ~bit)
+    smpStoreBarrier()
+}
+
 private func processSchedulerCpuIndex() -> Int {
     let cpu = currentCpuId()
-    if cpu >= schedCtxCpuCount || !processSecondaryEl0GateAllowsCpu(cpu) {
-        uartPuts("panic: EL0 process scheduler entered on non-owner CPU\n")
+    if cpu >= schedCtxCpuCount || !processCpuCanSchedule(cpu) {
+        uartPuts("panic: EL0 process scheduler entered on inactive CPU\n")
         while true {}
     }
     return Int(cpu)
@@ -273,25 +405,23 @@ private func processValidSchedulerCpu(_ cpu: UInt32) -> Bool {
 }
 
 private func processSecondaryEl0GateEnabled() -> Bool {
-    false
+    processSecondaryRunMask() != 0
 }
 
 private func processSecondaryEl0GateAllowsCpu(_ cpu: UInt32) -> Bool {
-    processValidSchedulerCpu(cpu) && (cpu == 0 || processSecondaryEl0GateEnabled())
+    processCpuCanSchedule(cpu)
 }
 
 private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
-    if currentCpuId() != cpu { return }
     let idx = Int(cpu)
-    smpSetProcessRunQueueForCurrentCpu(head: processRunQueueHead[idx],
-                                       tail: processRunQueueTail[idx])
+    _ = smpSetProcessRunQueueForCpu(cpu, head: processRunQueueHead[idx],
+                                    tail: processRunQueueTail[idx])
 }
 
 private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
     if slot < 0 || slot >= maxProc { return unassignedCpu }
-    // S2h keeps the placement policy behind an explicit gate. Today the gate is
-    // closed, so every runnable EL0 process remains CPU0-owned.
-    if !processSecondaryEl0GateEnabled() { return 0 }
+    // Default placement remains CPU0. The restricted S2h coproc path passes an
+    // explicit home CPU while its secondary scheduler run mask is open.
     return 0
 }
 
@@ -311,8 +441,8 @@ private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
         uartPuts("panic: invalid EL0 process dispatch telemetry target\n")
         while true {}
     }
-    if !processSecondaryEl0GateAllowsCpu(cpu) {
-        uartPuts("panic: EL0 process dispatched on secondary before S2\n")
+    if !processCpuCanSchedule(cpu) {
+        uartPuts("panic: EL0 process dispatched on inactive CPU\n")
         while true {}
     }
     if pHomeCpu[slot] != cpu {
@@ -330,8 +460,8 @@ private func recordProcessAddressSpaceActivation(_ slot: Int, on cpu: UInt32) {
         uartPuts("panic: invalid address-space CPU mask target\n")
         while true {}
     }
-    if !processSecondaryEl0GateAllowsCpu(cpu) {
-        uartPuts("panic: address space activated on secondary before S3\n")
+    if !processCpuCanSchedule(cpu) {
+        uartPuts("panic: address space activated on inactive CPU\n")
         while true {}
     }
     if pHomeCpu[slot] != cpu || pLastDispatchCpu[slot] != cpu {
@@ -347,15 +477,16 @@ private func processAddressSpaceActiveCpuMaskForSlot(_ slot: Int) -> UInt64 {
     if slot < 0 || slot >= maxProc { return currentMask }
 
     var mask = pAddressSpaceCpuMask[slot]
-    if slot == currentProc {
+    if slot == currentProcessSlot() {
         mask |= currentMask
     }
     return mask == 0 ? currentMask : mask
 }
 
 func processCurrentAddressSpaceActiveCpuMask() -> UInt64 {
-    if currentProc < 0 { return addressSpaceCurrentCpuTlbMask() }
-    return processAddressSpaceActiveCpuMaskForSlot(currentProc)
+    let current = currentProcessSlot()
+    if current < 0 { return addressSpaceCurrentCpuTlbMask() }
+    return processAddressSpaceActiveCpuMaskForSlot(current)
 }
 
 private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
@@ -377,8 +508,8 @@ private func markProcessReady(_ slot: Int, cpu: UInt32) {
         uartPuts("panic: invalid EL0 process run queue target\n")
         while true {}
     }
-    if !processSecondaryEl0GateAllowsCpu(cpu) {
-        uartPuts("panic: EL0 process scheduled on secondary before S2\n")
+    if !processCpuCanSchedule(cpu) {
+        uartPuts("panic: EL0 process scheduled on inactive CPU\n")
         while true {}
     }
     pState[slot] = pReady
@@ -507,24 +638,15 @@ func processSecondaryEl0GateSelfTest() -> Bool {
 
 func processSecondaryEl0GateHeldSelfTest() -> Bool {
     if !processSecondaryEl0GateSelfTest() { return false }
-    let primaryMask = UInt64(1)
-    for slot in 0..<maxProc {
-        if (pDispatchCpuMask[slot] & ~primaryMask) != 0 { return false }
-        if pLastDispatchCpu[slot] != unassignedCpu && pLastDispatchCpu[slot] != 0 {
-            return false
-        }
-        if pHomeCpu[slot] != unassignedCpu && pHomeCpu[slot] != 0 {
-            return false
-        }
-    }
+    if processSecondaryRunMask() != 0 { return false }
+    if processSecondaryActiveMask() != 0 { return false }
+    if processSecondaryStopMask() != 0 { return false }
 
-    var cpu: UInt32 = 1
+    var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
         let idx = Int(cpu)
-        if processRunQueueEnqueueCount[idx] != 0 { return false }
-        if processRunQueueDispatchCount[idx] != 0 { return false }
-        if processDispatchTelemetryCount[idx] != 0 { return false }
-        if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        if processRunQueueHead[idx] != noProcessSlot { return false }
+        if processRunQueueTail[idx] != noProcessSlot { return false }
         if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
         cpu += 1
     }
@@ -545,26 +667,38 @@ func processAddressSpaceCpuMaskSelfTest() -> Bool {
     return true
 }
 
-func processAddressSpaceCpuMaskNoSecondarySelfTest() -> Bool {
+func processAddressSpaceCpuMaskPostRunSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
-    let primaryIdx = Int(primary)
-    if processAddressSpaceActivationCount[primaryIdx] == 0 { return false }
-    if processAddressSpaceActivationCount[primaryIdx] != processDispatchTelemetryCount[primaryIdx] {
-        return false
-    }
-    let primaryMask = UInt64(1) << Int(primary)
-    for slot in 0..<maxProc {
-        if (pAddressSpaceCpuMask[slot] & ~primaryMask) != 0 { return false }
-    }
 
+    var sawPrimaryActivation = false
+    var sawSecondaryActivation = false
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
         let idx = Int(cpu)
-        if cpu != primary && processAddressSpaceActivationCount[idx] != 0 {
+        if processAddressSpaceActivationCount[idx] != processDispatchTelemetryCount[idx] {
             return false
         }
+        if cpu >= platform.cpuCount && processAddressSpaceActivationCount[idx] != 0 {
+            return false
+        }
+        if cpu == primary {
+            sawPrimaryActivation = processAddressSpaceActivationCount[idx] != 0
+        } else if processAddressSpaceActivationCount[idx] != 0 {
+            sawSecondaryActivation = true
+            if smpPerCpuEl0SwitchCount(cpu) == 0 { return false }
+        }
         cpu += 1
+    }
+    if !sawPrimaryActivation { return false }
+    if platform.cpuCount > 1 && !sawSecondaryActivation { return false }
+
+    for slot in 0..<maxProc {
+        if pState[slot] == pUnused {
+            if pAddressSpaceCpuMask[slot] != 0 { return false }
+        } else if (pAddressSpaceCpuMask[slot] & ~pDispatchCpuMask[slot]) != 0 {
+            return false
+        }
     }
     return true
 }
@@ -574,20 +708,69 @@ func processCoprocPairDispatchTelemetrySelfTest() -> Bool {
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
     if !lastPairDispatchTelemetryValid { return false }
     if lastPairDispatchCountA == 0 || lastPairDispatchCountB == 0 { return false }
-    if lastPairLastDispatchCpuA != primary { return false }
-    if lastPairLastDispatchCpuB != primary { return false }
     let primaryMask = UInt64(1) << Int(primary)
-    if lastPairDispatchCpuMaskA != primaryMask { return false }
-    if lastPairDispatchCpuMaskB != primaryMask { return false }
+    let secondary = processFirstSecondarySchedulerCpu()
+    if secondary == unassignedCpu {
+        if lastPairLastDispatchCpuA != primary { return false }
+        if lastPairLastDispatchCpuB != primary { return false }
+        if lastPairDispatchCpuMaskA != primaryMask { return false }
+        if lastPairDispatchCpuMaskB != primaryMask { return false }
+    } else {
+        let secondaryMask = UInt64(1) << Int(secondary)
+        let combined = lastPairDispatchCpuMaskA | lastPairDispatchCpuMaskB
+        if (combined & primaryMask) == 0 { return false }
+        if (combined & secondaryMask) == 0 { return false }
+        if lastPairDispatchCpuMaskA == lastPairDispatchCpuMaskB { return false }
+        if lastPairLastDispatchCpuA != primary && lastPairLastDispatchCpuA != secondary {
+            return false
+        }
+        if lastPairLastDispatchCpuB != primary && lastPairLastDispatchCpuB != secondary {
+            return false
+        }
+        if processDispatchTelemetryCount[Int(secondary)] == 0 { return false }
+        if smpPerCpuEl0SwitchCount(secondary) == 0 { return false }
+        if (processSecondaryRunMask() & secondaryMask) != 0 { return false }
+        if (processSecondaryActiveMask() & secondaryMask) != 0 { return false }
+    }
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
-        if cpu != primary {
-            if processDispatchTelemetryCount[Int(cpu)] != 0 { return false }
-            if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        if platform.cpuCount == 1 || cpu >= platform.cpuCount {
+            if cpu != primary {
+                if processDispatchTelemetryCount[Int(cpu)] != 0 { return false }
+                if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+            }
         }
         cpu += 1
     }
     return true
+}
+
+func processMultiCpuSchedulerPostRunSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    if processRunQueueEnqueueCount[Int(primary)] == 0 { return false }
+    if processRunQueueDispatchCount[Int(primary)] == 0 { return false }
+    if processDispatchTelemetryCount[Int(primary)] == 0 { return false }
+    if processDispatchTelemetryCount[Int(primary)] != smpPerCpuEl0SwitchCount(primary) {
+        return false
+    }
+    if processSecondaryRunMask() != 0 { return false }
+    if processSecondaryActiveMask() != 0 { return false }
+
+    var sawSecondaryDispatch = false
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueHead[idx] != noProcessSlot { return false }
+        if processRunQueueTail[idx] != noProcessSlot { return false }
+        if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+        if cpu != primary && processDispatchTelemetryCount[idx] != 0 {
+            sawSecondaryDispatch = true
+            if smpPerCpuEl0SwitchCount(cpu) == 0 { return false }
+        }
+        cpu += 1
+    }
+    return platform.cpuCount > 1 ? sawSecondaryDispatch : true
 }
 
 func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
@@ -618,17 +801,16 @@ func processAddressSpaceTlbFlushFacadeSelfTest() -> Bool {
     return processCurrentAddressSpaceActiveCpuMask() == addressSpaceCurrentCpuTlbMask()
 }
 
-func processAddressSpaceTlbFlushNoSecondarySelfTest() -> Bool {
+func processAddressSpaceTlbFlushPostRunSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
-    let primaryMask = UInt64(1) << Int(primary)
-    if (processCurrentAddressSpaceActiveCpuMask() & ~primaryMask) != 0 { return false }
     for slot in 0..<maxProc {
-        if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~primaryMask) != 0 {
+        if pState[slot] == pUnused { continue }
+        if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~pDispatchCpuMask[slot]) != 0 {
             return false
         }
     }
-    return processAddressSpaceCpuMaskNoSecondarySelfTest()
+    return processAddressSpaceCpuMaskPostRunSelfTest()
 }
 
 func processNoSecondarySchedulerDispatchSelfTest() -> Bool {
@@ -691,12 +873,13 @@ func processDispatchTelemetryNoSecondarySelfTest() -> Bool {
     return true
 }
 
-func processIsActive() -> Bool { currentProc >= 0 }
+func processIsActive() -> Bool { currentProcessSlot() >= 0 }
 func processLastKilledBySignal() -> Bool { lastReapedKilled }
 func processCurrentAddressSpace() -> UInt {
-    currentProc >= 0 ? pTtbr0[currentProc] : 0
+    let current = currentProcessSlot()
+    return current >= 0 ? pTtbr0[current] : 0
 }
-func processCurrentSlot() -> Int { currentProc }
+func processCurrentSlot() -> Int { currentProcessSlot() }
 
 /// Pack argv into a kernel buffer as NUL-separated strings ("a\0b\0c\0").
 /// Returns (buffer address, total length, argc). Heap-allocated; never freed.
@@ -715,7 +898,7 @@ func packArgs(_ args: [StaticString]) -> (UInt, UInt, Int) {
 }
 
 private func allocSlot() -> Int {
-    for i in 0..<maxProc where pState[i] == pUnused { return i }
+    for i in 0..<maxProc where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
     return -1
 }
 
@@ -772,7 +955,8 @@ private func copyProcessSecurity(from parent: Int, to child: Int) {
 // `.explicit` installs only the provided HandleSpec vector.
 private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
                            argc: Int, parent: Int, inherit: HandleInheritance = .all,
-                           inheritSpecsVA: UInt = 0, inheritSpecCount: UInt = 0) -> Int {
+                           inheritSpecsVA: UInt = 0, inheritSpecCount: UInt = 0,
+                           homeCpu: UInt32 = unassignedCpu) -> Int {
     let slot = allocSlot()
     if slot < 0 { return -1 }
 
@@ -827,11 +1011,13 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pStartTick[slot] = systemTicks
     pResPages[slot] = Int(elfLastLoadPages()) + userStackPages
     pWakeTick[slot] = 0
+    pSchedulerQuiesced[slot] = false
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent, inherit: inherit,
                    specsVA: inheritSpecsVA, specCount: inheritSpecCount)
-    markProcessReadyOnHomeCpu(slot)
+    let targetCpu = homeCpu == unassignedCpu ? processHomeCpuForNewReadySlot(slot) : homeCpu
+    markProcessReady(slot, cpu: targetCpu)
     return slot
 }
 
@@ -873,9 +1059,14 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
 // — preemptive callers (processOnTick) entered with IRQs already masked, while
 // cooperative callers in a blocking syscall entered with them enabled.
 private func yieldToScheduler() {
+    let current = currentProcessSlot()
+    if current < 0 {
+        uartPuts("panic: yieldToScheduler without current process\n")
+        while true {}
+    }
     let daif = irq_save()
     let schedulerContext = schedulerContextForCurrentCpu()
-    cpu_switch_context(UnsafeMutableRawPointer(procCtx.advanced(by: currentProc)),
+    cpu_switch_context(UnsafeMutableRawPointer(procCtx.advanced(by: current)),
                        schedulerContext)
     irq_restore(daif)
 }
@@ -894,6 +1085,10 @@ private func wakeParent(of slot: Int) {
 /// doomed TTBR0 first if it happens to be the one currently installed.
 private func reapProcess(_ slot: Int) {
     if slot < 0 || slot >= maxProc { return }
+    if !pSchedulerQuiesced[slot] {
+        uartPuts("panic: reapProcess before scheduler quiescence\n")
+        while true {}
+    }
     if pTtbr0[slot] != 0 {
         address_space_destroy(pTtbr0[slot])
         pTtbr0[slot] = 0
@@ -908,6 +1103,7 @@ private func reapProcess(_ slot: Int) {
     }
     pState[slot] = pUnused
     clearProcessSchedulerSlot(slot)
+    pSchedulerQuiesced[slot] = true
 }
 
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
@@ -930,9 +1126,9 @@ private func schedule(until done: () -> Bool) {
             disable_irq()
             continue
         }
-        currentProc = s
-        smpSetCurrentProcessForCurrentCpu(Int32(s))
+        setCurrentProcessSlot(s)
         pState[s] = pRunning
+        pSchedulerQuiesced[s] = false
         let cpu = UInt32(processSchedulerCpuIndex())
         recordProcessDispatch(s, on: cpu)
         // cpu_switch_context swaps registers only — install the process's
@@ -943,8 +1139,12 @@ private func schedule(until done: () -> Bool) {
         let schedulerContext = schedulerContextForCurrentCpu()
         cpu_switch_context(schedulerContext,
                            UnsafeMutableRawPointer(procCtx.advanced(by: s)))
-        smpSetCurrentProcessForCurrentCpu(-1)
-        currentProc = -1
+        address_space_switch(mmu_kernel_ttbr0())
+        if pState[s] == pZombie || pState[s] == pUnused {
+            pSchedulerQuiesced[s] = true
+            smpStoreBarrier()
+        }
+        setCurrentProcessSlot(-1)
     }
     irq_restore(daif)
 }
@@ -957,7 +1157,7 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
         uartPuts("panic: createProcess failed\n")
         while true {}
     }
-    schedule(until: { pState[slot] == pZombie })
+    schedule(until: { pState[slot] == pZombie && pSchedulerQuiesced[slot] })
     let code = pExit[slot]
     lastReapedKilled = pKilled[slot]
     reapProcess(slot)
@@ -967,13 +1167,22 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
 /// Run two top-level processes concurrently; return when both have exited.
 func processRunPair(_ imageA: UInt, _ sizeA: UInt, _ pa: UInt, _ na: UInt, _ ca: Int,
                     _ imageB: UInt, _ sizeB: UInt, _ pb: UInt, _ nb: UInt, _ cb: Int) {
-    let a = createProcess(imageA, sizeA, packed: pa, packedLen: na, argc: ca, parent: -1)
-    let b = createProcess(imageB, sizeB, packed: pb, packedLen: nb, argc: cb, parent: -1)
+    let secondary = processFirstSecondarySchedulerCpu()
+    if secondary != unassignedCpu {
+        processStartSecondaryScheduler(cpu: secondary)
+    }
+    let a = createProcess(imageA, sizeA, packed: pa, packedLen: na, argc: ca, parent: -1, homeCpu: 0)
+    let bHome = secondary == unassignedCpu ? UInt32(0) : secondary
+    let b = createProcess(imageB, sizeB, packed: pb, packedLen: nb, argc: cb, parent: -1, homeCpu: bHome)
     if a < 0 || b < 0 {
         uartPuts("panic: createProcess (pair) failed\n")
         while true {}
     }
-    schedule(until: { pState[a] == pZombie && pState[b] == pZombie })
+    schedule(until: { pState[a] == pZombie && pSchedulerQuiesced[a] &&
+                      pState[b] == pZombie && pSchedulerQuiesced[b] })
+    if secondary != unassignedCpu {
+        processStopSecondaryScheduler(cpu: secondary)
+    }
     captureLastPairDispatchTelemetry(a, b)
     reapProcess(a)
     reapProcess(b)
@@ -983,7 +1192,7 @@ private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packe
                                               packedLen: UInt, argc: Int,
                                               inherit: HandleInheritance,
                                               specsVA: UInt = 0, specCount: UInt = 0) -> Int {
-    let parent = currentProc
+    let parent = currentProcessSlot()
     guard parent >= 0 else { return -22 }
     let valid = vfsValidateHandleInheritance(parent: parent, inherit: inherit,
                                              specsVA: specsVA, specCount: specCount)
@@ -1016,11 +1225,15 @@ func processSpawnChildWithHandles(_ image: UInt, _ size: UInt, packed: UInt, pac
                                             specsVA: specsVA, specCount: specCount)
 }
 
-func processCurrentPid() -> Int { currentProc >= 0 ? currentProc + 1 : 0 }
+func processCurrentPid() -> Int {
+    let current = currentProcessSlot()
+    return current >= 0 ? current + 1 : 0
+}
 
 func processYieldForIO() {
-    if currentProc < 0 { return }
-    markProcessReadyOnHomeCpu(currentProc)
+    let current = currentProcessSlot()
+    if current < 0 { return }
+    markProcessReadyOnHomeCpu(current)
     yieldToScheduler()
 }
 
@@ -1029,7 +1242,7 @@ func processYieldForIO() {
 /// parent's trap frame with x0=0, so it "returns from fork()" into EL0 at the
 /// same point seeing 0; the parent gets the child pid.
 func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
-    let parent = currentProc
+    let parent = currentProcessSlot()
     guard parent >= 0 else { return -11 }
     let child = allocSlot()
     if child < 0 { return -11 } // EAGAIN
@@ -1073,6 +1286,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pStartTick[child] = systemTicks
     pResPages[child] = pResPages[parent]
     pWakeTick[child] = 0
+    pSchedulerQuiesced[child] = false
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
@@ -1089,7 +1303,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
 /// negative errno. The shared address space is never torn down here; it outlives
 /// every thread (page reclamation is a global follow-up, as for processes).
 func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
-    let creator = currentProc
+    let creator = currentProcessSlot()
     guard creator >= 0 else { return -22 } // EINVAL: no active process
     // The entry PC and the top of the thread's stack must be valid user VAs in
     // the (shared) address space; reject obvious garbage early.
@@ -1131,6 +1345,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     fileVmasCopy(slot, creator)
     pIsThread[slot] = true
     pWakeTick[slot] = 0
+    pSchedulerQuiesced[slot] = false
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
     // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
@@ -1144,7 +1359,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
 /// ready again. Mirrors processYieldForIO but parks in pBlocked (it must not be
 /// rescheduled until explicitly woken). Returns once rescheduled.
 func processBlockOnFutex() {
-    let me = currentProc
+    let me = currentProcessSlot()
     if me < 0 { return }
     pState[me] = pBlocked
     yieldToScheduler()
@@ -1163,7 +1378,7 @@ func processWakeFromFutex(_ slot: Int) {
 /// a sub-tick request still parks for one tick. Always sleeps the full duration
 /// (blocked syscalls are not signal-interrupted today). Returns 0.
 func processNanosleep(seconds: UInt, nanos: UInt) -> Int {
-    let me = currentProc
+    let me = currentProcessSlot()
     guard me >= 0 else { return -22 } // EINVAL: no active process
     let hz = UInt64(timerHz)
     var ticks = UInt64(seconds) &* hz &+ (UInt64(nanos) &* hz) / 1_000_000_000
@@ -1181,7 +1396,7 @@ func processNanosleep(seconds: UInt, nanos: UInt) -> Int {
 /// waitpid(pid, *status, opts): reap a (matching) zombie child, blocking until
 /// one is available. Returns the child pid, or -10 (ECHILD) if no such child.
 func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
-    let parent = currentProc
+    let parent = currentProcessSlot()
     guard parent >= 0 else { return -10 }
     if statusVA != 0 && userWritableBuffer(statusVA, 4) == nil { return -22 }
     let wantSlot = pid > 0 ? pid - 1 : waitAny
@@ -1192,7 +1407,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
         for i in 0..<maxProc where pState[i] != pUnused && pParent[i] == parent {
             if wantSlot != waitAny && i != wantSlot { continue }
             live += 1
-            if pState[i] == pZombie { found = i; break }
+            if pState[i] == pZombie && pSchedulerQuiesced[i] { found = i; break }
         }
         if found >= 0 {
             let code = pExit[found]
@@ -1217,7 +1432,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
 /// this syscall directly into the new EL0 entry point. envp is ignored today.
 func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
                  argc: Int, frame: UnsafeMutablePointer<UInt>) -> Int {
-    let me = currentProc
+    let me = currentProcessSlot()
     guard me >= 0 else { return -22 }
 
     let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed, packedLen: packedLen, argc: argc)
@@ -1362,18 +1577,20 @@ func processSysInfo(buffer: UInt) -> Int {
 /// file access against the process's principal context. The kernel itself
 /// (no active process) is fully privileged.
 func processCurrentCaps() -> UInt64 {
-    currentProc >= 0 ? pSecurity[currentProc].caps : ~UInt64(0)
+    let current = currentProcessSlot()
+    return current >= 0 ? pSecurity[current].caps : ~UInt64(0)
 }
 
 /// The principal id of the running process (M13c). Used by the VFS to stamp the
 /// owner on tmpfs nodes it creates. The kernel itself (no active process) acts
 /// as the boot/root principal 1.
 func processCurrentPrincipal() -> UInt32 {
-    currentProc >= 0 ? pSecurity[currentProc].principal : 1
+    let current = currentProcessSlot()
+    return current >= 0 ? pSecurity[current].principal : 1
 }
 
 func processSecurityInfo(buffer: UInt) -> Int {
-    let me = currentProc
+    let me = currentProcessSlot()
     guard me >= 0 else { return -22 }
     guard let dst = userWritableBuffer(buffer, 16) else { return -22 }
     let raw = UnsafeMutableRawPointer(dst)
@@ -1389,7 +1606,7 @@ func processSecurityInfo(buffer: UInt) -> Int {
 /// cannot grant itself a principal or capabilities. The new context is
 /// inherited across the subsequent execve into the user's shell.
 func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
-    let me = currentProc
+    let me = currentProcessSlot()
     guard me >= 0 else { return -22 }            // EINVAL
     if (pSecurity[me].caps & capConsole) == 0 { return -1 } // EPERM
     pSecurity[me].principal = principal
@@ -1401,19 +1618,22 @@ func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
 /// Timer preemption hook (called from the IRQ handler after the GIC EOI).
 /// `fromEL0` is true when the timer interrupted user code, false at EL1.
 func processOnTick(fromEL0: Bool) {
-    if currentCpuId() != 0 {
-        uartPuts("panic: processOnTick entered on non-owner CPU\n")
+    let cpu = currentCpuId()
+    if !processCpuCanSchedule(cpu) {
+        uartPuts("panic: processOnTick entered on inactive scheduler CPU\n")
         while true {}
     }
 
     // Wake any sleepers whose deadline has passed. Runs first and unconditionally
-    // (even when currentProc == -1 during the scheduler's idle wfi) so a sleep
+    // (even when no process is current during the scheduler's idle wfi) so a sleep
     // resumes promptly on an otherwise idle system. Only nanosleep blockers carry
     // a nonzero pWakeTick, so futex/waitpid/IO blockers are left untouched.
-    for i in 0..<maxProc where pState[i] == pBlocked && pWakeTick[i] != 0 {
-        if systemTicks >= pWakeTick[i] {
-            markProcessReadyOnHomeCpu(i)
-            pWakeTick[i] = 0
+    if cpu == 0 {
+        for i in 0..<maxProc where pState[i] == pBlocked && pWakeTick[i] != 0 {
+            if systemTicks >= pWakeTick[i] {
+                markProcessReadyOnHomeCpu(i)
+                pWakeTick[i] = 0
+            }
         }
     }
 
@@ -1424,20 +1644,21 @@ func processOnTick(fromEL0: Bool) {
     // input shows ~0% CPU and an idle system shows ~100% idle, while a CPU-bound
     // EL0 loop shows ~100%. (Kernel "system" time is bucketed into idle; a
     // separate sy% would need to distinguish syscall work from a wfi wait.)
-    if fromEL0 && currentProc >= 0 {
-        pCpuTicks[currentProc] &+= 1
+    let current = currentProcessSlot()
+    if fromEL0 && current >= 0 {
+        pCpuTicks[current] &+= 1
     } else {
         idleTicks &+= 1
     }
-    if currentProc >= 0 && pState[currentProc] == pRunning {
-        markProcessReadyOnHomeCpu(currentProc)
+    if current >= 0 && pState[current] == pRunning {
+        markProcessReadyOnHomeCpu(current)
         yieldToScheduler()
     }
 }
 
 /// SYS_exit: zombify the current process, wake a waiting parent, leave the CPU.
 func processExit(_ code: Int) {
-    let me = currentProc
+    let me = currentProcessSlot()
     vfsProcessCloseAll(slot: me)
     // rt-a: a thread has no waitpid joiner (siblings join via futex), so it must
     // not linger as an unreapable zombie — free its slot directly. The shared
@@ -1460,7 +1681,7 @@ func processExit(_ code: Int) {
 
 /// Fatal-signal termination of the current process (status 128+signo).
 func processTerminateBySignal(_ sig: Int) {
-    let me = currentProc
+    let me = currentProcessSlot()
     vfsProcessCloseAll(slot: me)
     pExit[me] = 128 + sig
     pKilled[me] = true
@@ -1473,8 +1694,8 @@ func processTerminateBySignal(_ sig: Int) {
 /// sbrk(incr): grow the current process's heap, mapping pages from the PMM.
 func processSbrk(_ incr: Int) -> UInt {
     let fail = UInt(bitPattern: -1)
-    guard currentProc >= 0 else { return fail }
-    let me = currentProc
+    let me = currentProcessSlot()
+    guard me >= 0 else { return fail }
     let old = pBrk[me]
     if incr == 0 { return old }
 
@@ -1526,8 +1747,8 @@ private func roundUpPages(_ len: UInt) -> UInt {
 /// negative errno encoded in the UInt result.
 func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
-    guard currentProc >= 0 else { return err(-22) } // EINVAL
-    let me = currentProc
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) } // EINVAL
     if len == 0 { return err(-22) }
     // W^X / PROT_NONE up front (also enforced in protPageDesc, defensively).
     if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return err(-22) }
@@ -1560,8 +1781,8 @@ func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
 /// VMA; the model-serving path maps once and exits, which is covered.)
 func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
-    guard currentProc >= 0 else { return err(-22) } // EINVAL
-    let me = currentProc
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) } // EINVAL
     if len == 0 { return err(-22) }
     // Read-only file views only for now (model weights); write/exec is future work.
     if prot != PROT_READ { return err(-22) }
@@ -1583,7 +1804,7 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
 /// read-only from disk; false otherwise (the caller treats that as a real fault,
 /// e.g. a write to a read-only page, which falls through to COW / panic).
 func processHandleFileFault(_ faultVA: UInt) -> Bool {
-    let me = currentProc
+    let me = currentProcessSlot()
     guard me >= 0 else { return false }
     let pageSize = PageAllocator.pageSize
     let pageVA = faultVA & ~(pageSize - 1)
@@ -1617,8 +1838,8 @@ func processHandleFileFault(_ faultVA: UInt) -> Bool {
 /// munmap(addr, len): unmap and free `len` (rounded up) bytes at `addr`. addr
 /// must be page-aligned and lie in the mmap arena. Returns 0 or a negative errno.
 func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
-    guard currentProc >= 0 else { return -22 }
-    let me = currentProc
+    let me = currentProcessSlot()
+    guard me >= 0 else { return -22 }
     if len == 0 { return -22 }
     if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 } // EINVAL: unaligned
     let pages = roundUpPages(len)
@@ -1668,8 +1889,8 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
 /// mapped. PROT_WRITE|PROT_EXEC (W^X) and PROT_NONE are rejected. This is the
 /// JIT lever: write code as RW, then flip the region to RX. Returns 0 or errno.
 func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
-    guard currentProc >= 0 else { return -22 }
-    let me = currentProc
+    let me = currentProcessSlot()
+    guard me >= 0 else { return -22 }
     if len == 0 { return -22 }
     if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 }
     // W^X invariant enforced HERE (syscall entry) as well as in protPageDesc.
