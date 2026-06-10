@@ -18,10 +18,10 @@ manifest entries left behind after globals move or disappear.
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
-| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | Keep the small-object heap CPU0-owned for now; add VFS/kernel object-pool protection before secondary CPUs can execute general kernel/user work. |
+| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | Keep the small-object heap CPU0-owned for now; VFS/kernel object-pool protection begins at S4b, but heap allocations themselves still need a later policy before secondary CPUs can execute arbitrary allocation-heavy kernel/user work. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
-| VFS/handles/pipes/endpoints/package store | Shared fixed tables; C4 work may change them. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Do not change in S0c. Later protect table mutation, handle refcount paths, and target-side package-store append/activation before secondary CPUs can run package management or VFS mutation. |
+| VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. Package-store append/activation and the network engine still need their own policy before multi-CPU service work. |
 | Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
@@ -249,6 +249,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/vfs/vfs.swift:nodes`
 - `kernel/vfs/vfs.swift:openDescriptions`
 - `kernel/vfs/vfs.swift:pipes`
+- `kernel/vfs/vfs.swift:vfsLockAcquireCount`
+- `kernel/vfs/vfs.swift:vfsLockContentionCount`
+- `kernel/vfs/vfs.swift:vfsLockWord`
 
 ## Immediate S1/S2 Risks
 
@@ -262,12 +265,15 @@ manifest entries left behind after globals move or disappear.
   that active-mask surface; none of these milestones make those structures
   concurrency-safe.
 - PMM allocation/free/refcount entry points are now protected by the S4a lock
-  boundary. The small-object heap remains CPU0-owned until later S4 work.
+  boundary. VFS shared pools and handle/open-description lifetimes are protected
+  by the S4b lock boundary. The small-object heap remains CPU0-owned until
+  later S4 work.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple
   CPUs.
-- VFS handle/open-description/pipe/endpoint tables are deliberately left as an
-  audit-only item in S0c because C4 work is active elsewhere.
+- Package-store activation/append state remains outside the VFS S4b boundary
+  and must be protected before package-management service work can run away
+  from CPU 0.
 - Device queues and network socket tables need an IRQ/poll locking policy before
   interrupts or service work are allowed away from CPU 0.

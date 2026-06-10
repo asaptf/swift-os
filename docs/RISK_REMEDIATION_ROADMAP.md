@@ -192,6 +192,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   operation, host PageAllocator tests include a threaded allocation/free stress,
   and boot runs a bounded SGI-delivered PMM stress on discovered secondary CPUs.
   VFS/kernel object pools remain the next S4 target.
+- S4b preflight (2026-06-10): VFS node/fd/open-description/pipe/endpoint/cwd
+  and confinement tables now share an IRQ-save VFS lock. Long pipe, endpoint,
+  socket, and disk-backed operations borrow their open description so the lock
+  can be released before peer waits or network/block work. Boot validates VFS
+  handle/open-description/pipe/endpoint accounting after `vfsInit` and again
+  after the userland demos.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase".
