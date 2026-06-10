@@ -535,19 +535,25 @@ drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
 drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
+drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
+drvinputd: C5c virtio-input grant accepted
 drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
 drvsvc: C5b device grant reclaimed
+drvsvc: C5c virtio-input grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
-C5c OK: device discovery manifest matched pseudo input
+C5c OK: virtio-input device grant discovered and matched
 ```
 
-This proves the current restartable service shape, pseudo-device discovery, and
-opaque pseudo-device grant transfer. It is still metadata-only authority: C5c
-does not hand MMIO, IRQ, DMA, or real virtio-input ownership to userland.
+This proves the current restartable service shape, virtio-input discovery
+metadata, and opaque device-grant transfer. It is still metadata-only authority:
+C5c does not hand MMIO, IRQ, DMA, or real virtio-input queue ownership to
+userland. A broad headless boot without a QEMU keyboard device exercises the
+same lifecycle through the `pseudo-input.0` fallback and emits
+`C5c OK: device discovery manifest matched pseudo input`.
 
 Equivalent automated check:
 
@@ -555,7 +561,8 @@ Equivalent automated check:
 make c5-device-discovery-test
 ```
 
-The automated gate boots with `-smp 4` and checks the same serial markers.
+The automated gate boots with `-smp 4`, attaches `virtio-keyboard-device`, and
+checks the same serial markers.
 `make c5-device-handle-test` remains a compatible alias.
 
 ## 17. Run The Full Gate

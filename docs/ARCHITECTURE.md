@@ -90,12 +90,14 @@ Future driver service loading flow:
 6. The driver registers readiness.
 7. Clients communicate with it through handle-based IPC.
 
-Current implementation slice: C5a-C5c ships a pseudo driver-service harness
-instead of real hardware handoff. `/bin/drvsvcdemo` supervises
-`/bin/drvinputd`, discovers the metadata-only `pseudo-input.0` registry entry,
-claims an opaque grant, transfers that handle over endpoint IPC, observes the
-busy claim, and reclaims the device after service exit. MMIO-range handles, IRQ
-endpoints, DMA windows, and real virtio-input ownership remain future work.
+Current implementation slice: C5a-C5c ships a restartable driver-service
+harness and device-discovery smoke, but not real hardware handoff.
+`/bin/drvsvcdemo` supervises `/bin/drvinputd`, discovers the metadata-only
+`virtio-input.0` registry entry when QEMU exposes a `virtio-keyboard-device`,
+falls back to `pseudo-input.0` in headless boots, claims an opaque grant,
+transfers that handle over endpoint IPC, observes the busy claim, and reclaims
+the device after service exit. MMIO-range handles, IRQ endpoints, DMA windows,
+and real virtio-input queue ownership remain future work.
 
 This model supports fast boot, explicit security boundaries, driver restart, and future hot driver updates
 without making arbitrary binary code part of the permanent kernel ABI.

@@ -129,9 +129,11 @@ Use `/tmp` for runtime scratch state.
 
 The base image stages native Swift programs, C demos, and busybox. The C5
 service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
-pseudo driver service `/bin/drvinputd` over endpoint IPC, then transfers an
-opaque `pseudo-input.0` device handle to prove device ownership can move to a
-restartable service.
+driver-service worker `/bin/drvinputd` over endpoint IPC, then transfers an
+opaque input-device handle to prove device ownership can move to a restartable
+service. In the focused C5 gate that handle is discovered as `virtio-input.0`
+when QEMU exposes a keyboard device; headless boots use the `pseudo-input.0`
+fallback so the same lifecycle remains testable.
 
 Common native Swift tools:
 
