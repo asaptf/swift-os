@@ -75,6 +75,26 @@ The checked-in system currently provides these practical guarantees:
    an existing confinement.
 12. `mmap`/`mprotect` reject `PROT_WRITE | PROT_EXEC`.
 
+## Choose A Security Verification
+
+Start with the boundary you want to prove. Capture the guest command output
+alongside the focused test so another reviewer can distinguish an enforced
+guarantee from roadmap language.
+
+| Boundary | Guest check | Expected evidence | Focused proof |
+| --- | --- | --- | --- |
+| Login adopts the selected principal | Log in as `root`, `user`, or `guest`, then run `id` | Principal, session, and capability mask match the identity store | `./tests/console_login_test.sh` |
+| Restricted accounts cannot read base files | Log in as `guest`, then run `cat /etc/motd` | Read fails while `id` still prints numeric context | `./tests/cap_enforce_test.sh` |
+| Non-network accounts cannot open sockets | Log in as `user`, then run `/bin/nslookup example.com` | Socket or resolver operation fails before traffic is sent | `./tests/cap_enforce_test.sh` |
+| tmpfs mutation is capability-gated | Compare `echo ok >/tmp/check.txt` under accounts with and without `capTmpWrite` | Writable account succeeds; restricted account fails | `./tests/swift_fileops_test.sh`, `./tests/cap_enforce_test.sh` |
+| Base image stays immutable | Run `echo no >/etc/motd` | Write fails even from the fully capable seeded `root` account | `./tests/vfs_disk_test.sh` |
+| Ownership and modes are visible | Run `chmod`, `chown`, and `ls -l` on a `/tmp` file | Mode and owner metadata change on tmpfs only | `./tests/ls_l_test.sh`, `./tests/swift_chmodown_test.sh` |
+| Explicit handle inheritance is attenuated | Run the spawn demo path or acceptance test | Child receives only listed handles and requested rights | `./tests/spawn_self_exec_test.sh` |
+| IPC handle transfer moves ownership | Run the socket-transfer acceptance test | Sender fd is cleared and receiver gets the transferred handle | `./tests/ipc_socket_transfer_test.sh` |
+| Device grants stay metadata-only | Run the C5 device-authority gate | Discovery metadata is visible, hardware authority bits stay clear, and grant rights do not expand | `make c5-device-authority-test` |
+| W^X memory policy is enforced | Run `/bin/mmapdemo` or the acceptance test | RW mapping can become RX, but RWX is rejected | `./tests/mmap_test.sh` |
+| Package content remains read-only and verified | Install or mount package fixtures, then run the package smoke | Payloads execute from read-only `/usr` paths and repository metadata is verified | `make package-overlay-test`, `make package-repo-install-test` |
+
 ## Current Limits
 
 The current model is useful and testable, but it is not the final security
