@@ -545,6 +545,25 @@ private func markdownTableCells(_ line: String) -> [String] {
     return cells
 }
 
+private func verificationCommandToken(_ text: String) -> String? {
+    let tokens = text.trimmingCharacters(in: .whitespaces)
+        .split { $0 == " " || $0 == "\t" }
+        .map(String.init)
+    var index = 0
+    while index < tokens.count &&
+          tokens[index].contains("=") &&
+          !tokens[index].hasPrefix("./") {
+        index += 1
+    }
+    guard index < tokens.count else { return nil }
+    return tokens[index]
+}
+
+private func isRunnableVerificationCommand(_ ref: String) -> Bool {
+    guard let command = verificationCommandToken(ref) else { return false }
+    return command == "make" || command.hasPrefix("./tests/")
+}
+
 private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int) {
     if ref.hasSuffix("/*") {
         let dir = String(ref.dropLast(2))
@@ -569,7 +588,7 @@ private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int
 }
 
 private func isMachineVerificationReference(_ ref: String) -> Bool {
-    ref.hasPrefix("make ") || ref.hasPrefix("./tests/") || ref.hasPrefix("tests/")
+    isRunnableVerificationCommand(ref) || ref.hasPrefix("tests/")
 }
 
 private func validateCoverageReferences(_ text: String,
@@ -594,7 +613,7 @@ private func validateApiVerificationReference(_ ref: String,
                                               in path: String,
                                               lineNumber: Int,
                                               makeTargets: Set<String>) {
-    if ref.hasPrefix("make ") || ref.hasPrefix("./tests/") {
+    if isRunnableVerificationCommand(ref) {
         validateVerificationCommand(ref,
                                     in: path,
                                     lineNumber: lineNumber,
@@ -957,6 +976,62 @@ private func checkPackageGuideVerificationMatrixReferences() {
     }
 }
 
+private func checkGuideVerificationTableReferences(path: String,
+                                                   heading: String,
+                                                   labelHeader: String,
+                                                   verificationHeader: String) {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inTable = false
+    for (index, line) in lines.enumerated() {
+        if line == heading {
+            inTable = true
+            continue
+        }
+        if inTable && line.hasPrefix("## ") {
+            break
+        }
+        guard inTable,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let label = cells[1]
+        let verification = cells[2]
+        if label == labelHeader && verification == verificationHeader {
+            continue
+        }
+        validateCoverageReferences(verification,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "`\(label)` verification row")
+    }
+}
+
+private func checkDeploymentValidationMatrixReferences() {
+    checkGuideVerificationTableReferences(path: "docs/DEPLOYMENT_GUIDE.md",
+                                          heading: "## Validation Matrix",
+                                          labelHeader: "Candidate includes",
+                                          verificationHeader: "Required focused gate")
+}
+
+private func checkOperationsVerificationMatrixReferences() {
+    checkGuideVerificationTableReferences(path: "docs/OPERATIONS_GUIDE.md",
+                                          heading: "## Verification Matrix",
+                                          labelHeader: "Area",
+                                          verificationHeader: "Command")
+}
+
 private func hostToolExecutables() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -1238,6 +1313,8 @@ checkCommandReferenceAcceptanceCoverageRefs()
 checkConfigurationBuildTargetReferences()
 checkConfigurationVerificationMatrixReferences()
 checkPackageGuideVerificationMatrixReferences()
+checkDeploymentValidationMatrixReferences()
+checkOperationsVerificationMatrixReferences()
 checkHostToolReferenceCoverage()
 checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
