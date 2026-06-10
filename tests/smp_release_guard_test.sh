@@ -13,6 +13,7 @@ GIC_SWIFT="$ROOT/kernel/drivers/gic.swift"
 PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
 SECONDARY_SWIFT="$ROOT/kernel/smp/secondary.swift"
 PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
+VM_SWIFT="$ROOT/kernel/mm/vm.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
@@ -148,6 +149,8 @@ for needle in \
   'processHomeCpuForNewReadySlot' \
   'recordProcessDispatch' \
   'recordProcessAddressSpaceActivation' \
+  'processAddressSpaceActiveCpuMaskForSlot' \
+  'processCurrentAddressSpaceActiveCpuMask' \
   'captureLastPairDispatchTelemetry' \
   'processSecondaryEl0GateEnabled' \
   'processSecondaryEl0GateAllowsCpu' \
@@ -155,6 +158,8 @@ for needle in \
   'processSecondaryEl0GateHeldSelfTest' \
   'processAddressSpaceCpuMaskSelfTest' \
   'processAddressSpaceCpuMaskNoSecondarySelfTest' \
+  'processAddressSpaceTlbFlushFacadeSelfTest' \
+  'processAddressSpaceTlbFlushNoSecondarySelfTest' \
   'processRunQueueScaffoldSelfTest' \
   'processDormantSchedulerCpusSelfTest' \
   'processDispatchTelemetrySelfTest' \
@@ -210,6 +215,36 @@ if ! grep -q 'address space activated on secondary before S3' "$PROCESS_SWIFT" |
    ! grep -q 'address-space CPU mask dispatch mismatch' "$PROCESS_SWIFT" ||
    ! grep -q 'processAddressSpaceActivationCount\[Int(cpu)\]' "$PROCESS_SWIFT"; then
   echo "FAIL: S3a address-space CPU mask telemetry must keep secondary and dispatch-mismatch guards." >&2
+  exit 1
+fi
+
+for needle in \
+  'addressSpaceCurrentCpuTlbMask' \
+  'addressSpaceFlushTlbForActiveCpuMask' \
+  'addressSpaceTlbFlushFacadeSelfTest' \
+  'smpRequestTlbShootdownForCpuMask(remoteMask)' \
+  'addressSpaceMapForActiveCpuMask' \
+  'addressSpaceMmapForActiveCpuMask' \
+  'addressSpaceMapFilePageForActiveCpuMask' \
+  'addressSpaceMunmapForActiveCpuMask' \
+  'addressSpaceMprotectForActiveCpuMask' \
+  'addressSpaceCloneForActiveCpuMask' \
+  'addressSpaceHandleCowFaultForActiveCpuMask' \
+  'addressSpacePrepareWriteForActiveCpuMask'; do
+  if ! grep -q "$needle" "$VM_SWIFT"; then
+    echo "FAIL: S3d VM TLB flush facade missing $needle." >&2
+    exit 1
+  fi
+done
+
+if grep -q 'address_space_mmap(pTtbr0\[me\]' "$PROCESS_SWIFT" ||
+   grep -q 'address_space_munmap(pTtbr0\[me\]' "$PROCESS_SWIFT" ||
+   grep -q 'address_space_mprotect(pTtbr0\[me\]' "$PROCESS_SWIFT" ||
+   grep -q 'address_space_clone(pTtbr0\[parent\]' "$PROCESS_SWIFT" ||
+   ! grep -q 'addressSpaceMapFilePageForActiveCpuMask' "$PROCESS_SWIFT" ||
+   ! grep -q 'addressSpacePrepareWriteForActiveCpuMask' "$ROOT/kernel/user/user_access.swift" ||
+   ! grep -q 'addressSpaceHandleCowFaultForActiveCpuMask' "$MAIN_SWIFT"; then
+  echo "FAIL: S3d process-owned VM mutations must route through active CPU mask TLB flush helpers." >&2
   exit 1
 fi
 
@@ -366,6 +401,11 @@ if ! grep -q 'S3c OK: TLB shootdown IPI scaffold ready' "$MAIN_SWIFT" ||
   echo "FAIL: S3c must log TLB shootdown readiness and scheduler-safe delivery markers." >&2
   exit 1
 fi
+if ! grep -q 'S3d OK: address-space TLB flush facade ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S3d OK: address-space TLB flush stayed CPU0-owned' "$MAIN_SWIFT"; then
+  echo "FAIL: S3d must log address-space TLB flush facade readiness and CPU0-owned markers." >&2
+  exit 1
+fi
 if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
   echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
@@ -383,6 +423,7 @@ s2h_line="$(rg -n 'processSecondaryEl0GateSelfTest\(\)' "$MAIN_SWIFT" | head -1 
 s3a_line="$(rg -n 'processAddressSpaceCpuMaskSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3b_line="$(rg -n 'smpIpiSubstrateSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3c_line="$(rg -n 'smpTlbShootdownSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3d_line="$(rg -n 'processAddressSpaceTlbFlushFacadeSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -397,6 +438,7 @@ s2h_no_secondary_line="$(rg -n 'processSecondaryEl0GateHeldSelfTest\(\)' "$MAIN_
 s3a_no_secondary_line="$(rg -n 'processAddressSpaceCpuMaskNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3b_no_secondary_line="$(rg -n 'smpS3bIpiSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3c_no_secondary_line="$(rg -n 'smpS3cTlbShootdownSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3d_no_secondary_line="$(rg -n 'processAddressSpaceTlbFlushNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
@@ -434,6 +476,10 @@ if [[ -z "$s3b_line" || "$s3a_line" -ge "$s3b_line" || "$s3b_line" -ge "$demo_li
 fi
 if [[ -z "$s3c_line" || "$s3b_line" -ge "$s3c_line" || "$s3c_line" -ge "$demo_line" ]]; then
   echo "FAIL: S3c TLB shootdown self-test must run after S3b readiness and before scheduler/userland demos." >&2
+  exit 1
+fi
+if [[ -z "$s3d_line" || "$s3c_line" -ge "$s3d_line" || "$s3d_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S3d TLB flush facade self-test must run after S3c readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
@@ -490,6 +536,12 @@ if [[ -z "$s3c_no_secondary_line" ||
   echo "FAIL: S3c TLB shootdown scheduler-boundary guard must run after S3b and before S2b no-secondary-EL0." >&2
   exit 1
 fi
+if [[ -z "$s3d_no_secondary_line" ||
+      "$s3c_no_secondary_line" -ge "$s3d_no_secondary_line" ||
+      "$s3d_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S3d address-space TLB flush guard must run after S3c and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
 if ! grep -q 'smpHandleIpi(iar)' "$MAIN_SWIFT" ||
    ! grep -q 'interruptId == smpIpiInterruptId' "$MAIN_SWIFT"; then
@@ -527,4 +579,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB boundary)"

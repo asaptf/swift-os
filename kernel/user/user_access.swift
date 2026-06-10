@@ -47,8 +47,9 @@ private func userRangeWritable(_ va: UInt, _ count: UInt) -> Bool {
 
     var page = va & ~userAccessPageMask
     let lastPage = last & ~userAccessPageMask
+    let activeMask = processCurrentAddressSpaceActiveCpuMask()
     while true {
-        if !addressSpacePrepareWrite(ttbr0, page) { return false }
+        if !addressSpacePrepareWriteForActiveCpuMask(ttbr0, page, activeMask) { return false }
         if page == lastPage { break }
         page += PageAllocator.pageSize
     }

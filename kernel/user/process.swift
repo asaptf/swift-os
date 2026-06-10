@@ -342,6 +342,22 @@ private func recordProcessAddressSpaceActivation(_ slot: Int, on cpu: UInt32) {
     processAddressSpaceActivationCount[Int(cpu)] &+= 1
 }
 
+private func processAddressSpaceActiveCpuMaskForSlot(_ slot: Int) -> UInt64 {
+    let currentMask = addressSpaceCurrentCpuTlbMask()
+    if slot < 0 || slot >= maxProc { return currentMask }
+
+    var mask = pAddressSpaceCpuMask[slot]
+    if slot == currentProc {
+        mask |= currentMask
+    }
+    return mask == 0 ? currentMask : mask
+}
+
+func processCurrentAddressSpaceActiveCpuMask() -> UInt64 {
+    if currentProc < 0 { return addressSpaceCurrentCpuTlbMask() }
+    return processAddressSpaceActiveCpuMaskForSlot(currentProc)
+}
+
 private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
     if a < 0 || a >= maxProc || b < 0 || b >= maxProc {
         lastPairDispatchTelemetryValid = false
@@ -595,6 +611,24 @@ func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
         cpu += 1
     }
     return true
+}
+
+func processAddressSpaceTlbFlushFacadeSelfTest() -> Bool {
+    if !addressSpaceTlbFlushFacadeSelfTest() { return false }
+    return processCurrentAddressSpaceActiveCpuMask() == addressSpaceCurrentCpuTlbMask()
+}
+
+func processAddressSpaceTlbFlushNoSecondarySelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    let primaryMask = UInt64(1) << Int(primary)
+    if (processCurrentAddressSpaceActiveCpuMask() & ~primaryMask) != 0 { return false }
+    for slot in 0..<maxProc {
+        if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~primaryMask) != 0 {
+            return false
+        }
+    }
+    return processAddressSpaceCpuMaskNoSecondarySelfTest()
 }
 
 func processNoSecondarySchedulerDispatchSelfTest() -> Bool {
@@ -1000,7 +1034,8 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     let child = allocSlot()
     if child < 0 { return -11 } // EAGAIN
 
-    let childTtbr0 = address_space_clone(pTtbr0[parent])
+    let childTtbr0 = addressSpaceCloneForActiveCpuMask(pTtbr0[parent],
+                                                       processAddressSpaceActiveCpuMaskForSlot(parent))
     if childTtbr0 == 0 { return -12 } // ENOMEM
 
     let kstack = pmmAllocPages(kernelStackPages)
@@ -1450,13 +1485,18 @@ func processSbrk(_ incr: Int) -> UInt {
     let oldTop = (old + mask) & ~mask
     let newTop = (newBreak + mask) & ~mask
     if newTop > oldTop {
+        let activeMask = processAddressSpaceActiveCpuMaskForSlot(me)
         var va = oldTop
         while va < newTop {
             let pa = pmmAllocZeroedPage()
-            if pa == 0 || address_space_map(pTtbr0[me], va, pa, Int32(VM_PERM_USER_DATA)) != 0 {
+            if pa == 0 ||
+               addressSpaceMapForActiveCpuMask(pTtbr0[me], va, pa, Int32(VM_PERM_USER_DATA), activeMask) != 0 {
                 if pa != 0 { pmmFreePage(pa) }
                 if va > oldTop {
-                    _ = address_space_munmap(pTtbr0[me], oldTop, (va - oldTop) / PageAllocator.pageSize)
+                    _ = addressSpaceMunmapForActiveCpuMask(pTtbr0[me],
+                                                           oldTop,
+                                                           (va - oldTop) / PageAllocator.pageSize,
+                                                           activeMask)
                 }
                 return fail
             }
@@ -1500,7 +1540,11 @@ func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
     if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
     let base = pMmapTop[me] - bytes
 
-    let rc = address_space_mmap(pTtbr0[me], base, pages, prot)
+    let rc = addressSpaceMmapForActiveCpuMask(pTtbr0[me],
+                                              base,
+                                              pages,
+                                              prot,
+                                              processAddressSpaceActiveCpuMaskForSlot(me))
     if rc != 0 { return err(Int(rc)) }
     pMmapTop[me] = base
     pResPages[me] += Int(pages)
@@ -1550,7 +1594,13 @@ func processHandleFileFault(_ faultVA: UInt) -> Bool {
         let contentStart = ((pageVA - v.base) / pageSize) * pageSize
         let remaining = v.fileLen > contentStart ? v.fileLen - contentStart : 0
         let contentLen = remaining < pageSize ? remaining : pageSize
-        if addressSpaceMapFilePage(pTtbr0[me], pageVA, v.diskImage, v.diskOffset + contentStart, contentLen, v.prot) {
+        if addressSpaceMapFilePageForActiveCpuMask(pTtbr0[me],
+                                                   pageVA,
+                                                   v.diskImage,
+                                                   v.diskOffset + contentStart,
+                                                   contentLen,
+                                                   v.prot,
+                                                   processAddressSpaceActiveCpuMaskForSlot(me)) {
             pResPages[me] += 1
             fileDemandFaults += 1
             if !fileDemandLogged {
@@ -1585,7 +1635,10 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
         if address_space_translate(pTtbr0[me], addr + i * PageAllocator.pageSize) != 0 { live += 1 }
         i += 1
     }
-    let rc = address_space_munmap(pTtbr0[me], addr, pages)
+    let rc = addressSpaceMunmapForActiveCpuMask(pTtbr0[me],
+                                                addr,
+                                                pages,
+                                                processAddressSpaceActiveCpuMaskForSlot(me))
     if rc != 0 { return Int(rc) }
     pResPages[me] -= live
     // I6: a lazily-reserved file VMA must not survive its munmap — the cursor
@@ -1626,5 +1679,9 @@ func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
     let bytes = pages * PageAllocator.pageSize
     if addr < pMmapTop[me] || addr >= userMmapTop { return -22 }
     if addr > userMmapTop - bytes { return -22 }
-    return Int(address_space_mprotect(pTtbr0[me], addr, pages, prot))
+    return Int(addressSpaceMprotectForActiveCpuMask(pTtbr0[me],
+                                                    addr,
+                                                    pages,
+                                                    prot,
+                                                    processAddressSpaceActiveCpuMaskForSlot(me)))
 }

@@ -1162,6 +1162,36 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   The next S3 slice can connect this protocol to per-address-space active CPU
   masks once multi-CPU process execution is intentionally opened.
 
+### S3d — active-mask VM TLB flush facade (DONE, 2026-06-10)
+
+- **VM facade.** `kernel/mm/vm.swift` now routes TLB invalidation through
+  `addressSpaceFlushTlbForActiveCpuMask`. The facade performs the page-table
+  write barrier, invalidates the current CPU locally (`tlbi vae1` or
+  `tlbi vmalle1`), and forwards any remote CPU bits to the S3c request/ack
+  shootdown path. The exported C ABI entry points remain as current-CPU wrappers
+  for inactive construction paths.
+- **Process-owned active masks.** `kernel/user/process.swift` exposes
+  `processCurrentAddressSpaceActiveCpuMask` and uses S3a's
+  `pAddressSpaceCpuMask` for process-owned page-table mutations: heap growth
+  rollback, anonymous mmap, demand-paged file mmap, munmap, mprotect, COW
+  prepare/fault handling, and fork's parent COW rewrite. The current gate keeps
+  the active mask CPU0-only, but the future multi-CPU path now has one explicit
+  hook instead of scattered raw `tlbi_*` calls.
+- **Runtime acceptance.** Boot runs `processAddressSpaceTlbFlushFacadeSelfTest`
+  after S3c readiness and logs
+  `S3d OK: address-space TLB flush facade ready`. After userland demos, boot
+  runs `processAddressSpaceTlbFlushNoSecondarySelfTest`, verifies active masks
+  stayed CPU0-owned, and logs
+  `S3d OK: address-space TLB flush stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the VM facade,
+  active-mask variants, process active-mask helpers, COW/copyout routing, and
+  the S3d boot-order contract. Generic IPI/TLB handlers remain constrained to
+  no logging, scheduler, process, VFS, virtio, or PMM work from secondary IRQ
+  context.
+- **Non-goals.** This checkpoint does not enable secondary EL0 execution, does
+  not prove stale translation eviction across user threads on different CPUs,
+  and does not change PMM/VFS/package-store concurrency policy.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
