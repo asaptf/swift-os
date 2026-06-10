@@ -46,6 +46,7 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     sed 's/\r//' "$LOG" | tail -100 >&2
     exit 1
   fi
+  sleep 0.05
   printf '%b' "$text" >&3
 }
 

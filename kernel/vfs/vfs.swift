@@ -76,7 +76,7 @@ private struct VNode {
     var nextSibling = -1
 }
 
-private let maxNodes = 128
+private let maxNodes = 96
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
 

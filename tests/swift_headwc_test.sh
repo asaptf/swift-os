@@ -52,6 +52,11 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  printf '%s\n' "$1" >&3
+  sleep 0.05
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -71,17 +76,15 @@ printf 'root\n' >&3
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-{
-  printf 'echo one > /tmp/t\n'
-  printf 'echo two >> /tmp/t\n'
-  printf 'echo three >> /tmp/t\n'
-  printf '/bin/wc /tmp/t\n'
-  printf '/bin/head -n 2 /tmp/t | /bin/wc\n'
-  printf '/bin/touch /tmp/empty\n'
-  printf '/bin/wc /tmp/empty\n'
-  printf 'echo HEADWC-DONE\n'
-  printf 'exit\n'
-} >&3
+send_line 'echo one > /tmp/t'
+send_line 'echo two >> /tmp/t'
+send_line 'echo three >> /tmp/t'
+send_line '/bin/wc /tmp/t'
+send_line '/bin/head -n 2 /tmp/t | /bin/wc'
+send_line '/bin/touch /tmp/empty'
+send_line '/bin/wc /tmp/empty'
+send_line 'echo HEADWC-DONE'
+send_line 'exit'
 await "HEADWC-DONE" 180 || drive_fail "shell did not survive head/wc/touch"
 await "M12c: session ended" 60 || true
 
