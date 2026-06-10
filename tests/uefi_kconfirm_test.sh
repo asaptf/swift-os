@@ -21,6 +21,7 @@ AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
 [[ -f "$DISK_IMG" ]]   || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
 [[ -f "$BASE" ]]       || { echo "FAIL: $BASE missing (run 'make base-image')" >&2; exit 2; }
 
+FRESH="$(mktemp -t swiftos-kconf-fresh.XXXXXX)"
 WORK="$(mktemp -t swiftos-kconf-img.XXXXXX)"
 LOG="$(mktemp -t swiftos-kconf-log.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-kconf-pid.XXXXXX)"
@@ -33,9 +34,11 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$WORK" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$FRESH" "$WORK" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-cp "$DISK_IMG" "$WORK"
+"$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
+  || { echo "FAIL: could not create a fresh disk image (run 'make disk')" >&2; exit 2; }
+cp "$FRESH" "$WORK"
 
 QEMU_DRIVE=(-global virtio-mmio.force-legacy=false
             -bios "$AAVMF_CODE"
