@@ -13,6 +13,7 @@ format details.
 | Need | Document |
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
+| Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |

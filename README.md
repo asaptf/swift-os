@@ -123,6 +123,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 
 - [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
   and attach QEMU networking.
+- [Release Notes](docs/RELEASE_NOTES.md): shipped features, verification gates,
+  known limits, and upgrade notes for the current checked-in snapshot.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
 - [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
