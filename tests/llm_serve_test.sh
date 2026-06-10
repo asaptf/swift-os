@@ -86,12 +86,16 @@ await "Password:" 90 || drive_fail "password prompt did not appear"
 printf 'swordfish\n' >&3
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 printf '/bin/llmd\n' >&3
-await "llmd: serving on 8080" 120 || drive_fail "llmd never reported serving"
+# Startup parses the 32000-entry tokenizer into the lookup table under TCG.
+await "llmd: serving on 8080" 240 || drive_fail "llmd never reported serving"
 
 # Patient request loop: slirp + guest poll() can need a beat to be reachable.
+# The served model is stories15M-q8 (I4): one 64-token completion takes several
+# seconds under TCG (the cold first request also demand-pages ~17 MB of weights),
+# so give curl a generous budget.
 post_ok=0
-for _ in 1 2 3 4 5; do
-  if curl -s -m 60 -X POST --data "Once upon a time" \
+for _ in 1 2 3; do
+  if curl -s -m 180 -X POST --data "Once upon a time" \
        "http://127.0.0.1:${HOST_PORT}/completion" > "$OC" 2>/dev/null \
      && grep -qF "$STORY_MARK" "$OC"; then
     post_ok=1; break
@@ -109,8 +113,11 @@ ok=1
 fail() { echo "FAIL: $1" >&2; ok=0; }
 
 [[ "$post_ok" -eq 1 ]]                                  || fail "POST /completion did not return the reference story"
-grep -qF "She loved to play outside" "$OC"              || fail "completion body diverged from the llama2.c reference"
-grep -qF "ok stories260K" "$OH"                         || fail "GET /health did not report the model"
+# stories15M-q8 reference (runq.c golden): richer than the 260K story.
+grep -qF "She loved to play outside in the sunshine" "$OC" || fail "completion body diverged from the runq.c reference"
+grep -qF "It was the sun!" "$OC"                        || fail "completion body diverged from the runq.c reference (tail)"
+grep -qF "ok model dim=288" "$OH"                       || fail "GET /health did not report the model"
+grep -qF "llmd: model int8 Q8_0 GS=32" <<<"$(sed 's/\r//' "$LOG")" || fail "llmd did not select the quantized engine"
 grep -qE "requests [1-9]" "$OM"                         || fail "GET /metrics did not count the request"
 grep -qE "tokens_total [1-9][0-9]*" "$OM"               || fail "GET /metrics did not count generated tokens"
 grep -qE "last_tok_s [0-9]+" "$OM"                      || fail "GET /metrics missing a tok/s figure"

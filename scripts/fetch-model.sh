@@ -13,23 +13,28 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)/models"
-BASE="${MODEL_BASE_URL:-https://huggingface.co/karpathy/tinyllamas/resolve/main/stories260K}"
+HF="${MODEL_HF_BASE:-https://huggingface.co/karpathy/tinyllamas/resolve/main}"
+GH="${MODEL_GH_BASE:-https://raw.githubusercontent.com/karpathy/llama2.c/master}"
 mkdir -p "$DIR"
 
-fetch() { # name min_bytes
-    local name="$1" min="$2" path="$DIR/$1"
+fetch() { # name min_bytes url
+    local name="$1" min="$2" url="$3" path="$DIR/$1"
     if [ -f "$path" ] && [ "$(wc -c < "$path")" -ge "$min" ]; then
         echo "have $name ($(wc -c < "$path") bytes)"
         return 0
     fi
     echo "fetching $name ..."
-    curl -fL --retry 3 --max-time 120 -o "$path" "$BASE/$name"
+    curl -fL --retry 3 --max-time 600 -o "$path" "$url"
     if [ "$(wc -c < "$path")" -lt "$min" ]; then
         echo "error: $name is smaller than expected ($min bytes)" >&2
         exit 1
     fi
 }
 
-fetch stories260K.bin 1000000
-fetch tok512.bin 6000
+# Tiny test checkpoint + its 512-entry tokenizer (I0/I1 goldens).
+fetch stories260K.bin 1000000 "$HF/stories260K/stories260K.bin"
+fetch tok512.bin 6000 "$HF/stories260K/tok512.bin"
+# The served model (I4): stories15M + the full 32000-entry Llama-2 tokenizer.
+fetch stories15M.bin 60000000 "$HF/stories15M.bin"
+fetch tokenizer.bin 400000 "$GH/tokenizer.bin"
 echo "model fetch OK -> $DIR"

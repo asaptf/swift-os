@@ -337,6 +337,305 @@ final class Llama2 {
     }
 }
 
+// MARK: - Model protocol (fp32 and int8 engines share the generation loop)
+
+protocol LlamaModel: AnyObject {
+    var cfg: LlamaConfig { get }
+    func forward(token: Int, pos: Int) -> UnsafePointer<Float>
+}
+
+extension Llama2: LlamaModel {}
+
+// MARK: - Q8_0 quantized transformer (llama2.c "version 2" checkpoints, I4)
+//
+// A faithful reimplementation of runq.c: groupwise int8 weights with float32
+// scales (group size GS from the header), activations quantized per matmul,
+// int32 accumulation per group scaled by s_w * s_x. The norm (rmsnorm) weights
+// stay fp32. The token embedding row is dequantized on the fly per token —
+// element-for-element the same values runq.c gets from its predequantized
+// table, without spending vocab*dim*4 bytes of RAM on a copy.
+
+final class QLlama2: LlamaModel {
+    let cfg: LlamaConfig
+    let gs: Int
+
+    // Weight views into the (caller-owned, kept-alive) model buffer.
+    private struct QT {  // one quantized tensor: int8 values + per-group scales
+        var q: UnsafePointer<Int8>
+        var s: UnsafePointer<Float>
+    }
+    private let rmsAtt: UnsafePointer<Float>
+    private let rmsFFN: UnsafePointer<Float>
+    private let rmsFinal: UnsafePointer<Float>
+    private let qTok: QT
+    private let wq: UnsafeMutablePointer<QT>   // one per layer
+    private let wk: UnsafeMutablePointer<QT>
+    private let wv: UnsafeMutablePointer<QT>
+    private let wo: UnsafeMutablePointer<QT>
+    private let w1: UnsafeMutablePointer<QT>
+    private let w2: UnsafeMutablePointer<QT>
+    private let w3: UnsafeMutablePointer<QT>
+    private let wcls: QT
+
+    // Activation buffers (fp32) + quantized activation staging (q + scales).
+    private let x: UnsafeMutablePointer<Float>
+    private let xb: UnsafeMutablePointer<Float>
+    private let xb2: UnsafeMutablePointer<Float>
+    private let hb: UnsafeMutablePointer<Float>
+    private let hb2: UnsafeMutablePointer<Float>
+    private let q: UnsafeMutablePointer<Float>
+    private let att: UnsafeMutablePointer<Float>
+    private let logits: UnsafeMutablePointer<Float>
+    private let keyCache: UnsafeMutablePointer<Float>
+    private let valueCache: UnsafeMutablePointer<Float>
+    private let xqQ: UnsafeMutablePointer<Int8>
+    private let xqS: UnsafeMutablePointer<Float>
+    private let hqQ: UnsafeMutablePointer<Int8>
+    private let hqS: UnsafeMutablePointer<Float>
+
+    /// True when `base` starts a v2 quantized checkpoint ("ak42" magic).
+    static func isQuantized(_ base: UnsafeRawPointer) -> Bool {
+        return base.loadUnaligned(fromByteOffset: 0, as: UInt32.self) == 0x616b_3432
+    }
+
+    /// Parse a v2 checkpoint header + map the weights. `base` must stay valid
+    /// (and unfreed) for the lifetime of this object.
+    init(modelBytes base: UnsafeRawPointer) {
+        func i32(_ off: Int) -> Int { Int(base.loadUnaligned(fromByteOffset: off, as: Int32.self)) }
+        // magic u32 @0, version i32 @4 (checked via isQuantized by the caller),
+        // config @8..35, shared u8 @36, group_size i32 @37 (unaligned).
+        let dim = i32(8), hidden = i32(12), nLayers = i32(16), nHeads = i32(20)
+        let nKV = i32(24), vocab = i32(28), seqLen = i32(32)
+        let shared = base.loadUnaligned(fromByteOffset: 36, as: UInt8.self) != 0
+        let groupSize = Int(base.loadUnaligned(fromByteOffset: 37, as: Int32.self))
+        let c = LlamaConfig(dim: dim, hiddenDim: hidden, nLayers: nLayers,
+                            nHeads: nHeads, nKVHeads: nKV, vocabSize: vocab,
+                            seqLen: seqLen)
+        self.cfg = c
+        self.gs = groupSize
+
+        // fp32 norm blocks follow the 256-byte header.
+        var off = 256
+        func takeF(_ n: Int) -> UnsafePointer<Float> {
+            let p = (base + off).assumingMemoryBound(to: Float.self)
+            off += n * 4
+            return p
+        }
+        self.rmsAtt = takeF(c.nLayers * c.dim)
+        self.rmsFFN = takeF(c.nLayers * c.dim)
+        self.rmsFinal = takeF(c.dim)
+
+        // Quantized tensors: per tensor, int8 q[numel] then float s[numel/GS];
+        // layered weights repeat that per layer (runq.c init_quantized_tensors).
+        func takeQ(_ numel: Int) -> QT {
+            let qp = (base + off).assumingMemoryBound(to: Int8.self)
+            off += numel
+            let sp = (base + off).assumingMemoryBound(to: Float.self)
+            off += (numel / groupSize) * 4
+            return QT(q: qp, s: sp)
+        }
+        func takeLayered(_ perLayer: Int) -> UnsafeMutablePointer<QT> {
+            let arr = UnsafeMutablePointer<QT>.allocate(capacity: c.nLayers)
+            for l in 0..<c.nLayers { (arr + l).initialize(to: takeQ(perLayer)) }
+            return arr
+        }
+        let headSize = c.headSize
+        self.qTok = takeQ(c.vocabSize * c.dim)
+        self.wq = takeLayered(c.dim * (c.nHeads * headSize))
+        self.wk = takeLayered(c.dim * (c.nKVHeads * headSize))
+        self.wv = takeLayered(c.dim * (c.nKVHeads * headSize))
+        self.wo = takeLayered((c.nHeads * headSize) * c.dim)
+        self.w1 = takeLayered(c.dim * c.hiddenDim)
+        self.w2 = takeLayered(c.hiddenDim * c.dim)
+        self.w3 = takeLayered(c.dim * c.hiddenDim)
+        self.wcls = shared ? qTok : takeQ(c.dim * c.vocabSize)
+
+        func alloc(_ n: Int) -> UnsafeMutablePointer<Float> {
+            let m = UnsafeMutablePointer<Float>.allocate(capacity: n)
+            m.initialize(repeating: 0, count: n)
+            return m
+        }
+        self.x = alloc(c.dim)
+        self.xb = alloc(c.dim)
+        self.xb2 = alloc(c.dim)
+        self.hb = alloc(c.hiddenDim)
+        self.hb2 = alloc(c.hiddenDim)
+        self.q = alloc(c.dim)
+        self.att = alloc(c.nHeads * c.seqLen)
+        self.logits = alloc(c.vocabSize)
+        self.keyCache = alloc(c.nLayers * c.seqLen * c.kvDim)
+        self.valueCache = alloc(c.nLayers * c.seqLen * c.kvDim)
+        self.xqQ = UnsafeMutablePointer<Int8>.allocate(capacity: c.dim)
+        self.xqQ.initialize(repeating: 0, count: c.dim)
+        self.xqS = alloc(c.dim / groupSize)
+        self.hqQ = UnsafeMutablePointer<Int8>.allocate(capacity: c.hiddenDim)
+        self.hqQ.initialize(repeating: 0, count: c.hiddenDim)
+        self.hqS = alloc(c.hiddenDim / groupSize)
+    }
+
+    deinit {
+        wq.deallocate(); wk.deallocate(); wv.deallocate(); wo.deallocate()
+        w1.deallocate(); w2.deallocate(); w3.deallocate()
+        x.deallocate(); xb.deallocate(); xb2.deallocate(); hb.deallocate()
+        hb2.deallocate(); q.deallocate(); att.deallocate(); logits.deallocate()
+        keyCache.deallocate(); valueCache.deallocate()
+        xqQ.deallocate(); xqS.deallocate(); hqQ.deallocate(); hqS.deallocate()
+    }
+
+    // MARK: quantized net blocks (mirror runq.c)
+
+    /// Quantize `n` activations into (qOut, sOut), runq.c quantize(): per group,
+    /// scale = max|v| / 127.0f, q = round(v/scale) — half away from zero, all
+    /// float32. An all-zero group gets q=0, s=0 (its contribution is zero either
+    /// way, since the group's scale multiplies the whole partial sum).
+    private func quantizeBuf(_ qOut: UnsafeMutablePointer<Int8>, _ sOut: UnsafeMutablePointer<Float>,
+                             _ xin: UnsafePointer<Float>, _ n: Int) {
+        let groups = n / gs
+        for g in 0..<groups {
+            let xg = xin + g * gs
+            var wmax: Float = 0
+            for i in 0..<gs {
+                let v = xg[i] < 0 ? -xg[i] : xg[i]
+                if v > wmax { wmax = v }
+            }
+            let scale = wmax / 127.0
+            sOut[g] = scale
+            let qg = qOut + g * gs
+            if scale == 0 {
+                for i in 0..<gs { qg[i] = 0 }
+            } else {
+                for i in 0..<gs { qg[i] = Int8((xg[i] / scale).rounded()) }
+            }
+        }
+    }
+
+    /// xout(d) = W(d,n) @ x(n) over quantized operands: int32 accumulation per
+    /// group of GS, scaled by the weight-group and activation-group scales.
+    private func qmatmul(_ xout: UnsafeMutablePointer<Float>,
+                         _ xq: UnsafePointer<Int8>, _ xs: UnsafePointer<Float>,
+                         _ w: QT, _ n: Int, _ d: Int) {
+        for i in 0..<d {
+            var val: Float = 0
+            let iN = i * n
+            var j = 0
+            while j + gs <= n {
+                var ival: Int32 = 0
+                for k in 0..<gs {
+                    ival += Int32(xq[j + k]) * Int32(w.q[iN + j + k])
+                }
+                val += Float(ival) * w.s[(iN + j) / gs] * xs[j / gs]
+                j += gs
+            }
+            xout[i] = val
+        }
+    }
+
+    private func rmsnorm(_ o: UnsafeMutablePointer<Float>, _ xin: UnsafePointer<Float>,
+                         _ weight: UnsafePointer<Float>, _ size: Int) {
+        var ss: Float = 0
+        for j in 0..<size { ss += xin[j] * xin[j] }
+        ss /= Float(size)
+        ss += 1e-5
+        ss = Mathf.rsqrtf(ss)
+        for j in 0..<size { o[j] = weight[j] * (ss * xin[j]) }
+    }
+
+    private func softmax(_ a: UnsafeMutablePointer<Float>, _ size: Int) {
+        var maxVal = a[0]
+        for i in 1..<size where a[i] > maxVal { maxVal = a[i] }
+        var sum: Float = 0
+        for i in 0..<size { a[i] = Mathf.expf(a[i] - maxVal); sum += a[i] }
+        for i in 0..<size { a[i] /= sum }
+    }
+
+    /// One decode step (runq.c forward). Returns the logits (vocabSize values).
+    func forward(token: Int, pos: Int) -> UnsafePointer<Float> {
+        let dim = cfg.dim, kvDim = cfg.kvDim, kvMul = cfg.kvMul
+        let hidden = cfg.hiddenDim, headSize = cfg.headSize
+
+        // Token embedding, dequantized on the fly (== runq.c's predequantized
+        // table values: same per-element q * s, no accumulation).
+        let tBase = token * dim
+        for i in 0..<dim {
+            x[i] = Float(qTok.q[tBase + i]) * qTok.s[(tBase + i) / gs]
+        }
+
+        for l in 0..<cfg.nLayers {
+            rmsnorm(xb, x, rmsAtt + l * dim, dim)
+
+            let loff = l * cfg.seqLen * kvDim
+            let k = keyCache + loff + pos * kvDim
+            let v = valueCache + loff + pos * kvDim
+
+            quantizeBuf(xqQ, xqS, xb, dim)
+            qmatmul(q, xqQ, xqS, wq[l], dim, dim)
+            qmatmul(k, xqQ, xqS, wk[l], dim, kvDim)
+            qmatmul(v, xqQ, xqS, wv[l], dim, kvDim)
+
+            // RoPE: rotate (q,k) pairwise per head.
+            var i = 0
+            while i < dim {
+                let headDim = i % headSize
+                let freq = 1.0 / Mathf.expf((Float(headDim) / Float(headSize)) * Mathf.ln10000)
+                let val = Float(pos) * freq
+                let fcr = Mathf.cosf(val)
+                let fci = Mathf.sinf(val)
+                let rotn = i < kvDim ? 2 : 1
+                for vSel in 0..<rotn {
+                    let vec = vSel == 0 ? q : k
+                    let v0 = vec[i], v1 = vec[i + 1]
+                    vec[i] = v0 * fcr - v1 * fci
+                    vec[i + 1] = v0 * fci + v1 * fcr
+                }
+                i += 2
+            }
+
+            for h in 0..<cfg.nHeads {
+                let qh = q + h * headSize
+                let attH = att + h * cfg.seqLen
+                for t in 0...pos {
+                    let kt = keyCache + loff + t * kvDim + (h / kvMul) * headSize
+                    var score: Float = 0
+                    for d in 0..<headSize { score += qh[d] * kt[d] }
+                    score /= Mathf.sqrtf(Float(headSize))
+                    attH[t] = score
+                }
+                softmax(attH, pos + 1)
+                let xbH = xb + h * headSize
+                for d in 0..<headSize { xbH[d] = 0 }
+                for t in 0...pos {
+                    let vt = valueCache + loff + t * kvDim + (h / kvMul) * headSize
+                    let a = attH[t]
+                    for d in 0..<headSize { xbH[d] += a * vt[d] }
+                }
+            }
+
+            quantizeBuf(xqQ, xqS, xb, dim)
+            qmatmul(xb2, xqQ, xqS, wo[l], dim, dim)
+            for d in 0..<dim { x[d] += xb2[d] }
+
+            rmsnorm(xb, x, rmsFFN + l * dim, dim)
+            quantizeBuf(xqQ, xqS, xb, dim)
+            qmatmul(hb, xqQ, xqS, w1[l], dim, hidden)
+            qmatmul(hb2, xqQ, xqS, w3[l], dim, hidden)
+            for d in 0..<hidden {
+                var val = hb[d]
+                val *= 1.0 / (1.0 + Mathf.expf(-val))   // SiLU
+                val *= hb2[d]
+                hb[d] = val
+            }
+            quantizeBuf(hqQ, hqS, hb, hidden)
+            qmatmul(xb, hqQ, hqS, w2[l], hidden, dim)
+            for d in 0..<dim { x[d] += xb[d] }
+        }
+
+        rmsnorm(x, x, rmsFinal, dim)
+        quantizeBuf(xqQ, xqS, x, dim)
+        qmatmul(logits, xqQ, xqS, wcls, dim, cfg.vocabSize)
+        return UnsafePointer(logits)
+    }
+}
+
 // MARK: - BPE tokenizer (SentencePiece-style, byte fallback)
 
 final class LlamaTokenizer {
@@ -437,8 +736,8 @@ final class LlamaTokenizer {
 /// each decoded piece's bytes (the prompt's forced tokens are emitted too, as
 /// run.c does). Returns the number of positions advanced.
 @discardableResult
-func llamaGenerate(_ model: Llama2, _ tok: LlamaTokenizer, prompt: String,
-                   steps: Int, emit: ([UInt8]) -> Void) -> Int {
+func llamaGenerate<M: LlamaModel>(_ model: M, _ tok: LlamaTokenizer, prompt: String,
+                                  steps: Int, emit: ([UInt8]) -> Void) -> Int {
     let promptTokens = tok.encode(prompt, bos: true, eos: false)
     if promptTokens.isEmpty { return 0 }
     var token = promptTokens[0]

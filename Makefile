@@ -696,14 +696,29 @@ gdb:
 MODEL_DIR := models
 MODEL_BIN := $(MODEL_DIR)/stories260K.bin
 MODEL_TOK := $(MODEL_DIR)/tok512.bin
+MODEL15_BIN := $(MODEL_DIR)/stories15M.bin
+MODEL_TOK32 := $(MODEL_DIR)/tokenizer.bin
+# I4: int8-quantized checkpoints, produced by the host quantizer (Q8_0,
+# llama2.c "version 2" format). The 15M-q8 bundle is what /bin/llmd serves.
+MODEL_Q8 := $(MODEL_DIR)/stories260K-q8.bin
+MODEL15_Q8 := $(MODEL_DIR)/stories15M-q8.bin
+QUANTIZE := $(BUILD)/quantize
 
 $(MODEL_BIN): scripts/fetch-model.sh
 	scripts/fetch-model.sh
-$(MODEL_TOK): $(MODEL_BIN)
+$(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32): $(MODEL_BIN)
 
-model: $(MODEL_BIN) $(MODEL_TOK)
+$(QUANTIZE): tools/quantize.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/quantize.swift -o $@
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK)
+$(MODEL_Q8): $(MODEL_BIN) $(QUANTIZE)
+	$(QUANTIZE) $(MODEL_BIN) $@
+$(MODEL15_Q8): $(MODEL15_BIN) $(QUANTIZE)
+	$(QUANTIZE) $(MODEL15_BIN) $@
+
+model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
+
+test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
@@ -731,6 +746,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	$(BUILD)/tls_handshake_test
 	$(HOST_SWIFTC) tests/llm_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_engine_test
 	$(BUILD)/llm_engine_test
+	$(HOST_SWIFTC) -O tests/llm_q8_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_q8_engine_test
+	$(BUILD)/llm_q8_engine_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
@@ -885,13 +902,13 @@ package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG)
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 	./tests/package_overlay_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
 	mkdir -p $(BASE_ROOT)/models
-	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
+	cp $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(BASE_ROOT)/models/
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo

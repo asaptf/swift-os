@@ -60,8 +60,7 @@ private func putUInt(_ v: UInt) { writeUInt(1, v) }
 
 // ---- model load (file-backed mmap, I2) --------------------------------------
 
-private func loadFile(_ path: StaticString) -> (UnsafeRawPointer, Int)? {
-    let cpath = UnsafeRawPointer(path.utf8Start).assumingMemoryBound(to: CChar.self)
+private func loadFile(_ cpath: UnsafePointer<CChar>) -> (UnsafeRawPointer, Int)? {
     var mode: UInt32 = 0, uid: UInt32 = 0, gid: UInt32 = 0, nlink: UInt32 = 0
     var size: UInt = 0, mtime: UInt = 0
     if swiftos_stat(cpath, &mode, &uid, &gid, &nlink, &size, &mtime) != 0 { return nil }
@@ -72,6 +71,11 @@ private func loadFile(_ path: StaticString) -> (UnsafeRawPointer, Int)? {
     _ = swiftos_close(fd)
     guard base != 0, let ptr = UnsafeRawPointer(bitPattern: base) else { return nil }
     return (ptr, Int(size))
+}
+
+@inline(__always)
+private func staticPath(_ s: StaticString) -> UnsafePointer<CChar> {
+    return UnsafeRawPointer(s.utf8Start).assumingMemoryBound(to: CChar.self)
 }
 
 // ---- wall clock (scheduler ticks) -------------------------------------------
@@ -174,7 +178,7 @@ private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> 
 }
 
 /// Serve one connection: route GET /health, GET /metrics, POST /completion.
-private func serveConnection(_ cfd: Int32, _ model: Llama2, _ tok: LlamaTokenizer, _ hz: UInt64) {
+private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: LlamaTokenizer, _ hz: UInt64) {
     withUnsafeTemporaryAllocation(byteCount: reqCap, alignment: 16) { req in
         let rp = req.baseAddress!
         let (total, headerEnd, contentLen) = readRequest(cfd, rp, reqCap)
@@ -182,7 +186,7 @@ private func serveConnection(_ cfd: Int32, _ model: Llama2, _ tok: LlamaTokenize
         let b = rp.assumingMemoryBound(to: UInt8.self)
 
         if matches(b, total, "GET /health") {
-            writeStr(cfd, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nok stories260K dim=")
+            writeStr(cfd, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nok model dim=")
             writeUInt(cfd, UInt(model.cfg.dim))
             writeStr(cfd, " layers=")
             writeUInt(cfd, UInt(model.cfg.nLayers))
@@ -242,31 +246,11 @@ private func serveConnection(_ cfd: Int32, _ model: Llama2, _ tok: LlamaTokenize
     }
 }
 
-// ---- entry point -------------------------------------------------------------
+// ---- serve loop (generic over the engine: fp32 Llama2 or int8 QLlama2) -------
 
-@_cdecl("main")
-func main(_ argc: Int32,
-          _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
-          _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
-    _ = (argc, argv, envp)
-
-    guard let (modelPtr, _) = loadFile("/models/stories260K.bin") else {
-        swiftos_puts("llmd: cannot load /models/stories260K.bin\n")
-        return 1
-    }
-    guard let (tokPtr, _) = loadFile("/models/tok512.bin") else {
-        swiftos_puts("llmd: cannot load /models/tok512.bin\n")
-        return 1
-    }
-    swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
-
-    let model = Llama2(modelBytes: modelPtr)
-    let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
+private func runServe<M: LlamaModel>(_ lfd: Int32, _ model: M, _ tok: LlamaTokenizer) -> Int32 {
     _ = swiftos_sysinfo_refresh()
     let hz = UInt64(swiftos_sys_hz())
-
-    let lfd = swiftos_socket_stream()
-    if lfd < 0 { swiftos_puts("llmd: socket failed (capNet?)\n"); return 1 }
     if swiftos_bind(lfd, listenPort) != 0 { swiftos_puts("llmd: bind failed\n"); return 1 }
     if swiftos_listen(lfd, Int32(maxConns)) != 0 { swiftos_puts("llmd: listen failed\n"); return 1 }
     swiftos_puts("llmd: serving on 8080 (POST /completion, GET /health, GET /metrics)\n")
@@ -310,4 +294,49 @@ func main(_ argc: Int32,
             }
         }
     }
+}
+
+// ---- entry point -------------------------------------------------------------
+
+@_cdecl("main")
+func main(_ argc: Int32,
+          _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
+          _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
+    _ = envp
+
+    // Default served model: the int8-quantized stories15M bundle (I4). argv can
+    // override: llmd [model.bin] [tokenizer.bin].
+    var modelPath = staticPath("/models/stories15M-q8.bin")
+    var tokPath = staticPath("/models/tokenizer.bin")
+    if let argv = argv {
+        if argc > 1, let a = argv[1] { modelPath = UnsafePointer(a) }
+        if argc > 2, let a = argv[2] { tokPath = UnsafePointer(a) }
+    }
+
+    guard let (modelPtr, _) = loadFile(modelPath) else {
+        swiftos_puts("llmd: cannot load model file\n")
+        return 1
+    }
+    guard let (tokPtr, _) = loadFile(tokPath) else {
+        swiftos_puts("llmd: cannot load tokenizer file\n")
+        return 1
+    }
+    swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
+
+    let lfd = swiftos_socket_stream()
+    if lfd < 0 { swiftos_puts("llmd: socket failed (capNet?)\n"); return 1 }
+
+    if QLlama2.isQuantized(modelPtr) {
+        let model = QLlama2(modelBytes: modelPtr)
+        swiftos_puts("llmd: model int8 Q8_0 GS="); putUInt(UInt(model.gs))
+        swiftos_puts(" dim="); putUInt(UInt(model.cfg.dim))
+        swiftos_puts(" vocab="); putUInt(UInt(model.cfg.vocabSize)); swiftos_puts("\n")
+        let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
+        return runServe(lfd, model, tok)
+    }
+    let model = Llama2(modelBytes: modelPtr)
+    swiftos_puts("llmd: model fp32 dim="); putUInt(UInt(model.cfg.dim))
+    swiftos_puts(" vocab="); putUInt(UInt(model.cfg.vocabSize)); swiftos_puts("\n")
+    let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
+    return runServe(lfd, model, tok)
 }

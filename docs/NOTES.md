@@ -2609,3 +2609,52 @@ real counters, and the serial metrics line appeared. With I0–I3 complete, the
 flagship claim is demonstrated end to end: swift-os loads an immutable model
 bundle, mmaps the weights, and serves deterministic inference over TCP from an
 isolated, capability-confined EL0 process.
+
+### I4 — Q8_0 int8 quantization; llmd serves stories15M (DONE, 2026-06-09)
+
+**Why.** The biggest product lever after I3: visibly coherent text (a 15M-param
+model instead of the 260K toy) in ~3.6× less weight memory (60.8 MB fp32 →
+17.1 MB int8). CPU-only int8 is exactly the "small immutable inference
+appliance" profile.
+
+**Quantizer (host).** `tools/quantize.swift` converts a legacy fp32 llama2.c
+checkpoint into the llama2.c "version 2" Q8_0 format that upstream `runq.c`
+consumes: 256-byte header (magic `ak42`, version 2, config, shared flag, group
+size), fp32 rmsnorm weights, then per-tensor int8 `q[]` + fp32 `s[]` per-layer
+interleaved. Quantization math is C-identical in fp32 (`scale = max|v|/127`,
+`round` half-away-from-zero). GS is picked as the largest power of two ≤ 64
+dividing both `dim` and `hidden_dim` — runq.c's matmul walks rows in GS steps,
+so GS must divide every matmul row length (260K → GS=4, 15M → GS=32). Verified
+by feeding the converted files to upstream runq.c itself. `make model` builds
+`models/stories260K-q8.bin` + `models/stories15M-q8.bin` via Makefile rules;
+`fetch-model.sh` also fetches `stories15M.bin` and the full 32000-entry Llama-2
+`tokenizer.bin`.
+
+**Engine.** `userland/lib/llama2.swift` gains a `LlamaModel` protocol (the
+fp32 `Llama2` and the new `QLlama2` both conform; `llamaGenerate` is generic,
+statically dispatched per the kernel protocol guidance) and a faithful runq.c
+int8 path: activations quantized per matmul into (int8, scales), int32
+accumulation per group scaled by `s_w * s_x`. One deliberate divergence:
+the token-embedding row is dequantized on the fly per token — element-for-
+element the same values as runq.c's predequantized table, without spending
+`vocab*dim*4` bytes (36 MB for 15M) of RAM on a copy. An all-zero activation
+group writes q=0, s=0 (same zero contribution as C, without its NaN-cast UB).
+
+**TDD.** `tests/llm_q8_engine_test.swift` (host, `-O`, in `make test`) pins
+both quantized checkpoints to upstream runq.c goldens byte-for-byte
+(temperature 0, "Once upon a time", 64 steps) — including the 32000-vocab
+tokenizer path. Both matched on the first run; the hand-rolled
+expf/sinf/cosf/sqrtf survive the bigger model.
+
+**Serving.** `/bin/llmd` now picks the engine by checkpoint magic and defaults
+to `/models/stories15M-q8.bin` + `/models/tokenizer.bin` (argv can override:
+`llmd [model] [tokenizer]`); `/bin/llm` stays on the fp32 260K demo (its test
+is unchanged). The base image packs the q8 bundle (base.img 4.6 → 22.4 MB).
+
+**Measured (QEMU TCG, scalar).** fp32 260K console demo: ~492 tok/s. Served
+15M-q8 over TCP: ttft=1150 ms on the cold first request (demand-paging all
+~17 MB of weights through I2b plus prompt prefill) and ~10 tok/s steady
+streaming — a real, visibly coherent TinyStories model served by an isolated
+Swift process. `tests/llm_serve_test.sh` asserts the richer 15M reference text
+("She loved to play outside in the sunshine", "It was the sun!"), the
+quantized-engine marker (`llmd: model int8 Q8_0 GS=32`), and live metrics.
