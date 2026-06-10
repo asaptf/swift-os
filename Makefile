@@ -59,6 +59,9 @@ PKG_LUA_INSTALL_STORE_IMG := $(BUILD)/pkgstore-lua-install.img
 PKGREPO_ROOT := $(BUILD)/pkgrepo-root
 PKGREPO_PUB := $(BUILD)/pkgrepo-root.pub
 PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+PORTS_SEED_REPO_ROOT := $(BUILD)/ports-seed-repo-root
+PORTS_SEED_REPO_PUB := $(BUILD)/ports-seed-repo-root.pub
+PKG_DEFAULT_REPO_URL ?=
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -328,7 +331,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-seed-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -984,11 +987,17 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
 	./scripts/build-lua.sh
+
+ports-zlib-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/archivers/zlib/Port.json scripts/build-zlib.sh
+	./scripts/build-zlib.sh
+
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-ports-seed-repo.sh
+	./scripts/build-ports-seed-repo.sh
 
 $(PKGREPO_PUB): $(PKGREPO) Makefile
 	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
@@ -1050,6 +1059,9 @@ package-repo-install-test: build $(QEMU_DTB) base-image package-local-install-fi
 package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-fixture ports-lua-repo-fixture
 	./tests/pkg_lua_repo_install_test.sh
 
+package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-seed-repo-fixture
+	./tests/pkg_ports_seed_repo_install_test.sh
+
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
@@ -1060,6 +1072,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	mkdir -p $(BASE_ROOT)/models
 	cp $(PKGHELLO_PKG) $(BASE_ROOT)/packages/pkghello.swpkg
 	cp $(PKGREPO_PUB) $(BASE_ROOT)/etc/pkg/repo-root.pub
+	if [ -n "$(PKG_DEFAULT_REPO_URL)" ]; then printf '%s\n' "$(PKG_DEFAULT_REPO_URL)" > $(BASE_ROOT)/etc/pkg/repo-url; fi
 	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
 	# real q8 bundle; generation 2 is DELIBERATELY corrupt (a truncated model
@@ -1146,7 +1159,11 @@ busybox-check:
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
 		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/pkgstore $(BUILD)/pkgrepo $(BUILD)/base_image_test \
-		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BUILD)/pkgrepo_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(PKGREPO_ROOT) $(PKGREPO_PUB) $(ESP_DIR)
+		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BUILD)/pkgrepo_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) \
+		$(PKGREPO_ROOT) $(PKGREPO_PUB) $(PORTS_SEED_REPO_ROOT) $(PORTS_SEED_REPO_PUB) \
+		$(BUILD)/lua-port-work $(BUILD)/lua-port-runtime $(BUILD)/lua-root $(BUILD)/lua-repo-root $(BUILD)/lua-repo-root.pub \
+		$(BUILD)/zlib-port-work $(BUILD)/zlib-port-runtime $(BUILD)/zlib-root $(BUILD)/zlib-repo-root $(BUILD)/zlib-repo-root.pub \
+		$(BUILD)/base-ports-seed-repo.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

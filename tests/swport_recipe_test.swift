@@ -65,6 +65,7 @@ let swport = repo.appendingPathComponent("build/swport")
 let swpkg = repo.appendingPathComponent("build/swpkg")
 let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
+let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
     fail("missing executable build/swport; build swport first")
@@ -77,6 +78,9 @@ guard FileManager.default.isExecutableFile(atPath: pkgrepo.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: recipe.path) else {
     fail("missing ports/lang/lua/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: zlibRecipe.path) else {
+    fail("missing ports/archivers/zlib/Port.json")
 }
 
 let temp = FileManager.default.temporaryDirectory
@@ -185,6 +189,93 @@ guard output(repoInspect).contains("lua-5.4.8_1") else {
     fail("repo fixture catalog did not include lua package: \(output(repoInspect))")
 }
 
+let zlibValidate = run(swport, ["recipe", "validate", "archivers/zlib"])
+requireSuccess(zlibValidate, "validate zlib recipe")
+guard output(zlibValidate).contains("recipe: OK zlib-1.3.1_1") else {
+    fail("validate output did not confirm zlib recipe: \(output(zlibValidate))")
+}
+
+let zlibManifestURL = temp.appendingPathComponent("zlib-manifest.json")
+let zlibManifest = run(swport, ["recipe", "manifest", "archivers/zlib", "--output", zlibManifestURL.path])
+requireSuccess(zlibManifest, "generate zlib manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: zlibManifestURL)) as? [String: Any] else {
+        fail("generated zlib manifest is not a JSON object")
+    }
+    requireString(object, "name", "zlib")
+    requireString(object, "version", "1.3.1")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["zlib", "libz"] else {
+        fail("zlib manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/minigzip",
+        "/usr/include/zconf.h",
+        "/usr/include/zlib.h",
+        "/usr/lib/libz.a",
+        "/usr/lib/pkgconfig/zlib.pc",
+    ] else {
+        fail("unexpected zlib manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated zlib manifest: \(error)")
+}
+
+let zlibRoot = temp.appendingPathComponent("zlib-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/minigzip", Data("#!/bin/sh\necho minigzip\n".utf8), 0o755),
+        ("usr/include/zconf.h", Data("/* zconf */\n".utf8), 0o644),
+        ("usr/include/zlib.h", Data("/* zlib */\n".utf8), 0o644),
+        ("usr/lib/libz.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/zlib.pc", Data("Name: zlib\nVersion: 1.3.1\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = zlibRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy zlib package root: \(error)")
+}
+
+let zlibPackageURL = temp.appendingPathComponent("zlib.swpkg")
+let zlibPackageResult = run(swport, [
+    "recipe", "package", "archivers/zlib",
+    "--root", zlibRoot.path,
+    "--output", zlibPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(zlibPackageResult, "package dummy zlib root")
+let zlibVerify = run(swpkg, ["verify", zlibPackageURL.path])
+requireSuccess(zlibVerify, "verify dummy zlib package")
+guard output(zlibVerify).contains("OK: zlib-1.3.1_1") else {
+    fail("swpkg verify did not identify zlib package: \(output(zlibVerify))")
+}
+
+let zlibRepoRoot = temp.appendingPathComponent("zlib-repo-root", isDirectory: true)
+let zlibPubkey = temp.appendingPathComponent("zlib-repo-root.pub")
+let zlibRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "archivers/zlib",
+    "--root", zlibRoot.path,
+    "--output", zlibRepoRoot.path,
+    "--pubkey", zlibPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(zlibRepoFixture, "create zlib repository fixture")
+let zlibCatalog = zlibRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let zlibRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", zlibCatalog.path, "--pubkey", zlibPubkey.path])
+requireSuccess(zlibRepoVerify, "verify zlib repository fixture")
+let zlibRepoInspect = run(pkgrepo, ["inspect", zlibCatalog.path])
+requireSuccess(zlibRepoInspect, "inspect zlib repository fixture")
+guard output(zlibRepoInspect).contains("zlib-1.3.1_1") else {
+    fail("repo fixture catalog did not include zlib package: \(output(zlibRepoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
@@ -238,4 +329,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates, packages, and publishes the lua recipe fixture")
+print("PASS: swport validates, packages, and publishes lua and zlib recipe fixtures")

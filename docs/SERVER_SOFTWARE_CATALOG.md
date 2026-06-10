@@ -13,14 +13,16 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b/P6c/P6d/P6e/P6f add the first Lua `Port.json` recipe with recipe validation,
-> manifest generation, checksum-verified source fetch, `.swpkg` creation from a
-> clean staged root, signed local repository fixture generation, and real
-> AArch64 static Lua cross-builds through `make ports-lua-repo-fixture`, with
-> the runtime interpreter packaged first. `make package-lua-repo-install-test`
-> installs and runs Lua from that repository inside QEMU. Public hosted
-> repositories, remove, upgrade, version-constraint solving, and rollback flows
-> are still roadmap work.
+> P6b-P7 add checked Lua and zlib `Port.json` recipes with recipe validation,
+> manifest generation, checksum-verified source fetch, `.swpkg` creation from
+> clean staged roots, signed local repository fixture generation, real AArch64
+> static cross-builds, and a two-package signed seed repository fixture. The
+> `package-lua-repo-install-test` installs and runs Lua from its signed
+> repository inside QEMU. The `package-ports-seed-repo-install-test` boots
+> SwiftOS with a default repository URL, runs `pkg update`, installs `lua` and
+> `zlib`, and runs both package smoke commands. Public hosted repositories,
+> remove, upgrade, version-constraint solving, and rollback flows are still
+> roadmap work.
 
 Use this guide with:
 
@@ -51,9 +53,11 @@ paths are available in the current tree:
 | Lua recipe repository path | Validate the first source recipe and prove its staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
+| zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
+| Ports seed repository fixture | Publish Lua and zlib into one signed local repository and install both from SwiftOS using a default repo URL | `make package-ports-seed-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
-UX. Today, the implemented repository path is the explicit test-fixture form:
+UX. Today, the implemented repository path has both an explicit fixture form:
 
 ```sh
 pkg repo set http://10.0.2.2:<port>/aarch64/current
@@ -64,6 +68,16 @@ pkg install pkghello
 /usr/bin/pkghello
 ```
 
+and a hosted-style default repository form for the ports seed fixture:
+
+```sh
+pkg update
+pkg install lua
+pkg install zlib
+/usr/bin/lua -e 'print(21 * 2)'
+/usr/bin/minigzip /tmp/zlib.txt
+```
+
 The package priority data in this document is mirrored into the checked
 machine-readable seed catalog:
 
@@ -71,10 +85,15 @@ machine-readable seed catalog:
 make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
+build/swport recipe validate archivers/zlib
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
@@ -102,10 +121,10 @@ pkg install web-basic postgresql nodejs
 ```
 
 Those commands describe the intended public repository experience. Today, use
-the signed repository fixture for repository smoke tests, `pkg install FILE`
+the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
-inspection, `build/swport recipe ...` for the first Lua recipe scaffold, and the
-host package tooling for package construction.
+inspection, `build/swport recipe ...` for the checked Lua and zlib recipes, and
+the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
@@ -304,9 +323,11 @@ Acceptance demo:
 
 ```sh
 pkg update
-pkg install lua zstd
+pkg install lua zlib
 lua -e 'print(_VERSION)'
-zstd --version
+echo zlib-ok > /tmp/zlib.txt
+minigzip /tmp/zlib.txt
+minigzip -d /tmp/zlib.txt.gz
 ```
 
 ### Wave B: Usable Admin Console

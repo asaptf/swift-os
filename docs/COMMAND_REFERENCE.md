@@ -223,9 +223,7 @@ Notes:
 - `-b` uses batch mode. It does not clear the screen or use raw input.
 - `-d` sets the refresh delay in seconds.
 - `-n` exits after the selected number of refreshes.
-- The aggregate `Cpu:` line reports busy and idle percentages.
-- The `CPUs:` line reports the discovered CPU count and per-CPU busy
-  percentages, for example `CPUs: 4 present, per-CPU busy: 0=...`.
+- SMP test profiles include per-CPU busy/idle utilization lines.
 - Interactive mode accepts `q` to quit.
 
 Acceptance coverage: `tests/top_test.sh`, `make smp-cpu-utilization-test`.
@@ -791,7 +789,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from the signed HTTP repository fixture, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh` |
 
 Examples:
 
@@ -874,7 +872,9 @@ Notes:
 
 - `pkg install FILE` expects a local `.swpkg`.
 - `pkg repo set URL` stores the active repository URL in tmpfs for the current
-  boot. `pkg repo show` prints the configured URL.
+  boot. `pkg repo show` prints the configured URL. If `/etc/pkg/repo-url` is
+  present in the base image, `pkg update` can use it without a prior
+  `pkg repo set`; the test base image is built with `PKG_DEFAULT_REPO_URL`.
 - `pkg update [URL]` expects a P5c signed static HTTP repository URL, such as
   the QEMU fixture path under
   `http://10.0.2.2:<port>/good/aarch64/current`. It rejects expired catalogs,
@@ -889,7 +889,8 @@ Notes:
 - See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for the complete runbook.
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
-`tests/pkg_repo_install_test.sh`.
+`tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
+flow is covered by `tests/pkg_ports_seed_repo_install_test.sh`.
 
 ### `pkghello`
 

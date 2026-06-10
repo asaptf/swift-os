@@ -23,15 +23,16 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| P6d Lua recipe repository fixture | `ports/lang/lua/Port.json` validates against the catalog, emits a package manifest, packages a clean staged root, and publishes it into a signed local static repository fixture | `make ports-recipe-test` |
-| P6e Lua cross-build repository fixture | Static AArch64 `lua` and `luac` cross-build against the local newlib sysroot, package into `.swpkg`, and publish into a signed local repository fixture | `make ports-lua-repo-fixture` |
+| P6d/P7 recipe repository fixtures | `ports/lang/lua/Port.json` and `ports/archivers/zlib/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures | `make ports-recipe-test` |
+| Lua and zlib cross-build repository fixtures | Static AArch64 Lua and zlib cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture` |
 | P6f Lua repository install smoke | QEMU installs real Lua from the signed local repository fixture and runs `lua -v` plus a small expression | `make package-lua-repo-install-test` |
+| Ports seed repository fixture | Lua and zlib publish into one signed local repository; SwiftOS boots with a default repo URL and installs both with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
 | `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
-repository path, P6a seed catalog, and P6b/P6c/P6d/P6e/P6f Lua recipe repository
+repository path, P6a seed catalog, and checked Lua/zlib recipe repository
 scaffold. Until the separate `swift-os-ports` repository and public hosted
 channels exist, maintainers should use the local fixture commands in this
 repository.
@@ -74,6 +75,9 @@ make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
 make package-lua-repo-install-test
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 ```
 
 Inspect the signed repository fixture:
@@ -91,23 +95,31 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 ```
 
-Inspect the first P6 source recipe and generate its `.swpkg` manifest:
+Inspect the checked source recipes and generate `.swpkg` manifests:
 
 ```sh
 build/swport recipe validate lang/lua
+build/swport recipe validate archivers/zlib
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-Build the current real Lua package fixture:
+Build the current real package fixtures:
 
 ```sh
 make ports-lua-repo-fixture
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
 build/swpkg verify build/lua.swpkg
+build/swpkg verify build/zlib.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
+build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
+make package-lua-repo-install-test
+make package-ports-seed-repo-install-test
 ```
 
 For a new experimental port before full `swport` build/test commands exist,

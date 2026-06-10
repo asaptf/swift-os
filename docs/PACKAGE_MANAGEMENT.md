@@ -8,9 +8,12 @@ Design for binary package installation on swift-os.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME` for the signed fixture catalog, including name-based
 > dependency resolution, and rejects expired catalogs, incompatible catalog
-> entries, and package SHA-256 mismatches. Rollback, remove, upgrade, public
-> hosted channels, version-constraint solving, and large-package streaming
-> downloads are still staged work.
+> entries, and package SHA-256 mismatches. The ports seed fixture now
+> cross-builds Lua and zlib, publishes both into one signed local repository,
+> and can boot SwiftOS with `/etc/pkg/repo-url` so `pkg update` works without a
+> manual `pkg repo set`. Rollback, remove, upgrade, public hosted channels,
+> version-constraint solving, and large-package streaming downloads are still
+> staged work.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 

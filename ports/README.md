@@ -5,12 +5,15 @@ repository. It is intentionally small and machine-readable: it records the
 first package priorities, dependency names, OS prerequisite bundles, blocked
 state, and the first smoke test each package must eventually pass.
 
-This is not a full ports tree yet. The first `Port.json` recipe is checked in
-for `lang/lua`, with validation, manifest generation, checksum-verified
-distfile fetching, `.swpkg` creation from a clean staged root, and signed static
-repository fixture generation. `make ports-lua-repo-fixture` also cross-builds
-real AArch64 static Lua against the local newlib sysroot and packages the
-runtime interpreter.
+This is not a full ports tree yet. The first checked-in recipes are `lang/lua`
+and `archivers/zlib`, with validation, manifest generation, checksum-verified
+distfile fetching, `.swpkg` creation from clean staged roots, and signed static
+repository fixture generation. `make ports-lua-repo-fixture` cross-builds real
+AArch64 static Lua against the local newlib sysroot and packages the runtime
+interpreter. `make ports-zlib-repo-fixture` cross-builds static zlib, headers,
+pkgconf metadata, and the small `minigzip` smoke-test helper. `make
+ports-seed-repo-fixture` publishes both packages into one signed seed
+repository.
 Patches, QEMU smoke tests, and trusted public publishing workflows still belong
 to the planned `swift-os-ports` repository. The seed catalog keeps that work
 ordered and reviewable while the target-side package manager is still being
@@ -22,6 +25,9 @@ Validate the catalog:
 make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
+make ports-zlib-repo-fixture
+make ports-seed-repo-fixture
+make package-ports-seed-repo-install-test
 ```
 
 Useful inspection commands:
@@ -32,14 +38,16 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport catalog inspect nodejs ports/catalog.json
 build/swport recipe validate lang/lua
+build/swport recipe validate archivers/zlib
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua cross-build target requires `sysroot/aarch64-elf/lib/libc.a`; create it
-with `make newlib` if the generated sysroot is not present.
+The Lua and zlib cross-build targets require `sysroot/aarch64-elf/lib/libc.a`;
+create it with `make newlib` if the generated sysroot is not present.
 
 Catalog rules enforced by `swport catalog validate`:
 
