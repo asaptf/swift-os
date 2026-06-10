@@ -296,6 +296,10 @@ The Makefile tracks the active board and removes board-dependent artifacts when
 the board changes. Slow board-independent inputs such as busybox, newlib, and
 model files are kept unless their own targets are rebuilt or cleaned.
 
+For update planning, rollback artifacts, release-candidate validation, and
+package or model refresh procedures, see
+[UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

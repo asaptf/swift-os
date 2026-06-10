@@ -11,6 +11,8 @@ Use this guide with:
 - [Getting Started](GETTING_STARTED.md) for the first boot.
 - [Installation Guide](INSTALLATION_GUIDE.md) for choosing and verifying direct,
   UEFI, graphical, and VirtualBox boot profiles.
+- [Update And Rollback Guide](UPDATE_GUIDE.md) for rebuilding immutable
+  artifacts, validating candidates, and returning to a known-good image.
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.

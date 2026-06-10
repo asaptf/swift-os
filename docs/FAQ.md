@@ -79,7 +79,17 @@ SwiftOS intentionally uses an immutable packed base image plus RAM-backed
 `/tmp`. This keeps boot deterministic and makes package/update work move toward
 signed immutable images instead of in-place root mutation.
 
-See [BASE_IMAGE.md](BASE_IMAGE.md) and [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
+See [BASE_IMAGE.md](BASE_IMAGE.md), [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md), and
+[UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+
+### How do I update or roll back SwiftOS?
+
+Today updates are host-driven. Rebuild immutable artifacts with `make build`,
+`make base-image`, `make disk`, package tooling, or model targets; boot the new
+artifacts; run the relevant acceptance tests; and keep the previous artifacts or
+commit available for rollback.
+
+See [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
 
 ### Where does writable data go?
 

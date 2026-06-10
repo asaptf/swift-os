@@ -127,6 +127,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   QEMU, UEFI/GPT, graphical smoke, and VirtualBox ARM boot profiles.
 - [Release Notes](docs/RELEASE_NOTES.md): shipped features, verification gates,
   known limits, and upgrade notes for the current checked-in snapshot.
+- [Update And Rollback Guide](docs/UPDATE_GUIDE.md): rebuild immutable
+  artifacts, update boot profiles, verify candidates, and roll back safely.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
 - [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,

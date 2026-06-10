@@ -190,6 +190,8 @@ make base-image
   [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The current
   verified LLM bundle is a narrow, working example of generation verification
   and fallback.
+- For the current host-driven update and rollback procedure, use
+  [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
 
 ## More Information
 
@@ -197,6 +199,7 @@ make base-image
 - Use [USER_GUIDE.md](USER_GUIDE.md) for interactive operation.
 - Use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) for command syntax.
 - Use [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for tested runbooks.
+- Use [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for artifact updates and rollback.
 - Use [API_REFERENCE.md](API_REFERENCE.md) and
   [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for application development.
 - Use [SUPPORT_GUIDE.md](SUPPORT_GUIDE.md) when collecting evidence for an
