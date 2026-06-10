@@ -19,6 +19,50 @@ A default SwiftOS boot gives you:
   the eight-package ports seed repository fixture.
 - A POSIX-like syscall ABI that is intentionally not the Linux ABI.
 
+## First Ten Minutes Checklist
+
+Use this path when you only need to prove that a checkout is healthy:
+
+1. Build the direct-boot artifacts:
+
+   ```sh
+   make build base-image build/virt.dtb
+   ```
+
+2. Boot the serial profile:
+
+   ```sh
+   make run
+   ```
+
+3. Complete the early TTY prompt, then log in:
+
+   ```text
+   swift-os login: root
+   Password: swordfish
+   ```
+
+4. In the guest, verify identity, filesystem, scratch space, and process
+   inspection:
+
+   ```sh
+   id
+   ls -l /
+   cat /etc/motd
+   mkdir /tmp/work
+   echo ok >/tmp/work/first.txt
+   cat /tmp/work/first.txt
+   top -b -n 1
+   ```
+
+5. On the host, run the automated boot proof:
+
+   ```sh
+   ./tests/boot_test.sh
+   ```
+
+For task-specific next steps, use the decision table in [FAQ.md](FAQ.md).
+
 ## Host Requirements
 
 The default Makefile expects these tools:
