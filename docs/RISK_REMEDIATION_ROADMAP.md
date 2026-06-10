@@ -294,6 +294,25 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   userland yet. C5b/C5 proper still owns the device-handle and real driver
   extraction work.
 
+### C5b — opaque device-handle handoff scaffold (DONE, 2026-06-10)
+
+- `HandleKind.device` now exists as a non-duplicable, transferable, opaque
+  device-ownership grant. The first registry entry is `pseudo-input.0`, a C5
+  scaffold device with no MMIO, IRQ, or DMA grant.
+- New `device_claim` / `device_info` syscalls let the boot authority claim the
+  pseudo device, inspect fixed metadata, and transfer the resulting handle over
+  C4 IPC.
+- `/bin/drvsvcdemo` now moves the device handle to `/bin/drvinputd`, proves the
+  supervisor's source fd is invalid after the move, proves a second claim is
+  busy while the service owns the grant, stops the service, and reclaims the
+  device after release.
+- The boot path requires `C5b OK: opaque device handle transferred and released`;
+  `make c5-device-handle-test` is the focused direct-boot gate.
+- Non-goals: C5b still does not expose MMIO mapping, IRQ endpoints, DMA windows,
+  or real virtio-input ownership. The next C5 slice should replace the pseudo
+  registry entry with real device discovery/manifest matching and then begin
+  moving a non-boot-critical driver out of the kernel.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

@@ -225,6 +225,8 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 59 | `mmap_file` | `fd`, `length`, `prot` | base VA or negative error |
 | 60 | `pkg_install` | `fd`, `name`, `version_revision` | 0 or negative error |
 | 61 | `pkg_info` | `index`, `buf`, `cap` | bytes copied or negative error |
+| 62 | `device_claim` | `name`, `device_info*` | device fd or negative error |
+| 63 | `device_info` | `fd`, `device_info*` | 0 or negative error |
 
 Notes:
 
@@ -418,6 +420,41 @@ if rc >= 0 {
     swiftos_puts("\n")
 }
 ```
+
+## Device Grants
+
+C5b adds an opaque device-handle scaffold for restartable driver services. The
+current registry has one pseudo device, `pseudo-input.0`, used by
+`/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over IPC.
+It is not a real MMIO, IRQ, or DMA grant yet.
+
+```c
+struct swiftos_device_info {
+    unsigned int kind;
+    unsigned int bus;
+    unsigned long mmio_base;
+    unsigned long mmio_len;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned int generation;
+    unsigned int claimed;
+    char name[24];
+};
+
+int device_claim(const char *name, struct swiftos_device_info *info);
+int device_info(int fd, struct swiftos_device_info *info);
+```
+
+Contract:
+
+- `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
+  transfer authority, or a negative error.
+- A second claim while a live handle owns the grant returns `-16`.
+- Moving the handle through `ipc_send` invalidates the sender's source fd.
+- Closing the final fd for the device releases the registry claim.
+- `device_info` fills the fixed 64-byte metadata record. `mmio_base`,
+  `mmio_len`, and `irq` are zero in C5b because hardware access is deliberately
+  not granted.
 
 ## Terminal API
 

@@ -127,9 +127,11 @@ Use `/tmp` for runtime scratch state.
 
 ## Programs In `/bin`
 
-The base image stages native Swift programs, C demos, and busybox. The C5a
+The base image stages native Swift programs, C demos, and busybox. The C5
 service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
-pseudo driver service `/bin/drvinputd` over endpoint IPC.
+pseudo driver service `/bin/drvinputd` over endpoint IPC, then transfers an
+opaque `pseudo-input.0` device handle to prove device ownership can move to a
+restartable service.
 
 Common native Swift tools:
 

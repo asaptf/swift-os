@@ -77,6 +77,8 @@ struct HandleTest {
               "HandleKind.pipe != .file")
         check(HandleKind.endpoint.rawValue != HandleKind.socket.rawValue,
               "HandleKind.endpoint != .socket")
+        check(HandleKind.device.rawValue != HandleKind.endpoint.rawValue,
+              "HandleKind.device != .endpoint")
 
         // ---- 6. C2 handle inheritance selector ------------------------------
         check(handleInheritanceCopiesFD(.all, fd: 0), ".all copies fd 0")
@@ -125,6 +127,15 @@ struct HandleTest {
         check(recvEndpoint.kind == .endpoint, "recv endpoint is an endpoint handle")
         check(recvEndpoint.rights == [.read, .transfer],
               "recv endpoint carries read+transfer rights")
+
+        // ---- 10. C5 device handle vocabulary --------------------------------
+        let device = HandleEntry(inUse: true, kind: .device, object: 13,
+                                 rights: [.getattr, .transfer])
+        check(device.kind == .device, "device grant is a device handle")
+        check(device.rights == [.getattr, .transfer],
+              "device grant carries metadata+transfer rights")
+        check(!device.rights.contains(.duplicate),
+              "device grant is not duplicable by default")
 
         if failed {
             FileHandle.standardError.write(Data("handle_test: FAILURES\n".utf8))

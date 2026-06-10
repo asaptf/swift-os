@@ -92,8 +92,14 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
 C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
@@ -158,6 +164,11 @@ drvinputd: invalid generation
 drvinputd: ready send failed
 drvinputd: command receive failed
 drvinputd: event send failed
+drvinputd: device handle missing
+drvinputd: duplicate device grant
+drvinputd: device info failed
+drvinputd: device info mismatch
+drvinputd: device ack send failed
 drvinputd: unknown command
 drvsvc: endpoint_create failed
 drvsvc: fork failed
@@ -165,6 +176,15 @@ drvsvc: exec drvinputd failed
 drvsvc: ready message mismatch
 drvsvc: ping send failed
 drvsvc: event message mismatch
+drvsvc: device claim failed
+drvsvc: device info mismatch
+drvsvc: device dup unexpectedly succeeded
+drvsvc: device grant send failed
+drvsvc: moved device fd still valid
+drvsvc: device ack mismatch
+drvsvc: busy claim failed
+drvsvc: reclaim claim failed
+drvsvc: reclaim info mismatch
 drvsvc: stop send failed
 drvsvc: service wait failed}"
 

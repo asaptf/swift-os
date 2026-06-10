@@ -68,6 +68,8 @@
 #define SYS_SPAWN_HANDLES 58
 #define SYS_PKG_INSTALL   60
 #define SYS_PKG_INFO      61
+#define SYS_DEVICE_CLAIM  62
+#define SYS_DEVICE_INFO   63
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -97,6 +99,10 @@
                                  SWIFTOS_RIGHT_DUPLICATE | SWIFTOS_RIGHT_TRANSFER | \
                                  SWIFTOS_RIGHT_GETATTR | SWIFTOS_RIGHT_SETATTR)
 #define SWIFTOS_SPAWN_HANDLE_CLOEXEC (1u << 0)
+
+#define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
+#define SWIFTOS_DEVICE_BUS_PSEUDO        1u
+#define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
 
 #ifndef __ASSEMBLER__
 
@@ -273,6 +279,26 @@ static inline int pkg_install(int fd, const char *name, const char *version_revi
 
 static inline int pkg_info(int index, char *buf, size_t cap) {
     return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
+}
+
+struct swiftos_device_info {
+    unsigned int kind;
+    unsigned int bus;
+    unsigned long mmio_base;
+    unsigned long mmio_len;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned int generation;
+    unsigned int claimed;
+    char name[24];
+};
+
+static inline int device_claim(const char *name, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_CLAIM, (long)name, (long)info, 0);
+}
+
+static inline int device_info(int fd, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_INFO, fd, (long)info, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.
