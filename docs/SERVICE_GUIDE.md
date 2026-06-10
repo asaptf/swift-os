@@ -66,8 +66,8 @@ C5a proves the service shape that future userland drivers need before real
 device ownership moves out of the kernel. C5b adds an opaque pseudo-input
 device grant on top of that shape. The demo supervisor starts `/bin/drvinputd`
 with endpoint file descriptors, exchanges a pseudo input event, transfers the
-opaque device handle, proves the grant is moved and busy while the service owns
-it, stops the service, starts a fresh generation, and verifies that
+opaque device handle, proves the grant moves and stays busy while the service
+owns it, stops the service, starts a fresh generation, and verifies that
 communication recovers.
 
 Focused host gate:

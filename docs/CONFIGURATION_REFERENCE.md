@@ -360,7 +360,7 @@ Most acceptance tests accept a small set of environment overrides.
 | `LLVM_OBJDUMP` | SMP object-layout tests | Select `llvm-objdump` |
 | `FDT_TEST` | SMP S1 preflight | Reuse a prebuilt FDT test binary |
 | `SMP_CPUS` | SMP and UEFI tests | Select CPU count, usually 1 to 8 |
-| `SMP_DTB` | SMP and C5a driver-service tests | Provide a prebuilt SMP DTB |
+| `SMP_DTB` | SMP and C5 driver-service/device-handle tests | Provide a prebuilt SMP DTB |
 | `SMP_HEADROOM_CPUS` | SMP headroom test | Space-separated CPU counts to probe |
 | `SMP_S1_PREFLIGHT_CPUS` | SMP S1 preflight | Space-separated CPU counts to validate |
 | `UEFI_BOOT` | UEFI boot test | Select `disk` or `fat` boot mode |
