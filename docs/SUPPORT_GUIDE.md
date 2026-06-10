@@ -91,6 +91,43 @@ Then run the narrowest acceptance test that proves the failing path:
 If the narrow test passes, record that too. It narrows the problem and prevents
 the next person from retesting the wrong layer.
 
+## Choose A Support Bundle
+
+Pick the smallest bundle that proves the failing path. Every bundle should
+include `git-status.txt`, `git-head.txt`, `tools-check.txt`, the exact command
+that failed, and the first failing line.
+
+| Case | Add these logs | Add this proof |
+| --- | --- | --- |
+| Build or toolchain failure | `support/build.txt`, `support/tools-check.txt` | `make tools-check`, then the failing `make` target |
+| Direct boot failure | `support/boot-test.txt`, `support/serial.log` when manual | `./tests/boot_test.sh` |
+| UEFI boot failure | `support/disk-build.txt`, `support/uefi-boot-test.txt` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| Login or capability failure | `support/console-login-test.txt`, guest `id` transcript | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
+| Filesystem or tmpfs failure | `support/vfs-disk-test.txt`, command transcript | `./tests/vfs_disk_test.sh`, `./tests/swift_fileops_test.sh` |
+| Network service failure | Service test output, host `curl` or `nc` output, serial readiness marker | Focused network test from [Networking Guide](NETWORKING_GUIDE.md) |
+| AI serving failure | `support/llm-serve-test.txt`, `/health`, `/completion`, `/metrics` output | `./tests/llm_serve_test.sh` |
+| Package install or repository failure | Package fixture output and `/bin/pkg` transcript | Matching package test from [Package Guide](PACKAGE_GUIDE.md) |
+| Base-image A/B update failure | Stage, activate, confirm, rollback test logs as applicable | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh`, `./tests/ab_rollback_test.sh` |
+| Kernel-slot update failure | ESP build output, loader log, `kernel-state` context if available | Matching `uefi_k*` test from [Update And Rollback Guide](UPDATE_GUIDE.md) |
+| Driver-service/device-authority failure | C5 test output and markers around `drvsvc:` | `make c5-device-authority-test` |
+| Documentation mismatch | `make docs-test` output and the exact guide section | `git diff --check`, `make docs-test` |
+
+Example support bundle for a networking issue:
+
+```sh
+mkdir -p support
+git status --short --branch >support/git-status.txt
+git log -1 --oneline >support/git-head.txt
+make tools-check >support/tools-check.txt 2>&1
+./tests/httpd_test.sh >support/httpd-test.txt 2>&1
+```
+
+If the issue was reproduced manually, add the host client output:
+
+```sh
+curl -v http://127.0.0.1:8080/ >support/curl-httpd.txt 2>&1
+```
+
 ## Minimum Report Template
 
 Use this template for bugs, regressions, and failed validation runs.
