@@ -24,6 +24,7 @@ RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
 TOP_SWIFT="$ROOT/userland/top.swift"
 SWIFT_USER_C="$ROOT/userland/lib/swift_user.c"
 SWIFT_USER_H="$ROOT/userland/lib/swift_user.h"
+API_REFERENCE="$ROOT/docs/API_REFERENCE.md"
 S4_STRESS_C="$ROOT/userland/s4stress.c"
 S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
 SMP_BOOT_TEST="$ROOT/tests/smp_boot_test.sh"
@@ -994,6 +995,26 @@ for needle in \
   'swiftos_sys_cpu_idle_ticks'; do
   if ! grep -Fq -- "$needle" "$SWIFT_USER_C"; then
     echo "FAIL: S5a swift_user.c missing sysinfo ABI field/accessor: $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '| 46 | `sysinfo` | `buffer`, `capacity` | 0 or negative error |' \
+  '`sysinfo(buffer, capacity)` writes a system stats blob' \
+  'A capacity of 0 requests the legacy 64-byte layout.' \
+  'A capacity of at least 200 bytes requests the full S5 layout' \
+  '#define SWIFTOS_CPU_MAX 8' \
+  'unsigned int cpu_count;' \
+  'unsigned int cpu_capacity;' \
+  'unsigned long cpu_ticks[SWIFTOS_CPU_MAX];' \
+  'unsigned long cpu_idle_ticks[SWIFTOS_CPU_MAX];' \
+  'unsigned int swiftos_sys_cpu_count(void);' \
+  'unsigned int swiftos_sys_cpu_capacity(void);' \
+  'unsigned long swiftos_sys_cpu_ticks(unsigned int cpu);' \
+  'unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu);'; do
+  if ! grep -Fq -- "$needle" "$API_REFERENCE"; then
+    echo "FAIL: S5a API_REFERENCE.md missing sysinfo ABI detail: $needle." >&2
     exit 1
   fi
 done

@@ -183,7 +183,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 43 | `accept` | `fd` | connection fd or negative error |
 | 44 | `connect` | `fd`, `ip`, `port` | 0 or negative error |
 | 45 | `resolve` | `name`, `server_ip`, `server_port` | host-order IPv4, or 0 on failure |
-| 46 | `sysinfo` | `buffer` | 0 or negative error |
+| 46 | `sysinfo` | `buffer`, `capacity` | 0 or negative error |
 | 47 | `procstat` | `buffer`, `capacity` | process count or negative error |
 | 48 | `thread_create` | `entry`, `arg`, `stack_top` | thread id or negative error |
 | 49 | `futex` | `uaddr`, `op`, `val` | op-specific result or negative error |
@@ -838,7 +838,12 @@ struct swiftos_ps_entry {
 
 ### `sysinfo`
 
-`sysinfo(buffer)` writes a 64-byte system stats blob:
+`sysinfo(buffer, capacity)` writes a system stats blob for `/bin/top` and other
+observability tools. A capacity of 0 requests the legacy 64-byte layout.
+A capacity of at least 200 bytes requests the full S5 layout with per-CPU timer
+and idle counters.
+
+The first 64 bytes are stable:
 
 ```c
 struct swiftos_sysinfo {
@@ -854,6 +859,34 @@ struct swiftos_sysinfo {
     unsigned int reserved;        // offset 60
 };
 ```
+
+The full 200-byte layout appends:
+
+```c
+#define SWIFTOS_CPU_MAX 8
+
+struct swiftos_sysinfo_s5 {
+    unsigned long uptime_ticks;                  // offset 0
+    unsigned long idle_ticks;                    // offset 8
+    unsigned long mem_total;                     // offset 16
+    unsigned long mem_free;                      // offset 24
+    unsigned long kernel_image;                  // offset 32
+    unsigned long kernel_heap;                   // offset 40
+    unsigned int hz;                             // offset 48
+    unsigned int proc_total;                     // offset 52
+    unsigned int proc_running;                   // offset 56
+    unsigned int reserved;                       // offset 60
+    unsigned int cpu_count;                      // offset 64
+    unsigned int cpu_capacity;                   // offset 68
+    unsigned long cpu_ticks[SWIFTOS_CPU_MAX];    // offset 72
+    unsigned long cpu_idle_ticks[SWIFTOS_CPU_MAX]; // offset 136
+};
+```
+
+`cpu_count` is clamped to the platform CPU count and `SWIFTOS_CPU_MAX`.
+`cpu_capacity` publishes the ABI array capacity. Entries at or above
+`cpu_count` are zero. Native Swift userland should prefer the bridge accessors
+instead of depending on the raw offsets directly.
 
 ### `procstat`
 
@@ -922,6 +955,38 @@ int swiftos_exec_shell(const char *path);
 long swiftos_getpid(void);
 ```
 
+### System And Process Stats
+
+```c
+#define SWIFTOS_TOP_MAX 16
+#define SWIFTOS_CPU_MAX 8
+
+int swiftos_sysinfo_refresh(void);
+unsigned long swiftos_sys_uptime_ticks(void);
+unsigned long swiftos_sys_idle_ticks(void);
+unsigned long swiftos_sys_mem_total(void);
+unsigned long swiftos_sys_mem_free(void);
+unsigned long swiftos_sys_kernel_image(void);
+unsigned long swiftos_sys_kernel_heap(void);
+unsigned int swiftos_sys_hz(void);
+unsigned int swiftos_sys_proc_total(void);
+unsigned int swiftos_sys_proc_running(void);
+unsigned int swiftos_sys_cpu_count(void);
+unsigned int swiftos_sys_cpu_capacity(void);
+unsigned long swiftos_sys_cpu_ticks(unsigned int cpu);
+unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu);
+
+int swiftos_top_refresh(void);
+unsigned int swiftos_top_pid(int i);
+unsigned int swiftos_top_ppid(int i);
+unsigned int swiftos_top_state(int i);
+unsigned int swiftos_top_principal(int i);
+unsigned long swiftos_top_cpu_ticks(int i);
+unsigned long swiftos_top_start_tick(int i);
+unsigned long swiftos_top_res_bytes(int i);
+const char *swiftos_top_name(int i);
+```
+
 ### Time
 
 ```c
@@ -987,7 +1052,7 @@ one booting acceptance path:
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
-| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test` |
+| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,
