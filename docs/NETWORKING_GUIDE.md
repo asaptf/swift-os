@@ -9,7 +9,7 @@ SwiftOS networking today is real but intentionally small: a QEMU `virt`
 virtio-net device, an in-kernel pure-Swift TCP/IP stack, capability-gated socket
 syscalls, static guest addressing, and a set of native userland network tools.
 It is enough to serve static files, serve local TinyStories completions, run TCP
-and UDP echo demos, resolve DNS, and exercise the TLS 1.3 client path.
+and UDP echo services, resolve DNS, and exercise the TLS 1.3 client path.
 
 Use this guide with:
 
@@ -61,10 +61,10 @@ explicit QEMU command.
 
 ## QEMU Network Profiles
 
-### All-In-One Demo Profile
+### All-In-One Validation Profile
 
-This profile exposes the HTTP and echo demo ports and is the best starting
-point for manual demos:
+This profile exposes the HTTP and echo service ports and is the best starting
+point for manual validation:
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -400,7 +400,7 @@ from the guest:
 ```
 
 Certificate verification is deliberately incomplete in the current branch. Use
-`tlsget` as a runtime and interoperability demo, not as a production trust
+`tlsget` as a runtime smoke and interoperability path, not as a production trust
 decision.
 
 Proof:
@@ -437,7 +437,7 @@ Run the narrowest proof for the path you changed:
 | UDP echo | `./tests/udp_echo_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
-| TLS client demo | `./tests/tls_test.sh` |
+| TLS client smoke | `./tests/tls_test.sh` |
 | IPv6 link-local/NDP | `./tests/ipv6_smoke_test.sh` |
 | IPv6 TCP path | `./tests/ipv6_tcp_echo_test.sh` |
 | IPv6 UDP path | `./tests/ipv6_udp_echo_test.sh` |
@@ -465,16 +465,16 @@ and collect serial evidence with [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md
 
 ## Security And Product Limits
 
-Current limits that matter when exposing a SwiftOS network demo:
+Current limits that matter when exposing a SwiftOS network service:
 
 - `capNet` is coarse. It grants the ability to create sockets generally, not a
   specific port, address, or protocol.
 - There is no target-side firewall command, routing table command, or DHCP
   client workflow yet.
 - TLS certificate verification is not production-ready.
-- `httpd` is an HTTP static-file demo, not a hardened Internet-facing web
+- `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.
-- `/bin/llmd` is a foreground demo service with no service manager or restart
+- `/bin/llmd` is a foreground service with no service manager or restart
   policy yet.
 - The writable filesystem is RAM-backed `/tmp`; no network service state
   persists across reboot unless it is built into the base image or provided by a
@@ -483,7 +483,7 @@ Current limits that matter when exposing a SwiftOS network demo:
   hardening roadmap moves this authority toward restartable userland services.
 
 Use host-only loopback forwarding, such as `hostfwd=tcp:127.0.0.1:8080-:8080`,
-for local demos. Do not expose current demo services directly to an untrusted
+for local validation. Do not expose current services directly to an untrusted
 network.
 
 ## Source Map
