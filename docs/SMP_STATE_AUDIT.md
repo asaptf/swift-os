@@ -19,7 +19,7 @@ manifest entries left behind after globals move or disappear.
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
 | Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
-| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work wires shootdowns to real address-space active masks. |
+| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints/package store | Shared fixed tables; C4 work may change them. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Do not change in S0c. Later protect table mutation, handle refcount paths, and target-side package-store append/activation before secondary CPUs can run package management or VFS mutation. |
 | Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
@@ -247,9 +247,10 @@ manifest entries left behind after globals move or disappear.
   mask scaffold, and timer accounting must become per-CPU or protected before
   any secondary CPU can run scheduler code.
   S2e publishes dormant secondary scheduler resources, S2f records CPU0
-  dispatch evidence, S2g snapshots the `coproc` pair before reap, and S3a
-  records CPU0-only address-space activation evidence; none of these milestones
-  make those structures concurrency-safe.
+  dispatch evidence, S2g snapshots the `coproc` pair before reap, S3a records
+  CPU0-only address-space activation evidence, and S3d wires VM TLB flushes to
+  that active-mask surface; none of these milestones make those structures
+  concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2

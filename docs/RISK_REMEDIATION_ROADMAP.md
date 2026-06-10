@@ -174,6 +174,11 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   request to discovered secondaries, send the reserved IPI, and wait for each
   target to run a local `tlbi vmalle1` and atomically acknowledge it while the
   scheduler and EL0 gates remain CPU0-owned.
+- S3d preflight (2026-06-10): VM TLB invalidation sites now route through an
+  active-CPU-mask facade. Process-owned mmap/munmap/mprotect, demand paging,
+  COW, and fork/COW parent rewrites pass the S3a address-space CPU mask into
+  the S3c shootdown substrate; today that mask remains CPU0-only, but the page
+  table mutation boundary is now the future cross-CPU hook.
 - Implement a minimal IPI / SGI mechanism (or use GIC SGI) for "reschedule this CPU", "TLB invalidate range on these CPUs", etc.
 - When a page table change (munmap, mprotect, process exec/exit) happens on CPU A for an address space that may be active on CPU B, we must shoot down the TLB on B (or the relevant set of CPUs). Single-CPU `tlbi vmalle1` / `tlbi vae1` is no longer sufficient.
 - `address_space_switch` and the TTBR0 install path must be safe when the same AS can be on multiple CPUs (or when we migrate a process).

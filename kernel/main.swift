@@ -631,8 +631,12 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
         let isPermissionFault = dfsc >= 0xC && dfsc <= 0xF
         if isWrite && isPermissionFault {
             let ttbr0 = processCurrentAddressSpace()
-            if ttbr0 != 0 && addressSpaceHandleCowFault(ttbr0, far) {
-                return
+            if ttbr0 != 0 {
+                if addressSpaceHandleCowFaultForActiveCpuMask(ttbr0,
+                                                              far,
+                                                              processCurrentAddressSpaceActiveCpuMask()) {
+                    return
+                }
             }
         }
     }
@@ -818,6 +822,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S3c OK: TLB shootdown IPI scaffold ready", UInt64(platform.cpuCount))
+    if !processAddressSpaceTlbFlushFacadeSelfTest() {
+        uartPuts("panic: S3d address-space TLB flush facade self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3d OK: address-space TLB flush facade ready", UInt64(smpMaxCpuCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     pkgStoreInit()      // P3: read active package-store generation, if present
@@ -901,6 +910,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S3c OK: TLB shootdown path stayed scheduler-safe", UInt64(platform.cpuCount))
+        if !processAddressSpaceTlbFlushNoSecondarySelfTest() {
+            uartPuts("panic: S3d address-space TLB flush facade guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3d OK: address-space TLB flush stayed CPU0-owned", UInt64(platform.cpuCount))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

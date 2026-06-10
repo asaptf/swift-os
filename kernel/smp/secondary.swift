@@ -153,16 +153,39 @@ func smpTlbShootdownSelfTest() -> Bool {
     if primary >= smpMaxCpuCount() { return false }
 
     let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
-    let generation = smpBeginTlbShootdownProbe(targetMask: targetMask)
-    if generation == 0 { return false }
-    if targetMask == 0 { return smpSecondariesRemainSchedulerIdle() }
+    return smpRequestTlbShootdownForCpuMask(targetMask)
+}
 
-    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+func smpRequestTlbShootdownForCpuMask(_ requestedMask: UInt64) -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    var targetMask: UInt64 = 0
+    var discoveredMask: UInt64 = 0
     var i: UInt32 = 0
     while i < platform.cpuCount {
         let cpu = platformCpuAff0(i)
         if cpu >= smpMaxCpuCount() { return false }
-        if cpu != primary {
+        let bit = UInt64(1) << UInt64(cpu)
+        discoveredMask |= bit
+        if cpu != primary && (requestedMask & bit) != 0 {
+            targetMask |= bit
+        }
+        i += 1
+    }
+    if (requestedMask & ~discoveredMask) != 0 { return false }
+    if targetMask == 0 { return smpSecondariesRemainSchedulerIdle() }
+
+    let generation = smpBeginTlbShootdownProbe(targetMask: targetMask)
+    if generation == 0 { return false }
+
+    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
             before[Int(cpu)] = smpPerCpuTlbShootdownReceivedCount(cpu)
             if !smpPublishTlbShootdownRequest(cpu: cpu, generation: generation) {
                 return false
@@ -175,7 +198,8 @@ func smpTlbShootdownSelfTest() -> Bool {
     i = 0
     while i < platform.cpuCount {
         let cpu = platformCpuAff0(i)
-        if cpu != primary {
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
             if !gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu) {
                 return false
             }
@@ -191,7 +215,8 @@ func smpTlbShootdownSelfTest() -> Bool {
             i = 0
             while i < platform.cpuCount {
                 let cpu = platformCpuAff0(i)
-                if cpu != primary {
+                let bit = UInt64(1) << UInt64(cpu)
+                if (targetMask & bit) != 0 {
                     if smpPerCpuTlbShootdownAckGeneration(cpu) != generation { return false }
                     if smpPerCpuTlbShootdownReceivedCount(cpu) <= before[Int(cpu)] { return false }
                 }

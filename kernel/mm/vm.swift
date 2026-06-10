@@ -41,6 +41,60 @@ private let BLOCK_1G_MASK: UInt64 = 0x0000_ffff_c000_0000
 private let BLOCK_2M_MASK: UInt64 = 0x0000_ffff_ffe0_0000
 private let PAGE_4K_MASK: UInt64  = 0x0000_ffff_ffff_f000
 
+func addressSpaceCurrentCpuTlbMask() -> UInt64 {
+    let cpu = currentCpuId()
+    if cpu >= smpMaxCpuCount() { return 0 }
+    return UInt64(1) << UInt64(cpu)
+}
+
+private func addressSpaceSupportedCpuMask() -> UInt64 {
+    var mask: UInt64 = 0
+    var cpu: UInt32 = 0
+    while cpu < smpMaxCpuCount() {
+        mask |= UInt64(1) << UInt64(cpu)
+        cpu += 1
+    }
+    return mask
+}
+
+@discardableResult
+func addressSpaceFlushTlbForActiveCpuMask(_ activeCpuMask: UInt64,
+                                          pageVA: UInt,
+                                          singlePage: Bool) -> Bool {
+    let currentMask = addressSpaceCurrentCpuTlbMask()
+    if currentMask == 0 { return false }
+
+    let targetMask = activeCpuMask == 0 ? currentMask : activeCpuMask
+    if (targetMask & ~addressSpaceSupportedCpuMask()) != 0 { return false }
+
+    dsb_sy()
+    if (targetMask & currentMask) != 0 {
+        if singlePage {
+            tlbi_va(pageVA)
+        } else {
+            tlbi_all()
+        }
+    }
+
+    let remoteMask = targetMask & ~currentMask
+    if remoteMask != 0 {
+        return smpRequestTlbShootdownForCpuMask(remoteMask)
+    }
+    return true
+}
+
+func addressSpaceTlbFlushFacadeSelfTest() -> Bool {
+    let currentMask = addressSpaceCurrentCpuTlbMask()
+    if currentMask == 0 { return false }
+    if !addressSpaceFlushTlbForActiveCpuMask(currentMask, pageVA: 0, singlePage: true) {
+        return false
+    }
+    if !addressSpaceFlushTlbForActiveCpuMask(currentMask, pageVA: 0, singlePage: false) {
+        return false
+    }
+    return true
+}
+
 // --- page-table entry access -----------------------------------------------
 // A table is a 4 KiB frame; RAM is identity-mapped so its PA is its pointer.
 // Entry `idx` is a little-endian UInt64 at byte offset idx*8.
@@ -201,7 +255,7 @@ private func releaseUserFrame(_ pa: UInt) {
     }
 }
 
-private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
+private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt, activeCpuMask: UInt64) -> Bool {
     let va = faultVA & ~(PAGE_SIZE - 1)
     let l3 = walkToL3(ttbr0, va, allocate: false)
     if l3 == 0 { return false }
@@ -219,9 +273,7 @@ private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
         // The other sharer already went away. No copy is needed; just restore
         // write permission and clear the software COW marker.
         tableStore(l3, leafIdx, writableDesc)
-        dsb_sy()
-        tlbi_va(va)
-        return true
+        return addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: true)
     }
 
     let newPA = copyFrame(oldPA)
@@ -229,13 +281,15 @@ private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
     let newDesc = (writableDesc & ~PAGE_4K_MASK) | (UInt64(newPA) & PAGE_4K_MASK)
     tableStore(l3, leafIdx, newDesc)
     releaseUserFrame(oldPA)
-    dsb_sy()
-    tlbi_va(va)
-    return true
+    return addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: true)
 }
 
 func addressSpaceHandleCowFault(_ ttbr0: UInt, _ faultVA: UInt) -> Bool {
-    return resolveCow(ttbr0, faultVA)
+    return addressSpaceHandleCowFaultForActiveCpuMask(ttbr0, faultVA, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceHandleCowFaultForActiveCpuMask(_ ttbr0: UInt, _ faultVA: UInt, _ activeCpuMask: UInt64) -> Bool {
+    return resolveCow(ttbr0, faultVA, activeCpuMask: activeCpuMask)
 }
 
 func addressSpacePrepareWrite(_ ttbr0: UInt, _ va: UInt) -> Bool {
@@ -245,7 +299,19 @@ func addressSpacePrepareWrite(_ ttbr0: UInt, _ va: UInt) -> Bool {
     let desc = tableLoad(l3, Int((pageVA >> 12) & 0x1ff))
     if (desc & DESC_VALID) == 0 { return false }
     if (desc & DESC_COW) != 0 {
-        return resolveCow(ttbr0, pageVA)
+        return resolveCow(ttbr0, pageVA, activeCpuMask: addressSpaceCurrentCpuTlbMask())
+    }
+    return (desc & DESC_AP_MASK) == DESC_AP_EL0_RW
+}
+
+func addressSpacePrepareWriteForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ activeCpuMask: UInt64) -> Bool {
+    let pageVA = va & ~(PAGE_SIZE - 1)
+    let l3 = walkToL3(ttbr0, pageVA, allocate: false)
+    if l3 == 0 { return false }
+    let desc = tableLoad(l3, Int((pageVA >> 12) & 0x1ff))
+    if (desc & DESC_VALID) == 0 { return false }
+    if (desc & DESC_COW) != 0 {
+        return resolveCow(ttbr0, pageVA, activeCpuMask: activeCpuMask)
     }
     return (desc & DESC_AP_MASK) == DESC_AP_EL0_RW
 }
@@ -283,14 +349,20 @@ func addressSpaceCreate() -> UInt {
 
 @_cdecl("address_space_map")
 func addressSpaceMap(_ ttbr0: UInt, _ va: UInt, _ pa: UInt, _ perm: Int32) -> Int32 {
+    return addressSpaceMapForActiveCpuMask(ttbr0, va, pa, perm, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceMapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pa: UInt,
+                                     _ perm: Int32, _ activeCpuMask: UInt64) -> Int32 {
     if (va & (PAGE_SIZE - 1)) != 0 || (pa & (PAGE_SIZE - 1)) != 0 {
         return -1
     }
     if !linkPage(ttbr0, va, permPageDesc(pa, perm)) {
         return -2
     }
-    dsb_sy()
-    tlbi_va(va)
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: true) {
+        return -1
+    }
     return 0
 }
 
@@ -303,6 +375,11 @@ func addressSpaceMap(_ ttbr0: UInt, _ va: UInt, _ pa: UInt, _ perm: Int32) -> In
 // Frames are zeroed because anonymous memory must read as 0.
 @_cdecl("address_space_mmap")
 func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int32) -> Int32 {
+    return addressSpaceMmapForActiveCpuMask(ttbr0, va, pageCount, prot, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceMmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
+                                      _ prot: Int32, _ activeCpuMask: UInt64) -> Int32 {
     if (va & (PAGE_SIZE - 1)) != 0 { return -22 } // EINVAL
     if pageCount == 0 { return -22 }
     // Reject PROT_WRITE|PROT_EXEC (W^X) and PROT_NONE up front: protPageDesc
@@ -325,8 +402,9 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
         }
         i += 1
     }
-    dsb_sy()
-    tlbi_all() // one bulk flush for the whole region
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
+        return -22
+    }
     return 0
 }
 
@@ -337,6 +415,13 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
 // it read-only with `prot`, and flush just this page. Returns true on success.
 func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskImage: Int, _ diskByteOffset: UInt,
                              _ contentLen: UInt, _ prot: Int32) -> Bool {
+    return addressSpaceMapFilePageForActiveCpuMask(ttbr0, pageVA, diskImage, diskByteOffset,
+                                                  contentLen, prot, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceMapFilePageForActiveCpuMask(_ ttbr0: UInt, _ pageVA: UInt, _ diskImage: Int,
+                                             _ diskByteOffset: UInt, _ contentLen: UInt,
+                                             _ prot: Int32, _ activeCpuMask: UInt64) -> Bool {
     if (pageVA & (PAGE_SIZE - 1)) != 0 { return false }
     if protPageDesc(0, prot) == 0 { return false } // W^X / PROT_NONE guard
     // Already mapped? Then this fault is not a missing-page demand fault.
@@ -356,9 +441,7 @@ func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskImage: Int, _ 
     if !linkPage(ttbr0, pageVA, protPageDesc(frame, prot)) {
         pmm_free_page(frame); return false
     }
-    dsb_sy()
-    tlbi_all()
-    return true
+    return addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: pageVA, singlePage: true)
 }
 
 // munmap: clear the leaf descriptors over [va, va+n*4K), free each backing
@@ -367,10 +450,16 @@ func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskImage: Int, _ 
 // typically re-mmap'd); address_space_destroy reclaims them at process exit.
 @_cdecl("address_space_munmap")
 func addressSpaceMunmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) -> Int32 {
+    return addressSpaceMunmapForActiveCpuMask(ttbr0, va, pageCount, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceMunmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
+                                        _ activeCpuMask: UInt64) -> Int32 {
     if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
     unmapRange(ttbr0, va, pageCount)
-    dsb_sy()
-    tlbi_all()
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
+        return -22
+    }
     return 0
 }
 
@@ -382,6 +471,11 @@ func addressSpaceMunmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) -> Int32 {
 // touched. Returns 0 on success or a negative errno.
 @_cdecl("address_space_mprotect")
 func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int32) -> Int32 {
+    return addressSpaceMprotectForActiveCpuMask(ttbr0, va, pageCount, prot, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceMprotectForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
+                                          _ prot: Int32, _ activeCpuMask: UInt64) -> Int32 {
     if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
     if pageCount == 0 { return -22 }
     if protPageDesc(0, prot) == 0 { return -22 } // W^X + PROT_NONE guard
@@ -414,8 +508,9 @@ func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: 
         tableStore(l3, leafIdx, newDesc)
         i += 1
     }
-    dsb_sy()
-    tlbi_all()
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
+        return -22
+    }
     return 0
 }
 
@@ -453,7 +548,9 @@ func addressSpaceSwitch(_ ttbr0: UInt) {
     write_ttbr0_el1(UInt64(ttbr0))
     dsb_sy()
     isb()
-    tlbi_all()
+    _ = addressSpaceFlushTlbForActiveCpuMask(addressSpaceCurrentCpuTlbMask(),
+                                             pageVA: 0,
+                                             singlePage: false)
 }
 
 @_cdecl("address_space_translate")
@@ -545,6 +642,10 @@ func addressSpaceDestroy(_ ttbr0: UInt) {
 // on failure.
 @_cdecl("address_space_clone")
 func addressSpaceClone(_ parent: UInt) -> UInt {
+    return addressSpaceCloneForActiveCpuMask(parent, addressSpaceCurrentCpuTlbMask())
+}
+
+func addressSpaceCloneForActiveCpuMask(_ parent: UInt, _ activeCpuMask: UInt64) -> UInt {
     let child = addressSpaceCreate()
     if child == 0 {
         return 0
@@ -587,7 +688,9 @@ func addressSpaceClone(_ parent: UInt) -> UInt {
             }
         }
     }
-    dsb_sy()
-    tlbi_all()
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: 0, singlePage: false) {
+        addressSpaceDestroy(child)
+        return 0
+    }
     return child
 }
