@@ -43,6 +43,7 @@ QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
 UPDATESTORE := $(BUILD)/updatestore
+KERNELBOOT := $(BUILD)/kernelboot
 SWPKG     := $(BUILD)/swpkg
 BASE_ROOT := $(BUILD)/base-root
 BASE_SEED_FILES := $(shell find base -type f | sort)
@@ -868,6 +869,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+	./tests/uefi_kernel_ab_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -915,14 +917,25 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 	@mkdir -p $(ESP_DIR)/EFI/BOOT
 	cp $(EFI_APP) $@
 
-# U1g: stage the kernel image on the ESP at \EFI\swift-os\kernel.bin. The loader
-# reads it from there (decoupled from the loader binary); the embedded blob stays
-# as a fallback. make-disk.sh copies this same file into the real GPT image.
-$(ESP_DIR)/EFI/swift-os/kernel.bin: $(KERNEL_BIN)
+# U1g: stage the kernel A/B slots + boot manifest on the ESP under \EFI\swift-os.
+# The loader reads the manifest, picks the active slot (kernelA.bin / kernelB.bin),
+# and loads it (decoupled from the loader binary; the embedded blob is a fallback).
+# Both slots are the same image for now; A/B differentiation comes with staging a
+# new kernel into the inactive slot. make-disk.sh copies these into the GPT image.
+$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	cp $(KERNEL_BIN) $@
+$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(KERNEL_BIN) $@
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	$(KERNELBOOT) $@ A
 
-uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI $(ESP_DIR)/EFI/swift-os/kernel.bin
+uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
+      $(ESP_DIR)/EFI/swift-os/kernelA.bin \
+      $(ESP_DIR)/EFI/swift-os/kernelB.bin \
+      $(ESP_DIR)/EFI/swift-os/kernel-boot
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
 uefi-run: uefi base-image
@@ -968,6 +981,14 @@ $(UPDATESTORE): tools/updatestore.swift kernel/fs/swosboot.swift Makefile | $(BU
 	$(HOST_SWIFTC) -O tools/updatestore.swift kernel/fs/swosboot.swift -o $@
 
 updatestore: $(UPDATESTORE)
+
+# U1g-2: host builder for the SWOSKERN kernel A/B boot manifest (read by the UEFI
+# loader from the ESP). Self-contained (no shared module — the loader parses it
+# directly in C).
+$(KERNELBOOT): tools/kernelboot.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/kernelboot.swift -o $@
+
+kernelboot: $(KERNELBOOT)
 
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)

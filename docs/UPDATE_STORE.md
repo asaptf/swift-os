@@ -222,16 +222,21 @@ backend. `updateStoreInit` logs "write durability via virtio FLUSH".
 The base-image A/B above covers the userland/system image. The kernel image
 itself is A/B'd through the UEFI loader, which is being built in slices.
 
-- **U1g-1 (done):** the loader reads the kernel from a file on the ESP
-  (`\EFI\swift-os\kernel.bin`) via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL` instead of an
-  embedded blob, decoupling the kernel image from the loader binary (a
-  prerequisite for A/B). The embedded blob remains as a fallback.
-  `tests/uefi_boot_test.sh` asserts the ESP-file load and full boot.
-- **Next:** a kernel A/B manifest on the ESP + a second kernel image + slot
-  selection; then Ed25519 verification of the selected kernel against the
-  compiled-in trust root.
+- **U1g-1 (done):** the loader reads the kernel from a file on the ESP via
+  `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL` instead of an embedded blob, decoupling the
+  kernel image from the loader binary (a prerequisite for A/B). The embedded blob
+  remains as a fallback.
+- **U1g-2 (done):** the loader reads a **SWOSKERN** boot manifest
+  (`\EFI\swift-os\kernel-boot`: magic, version, active/fallback slot, generation)
+  and loads the active slot (`kernelA.bin` / `kernelB.bin`), rolling back to the
+  fallback slot when the active file is missing/unopenable. Host-authored at image
+  build via `tools/kernelboot.swift` (no CRC yet — added when the OS writes it at
+  runtime). `tests/uefi_kernel_ab_test.sh` covers active-B selection + fallback.
+- **Next:** Ed25519 verification of the selected kernel against the compiled-in
+  trust root.
 
 ## Not implemented yet
 
-- Kernel A/B manifest + slot selection + Ed25519 (U1g-2/3).
+- Kernel A/B Ed25519 verification (U1g-3); runtime manifest writes (CRC +
+  double-buffering) so the OS can flip the active kernel slot.
 - Key rotation / revocation.

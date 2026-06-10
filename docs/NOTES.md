@@ -3081,3 +3081,37 @@ fallback keeps the path safe if the file is ever missing.
 **Still future (U1g-2/3).** A kernel A/B manifest on the ESP + a second kernel
 image + slot selection; then Ed25519 verification of the selected kernel against
 the compiled-in trust root.
+
+### U1g-2 — kernel A/B manifest + slot selection on the ESP (DONE, 2026-06-10)
+
+**Scope.** Second slice of kernel-image A/B. The loader now reads a small boot
+manifest from the ESP and chooses between two kernel slots, falling back to the
+other when the active slot's file is missing/unopenable.
+
+- **SWOSKERN manifest** (`\EFI\swift-os\kernel-boot`, 24 bytes LE): magic
+  "SWOSKERN", version=1, active(0/1), fallback(0/1), generation. Host-authored at
+  image build for now (no CRC; a CRC + double-buffering, like SWOSBOOT, come once
+  the OS writes it at runtime). Two slot images: `kernelA.bin` / `kernelB.bin`.
+- `boot/efi/loader.c`: `open_esp_kernel` generalized to `open_esp_file(path,…)`;
+  `read_kernel_manifest()` parses+validates the manifest; `efi_main` selects the
+  active slot's path, and if it won't open and a distinct fallback exists, rolls
+  back to the fallback slot (logs "rolling back to slot X"). Logs the active slot
+  ("kernel A/B manifest active slot B gen N") and the slot actually booted
+  ("booted kernel slot A/B"). No manifest → defaults to slot A. The embedded blob
+  remains the final fallback. The generic "kernel loaded from ESP file N bytes"
+  line is kept (so uefi_boot_test still asserts it).
+- `tools/kernelboot.swift`: host generator (`kernelboot <out> A|B [gen]`).
+- `Makefile`/`scripts/make-disk.sh`: stage `kernelA.bin`, `kernelB.bin`, and an
+  active-A `kernel-boot` into both the virtual-FAT ESP and the GPT image.
+
+**Acceptance.** `tests/uefi_kernel_ab_test.sh` (in `make test`) edits ESP copies
+of the GPT image with mtools: (1) active=B → loader reports "active slot B" +
+"booted kernel slot B" and the kernel boots from slot B; (2) active=B but
+`kernelB.bin` deleted → loader rolls back to slot A, "booted kernel slot A", boots.
+uefi_boot_test (default active-A manifest) still boots to busybox, single-core and
+`-smp 4`.
+
+**Still future (U1g-3).** Ed25519 verification of the selected kernel against the
+compiled-in trust root (`kernel/security/trust_root.S`), so a tampered/garbage
+slot is rejected at load and triggers fallback — the kernel-image analogue of the
+base-image signature check.

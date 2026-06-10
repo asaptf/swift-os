@@ -138,19 +138,32 @@ static void clean_dcache(UINT64 start, UINT64 len) {
 // GetMemoryMap and ExitBootServices). QEMU virt's map is well under this.
 static UINT8 mmap_buf[16384];
 
-// U1g: the kernel image path on the ESP, as a CHAR16 (UTF-16) array so we do not
-// depend on the toolchain's u"" literal. "\EFI\swift-os\kernel.bin".
-static CHAR16 KERNEL_ESP_PATH[] = {
+// U1g: ESP paths, as CHAR16 (UTF-16) arrays so we do not depend on the
+// toolchain's u"" literal. U1g-2 selects between two kernel slots (A/B) named by
+// a small manifest; the manifest and both slot images live under \EFI\swift-os.
+static CHAR16 KERNEL_A_PATH[] = {
     '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
-    'k','e','r','n','e','l','.','b','i','n', 0
+    'k','e','r','n','e','l','A','.','b','i','n', 0
+};
+static CHAR16 KERNEL_B_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','B','.','b','i','n', 0
+};
+static CHAR16 KERNEL_MANIFEST_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','-','b','o','o','t', 0
 };
 
-// Open the kernel image file on the volume the loader was loaded from (the ESP)
-// and return its handle (*out_file) and size (*out_size). Returns 1 on success,
-// 0 on any failure (the caller falls back to the embedded blob). U1g decouples
-// the kernel image from the loader binary so it can be A/B-staged on disk.
-static int open_esp_kernel(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
-                           EFI_FILE_PROTOCOL **out_file, UINT64 *out_size) {
+static UINT32 ld32(const UINT8 *p) {
+    return (UINT32)p[0] | ((UINT32)p[1] << 8) | ((UINT32)p[2] << 16) | ((UINT32)p[3] << 24);
+}
+
+// Open a file on the volume the loader was loaded from (the ESP) and return its
+// handle (*out_file) and size (*out_size). Returns 1 on success, 0 on any
+// failure. U1g decouples the kernel image (and its A/B manifest) from the loader
+// binary so they can be staged on disk.
+static int open_esp_file(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, CHAR16 *path,
+                         EFI_FILE_PROTOCOL **out_file, UINT64 *out_size) {
     EFI_BOOT_SERVICES *bs = st->BootServices;
     EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
@@ -169,7 +182,7 @@ static int open_esp_kernel(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
         return 0;
     }
     EFI_FILE_PROTOCOL *f = 0;
-    if (root->Open(root, &f, KERNEL_ESP_PATH, EFI_FILE_MODE_READ, 0) != EFI_SUCCESS || !f) {
+    if (root->Open(root, &f, path, EFI_FILE_MODE_READ, 0) != EFI_SUCCESS || !f) {
         root->Close(root);
         return 0;
     }
@@ -207,6 +220,41 @@ static int read_file_into(EFI_FILE_PROTOCOL *f, UINT64 dst, UINT64 size) {
         }
         off += chunk;
     }
+    return 1;
+}
+
+// U1g-2: the kernel A/B boot manifest (\EFI\swift-os\kernel-boot). Layout (LE):
+//   0  u8[8] "SWOSKERN"   8  u32 version=1   12 u32 active(0/1)
+//   16 u32 fallback(0/1)  20 u32 generation
+// Returns 1 and fills *active/*fallback/*gen on a valid manifest, else 0 (the
+// caller then loads slot A by default). The manifest is host-authored at image
+// build for now and carries no CRC; once the OS writes it at runtime a CRC and
+// double-buffering (like SWOSBOOT) will be added.
+static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
+                                int *active, int *fallback, UINT32 *gen) {
+    EFI_FILE_PROTOCOL *f = 0;
+    UINT64 sz = 0;
+    if (!open_esp_file(image_handle, st, KERNEL_MANIFEST_PATH, &f, &sz)) {
+        return 0;
+    }
+    UINT8 buf[64];
+    if (sz < 24 || sz > sizeof(buf)) { f->Close(f); return 0; }
+    UINTN n = (UINTN)sz;
+    EFI_STATUS rs = f->Read(f, &n, buf);
+    f->Close(f);
+    if (rs != EFI_SUCCESS || n < 24) {
+        return 0;
+    }
+    static const char magic[8] = { 'S','W','O','S','K','E','R','N' };
+    for (int i = 0; i < 8; i++) {
+        if (buf[i] != (UINT8)magic[i]) return 0;
+    }
+    if (ld32(buf + 8) != 1) return 0;             // version
+    UINT32 a = ld32(buf + 12), fb = ld32(buf + 16);
+    if (a > 1 || fb > 1) return 0;                // slot indices out of range
+    *active = (int)a;
+    *fallback = (int)fb;
+    *gen = ld32(buf + 20);
     return 1;
 }
 
@@ -291,14 +339,48 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         }
     }
 
-    // U1g: prefer the kernel image from a file on the ESP (decoupled from the
-    // loader binary, so it can be A/B-staged on disk); fall back to the embedded
-    // blob if the file is absent or unreadable. Open the file first to learn its
-    // size, so we reserve the right number of pages before reading into place.
+    // U1g: load the kernel image from a file on the ESP (decoupled from the loader
+    // binary so it can be A/B-staged); fall back to the embedded blob if no slot
+    // file is usable. U1g-2: a kernel A/B manifest selects the active slot
+    // (kernelA.bin / kernelB.bin); if the active slot's file is absent/unopenable
+    // the loader rolls back to the fallback slot. Open the chosen file first to
+    // learn its size, so we reserve the right page count before reading it in.
     UINTN blob_size = (UINTN)(kernel_blob_end - kernel_blob);
     EFI_FILE_PROTOCOL *kfile = 0;
     UINT64 file_size = 0;
-    int from_file = open_esp_kernel(image_handle, st, &kfile, &file_size);
+    int from_file = 0;
+    int loaded_slot = -1; // -1 = no A/B manifest (defaulted to slot A)
+
+    int active = 0, fallback = 1;
+    UINT32 kgen = 0;
+    int have_manifest = read_kernel_manifest(image_handle, st, &active, &fallback, &kgen);
+    if (have_manifest) {
+        puts16(st, "UEFI: kernel A/B manifest active slot ");
+        puts16(st, active == 0 ? "A" : "B");
+        puts16(st, " gen ");
+        puthex(st, kgen);
+        puts16(st, "\r\n");
+    } else {
+        puts16(st, "UEFI: no kernel A/B manifest, defaulting to slot A\r\n");
+        active = 0;
+        fallback = 0;
+    }
+
+    // Try the active slot, then (if it won't open and differs) the fallback slot.
+    CHAR16 *active_path = active == 0 ? KERNEL_A_PATH : KERNEL_B_PATH;
+    if (open_esp_file(image_handle, st, active_path, &kfile, &file_size)) {
+        from_file = 1;
+        loaded_slot = active;
+    } else if (fallback != active) {
+        CHAR16 *fb_path = fallback == 0 ? KERNEL_A_PATH : KERNEL_B_PATH;
+        if (open_esp_file(image_handle, st, fb_path, &kfile, &file_size)) {
+            from_file = 1;
+            loaded_slot = fallback;
+            puts16(st, "UEFI: active slot kernel unopenable, rolling back to slot ");
+            puts16(st, fallback == 0 ? "A" : "B");
+            puts16(st, "\r\n");
+        }
+    }
 
     UINTN ksize = from_file ? (UINTN)file_size : blob_size;
     UINTN npages = (ksize + 0xFFF) / 0x1000;
@@ -316,6 +398,10 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
             puts16(st, "UEFI: kernel loaded from ESP file ");
             puthex(st, file_size);
             puts16(st, " bytes\r\n");
+            if (loaded_slot >= 0) {
+                puts16(st, "UEFI: booted kernel slot ");
+                puts16(st, loaded_slot == 0 ? "A\r\n" : "B\r\n");
+            }
         } else {
             // The read failed after the pages were reserved; fall back to the
             // embedded blob in place (same build, so it fits the reservation).
