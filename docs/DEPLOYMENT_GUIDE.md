@@ -6,8 +6,8 @@ demo owners, embedded/appliance integrators, and application or AI hosting
 teams who need repeatable deployment evidence.
 
 SwiftOS does not yet ship a downloadable installer, hosted update service,
-online package repository, or production bare-metal certification matrix. A
-deployment today is a host-built immutable artifact set plus a documented boot
+public online package repository, or production bare-metal certification matrix.
+A deployment today is a host-built immutable artifact set plus a documented boot
 profile, validation record, and rollback artifact set.
 
 Use this guide with:
@@ -46,6 +46,7 @@ artifacts:
 | Package payload image | `make package-fixture` or package tooling | Optional read-only `/usr` payload |
 | Package-store image | `make package-store-fixture` or `build/pkgstore` | Optional active package generation |
 | Writable package-store image | `make package-local-install-fixture` | Optional local `pkg install FILE` target |
+| Static repository fixture | `make package-repo-fixture` or `build/pkgrepo` | Optional signed HTTP package repository fixture |
 | Model artifacts | `make model`, then `make base-image` | Optional TinyStories local and served models |
 
 A complete deployment candidate records:
@@ -77,6 +78,7 @@ capabilities the workload needs.
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
+| Signed repository install candidate | Install package content by name from the P5a HTTP fixture | Base artifacts plus writable store, repository fixture, and virtio-net | `make package-repo-install-test` |
 | Embedded/appliance-style candidate | Minimal fixed-purpose image | Base artifacts plus only needed devices/services | Boot test plus workload-specific test |
 | VirtualBox ARM smoke | Apple Silicon firmware-adjacent evidence | `swift-os.vdi` | Manual evidence from [VIRTUALBOX.md](VIRTUALBOX.md) |
 
@@ -90,7 +92,7 @@ Do not present the current system as having:
 - A graphical end-user installer.
 - A Linux, Docker, OCI, DEB, RPM, APK, Homebrew, or Nix deployment path.
 - A persistent writable root filesystem.
-- Target-side repository install, package upgrade, remove, or rollback commands.
+- Public hosted package channels, package upgrade, remove, or rollback commands.
 - A production online update service.
 - Automatic A/B boot slot rollback.
 - A production bare-metal certification matrix.
@@ -379,12 +381,13 @@ Validate the supported package boot paths:
 make package-overlay-test
 make package-store-test
 make package-local-install-test
+make package-repo-install-test
 ```
 
-`make package-local-install-test` proves the current local-file install path.
-The operator-facing repository model remains staged work: do not document
-`pkg update`, dependency solving, remove, upgrade, or rollback as current
-features yet.
+`make package-local-install-test` proves the local-file install path.
+`make package-repo-install-test` proves the P5a signed HTTP repository fixture.
+Do not document public hosted channels, dependency solving, remove, upgrade, or
+rollback as current features yet.
 
 ### Embedded Or Appliance-Style Candidate
 

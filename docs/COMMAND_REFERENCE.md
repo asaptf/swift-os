@@ -788,7 +788,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `pkg` | `pkg install FILE` or `pkg list` | Install a local `.swpkg` into a writable package-store image and list active package records. | `tests/pkg_local_install_test.sh` |
+| `pkg` | `pkg update URL`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from the signed HTTP repository fixture, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh` |
 
 Examples:
 
@@ -804,10 +804,16 @@ pkg list
 
 ### `pkg`
 
-Install a local SwiftOS package file or list active package-store records.
+Install a local SwiftOS package file, update/search/inspect the signed HTTP
+repository fixture, install a package by name from that fixture, or list active
+package-store records.
 
 ```text
+pkg update URL
+pkg search TEXT
+pkg info NAME
 pkg install FILE
+pkg install NAME
 pkg list
 ```
 
@@ -829,17 +835,43 @@ pkghello-1.0.0_1
 pkghello: hello from package overlay
 ```
 
+Example signed repository fixture:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+pkg list
+/usr/bin/pkghello
+```
+
+Expected output includes:
+
+```text
+pkg: catalog updated
+pkghello-1.0.0_1
+sha256:
+pkg: installed pkghello-1.0.0_1
+pkghello-1.0.0_1
+pkghello: hello from package overlay
+```
+
 Notes:
 
-- `pkg install FILE` expects a local `.swpkg`; repository install by package
-  name is not implemented yet.
+- `pkg install FILE` expects a local `.swpkg`.
+- `pkg update URL` expects a P5a signed static HTTP repository URL, such as the
+  QEMU fixture path under `http://10.0.2.2:<port>/aarch64/current`.
+- `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
+  cached by `pkg update`.
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active
   package store.
 - See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for the complete runbook.
 
-Acceptance coverage: `tests/pkg_local_install_test.sh`.
+Acceptance coverage: `tests/pkg_local_install_test.sh` and
+`tests/pkg_repo_install_test.sh`.
 
 ### `pkghello`
 
@@ -867,8 +899,8 @@ Notes:
   acceptance fixture or package-store fixture.
 - See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for package boot workflows,
   [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) for package design, and
-  [SWPKG_FORMAT.md](SWPKG_FORMAT.md) and
-  [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) for package format details.
+  [SWPKG_FORMAT.md](SWPKG_FORMAT.md), [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md),
+  and [PKGREPO_FORMAT.md](PKGREPO_FORMAT.md) for package format details.
 
 Acceptance coverage: `tests/package_overlay_test.sh` and
 `tests/pkg_store_boot_test.sh`.

@@ -435,10 +435,15 @@ Operational consequences:
 4. Local `pkg install FILE` can activate a local `.swpkg` through a writable
    package-store image, but package payload content remains read-only once
    active.
-5. Repository install, remove, upgrade, and rollback are not implemented yet.
+5. P5a `pkg update URL` verifies a signed repository catalog and
+   `pkg install NAME` verifies the downloaded package hash before reusing the
+   local package-store install path.
+6. Remove, upgrade, rollback, dependency solving, public hosted package
+   channels, and package-level publisher signatures are not implemented yet.
 
-The host `.swpkg` tool verifies package structure and payload hashes. Package
-signatures and network repository policy are later package-management work.
+The host `.swpkg` tool verifies package structure and payload hashes. P5a
+repository signatures authenticate the fixture catalog; broader public
+repository policy remains later package-management work.
 
 Acceptance evidence:
 

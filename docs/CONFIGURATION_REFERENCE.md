@@ -464,6 +464,9 @@ make package-overlay-test
 | Network profile | Relevant socket test plus `./tests/virtio_net_test.sh` |
 | LLM serving profile | `make base-image`, `./tests/llm_serve_test.sh` |
 | Package overlay | `make package-overlay-test` |
+| Package-store activation | `make package-store-test` |
+| Local package install | `make package-local-install-test` |
+| Signed repository install | `make package-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test` or the milestone-specific SMP target |
 | Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
@@ -478,8 +481,10 @@ These are intentional current limits:
 - No Linux ABI mode.
 - No dynamic loader.
 - No persistent writable filesystem.
-- No repository package transaction flow. Local `pkg install FILE` works for
-  local `.swpkg` files when a writable package-store image is attached.
+- No public hosted package channel, dependency-solving transaction, package
+  upgrade, remove, rollback, or streaming large-package install path. Local
+  `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` work for
+  signed fixtures when a writable package-store image is attached.
 - No production certificate store for `tlsget`.
 - No default graphical desktop shell.
 
