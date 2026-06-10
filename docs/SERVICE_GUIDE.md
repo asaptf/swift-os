@@ -36,7 +36,7 @@ markers.
 | Port exposure | QEMU `hostfwd` from host ports to guest ports |
 | Persistence | Rebuild the base image or attach package overlays for installed files |
 
-This is enough for product demos, acceptance tests, and early application
+This is enough for product validation, acceptance tests, and early application
 hosting experiments. The roadmap moves toward explicit handle-based service
 launch, restart policy, package service manifests, and restartable driver and
 network services.
@@ -51,13 +51,13 @@ network services.
 | `/bin/udpecho` | One-shot UDP echo server | UDP 5555 | `udpecho: listening on 5555` | `./tests/udp_echo_test.sh` |
 | `/bin/tcpget` | Guest-to-host TCP client | Client-chosen | Request output | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | DNS client | UDP client | Query output | `./tests/dns_test.sh` |
-| `/bin/tlsget` | TLS client demo | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
+| `/bin/tlsget` | TLS runtime smoke client | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
 | `/bin/drvsvcdemo` | C5 driver-service/device-authority smoke | n/a | `C5a OK: restartable driver service recovered over IPC`; C5e gate also expects `C5e OK: device authority withheld until explicit handoff` | `make c5-device-authority-test` |
 
 `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080. Run one of them at a
 time.
 
-The echo servers are intentionally one-shot demos: they serve one request and
+The echo servers are intentionally one-shot services: they serve one request and
 exit. Start them again for another request. `httpd` and `llmd` are long-running
 servers that keep accepting connections.
 
@@ -66,7 +66,7 @@ servers that keep accepting connections.
 C5a proves the service shape that future userland drivers need, C5b adds an
 opaque transferable device handle, and C5c/C5d/C5e match that handle against a
 discovered QEMU virtio-input transport and surface its metadata when one is
-attached. The demo supervisor
+attached. The supervisor smoke
 starts `/bin/drvinputd` with only endpoint file descriptors, exchanges a pseudo
 input event, transfers the opaque device handle, proves the grant moves and
 stays busy while the service owns it, stops the service, starts a fresh
@@ -362,7 +362,7 @@ predictable behavior.
 | State | Keep writable runtime state under `/tmp` unless the design adds a new storage service |
 | Files | Close file descriptors on every error path |
 | TCP serving | Use `poll` for multi-connection long-running services |
-| One-shot demos | State clearly when a command handles only one request and exits |
+| One-shot services | State clearly when a command handles only one request and exits |
 | Health | For HTTP services, provide `/health` when practical |
 | Metrics | For HTTP services, provide `/metrics` when useful and cheap |
 | Ports | Document guest ports and host forwarding examples |
