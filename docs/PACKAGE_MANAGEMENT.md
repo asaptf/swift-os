@@ -887,8 +887,17 @@ Remaining repository work:
 
 ### P6: Ports Tree Bootstrap
 
-- Create `swift-os-ports`.
-- Add `swport`.
+Current state: P6a has started inside `swift-os` with a checked
+machine-readable seed catalog, `ports/catalog.json`, plus the host-side
+`build/swport catalog validate/list/inspect` commands. This is deliberately not
+the full ports tree yet; it makes package priorities, dependency names, OS
+prerequisite bundles, and blockers reviewable before the separate
+`swift-os-ports` repository exists.
+
+- Keep `ports/catalog.json` valid with `make ports-catalog-test`.
+- Move the seed catalog into `swift-os-ports` once real recipes land.
+- Add full `swport` recipe commands: `new`, `fetch`, `build`, `test`,
+  `package`, and `publish`.
 - Port 3 to 5 small packages.
 - Publish a bootstrap/current repository.
 
@@ -902,6 +911,7 @@ Good early candidates:
 
 Acceptance:
 
+- `make ports-catalog-test` validates the seed catalog.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 
