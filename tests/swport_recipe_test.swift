@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// swport_recipe_test.swift - host test for the first P6b port recipe workflow.
+// swport_recipe_test.swift - host test for the first P6 port recipe workflow.
 
 import Foundation
 
@@ -134,14 +134,40 @@ do {
 }
 
 let packageURL = temp.appendingPathComponent("lua.swpkg")
-requireSuccess(
-    run(swpkg, ["create", "--manifest", manifestURL.path, "--root", temp.appendingPathComponent("root").path, "--output", packageURL.path]),
-    "create dummy lua package"
-)
+let packageResult = run(swport, [
+    "recipe", "package", "lang/lua",
+    "--root", temp.appendingPathComponent("root").path,
+    "--output", packageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(packageResult, "package dummy lua root")
+guard output(packageResult).contains("package: OK \(packageURL.path)") else {
+    fail("recipe package did not report output path: \(output(packageResult))")
+}
 let verify = run(swpkg, ["verify", packageURL.path])
 requireSuccess(verify, "verify dummy lua package")
 guard output(verify).contains("OK: lua-5.4.8_1") else {
     fail("swpkg verify did not identify lua package: \(output(verify))")
+}
+
+do {
+    let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
+    let binDir = badRoot.appendingPathComponent("usr/bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+    let executable = binDir.appendingPathComponent("lua")
+    try Data("#!/bin/sh\necho lua\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let bad = run(swport, [
+        "recipe", "package", "lang/lua",
+        "--root", badRoot.path,
+        "--output", temp.appendingPathComponent("bad-missing.swpkg").path,
+        "--swpkg", swpkg.path,
+    ])
+    guard bad.status != 0, output(bad).contains("staged root missing /usr/bin/luac") else {
+        fail("incomplete staged root unexpectedly packaged: \(output(bad))")
+    }
+} catch {
+    fail("negative staged-root test failed: \(error)")
 }
 
 do {
@@ -181,4 +207,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates the lua recipe, emits a package manifest, and rejects invalid recipes")
+print("PASS: swport validates the lua recipe, emits and packages a manifest, and rejects invalid recipes")

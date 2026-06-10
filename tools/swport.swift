@@ -121,6 +121,7 @@ private func usage() -> String {
       swport recipe validate <port|Port.json> [--catalog catalog.json]
       swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
       swport recipe fetch <port|Port.json> [--cache dir]
+      swport recipe package <port|Port.json> --root root-dir --output out.swpkg [--swpkg build/swpkg] [--catalog catalog.json]
     """
 }
 
@@ -514,6 +515,14 @@ private func manifestData(for recipe: Recipe) throws -> Data {
                                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
 }
 
+private func absoluteURL(for path: String, isDirectory: Bool = false) -> URL {
+    if path.hasPrefix("/") {
+        return URL(fileURLWithPath: path, isDirectory: isDirectory)
+    }
+    return URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        .appendingPathComponent(path, isDirectory: isDirectory)
+}
+
 private func sha256Hex(_ data: Data) -> String {
     var digest = [UInt8](repeating: 0, count: sha256DigestLen)
     data.withUnsafeBytes { input in
@@ -533,6 +542,96 @@ private func optionValue(_ flag: String, in args: [String], default defaultValue
     }
     guard index + 1 < args.count else { throw ToolError.message("missing value after \(flag)") }
     return args[index + 1]
+}
+
+private struct CommandResult {
+    let status: Int32
+    let output: String
+}
+
+private func runCommand(_ executablePath: String, _ arguments: [String]) throws -> CommandResult {
+    let executable = absoluteURL(for: executablePath)
+    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+        throw ToolError.message("missing executable \(executable.path)")
+    }
+
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = arguments
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    do {
+        try process.run()
+    } catch {
+        throw ToolError.message("could not run \(executable.path): \(error)")
+    }
+    process.waitUntilExit()
+
+    let out = stdout.fileHandleForReading.readDataToEndOfFile()
+    let err = stderr.fileHandleForReading.readDataToEndOfFile()
+    return CommandResult(
+        status: process.terminationStatus,
+        output: (String(decoding: out, as: UTF8.self) + String(decoding: err, as: UTF8.self))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+}
+
+private func collectStagedFiles(root: URL) throws -> Set<String> {
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
+        throw ToolError.message("staged root is not a directory: \(root.path)")
+    }
+    guard let enumerator = fm.enumerator(at: root,
+                                         includingPropertiesForKeys: [.isRegularFileKey],
+                                         options: [.skipsHiddenFiles]) else {
+        throw ToolError.message("cannot enumerate staged root: \(root.path)")
+    }
+
+    let rootPath = root.standardizedFileURL.path
+    var paths = Set<String>()
+    for case let url as URL in enumerator {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+        guard values.isRegularFile == true else { continue }
+        var rel = String(url.standardizedFileURL.path.dropFirst(rootPath.count))
+        while rel.first == "/" { rel.removeFirst() }
+        if rel.isEmpty { continue }
+        paths.insert("/\(rel)")
+    }
+    return paths
+}
+
+private func validateStagedRoot(_ root: URL, for recipe: Recipe) throws {
+    let expected = Dictionary(uniqueKeysWithValues: recipe.package.files.map { ($0.to, $0) })
+    let actual = try collectStagedFiles(root: root)
+    let expectedPaths = Set(expected.keys)
+    let missing = expectedPaths.subtracting(actual).sorted()
+    let extra = actual.subtracting(expectedPaths).sorted()
+    if !missing.isEmpty {
+        throw ToolError.message("recipe \(recipe.name): staged root missing \(missing.joined(separator: ","))")
+    }
+    if !extra.isEmpty {
+        throw ToolError.message("recipe \(recipe.name): staged root has undeclared files \(extra.joined(separator: ","))")
+    }
+
+    for (path, file) in expected {
+        let relativePath = String(path.dropFirst())
+        let url = root.appendingPathComponent(relativePath)
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let actualMode = ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o7777
+        guard let expectedMode = Int(file.mode, radix: 8) else {
+            throw ToolError.message("recipe \(recipe.name): invalid file mode \(file.mode)")
+        }
+        if actualMode != expectedMode {
+            throw ToolError.message(
+                "recipe \(recipe.name): staged file \(path) mode \(String(format: "%04o", actualMode)) != \(file.mode)"
+            )
+        }
+    }
 }
 
 private func printSummary(_ catalog: Catalog) {
@@ -619,6 +718,37 @@ private func fetchRecipeCommand(_ spec: String, args: [String]) throws {
     print("fetch: OK \(output.path)")
 }
 
+private func packageRecipeCommand(_ spec: String, args: [String]) throws {
+    let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
+    let swpkgPath = try optionValue("--swpkg", in: args, default: "build/swpkg")
+    let root = absoluteURL(for: try optionValue("--root", in: args), isDirectory: true)
+    let output = absoluteURL(for: try optionValue("--output", in: args))
+    let (recipe, _) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
+    try validateStagedRoot(root, for: recipe)
+
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("swport-package-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let manifest = temp.appendingPathComponent("manifest.json")
+    try manifestData(for: recipe).write(to: manifest, options: .atomic)
+    try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
+                                            withIntermediateDirectories: true)
+
+    let create = try runCommand(swpkgPath, [
+        "create", "--manifest", manifest.path, "--root", root.path, "--output", output.path,
+    ])
+    guard create.status == 0 else {
+        throw ToolError.message("swpkg create failed: \(create.output)")
+    }
+    let verify = try runCommand(swpkgPath, ["verify", output.path])
+    guard verify.status == 0 else {
+        throw ToolError.message("swpkg verify failed: \(verify.output)")
+    }
+    print("package: OK \(output.path)")
+}
+
 @main
 struct SwportTool {
     static func main() {
@@ -650,6 +780,8 @@ struct SwportTool {
                     try manifestRecipeCommand(args[3], args: args)
                 case "fetch":
                     try fetchRecipeCommand(args[3], args: args)
+                case "package":
+                    try packageRecipeCommand(args[3], args: args)
                 default:
                     throw ToolError.message(usage())
                 }

@@ -6,11 +6,12 @@ first package priorities, dependency names, OS prerequisite bundles, blocked
 state, and the first smoke test each package must eventually pass.
 
 This is not a full ports tree yet. The first `Port.json` recipe is checked in
-for `lang/lua`, with validation, manifest generation, and checksum-verified
-distfile fetching. Patches, cross-builds, QEMU smoke tests, and publishing
-workflows still belong to the planned `swift-os-ports` repository. The seed
-catalog keeps that work ordered and reviewable while the target-side package
-manager is still being hardened inside `swift-os`.
+for `lang/lua`, with validation, manifest generation, checksum-verified
+distfile fetching, and `.swpkg` creation from a clean staged root. Patches,
+cross-builds, QEMU smoke tests, and publishing workflows still belong to the
+planned `swift-os-ports` repository. The seed catalog keeps that work ordered
+and reviewable while the target-side package manager is still being hardened
+inside `swift-os`.
 
 Validate the catalog:
 
@@ -29,6 +30,7 @@ build/swport catalog inspect nodejs ports/catalog.json
 build/swport recipe validate lang/lua
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
+build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 ```
 
 Catalog rules enforced by `swport catalog validate`:
@@ -50,3 +52,7 @@ Recipe rules enforced by `swport recipe validate`:
 - staged package files must install under `/usr`;
 - file modes must be four octal digits;
 - duplicate staged package targets are rejected.
+
+`swport recipe package` additionally rejects staged roots with missing,
+undeclared, or mode-mismatched files before it calls `swpkg create` and
+`swpkg verify`.

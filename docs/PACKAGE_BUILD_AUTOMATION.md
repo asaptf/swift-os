@@ -23,8 +23,8 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| P6b Lua recipe scaffold | `ports/lang/lua/Port.json` validates against the catalog and emits a package manifest | `make ports-recipe-test` |
-| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, and checksum-verified `recipe fetch`; build/package/QEMU smoke commands remain planned | `make swport` |
+| P6c Lua recipe package path | `ports/lang/lua/Port.json` validates against the catalog, emits a package manifest, and packages a clean staged root through `swpkg create`/`verify` | `make ports-recipe-test` |
+| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, and staged-root `recipe package`; cross-build/QEMU smoke commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
@@ -84,21 +84,22 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 ```
 
-Inspect the first P6b source recipe and generate its `.swpkg` manifest:
+Inspect the first P6 source recipe and generate its `.swpkg` manifest:
 
 ```sh
 build/swport recipe validate lang/lua
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
+build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 ```
 
-For a new experimental port before full `swport` build/package/test commands
-exist, keep the same discipline:
+For a new experimental port before full `swport` build/test commands exist,
+keep the same discipline:
 
 1. Cross-build the program statically against the current SwiftOS ABI.
 2. Stage the installed files under a clean package root.
-3. Generate a `.swpkg` with `build/swpkg create`.
-4. Verify it with `build/swpkg verify`.
+3. Generate and verify a `.swpkg` with `build/swport recipe package`.
+4. Inspect it with `build/swpkg inspect` if reviewing package metadata.
 5. Boot QEMU and run a command that proves the installed binary works.
 6. Record any missing syscall, libc, service, or filesystem requirement in the
    port notes before treating the package as publishable.
@@ -353,6 +354,7 @@ swport catalog inspect <name> [catalog.json]
 swport recipe validate <port|Port.json> [--catalog catalog.json]
 swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
 swport recipe fetch <port|Port.json> [--cache dir]
+swport recipe package <port|Port.json> --root root-dir --output out.swpkg [--swpkg build/swpkg] [--catalog catalog.json]
 swport fetch <port> [--update-checksum]
 swport extract <port>
 swport patch <port>
@@ -907,8 +909,9 @@ Common failure modes should have boring outcomes:
 - Support the `lua` recipe scaffold.
 
 Acceptance: `make ports-recipe-test` validates `lang/lua`, emits a manifest,
-and proves that manifest can feed `swpkg create`; `swport recipe fetch lang/lua`
-verifies the distfile checksum.
+packages a staged root through `swport recipe package`, and verifies the
+resulting `.swpkg`; `swport recipe fetch lang/lua` verifies the distfile
+checksum.
 
 ### A2: Local Package Build
 
