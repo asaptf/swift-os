@@ -1354,10 +1354,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   the packed base image, and requires the S2 timer heartbeat plus the S4e
   post-run lock-balance marker before accepting the S4f markers. `make test`
   runs the harness after the SMP boot smoke.
+- **Post-boot SMP churn harness.** `tests/smp_resource_stress_test.sh` boots
+  with `-smp 4`, logs in after the normal boot demos, and reruns resource-heavy
+  userland paths (`forkdemo`, `fdopsdemo`, `execdemo`, `threadsdemo`, and a
+  tmpfs create/write/pipe/move/remove loop) while all discovered CPUs remain
+  online and ticking. It checks the S4a-S4e post-demo lock-boundary markers and
+  its own `S4F-*` status markers, and is available as
+  `make smp-resource-stress-test`.
 - **Static guard.** `tests/smp_release_guard_test.sh` now requires the
-  `/bin/s4stress` Makefile wiring, base-image install step, executable harness,
-  and workload coverage markers so the S4f stress does not silently fall out of
-  the release contract.
+  `/bin/s4stress` Makefile wiring, base-image install step, executable
+  harnesses, and workload coverage markers so the S4f stress does not silently
+  fall out of the release contract.
 - **Non-goals.** S4f is intentionally a restricted-SMP stress pass for the
   current S2h gate. It does not enable broad secondary EL0 execution or make one
   address space execute concurrently on multiple CPUs; that remains S5.

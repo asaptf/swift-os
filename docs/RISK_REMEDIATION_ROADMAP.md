@@ -231,11 +231,18 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   `fork`/`waitpid`, and `spawn`/exec of `/bin/argvdemo`. This is the
   restricted-SMP stress slice for the current S2h gate and fixed-size tmpfs
   vnode table; S5 still owns broad secondary EL0 execution.
+- S4f stress gate (2026-06-10): `make test` also includes a dedicated
+  `tests/smp_resource_stress_test.sh` run under `-smp 4`. The test keeps the
+  current S2h policy intact (general EL0 work is still CPU0-owned), but repeats
+  fork/IPC handle transfer, fd/pipe/poll/tmpfs churn, exec, futex-thread churn,
+  and tmpfs create/write/move/remove loops after the boot demos while
+  secondaries are online and ticking. It also verifies the S4a-S4e post-demo
+  lock-boundary markers stayed balanced.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase". S4e gives the current in-kernel engine a coarse correctness boundary; moving it to a userland service remains the architectural target.
-- Add a concurrency stress test that runs many alloc/free, pipe create/close, fork/exec, and tmpfs create/write cycles while all CPUs are under timer load. Look for use-after-free, double-free, or lost updates.
-- Acceptance: the stress test runs for a long time without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
+- Add a concurrency stress test that runs many alloc/free, pipe create/close, fork/exec, and tmpfs create/write cycles while all CPUs are under timer load. Look for use-after-free, double-free, or lost updates. S4f provides the first bounded `make test` gate; S5 still needs the full general multi-CPU EL0 stress once broad secondary scheduling is enabled.
+- Acceptance: the stress test runs without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
 
 ### S5 — Full multi-CPU EL0 execution + end-to-end validation
 - S5a preflight (2026-06-10): per-CPU timer and idle counters are exported
