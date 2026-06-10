@@ -12,7 +12,9 @@ private let ioChunk = 4096
 private let httpHeaderMax = 8192
 private let catalogMax = 131072
 private let repoURLMax = 512
+private let dnsServerMax = 64
 private let trustRootPath = "/etc/pkg/repo-root.pub"
+private let defaultDNSServerPath = "/etc/pkg/dns-server"
 private let defaultRepoURLPath = "/etc/pkg/repo-url"
 private let repoURLPath = "/tmp/pkg-repo-url"
 private let catalogCachePath = "/tmp/pkg-catalog.signed"
@@ -192,7 +194,71 @@ private func parseIPv4Bytes(_ bytes: [UInt8], _ start: Int, _ end: Int) -> UInt3
     return (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
 }
 
-private func parseURL(_ text: String) -> HTTPURL? {
+private func parsePortBytes(_ bytes: [UInt8], _ start: Int, _ end: Int) -> UInt16? {
+    if start >= end { return nil }
+    var port: UInt = 0
+    var i = start
+    while i < end {
+        let ch = bytes[i]
+        if ch < 0x30 || ch > 0x39 { return nil }
+        port = port * 10 + UInt(ch - 0x30)
+        if port > 65535 { return nil }
+        i += 1
+    }
+    return UInt16(port)
+}
+
+private func isDNSHostByte(_ ch: UInt8) -> Bool {
+    (ch >= 0x30 && ch <= 0x39) ||
+    (ch >= 0x41 && ch <= 0x5A) ||
+    (ch >= 0x61 && ch <= 0x7A) ||
+    ch == 0x2D ||
+    ch == 0x2E
+}
+
+private func isValidDNSHost(_ bytes: [UInt8], _ start: Int, _ end: Int) -> Bool {
+    if start >= end || end - start > 253 { return false }
+    var labelLen = 0
+    var sawDot = false
+    var labelFirst: UInt8 = 0
+    var labelLast: UInt8 = 0
+    var i = start
+    while i < end {
+        let ch = bytes[i]
+        if !isDNSHostByte(ch) { return false }
+        if ch == 0x2E {
+            if labelLen == 0 { return false }
+            if labelFirst == 0x2D || labelLast == 0x2D { return false }
+            sawDot = true
+            labelLen = 0
+            labelFirst = 0
+            labelLast = 0
+        } else {
+            if labelLen == 0 { labelFirst = ch }
+            labelLast = ch
+            labelLen += 1
+            if labelLen > 63 { return false }
+        }
+        i += 1
+    }
+    if labelLen == 0 { return false }
+    if labelFirst == 0x2D || labelLast == 0x2D { return false }
+    return sawDot
+}
+
+private func resolveURLHost(_ host: String) -> UInt32? {
+    let bytes = Array(host.utf8)
+    if let ip = parseIPv4Bytes(bytes, 0, bytes.count) { return ip }
+    if !isValidDNSHost(bytes, 0, bytes.count) { return nil }
+    let (dnsIP, dnsPort) = readDNSServer()
+    var cHost = Array(host.utf8CString)
+    let ip = cHost.withUnsafeBufferPointer { bp in
+        swiftos_resolve(bp.baseAddress!, dnsIP, dnsPort)
+    }
+    return ip == 0 ? nil : ip
+}
+
+private func parseURL(_ text: String, resolveHost: Bool = true) -> HTTPURL? {
     let bytes = Array(text.utf8)
     let prefix = staticBytes("http://")
     if bytes.count <= prefix.count { return nil }
@@ -204,8 +270,16 @@ private func parseURL(_ text: String) -> HTTPURL? {
     let hostStart = i
     while i < bytes.count && bytes[i] != 0x3A && bytes[i] != 0x2F { i += 1 }
     if i == hostStart { return nil }
-    guard let ip = parseIPv4Bytes(bytes, hostStart, i) else { return nil }
     let host = String(decoding: bytes[hostStart..<i], as: UTF8.self)
+    let ip: UInt32
+    if resolveHost {
+        guard let resolvedIP = resolveURLHost(host) else { return nil }
+        ip = resolvedIP
+    } else if parseIPv4Bytes(bytes, hostStart, i) != nil || isValidDNSHost(bytes, hostStart, i) {
+        ip = 0
+    } else {
+        return nil
+    }
     var port: UInt = 80
     if i < bytes.count && bytes[i] == 0x3A {
         i += 1
@@ -301,8 +375,27 @@ private func readRepoURL() -> String? {
     return String(decoding: trimmed, as: UTF8.self)
 }
 
+private func readDNSServer() -> (UInt32, UInt16) {
+    guard let bytes = readFile(defaultDNSServerPath, maxSize: dnsServerMax) else { return (0, 0) }
+    let trimmed = trimASCII(bytes)
+    if trimmed.isEmpty { return (0, 0) }
+    var split = trimmed.count
+    var i = 0
+    while i < trimmed.count {
+        if trimmed[i] == 0x3A {
+            split = i
+            break
+        }
+        i += 1
+    }
+    guard let ip = parseIPv4Bytes(trimmed, 0, split) else { return (0, 0) }
+    if split == trimmed.count { return (ip, 0) }
+    guard let port = parsePortBytes(trimmed, split + 1, trimmed.count) else { return (0, 0) }
+    return (ip, port)
+}
+
 private func repoSet(_ url: String) -> Int32 {
-    guard parseURL(url) != nil else {
+    guard parseURL(url, resolveHost: false) != nil else {
         put("pkg: bad URL\n")
         return 1
     }

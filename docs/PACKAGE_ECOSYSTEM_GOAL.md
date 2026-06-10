@@ -78,10 +78,15 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     and a small Lua expression inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the Lua+zlib seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install from that published layout.
-- Public hosted binary repository publishing, version-constraint solving,
-  remove, upgrade, rollback, broad source-port coverage, package publication,
-  and streaming large-package downloads remain future work.
+    proves SwiftOS can install from that published layout;
+  - `make ports-hosted-url-verify-test` proves the host-side verifier can check
+    a served static-host root;
+  - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
+    install Lua and zlib from a DNS-resolved HTTP repository URL.
+- Public production binary repository publishing, target-side HTTPS transport,
+  version-constraint solving, remove, upgrade, rollback, broad source-port
+  coverage, package publication, and streaming large-package downloads remain
+  future work.
 
 ## Workstreams
 
@@ -155,6 +160,8 @@ credentials. Required maintainer decisions:
   - GitHub Releases/Pages for bootstrap, or
   - S3/R2/other object storage for larger packages.
 - Public package repository URL, for example `https://pkg.swift-os.org`.
+- Bootstrap HTTP repository URL for the current `/bin/pkg` transport, for
+  example `http://pkg.swift-os.org/aarch64/current`.
 - Signing-key policy:
   - local offline root key;
   - CI publishing key;

@@ -64,6 +64,8 @@ PORTS_SEED_REPO_ROOT := $(BUILD)/ports-seed-repo-root
 PORTS_SEED_REPO_PUB := $(BUILD)/ports-seed-repo-root.pub
 PORTS_STATIC_HOST_ROOT := $(BUILD)/ports-static-host-root
 PORTS_STATIC_HOST_BASE_URL ?=
+PKG_HOSTED_REPO_URL ?=
+PKG_DEFAULT_DNS_SERVER ?=
 PKG_DEFAULT_REPO_URL ?=
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
@@ -334,7 +336,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-seed-repo-fixture ports-static-host-publish package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test
+.PHONY: build run debug gdb test docs-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 
 build: $(KERNEL_ELF)
 
@@ -1016,6 +1018,13 @@ ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-
 	PORTS_STATIC_HOST_BASE_URL="$(PORTS_STATIC_HOST_BASE_URL)" \
 	./scripts/publish-ports-static-host.sh
 
+ports-hosted-url-verify: $(PKGREPO) scripts/verify-ports-hosted-url.sh
+	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host[/aarch64/current]" >&2; exit 2; fi
+	PKGREPO="$(PKGREPO)" ./scripts/verify-ports-hosted-url.sh "$(PKG_HOSTED_REPO_URL)"
+
+ports-hosted-url-verify-test: ports-static-host-publish scripts/verify-ports-hosted-url.sh
+	./tests/pkg_hosted_url_verify_test.sh
+
 $(PKGREPO_PUB): $(PKGREPO) Makefile
 	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
 
@@ -1082,6 +1091,13 @@ package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixt
 package-static-host-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
 	./tests/pkg_static_host_repo_install_test.sh
 
+package-static-host-dns-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
+	./tests/pkg_static_host_dns_repo_install_test.sh
+
+package-hosted-url-install-test: build $(QEMU_DTB) package-lua-install-fixture
+	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host/aarch64/current" >&2; exit 2; fi
+	PKG_HOSTED_REPO_URL="$(PKG_HOSTED_REPO_URL)" ./tests/pkg_hosted_url_install_test.sh
+
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
@@ -1092,6 +1108,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	mkdir -p $(BASE_ROOT)/models
 	cp $(PKGHELLO_PKG) $(BASE_ROOT)/packages/pkghello.swpkg
 	cp $(PKGREPO_PUB) $(BASE_ROOT)/etc/pkg/repo-root.pub
+	if [ -n "$(PKG_DEFAULT_DNS_SERVER)" ]; then printf '%s\n' "$(PKG_DEFAULT_DNS_SERVER)" > $(BASE_ROOT)/etc/pkg/dns-server; fi
 	if [ -n "$(PKG_DEFAULT_REPO_URL)" ]; then printf '%s\n' "$(PKG_DEFAULT_REPO_URL)" > $(BASE_ROOT)/etc/pkg/repo-url; fi
 	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
@@ -1183,7 +1200,7 @@ clean:
 		$(PKGREPO_ROOT) $(PKGREPO_PUB) $(PORTS_SEED_REPO_ROOT) $(PORTS_SEED_REPO_PUB) $(PORTS_STATIC_HOST_ROOT) \
 		$(BUILD)/lua-port-work $(BUILD)/lua-port-runtime $(BUILD)/lua-root $(BUILD)/lua-repo-root $(BUILD)/lua-repo-root.pub \
 		$(BUILD)/zlib-port-work $(BUILD)/zlib-port-runtime $(BUILD)/zlib-root $(BUILD)/zlib-repo-root $(BUILD)/zlib-repo-root.pub \
-		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(ESP_DIR)
+		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(BUILD)/base-ports-static-host-dns.img $(BUILD)/base-hosted-url.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

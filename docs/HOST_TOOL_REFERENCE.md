@@ -20,6 +20,7 @@ end-to-end package workflow, use
 | `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the Lua recipe scaffold. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the Lua+zlib ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
+| `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
 | `build/quantize` | `make model` | Quantize TinyStories checkpoints for the AI demo. | `./tests/llm_run_test.sh` |
@@ -136,7 +137,11 @@ cross-build and signed repository fixture. P6f adds
 installs `lua`, and runs it. P8 adds `make ports-static-host-publish`, which
 turns the Lua+zlib seed repository into a deployable static web root, and
 `make package-static-host-repo-install-test`, which installs from that web-root
-layout in QEMU. Generalized `swport build/test` commands remain planned.
+layout in QEMU. P9 adds `make ports-hosted-url-verify-test` for host-side
+verification of a served static root and `make
+package-static-host-dns-repo-install-test` for target-side install through a
+DNS-resolved HTTP repository URL. Generalized `swport build/test` commands
+remain planned.
 
 ```text
 swport catalog validate [catalog.json]
@@ -165,6 +170,8 @@ make ports-lua-repo-fixture
 make ports-static-host-publish
 make package-lua-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 Expected catalog inspection output includes fields such as package name,
@@ -183,7 +190,9 @@ handling. Use `make ports-lua-repo-fixture` and
 `make package-lua-repo-install-test` before changing `scripts/build-lua.sh`,
 the Lua recipe, or the Lua packaging path. Use `make ports-static-host-publish`
 and `make package-static-host-repo-install-test` before changing the static
-repository publishing path.
+repository publishing path. Use `make ports-hosted-url-verify-test` and
+`make package-static-host-dns-repo-install-test` before changing hosted URL or
+DNS repository handling.
 
 ## Model Bundle Tools
 
