@@ -232,6 +232,129 @@ func updateStoreActivateOther() -> Int {
     return 0
 }
 
+// Little-endian field loads from a raw header buffer (SWOSBASE layout).
+@inline(__always) private func usLoad32(_ p: UnsafeRawPointer, _ o: Int) -> UInt32 {
+    UInt32(p.load(fromByteOffset: o, as: UInt8.self))
+        | (UInt32(p.load(fromByteOffset: o + 1, as: UInt8.self)) << 8)
+        | (UInt32(p.load(fromByteOffset: o + 2, as: UInt8.self)) << 16)
+        | (UInt32(p.load(fromByteOffset: o + 3, as: UInt8.self)) << 24)
+}
+@inline(__always) private func usLoad64(_ p: UnsafeRawPointer, _ o: Int) -> UInt64 {
+    UInt64(usLoad32(p, o)) | (UInt64(usLoad32(p, o + 4)) << 32)
+}
+
+/// U1f-2b: copy the attached read-only payload disk (a signed SWOSBASE image)
+/// into the INACTIVE A/B slot, then mark that slot present + UNTRIED so the
+/// operator can `/bin/swos-activate` + reboot onto it. Gated on capConsole.
+///
+/// The payload must be a signed v3 SWOSBASE image and fit the inactive slot's
+/// length_sectors (the slot was sized by the store tool). The copy moves whole
+/// 64 KiB runs disk-to-disk through the driver's own multi-sector DMA buffer
+/// (U1f-2a's virtioBlkFill/FlushMulti) with no intermediate kernel buffer:
+/// read a run from the payload into blkMultiBase, re-select the store, flush it
+/// to the slot. This routine copies BYTES; it does not verify them — the staged
+/// image's own Ed25519 signature is checked at the next boot's mount (the
+/// unchanged I8 path), so a payload that copies but is corrupt simply fails to
+/// boot on trial and U1a/U1d return to the known-good slot.
+///
+/// Returns 0 on success, or a negative errno-style code. Invoked from EL0 via
+/// syscall 62 (/bin/swos-update).
+func updateStoreStagePayload() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
+    if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return -19 }
+    if !virtioBlkHasPayload() { return -19 }                  // ENODEV: no payload disk
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return -5 } // EIO
+
+    let target = 1 - updateStoreActiveSlot
+    if target < 0 || target >= SwosbootFormat.slotCount { return -2 } // ENOENT
+    let storeBaseSec = chosen.slot(target).baseLBA
+    let slotSectors = chosen.slot(target).lengthSectors
+
+    // Bring up the payload and read its header: confirm a signed v3 SWOSBASE
+    // image and compute its length (dataOffset + payloadLen, rounded up).
+    let payCap = virtioBlkSelectPayload()
+    if payCap == 0 { virtioBlkReselectStore(); return -19 }
+    var imageSectors: UInt64 = 0
+    var headerOK = false
+    var hdr = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &hdr) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkRead(0, p) == 0 {
+            let magic: StaticString = "SWOSBASE"
+            var m = true
+            magic.withUTF8Buffer { mm in
+                var i = 0
+                while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != mm[i] { m = false }; i += 1 }
+            }
+            let total = usLoad64(UnsafeRawPointer(p), 48) &+ usLoad64(UnsafeRawPointer(p), 56)
+            imageSectors = (total &+ 511) / 512
+            headerOK = m && usLoad32(UnsafeRawPointer(p), 8) == 3 && total > 0
+        }
+    }
+    if !headerOK { virtioBlkReselectStore(); return -22 }              // EINVAL: not a signed v3 image
+    if imageSectors > payCap { virtioBlkReselectStore(); return -22 }  // payload truncated on disk
+    if imageSectors > slotSectors {                                   // EFBIG: image too big for slot
+        virtioBlkReselectStore()
+        uartPuts("update-store: payload ")
+        uartPutUInt(imageSectors)
+        uartPuts(" sectors does not fit slot ")
+        updateStoreLogSlot(target)
+        uartPuts(" (")
+        uartPutUInt(slotSectors)
+        uartPuts(" sectors)\n")
+        return -27
+    }
+
+    // Copy payload[0, imageSectors) -> store[storeBaseSec, +imageSectors).
+    let maxChunk = UInt64(virtioBlkMultiMax())
+    var done: UInt64 = 0
+    var copyOK = true
+    while done < imageSectors {
+        var n = imageSectors - done
+        if n > maxChunk { n = maxChunk }
+        if virtioBlkSelectPayload() == 0 { copyOK = false; break }
+        if virtioBlkFillMulti(done, Int(n)) != 0 { copyOK = false; break }
+        virtioBlkReselectStore()
+        if virtioBlkFlushMulti(storeBaseSec &+ done, Int(n)) != 0 { copyOK = false; break }
+        done &+= n
+    }
+    virtioBlkReselectStore()
+    if !copyOK {
+        uartPuts("update-store: stage copy failed\n")
+        return -5
+    }
+
+    // Mark the freshly-staged slot present + UNTRIED with attempts reset and a
+    // bumped generation, persisted via the double-buffered write-back. The
+    // operator then runs /bin/swos-activate to boot it on trial.
+    var updated = chosen
+    if target == 0 {
+        updated.slot0.present = true
+        updated.slot0.state = SwosbootFormat.stateUntried
+        updated.slot0.attemptCount = 0
+        updated.slot0.generation &+= 1
+    } else {
+        updated.slot1.present = true
+        updated.slot1.state = SwosbootFormat.stateUntried
+        updated.slot1.attemptCount = 0
+        updated.slot1.generation &+= 1
+    }
+    updated.sequence = chosen.sequence &+ 1
+    if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
+        uartPuts("update-store: stage write-back failed\n")
+        return -5
+    }
+    uartPuts("update-store: staged payload (")
+    uartPutUInt(imageSectors)
+    uartPuts(" sectors) into slot ")
+    updateStoreLogSlot(target)
+    uartPuts(" gen ")
+    uartPutUInt(UInt64(target == 0 ? updated.slot0.generation : updated.slot1.generation))
+    uartPuts("\n")
+    return 0
+}
+
 /// U1f: report an A/B update payload disk attached alongside the store, by
 /// reading its sector-0 header through the secondary virtio-blk path and
 /// checking it is a signed v3 SWOSBASE base image. This proves the multi-device

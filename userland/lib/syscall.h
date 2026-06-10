@@ -68,6 +68,7 @@
 #define SYS_SPAWN_HANDLES 58
 #define SYS_UPDATE_CONFIRM 60
 #define SYS_UPDATE_ACTIVATE 61
+#define SYS_UPDATE_STAGE 62
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -279,6 +280,15 @@ static inline int update_confirm(void) {
 // 0 on success; negative on error (-1 EPERM, -19 ENODEV, -2 no inactive slot).
 static inline int update_activate(void) {
     return (int)__syscall3(SYS_UPDATE_ACTIVATE, 0, 0, 0);
+}
+
+// U1f-2b: copy the attached read-only payload disk (a signed SWOSBASE image)
+// into the inactive A/B slot, ready for update_activate + reboot. Needs
+// CAP_CONSOLE. 0 on success; negative on error (-1 EPERM, -19 ENODEV when not
+// store-booted or no payload disk, -22 EINVAL bad/non-v3 payload, -27 EFBIG
+// payload too big for the slot, -5 EIO copy/write-back failure).
+static inline int update_stage(void) {
+    return (int)__syscall3(SYS_UPDATE_STAGE, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

@@ -62,6 +62,7 @@ private let sysSpawnHandles: UInt = 58 // spawn_handles(path, argv, specs, count
 private let sysMmapFile: UInt = 59     // mmap_file(fd, len, prot) -> base VA — file-backed read-only (I2a)
 private let sysUpdateConfirm: UInt = 60 // update_confirm() — mark the booted A/B slot healthy (U1c); needs capConsole
 private let sysUpdateActivate: UInt = 61 // update_activate() — promote the inactive A/B slot (U1e); needs capConsole
+private let sysUpdateStage: UInt = 62    // update_stage() — copy the payload disk into the inactive A/B slot (U1f-2b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -243,6 +244,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = updateStoreConfirm() // U1c: capConsole-gated A/B health-confirm
     } else if number == sysUpdateActivate {
         result = updateStoreActivateOther() // U1e: capConsole-gated promote inactive slot
+    } else if number == sysUpdateStage {
+        result = updateStoreStagePayload() // U1f-2b: capConsole-gated payload→inactive slot copy
     } else {
         result = -38 // ENOSYS
     }

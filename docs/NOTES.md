@@ -2978,6 +2978,38 @@ shell only launches if that large multi-chunk read is byte-exact). boot_test +
 signed_image + the U1a–U1f-1 A/B suite unaffected (all base reads now flow
 through the multi-sector path).
 
-**Still future (U1f-2b).** `/bin/swos-update` (syscall 62, capConsole) copies the
-payload disk into the inactive slot using the no-copy fill/flush primitives, then
-the operator runs swos-activate + reboots.
+### U1f-2b — the A/B stage copy: /bin/swos-update (DONE, 2026-06-10)
+
+**Scope.** Close the staging loop: copy the attached read-only payload disk
+(U1f-1) into the inactive A/B slot from a running system, so an operator can then
+swos-activate + reboot onto the new image.
+
+- `kernel/fs/updatestore.swift`: `updateStoreStagePayload()` (syscall 62
+  `SYS_UPDATE_STAGE`, capConsole-gated). Reads the chosen manifest, picks the
+  inactive slot (1−booted), brings up the payload and reads its SWOSBASE header —
+  requires a signed v3 image and computes its length (`dataOffset`@48 +
+  `payloadLen`@56, rounded up to sectors). Rejects a payload that is truncated on
+  its disk (> payload capacity, EINVAL) or larger than the slot's
+  `length_sectors` (EFBIG). Copies payload[0,N) → store[slotBaseLBA,+N) in 64 KiB
+  runs via U1f-2a's no-copy `virtioBlkFillMulti`/`FlushMulti` (read into the
+  driver's DMA buffer from the payload, re-select the store, flush it out — no
+  intermediate kernel buffer; serial on the one CPU). Then marks the slot present
+  + UNTRIED, attempts 0, generation++, persisted via the U1b double-buffered
+  write-back. Copies BYTES only — the staged image's own Ed25519 signature is
+  verified at the NEXT boot's mount (unchanged I8 path), so a corrupt payload
+  simply fails on trial and U1a/U1d return to the known-good slot. No new globals.
+- `/bin/swos-update` (`userland/swos-update.swift`, bridge `swiftos_update_stage`
+  / `update_stage`); registered in execResolve + the Makefile ELF/staging rules.
+
+**Acceptance.** `tests/ab_stage_test.sh` (in `make test`): a store with a valid
+active slot A and a deliberately CORRUPT slot B (a same-size copy of base.img with
+a signed byte flipped — so it fits the payload exactly but fails verification) +
+a valid payload disk. Boot A → shell → swos-update (stage) → swos-activate. Reboot
+→ slot B is active AND its image now passes Ed25519 verification and mounts (no
+"signature INVALID"): a clean verified mount of the once-corrupt slot proves the
+stage copy wrote a valid image. The full operator update workflow is now complete:
+swos-update → swos-activate → reboot on trial → swos-confirm (U1c) / rollback (U1d).
+
+**Still future.** Kernel-image A/B via the loader (Ed25519 + EFI Block I/O);
+virtio-blk FLUSH (durability without `cache=writethrough`); key rotation. Next
+free syscall = 63.

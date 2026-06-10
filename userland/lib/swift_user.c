@@ -173,6 +173,10 @@ int swiftos_update_activate(void) {
     return update_activate();
 }
 
+int swiftos_update_stage(void) {
+    return update_stage();
+}
+
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
     struct security_info si;
     int rc = security_info(&si);

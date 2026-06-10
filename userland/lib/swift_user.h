@@ -59,6 +59,9 @@ int  swiftos_update_confirm(void);
 // U1e: promote the inactive A/B slot to active for the next boot (on trial).
 // Needs CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_update_activate(void);
+// U1f-2b: copy the attached payload disk into the inactive A/B slot. Needs
+// CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_update_stage(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.

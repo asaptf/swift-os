@@ -185,11 +185,29 @@ through the driver's own buffer without an intermediate kernel copy.
 `tests/multisector_test.sh` proves byte-exact reads across the signed metadata, a
 payload file, and a ~1.1 MB busybox ELF.
 
+## Stage the payload into the inactive slot (U1f-2b)
+
+`/bin/swos-update` (capConsole-gated; root yes, guest EPERM) calls
+`SYS_UPDATE_STAGE` (62) → `updateStoreStagePayload()`, which copies the attached
+read-only payload disk (a signed SWOSBASE image, U1f-1) into the **inactive**
+slot. It reads the payload's header, requires a signed v3 image, and rejects one
+that is truncated on disk (EINVAL) or larger than the slot's `length_sectors`
+(EFBIG). The copy moves 64 KiB runs disk-to-disk through the driver's own
+multi-sector DMA buffer (U1f-2a's `virtioBlkFillMulti`/`FlushMulti`) with no
+intermediate kernel buffer, then marks the slot present + UNTRIED, attempts 0,
+generation++ via the same double-buffered write-back. It copies **bytes only** —
+the staged image's own Ed25519 signature is verified at the next boot's mount, so
+a corrupt payload simply fails on trial and rolls back (U1a/U1d) to the
+known-good slot.
+
+The full operator update workflow is now: `swos-update` (stage) → `swos-activate`
+(promote) → reboot (boots on trial) → `swos-confirm` if healthy, else
+attempt-based rollback returns to the fallback. `tests/ab_stage_test.sh` stages a
+valid payload over a deliberately-corrupt inactive slot and asserts the slot
+verifies and boots after activate + reboot.
+
 ## Not implemented yet
 
-- The stage copy (U1f-2b): `/bin/swos-update` copies the payload disk into the
-  inactive slot (using U1f-2a's multi-sector primitives); then `swos-activate` +
-  reboot.
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.
