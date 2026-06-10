@@ -69,6 +69,7 @@ let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
+let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
     fail("missing executable build/swport; build swport first")
@@ -93,6 +94,9 @@ guard FileManager.default.isReadableFile(atPath: pcre2Recipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
     fail("missing ports/sysutils/tzdata/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
+    fail("missing ports/www/nginx/Port.json")
 }
 
 let temp = FileManager.default.temporaryDirectory
@@ -554,6 +558,91 @@ guard output(tzdataRepoInspect).contains("tzdata-2026b_1") else {
     fail("repo fixture catalog did not include tzdata package: \(output(tzdataRepoInspect))")
 }
 
+let nginxValidate = run(swport, ["recipe", "validate", "www/nginx"])
+requireSuccess(nginxValidate, "validate nginx recipe")
+guard output(nginxValidate).contains("recipe: OK nginx-1.30.2_1") else {
+    fail("validate output did not confirm nginx recipe: \(output(nginxValidate))")
+}
+
+let nginxManifestURL = temp.appendingPathComponent("nginx-manifest.json")
+let nginxManifest = run(swport, ["recipe", "manifest", "www/nginx", "--output", nginxManifestURL.path])
+requireSuccess(nginxManifest, "generate nginx manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: nginxManifestURL)) as? [String: Any] else {
+        fail("generated nginx manifest is not a JSON object")
+    }
+    requireString(object, "name", "nginx")
+    requireString(object, "version", "1.30.2")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["nginx", "http-server"] else {
+        fail("nginx manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/etc/nginx/nginx.conf",
+        "/usr/sbin/nginx",
+        "/usr/share/nginx/html/index.html",
+        "/usr/share/nginx/swiftos-nginx.version",
+    ] else {
+        fail("unexpected nginx manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated nginx manifest: \(error)")
+}
+
+let nginxRoot = temp.appendingPathComponent("nginx-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/sbin/nginx", Data("#!/bin/sh\necho 'nginx version: nginx/1.30.2'\n".utf8), 0o755),
+        ("usr/etc/nginx/nginx.conf", Data("daemon off;\nmaster_process off;\n".utf8), 0o644),
+        ("usr/share/nginx/html/index.html", Data("swift-os nginx package\n".utf8), 0o644),
+        ("usr/share/nginx/swiftos-nginx.version", Data("nginx 1.30.2 swift-os minimal-http\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = nginxRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy nginx package root: \(error)")
+}
+
+let nginxPackageURL = temp.appendingPathComponent("nginx.swpkg")
+let nginxPackageResult = run(swport, [
+    "recipe", "package", "www/nginx",
+    "--root", nginxRoot.path,
+    "--output", nginxPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(nginxPackageResult, "package dummy nginx root")
+let nginxVerify = run(swpkg, ["verify", nginxPackageURL.path])
+requireSuccess(nginxVerify, "verify dummy nginx package")
+guard output(nginxVerify).contains("OK: nginx-1.30.2_1") else {
+    fail("swpkg verify did not identify nginx package: \(output(nginxVerify))")
+}
+
+let nginxRepoRoot = temp.appendingPathComponent("nginx-repo-root", isDirectory: true)
+let nginxPubkey = temp.appendingPathComponent("nginx-repo-root.pub")
+let nginxRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "www/nginx",
+    "--root", nginxRoot.path,
+    "--output", nginxRepoRoot.path,
+    "--pubkey", nginxPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(nginxRepoFixture, "create nginx repository fixture")
+let nginxCatalog = nginxRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let nginxRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", nginxCatalog.path, "--pubkey", nginxPubkey.path])
+requireSuccess(nginxRepoVerify, "verify nginx repository fixture")
+let nginxRepoInspect = run(pkgrepo, ["inspect", nginxCatalog.path])
+requireSuccess(nginxRepoInspect, "inspect nginx repository fixture")
+guard output(nginxRepoInspect).contains("nginx-1.30.2_1") else {
+    fail("repo fixture catalog did not include nginx package: \(output(nginxRepoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
@@ -607,4 +696,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, and tzdata recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipe fixtures")

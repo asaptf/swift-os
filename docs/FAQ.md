@@ -240,8 +240,8 @@ See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 Yes, through checked-in signed local repository fixtures. The Lua path
 cross-builds static AArch64 `lua` and `luac`; the seed repository also
-cross-builds zlib and pcre2, packages ca-certificates and tzdata, publishes all
-five into one signed local repository, boots SwiftOS with that default repo URL,
+cross-builds zlib, pcre2, and nginx, packages ca-certificates and tzdata, publishes all
+six into one signed local repository, boots SwiftOS with that default repo URL,
 installs them by name, and runs their smoke commands. P8 then publishes the same seed
 repository into a static-hostable web root and proves installs from that hosted
 layout. The hosted URL smoke verifies that hosted root through URL fetching and

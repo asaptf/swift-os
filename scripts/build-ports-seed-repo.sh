@@ -24,6 +24,7 @@ fail() {
 "$ROOT/scripts/build-ca-certificates.sh"
 "$ROOT/scripts/build-pcre2.sh"
 "$ROOT/scripts/build-tzdata.sh"
+"$ROOT/scripts/build-nginx.sh"
 
 rm -rf "$REPO_ROOT" "$REPO_PUB"
 "$ROOT/build/pkgrepo" create \
@@ -32,6 +33,7 @@ rm -rf "$REPO_ROOT" "$REPO_PUB"
     --package "$ROOT/build/ca-certificates.swpkg" \
     --package "$ROOT/build/pcre2.swpkg" \
     --package "$ROOT/build/tzdata.swpkg" \
+    --package "$ROOT/build/nginx.swpkg" \
     --output "$REPO_ROOT" \
     --seed-hex "$SEED_HEX" \
     --generation 1

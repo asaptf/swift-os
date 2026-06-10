@@ -13,19 +13,19 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b-P12 add checked Lua, zlib, ca-certificates, pcre2, and tzdata `Port.json` recipes with
+> P6b-P13 add checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx `Port.json` recipes with
 > recipe validation, manifest generation, checksum-verified source fetch,
 > `.swpkg` creation from clean staged roots, signed local repository fixture
 > generation, real AArch64 static cross-builds where applicable, and a
-> five-package signed seed repository fixture. The
+> six-package signed seed repository fixture. The
 > `package-lua-repo-install-test` installs and runs Lua from its signed
 > repository inside QEMU. The `package-ports-seed-repo-install-test` boots
 > SwiftOS with a default repository URL, runs `pkg update`, installs `lua`,
-> `zlib`, `ca-certificates`, `pcre2`, and `tzdata`, and runs the package smoke commands. `make ports-static-host-publish`
+> `zlib`, `ca-certificates`, `pcre2`, `tzdata`, and `nginx`, and runs the package smoke commands. `make ports-static-host-publish`
 > now emits a static-hostable web root for that seed repository, and
 > `make package-static-host-repo-install-test` proves installs from that layout.
 > P9 adds host-side hosted URL verification and a QEMU smoke where `/bin/pkg`
-> installs Lua, zlib, ca-certificates, pcre2, and tzdata from a DNS-resolved HTTP repository URL. Public
+> installs Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a DNS-resolved HTTP repository URL. Public
 > production domains/channels, target-side HTTPS, remove, upgrade,
 > version-constraint solving, and rollback flows are still roadmap work.
 
@@ -55,16 +55,17 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, and tzdata recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
 | tzdata repository fixture | Compile IANA TZif zoneinfo files with host `zic`, package `/usr/share/zoneinfo`, and publish the signed local repository fixture | `make ports-tzdata-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, ca-certificates, pcre2, and tzdata into one signed local repository and install all five from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all five packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, ca-certificates, pcre2, and tzdata from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| nginx binary repository fixture | Cross-build minimal static HTTP-only nginx, then publish it into a signed local repository fixture | `make ports-nginx-repo-fixture` |
+| Ports seed repository fixture | Publish Lua, zlib, ca-certificates, pcre2, tzdata, and nginx into one signed local repository and install all six from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all six packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -149,7 +150,7 @@ Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
 inspection, `build/swport recipe ...` for the checked Lua, zlib,
-ca-certificates, pcre2, and tzdata recipes, and the host package tooling for package
+ca-certificates, pcre2, tzdata, and nginx recipes, and the host package tooling for package
 construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only

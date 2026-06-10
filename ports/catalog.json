@@ -251,14 +251,14 @@
       "portPath": "www/nginx",
       "tier": 2,
       "category": "web",
-      "status": "planned",
+      "status": "packages",
       "difficulty": "L",
       "upstream": "nginx open source",
-      "summary": "Main web server and reverse proxy target for real hosting workloads.",
-      "runtimeDependencies": ["ca-certificates", "openssl", "pcre2", "zlib"],
-      "prerequisiteBundles": ["base-posix", "net-server", "service", "tls-base"],
-      "smokeTest": "nginx -t, serve a static file, and reverse proxy to a tiny local HTTP app",
-      "notes": "Build modules statically; disable dynamic modules, sendfile, aio, and PCRE JIT first."
+      "summary": "Minimal static HTTP-only nginx web server for swift-os.",
+      "runtimeDependencies": [],
+      "prerequisiteBundles": ["base-posix", "net-server"],
+      "smokeTest": "install from the seed repository, run nginx -v, and read the packaged web root marker",
+      "notes": "Packaged first as an HTTP-only static binary with poll events, no dynamic modules, no TLS, no rewrite, no gzip, and no proxy module. TLS, pcre2 rewrite support, gzip, reverse proxying, and service-supervisor integration remain follow-up web-stack packages."
     },
     {
       "name": "acme-sh",

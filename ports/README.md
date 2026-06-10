@@ -6,8 +6,8 @@ first package priorities, dependency names, OS prerequisite bundles, blocked
 state, and the first smoke test each package must eventually pass.
 
 This is not a full ports tree yet. The first checked-in recipes are `lang/lua`,
-`archivers/zlib`, `security/ca-certificates`, `devel/pcre2`, and
-`sysutils/tzdata`, with
+`archivers/zlib`, `security/ca-certificates`, `devel/pcre2`,
+`sysutils/tzdata`, and `www/nginx`, with
 validation, manifest generation, checksum-verified distfile fetching, `.swpkg`
 creation from clean staged roots, and signed static repository fixture
 generation. `make
@@ -19,8 +19,9 @@ ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA bundle as a
 data-only trust-store package. `make ports-pcre2-repo-fixture` cross-builds
 static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep`. `make
 ports-tzdata-repo-fixture` compiles portable IANA TZif zoneinfo files and
-packages the `/usr/share/zoneinfo` tree. `make ports-seed-repo-fixture`
-publishes all five packages into one signed seed
+packages the `/usr/share/zoneinfo` tree. `make ports-nginx-repo-fixture`
+cross-builds a minimal static HTTP-only nginx package. `make
+ports-seed-repo-fixture` publishes all six packages into one signed seed
 repository. `make ports-static-host-publish`
 copies that seed repository into a deployable static-host web root with
 `hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS`.
@@ -39,6 +40,7 @@ make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
+make ports-nginx-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-ports-seed-repo-install-test
@@ -57,16 +59,18 @@ build/swport recipe validate archivers/zlib
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
+build/swport recipe validate www/nginx
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
+build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua, zlib, and pcre2 cross-build targets require
+The Lua, zlib, pcre2, and nginx cross-build targets require
 `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib` if the generated
 sysroot is not present.
 
