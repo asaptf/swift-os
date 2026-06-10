@@ -78,7 +78,7 @@ capabilities the workload needs.
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
-| Signed repository install candidate | Install package content by name from the P5b HTTP fixture | Base artifacts plus writable store, repository fixture, and virtio-net | `make package-repo-install-test` |
+| Signed repository install candidate | Install package content by name from the P5c HTTP fixture | Base artifacts plus writable store, repository fixture, and virtio-net | `make package-repo-install-test` |
 | Embedded/appliance-style candidate | Minimal fixed-purpose image | Base artifacts plus only needed devices/services | Boot test plus workload-specific test |
 | VirtualBox ARM smoke | Apple Silicon firmware-adjacent evidence | `swift-os.vdi` | Manual evidence from [VIRTUALBOX.md](VIRTUALBOX.md) |
 
@@ -385,10 +385,11 @@ make package-repo-install-test
 ```
 
 `make package-local-install-test` proves the local-file install path.
-`make package-repo-install-test` proves the P5b signed HTTP repository fixture,
-including expired-catalog, incompatible-catalog, and package-hash rejection.
-Do not document public hosted channels, dependency solving, remove, upgrade, or
-rollback as current features yet.
+`make package-repo-install-test` proves the P5c signed HTTP repository fixture,
+including configured repository URLs, name-based dependency resolution,
+expired-catalog rejection, incompatible-catalog rejection, and package-hash
+rejection. Do not document public hosted channels, version-constraint solving,
+remove, upgrade, or rollback as current features yet.
 
 ### Embedded Or Appliance-Style Candidate
 
