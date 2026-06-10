@@ -246,11 +246,11 @@ Yes, through checked-in signed local repository fixtures. The Lua path
 cross-builds static AArch64 `lua` and `luac`; the seed repository also
 cross-builds zlib, bzip2, pcre2, nginx, and sqlite, packages ca-certificates and
 tzdata, publishes all eight into one signed local repository, boots SwiftOS with
-that default repo URL, installs them by name, and runs their smoke commands. P8
-then publishes the same seed repository into a static-hostable web root and
-proves installs from that hosted layout. The hosted URL smoke verifies that
-hosted root through URL fetching and
-proves target-side install through a DNS-resolved HTTP repository hostname:
+that default repo URL, installs them by name, and runs their smoke commands. The
+same seed repository can be published into a static-hostable web root and proved
+from that hosted layout. The hosted URL smoke verifies that hosted root through
+URL fetching and proves target-side install through a DNS-resolved HTTP
+repository hostname:
 
 ```sh
 make ports-lua-repo-fixture
@@ -260,6 +260,9 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
+make ports-tzdata-repo-fixture
+make ports-nginx-repo-fixture
+make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
@@ -269,11 +272,13 @@ make package-static-host-dns-repo-install-test
 ```
 
 The seed test exercises `pkg install lua`, `pkg install zlib`,
-`pkg install ca-certificates`, `pkg install pcre2`, Lua version and expression
-checks, a `minigzip` compression/decompression round trip, the CA bundle
-marker, and a `pcre2grep` regex match. The static-host test serves
-`build/ports-static-host-root` and repeats that install path. The DNS smoke
-uses a hosted-style hostname URL. This is still a local fixture, not a public
+`pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
+`pkg install nginx`, and `pkg install sqlite`; Lua version and expression
+checks; a `minigzip` compression/decompression round trip; the CA bundle
+marker; a `pcre2grep` regex match; the tzdata marker; nginx version/marker
+checks; and a SQLite in-memory query. The static-host test serves
+`build/ports-static-host-root` and repeats that install path. The DNS smoke uses
+a hosted-style hostname URL. This is still a local fixture, not a public
 production package channel.
 
 ### Can package files write into `/bin` or `/etc`?

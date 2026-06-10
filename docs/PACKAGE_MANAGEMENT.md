@@ -1,26 +1,26 @@
 # Package Management
 
-Design for binary package installation on swift-os.
+Design for binary package installation on SwiftOS.
 
-> Status: P1 host tooling, P2 package payload overlays, P3a boot activation from
-> a preseeded package-store image, P3b local `/bin/pkg install FILE`, and P5c
-> signed static HTTP repository install are implemented. P5c supports
-> `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
-> `pkg install NAME` for the signed fixture catalog, including name-based
-> dependency resolution, and rejects expired catalogs, incompatible catalog
-> entries, and package SHA-256 mismatches. The ports seed fixture now
-> cross-builds Lua, zlib, bzip2, pcre2, nginx, and sqlite, packages ca-certificates and
-> tzdata, publishes all eight into one signed local repository, and can boot SwiftOS with `/etc/pkg/repo-url` so
-> `pkg update` works without a manual `pkg repo set`. `make
-> ports-static-host-publish` turns that seed into a deployable static web root,
-> and `make package-static-host-repo-install-test` proves install from that
-> published layout. `/bin/pkg` now accepts DNS
-> hostnames in HTTP repository URLs, `make ports-hosted-url-verify` checks a
-> deployed static-host URL from the host, and
-> `make package-static-host-dns-repo-install-test` proves target-side install
-> through a DNS-resolved hosted-style URL. Rollback, remove, upgrade, public
-> production channels, target-side HTTPS transport, version-constraint solving,
-> and large-package streaming downloads are still staged work.
+> Status: host package tooling, read-only package payload overlays,
+> package-store boot activation, local `/bin/pkg install FILE`, and signed
+> static HTTP repository install are implemented. `pkg repo set`,
+> `pkg update [URL]`, `pkg search`, `pkg info`, and `pkg install NAME` work
+> against signed fixture catalogs, including name-based dependency resolution,
+> and reject expired catalogs, incompatible catalog entries, and package
+> SHA-256 mismatches. The ports seed fixture cross-builds Lua, zlib, bzip2,
+> pcre2, nginx, and sqlite, packages ca-certificates and tzdata, publishes all
+> eight into one signed local repository, and can boot SwiftOS with
+> `/etc/pkg/repo-url` so `pkg update` works without a manual `pkg repo set`.
+> `make ports-static-host-publish` turns that seed into a deployable static web
+> root, and `make package-static-host-repo-install-test` proves install from
+> that published layout. `/bin/pkg` accepts DNS hostnames in HTTP repository
+> URLs, `make ports-hosted-url-verify` checks a deployed static-host URL from
+> the host, and `make package-static-host-dns-repo-install-test` proves
+> target-side install through a DNS-resolved hosted-style URL. Rollback, remove,
+> upgrade, public production channels, target-side HTTPS transport,
+> version-constraint solving, and large-package streaming downloads are still
+> staged work.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 
@@ -54,11 +54,11 @@ Related package ecosystem documents:
 
 - [PACKAGE_ECOSYSTEM_GOAL.md](PACKAGE_ECOSYSTEM_GOAL.md) - active end-to-end
   goal, workstreams, and deployment inputs.
-- [SWPKG_FORMAT.md](SWPKG_FORMAT.md) - implemented P1 `.swpkg` container.
-- [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) - implemented P3a package-store
+- [SWPKG_FORMAT.md](SWPKG_FORMAT.md) - implemented `.swpkg` container.
+- [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) - implemented package-store
   bootstrap image and activation records.
 - [PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md)
-  - concrete P1-P5 implementation readiness plan.
+  - historical package-manager implementation readiness plan.
 - [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md) - `swport`, CI,
   and repository publishing automation.
 - [SERVER_SOFTWARE_CATALOG.md](SERVER_SOFTWARE_CATALOG.md) - staged server
@@ -376,12 +376,13 @@ needs to support:
 - enumerate history;
 - garbage collect blobs not reachable from recent activations.
 
-P3a implements the read side of this model for boot activation: a `SWPKGST1`
-block image contains payload records, activation records, and an active pointer.
-The kernel mounts payload images referenced by the active generation. P3b adds
-the first target-side append path for local `.swpkg` files and live activation.
-P4/P5 will broaden that into remove, rollback, history, repository catalogs,
-downloads, and garbage collection.
+The current package-store boot path implements the read side of this model for
+activation: a `SWPKGST1` block image contains payload records, activation
+records, and an active pointer. The kernel mounts payload images referenced by
+the active generation. The local install path adds the first target-side append
+path for local `.swpkg` files and live activation. Later lifecycle and
+repository work will broaden that into remove, rollback, history, repository
+catalogs, downloads, and garbage collection.
 
 Activation manifest:
 
@@ -815,7 +816,7 @@ Package management requires new OS features, but they can land in small slices.
 Ready-to-paste prompts for these slices live in
 [PACKAGE_MANAGER_SESSION_PROMPTS.md](PACKAGE_MANAGER_SESSION_PROMPTS.md).
 
-### P1: Host-Only Package Format (DONE)
+### Host-Only Package Format
 
 Implemented in `tools/swpkg.swift`, `tools/packfs.swift`,
 `docs/SWPKG_FORMAT.md`, and `tests/swpkg_tool_test.swift`.
@@ -825,7 +826,7 @@ Acceptance:
 - host tests verify deterministic `.swpkg` creation, inspection, payload hash
   validation, manifest hash validation, and corrupt-package rejection.
 
-### P2: VFS Package Image Overlay (DONE)
+### VFS Package Image Overlay
 
 Implemented in `kernel/drivers/virtio_blk.swift`, `kernel/vfs/vfs.swift`,
 `kernel/user/exec.swift`, `tools/swpkg.swift`, and
@@ -837,9 +838,9 @@ Acceptance:
 - VFS selects the base image by contents rather than virtio-mmio scan order.
 - QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
-### P3: Package Store (P3a Boot Activation, P3b Local Install DONE)
+### Package Store
 
-P3a adds the read-only boot side of the package store:
+Implemented boot activation:
 
 - `tools/pkgstore.swift` creates and inspects `SWPKGST1` package-store images.
 - `kernel/pkg/store.swift` reads payload records, activation records, and the
@@ -847,7 +848,7 @@ P3a adds the read-only boot side of the package store:
 - `tests/pkg_store_boot_test.sh` boots a preseeded store image and runs
   `/usr/bin/pkghello` from the active package generation.
 
-P3b adds the first target-side write path:
+Implemented local target-side install:
 
 - `/bin/pkg install FILE` parses a local `.swpkg` staged in the base image.
 - The kernel verifies hashes, appends the payload to a writable package-store
@@ -856,14 +857,14 @@ P3b adds the first target-side write path:
 - `tests/pkg_local_install_test.sh` installs `/packages/pkghello.swpkg` and
   runs `/usr/bin/pkghello` without rebooting.
 
-Remaining P4 work:
+Remaining local lifecycle work:
 
 - `pkg files NAME`.
 - `pkg remove NAME`.
 - `pkg rollback [generation]`.
 - Stronger user-facing diagnostics for failed local installs.
 
-### P4: Complete Local `pkg` Lifecycle
+### Complete Local `pkg` Lifecycle
 
 Extend the base-image `/bin/pkg` local-file workflow:
 
@@ -877,7 +878,7 @@ Acceptance:
 - QEMU test installs a local package, runs it, removes it, proves it is gone,
   then rolls back to the previous active generation.
 
-### P5: Repository Catalogs and Network Fetch (P5c DONE)
+### Repository Catalogs and Network Fetch
 
 Implemented in `tools/pkgrepo.swift`, `userland/pkg.swift`,
 `docs/PKGREPO_FORMAT.md`, `tests/pkgrepo_tool_test.swift`, and
@@ -892,11 +893,11 @@ pkg info pkghello
 pkg install pkghello
 ```
 
-The P5c repository is a static HTTP tree with `catalog.signed` plus
+The repository fixture is a static HTTP tree with `catalog.signed` plus
 content-addressed `.swpkg` blobs. `/bin/pkg` verifies the catalog signature with
 `/etc/pkg/repo-root.pub`, rejects expired and incompatible catalogs, verifies
 the downloaded package SHA-256, resolves catalog dependencies by package name,
-then reuses the local install path. The package-store activation path now keeps
+then reuses the local install path. The package-store activation path keeps
 previous active payloads mounted while adding newly installed payloads, which is
 the minimum needed for dependency packages to remain visible.
 
@@ -994,7 +995,7 @@ Acceptance:
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 
-### P7: Upgrade, History, and Garbage Collection
+### Upgrade, History, and Garbage Collection
 
 - Implement dependency upgrades.
 - Keep activation history.
@@ -1005,7 +1006,7 @@ Acceptance:
 - QEMU test upgrades `pkghello` from v1 to v2, rolls back to v1, then cleans
   unreachable blobs.
 
-### P8: Services and Declarative Policy
+### Services and Declarative Policy
 
 - Package manifests can register services.
 - Service manager reads package service declarations.

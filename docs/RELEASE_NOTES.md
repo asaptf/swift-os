@@ -22,7 +22,7 @@ service-oriented.
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the P6 Lua ports recipe/cross-build/repository scaffold |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the seven-package seed ports repository fixture |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5e virtio-input discovery metadata plus withheld-authority matching over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
@@ -74,28 +74,29 @@ service-oriented.
 - Builds sample `.swpkg` artifacts, read-only package payload overlays, and a
   preseeded package-store image.
 - Provides a narrow local target-side `pkg install FILE` and `pkg list` path.
-- Provides P5c signed HTTP repository fixture install with `pkg repo set`,
+- Provides signed HTTP repository fixture install with `pkg repo set`,
   `pkg update [URL]`, `pkg search`, `pkg info`, dependency resolution by package
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
-- Provides P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 maintainer-side ports scaffolding:
-  `ports/catalog.json`, checked `ports/lang/lua/Port.json` and
-  `ports/archivers/zlib/Port.json` recipes, `swport catalog
-  validate/list/inspect`, and `swport recipe` commands for `validate`,
-  `manifest`, `fetch`, `package`, and `repo-fixture`.
+- Provides maintainer-side ports scaffolding: `ports/catalog.json`, checked
+  Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes,
+  `swport catalog validate/list/inspect`, and `swport recipe` commands for
+  `validate`, `manifest`, `fetch`, `package`, and `repo-fixture`.
 - Cross-builds real static AArch64 `lua` and `luac` binaries against the local
   newlib sysroot and publishes them into a signed local repository fixture with
   `make ports-lua-repo-fixture`.
 - Installs real Lua from the signed local repository fixture inside QEMU and
   runs `lua -v` plus a small expression smoke with
   `make package-lua-repo-install-test`.
-- Publishes Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local seed
+- Publishes Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite
+  into one signed local seed
   repository and verifies `pkg install lua`, `pkg install zlib`,
   `pkg install bzip2`, `pkg install ca-certificates`, `pkg install pcre2`,
   `pkg install tzdata`, `pkg install nginx`, and `pkg install sqlite`, Lua
   smoke commands, `minigzip` and bzip2 round trips, the CA bundle marker, a
   `pcre2grep` regex match, the tzdata zoneinfo marker, nginx version/marker
-  smoke, and SQLite SQL smoke with `make package-ports-seed-repo-install-test`.
+  smoke, and a SQLite in-memory query with
+  `make package-ports-seed-repo-install-test`.
 - Publishes that seed into a static-hostable web root with `hosted-repo.json`,
   `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua, zlib, bzip2,
   ca-certificates, pcre2, tzdata, nginx, and sqlite install from that hosted
@@ -197,14 +198,13 @@ llmd: served
 - The base filesystem is read-only. Persistent writable storage is not part of
   the current product surface.
 - Package payloads are read-only once active. Local target-side package install
-  and P5c signed repository fixture install with name-based dependencies exist,
-  P6e/P6f can cross-build and install Lua in QEMU, and P7 can publish Lua plus
-  zlib into one signed local seed repository and install both in QEMU. P8 can
-  publish that seed into a static-hostable web root and install from that hosted
-  layout. P9 verifies hosted static-root URLs and target-side DNS-resolved HTTP
-  repository URLs. Public production channels, broad source-port coverage,
-  version-constraint solving, removal, upgrade, rollback, and streaming
-  large-package downloads remain roadmap work.
+  and signed repository fixture install with name-based dependencies exist. The
+  checked seed repository can install Lua, zlib, bzip2, ca-certificates, pcre2,
+  tzdata, nginx, and sqlite in QEMU, publish the same seed into a
+  static-hostable web root, verify hosted static-root URLs, and install from
+  target-side DNS-resolved HTTP repository URLs. Public production channels,
+  broad source-port coverage, version-constraint solving, removal, upgrade,
+  rollback, and streaming large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. C5a-C5e prove

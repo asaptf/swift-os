@@ -28,6 +28,7 @@ PART_OFFSET=$((2048 * 512))
 [[ -f "$KERNEL_BIN" ]] || { echo "FAIL: $KERNEL_BIN missing (run 'make build')" >&2; exit 2; }
 [[ -x "$MCOPY" ]]      || { echo "FAIL: missing mtools $MCOPY" >&2; exit 2; }
 
+FRESH="$(mktemp -t swiftos-kst-fresh.XXXXXX)"
 WORK="$(mktemp -t swiftos-kst-img.XXXXXX)"
 BADB="$(mktemp -t swiftos-kst-badb.XXXXXX)"
 LOG="$(mktemp -t swiftos-kst-log.XXXXXX)"
@@ -41,13 +42,16 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$WORK" "$BADB" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$FRESH" "$WORK" "$BADB" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 export MTOOLS_SKIP_CHECK=1
+
+"$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
+  || { echo "FAIL: could not create a fresh disk image (run 'make disk')" >&2; exit 2; }
 
 # A same-size, byte-flipped copy of the kernel for the (inactive) slot B.
 cp "$KERNEL_BIN" "$BADB"
 printf '\xFF' | dd of="$BADB" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
-cp "$DISK_IMG" "$WORK"
+cp "$FRESH" "$WORK"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$BADB" ::/EFI/swift-os/kernelB.bin \
   || { echo "FAIL: could not corrupt kernelB.bin" >&2; exit 2; }
 

@@ -32,27 +32,27 @@ pkg install nginx acme-client postgresql node openjdk swift mc
 
 ## Current State
 
-- P1 host package artifact tooling is present:
+- Host package artifact tooling is present:
   - `tools/swpkg.swift`;
   - `tools/packfs.swift`;
   - `docs/SWPKG_FORMAT.md`;
   - `tests/swpkg_tool_test.swift`.
 - `.swpkg` can be created, inspected, verified, and host-tested.
-- P2 package payload overlays are implemented:
+- Package payload overlays are implemented:
   - QEMU can boot with a base SWOSBASE disk plus package payload disks;
   - VFS selects the base image by contents, independent of virtio scan order;
   - `/usr/bin/pkghello` executes from a package payload image.
-- P3a package-store boot activation is implemented:
+- Package-store boot activation is implemented:
   - `docs/PKGSTORE_FORMAT.md` documents the `SWPKGST1` image layout;
   - `build/pkgstore` can create and inspect package-store images;
   - QEMU can boot a preseeded active package generation.
-- P3b local target-side install is implemented:
+- Local target-side install is implemented:
   - `/bin/pkg install FILE` can install a local `.swpkg` into a writable
     package-store image;
   - `/bin/pkg list` reports active package-store records;
   - `make package-local-install-test` proves the flow with
     `/packages/pkghello.swpkg`.
-- P5c signed static HTTP repository install is implemented as a fixture:
+- Signed static HTTP repository install is implemented as a fixture:
   - `tools/pkgrepo.swift` builds signed catalogs and content-addressed package
     trees;
   - `/bin/pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
@@ -119,14 +119,15 @@ Lives in `swift-os`.
 
 Milestones:
 
-1. P2: mount verified package payload images as read-only VFS overlays. (DONE)
-2. P3a: persistent package store and boot activation generations. (DONE)
-3. P3b: local target-side `/bin/pkg install FILE` and `pkg list`. (DONE)
-4. P4: complete local package lifecycle: files, remove, rollback, and
-   diagnostics.
-5. P5: signed static HTTP repository catalogs, network fetch, configured
-   repository URLs, and name-based dependency installation. (P5c fixture DONE;
-   public hosted channels remain future work)
+1. Package payload overlays: mount verified package payload images as read-only
+   VFS overlays. (DONE)
+2. Package-store boot activation: persistent package store and boot activation
+   generations. (DONE)
+3. Local target-side install: `/bin/pkg install FILE` and `pkg list`. (DONE)
+4. Complete local package lifecycle: files, remove, rollback, and diagnostics.
+5. Signed repository catalogs and network fetch: configured repository URLs,
+   name-based dependency installation, and signed static HTTP repository
+   fixtures are implemented; public hosted channels remain future work.
 
 ### 2. Ports Catalog
 

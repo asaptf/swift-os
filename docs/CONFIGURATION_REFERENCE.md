@@ -135,6 +135,9 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make ports-bzip2-repo-fixture` | Cross-build bzip2 tools/libbz2 and publish its signed local repository fixture. |
 | `make ports-ca-certificates-repo-fixture` | Build the data-only CA certificate package and signed local repository fixture. |
 | `make ports-pcre2-repo-fixture` | Cross-build PCRE2/pcre2grep and publish its signed local repository fixture. |
+| `make ports-tzdata-repo-fixture` | Build the data-only IANA time zone package and signed local repository fixture. |
+| `make ports-nginx-repo-fixture` | Cross-build nginx and publish its signed local repository fixture. |
+| `make ports-sqlite-repo-fixture` | Cross-build SQLite and publish its signed local repository fixture. |
 | `make package-lua-install-fixture` | Build the writable package-store image used by Lua/ports repository install tests. |
 | `make package-lua-repo-install-test` | Run target-side Lua install from the signed Lua repository fixture. |
 | `make ports-seed-repo-fixture` | Publish Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed seed repository. |
@@ -531,7 +534,7 @@ These are intentional current limits:
 - No persistent writable filesystem.
 - No public hosted package channel, package upgrade, remove, rollback,
   version-constraint solver, or streaming large-package install path. Local
-  `pkg install FILE` and P5c `pkg repo set`/`pkg update [URL]`/
+  `pkg install FILE` and signed `pkg repo set`/`pkg update [URL]`/
   `pkg install NAME` work for signed fixtures when a writable package-store
   image is attached, including name-based dependency resolution and rejection
   paths for expired or incompatible catalogs and package hash mismatches.

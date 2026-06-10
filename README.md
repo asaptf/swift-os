@@ -118,9 +118,9 @@ What exists today, in the order it was built:
   are covered by executable fixtures. The current ports path also cross-builds
   static AArch64 Lua, zlib, bzip2, pcre2, nginx, and sqlite on the host,
   packages the pinned ca-certificates and tzdata bundles as data, publishes all
-  eight into one signed
-  seed repository, emits a static-hostable repository root that can be served to
-  QEMU, and proves install from a DNS-resolved hosted-style repository URL.
+  eight into one signed seed repository, emits a static-hostable repository
+  root that can be served to QEMU, and proves install from a DNS-resolved
+  hosted-style repository URL.
 
 ## Philosophy
 
@@ -213,7 +213,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Package Management](docs/PACKAGE_MANAGEMENT.md): package-system design,
   current implementation status, and roadmap boundaries.
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
-  recipe, Lua/zlib/bzip2 cross-build fixtures, CI smoke-test, and repository publishing
+  recipe, seed package fixtures, CI smoke-test, and repository publishing
   workflow for maintainers.
 - [Package Ecosystem Goal](docs/PACKAGE_ECOSYSTEM_GOAL.md): end-state package
   ecosystem goals and current package roadmap.
@@ -226,7 +226,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
   activation record, and local install layout.
 - [Static Package Repository](docs/PKGREPO_FORMAT.md): signed static HTTP
-  catalog layout and P5c repository install flow.
+  catalog layout and repository install flow.
 - [API Reference](docs/API_REFERENCE.md): API recipe index, syscall table,
   structure layouts, handle rights, native Swift bridge, and compatibility API
   notes.

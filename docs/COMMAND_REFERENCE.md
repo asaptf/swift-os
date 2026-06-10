@@ -1021,7 +1021,7 @@ Notes:
   boot. `pkg repo show` prints the configured URL. If `/etc/pkg/repo-url` is
   present in the base image, `pkg update` can use it without a prior
   `pkg repo set`; the test base image is built with `PKG_DEFAULT_REPO_URL`.
-- `pkg update [URL]` expects a P5c signed static HTTP repository URL, such as
+- `pkg update [URL]` expects a signed static HTTP repository URL, such as
   the QEMU fixture path under
   `http://10.0.2.2:<port>/good/aarch64/current`. It rejects expired catalogs,
   incompatible package entries, and invalid dependency entries.
@@ -1041,7 +1041,7 @@ Notes:
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
 flow for Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite is
-covered by `tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved
+by `tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved
 hosted-style URL flow is covered by
 `tests/pkg_static_host_dns_repo_install_test.sh`.
 
