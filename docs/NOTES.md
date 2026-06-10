@@ -1312,6 +1312,35 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   transactions, or a package-management service. Install remains a serialized
   operation.
 
+### S4e — network/socket lock boundary (DONE, 2026-06-10)
+
+- **Network lock.** `kernel/net/socket.swift` now protects `gNet`, DNS scratch
+  state, socket tables, TCP connection state, RX datagram rings, and the
+  virtio-net poll/TX/RX boundary with a short IRQ-save spinlock and S4e
+  acquire/contention counters.
+- **Pump boundary.** `netPump()` is the public locked pump entry point;
+  `netPumpLocked()` is the internal helper that may call `virtioNetPoll(&gNet)`
+  and deliver RX frames into sockets. Blocking recv/accept/connect paths pump
+  or wait without holding the lock, then take short locked snapshots to inspect
+  socket state or copy payloads.
+- **Boot probe boundary.** The net-a boot probe no longer reads `gNet` or calls
+  virtio-net TX/poll helpers directly from `main.swift`; it uses small locked
+  probe helpers for MAC, ARP, and ICMP echo checks.
+- **Executable checks.** Boot runs `netS4eReadinessSelfTest()` immediately after
+  `runVirtioNetProbe()` and logs `S4e OK: network lock boundary ready`. After
+  the userland demos it runs `netS4eLockBoundaryHeldSelfTest()` and logs
+  `S4e OK: network lock boundary stayed balanced`.
+- **Static/runtime guard.** `tests/smp_release_guard_test.sh` requires the S4e
+  lock, counters, pump/probe helpers, and boot-marker order. SMP and UEFI boot
+  smokes require both S4e markers. Runtime network coverage was re-run across
+  virtio-net ARP/ICMP, UDP/TCP echo, TCP active open, DNS, HTTP, TLS, zero-copy
+  RX refs, socket handle transfer, IPv6 link-local/NDP smokes, and signed HTTP
+  package repo install.
+- **Non-goals.** S4e does not service-ize the network stack, add a NIC interrupt
+  thread, or enable broad secondary network work. It is a correctness boundary
+  for the current in-kernel polled engine; C5/network service work still owns
+  the architectural move out of the kernel.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

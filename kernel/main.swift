@@ -455,23 +455,23 @@ private func printMac(_ m: MAC) {
 /// boot/test paths are unaffected (mirrors runVirtioBlkProbe).
 private func runVirtioNetProbe() {
     netInit()   // brings up the NIC + the shared NetStack the socket layer uses
-    if !netReady {
+    if !netIsReady() {
         return  // netInit already logged "net: no virtio-net device attached"
     }
     uartPuts("net-a: virtio-net up, MAC ")
-    printMac(gNet.mac)
+    printMac(netCurrentMac())
     uartPuts("\n")
 
     let gwIP = netGatewayIP   // 10.0.2.2 (slirp gateway)
 
     // 1) Resolve the gateway's MAC via ARP.
-    virtioNetTxSubmit(frameLen: gNet.buildArpRequest(targetIP: gwIP, out: virtioNetTxBuffer()))
+    netProbeSendArpRequest(targetIP: gwIP)
     var gwMac = MAC()
     var resolved = false
     var spins = 0
     while spins < 4_000_000 && !resolved {
-        let r = virtioNetPoll(&gNet)
-        if r.arpResolved && r.resolvedIP == gwIP { gwMac = r.resolvedMac; resolved = true }
+        let r = netProbePollArp(targetIP: gwIP)
+        if r.resolved { gwMac = r.mac; resolved = true }
         spins += 1
     }
     if !resolved {
@@ -483,13 +483,11 @@ private func runVirtioNetProbe() {
     uartPuts("\n")
 
     // 2) Ping the gateway: send an ICMP echo request and await the echo reply.
-    virtioNetTxSubmit(frameLen: gNet.buildEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234,
-                                                      seq: 1, payloadLen: 32, out: virtioNetTxBuffer()))
+    netProbeSendEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234, seq: 1, payloadLen: 32)
     var got = false
     spins = 0
     while spins < 4_000_000 && !got {
-        let r = virtioNetPoll(&gNet)
-        if r.echoReply { got = true }
+        if netProbePollEcho() { got = true }
         spins += 1
     }
     if got {
@@ -858,6 +856,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     }
     klog(.info, "smp", "S4c OK: kernel heap lock boundary ready", UInt64(swiftos_heap_lock_acquire_count()))
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
+    if !netS4eReadinessSelfTest() {
+        uartPuts("panic: S4e network lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4e OK: network lock boundary ready", UInt64(netS4eLockAcquireCount()))
     ttyInit()
     signalReset()
     uartRxInit()
@@ -959,6 +962,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S4d OK: package-store lock boundary stayed balanced", UInt64(pkgStoreS4dLockContentionCount()))
+        if !netS4eLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4e network lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4e OK: network lock boundary stayed balanced", UInt64(netS4eLockContentionCount()))
         klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in

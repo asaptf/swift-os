@@ -21,8 +21,8 @@ manifest entries left behind after globals move or disappear.
 | Runtime heap/PMM | S4c protects the small-object bump heap cursor/limit/init state with an IRQ-save C spinlock and boot-time boundary checks. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | The allocator strategy is still a minimal non-freeing bump heap; this only makes the shared cursor safe. Add a real small-object allocator later if profiles need reclaim or lower fragmentation. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
-| VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. S4d protects package-store activation/append tables, active payload publication, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. The network engine still needs its own policy before multi-CPU service work. |
-| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. | Protect interrupt/poll paths and virtio queue selection before real concurrent drivers; longer term move at least one driver toward a service boundary. |
+| VFS/handles/pipes/endpoints/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. S4d protects package-store activation/append tables, active payload publication, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. |
+| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. S4e protects the in-kernel network/socket engine (`gNet`, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
 ## Machine-Checked Manifest
@@ -126,6 +126,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/net/socket.swift:ephemeralCursor`
 - `kernel/net/socket.swift:gDnsScratch`
 - `kernel/net/socket.swift:gNet`
+- `kernel/net/socket.swift:netLockAcquireCount`
+- `kernel/net/socket.swift:netLockContentionCount`
+- `kernel/net/socket.swift:netLockWord`
 - `kernel/net/socket.swift:netGatewayIPv6`
 - `kernel/net/socket.swift:netLocalIPv6`
 - `kernel/net/socket.swift:netReady`
@@ -292,5 +295,7 @@ manifest entries left behind after globals move or disappear.
   boundary. Target-side installs are still serialized through one writer gate;
   package-management service work should keep that single-writer contract unless
   a later milestone adds a transactional store journal.
-- Device queues and network socket tables need an IRQ/poll locking policy before
-  interrupts or service work are allowed away from CPU 0.
+- The in-kernel network/socket engine is now protected by the S4e lock boundary.
+  Device/service migration is still future work: before interrupts or network
+  service work move away from CPU 0, the virtio driver/service boundary needs a
+  reviewed ownership model rather than only a coarse in-kernel lock.

@@ -216,9 +216,16 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   active payload snapshot before doing block I/O. Boot validates the
   package-store invariants before VFS consumes active package payloads and
   again after the userland demos.
+- S4e preflight (2026-06-10): the in-kernel network/socket engine now has a
+  short IRQ-save lock around `gNet`, DNS scratch state, socket tables, TCP
+  connection state, RX datagram rings, and the virtio-net poll/TX/RX boundary.
+  Blocking recv/accept/connect paths pump or wait outside the lock, while the
+  boot net-a probe goes through locked helpers instead of touching `gNet`
+  directly. Boot validates network invariants after the net probe and again
+  after the userland demos.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
-- Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase".
+- Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase". S4e gives the current in-kernel engine a coarse correctness boundary; moving it to a userland service remains the architectural target.
 - Add a concurrency stress test that runs many alloc/free, pipe create/close, fork/exec, and tmpfs create/write cycles while all CPUs are under timer load. Look for use-after-free, double-free, or lost updates.
 - Acceptance: the stress test runs for a long time without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
 

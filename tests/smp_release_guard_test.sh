@@ -17,6 +17,7 @@ VM_SWIFT="$ROOT/kernel/mm/vm.swift"
 PMM_SWIFT="$ROOT/kernel/mm/pmm.swift"
 VFS_SWIFT="$ROOT/kernel/vfs/vfs.swift"
 PKG_SWIFT="$ROOT/kernel/pkg/store.swift"
+NET_SWIFT="$ROOT/kernel/net/socket.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
@@ -495,6 +496,11 @@ if ! grep -q 'S4d OK: package-store lock boundary ready' "$MAIN_SWIFT" ||
   echo "FAIL: S4d must log package-store lock boundary readiness and balanced markers." >&2
   exit 1
 fi
+if ! grep -q 'S4e OK: network lock boundary ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S4e OK: network lock boundary stayed balanced' "$MAIN_SWIFT"; then
+  echo "FAIL: S4e must log network lock boundary readiness and balanced markers." >&2
+  exit 1
+fi
 
 for needle in \
   'private var vfsLockWord: UInt64 = 0' \
@@ -580,6 +586,36 @@ if ! grep -q 'if !pkgStoreBeginMutation() { return -11 }' "$PKG_SWIFT" ||
   exit 1
 fi
 
+for needle in \
+  'private var netLockWord: UInt64 = 0' \
+  'private var netLockAcquireCount: UInt64 = 0' \
+  'private var netLockContentionCount: UInt64 = 0' \
+  'private func netLock() -> UInt64' \
+  'private func netUnlock(_ daif: UInt64)' \
+  'private func netPumpLocked() -> RxOutcome' \
+  'func netPump()' \
+  'func netIsReady() -> Bool' \
+  'func netProbeSendArpRequest' \
+  'func netProbePollArp' \
+  'func netProbeSendEchoRequest' \
+  'func netProbePollEcho() -> Bool' \
+  'private func socketAllocLocked' \
+  'private func allocEphemeralPortLocked' \
+  'func netS4eLockAcquireCount() -> UInt64' \
+  'func netS4eLockContentionCount() -> UInt64' \
+  'func netS4eReadinessSelfTest() -> Bool' \
+  'func netS4eLockBoundaryHeldSelfTest() -> Bool'; do
+  if ! grep -q "$needle" "$NET_SWIFT"; then
+    echo "FAIL: S4e network lock boundary missing $needle." >&2
+    exit 1
+  fi
+done
+
+if rg -n 'gNet|virtioNetPoll|virtioNetTxSubmit|virtioNetTxBuffer' "$MAIN_SWIFT" >/dev/null; then
+  echo "FAIL: S4e main boot probe must use network lock-boundary helpers instead of direct gNet/virtio-net access." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -598,6 +634,8 @@ s4a_smp_line="$(rg -n 'smpPmmStressSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -
 s4d_line="$(rg -n 'pkgStoreS4dReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4b_line="$(rg -n 'vfsS4bReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4c_line="$(rg -n 'swiftos_heap_s4c_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+net_probe_line="$(rg -n '^[[:space:]]*runVirtioNetProbe\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4e_line="$(rg -n 'netS4eReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -616,6 +654,7 @@ s4a_stress_boundary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)'
 s4b_lock_boundary_line="$(rg -n 'vfsS4bLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4c_lock_boundary_line="$(rg -n 'swiftos_heap_lock_boundary_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4d_lock_boundary_line="$(rg -n 'pkgStoreS4dLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4e_lock_boundary_line="$(rg -n 'netS4eLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
       "$proc_line" -ge "$s2a_line" ]]; then
@@ -683,6 +722,13 @@ if [[ -z "$s4c_line" ||
   echo "FAIL: S4c kernel heap lock self-test must run after S4b readiness and before scheduler/userland demos." >&2
   exit 1
 fi
+if [[ -z "$net_probe_line" || -z "$s4e_line" ||
+      "$s4c_line" -ge "$net_probe_line" ||
+      "$net_probe_line" -ge "$s4e_line" ||
+      "$s4e_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S4e network lock self-test must run after the net probe and before scheduler/userland demos." >&2
+  exit 1
+fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
       "$demo_line" -ge "$s2c_no_secondary_line" ||
       "$s2c_no_secondary_line" -ge "$process_demo_line" ]]; then
@@ -744,6 +790,11 @@ fi
 if [[ -z "$s4d_lock_boundary_line" ||
       "$s4c_lock_boundary_line" -ge "$s4d_lock_boundary_line" ]]; then
   echo "FAIL: S4d package-store lock guard must run after S4c." >&2
+  exit 1
+fi
+if [[ -z "$s4e_lock_boundary_line" ||
+      "$s4d_lock_boundary_line" -ge "$s4e_lock_boundary_line" ]]; then
+  echo "FAIL: S4e network lock guard must run after S4d." >&2
   exit 1
 fi
 
@@ -813,4 +864,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4d release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store boundary)"
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4e release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary)"

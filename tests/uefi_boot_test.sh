@@ -150,6 +150,7 @@ check "[I] smp: S4a OK: PMM lock boundary ready"
 check "[I] smp: S4d OK: package-store lock boundary ready"
 check "[I] smp: S4b OK: VFS lock boundary ready"
 check "[I] smp: S4c OK: kernel heap lock boundary ready"
+check "[I] smp: S4e OK: network lock boundary ready"
 check "[I] sched: M4.5 sched: real context switch OK"
 check "[I] smp: S2c OK: no secondary kernel scheduler execution"
 if (( SMP_CPU_COUNT > 1 )); then
@@ -167,13 +168,14 @@ check "[I] smp: S4a OK: PMM lock boundary stayed balanced"
 check "[I] smp: S4b OK: VFS lock boundary stayed balanced"
 check "[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
 check "[I] smp: S4d OK: package-store lock boundary stayed balanced"
+check "[I] smp: S4e OK: network lock boundary stayed balanced"
 check "built-in shell (ash)"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b/S4c/S4d acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a-S4e acceptance)"
     exit 0
 fi
 echo "--- serial log ---" >&2
