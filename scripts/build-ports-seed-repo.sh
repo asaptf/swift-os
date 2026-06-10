@@ -23,8 +23,18 @@ fail() {
 "$ROOT/scripts/build-zlib.sh"
 "$ROOT/scripts/build-ca-certificates.sh"
 "$ROOT/scripts/build-pcre2.sh"
+"$ROOT/scripts/build-tzdata.sh"
+"$ROOT/scripts/build-nginx.sh"
+
+rm -rf "$REPO_ROOT" "$REPO_PUB"
+"$ROOT/build/pkgrepo" create \
+    --package "$ROOT/build/lua.swpkg" \
+    --package "$ROOT/build/zlib.swpkg" \
+    --package "$ROOT/build/ca-certificates.swpkg" \
+    --package "$ROOT/build/pcre2.swpkg" \
     --package "$ROOT/build/tzdata.swpkg" \
-    --package "$ROOT/build/nginx.swpkg" \    --output "$REPO_ROOT" \
+    --package "$ROOT/build/nginx.swpkg" \
+    --output "$REPO_ROOT" \
     --seed-hex "$SEED_HEX" \
     --generation 1
 "$ROOT/build/pkgrepo" pubkey --seed-hex "$SEED_HEX" --output "$REPO_PUB"
