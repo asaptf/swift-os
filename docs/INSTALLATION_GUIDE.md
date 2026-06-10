@@ -35,6 +35,33 @@ Current non-targets:
 - No production bare-metal hardware matrix beyond the documented QEMU and
   best-effort VirtualBox ARM profiles.
 
+## Choose An Install Profile
+
+Pick the smallest boot profile that proves the thing you are changing. Broader
+profiles are useful evidence, but they are slower and can hide the first failing
+layer.
+
+| Need | Use profile | Build and run | First proof | Do not use it for |
+| --- | --- | --- | --- | --- |
+| Fast kernel, userland, VFS, login, or command validation | Direct serial QEMU | `make build base-image build/virt.dtb`, then `make run` | `./tests/boot_test.sh` | Firmware or GPT validation |
+| Firmware loader, ESP, GPT, or boot-state validation | UEFI GPT disk | `make disk base-image`, then `make disk-run` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` | Fast inner-loop command work |
+| Framebuffer or keyboard smoke | Graphical QEMU smoke | `make run-gfx` | `./tests/fb_vi_test.sh` | Desktop-product claims |
+| Network service validation | Direct serial QEMU plus virtio-net host forwarding | Manual QEMU network profile from [Networking Guide](NETWORKING_GUIDE.md) | Service-specific network test | Booting without `capNet` or a NIC |
+| Package overlay or store validation | Direct serial QEMU plus package image | Package fixture target from [Package Guide](PACKAGE_GUIDE.md) | Package overlay/store/install test | Target-side package upgrade or rollback claims |
+| AI hosting validation | Direct serial QEMU plus model bundle, optionally with virtio-net | `make model base-image`, then the AI service profile | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` | Production throughput promises |
+| Apple Silicon firmware-adjacent smoke | VirtualBox ARM best-effort profile | `./run_in_virtual_box.sh --check`, then `./run_in_virtual_box.sh` | Manual evidence from [VIRTUALBOX.md](VIRTUALBOX.md) | Primary release gating |
+
+Example: for a change to `/bin/httpd`, use the network service path, not the
+UEFI disk path first:
+
+```sh
+make build base-image build/virt.dtb
+./tests/httpd_test.sh
+```
+
+Run the UEFI profile later only if the change also affects boot packaging,
+release evidence, or the deployment profile.
+
 ## Host Requirements
 
 The default checked-in configuration expects a macOS/Homebrew-style development
