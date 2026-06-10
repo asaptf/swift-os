@@ -30,6 +30,7 @@ Current supported support targets:
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
+| Static-host ports fixture | `make package-static-host-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
@@ -42,6 +43,7 @@ Current non-support targets:
 - General x86-64, Raspberry Pi, or PC hardware boot.
 - Target-side package remove, upgrade, rollback, and version-constraint solving
   transactions.
+- Public hosted package channels outside the checked local fixtures.
 
 For the full compatibility matrix, see
 [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md).
@@ -74,6 +76,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
+| Static-host ports fixture | `make package-static-host-repo-install-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
@@ -346,11 +349,14 @@ make package-overlay-test
 make package-store-test
 make package-local-install-test
 make package-repo-install-test
+make package-static-host-repo-install-test
 ```
 
 Mention whether the guest saw `/usr/bin/pkghello`, whether `pkg list` reported
 `pkghello-1.0.0_1`, and whether the repository flow printed
-`pkg: catalog updated`.
+`pkg: catalog updated`. For the static-host ports fixture, mention whether
+`pkg install lua` and `pkg install zlib` succeeded, whether Lua printed `42`,
+and whether the `minigzip` round trip printed `static-host-ok`.
 
 ### SMP Readiness
 

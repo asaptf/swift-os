@@ -403,12 +403,12 @@ make package-overlay-test
 ```
 
 Remember: `.swpkg` creation and payload extraction are host-side today. Guest
-install works through the local-file form, `pkg install FILE`, and through the
-P5c signed static HTTP repository fixture, `pkg repo set URL && pkg update`
-or `pkg update URL` followed by `pkg install NAME`. Name-based dependency
-resolution is implemented for signed catalogs. Remove, upgrade, rollback,
-version-constraint solving, public hosted channels, and large-package streaming
-downloads are future work.
+install works through the local-file form, `pkg install FILE`, through the P5c
+signed static HTTP repository fixture, `pkg repo set URL && pkg update` or
+`pkg update URL` followed by `pkg install NAME`, and through the P8 static-host
+ports fixture for Lua plus zlib. Name-based dependency resolution is implemented
+for signed catalogs. Remove, upgrade, rollback, version-constraint solving,
+public hosted channels, and large-package streaming downloads are future work.
 
 For the P3a package-store boot path, use:
 
@@ -463,6 +463,45 @@ target, ABI, or linkage, and catalogs with invalid dependency entries.
 If `pkg install NAME` fails after a successful update, inspect
 `build/pkgrepo-root/aarch64/current`, check whether the guest printed
 `pkg: package SHA-256 mismatch`, and rerun `make package-repo-install-test`.
+
+For the source-built Lua/zlib static-host path, use:
+
+```sh
+make ports-static-host-publish
+make package-static-host-repo-install-test
+```
+
+The tested guest flow is:
+
+```sh
+pkg update
+pkg search lua
+pkg search zlib
+pkg install lua
+pkg install zlib
+/usr/bin/lua -e 'print(21 * 2)'
+echo static-host-ok > /tmp/zlib.txt
+/usr/bin/minigzip /tmp/zlib.txt
+/usr/bin/minigzip -d /tmp/zlib.txt.gz
+cat /tmp/zlib.txt
+```
+
+The serial log should include:
+
+```text
+pkg: catalog updated
+pkg: installed lua-5.4.8_1
+pkg: installed zlib-1.3.1_1
+42
+static-host-ok
+```
+
+If this path fails, inspect `build/ports-static-host-root`, verify that
+`hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS` exist, and rerun
+`make ports-static-host-publish`. The guest still needs virtio-net and a
+default repository URL pointing at the served `/aarch64/current` path. Public
+hosted package channels are not implemented yet; this is a local static-host
+fixture.
 
 ### `swpkg verify` Fails
 
