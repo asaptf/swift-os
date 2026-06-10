@@ -674,6 +674,14 @@ unsigned long swiftos_mmap(unsigned long len, int prot) {
     return (p == MAP_FAILED) ? 0 : (unsigned long)p;
 }
 
+// File-backed read-only mmap (I2a): SYS_MMAP_FILE(fd, len, prot) returns a base
+// VA or a small negative errno; 0 sentinel on failure (Swift has no errno).
+unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot) {
+    long r = __syscall3(SYS_MMAP_FILE, (long)fd, (long)len, (long)prot);
+    if (r < 0 && r >= -4095) return 0;
+    return (unsigned long)r;
+}
+
 int swiftos_munmap(unsigned long addr, unsigned long len) {
     return munmap((void *)addr, len);
 }

@@ -2094,3 +2094,17 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
     if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0) }
     return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }
+
+/// I2a: on-disk extent of a disk-backed, readable regular file open on `fd`, for
+/// file-backed mmap. Returns (ok, diskByteOffset, dataLen); ok is false unless
+/// `fd` is a readable, disk-backed (read-only base image) regular file. Authority
+/// was already checked at open time, so no re-confinement check here.
+func vfsFileExtent(fd: Int) -> (Bool, Int, Int) {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return (false, 0, 0) }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0) }
+    let node = openDescriptions[entry.object].node
+    guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0) }
+    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+}

@@ -618,12 +618,17 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
         return
     }
     if exceptionClass == 0x24 {
+        let far = UInt(read_far_el1())
+        // I2b: demand-page a lazily-reserved file-backed mmap region. This is a
+        // translation fault on an unmapped page; it is disjoint from COW below,
+        // which is a write *permission* fault on a still-mapped shared page.
+        if processHandleFileFault(far) { return }
         let dfsc = esr & 0x3F
         let isWrite = (esr & (1 << 6)) != 0
         let isPermissionFault = dfsc >= 0xC && dfsc <= 0xF
         if isWrite && isPermissionFault {
             let ttbr0 = processCurrentAddressSpace()
-            if ttbr0 != 0 && addressSpaceHandleCowFault(ttbr0, UInt(read_far_el1())) {
+            if ttbr0 != 0 && addressSpaceHandleCowFault(ttbr0, far) {
                 return
             }
         }

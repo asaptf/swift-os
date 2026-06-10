@@ -2517,3 +2517,37 @@ baseline, not native throughput).
 **Next.** I2 replaces the read-into-RAM load with a file-backed read-only `mmap`
 of the weights (the documented "mmap-backed weights" primitive; today's `mmap`
 is anonymous-only). I3 serves generated tokens over TCP via `poll()`.
+
+### I2 — file-backed mmap of model weights (DONE, 2026-06-09)
+
+**I2a — eager file-backed mmap.** New `mmap_file(fd, len, prot)` [`SYS_MMAP_FILE`=59]:
+a read-only file-backed mmap of a disk-backed base-image file. I2a maps the whole
+extent eagerly (the kernel reads it into private frames at mmap time); `/bin/llm`
+switched from read-into-anonymous to this. `addressSpaceMmapFile` (vm.swift),
+`vfsFileExtent(fd)` (vfs.swift), `processMmapFile` (process.swift), bridge
+`swiftos_mmap_file`.
+
+**I2b — demand paging (lazy).** `processMmapFile` now only reserves the VA range
+and records a per-process file-VMA (`pFileVmas`); no frames are mapped at mmap
+time. A translation fault on the region is serviced by `processHandleFileFault`
+→ `addressSpaceMapFilePage`, which reads just the faulting page from disk, maps
+it read-only, and retries. Hooked into the EL0 sync handler (main.swift, ESR
+EC=0x24), disjoint from the COW write-fault path. VMAs are reset on exec/fresh
+image and copied on fork/thread. A one-shot klog `demand-paged file mmap active`
+marks the path; `fileDemandFaults` counts serviced faults. This realizes the
+documented "mmap-backed weights / page-cache-friendly immutable model bundle"
+primitive: resident memory grows only with pages actually touched, and startup
+no longer reads the whole model up front.
+
+**Tradeoff (honest).** Dense inference touches every weight page each token, so
+the first forward pass faults in the whole model (~258 single-page reads):
+first-token latency rises and steady-state resident still ≈ full model. Measured
+~426 tok/s demand-paged vs ~800 eager (QEMU TCG, scalar FP). Demand paging wins
+for huge/sparse/over-committed models and future shared-across-cells mappings;
+eager wins for dense single-tenant. Exposing eager-vs-lazy as an `mmap_file` flag
+is a natural follow-up. munmap of a lazily-reserved region does not yet
+deactivate its VMA (the model-serving path maps once and exits, which is covered).
+
+**Acceptance.** `tests/llm_run_test.sh` asserts the `file-backed` and
+`demand-paged file mmap active` markers and that the generated story still
+matches the llama2.c reference. Next: I3 serves tokens over TCP via `poll()`.

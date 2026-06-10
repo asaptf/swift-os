@@ -330,6 +330,37 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
     return 0
 }
 
+// I2b: demand-fault one page of a lazily-reserved file-backed region. If
+// `pageVA` is already mapped this is not a missing-page demand fault (returns
+// false, so the caller treats it as a real fault). Otherwise allocate a frame,
+// fill it with `contentLen` bytes from the disk extent (the rest left zero), map
+// it read-only with `prot`, and flush just this page. Returns true on success.
+func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskByteOffset: UInt,
+                             _ contentLen: UInt, _ prot: Int32) -> Bool {
+    if (pageVA & (PAGE_SIZE - 1)) != 0 { return false }
+    if protPageDesc(0, prot) == 0 { return false } // W^X / PROT_NONE guard
+    // Already mapped? Then this fault is not a missing-page demand fault.
+    let existing = walkToL3(ttbr0, pageVA, allocate: false)
+    if existing != 0 && (tableLoad(existing, Int((pageVA >> 12) & 0x1ff)) & DESC_VALID) != 0 {
+        return false
+    }
+    let frame = pmm_alloc_page()
+    if frame == 0 { return false } // ENOMEM
+    zeroFrame(frame)
+    if contentLen > 0 {
+        let rc = virtioBlkReadRange(UInt64(diskByteOffset),
+                                    UnsafeMutableRawPointer(bitPattern: frame),
+                                    UInt32(contentLen))
+        if rc != 0 { pmm_free_page(frame); return false }
+    }
+    if !linkPage(ttbr0, pageVA, protPageDesc(frame, prot)) {
+        pmm_free_page(frame); return false
+    }
+    dsb_sy()
+    tlbi_all()
+    return true
+}
+
 // munmap: clear the leaf descriptors over [va, va+n*4K), free each backing
 // frame, and flush. Pages with no live mapping are skipped (munmap of a hole is
 // not an error). The page tables themselves are kept (cheap, and the region is
