@@ -326,7 +326,7 @@ The current checked-in fixtures cover five levels:
 | Package-store activation | A package-store image can activate a payload at boot | `make package-store-test` |
 | Guest local install | `/bin/pkg install FILE` installs into a writable package-store disk | `make package-local-install-test` |
 | Signed repository install | `/bin/pkg install NAME` resolves dependencies and verifies a signed catalog | `make package-repo-install-test` |
-| Real source-port repository install | `/bin/pkg install lua`, `pkg install zlib`, and `pkg install ca-certificates` install real upstream/data packages | `make package-ports-seed-repo-install-test` |
+| Real source-port repository install | `/bin/pkg install lua`, `zlib`, `ca-certificates`, `pcre2`, `tzdata`, `nginx`, and `sqlite` install real upstream/data packages | `make package-ports-seed-repo-install-test` |
 
 The sample fixture builds `/usr/bin/pkghello`:
 
@@ -393,6 +393,11 @@ build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-ca-certificates-repo-fixture
+make ports-pcre2-repo-fixture
+make ports-tzdata-repo-fixture
+make ports-nginx-repo-fixture
+make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
@@ -410,10 +415,21 @@ pkg install lua
 /usr/bin/lua -v
 /usr/bin/lua -e 'print(21 * 2)'
 pkg install zlib
+pkg install ca-certificates
+pkg install pcre2
+pkg install tzdata
+pkg install nginx
+pkg install sqlite
 echo zlib-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
+cat /usr/share/certs/swiftos-ca-bundle.version
+echo nginx-lighttpd > /tmp/pcre2.txt
+/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
+cat /usr/share/zoneinfo/swiftos-tzdata.version
+/usr/sbin/nginx -v
+/usr/bin/sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;'
 ```
 
 Use this recipe as the maintainer-side and guest-smoke reference for new source
@@ -431,7 +447,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, the individual package fixture for the port you changed, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.
