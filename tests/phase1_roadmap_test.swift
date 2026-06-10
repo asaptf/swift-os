@@ -166,6 +166,15 @@ private let milestones: [Milestone] = [
         targetFragments: ["tests/handle_test.swift", "tests/device_authority_guard_test.sh"],
         markerNeedles: ["C5f OK: device grant rights stayed metadata-only"],
         docsNeedles: ["make c5-device-rights-test"]
+    ),
+    Milestone(
+        id: "C5",
+        roadmapNeedle: "### C5 aggregate readiness gate (DONE, 2026-06-10)",
+        notesNeedle: "### C5 aggregate readiness gate (DONE, 2026-06-10)",
+        target: "c5-test",
+        targetFragments: ["c5-device-authority-test", "c5-device-rights-test"],
+        markerNeedles: ["C5f OK: device grant rights stayed metadata-only"],
+        docsNeedles: ["make c5-test"]
     )
 ]
 
