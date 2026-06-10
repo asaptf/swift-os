@@ -106,6 +106,7 @@ private let allowedRecipeMaturities: Set<String> = [
 ]
 private let defaultCatalogPath = "ports/catalog.json"
 private let defaultRecipeName = "Port.json"
+private let defaultRepoSeedHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 private func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("swport: \(message)\n".utf8))
@@ -122,6 +123,7 @@ private func usage() -> String {
       swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
       swport recipe fetch <port|Port.json> [--cache dir]
       swport recipe package <port|Port.json> --root root-dir --output out.swpkg [--swpkg build/swpkg] [--catalog catalog.json]
+      swport recipe repo-fixture <port|Port.json> --root root-dir --output repo-root [--swpkg build/swpkg] [--pkgrepo build/pkgrepo] [--seed-hex hex] [--generation N]
     """
 }
 
@@ -718,12 +720,7 @@ private func fetchRecipeCommand(_ spec: String, args: [String]) throws {
     print("fetch: OK \(output.path)")
 }
 
-private func packageRecipeCommand(_ spec: String, args: [String]) throws {
-    let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
-    let swpkgPath = try optionValue("--swpkg", in: args, default: "build/swpkg")
-    let root = absoluteURL(for: try optionValue("--root", in: args), isDirectory: true)
-    let output = absoluteURL(for: try optionValue("--output", in: args))
-    let (recipe, _) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
+private func createPackage(recipe: Recipe, root: URL, output: URL, swpkgPath: String) throws {
     try validateStagedRoot(root, for: recipe)
 
     let temp = FileManager.default.temporaryDirectory
@@ -746,7 +743,56 @@ private func packageRecipeCommand(_ spec: String, args: [String]) throws {
     guard verify.status == 0 else {
         throw ToolError.message("swpkg verify failed: \(verify.output)")
     }
+}
+
+private func packageRecipeCommand(_ spec: String, args: [String]) throws {
+    let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
+    let swpkgPath = try optionValue("--swpkg", in: args, default: "build/swpkg")
+    let root = absoluteURL(for: try optionValue("--root", in: args), isDirectory: true)
+    let output = absoluteURL(for: try optionValue("--output", in: args))
+    let (recipe, _) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
+    try createPackage(recipe: recipe, root: root, output: output, swpkgPath: swpkgPath)
     print("package: OK \(output.path)")
+}
+
+private func repoFixtureRecipeCommand(_ spec: String, args: [String]) throws {
+    let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
+    let swpkgPath = try optionValue("--swpkg", in: args, default: "build/swpkg")
+    let pkgrepoPath = try optionValue("--pkgrepo", in: args, default: "build/pkgrepo")
+    let seedHex = try optionValue("--seed-hex", in: args, default: defaultRepoSeedHex)
+    let generation = try optionValue("--generation", in: args, default: "1")
+    let root = absoluteURL(for: try optionValue("--root", in: args), isDirectory: true)
+    let output = absoluteURL(for: try optionValue("--output", in: args), isDirectory: true)
+    let pubkey = absoluteURL(for: try optionValue("--pubkey", in: args, default: "\(output.path).pub"))
+    let (recipe, _) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
+
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("swport-repo-fixture-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temp) }
+
+    let package = temp.appendingPathComponent("\(recipe.name)-\(recipe.version)_\(recipe.revision).swpkg")
+    try createPackage(recipe: recipe, root: root, output: package, swpkgPath: swpkgPath)
+
+    let create = try runCommand(pkgrepoPath, [
+        "create", "--package", package.path, "--output", output.path,
+        "--seed-hex", seedHex, "--generation", generation,
+    ])
+    guard create.status == 0 else {
+        throw ToolError.message("pkgrepo create failed: \(create.output)")
+    }
+    let pub = try runCommand(pkgrepoPath, ["pubkey", "--seed-hex", seedHex, "--output", pubkey.path])
+    guard pub.status == 0 else {
+        throw ToolError.message("pkgrepo pubkey failed: \(pub.output)")
+    }
+    let catalog = output.appendingPathComponent("aarch64/current/catalog.signed")
+    let verify = try runCommand(pkgrepoPath, [
+        "verify", "--catalog-signed", catalog.path, "--pubkey", pubkey.path,
+    ])
+    guard verify.status == 0 else {
+        throw ToolError.message("pkgrepo verify failed: \(verify.output)")
+    }
+    print("repo-fixture: OK \(output.appendingPathComponent("aarch64/current").path)")
 }
 
 @main
@@ -782,6 +828,8 @@ struct SwportTool {
                     try fetchRecipeCommand(args[3], args: args)
                 case "package":
                     try packageRecipeCommand(args[3], args: args)
+                case "repo-fixture":
+                    try repoFixtureRecipeCommand(args[3], args: args)
                 default:
                     throw ToolError.message(usage())
                 }

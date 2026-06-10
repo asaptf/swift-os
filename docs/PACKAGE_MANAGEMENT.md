@@ -896,16 +896,17 @@ Remaining repository work:
 
 ### P6: Ports Tree Bootstrap
 
-Current state: P6a/P6b/P6c have started inside `swift-os` with a checked
+Current state: P6a/P6b/P6c/P6d have started inside `swift-os` with a checked
 machine-readable seed catalog, `ports/catalog.json`, the host-side
 `build/swport catalog validate/list/inspect` commands, and the first
 `ports/lang/lua/Port.json` recipe scaffold. `swport recipe validate`,
 `swport recipe manifest`, checksum-verified `swport recipe fetch`, and
-staged-root `swport recipe package` exist for the Lua path. This is
-deliberately not the full ports tree yet; it makes package priorities,
-dependency names, OS prerequisite bundles, blockers, and the
-recipe-to-package contract reviewable before the separate `swift-os-ports`
-repository exists.
+staged-root `swport recipe package` exist for the Lua path. P6d also adds
+`swport recipe repo-fixture`, which creates and verifies a signed local static
+repository from the staged recipe package. This is deliberately not the full
+ports tree yet; it makes package priorities, dependency names, OS prerequisite
+bundles, blockers, and the recipe-to-repository contract reviewable before the
+separate `swift-os-ports` repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
 - Keep the first source recipe workflow valid with `make ports-recipe-test`.
@@ -928,7 +929,8 @@ Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
 - `make ports-recipe-test` validates the first Lua recipe and proves the
-  generated manifest can feed `swport recipe package` and `swpkg verify`.
+  generated manifest can feed `swport recipe package`, `swpkg verify`, and a
+  signed local `pkgrepo` repository fixture.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

@@ -63,6 +63,7 @@ private func writeJSON(_ object: [String: Any], to url: URL) throws {
 let repo = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
 let swport = repo.appendingPathComponent("build/swport")
 let swpkg = repo.appendingPathComponent("build/swpkg")
+let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
@@ -70,6 +71,9 @@ guard FileManager.default.isExecutableFile(atPath: swport.path) else {
 }
 guard FileManager.default.isExecutableFile(atPath: swpkg.path) else {
     fail("missing executable build/swpkg; build swpkg first")
+}
+guard FileManager.default.isExecutableFile(atPath: pkgrepo.path) else {
+    fail("missing executable build/pkgrepo; build pkgrepo first")
 }
 guard FileManager.default.isReadableFile(atPath: recipe.path) else {
     fail("missing ports/lang/lua/Port.json")
@@ -150,6 +154,37 @@ guard output(verify).contains("OK: lua-5.4.8_1") else {
     fail("swpkg verify did not identify lua package: \(output(verify))")
 }
 
+let repoRoot = temp.appendingPathComponent("repo-root", isDirectory: true)
+let pubkey = temp.appendingPathComponent("repo-root.pub")
+let repoFixture = run(swport, [
+    "recipe", "repo-fixture", "lang/lua",
+    "--root", temp.appendingPathComponent("root").path,
+    "--output", repoRoot.path,
+    "--pubkey", pubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(repoFixture, "create lua repository fixture")
+let channel = repoRoot.appendingPathComponent("aarch64/current", isDirectory: true)
+guard output(repoFixture).contains("repo-fixture: OK \(channel.path)") else {
+    fail("repo fixture did not report channel path: \(output(repoFixture))")
+}
+let catalog = channel.appendingPathComponent("catalog.signed")
+guard FileManager.default.isReadableFile(atPath: catalog.path),
+      FileManager.default.isReadableFile(atPath: pubkey.path) else {
+    fail("repo fixture did not write signed catalog and public key")
+}
+let repoVerify = run(pkgrepo, ["verify", "--catalog-signed", catalog.path, "--pubkey", pubkey.path])
+requireSuccess(repoVerify, "verify lua repository fixture")
+guard output(repoVerify).contains("signature: OK") else {
+    fail("pkgrepo verify did not accept lua catalog: \(output(repoVerify))")
+}
+let repoInspect = run(pkgrepo, ["inspect", catalog.path])
+requireSuccess(repoInspect, "inspect lua repository fixture")
+guard output(repoInspect).contains("lua-5.4.8_1") else {
+    fail("repo fixture catalog did not include lua package: \(output(repoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     let binDir = badRoot.appendingPathComponent("usr/bin", isDirectory: true)
@@ -207,4 +242,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates the lua recipe, emits and packages a manifest, and rejects invalid recipes")
+print("PASS: swport validates, packages, and publishes the lua recipe fixture")

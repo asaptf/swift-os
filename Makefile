@@ -974,7 +974,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 $(PKGREPO_PUB): $(PKGREPO) Makefile
