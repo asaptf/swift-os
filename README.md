@@ -46,7 +46,7 @@ What exists today, in the order it was built:
   `docs/VIRTUALBOX.md`.
 
 - **M11 (a–d) — virtio-blk + packed read-only base FS from disk:** a
-  deterministic packed base image format (`SWOSBASE v2`); a host packer
+  deterministic signed packed base image format (`SWOSBASE v3`); a host packer
   (`tools/basepack.swift`); a polled virtio 1.0 block driver; the VFS mounts the
   packed image at boot and serves `/bin`, `/etc`, and other base files directly
   from disk. The kernel no longer embeds any userland binary; the image shrank
@@ -258,7 +258,7 @@ Key architectural decisions:
   initialization read from it instead of hardcoded constants.
 - **Kernel language:** Embedded Swift, freestanding, no Foundation, no full standard library.
 - **Isolation:** real MMU-based process isolation, one address space per process.
-- **Filesystem:** two-tier. A packed read-only base image (`SWOSBASE v2`) served off a virtio-blk
+- **Filesystem:** two-tier. A signed packed read-only base image (`SWOSBASE v3`) served off a virtio-blk
   device; a RAM tmpfs for writable scratch. No journaling; data loss on reboot is by design.
 - **Security:** capability/principal model. `/etc/swos/passwd` is the identity source; `/etc/passwd`
   is a generated compatibility view for busybox/newlib only.
