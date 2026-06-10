@@ -138,6 +138,8 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 57 | `nanosleep` | `seconds`, `nanoseconds` | 0 or negative error |
 | 58 | `spawn_handles` | `path`, `argv`, `HandleSpec*`, `count` | child exit status or negative error |
 | 59 | `mmap_file` | `fd`, `length`, `prot` | base VA or negative error |
+| 60 | `pkg_install` | `fd`, `name`, `version_revision` | 0 or negative error |
+| 61 | `pkg_info` | `index`, `buf`, `cap` | bytes copied or negative error |
 
 Notes:
 
@@ -230,6 +232,107 @@ struct dirent {
 
 `confine(path)` narrows the current process to a filesystem subtree. It is
 confine-only: a process cannot widen the root after confinement.
+
+## Package Store API
+
+The target-side package manager uses two public syscalls for the mutable package
+store. These are low-level APIs for trusted system tools. Most applications
+should invoke `/bin/pkg` instead of calling them directly.
+
+Related file formats:
+
+- [SWPKG_FORMAT.md](SWPKG_FORMAT.md) describes the package archive.
+- [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) describes the append-only store.
+- [PKGREPO_FORMAT.md](PKGREPO_FORMAT.md) describes signed repository catalogs.
+- [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) shows the user-facing package workflow.
+
+### Raw C Wrappers
+
+`userland/lib/syscall.h` declares:
+
+```c
+int pkg_install(int fd, const char *name, const char *version_revision);
+int pkg_info(int index, char *buf, size_t cap);
+```
+
+`pkg_install` appends the package payload, writes a new activation record, moves
+the active pointer, and mounts the active package view.
+
+Contract:
+
+- The caller must run as the root principal; non-root callers receive `-13`.
+- A package-store virtio block device must be present; otherwise the syscall
+  returns `-2`.
+- Only one package-store mutation may run at a time; a concurrent install
+  receives `-11`.
+- `fd` must refer to a readable `.swpkg` file.
+- `name` is 1 to 31 bytes; `version_revision` is 1 to 15 bytes.
+- The package must be unsigned `SWPKG001` v1, with valid manifest and payload
+  SHA-256 hashes in the header.
+- The payload must be a packed `SWOSBASE` v2 image.
+- Repository catalog signatures and package download hashes are verified by
+  `/bin/pkg` before it calls `pkg_install`; they are not part of this syscall.
+
+Example:
+
+```c
+#include "lib/syscall.h"
+#include "lib/fs.h"
+
+int main(void) {
+    int fd = open("/tmp/pkghello.swpkg", O_RDONLY);
+    if (fd < 0) {
+        return 1;
+    }
+
+    int rc = pkg_install(fd, "pkghello", "1.0.0_1");
+    close(fd);
+    return rc == 0 ? 0 : 1;
+}
+```
+
+`pkg_info` enumerates active package payloads by index. It writes a NUL-terminated
+`name-version_revision` string to `buf` and returns the number of payload bytes
+that would be written, excluding the trailing NUL. A missing index returns `-2`.
+
+Example:
+
+```c
+char line[80];
+for (int i = 0; i < 16; i++) {
+    int n = pkg_info(i, line, sizeof(line));
+    if (n < 0) {
+        break;
+    }
+    write(1, line, (unsigned long)n);
+    write(1, "\n", 1);
+}
+```
+
+### Native Swift Bridge
+
+`userland/lib/swift_user.h` exposes the same package-store operations for
+Embedded Swift tools:
+
+```c
+int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
+int swiftos_pkg_info(int index, char *buf, unsigned long cap);
+```
+
+Swift example:
+
+```swift
+var buf = Array<CChar>(repeating: 0, count: 80)
+let rc = buf.withUnsafeMutableBufferPointer { bp in
+    swiftos_pkg_info(0, bp.baseAddress!, UInt(bp.count))
+}
+if rc >= 0 {
+    buf.withUnsafeBufferPointer { bp in
+        swiftos_puts(bp.baseAddress!)
+    }
+    swiftos_puts("\n")
+}
+```
 
 ## Terminal API
 
@@ -742,6 +845,13 @@ int swiftos_unlink(const char *path);
 int swiftos_rename(const char *oldpath, const char *newpath);
 int swiftos_chmod(const char *path, unsigned int mode);
 int swiftos_chown(const char *path, unsigned int owner);
+```
+
+### Package Store
+
+```c
+int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
+int swiftos_pkg_info(int index, char *buf, unsigned long cap);
 ```
 
 ### Security And Process
