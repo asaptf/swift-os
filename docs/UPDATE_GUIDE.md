@@ -45,6 +45,41 @@ SwiftOS is built around immutable boot and software artifacts.
 The running guest has only RAM-backed writable storage under `/tmp`. An update
 does not preserve `/tmp`, and a reboot clears it.
 
+## Choose An Update Workflow
+
+Start with the artifact that changed. SwiftOS deliberately keeps these paths
+explicit so an operator can prove exactly what was promoted and what rollback
+means.
+
+| Change | Current workflow | Use when | Minimum proof | Rollback evidence |
+| --- | --- | --- | --- | --- |
+| Kernel, syscall, VFS, scheduler, or userland source | Direct kernel plus base-image rebuild | Fast product validation, syscall work, and most application-hosting changes | `make build base-image build/virt.dtb`, then `./tests/boot_test.sh` or the focused service test | Previous `kernel.elf`, `base.img`, `virt.dtb`, and serial log |
+| UEFI loader, GPT image, or firmware handoff | UEFI disk image rebuild | Validating the boot disk story rather than direct `-kernel` boot | `make disk base-image`, then `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` | Previous `swift-os.img`, matching `base.img`, and UEFI boot log |
+| Signed base-image slot behavior | SWOSBOOT A/B update store | Proving target-side staging, activation, confirmation, and rollback of base images | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` | Store state, slot manifest, boot-attempt log, and `./tests/ab_rollback_test.sh` when rollback is in scope |
+| Signed kernel slot behavior | UEFI ESP kernel A/B slots | Proving loader-selected kernel slots, confirmation, and attempt rollback | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kconfirm_test.sh` | ESP slot files, `kernel-state`, loader log, and `./tests/uefi_krollback_test.sh` when rollback is in scope |
+| Read-only application payload | Package payload image | Shipping a small staged binary without baking it into `/bin` | `make package-fixture`, then `make package-overlay-test` | Previous payload image and guest command output |
+| Package-store activation | Package store image | Validating signed package-store boot activation and dependency metadata | `make package-store-fixture`, then `make package-store-test` | Previous package-store image and package activation log |
+| AI model, tokenizer, or bundle manifest | Model bundle rebuild plus base-image repack | Updating local inference assets or signed generations | `make model`, `make base-image`, then `./tests/llm_run_test.sh` and `./tests/llm_serve_test.sh` | Previous `/models` generation, manifest, and `llmd` verification log |
+| Documentation only | Documentation gate | Updating guides, examples, or references without changing artifacts | `git diff --check`, then `make docs-test` | Commit hash and docs-test output |
+
+Example: a change to `/bin/llmd` source and the default model bundle touches
+both userland and model assets. Use the direct artifact path, rebuild the model
+assets, then prove the serving API:
+
+```sh
+make build model base-image build/virt.dtb
+./tests/llm_run_test.sh
+./tests/llm_serve_test.sh
+```
+
+Record the serving evidence with the public HTTP endpoints:
+
+```sh
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl -fsS http://127.0.0.1:8080/metrics
+```
+
 ## What Is Not Implemented Yet
 
 The current tree has a narrow signed SWOSBASE A/B update-store path with
@@ -478,7 +513,7 @@ Before handing a candidate to another operator:
 6. Run one process or observability command, such as `ps` or `top -b -n 1`.
 7. If networking is in scope, run the service or socket test that matches it.
 8. If packages are in scope, boot with the intended package image attached.
-9. If AI serving is in scope, prove `/health`, `/metrics`, and one `/generate`
+9. If AI serving is in scope, prove `/health`, `/metrics`, and one `/completion`
    request.
 10. Save the serial log and any host-side command output.
 
