@@ -2,11 +2,14 @@
 
 Design for binary package installation on swift-os.
 
-> Status: P1 host tooling and P2 package payload overlays are implemented. P3a
-> boot activation from a preseeded package-store image is implemented. Target-side
-> store writes, rollback, `/bin/pkg`, and repositories are still staged work. The
-> package work should continue to follow the project rule: one milestone at a
-> time, build, boot, test, commit, then stop for review.
+> Status: P1 host tooling, P2 package payload overlays, and P3a boot activation
+> from a preseeded package-store image are implemented. P3b now has a minimal
+> target-side `/bin/pkg install FILE` and `pkg list` path for local `.swpkg`
+> files: the kernel verifies hashes, appends records to a writable package-store
+> disk, switches the active generation, and live-mounts the payload. Rollback,
+> remove, repository catalogs, and downloads are still staged work. The package
+> work should continue to follow the project rule: one milestone at a time,
+> build, boot, test, commit, then stop for review.
 
 ## Goals
 
@@ -353,9 +356,10 @@ needs to support:
 
 P3a implements the read side of this model for boot activation: a `SWPKGST1`
 block image contains payload records, activation records, and an active pointer.
-The kernel mounts payload images referenced by the active generation. P3b/P4
-will add target-side append, active generation switching, rollback commands, and
-garbage collection.
+The kernel mounts payload images referenced by the active generation. P3b adds
+the first target-side append path for local `.swpkg` files and live activation.
+P4/P5 will broaden that into remove, rollback, history, repository catalogs,
+downloads, and garbage collection.
 
 Activation manifest:
 

@@ -175,6 +175,14 @@ int swiftos_context(unsigned int *principal, unsigned int *session, unsigned lon
     return 0;
 }
 
+int swiftos_pkg_install(int fd, const char *name, const char *version_revision) {
+    return pkg_install(fd, name, version_revision);
+}
+
+int swiftos_pkg_info(int index, char *buf, unsigned long cap) {
+    return pkg_info(index, buf, cap);
+}
+
 int swiftos_exec_shell(const char *path) {
     char arg0[] = "sh";
     char *argv[] = { arg0, 0 };

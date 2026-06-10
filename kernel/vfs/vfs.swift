@@ -519,6 +519,24 @@ func vfsInit() {
     for i in 0..<maxPipes { pipes[i] = Pipe() }
 }
 
+func vfsMountActivePackageStore() -> Int {
+    if nodes == nil { return errInvalid }
+    let rawCount = virtioBlkSwosbaseImageCount()
+    let storeCount = pkgStoreActivePayloadCount()
+    var store = 0
+    while store < storeCount {
+        let storeImage = rawCount + store
+        if buildImageFromDisk(storeImage, 0, allowExistingDirs: true) {
+            klog(.info, "pkg", "P3b: package store payload live-mounted", UInt64(store))
+        } else {
+            klog(.info, "pkg", "P3b: package store payload live-mount rejected", UInt64(store))
+            return errExists
+        }
+        store += 1
+    }
+    return 0
+}
+
 private func readHandleSpec(_ base: UnsafePointer<UInt8>, _ index: Int) -> HandleSpec {
     let raw = UnsafeRawPointer(base)
     let off = index * handleSpecSize
@@ -1088,6 +1106,43 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     }
     openDescriptions[d] = file
     return copied
+}
+
+func vfsKernelFileSize(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    let node = openDescriptions[entry.object].node
+    if node < 0 || nodes[node].isDir { return errInvalid }
+    return nodes[node].dataLen
+}
+
+func vfsKernelReadFile(fd: Int, offset: Int, buffer: UnsafeMutableRawPointer?, count: Int) -> Int {
+    if count == 0 { return 0 }
+    if offset < 0 || count < 0 { return errInvalid }
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    let node = openDescriptions[entry.object].node
+    if node < 0 || nodes[node].isDir { return errInvalid }
+    if offset >= nodes[node].dataLen { return 0 }
+    guard let dst = buffer else { return errInvalid }
+    let want = min(count, nodes[node].dataLen - offset)
+    if nodes[node].onDisk {
+        let off = UInt64(nodes[node].diskOffset + offset)
+        let rc = vfsImageReadRange(nodes[node].diskImage, off, dst, UInt32(want))
+        return rc == 0 ? want : errInvalid
+    }
+    let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+    let out = dst.bindMemory(to: UInt8.self, capacity: want)
+    var i = 0
+    while i < want {
+        out[i] = src[offset + i]
+        i += 1
+    }
+    return want
 }
 
 func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {

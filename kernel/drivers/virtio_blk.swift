@@ -52,6 +52,7 @@ private let VIRTQ_DESC_F_NEXT: UInt16  = 1
 private let VIRTQ_DESC_F_WRITE: UInt16 = 2
 
 private let VIRTIO_BLK_T_IN: UInt32 = 0  // read from disk into memory
+private let VIRTIO_BLK_T_OUT: UInt32 = 1 // write memory out to disk
 private let SECTOR_SIZE = 512
 
 // Ring page layout: descriptor table, available ring, and used ring carved out
@@ -80,6 +81,12 @@ private let maxBlkDevices = 8
 private let maxSwosbaseImages = 4
 private var blkDeviceMmio = [UInt](repeating: 0, count: maxBlkDevices)
 private var blkDeviceCapacity = [UInt64](repeating: 0, count: maxBlkDevices)
+private var blkDeviceRingBase = [UInt](repeating: 0, count: maxBlkDevices)
+private var blkDeviceDataBase = [UInt](repeating: 0, count: maxBlkDevices)
+private var blkDeviceQn = [UInt32](repeating: 0, count: maxBlkDevices)
+private var blkDeviceAvailIdx = [UInt16](repeating: 0, count: maxBlkDevices)
+private var blkDeviceLastUsed = [UInt16](repeating: 0, count: maxBlkDevices)
+private var blkDeviceReady = [Bool](repeating: false, count: maxBlkDevices)
 private var blkDeviceCount = 0
 private var swosbaseDevice = [Int](repeating: -1, count: maxSwosbaseImages)
 private var swosbaseCount = 0
@@ -128,27 +135,58 @@ private func blkUsedIdx() -> UInt16 {
 }
 
 // --- bring-up ---------------------------------------------------------------
-// Bring up a single virtio-blk transport at `m`: reset, negotiate, set up the
-// request virtqueue, and read the capacity. Sets blkMmio/blkQn/blkCapacity and
-// returns the capacity in sectors, or 0 on failure (blkMmio cleared).
-private func blkBringUp(_ m: UInt) -> UInt64 {
-    blkMmio = m
-    blkActiveDevice = -1
+private func blkSaveActiveState() {
+    if blkActiveDevice < 0 || blkActiveDevice >= maxBlkDevices { return }
+    blkDeviceAvailIdx[blkActiveDevice] = blkAvailIdx
+    blkDeviceLastUsed[blkActiveDevice] = blkLastUsed
+}
 
-    mmio_write32(m + R_STATUS, 0)               // reset
-    mmio_write32(m + R_STATUS, S_ACK)
-    mmio_write32(m + R_STATUS, S_ACK | S_DRV)
+private func blkLoadActiveState(_ index: Int) {
+    blkMmio = blkDeviceMmio[index]
+    blkRingBase = blkDeviceRingBase[index]
+    blkDataBase = blkDeviceDataBase[index]
+    blkQn = blkDeviceQn[index]
+    blkAvailIdx = blkDeviceAvailIdx[index]
+    blkLastUsed = blkDeviceLastUsed[index]
+    blkCapacity = blkDeviceCapacity[index]
+    blkActiveDevice = index
+}
+
+// Bring up a single virtio-blk device: reset, negotiate, set up its private
+// request virtqueue, and read the capacity. Returns capacity in sectors.
+private func blkBringUp(_ index: Int) -> UInt64 {
+    if index < 0 || index >= blkDeviceCount { return 0 }
+    blkSaveActiveState()
+    blkMmio = blkDeviceMmio[index]
+    blkActiveDevice = index
+
+    if blkDeviceRingBase[index] == 0 {
+        let r = pmm_alloc_page()
+        if r == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
+        blkDeviceRingBase[index] = r
+    }
+    if blkDeviceDataBase[index] == 0 {
+        let d = pmm_alloc_page()
+        if d == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
+        blkDeviceDataBase[index] = d
+    }
+    blkRingBase = blkDeviceRingBase[index]
+    blkDataBase = blkDeviceDataBase[index]
+
+    mmio_write32(blkMmio + R_STATUS, 0)               // reset
+    mmio_write32(blkMmio + R_STATUS, S_ACK)
+    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV)
     // Accept only VIRTIO_F_VERSION_1 (feature bit 32); ignore block features.
-    mmio_write32(m + R_DRVFEATSEL, 1); mmio_write32(m + R_DRVFEAT, 1)
-    mmio_write32(m + R_DRVFEATSEL, 0); mmio_write32(m + R_DRVFEAT, 0)
-    mmio_write32(m + R_STATUS, S_ACK | S_DRV | S_FEATOK)
-    if (mmio_read32(m + R_STATUS) & S_FEATOK) == 0 { blkMmio = 0; return 0 }
+    mmio_write32(blkMmio + R_DRVFEATSEL, 1); mmio_write32(blkMmio + R_DRVFEAT, 1)
+    mmio_write32(blkMmio + R_DRVFEATSEL, 0); mmio_write32(blkMmio + R_DRVFEAT, 0)
+    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK)
+    if (mmio_read32(blkMmio + R_STATUS) & S_FEATOK) == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
 
-    mmio_write32(m + R_QSEL, 0)
-    let maxq = mmio_read32(m + R_QNUMMAX)
-    if maxq == 0 { blkMmio = 0; return 0 }
+    mmio_write32(blkMmio + R_QSEL, 0)
+    let maxq = mmio_read32(blkMmio + R_QNUMMAX)
+    if maxq == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
     blkQn = maxq < UInt32(BLK_QSZ) ? maxq : UInt32(BLK_QSZ)
-    mmio_write32(m + R_QNUM, blkQn)
+    mmio_write32(blkMmio + R_QNUM, blkQn)
 
     blkZeroPage(blkRingBase)
     blkAvailIdx = 0
@@ -159,27 +197,33 @@ private func blkBringUp(_ m: UInt) -> UInt64 {
     let da = UInt64(blkRingBase + OFF_DESC)
     let aa = UInt64(blkRingBase + OFF_AVAIL)
     let ua = UInt64(blkRingBase + OFF_USED)
-    mmio_write32(m + R_QDESCL, UInt32(da & 0xFFFF_FFFF)); mmio_write32(m + R_QDESCH, UInt32(da >> 32))
-    mmio_write32(m + R_QDRVL,  UInt32(aa & 0xFFFF_FFFF)); mmio_write32(m + R_QDRVH,  UInt32(aa >> 32))
-    mmio_write32(m + R_QDEVL,  UInt32(ua & 0xFFFF_FFFF)); mmio_write32(m + R_QDEVH,  UInt32(ua >> 32))
-    mmio_write32(m + R_QREADY, 1)
-    mmio_write32(m + R_STATUS, S_ACK | S_DRV | S_FEATOK | S_DRVOK)
+    mmio_write32(blkMmio + R_QDESCL, UInt32(da & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDESCH, UInt32(da >> 32))
+    mmio_write32(blkMmio + R_QDRVL,  UInt32(aa & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDRVH,  UInt32(aa >> 32))
+    mmio_write32(blkMmio + R_QDEVL,  UInt32(ua & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDEVH,  UInt32(ua >> 32))
+    mmio_write32(blkMmio + R_QREADY, 1)
+    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK | S_DRVOK)
 
     // Capacity (config space offset 0): number of 512-byte sectors, LE u64.
-    let lo = mmio_read32(m + R_CONFIG + 0)
-    let hi = mmio_read32(m + R_CONFIG + 4)
+    let lo = mmio_read32(blkMmio + R_CONFIG + 0)
+    let hi = mmio_read32(blkMmio + R_CONFIG + 4)
     blkCapacity = (UInt64(hi) << 32) | UInt64(lo)
+    blkDeviceCapacity[index] = blkCapacity
+    blkDeviceQn[index] = blkQn
+    blkDeviceAvailIdx[index] = blkAvailIdx
+    blkDeviceLastUsed[index] = blkLastUsed
+    blkDeviceReady[index] = true
     return blkCapacity
 }
 
 private func blkSelectDevice(_ index: Int) -> Bool {
     if index < 0 || index >= blkDeviceCount { return false }
     if blkActiveDevice == index { return true }
-    let cap = blkBringUp(blkDeviceMmio[index])
-    if cap == 0 { return false }
-    blkDeviceCapacity[index] = cap
-    blkActiveDevice = index
-    return true
+    blkSaveActiveState()
+    if blkDeviceReady[index] {
+        blkLoadActiveState(index)
+        return blkMmio != 0 && blkRingBase != 0 && blkDataBase != 0
+    }
+    return blkBringUp(index) != 0
 }
 
 // True if the bounce buffer currently starts with the packed-base "SWOSBASE"
@@ -262,6 +306,67 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
     return 0
 }
 
+// Write the internal bounce buffer to one sector on the currently selected
+// device. Returns 0 on success. The caller chooses the device through
+// blkSelectDevice and prepares the bounce contents.
+private func blkDoWriteBounce(_ sector: UInt64) -> Int32 {
+    if blkMmio == 0 { return -1 }
+    if blkCapacity != 0 && sector >= blkCapacity { return -2 }
+
+    let hdr = blkDataBase + OFF_HDR
+    let status = blkDataBase + OFF_STATUS
+    let bounce = blkDataBase + OFF_BOUNCE
+
+    let hp = UnsafeMutableRawPointer(bitPattern: hdr)!
+    hp.storeBytes(of: VIRTIO_BLK_T_OUT, toByteOffset: 0, as: UInt32.self)
+    hp.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
+    hp.storeBytes(of: sector, toByteOffset: 8, as: UInt64.self)
+    UnsafeMutableRawPointer(bitPattern: status)!.storeBytes(of: UInt8(0xFF), toByteOffset: 0, as: UInt8.self)
+    blkClean(hdr, 16)
+    blkClean(bounce, SECTOR_SIZE)
+    blkClean(status, 1)
+
+    // Three-descriptor chain: header (device-read), data (device-read), status
+    // (device-write). Only the status descriptor carries VIRTQ_DESC_F_WRITE.
+    blkDescSet(0, addr: UInt64(hdr), len: 16, flags: VIRTQ_DESC_F_NEXT, next: 1)
+    blkDescSet(1, addr: UInt64(bounce), len: UInt32(SECTOR_SIZE),
+               flags: VIRTQ_DESC_F_NEXT, next: 2)
+    blkDescSet(2, addr: UInt64(status), len: 1, flags: VIRTQ_DESC_F_WRITE, next: 0)
+    blkClean(blkRingBase + OFF_DESC, BLK_QSZ * 16)
+
+    blkAvailAdd(descIdx: 0)
+    blkClean(blkRingBase + OFF_AVAIL, 32)
+
+    mmio_write32(blkMmio + R_QNOTIFY, 0)
+
+    let target = blkLastUsed &+ 1
+    while true {
+        blkInvalidate(blkRingBase + OFF_USED, 72)
+        if blkUsedIdx() == target { break }
+    }
+    blkLastUsed = target
+
+    let ist = mmio_read32(blkMmio + R_ISTATUS)
+    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+
+    blkInvalidate(status, 1)
+    if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
+    return 0
+}
+
+// Write one sector from `src` to the currently selected device. Returns 0 on
+// success. The caller chooses the device through blkSelectDevice.
+private func blkDoWrite(_ sector: UInt64, _ src: UnsafeRawPointer?) -> Int32 {
+    guard let input = src else { return -1 }
+    let bp = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    var i = 0
+    while i < SECTOR_SIZE {
+        bp.storeBytes(of: input.load(fromByteOffset: i, as: UInt8.self), toByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+    return blkDoWriteBounce(sector)
+}
+
 // Scan the virtio-mmio window (base/stride/count from the HAL) for block
 // devices and select the packed base image: a boot medium may carry several
 // disks (e.g. a GPT boot disk plus the SWOSBASE base image), so we prefer the
@@ -277,21 +382,14 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     for j in 0..<maxBlkDevices {
         blkDeviceMmio[j] = 0
         blkDeviceCapacity[j] = 0
+        blkDeviceRingBase[j] = 0
+        blkDeviceDataBase[j] = 0
+        blkDeviceQn[j] = 0
+        blkDeviceAvailIdx[j] = 0
+        blkDeviceLastUsed[j] = 0
+        blkDeviceReady[j] = false
     }
     for j in 0..<maxSwosbaseImages { swosbaseDevice[j] = -1 }
-
-    // The ring and data pages are allocated once and reused across bring-up
-    // attempts, mirroring the C version's static buffers (no per-scan leak).
-    if blkRingBase == 0 {
-        let r = pmm_alloc_page()
-        if r == 0 { return 0 }
-        blkRingBase = r
-    }
-    if blkDataBase == 0 {
-        let d = pmm_alloc_page()
-        if d == 0 { return 0 }
-        blkDataBase = d
-    }
 
     var first: UInt = 0
     var firstIndex = -1
@@ -310,9 +408,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
             first = m
             firstIndex = devIndex
         }
-        if blkBringUp(m) == 0 { continue }
-        blkDeviceCapacity[devIndex] = blkCapacity
-        blkActiveDevice = devIndex
+        if blkBringUp(devIndex) == 0 { continue }
         if blkDoRead(0) == 0 {
             if blkBounceIsSwosbase() {
                 if swosbaseCount < maxSwosbaseImages {
@@ -400,4 +496,51 @@ func virtioBlkReadRangeFromImage(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeM
 func virtioBlkReadPackageStoreRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
     if pkgStoreDevice < 0 { return -1 }
     return virtioBlkReadRangeFromDevice(pkgStoreDevice, byteOff, buf, len)
+}
+
+private func virtioBlkWriteRangeToDevice(_ device: Int, _ byteOff: UInt64,
+                                         _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
+    if len == 0 { return 0 }
+    if device < 0 || device >= blkDeviceCount { return -1 }
+    if !blkSelectDevice(device) { return -1 }
+    guard let input = buf else { return -1 }
+
+    let bounce = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    var done: UInt32 = 0
+    while done < len {
+        let pos = byteOff + UInt64(done)
+        let sec = pos / UInt64(SECTOR_SIZE)
+        let within = UInt32(pos % UInt64(SECTOR_SIZE))
+        var chunk = UInt32(SECTOR_SIZE) - within
+        if chunk > len - done { chunk = len - done }
+
+        if within != 0 || chunk != UInt32(SECTOR_SIZE) {
+            let readRc = blkDoRead(sec)
+            if readRc != 0 { return readRc }
+        } else {
+            var z = 0
+            while z < SECTOR_SIZE {
+                bounce.storeBytes(of: UInt8(0), toByteOffset: z, as: UInt8.self)
+                z += 1
+            }
+        }
+
+        var i: UInt32 = 0
+        while i < chunk {
+            bounce.storeBytes(of: input.load(fromByteOffset: Int(done + i), as: UInt8.self),
+                              toByteOffset: Int(within + i), as: UInt8.self)
+            i += 1
+        }
+
+        let writeRc = blkDoWriteBounce(sec)
+        if writeRc != 0 { return writeRc }
+        done += chunk
+    }
+    return 0
+}
+
+func virtioBlkWritePackageStoreRange(_ byteOff: UInt64, _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
+    if pkgStoreDevice < 0 { return -1 }
+    if byteOff + UInt64(len) > virtioBlkPackageStoreCapacityBytes() { return -2 }
+    return virtioBlkWriteRangeToDevice(pkgStoreDevice, byteOff, buf, len)
 }

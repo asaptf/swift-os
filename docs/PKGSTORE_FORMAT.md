@@ -1,15 +1,17 @@
 # Package Store Format
 
-Developer notes for the P3 package-store bootstrap image.
+Developer notes for the P3 package-store image.
 
 P3a adds the first persistent-store substrate: a block image that carries package
 payload records, activation records, and an active-generation pointer. The
 kernel can discover this image on virtio-blk, read the active generation at boot,
 and mount the selected payload images into the VFS package namespace.
 
-This is not yet the full target-side installer. `/bin/pkg` will later verify
-local or downloaded `.swpkg` files, append records to this store, and switch the
-active generation.
+P3b adds the first target-side write path. `/bin/pkg install FILE` can ask the
+kernel to verify a local `.swpkg`, append its payload and activation records to a
+writable package-store disk, switch the active generation, and live-mount the
+new payload without reboot. Repository catalogs, downloads, remove/rollback, and
+garbage collection remain later package-manager work.
 
 ## Image Layout
 
@@ -86,9 +88,12 @@ payload records referenced by the active activation.
 - One package-store block device is used.
 - Up to 32 records, 8 payload records, and 8 activation records are scanned.
 - Activation data is limited to 4096 bytes.
-- The kernel treats the store as read-only in P3a.
-- Target-side append, active-generation update, rollback, garbage collection,
-  and signatures remain P3b/P4 work.
+- Target-side append is limited to local `.swpkg` payload activation. The first
+  P3b installer records one package per new activation generation.
+- Rollback, remove, history enumeration, garbage collection, repository
+  catalogs, and signatures remain P4/P5+ work.
+- Store mutation is still CPU0-owned; SMP-safe locking is tracked in
+  `docs/SMP_STATE_AUDIT.md`.
 
 ## Host Tool
 
@@ -96,6 +101,7 @@ payload records referenced by the active activation.
 
 ```sh
 make pkgstore package-fixture
+build/pkgstore init --output build/pkgstore-empty.img --size 1048576
 build/pkgstore create --package build/pkghello.swpkg --output build/pkgstore-pkghello.img --generation 1
 build/pkgstore inspect build/pkgstore-pkghello.img
 ```
@@ -103,3 +109,7 @@ build/pkgstore inspect build/pkgstore-pkghello.img
 The package-store QEMU test boots with `build/base.img` plus
 `build/pkgstore-pkghello.img` and runs `/usr/bin/pkghello` from the active store
 generation.
+
+The local install QEMU test boots with an empty writable store, logs in as root,
+runs `pkg install /packages/pkghello.swpkg`, verifies `pkg list`, and executes
+`/usr/bin/pkghello` from the live-mounted package payload.

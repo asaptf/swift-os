@@ -222,6 +222,18 @@ private func makeStore(packages: [PackageInput], generation: UInt64) throws -> D
     return out
 }
 
+private func makeEmptyStore(size: Int) throws -> Data {
+    guard size >= Int(storeHeaderSize) else { throw StoreError.message("store size must be at least \(storeHeaderSize)") }
+    guard size % sectorSize == 0 else { throw StoreError.message("store size must be sector-aligned") }
+    var out = Data()
+    out.append(contentsOf: storeMagic)
+    appendLE32(&out, storeVersion)
+    appendLE32(&out, storeHeaderSize)
+    appendLE64(&out, UInt64(storeHeaderSize))
+    out.append(contentsOf: repeatElement(UInt8(0), count: size - out.count))
+    return out
+}
+
 private func inspectStore(_ path: String) throws {
     let data = try Data(contentsOf: URL(fileURLWithPath: path))
     guard data.count >= Int(storeHeaderSize) else { throw StoreError.message("store shorter than header") }
@@ -292,6 +304,7 @@ private func values(afterRepeated flag: String, in args: [String]) -> [String] {
 private func usage() -> String {
     """
     usage:
+      pkgstore init --output <store.img> [--size BYTES]
       pkgstore create --package <pkg.swpkg> [--package <pkg.swpkg> ...] --output <store.img> [--generation N]
       pkgstore inspect <store.img>
     """
@@ -304,6 +317,16 @@ struct PackageStoreTool {
         guard args.count >= 2 else { fail(usage()) }
         do {
             switch args[1] {
+            case "init":
+                let output = URL(fileURLWithPath: try value(after: "--output", in: args))
+                let sizeText = (try? value(after: "--size", in: args)) ?? "1048576"
+                guard let size = Int(sizeText) else {
+                    throw StoreError.message("bad --size")
+                }
+                let store = try makeEmptyStore(size: size)
+                try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try store.write(to: output, options: Data.WritingOptions.atomic)
+                print("created \(output.path)")
             case "create":
                 let pkgs = try values(afterRepeated: "--package", in: args).map { try readPackage($0) }
                 let output = URL(fileURLWithPath: try value(after: "--output", in: args))

@@ -49,6 +49,8 @@ PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
 PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
 PKGHELLO_STORE_IMG := $(BUILD)/pkgstore-pkghello.img
+PKG_EMPTY_STORE_IMG := $(BUILD)/pkgstore-empty.img
+PKG_INSTALL_STORE_IMG := $(BUILD)/pkgstore-install.img
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -106,6 +108,7 @@ SWIFT_SRCS := \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
+	kernel/crypto/sha256.swift \
 	kernel/pkg/store.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
@@ -261,6 +264,7 @@ USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
+USER_PKG_ELF := $(BUILD)/pkg.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
 USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
@@ -282,6 +286,7 @@ BASE_EXEC_ELFS := \
 	$(USER_HTTPD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
+	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_LS_ELF) \
@@ -313,7 +318,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore package-fixture package-store-fixture package-overlay-test package-store-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore package-fixture package-store-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test
 
 build: $(KERNEL_ELF)
 
@@ -503,6 +508,9 @@ $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Make
 $(BUILD)/user_pkghello.o: userland/pkghello.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkghello.swift -o $@
 
+$(BUILD)/user_pkg.o: userland/pkg.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkg.swift -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -652,6 +660,9 @@ $(USER_NSLOOKUP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/u
 $(USER_PKGHELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o -o $@
 
+$(USER_PKG_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkg.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkg.o $(SWIFT_UNICODE_DATA) -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -742,7 +753,7 @@ $(SIGNING_SEED): $(SIGNING_PUB)
 
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
+test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
@@ -804,6 +815,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	./tests/disk_exec_test.sh
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
+	./tests/pkg_local_install_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -935,6 +947,12 @@ $(PKGHELLO_PAYLOAD_IMG): $(SWPKG) $(PKGHELLO_PKG) Makefile
 $(PKGHELLO_STORE_IMG): $(PKGSTORE) $(PKGHELLO_PKG) Makefile
 	$(PKGSTORE) create --package $(PKGHELLO_PKG) --output $@ --generation 1
 
+$(PKG_EMPTY_STORE_IMG): $(PKGSTORE) Makefile
+	$(PKGSTORE) init --output $@ --size 1048576
+
+$(PKG_INSTALL_STORE_IMG): $(PKG_EMPTY_STORE_IMG) Makefile
+	cp $(PKG_EMPTY_STORE_IMG) $@
+
 package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG) $(PKGHELLO_STORE_IMG)
 	$(SWPKG) verify $(PKGHELLO_PKG)
 
@@ -947,12 +965,21 @@ package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 package-store-test: build $(QEMU_DTB) base-image package-store-fixture
 	./tests/pkg_store_boot_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
+package-local-install-fixture: $(PKG_EMPTY_STORE_IMG)
+	cp $(PKG_EMPTY_STORE_IMG) $(PKG_INSTALL_STORE_IMG)
+	$(PKGSTORE) inspect $(PKG_INSTALL_STORE_IMG)
+
+package-local-install-test: build $(QEMU_DTB) base-image package-local-install-fixture
+	./tests/pkg_local_install_test.sh
+
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
+	mkdir -p $(BASE_ROOT)/packages
 	mkdir -p $(BASE_ROOT)/models
+	cp $(PKGHELLO_PKG) $(BASE_ROOT)/packages/pkghello.swpkg
 	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
 	# real q8 bundle; generation 2 is DELIBERATELY corrupt (a truncated model
@@ -1016,6 +1043,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
+	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@
 

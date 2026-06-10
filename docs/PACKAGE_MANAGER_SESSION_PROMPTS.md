@@ -4,10 +4,11 @@ Copy-paste prompts for future Codex sessions that implement package management.
 Each prompt intentionally covers one milestone. Do not combine them unless the
 maintainer explicitly asks for a larger unstable branch.
 
-P1, P2, and P3a boot activation from a preseeded package-store image are already
-implemented in the current tree. The next implementation prompt is Prompt 3b or
-Prompt 4, depending on whether you want to finish target-side store mutation
-before exposing `/bin/pkg`.
+P1, P2, P3a boot activation, and the narrow P3b/P4-local install path are
+already implemented in the current tree. `/bin/pkg install FILE` and `pkg list`
+work for the local `pkghello.swpkg` smoke test. The next implementation prompt
+is Prompt 4b if you want to finish local remove/rollback/history, or Prompt 5 if
+you intentionally want to start repository download work first.
 
 ## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
 
@@ -68,11 +69,14 @@ Acceptance:
 - commit the milestone and stop for review.
 ```
 
-## Prompt 3: P3b Target-Writable Package Store
+## Prompt 3: P3b Target-Writable Package Store (Historical)
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGSTORE_FORMAT.md. Start
 from the P3a package-store boot-activation state.
+
+This prompt is historical. Use it only if P3b needs to be recreated from
+scratch.
 
 Implement package-management milestone P3b only: make the existing package store
 target-writable and support active-generation updates from EL0. Do not implement
@@ -91,24 +95,22 @@ Requirements:
 
 Acceptance:
 - `make test` passes;
-- a small target-side helper can add/remove `pkghello` by changing active
-  generations;
-- rollback restores the previous namespace;
+- a target-side helper or `/bin/pkg install FILE` can add `pkghello` by changing
+  active generations;
 - commit the milestone and stop for review.
 ```
 
-## Prompt 4: P4 Local `/bin/pkg`
+## Prompt 4b: Finish Local `/bin/pkg`
 
 ```text
 Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P3 package-store
-state.
+state where `/bin/pkg install FILE` and `pkg list` already work for
+`pkghello.swpkg`.
 
-Implement package-management milestone P4 only: the target-side local package
-manager `/bin/pkg`. Do not implement remote repository catalogs yet.
+Implement the remaining local package-manager milestone only. Do not implement
+remote repository catalogs yet.
 
 Required commands:
-- `pkg install ./name.swpkg`
-- `pkg list`
 - `pkg info <name>`
 - `pkg files <name>`
 - `pkg remove <name>`
@@ -117,8 +119,11 @@ Required commands:
 
 Requirements:
 - keep output concise and scriptable;
-- verify package hashes/signatures before activation;
-- reject ABI, architecture, or static-linkage mismatches;
+- preserve the existing local install/list flow;
+- add installed package metadata enough for info/files/history;
+- make remove a new activation generation without the package;
+- make rollback select an older activation generation;
+- reject ABI, architecture, or static-linkage mismatches with focused tests;
 - produce clear exit codes for usage, not found, ABI mismatch, verification
   failure, and store failure;
 - add QEMU tests that install `pkghello`, run it, list it, remove it, prove it is
@@ -126,7 +131,8 @@ Requirements:
 
 Acceptance:
 - `make test` passes;
-- a user can install and remove a local `.swpkg` inside QEMU;
+- a user can install, inspect, remove, and roll back a local `.swpkg` inside
+  QEMU;
 - commit the milestone and stop for review.
 ```
 
