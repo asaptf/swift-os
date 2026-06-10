@@ -40,6 +40,30 @@ running guest do not persist because those paths are read-only. To make a
 change durable, rebuild `build/base.img`, provide a package payload, or use a
 future persistent storage profile when one exists.
 
+## Choose A Base Image Workflow
+
+Start from the durable content you need to change. The running guest is the
+verification target, but the source of truth is always a host-side input.
+
+| Need | Edit or generate | Rebuild | Focused proof |
+| --- | --- | --- | --- |
+| Change login text, hostname, or identity seed files | `base/etc/*` | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/boot_test.sh` for general boot |
+| Change static HTTP content | `base/www/` | `make base-image` | `./tests/httpd_test.sh` |
+| Add or update a default `/bin` command | `userland/`, Makefile build rules, base staging rule | `make build base-image` | Command-specific QEMU test plus command reference update |
+| Update package repository trust or defaults | `build/pkgrepo-root.pub`, `PKG_DEFAULT_REPO_URL`, `PKG_DEFAULT_DNS_SERVER` | `make base-image` or custom `BASE_IMG=... base-image` | Matching package repository install test |
+| Update local package-install sample payload | `build/pkghello.swpkg` or package fixture inputs | `make package-fixture`, then `make base-image` | `make package-local-install-test` |
+| Update local inference files | `models/stories260K.bin`, `models/tok512.bin` | `make model`, then `make base-image` | `./tests/llm_run_test.sh` |
+| Update verified serving bundle generations | `models/stories15M-q8.bin`, `models/tokenizer.bin`, generated manifests | `make model`, then `make base-image` | `./tests/llm_serve_test.sh` |
+| Prove image integrity after format or signing changes | `tools/basepack.swift`, signing inputs, VFS mount code | `make base-image` | `build/base_image_test build/base.img`, `./tests/signed_image_test.sh` |
+
+Example static-content change:
+
+```sh
+printf 'hello from SwiftOS\n' > base/www/index.html
+make base-image
+./tests/httpd_test.sh
+```
+
 ## Build And Boot
 
 Build the normal signed base image:
