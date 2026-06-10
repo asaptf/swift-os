@@ -604,6 +604,39 @@ and demand-pages the quantized `stories15M` checkpoint before or during the
 first request. Treat the current serving demo as a correctness and integration
 path, not as a throughput target.
 
+## Driver-Service Smoke Problems
+
+### `make c5-driver-service-test` Fails
+
+The C5a gate boots QEMU with `SMP_CPUS=4`, starts `/bin/drvsvcdemo`, and expects
+the pseudo service `/bin/drvinputd` to recover across two generations. Rebuild
+the normal prerequisites and run the focused gate:
+
+```sh
+make build build/virt-smp4.dtb base-image
+make c5-driver-service-test
+```
+
+Expected serial markers include:
+
+```text
+drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: generation 2 stopped
+C5a OK: restartable driver service recovered over IPC
+```
+
+If the test fails, keep the serial tail printed by
+`tests/driver_service_test.sh`. A marker such as `drvinputd: missing endpoint
+args`, `drvsvc: ready message mismatch`, or `drvsvc: service wait failed`
+usually points at endpoint inheritance, IPC transfer, or process wait behavior
+rather than at real hardware; C5a does not hand MMIO, IRQ, DMA, or virtio-input
+ownership to userland yet.
+
 ## Test Driver Problems
 
 Many acceptance tests drive an interactive serial login through a FIFO. A busy
@@ -630,6 +663,7 @@ Useful targeted tests:
 ./tests/udp_echo_test.sh
 ./tests/top_test.sh
 ./tests/llm_run_test.sh
+./tests/driver_service_test.sh
 ```
 
 ### Host Port Collisions
