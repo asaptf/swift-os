@@ -174,6 +174,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pName`
 - `kernel/user/process.swift:pNameLen`
 - `kernel/user/process.swift:pParent`
+- `kernel/user/process.swift:pHomeCpu`
+- `kernel/user/process.swift:pRunNext`
+- `kernel/user/process.swift:pRunQueued`
 - `kernel/user/process.swift:pResPages`
 - `kernel/user/process.swift:pSecurity`
 - `kernel/user/process.swift:pStartTick`
@@ -181,8 +184,11 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pTtbr0`
 - `kernel/user/process.swift:pWait`
 - `kernel/user/process.swift:pWakeTick`
+- `kernel/user/process.swift:processRunQueueDispatchCount`
+- `kernel/user/process.swift:processRunQueueEnqueueCount`
+- `kernel/user/process.swift:processRunQueueHead`
+- `kernel/user/process.swift:processRunQueueTail`
 - `kernel/user/process.swift:procCtx`
-- `kernel/user/process.swift:rrCursor`
 - `kernel/user/process.swift:schedCtx`
 - `kernel/vfs/vfs.swift:confineNodes`
 - `kernel/vfs/vfs.swift:cwdNodes`
@@ -195,8 +201,9 @@ manifest entries left behind after globals move or disappear.
 
 ## Immediate S1/S2 Risks
 
-- `currentProc`, `currentThread`, `rrCursor`, and timer accounting must become
-  per-CPU or protected before any secondary CPU can run scheduler code.
+- `currentProc`, `currentThread`, the S2d process run queue scaffold, and timer
+  accounting must become per-CPU or protected before any secondary CPU can run
+  scheduler code.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - VFS handle/open-description/pipe/endpoint tables are deliberately left as an
