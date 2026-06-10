@@ -115,13 +115,14 @@ make docs-test
 ```
 
 This checks the public Markdown set (`README.md`, `docs/*.md`, and
-`ports/README.md`) for balanced fenced code blocks, local links that resolve
-inside the repository, syscall table sync between `docs/API_REFERENCE.md` and
-`userland/lib/syscall.h`, Swift bridge coverage between `docs/API_REFERENCE.md`
-and `userland/lib/swift_user.h`, coverage of every `docs/*.md` file from the
-public documentation map, and command-reference entries for every program staged
-into the base image's `/bin`. It also checks that every executable host Swift
-tool built from `tools/*.swift` is covered by [HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md).
+`ports/README.md`) for balanced fenced code blocks, local links and Markdown
+anchors that resolve inside the repository, syscall table sync between
+`docs/API_REFERENCE.md` and `userland/lib/syscall.h`, Swift bridge coverage
+between `docs/API_REFERENCE.md` and `userland/lib/swift_user.h`, coverage of
+every `docs/*.md` file from the public documentation map, and command-reference
+entries for every program staged into the base image's `/bin`. It also checks
+that every executable host Swift tool built from `tools/*.swift` is covered by
+[HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md).
 
 ## Full Gate
 
@@ -141,8 +142,8 @@ make test
 
 Current full-gate coverage includes:
 
-- Documentation fence, local-link, API table, Swift bridge, documentation map,
-  command reference, and host tool reference integrity.
+- Documentation fence, local-link/anchor, API table, Swift bridge,
+  documentation map, command reference, and host tool reference integrity.
 - Host tests for page allocation, base image format, packages, package store,
   FDT parsing, networking stack, crypto, handles, TLS primitives, LLM engine,
   model bundles, and Ed25519.
@@ -167,7 +168,7 @@ Run the narrowest test that proves the path you changed.
 
 | Changed area | First test |
 | --- | --- |
-| Documentation links, examples, API tables, Swift bridge coverage, map coverage, command references, or host tool references | `make docs-test` |
+| Documentation links/anchors, examples, API tables, Swift bridge coverage, map coverage, command references, or host tool references | `make docs-test` |
 | Kernel build only | `make build` |
 | Base image format or contents | `make base-image`, `./tests/vfs_disk_test.sh` |
 | Direct serial boot | `./tests/boot_test.sh` |

@@ -44,6 +44,80 @@ private func localPathTarget(_ target: String) -> String? {
     return pathPart.removingPercentEncoding ?? pathPart
 }
 
+private func anchorTarget(_ target: String) -> String? {
+    guard let hash = target.firstIndex(of: "#") else {
+        return nil
+    }
+    let raw = String(target[target.index(after: hash)...])
+    if raw.isEmpty {
+        return nil
+    }
+    return raw.removingPercentEncoding ?? raw
+}
+
+private func markdownAnchorSlug(_ heading: String) -> String {
+    var text = heading
+    while text.hasPrefix("#") {
+        text.removeFirst()
+    }
+    text = text.trimmingCharacters(in: .whitespaces).lowercased()
+
+    var slug = ""
+    for scalar in text.unicodeScalars {
+        if CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_" {
+            slug.unicodeScalars.append(scalar)
+        } else if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            slug.append("-")
+        }
+    }
+    return slug
+}
+
+private var markdownAnchorCache: [String: Set<String>] = [:]
+
+private func markdownAnchors(at path: String) -> Set<String>? {
+    if let cached = markdownAnchorCache[path] {
+        return cached
+    }
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read for anchor validation")
+        ok = false
+        return nil
+    }
+
+    var anchors = Set<String>()
+    var counts: [String: Int] = [:]
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        guard line.hasPrefix("#") else { continue }
+        let base = markdownAnchorSlug(line)
+        guard !base.isEmpty else { continue }
+        let count = counts[base] ?? 0
+        counts[base] = count + 1
+        anchors.insert(count == 0 ? base : "\(base)-\(count)")
+    }
+
+    markdownAnchorCache[path] = anchors
+    return anchors
+}
+
+private func checkMarkdownAnchor(source file: String,
+                                 line: Int,
+                                 target: String,
+                                 resolvedPath: String) {
+    guard resolvedPath.hasSuffix(".md"),
+          let anchor = anchorTarget(target) else {
+        return
+    }
+    guard let anchors = markdownAnchors(at: resolvedPath) else {
+        return
+    }
+    if !anchors.contains(anchor) {
+        fail("\(file):\(line): broken Markdown anchor \(target)")
+        ok = false
+    }
+}
+
 private struct SyscallDocEntry {
     let number: Int
     let name: String
@@ -368,14 +442,20 @@ for file in markdownFiles() {
             guard match.numberOfRanges > 1 else { continue }
             let rawTarget = nsLine.substring(with: match.range(at: 1))
             let target = linkTarget(from: rawTarget)
-            guard let local = localPathTarget(target) else { continue }
-
-            let base = URL(fileURLWithPath: file).deletingLastPathComponent()
-            let resolved = base.appendingPathComponent(local).standardizedFileURL.path
+            let resolved: String
+            if target.hasPrefix("#") {
+                resolved = URL(fileURLWithPath: file).standardizedFileURL.path
+            } else {
+                guard let local = localPathTarget(target) else { continue }
+                let base = URL(fileURLWithPath: file).deletingLastPathComponent()
+                resolved = base.appendingPathComponent(local).standardizedFileURL.path
+            }
             if !FileManager.default.fileExists(atPath: resolved) {
                 fail("\(file):\(index + 1): broken local link \(target)")
                 ok = false
+                continue
             }
+            checkMarkdownAnchor(source: file, line: index + 1, target: target, resolvedPath: resolved)
         }
     }
 
@@ -395,4 +475,4 @@ if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links, API table, Swift bridge, map coverage, command coverage, and host tool coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map coverage, command coverage, and host tool coverage are valid")
