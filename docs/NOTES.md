@@ -2656,3 +2656,79 @@ negligible at boot (signature over ~5 KiB metadata; content hashed on first use)
 **Still future.** Key rotation / multiple trust roots; signing the kernel image
 itself + an A/B boot manifest with rollback (loader/update-store territory);
 revocation.
+
+## A/B signed system updates (U-series)
+
+Extends the trust chain (I5–I8: signed model bundles → signed base image, kernel
+as root of trust) toward ARCHITECTURE.md §"Persistent update store" + the
+"A/B image discipline" design value: two image slots + an atomic boot manifest,
+verified slot selection, rollback to the known-good slot. (The roadmap sequences
+A/B late in Phase 1; brought forward here as the trust-chain capstone — the
+Ed25519 primitive is ready. Storage-medium + scope forks confirmed with the
+maintainer: a dedicated writable virtio-blk disk, read-side first.)
+
+### U1a — A/B update store: verified slot selection + fallback (DONE, 2026-06-10)
+
+**Scope (read side of A/B).** Select + verify + fall back. A persistent writable
+virtio-blk "update store" disk carries a `SWOSBOOT` boot manifest + two slots,
+each a full signed `SWOSBASE`-v3 base image. The kernel reads the manifest, picks
+the active slot, mounts+verifies it via the unchanged I8 path, and rolls back to
+the known-good fallback slot if the active image fails verification. Boot-state
+write-back (attempt counter, health confirm, attempt-based rollback persisted
+across reboots) is U1b; kernel-image A/B via the loader is U1c.
+
+**Format (`SWOSBOOT` v1).** `kernel/fs/swosboot.swift` — an I/O-free, no-mutable-
+global manifest core (parser + CRC32) shared by the kernel (Embedded), the host
+builder, and the host test, like the crypto. One 512-byte sector, two copies
+(LBA 0/1, double-buffered for U1b's torn-write-safe rewrite; reader picks the
+valid copy with the highest sequence). Header {magic, version, slot_count=2,
+active_slot, fallback_slot, sequence} + a 2-entry slot table {present, state,
+base_lba, length_sectors, generation, attempt_count} + trailing CRC32 over
+[0,508). Layout: manifest @ LBA 0–7, slot 0 image @ LBA 8, slot 1 after. CRC32 is
+IEEE reflected (poly 0xEDB88320); the canonical check value crc32("123456789")
+== 0xCBF43926 is pinned by the host test. Format documented in docs/UPDATE_STORE.md.
+
+**Trust boundary (deliberate).** The manifest is CRC32-protected, NOT signed: the
+kernel holds only the *public* image key and so cannot sign the boot-state it
+writes at runtime (U1b). Sound because the manifest is not a trust anchor — it
+only *selects among* self-authenticating signed images. A store-disk attacker can
+at worst point "active" at the other (still-signed) slot or induce a boot loop:
+availability/DoS, never a code-integrity bypass (a forged image still fails
+Ed25519 at mount). Same posture the base-image disk already has.
+
+**Kernel.** `virtio_blk.swift` gains a slot-relative read — `blkBaseByteOffset`
+added to every `virtioBlkReadRange`, so the unchanged VFS mount/verify/exec/mmap
+paths read the active slot transparently (a single choke point); the legacy
+single-image disk keeps offset 0. `blkFallbackByteOffset` holds the known-good
+slot, consumed once by `virtioBlkUseFallbackBase()`. `virtioBlkInit` now prefers
+a SWOSBOOT store disk > a SWOSBASE base disk > the first device.
+`kernel/fs/updatestore.swift` `updateStoreInit()` (called at the top of
+`vfsInit`) reads both manifest copies, picks the active slot, sets the offsets,
+logs the selection. `vfsInit` mounts the active slot via `buildBaseFromDisk`
+(the I8 path); if it rejects the slot (bad signature/content), it calls
+`virtioBlkUseFallbackBase()` and remounts the known-good slot. No virtio-blk
+*write* yet (U1a is read-only; the disk is writable for U1b). Two new globals
+(`blkBaseByteOffset`, `blkFallbackByteOffset`) added to docs/SMP_STATE_AUDIT.md —
+set once at boot before EL0.
+
+**Host + test.** `tools/updatestore.swift` builds the store (places two slot
+images, writes the CRC'd manifest, self-parses to verify). `tests/
+updatestore_test.swift` (host, in `make test`) pins the CRC32 check value +
+round-trip + corruption rejection. `tests/ab_update_test.sh` (in `make test`):
+Case A (active=A) → "active slot A", mounted, exec from slot; Case B (active=B, a
+*different* LBA) → "active slot B", mounted, exec — proves manifest-driven
+selection, not "always slot 0"; Case FB (active=B with tampered slot-B metadata)
+→ slot B rejected ("base image signature INVALID"), "rolling back to fallback
+slot", slot A mounted and serves /etc/motd to a working shell — verified fallback
+over a persistent disk.
+
+**Gotcha caught.** The interactive M7 tty demo gates the boot before login, so an
+A/B-selection assertion must await a pre-login marker (mount markers / the tty
+prompt), not "swift-os login:", unless it drives the tty. And `await` is a literal
+substring match — the rollback marker is "...failed verification — rolling back to
+fallback slot", so the awaited substring must not include a non-contiguous prefix.
+
+**Still future (U1b+).** virtio-blk write; boot-attempt counter + health-confirm
+(capability-gated /bin/swos-confirm + syscall) + attempt-based rollback persisted
+across reboots; staging a new generation into the inactive slot + atomic active
+flip; kernel-image A/B via the loader (Ed25519 + EFI Block I/O); key rotation.

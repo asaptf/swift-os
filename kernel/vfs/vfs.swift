@@ -450,8 +450,25 @@ func vfsInit() {
     // M11c: serve the read-only base from the packed disk image when one is
     // attached; otherwise fall back to the compiled-in literals (the -kernel
     // test paths and UEFI GPT boot, where the disk is not a SWOSBASE image).
-    if buildBaseFromDisk(root) {
+    //
+    // U1a: if an A/B update-store disk is attached, updateStoreInit picks the
+    // active slot and points base reads at it; if that slot's image fails its
+    // Ed25519/SHA-256 verification, roll back to the known-good fallback slot
+    // and mount that instead (the verified-fallback half of A/B).
+    updateStoreInit()
+    var mounted = buildBaseFromDisk(root)
+    var usedFallback = false
+    if !mounted && virtioBlkUseFallbackBase() {
+        uartPuts("update-store: active slot failed verification — rolling back to fallback slot\n")
+        mounted = buildBaseFromDisk(root)
+        usedFallback = mounted
+    }
+    if mounted {
         klog(.info, "vfs", "M11c: read-only base mounted from disk")
+        if virtioBlkUsingStore() {
+            if usedFallback { uartPuts("update-store: mounted fallback slot\n") }
+            else { uartPuts("update-store: mounted active slot\n") }
+        }
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")

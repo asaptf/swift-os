@@ -50,8 +50,10 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/fb.swift:g_stride`
 - `kernel/drivers/fb.swift:g_w`
 - `kernel/drivers/virtio_blk.swift:blkAvailIdx`
+- `kernel/drivers/virtio_blk.swift:blkBaseByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDataBase`
+- `kernel/drivers/virtio_blk.swift:blkFallbackByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkMmio`
 - `kernel/drivers/virtio_blk.swift:blkQn`

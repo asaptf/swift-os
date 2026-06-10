@@ -75,6 +75,17 @@ private var blkAvailIdx: UInt16 = 0
 private var blkLastUsed: UInt16 = 0
 private var blkCapacity: UInt64 = 0 // device capacity in 512-byte sectors
 
+// U1a (A/B update store): byte offset added to every base-image read
+// (virtioBlkReadRange). 0 means "the base image starts at sector 0 of the
+// selected disk" (the legacy single-image case). On an A/B update-store disk
+// the kernel sets this to the active slot's image offset so the unchanged VFS
+// mount/verify path reads the active slot transparently. blkFallbackByteOffset
+// is the known-good slot's offset, consumed once by virtioBlkUseFallbackBase()
+// if the active slot fails verification. SMP: set once at boot before EL0 runs.
+private let blkNoFallback: UInt64 = .max
+private var blkBaseByteOffset: UInt64 = 0
+private var blkFallbackByteOffset: UInt64 = blkNoFallback
+
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
     var a = pa & ~UInt(63)
@@ -176,6 +187,23 @@ private func blkBounceIsSwosbase() -> Bool {
     return ok
 }
 
+// True if the bounce buffer currently starts with the "SWOSBOOT" magic of an
+// A/B update-store disk (the boot manifest sits at sector 0). Preferred over a
+// bare SWOSBASE disk when both are attached.
+private func blkBounceIsSwosboot() -> Bool {
+    let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    let magic: StaticString = "SWOSBOOT"
+    var ok = true
+    magic.withUTF8Buffer { m in
+        var i = 0
+        while i < 8 {
+            if bounce.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }
+            i += 1
+        }
+    }
+    return ok
+}
+
 // Read one sector into the internal bounce buffer. Returns 0 on success.
 private func blkDoRead(_ sector: UInt64) -> Int32 {
     if blkMmio == 0 { return -1 }
@@ -227,12 +255,16 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
 }
 
 // Scan the virtio-mmio window (base/stride/count from the HAL) for block
-// devices and select the packed base image: a boot medium may carry several
-// disks (e.g. a GPT boot disk plus the SWOSBASE base image), so we prefer the
-// one whose sector 0 holds the SWOSBASE magic, falling back to the first block
-// device otherwise. Returns the selected disk's capacity in sectors, or 0.
+// devices and select the disk to serve the read-only base from. A boot medium
+// may carry several disks (e.g. a GPT boot disk plus the base storage), so we
+// prefer, in order: an A/B update-store disk ("SWOSBOOT" magic at sector 0),
+// then a packed base image ("SWOSBASE"), then the first block device. Returns
+// the selected disk's capacity in sectors, or 0. For an update-store disk the
+// caller then runs updateStoreInit() to pick a slot and set the base offset.
 func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkMmio = 0
+    blkBaseByteOffset = 0
+    blkFallbackByteOffset = blkNoFallback
     // The ring and data pages are allocated once and reused across bring-up
     // attempts, mirroring the C version's static buffers (no per-scan leak).
     if blkRingBase == 0 {
@@ -247,6 +279,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     }
 
     var first: UInt = 0
+    var baseDev: UInt = 0
     var i: UInt32 = 0
     while i < count {
         let m = base + UInt(i) * stride
@@ -256,11 +289,16 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         if mmio_read32(m + R_DEVID) != VIRTIO_ID_BLOCK { continue }
         if first == 0 { first = m }
         if blkBringUp(m) == 0 { continue }
-        if blkDoRead(0) == 0 && blkBounceIsSwosbase() {
-            return blkCapacity // packed base image — this is the one we want
+        if blkDoRead(0) != 0 { continue }
+        if blkBounceIsSwosboot() {
+            return blkCapacity // A/B update-store disk — highest preference
+        }
+        if baseDev == 0 && blkBounceIsSwosbase() {
+            baseDev = m       // remember, but keep scanning for a store disk
         }
     }
-    // No SWOSBASE disk; fall back to the first block device (if any).
+    // No update-store disk: prefer a SWOSBASE base image, else the first device.
+    if baseDev != 0 { return blkBringUp(baseDev) }
     if first != 0 { return blkBringUp(first) }
     blkMmio = 0
     return 0
@@ -268,6 +306,29 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
 
 func virtioBlkAvailable() -> Bool { blkMmio != 0 }
 func virtioBlkCapacity() -> UInt64 { blkCapacity }
+
+// --- A/B update store: active/fallback slot offsets (U1a) --------------------
+// True if the selected disk is an A/B update-store disk (sector 0 is SWOSBOOT).
+func virtioBlkIsUpdateStore() -> Bool { blkMmio != 0 && blkBounceMagicIsSwosboot() }
+// Re-reads sector 0; used by updateStoreInit before it parses the manifest.
+private func blkBounceMagicIsSwosboot() -> Bool {
+    blkDoRead(0) == 0 && blkBounceIsSwosboot()
+}
+// Point base-image reads at the active slot's image offset (bytes from sector 0).
+func virtioBlkSetBaseByteOffset(_ off: UInt64) { blkBaseByteOffset = off }
+// Record the known-good fallback slot's offset for virtioBlkUseFallbackBase().
+func virtioBlkSetFallbackByteOffset(_ off: UInt64) { blkFallbackByteOffset = off }
+// True once the base offset names an A/B slot rather than the legacy sector 0.
+func virtioBlkUsingStore() -> Bool { blkBaseByteOffset != 0 }
+// Switch base reads to the fallback slot (consumed once). Returns false if there
+// is no distinct fallback, so the caller does not loop.
+func virtioBlkUseFallbackBase() -> Bool {
+    if blkFallbackByteOffset == blkNoFallback { return false }
+    if blkFallbackByteOffset == blkBaseByteOffset { return false }
+    blkBaseByteOffset = blkFallbackByteOffset
+    blkFallbackByteOffset = blkNoFallback
+    return true
+}
 
 // Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.
 // Blocking: issues the request and spins on the used ring until it completes.
@@ -293,7 +354,10 @@ func virtioBlkReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ le
     let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     var done: UInt32 = 0
     while done < len {
-        let pos = byteOff + UInt64(done)
+        // U1a: reads are relative to the active A/B slot's image offset (0 for
+        // the legacy single-image disk), so the VFS mount/verify path is slot
+        // agnostic.
+        let pos = blkBaseByteOffset + byteOff + UInt64(done)
         let sec = pos / UInt64(SECTOR_SIZE)
         let within = UInt32(pos % UInt64(SECTOR_SIZE))
         let rc = blkDoRead(sec)

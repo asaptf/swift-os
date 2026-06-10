@@ -42,6 +42,7 @@ QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
+UPDATESTORE := $(BUILD)/updatestore
 SWPKG     := $(BUILD)/swpkg
 BASE_ROOT := $(BUILD)/base-root
 BASE_SEED_FILES := $(shell find base -type f | sort)
@@ -124,6 +125,8 @@ SWIFT_SRCS := \
 	kernel/user/ustack.swift \
 	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
+	kernel/fs/swosboot.swift \
+	kernel/fs/updatestore.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift \
 	kernel/mm/vm.swift
@@ -748,11 +751,13 @@ $(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
 
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
+test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
+	$(HOST_SWIFTC) tests/updatestore_test.swift kernel/fs/swosboot.swift -o $(BUILD)/updatestore_test
+	$(BUILD)/updatestore_test
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
@@ -807,6 +812,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/signed_image_test.sh
+	./tests/ab_update_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -916,6 +922,13 @@ $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefi
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
 
 swpkg: $(SWPKG)
+
+# U1a: host builder for the SWOSBOOT A/B update-store disk. Shares the manifest
+# format/CRC with the kernel via kernel/fs/swosboot.swift.
+$(UPDATESTORE): tools/updatestore.swift kernel/fs/swosboot.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/updatestore.swift kernel/fs/swosboot.swift -o $@
+
+updatestore: $(UPDATESTORE)
 
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
