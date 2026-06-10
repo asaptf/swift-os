@@ -8,6 +8,22 @@ SwiftOS documentation is split by audience. Start with the guide that matches
 what you are trying to do, then use the reference documents for exact ABI and
 format details.
 
+## Common Paths
+
+Use these paths when you want an end-to-end route instead of a single reference
+page.
+
+| Goal | Path |
+| --- | --- |
+| Evaluate SwiftOS from a fresh checkout | [Getting Started](GETTING_STARTED.md) -> [Examples](EXAMPLES.md) -> [Release Notes](RELEASE_NOTES.md) -> [FAQ](FAQ.md) |
+| Choose a boot or install profile | [Installation Guide](INSTALLATION_GUIDE.md) -> [Configuration Reference](CONFIGURATION_REFERENCE.md) -> [VirtualBox Guide](VIRTUALBOX.md) |
+| Prepare a deployment candidate | [Deployment Guide](DEPLOYMENT_GUIDE.md) -> [Update And Rollback Guide](UPDATE_GUIDE.md) -> [Operations Guide](OPERATIONS_GUIDE.md) -> [Support Guide](SUPPORT_GUIDE.md) |
+| Operate a running guest | [User Guide](USER_GUIDE.md) -> [Command Reference](COMMAND_REFERENCE.md) -> [Observability Guide](OBSERVABILITY_GUIDE.md) -> [Troubleshooting](TROUBLESHOOTING.md) |
+| Host network or AI services | [Networking Guide](NETWORKING_GUIDE.md) -> [Service Guide](SERVICE_GUIDE.md) -> [AI Hosting Guide](AI_HOSTING_GUIDE.md) -> [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) |
+| Write a native SwiftOS program | [Developer Guide](DEVELOPER_GUIDE.md) -> [Application Cookbook](APPLICATION_COOKBOOK.md) -> [API Reference](API_REFERENCE.md) -> [Testing Guide](TESTING_GUIDE.md) |
+| Port or package server software | [Porting Guide](PORTING_GUIDE.md) -> [Package Guide](PACKAGE_GUIDE.md) -> [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) -> [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) |
+| Review security and architecture boundaries | [Concepts](CONCEPTS.md) -> [Security Guide](SECURITY_GUIDE.md) -> [Capabilities](CAPABILITIES.md) -> [Architecture](ARCHITECTURE.md) -> [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
+
 ## Start Here
 
 | Need | Document |
@@ -163,7 +179,8 @@ When adding public docs:
 3. Separate current behavior from future roadmap language.
 4. Keep all docs in English.
 5. Run `make docs-test` for Markdown fence, local-link/anchor, API table, Swift
-   bridge, documentation map, command-reference, and host tool reference
+   bridge, documentation map, README front-door, example verification blocks and
+   commands, command-reference, host tool reference, and port recipe reference
    integrity.
 6. Run at least the relevant build or test target before committing.
 7. For operational docs, name the acceptance test that proves each workflow when

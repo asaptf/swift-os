@@ -294,6 +294,193 @@ private func checkDocumentationMapCoverage() {
     }
 }
 
+private func documentationMapTargets() -> [String] {
+    let mapPath = "docs/DOCUMENTATION.md"
+    guard let mapText = try? String(contentsOfFile: mapPath, encoding: .utf8) else {
+        fail("\(mapPath): could not read")
+        ok = false
+        return []
+    }
+
+    let linkRegex = try! NSRegularExpression(pattern: #"\(([^)#]+\.md)\)"#)
+    let nsText = mapText as NSString
+    let matches = linkRegex.matches(in: mapText, range: NSRange(location: 0, length: nsText.length))
+    var targets = Set<String>()
+    for match in matches {
+        let rawTarget = nsText.substring(with: match.range(at: 1))
+        if rawTarget.hasPrefix("../ports/") {
+            targets.insert(String(rawTarget.dropFirst(3)))
+        } else if !rawTarget.contains("/") {
+            targets.insert("docs/\(rawTarget)")
+        }
+    }
+    return targets.sorted()
+}
+
+private func checkReadmeDocumentationFrontDoorCoverage() {
+    let path = "README.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    for target in documentationMapTargets() where !text.contains(target) {
+        fail("\(path): missing front-door link for \(target) from docs/DOCUMENTATION.md")
+        ok = false
+    }
+}
+
+private func checkExampleVerificationCoverage() {
+    let path = "docs/EXAMPLES.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var currentHeading: String?
+    var currentStart = 0
+    var currentHasVerification = false
+
+    func finishCurrent(at line: Int) {
+        guard let heading = currentHeading else { return }
+        if !currentHasVerification {
+            fail("\(path):\(currentStart): numbered example `\(heading)` is missing a verification block before line \(line)")
+            ok = false
+        }
+    }
+
+    for (index, line) in lines.enumerated() {
+        if line.range(of: #"^## [0-9]+\. "#, options: .regularExpression) != nil {
+            finishCurrent(at: index + 1)
+            currentHeading = line
+            currentStart = index + 1
+            currentHasVerification = false
+            continue
+        }
+        if currentHeading != nil &&
+            (line == "Verification:" ||
+             line == "Equivalent automated check:" ||
+             line == "Automated checks:") {
+            currentHasVerification = true
+        }
+    }
+    finishCurrent(at: lines.count + 1)
+}
+
+private func makeTargetNames() -> Set<String> {
+    let path = "Makefile"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let targetRegex = try! NSRegularExpression(pattern: #"^([A-Za-z0-9_.-]+):"#)
+    var targets = Set<String>()
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        if line.hasPrefix(".PHONY:") {
+            for target in line.dropFirst(".PHONY:".count).split(separator: " ") {
+                targets.insert(String(target))
+            }
+            continue
+        }
+        if let groups = firstMatchGroups(targetRegex, in: line, groupCount: 1) {
+            targets.insert(groups[0])
+        }
+    }
+    if targets.isEmpty {
+        fail("\(path): no make targets found")
+        ok = false
+    }
+    return targets
+}
+
+private func validateExampleVerificationCommand(_ line: String,
+                                                lineNumber: Int,
+                                                makeTargets: Set<String>) {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    if trimmed.isEmpty || trimmed.hasPrefix("#") {
+        return
+    }
+
+    let tokens = trimmed.split { $0 == " " || $0 == "\t" }.map(String.init)
+    var index = 0
+    while index < tokens.count &&
+          tokens[index].contains("=") &&
+          !tokens[index].hasPrefix("./") {
+        index += 1
+    }
+    guard index < tokens.count else { return }
+
+    let command = tokens[index]
+    if command == "make" {
+        for arg in tokens.dropFirst(index + 1) {
+            if arg.hasPrefix("-") || arg.contains("=") {
+                continue
+            }
+            if !makeTargets.contains(arg) {
+                fail("docs/EXAMPLES.md:\(lineNumber): unknown make target `\(arg)` in verification block")
+                ok = false
+            }
+        }
+        return
+    }
+
+    if command.hasPrefix("./tests/") {
+        if !FileManager.default.fileExists(atPath: String(command.dropFirst(2))) {
+            fail("docs/EXAMPLES.md:\(lineNumber): missing verification script `\(command)`")
+            ok = false
+        }
+        return
+    }
+
+    fail("docs/EXAMPLES.md:\(lineNumber): verification command should be `make ...` or `./tests/...`, got `\(command)`")
+    ok = false
+}
+
+private func checkExampleVerificationCommandCoverage() {
+    let path = "docs/EXAMPLES.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var pendingVerificationFence = false
+    var inVerificationFence = false
+
+    for (index, line) in lines.enumerated() {
+        if line == "Verification:" ||
+            line == "Equivalent automated check:" ||
+            line == "Automated checks:" {
+            pendingVerificationFence = true
+            continue
+        }
+
+        if line.hasPrefix("```") {
+            if inVerificationFence {
+                inVerificationFence = false
+                continue
+            }
+            if pendingVerificationFence {
+                inVerificationFence = true
+                pendingVerificationFence = false
+                continue
+            }
+        }
+
+        if inVerificationFence {
+            validateExampleVerificationCommand(line, lineNumber: index + 1, makeTargets: makeTargets)
+        }
+    }
+}
+
 private func stagedBaseCommands() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -379,6 +566,68 @@ private func checkHostToolReferenceCoverage() {
     for tool in hostToolExecutables() where !text.contains("build/\(tool)") {
         fail("\(path): missing host tool reference entry for build/\(tool)")
         ok = false
+    }
+}
+
+private func checkedPortRecipePaths() -> [String] {
+    guard let categories = try? FileManager.default.contentsOfDirectory(atPath: "ports") else {
+        fail("ports: could not list ports directory")
+        ok = false
+        return []
+    }
+
+    var paths: [String] = []
+    for category in categories.sorted() {
+        let categoryPath = "ports/\(category)"
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: categoryPath, isDirectory: &isDir),
+              isDir.boolValue,
+              let ports = try? FileManager.default.contentsOfDirectory(atPath: categoryPath) else {
+            continue
+        }
+        for port in ports.sorted() {
+            let recipePath = "\(categoryPath)/\(port)/Port.json"
+            if FileManager.default.fileExists(atPath: recipePath) {
+                paths.append(recipePath)
+            }
+        }
+    }
+
+    if paths.isEmpty {
+        fail("ports: no checked Port.json recipes found")
+        ok = false
+    }
+    return paths
+}
+
+private func checkPortRecipeDocumentationCoverage() {
+    let docs = [
+        "ports/README.md",
+        "docs/PACKAGE_GUIDE.md",
+        "docs/PACKAGE_BUILD_AUTOMATION.md",
+        "docs/HOST_TOOL_REFERENCE.md",
+    ]
+    var texts: [String: String] = [:]
+    for path in docs {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            fail("\(path): could not read")
+            ok = false
+            continue
+        }
+        texts[path] = text
+    }
+
+    for recipePath in checkedPortRecipePaths() {
+        let shortPath = recipePath
+            .replacingOccurrences(of: "ports/", with: "")
+            .replacingOccurrences(of: "/Port.json", with: "")
+        for doc in docs {
+            guard let text = texts[doc] else { continue }
+            if !text.contains(recipePath) && !text.contains(shortPath) {
+                fail("\(doc): missing checked port recipe `\(recipePath)`")
+                ok = false
+            }
+        }
     }
 }
 
@@ -472,12 +721,16 @@ for file in markdownFiles() {
 
 checkSyscallTableSync()
 checkDocumentationMapCoverage()
+checkReadmeDocumentationFrontDoorCoverage()
+checkExampleVerificationCoverage()
+checkExampleVerificationCommandCoverage()
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
+checkPortRecipeDocumentationCoverage()
 checkSwiftBridgeCoverage()
 
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map coverage, command coverage, and host tool coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, example verification coverage, command coverage, host tool coverage, and port recipe coverage are valid")

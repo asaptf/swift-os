@@ -225,6 +225,13 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
   server packages, current package limits, and porting prerequisites.
 
+Maintainers and reviewers should also keep the planning and audit artifacts
+reachable from the front door: [Package Ecosystem Goal](docs/PACKAGE_ECOSYSTEM_GOAL.md),
+[Package Manager Implementation Plan](docs/PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md),
+[Package Manager Session Prompts](docs/PACKAGE_MANAGER_SESSION_PROMPTS.md),
+[Ports Seed Catalog](ports/README.md), [SMP Mutable State Audit](docs/SMP_STATE_AUDIT.md),
+and [Next Session](docs/NEXT_SESSION.md).
+
 ## Architecture
 
 ```text
