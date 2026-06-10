@@ -528,6 +528,50 @@ private func codeSpans(in text: String) -> [String] {
     }
 }
 
+private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int) {
+    if ref.hasSuffix("/*") {
+        let dir = String(ref.dropLast(2))
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: dir, isDirectory: &isDir) ||
+            !isDir.boolValue {
+            fail("\(path):\(lineNumber): missing documented directory `\(dir)`")
+            ok = false
+            return
+        }
+        if (try? FileManager.default.contentsOfDirectory(atPath: dir).isEmpty) != false {
+            fail("\(path):\(lineNumber): documented directory `\(dir)` is empty")
+            ok = false
+        }
+        return
+    }
+
+    if !FileManager.default.fileExists(atPath: ref) {
+        fail("\(path):\(lineNumber): missing documented path `\(ref)`")
+        ok = false
+    }
+}
+
+private func validateApiVerificationReference(_ ref: String,
+                                              in path: String,
+                                              lineNumber: Int,
+                                              makeTargets: Set<String>) {
+    if ref.hasPrefix("make ") || ref.hasPrefix("./tests/") {
+        validateVerificationCommand(ref,
+                                    in: path,
+                                    lineNumber: lineNumber,
+                                    makeTargets: makeTargets)
+        return
+    }
+
+    if ref.hasPrefix("tests/") {
+        checkDocumentedPath(ref, in: path, lineNumber: lineNumber)
+        return
+    }
+
+    fail("\(path):\(lineNumber): API verification reference should be `make ...`, `./tests/...`, or `tests/...`, got `\(ref)`")
+    ok = false
+}
+
 private func checkApiRecipeVerificationCoverage() {
     let path = "docs/API_REFERENCE.md"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -586,6 +630,65 @@ private func checkApiRecipeVerificationCoverage() {
                                         in: path,
                                         lineNumber: index + 1,
                                         makeTargets: makeTargets)
+        }
+    }
+}
+
+private func checkApiVerificationMapReferences() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inMap = false
+    for (index, line) in lines.enumerated() {
+        if line == "## API Verification Map" {
+            inMap = true
+            continue
+        }
+        if inMap && line.hasPrefix("## ") {
+            break
+        }
+        guard inMap,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 4 else { continue }
+        let area = cells[1]
+        let primaryFiles = cells[2]
+        let verification = cells[cells.count - 2]
+        if area == "API area" {
+            continue
+        }
+
+        let primaryRefs = codeSpans(in: primaryFiles)
+        if primaryRefs.isEmpty {
+            fail("\(path):\(index + 1): API verification area `\(area)` has no primary file reference")
+            ok = false
+        }
+        for ref in primaryRefs {
+            checkDocumentedPath(ref, in: path, lineNumber: index + 1)
+        }
+
+        let verificationRefs = codeSpans(in: verification)
+        if verificationRefs.isEmpty {
+            fail("\(path):\(index + 1): API verification area `\(area)` has no focused verification reference")
+            ok = false
+        }
+        for ref in verificationRefs {
+            validateApiVerificationReference(ref,
+                                           in: path,
+                                           lineNumber: index + 1,
+                                           makeTargets: makeTargets)
         }
     }
 }
@@ -834,6 +937,7 @@ checkReadmeDocumentationFrontDoorCoverage()
 checkExampleVerificationCoverage()
 checkApiCompleteExampleVerificationCoverage()
 checkApiRecipeVerificationCoverage()
+checkApiVerificationMapReferences()
 checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
 checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
