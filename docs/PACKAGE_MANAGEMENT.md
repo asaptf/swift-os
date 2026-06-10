@@ -2,9 +2,10 @@
 
 Design for binary package installation on swift-os.
 
-> Status: P1 is implemented as host tooling; P2 and later are still staged
-> design work. The package work should continue to follow the project rule: one
-> milestone at a time, build, boot, test, commit, then stop for review.
+> Status: P1 host tooling and P2 package payload overlays are implemented. P3
+> and later are still staged design work. The package work should continue to
+> follow the project rule: one milestone at a time, build, boot, test, commit,
+> then stop for review.
 
 ## Goals
 
@@ -780,16 +781,17 @@ Acceptance:
 - host tests verify deterministic `.swpkg` creation, inspection, payload hash
   validation, manifest hash validation, and corrupt-package rejection.
 
-### P2: VFS Package Image Overlay
+### P2: VFS Package Image Overlay (DONE)
 
-- Teach the VFS to mount more than one read-only packed image.
-- Add deterministic overlay priority and conflict rejection.
-- Boot with a built-in sample package image attached as an extra virtio-blk
-  disk or packed into a test disk.
+Implemented in `kernel/drivers/virtio_blk.swift`, `kernel/vfs/vfs.swift`,
+`kernel/user/exec.swift`, `tools/swpkg.swift`, and
+`tests/package_overlay_test.sh`.
 
 Acceptance:
 
-- QEMU boot assertion runs `/usr/bin/pkghello` from a package image.
+- QEMU boots with a base image and package payload image.
+- VFS selects the base image by contents rather than virtio-mmio scan order.
+- QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
 ### P3: Package Store
 

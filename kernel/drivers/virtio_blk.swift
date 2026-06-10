@@ -74,6 +74,15 @@ private var blkQn: UInt32 = 0
 private var blkAvailIdx: UInt16 = 0
 private var blkLastUsed: UInt16 = 0
 private var blkCapacity: UInt64 = 0 // device capacity in 512-byte sectors
+private var blkActiveDevice = -1
+
+private let maxBlkDevices = 8
+private let maxSwosbaseImages = 4
+private var blkDeviceMmio = [UInt](repeating: 0, count: maxBlkDevices)
+private var blkDeviceCapacity = [UInt64](repeating: 0, count: maxBlkDevices)
+private var blkDeviceCount = 0
+private var swosbaseDevice = [Int](repeating: -1, count: maxSwosbaseImages)
+private var swosbaseCount = 0
 
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
@@ -122,6 +131,7 @@ private func blkUsedIdx() -> UInt16 {
 // returns the capacity in sectors, or 0 on failure (blkMmio cleared).
 private func blkBringUp(_ m: UInt) -> UInt64 {
     blkMmio = m
+    blkActiveDevice = -1
 
     mmio_write32(m + R_STATUS, 0)               // reset
     mmio_write32(m + R_STATUS, S_ACK)
@@ -158,6 +168,16 @@ private func blkBringUp(_ m: UInt) -> UInt64 {
     let hi = mmio_read32(m + R_CONFIG + 4)
     blkCapacity = (UInt64(hi) << 32) | UInt64(lo)
     return blkCapacity
+}
+
+private func blkSelectDevice(_ index: Int) -> Bool {
+    if index < 0 || index >= blkDeviceCount { return false }
+    if blkActiveDevice == index { return true }
+    let cap = blkBringUp(blkDeviceMmio[index])
+    if cap == 0 { return false }
+    blkDeviceCapacity[index] = cap
+    blkActiveDevice = index
+    return true
 }
 
 // True if the bounce buffer currently starts with the packed-base "SWOSBASE"
@@ -233,6 +253,15 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
 // device otherwise. Returns the selected disk's capacity in sectors, or 0.
 func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkMmio = 0
+    blkActiveDevice = -1
+    blkDeviceCount = 0
+    swosbaseCount = 0
+    for j in 0..<maxBlkDevices {
+        blkDeviceMmio[j] = 0
+        blkDeviceCapacity[j] = 0
+    }
+    for j in 0..<maxSwosbaseImages { swosbaseDevice[j] = -1 }
+
     // The ring and data pages are allocated once and reused across bring-up
     // attempts, mirroring the C version's static buffers (no per-scan leak).
     if blkRingBase == 0 {
@@ -247,6 +276,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     }
 
     var first: UInt = 0
+    var firstIndex = -1
     var i: UInt32 = 0
     while i < count {
         let m = base + UInt(i) * stride
@@ -254,24 +284,45 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         if mmio_read32(m + R_MAGIC) != VIRTIO_MAGIC { continue }
         if mmio_read32(m + R_VERSION) != 2 { continue }      // modern only
         if mmio_read32(m + R_DEVID) != VIRTIO_ID_BLOCK { continue }
-        if first == 0 { first = m }
+        if blkDeviceCount >= maxBlkDevices { continue }
+        let devIndex = blkDeviceCount
+        blkDeviceCount += 1
+        blkDeviceMmio[devIndex] = m
+        if first == 0 {
+            first = m
+            firstIndex = devIndex
+        }
         if blkBringUp(m) == 0 { continue }
+        blkDeviceCapacity[devIndex] = blkCapacity
+        blkActiveDevice = devIndex
         if blkDoRead(0) == 0 && blkBounceIsSwosbase() {
-            return blkCapacity // packed base image — this is the one we want
+            if swosbaseCount < maxSwosbaseImages {
+                swosbaseDevice[swosbaseCount] = devIndex
+                swosbaseCount += 1
+            }
         }
     }
+
+    if swosbaseCount > 0 {
+        let dev = swosbaseDevice[0]
+        if blkSelectDevice(dev) { return blkDeviceCapacity[dev] }
+    }
+
     // No SWOSBASE disk; fall back to the first block device (if any).
-    if first != 0 { return blkBringUp(first) }
+    if first != 0 && firstIndex >= 0 && blkSelectDevice(firstIndex) { return blkDeviceCapacity[firstIndex] }
     blkMmio = 0
+    blkActiveDevice = -1
     return 0
 }
 
-func virtioBlkAvailable() -> Bool { blkMmio != 0 }
-func virtioBlkCapacity() -> UInt64 { blkCapacity }
+func virtioBlkAvailable() -> Bool { swosbaseCount > 0 || blkMmio != 0 }
+func virtioBlkCapacity() -> UInt64 { swosbaseCount > 0 ? blkDeviceCapacity[swosbaseDevice[0]] : blkCapacity }
+func virtioBlkSwosbaseImageCount() -> Int { swosbaseCount }
 
 // Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.
 // Blocking: issues the request and spins on the used ring until it completes.
 func virtioBlkRead(_ sector: UInt64, _ buf: UnsafeMutableRawPointer?) -> Int32 {
+    if swosbaseCount > 0 && !blkSelectDevice(swosbaseDevice[0]) { return -1 }
     let rc = blkDoRead(sector)
     if rc != 0 { return rc }
     guard let dst = buf else { return -1 }
@@ -288,7 +339,12 @@ func virtioBlkRead(_ sector: UInt64, _ buf: UnsafeMutableRawPointer?) -> Int32 {
 // sectors as needed. Returns 0 on success, negative on error. Used to back the
 // read-only VFS with extents into the disk image (M11c).
 func virtioBlkReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    virtioBlkReadRangeFromImage(0, byteOff, buf, len)
+}
+
+func virtioBlkReadRangeFromImage(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if image < 0 || image >= swosbaseCount { return -1 }
+    if !blkSelectDevice(swosbaseDevice[image]) { return -1 }
     guard let out = buf else { return -1 }
     let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     var done: UInt32 = 0

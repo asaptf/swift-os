@@ -38,7 +38,10 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `docs/SWPKG_FORMAT.md`;
   - `tests/swpkg_tool_test.swift`.
 - `.swpkg` can be created, inspected, verified, and host-tested.
-- P2 is now the next implementation milestone: VFS package payload overlays.
+- P2 package payload overlays are implemented:
+  - QEMU can boot with a base SWOSBASE disk plus package payload disks;
+  - VFS selects the base image by contents, independent of virtio scan order;
+  - `/usr/bin/pkghello` executes from a package payload image.
 - No target-side `/bin/pkg`, package store, repository catalog, or hosted binary
   repository exists yet.
 
@@ -53,7 +56,7 @@ Lives in `swift-os`.
 
 Milestones:
 
-1. P2: mount verified package payload images as read-only VFS overlays.
+1. P2: mount verified package payload images as read-only VFS overlays. (DONE)
 2. P3: persistent package store and activation generations.
 3. P4: target-side `/bin/pkg install ./name.swpkg`.
 4. P5: signed static HTTP repository catalogs and network fetch.
