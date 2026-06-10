@@ -61,13 +61,14 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make package-repo-install-test` proves negative catalog rejection,
     dependency installation, package SHA-256 rejection, and execution of
     `/usr/bin/pkghello`.
-- P6a/P6b/P6c/P6d/P6e/P6f/P7/P8/P10/P11 ports scaffolding is implemented in this
+- The checked ports seed is implemented in this
   repository:
   - `ports/catalog.json` records the first package priorities, prerequisite
     bundles, runtime dependency names, and blockers;
   - `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
     `ports/security/ca-certificates/Port.json`, and
-    `ports/devel/pcre2/Port.json` are the checked recipe scaffolds;
+    `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, and
+    `ports/www/nginx/Port.json` are the checked recipe scaffolds;
   - `build/swport catalog validate/list/inspect` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
@@ -76,14 +77,17 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     the local newlib sysroot, `scripts/build-ca-certificates.sh` packages
     the pinned Mozilla CA bundle as data, and `scripts/build-pcre2.sh`
     cross-builds static PCRE2 libraries plus `pcre2grep`;
+  - `scripts/build-tzdata.sh` compiles IANA TZif zoneinfo with host `zic`, and
+    `scripts/build-nginx.sh` cross-builds a minimal static HTTP-only nginx
+    package with the local SwiftOS crossbuild overlay;
   - `make ports-catalog-test` and `make ports-recipe-test` keep the catalog and
     checked recipe package/repository paths machine-readable;
   - `make ports-lua-repo-fixture` proves the Lua cross-build package and signed
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua, zlib, ca-certificates, pcre2, tzdata, and nginx
-    into one signed local seed repository, and
+  - `make ports-seed-repo-fixture` publishes Lua, zlib, ca-certificates, pcre2,
+    tzdata, and nginx into one signed local seed repository, and
     `make package-ports-seed-repo-install-test` proves installing all six
     packages plus the `minigzip` round trip, CA bundle marker, `pcre2grep`
     pattern match, zoneinfo marker, and nginx version/marker smoke inside QEMU;
@@ -93,7 +97,8 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a DNS-resolved HTTP    repository URL.
+    install Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a
+    DNS-resolved HTTP repository URL.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
   coverage, package publication, and streaming large-package downloads remain
@@ -121,9 +126,9 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 seed lives in this repository under `ports/`;
-the full ports tree should move to `swift-os-ports` once cross-building,
-testing, publishing, and broader package maintenance are ready.
+The current seed catalog and six checked recipes live in this repository under
+`ports/`; the full ports tree should move to `swift-os-ports` once
+cross-building, testing, publishing, and broader package maintenance are ready.
 
 Outputs:
 

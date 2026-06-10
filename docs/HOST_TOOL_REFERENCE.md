@@ -1,9 +1,9 @@
 # SwiftOS Host Tool Reference
 
 This reference describes the host-side tools that build SwiftOS images,
-packages, repositories, model bundles, and the P6-P13 ports seed catalog,
-recipe, and repository-publish scaffolding. These commands run on the
-development host, not inside the SwiftOS guest.
+packages, repositories, model bundles, and the checked ports seed catalog,
+recipes, and repository-publish artifacts. These commands run on the development
+host, not inside the SwiftOS guest.
 
 For guest commands, use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md). For the
 end-to-end package workflow, use
@@ -137,22 +137,17 @@ inside QEMU.
 
 ## Ports And Recipe Tool
 
-`swport` currently implements the P6a catalog subcommands and the recipe
-subcommands for the checked Lua, zlib, ca-certificates, pcre2, tzdata, and
-nginx recipes. P6e/P6f prove the Lua cross-build and target install path. P7 adds zlib and a
-multi-package seed repository fixture. P10 adds a data-only CA certificate
-package to that seed: `make package-ports-seed-repo-install-test` boots SwiftOS
-with a default repository URL, installs Lua, zlib, ca-certificates, pcre2,
-tzdata, and nginx by package name, and runs their smoke commands. P11 adds
-static PCRE2 libraries and `pcre2grep`, making nginx/lighttpd regex support a
-packaged dependency. P13 adds the first minimal static nginx package. P8 adds
-`make ports-static-host-publish`, which turns the seed repository into a
-deployable static web root, and `make package-static-host-repo-install-test`,
-which installs from that web-root layout in QEMU. P9 adds
-`make ports-hosted-url-verify-test` for host-side verification of a served
-static root and `make package-static-host-dns-repo-install-test` for target-side
-install through a DNS-resolved HTTP repository URL. Generalized `swport
-build/test` commands remain planned.
+`swport` implements the checked ports catalog and recipe subcommands for the
+current six-package seed: Lua, zlib, ca-certificates, pcre2, tzdata, and nginx.
+The tool validates catalog metadata, validates recipes, emits `.swpkg`
+manifests, verifies source checksums, packages clean staged roots, and publishes
+signed local repository fixtures through `swpkg` and `pkgrepo`. The Makefile
+targets cross-build or package the checked seed artifacts, publish them into one
+signed repository, turn that repository into a static-hostable web root, verify
+served hosted URLs, and prove target-side installs from local, hosted, and
+DNS-resolved repository URLs. Generalized `swport build` and `swport test`
+commands remain planned; today those orchestration steps live in the
+package-specific scripts and Makefile targets.
 
 ```text
 swport catalog validate [catalog.json]
@@ -173,11 +168,17 @@ build/swport catalog validate ports/catalog.json
 build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
+build/swport recipe validate archivers/zlib
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
+build/swport recipe validate sysutils/tzdata
+build/swport recipe validate www/nginx
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
+build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
+build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
@@ -185,6 +186,8 @@ make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
+make ports-tzdata-repo-fixture
+make ports-nginx-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-lua-repo-install-test
@@ -208,8 +211,11 @@ Use `make ports-catalog-test` before changing `ports/catalog.json`, and
 `make ports-recipe-test` before changing `ports/lang/lua/Port.json`,
 `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`,
 `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`,
-`ports/www/nginx/Port.json`, or recipe handling. Use`make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`,
-`make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`, and
+`ports/www/nginx/Port.json`, or recipe handling. Use the package-specific
+fixture targets (`make ports-lua-repo-fixture`,
+`make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`,
+`make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`, and
+`make ports-nginx-repo-fixture`) plus
 `make package-ports-seed-repo-install-test` before changing the checked port
 packaging path. Use `make ports-static-host-publish` and
 `make package-static-host-repo-install-test` before changing the static

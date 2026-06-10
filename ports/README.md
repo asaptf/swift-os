@@ -1,36 +1,31 @@
 # SwiftOS Ports Seed Catalog
 
-`ports/catalog.json` is the P6a seed for the future `swift-os-ports`
-repository. It is intentionally small and machine-readable: it records the
-first package priorities, dependency names, OS prerequisite bundles, blocked
-state, and the first smoke test each package must eventually pass.
+`ports/` is the checked seed for the future `swift-os-ports` repository. It is
+small on purpose: the catalog records the first server-package priorities,
+dependency names, OS prerequisite bundles, blockers, and smoke tests, while the
+checked recipes prove the package format and repository flow against real
+artifacts.
 
-This is not a full ports tree yet. The first checked-in recipes are `lang/lua`,
-`archivers/zlib`, `security/ca-certificates`, `devel/pcre2`,
-`sysutils/tzdata`, and `www/nginx`, with validation, manifest generation,
-checksum-verified distfile fetching, `.swpkg` creation from clean staged roots,
-and signed static repository fixture generation.
+This is not a full ports tree. It is the contract that lets SwiftOS harden the
+target-side package manager before broad public package publishing exists.
 
-`make ports-lua-repo-fixture` cross-builds real AArch64 static Lua against the
-local newlib sysroot and packages the runtime interpreter.
-`make ports-zlib-repo-fixture` cross-builds static zlib, headers, pkgconf
-metadata, and the small `minigzip` smoke-test helper.
-`make ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA bundle
-as a data-only trust-store package. `make ports-pcre2-repo-fixture` cross-builds
-static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep`.
-`make ports-tzdata-repo-fixture` compiles portable IANA TZif zoneinfo files and
-packages the `/usr/share/zoneinfo` tree. `make ports-nginx-repo-fixture`
-cross-builds a minimal static HTTP-only nginx package.
-`make ports-seed-repo-fixture` publishes all six packages into one signed seed
-repository. `make ports-static-host-publish` copies that seed repository into a
-deployable static-host web root with
-`hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS`.
-Patches, QEMU smoke tests, and trusted public publishing workflows still belong
-to the planned `swift-os-ports` repository. The seed catalog keeps that work
-ordered and reviewable while the target-side package manager is still being
-hardened inside `swift-os`.
+## Checked Seed Packages
 
-Validate the catalog:
+| Package | Path | Current result |
+| --- | --- | --- |
+| Lua | `ports/lang/lua/Port.json` | Static AArch64 `lua` runtime package and signed repository fixture |
+| zlib | `ports/archivers/zlib/Port.json` | Static `libz.a`, headers, pkgconf metadata, and `minigzip` |
+| ca-certificates | `ports/security/ca-certificates/Port.json` | Data-only Mozilla CA bundle under packaged `/usr` paths |
+| PCRE2 | `ports/devel/pcre2/Port.json` | Static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep` |
+| tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
+| nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
+
+`make ports-seed-repo-fixture` publishes all six packages into one signed local
+repository. `make ports-static-host-publish` turns that seed into a deployable
+static-host web root containing `hosted-repo.json`, `repo-root.pub`, and
+`SHA256SUMS`.
+
+## Common Checks
 
 ```sh
 make ports-catalog-test
@@ -41,6 +36,9 @@ make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
 make ports-nginx-repo-fixture
+make ports-seed-repo-fixture
+make ports-static-host-publish
+make ports-hosted-url-verify-test
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
@@ -57,6 +55,8 @@ build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lu
 The Lua, zlib, pcre2, and nginx cross-build targets require
 `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib` if the generated
 sysroot is not present.
+
+## Catalog Rules
 
 Catalog rules enforced by `swport catalog validate`:
 
@@ -85,3 +85,12 @@ undeclared, or mode-mismatched files before it calls `swpkg create` and
 `swport recipe repo-fixture` builds on that same package path, creates a signed
 static repository with `pkgrepo`, writes a public key next to the repository
 root by default, and verifies the signed catalog.
+
+## Current Limits
+
+- Public production package channels are not published yet.
+- Target-side HTTPS repository transport is still roadmap work.
+- Generalized `swport build` and `swport test` commands are planned; current
+  orchestration lives in package-specific scripts and Makefile targets.
+- Broad upstream patch management and package maintainer workflows belong in the
+  future external `swift-os-ports` repository.

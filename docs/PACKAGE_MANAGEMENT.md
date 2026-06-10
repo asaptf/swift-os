@@ -913,28 +913,23 @@ Remaining repository work:
 - replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.
 
-### P6-P8: Ports Tree Bootstrap
+### Ports Tree Bootstrap
 
-Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 have started inside `swift-os`
-with a checked machine-readable seed catalog, `ports/catalog.json`, the
-host-side `build/swport catalog validate/list/inspect` commands, and checked
-`ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
-`ports/security/ca-certificates/Port.json`, and `ports/devel/pcre2/Port.json`
-recipe scaffolds. `swport recipe
-validate`, `swport recipe manifest`, checksum-verified `swport recipe fetch`,
-staged-root `swport recipe package`, and signed `swport recipe repo-fixture`
-exist for those checked paths. P6e/P6f prove the Lua cross-build and target
-install path. P7 adds zlib, P10 adds ca-certificates, P11 adds pcre2, P12 adds
-tzdata, and P13 adds nginx to `make package-ports-seed-repo-install-test`, which
-installs all six packages from one signed local seed repository in QEMU and runs
-Lua, `minigzip`, the CA bundle marker, `pcre2grep`, zoneinfo, and nginx
-version/marker smoke commands. P8 adds `make ports-static-host-publish` and
-`make package-static-host-repo-install-test`, which publish that seed into a
-static-hostable web root and prove installs from that hosted layout. This is
-deliberately not the full ports tree yet; it makes package priorities,
-dependency names, OS prerequisite bundles, blockers, and the
-recipe-to-repository contract reviewable before the separate `swift-os-ports`
-repository exists.
+Current state: `swift-os` carries a checked machine-readable seed catalog,
+`ports/catalog.json`, host-side `build/swport catalog validate/list/inspect`
+commands, and checked recipes for Lua, zlib, ca-certificates, pcre2, tzdata, and
+nginx. `swport recipe validate`, `swport recipe manifest`, checksum-verified
+`swport recipe fetch`, staged-root `swport recipe package`, and signed
+`swport recipe repo-fixture` exist for those checked paths. The seed targets
+cross-build real static AArch64 packages where applicable, package data-only
+artifacts for CA certificates and time zones, publish all six packages into one
+signed local seed repository, and install them by package name in QEMU. The
+static-host targets publish that seed into a deployable web root and prove
+installs from the hosted layout; the DNS hosted-repository smoke proves the same
+path through a resolved repository hostname. This is deliberately not the full
+ports tree yet; it makes package priorities, dependency names, OS prerequisite
+bundles, blockers, and the recipe-to-repository contract reviewable before the
+separate `swift-os-ports` repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
 - Keep the checked source recipe workflow valid with `make ports-recipe-test`.
