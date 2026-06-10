@@ -1640,7 +1640,7 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   service instance recovered the endpoint protocol.
 - **Executable checks.** Boot now runs the smoke and prints
   `C5a OK: restartable driver service recovered over IPC`; `make
-  c5-driver-service-test` runs the focused direct-boot acceptance.
+  c5-driver-service-test` runs the focused `-smp 4` direct-boot acceptance.
 - **Non-goals.** No real device handle, MMIO mapping, IRQ endpoint, DMA window, or
   virtio-input ownership is moved to userland yet. This is the C5 supervisor/IPC
   contract that the next device-handoff slice can attach hardware authority to.

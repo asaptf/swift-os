@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# driver_service_test.sh - C5a restartable driver-service boot smoke under SMP.
+
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+KERNEL="$ROOT/build/kernel.elf"
+DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
+DISK="$ROOT/build/base.img"
+QEMU="${QEMU:-qemu-system-aarch64}"
+SMP_CPU_COUNT="${SMP_CPUS:-4}"
+TIMEOUT="${TIMEOUT:-120}"
+
+[[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
+[[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
+
+LOG="$(mktemp -t swiftos-c5a-driver.XXXXXX)"
+PIDFILE="$(mktemp -t swiftos-c5a-driver-pid.XXXXXX)"
+QP=""
+stop_qemu() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
+}
+trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M
+  -nographic -no-reboot -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+
+"${qemu_args[@]}" >"$LOG" 2>&1 &
+QP=$!
+
+EXPECTS="${EXPECTS:-drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: generation 2 stopped
+C5a OK: restartable driver service recovered over IPC
+C5a driver service demo exited, code 0}"
+
+FORBIDS="${FORBIDS:-panic:
+drvinputd: missing endpoint args
+drvinputd: invalid generation
+drvinputd: ready send failed
+drvinputd: command receive failed
+drvinputd: event send failed
+drvinputd: unknown command
+drvsvc: endpoint_create failed
+drvsvc: fork failed
+drvsvc: exec drvinputd failed
+drvsvc: ready message mismatch
+drvsvc: ping send failed
+drvsvc: event message mismatch
+drvsvc: stop send failed
+drvsvc: service wait failed}"
+
+all_found() {
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    grep -qF "$line" "$LOG" 2>/dev/null || return 1
+  done <<<"$EXPECTS"
+  return 0
+}
+
+deadline=$((SECONDS + TIMEOUT))
+while (( SECONDS < deadline )); do
+  if all_found; then
+    stop_qemu
+    QP=""
+    clean="$(sed 's/\r//' "$LOG")"
+    ok=1
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
+    done <<<"$FORBIDS"
+    if [[ "$ok" -eq 1 ]]; then
+      echo "PASS: C5a restartable driver-service boot smoke passed under -smp $SMP_CPU_COUNT"
+      exit 0
+    fi
+    echo "--- serial tail ---" >&2
+    tail -120 "$LOG" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+
+stop_qemu
+QP=""
+echo "FAIL: timed out waiting for C5a driver-service markers under -smp $SMP_CPU_COUNT" >&2
+echo "--- serial tail ---" >&2
+sed 's/\r//' "$LOG" | tail -160 >&2
+exit 1
