@@ -68,6 +68,7 @@ let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
+let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
     fail("missing executable build/swport; build swport first")
@@ -89,6 +90,9 @@ guard FileManager.default.isReadableFile(atPath: caRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: pcre2Recipe.path) else {
     fail("missing ports/devel/pcre2/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
+    fail("missing ports/sysutils/tzdata/Port.json")
 }
 
 let temp = FileManager.default.temporaryDirectory
@@ -459,6 +463,97 @@ guard output(pcre2RepoInspect).contains("pcre2-10.47_1") else {
     fail("repo fixture catalog did not include pcre2 package: \(output(pcre2RepoInspect))")
 }
 
+let tzdataValidate = run(swport, ["recipe", "validate", "sysutils/tzdata"])
+requireSuccess(tzdataValidate, "validate tzdata recipe")
+guard output(tzdataValidate).contains("recipe: OK tzdata-2026b_1") else {
+    fail("validate output did not confirm tzdata recipe: \(output(tzdataValidate))")
+}
+
+let tzdataRoot = temp.appendingPathComponent("tzdata-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/share/zoneinfo/UTC", Data("TZif2 UTC fixture\n".utf8), 0o644),
+        ("usr/share/zoneinfo/Europe/Madrid", Data("TZif2 Madrid fixture\n".utf8), 0o644),
+        ("usr/share/zoneinfo/America/Vancouver", Data("TZif2 Vancouver fixture\n".utf8), 0o644),
+        ("usr/share/zoneinfo/zone1970.tab", Data("ES\t+4024-00341\tEurope/Madrid\nCA\t+4916-12307\tAmerica/Vancouver\n".utf8), 0o644),
+        ("usr/share/zoneinfo/swiftos-tzdata.version", Data("iana-tzdata 2026b 598 compiled-zone-files\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = tzdataRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy tzdata package root: \(error)")
+}
+
+let tzdataManifestURL = temp.appendingPathComponent("tzdata-manifest.json")
+let tzdataManifest = run(swport, [
+    "recipe", "manifest", "sysutils/tzdata",
+    "--root", tzdataRoot.path,
+    "--output", tzdataManifestURL.path,
+])
+requireSuccess(tzdataManifest, "generate tzdata manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: tzdataManifestURL)) as? [String: Any] else {
+        fail("generated tzdata manifest is not a JSON object")
+    }
+    requireString(object, "name", "tzdata")
+    requireString(object, "version", "2026b")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["tzdata", "zoneinfo"] else {
+        fail("tzdata manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/share/zoneinfo/America/Vancouver",
+        "/usr/share/zoneinfo/Europe/Madrid",
+        "/usr/share/zoneinfo/UTC",
+        "/usr/share/zoneinfo/swiftos-tzdata.version",
+        "/usr/share/zoneinfo/zone1970.tab",
+    ] else {
+        fail("unexpected tzdata manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated tzdata manifest: \(error)")
+}
+
+let tzdataPackageURL = temp.appendingPathComponent("tzdata.swpkg")
+let tzdataPackageResult = run(swport, [
+    "recipe", "package", "sysutils/tzdata",
+    "--root", tzdataRoot.path,
+    "--output", tzdataPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(tzdataPackageResult, "package dummy tzdata root")
+let tzdataVerify = run(swpkg, ["verify", tzdataPackageURL.path])
+requireSuccess(tzdataVerify, "verify dummy tzdata package")
+guard output(tzdataVerify).contains("OK: tzdata-2026b_1") else {
+    fail("swpkg verify did not identify tzdata package: \(output(tzdataVerify))")
+}
+
+let tzdataRepoRoot = temp.appendingPathComponent("tzdata-repo-root", isDirectory: true)
+let tzdataPubkey = temp.appendingPathComponent("tzdata-repo-root.pub")
+let tzdataRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "sysutils/tzdata",
+    "--root", tzdataRoot.path,
+    "--output", tzdataRepoRoot.path,
+    "--pubkey", tzdataPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(tzdataRepoFixture, "create tzdata repository fixture")
+let tzdataCatalog = tzdataRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let tzdataRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", tzdataCatalog.path, "--pubkey", tzdataPubkey.path])
+requireSuccess(tzdataRepoVerify, "verify tzdata repository fixture")
+let tzdataRepoInspect = run(pkgrepo, ["inspect", tzdataCatalog.path])
+requireSuccess(tzdataRepoInspect, "inspect tzdata repository fixture")
+guard output(tzdataRepoInspect).contains("tzdata-2026b_1") else {
+    fail("repo fixture catalog did not include tzdata package: \(output(tzdataRepoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
@@ -512,4 +607,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, and pcre2 recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, and tzdata recipe fixtures")

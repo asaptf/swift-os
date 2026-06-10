@@ -6,7 +6,9 @@ private let oWrOnly: Int32 = 1
 private let oCreat: Int32 = 0x40
 private let oTrunc: Int32 = 0x80
 private let swpkgHeaderSize = 128
-private let manifestMax = 16384
+// Data packages such as tzdata can have hundreds of tiny files; keep this
+// bounded, but large enough for real source-built package manifests.
+private let manifestMax = 262144
 private let signedHeaderSize = 64
 private let ioChunk = 4096
 private let httpHeaderMax = 8192

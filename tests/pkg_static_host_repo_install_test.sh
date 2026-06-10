@@ -123,7 +123,7 @@ if manifest.get("kind") != "swift-os-static-host-repository":
     raise SystemExit("wrong manifest kind")
 if manifest.get("catalog") != "aarch64/current/catalog.signed":
     raise SystemExit("wrong catalog path")
-if not {"lua", "zlib", "ca-certificates", "pcre2"}.issubset(names):
+if not {"lua", "zlib", "ca-certificates", "pcre2", "tzdata"}.issubset(names):
     raise SystemExit(f"missing package names: {names}")
 PY
 
@@ -162,6 +162,8 @@ send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
 await "pcre2-10.47_1" 60 || drive_fail "pkg search did not find pcre2"
+send_line "pkg search tzdata"
+await "tzdata-2026b_1" 60 || drive_fail "pkg search did not find tzdata"
 send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
@@ -184,6 +186,13 @@ await "pkg: installed pcre2-10.47_1" 120 || drive_fail "pcre2 package was not in
 send_line "echo nginx-lighttpd > /tmp/pcre2.txt"
 send_line "/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt"
 await "nginx-lighttpd" 60 || drive_fail "pcre2grep did not match the web-server pattern"
+send_line "pkg install tzdata"
+await "pkg: installed tzdata-2026b_1" 120 || drive_fail "tzdata package was not installed"
+send_line "cat /usr/share/zoneinfo/swiftos-tzdata.version"
+await "iana-tzdata 2026b 598 compiled-zone-files" 60 || drive_fail "tzdata marker output mismatch"
+send_line "cat /usr/share/zoneinfo/zone1970.tab"
+await "Europe/Madrid" 60 || drive_fail "zone1970.tab did not include Europe/Madrid"
+await "America/Vancouver" 60 || drive_fail "zone1970.tab did not include America/Vancouver"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -198,16 +207,19 @@ grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install o
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
+grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
 grep -qF "static-host-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
+grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
+grep -qF "America/Vancouver" <<<"$clean" || { echo "FAIL: zone1970 output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during static host repo install" >&2; ok=0; }
 grep -qF "GET /hosted-repo.json" "$HTTPLOG" || { echo "FAIL: hosted manifest request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, and pcre2 from the static-host published repository"
+  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, pcre2, and tzdata from the static-host published repository"
   exit 0
 fi
 

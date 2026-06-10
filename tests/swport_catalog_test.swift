@@ -73,8 +73,17 @@ guard listText.contains("tier2 nginx planned L www/nginx") else {
 guard listText.contains("tier0 ca-certificates packages S security/ca-certificates") else {
     fail("list output did not include packaged ca-certificates")
 }
+guard listText.contains("tier0 lua packages S lang/lua") else {
+    fail("list output did not include packaged lua")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
+}
+guard listText.contains("tier0 tzdata packages S sysutils/tzdata") else {
+    fail("list output did not include packaged tzdata")
+}
+guard listText.contains("tier0 zlib packages S archivers/zlib") else {
+    fail("list output did not include packaged zlib")
 }
 guard listText.contains("tier4 nodejs blocked XL lang/nodejs") else {
     fail("list output did not include blocked nodejs")
