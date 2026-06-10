@@ -212,6 +212,7 @@ Run the narrowest test that proves the path you changed.
 | Virtio-input discovery metadata | `make c5-device-metadata-test` |
 | Device authority envelope | `make c5-device-authority-test` |
 | Metadata-only device grant rights | `make c5-device-rights-test` |
+| C5 aggregate driver-service readiness | `make c5-test` |
 | Phase 1 roadmap/test alignment | `make phase1-roadmap-test` |
 | SMP readiness | `make s1-test`, `make s5-test`, or the active milestone target |
 
@@ -433,12 +434,14 @@ make c5-device-handle-test
 make c5-device-metadata-test
 make c5-device-authority-test
 make c5-device-rights-test
+make c5-test
 ```
 
 Use the active roadmap milestone to choose the exact target. `smp-release-contract`
 is the review-facing alias for `smp-release-guard`; `s0c-test` is the narrow
 state-audit target. For broad SMP readiness, `make s1-test` covers the S0/S1
 foundation gates and `make s5-test` is the aggregate S5 runtime readiness gate.
+For broad C5 driver-service/device-authority readiness, use `make c5-test`.
 
 ## Reading Failures
 

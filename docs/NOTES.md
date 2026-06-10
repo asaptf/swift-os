@@ -1766,6 +1766,21 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   boot smokes now require
   `C5f OK: device grant rights stayed metadata-only`.
 
+### C5 aggregate readiness gate (DONE, 2026-06-10)
+
+- **Scope.** Added `make c5-test` as the review-facing aggregate for C5
+  readiness. It names the existing C5a-C5f gates in order:
+  `c5-driver-service-test`, `c5-device-handle-test`,
+  `c5-device-discovery-test`, `c5-device-metadata-test`,
+  `c5-device-authority-test`, and `c5-device-rights-test`.
+- **Why.** C5 review previously required remembering which QEMU gates cover the
+  restartable driver-service path and which host/static guard covers
+  metadata-only grant rights. The aggregate keeps focused gates available but
+  gives broad reviews one command.
+- **Guard.** `tests/phase1_roadmap_test.swift` checks the Makefile target and
+  docs references so future C5 additions keep the aggregate readiness contract
+  visible.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

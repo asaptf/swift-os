@@ -277,7 +277,7 @@ make smp-test
 make s1-test
 make smp-cpu-utilization-test
 make s5-run-any-placement-test
-make c5-device-authority-test
+make c5-test
 ```
 
 Run focused package and ports fixture gates:

@@ -394,6 +394,18 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   endpoint, DMA window, or virtio-input queue ownership. It is the rights-side
   contract before the first real authority grant.
 
+### C5 aggregate readiness gate (DONE, 2026-06-10)
+
+- `make c5-test` is the review-facing aggregate for the C5 driver-service and
+  device-authority readiness slice. It names the existing C5a-C5f focused gates
+  in order: `c5-driver-service-test`, `c5-device-handle-test`,
+  `c5-device-discovery-test`, `c5-device-metadata-test`,
+  `c5-device-authority-test`, and `c5-device-rights-test`.
+- The aggregate preserves the narrow gates for targeted debugging while giving
+  broader reviews a single command that covers restartable supervision, opaque
+  device grants, discovery metadata, withheld hardware authority, and the
+  metadata-only rights contract.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
