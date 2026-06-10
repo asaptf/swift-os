@@ -2723,3 +2723,26 @@ rejection + verification markers plus the I4 checks.
 **Still future.** Real signatures (needs Ed25519), staging new generations at
 runtime (needs a writable model store — tmpfs or the persistent update store)
 and hot reload/drain, per-cell model servers (C6).
+
+### I6 — munmap drops file-VMA (demand-paging correctness) (DONE, 2026-06-09)
+
+**Bug.** `processMunmap` reclaims the mmap cursor when the bottom region is
+freed, so the next mmap reuses the same VA range — but a lazily-reserved file
+VMA (I2b) survived munmap. A new `mmap_file` landing on the recycled VA would
+demand-fill its pages from the OLD file's disk extent (the stale VMA matches
+first), and repeated `mmap_file`+`munmap` cycles leaked VMA slots until the
+8-slot table was exhausted (relevant to llmd-style reload loops; I5's bundle
+fallback already consumes a slot per rejected generation).
+
+**Fix.** `processMunmap` deactivates any file VMA overlapping the unmapped
+range. A partial munmap drops demand paging for the whole VMA (materialized
+pages stay mapped; untouched pages become fatal on access) — acceptable for the
+map-whole/unmap-whole pattern and documented at the code site until a VMA split
+is warranted.
+
+**Regression.** `/bin/mmapdemo` gains an I6 section: `/etc/motd` via
+`mmap_file` must match `read()`; after munmap, `/etc/hostname` mapped into the
+recycled VA must show hostname bytes (`I6-OK file munmap drops stale VMA`);
+then 12 map/unmap cycles prove slot recycling past the 8-slot table
+(`I6-OK file vma slots recycled`). `tests/mmap_test.sh` asserts both markers;
+`llm_run_test` and `llm_serve_test` re-validated on the patched kernel.

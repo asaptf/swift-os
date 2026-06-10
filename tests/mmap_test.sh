@@ -110,6 +110,11 @@ grep -qF "mmapdemo: WX-OK mprotect ->RWX rejected" <<<"$clean" \
   || { echo "FAIL: W^X did not reject mprotect ->RWX" >&2; ok=0; }
 grep -qF "mmapdemo: WX-OK mmap RWX rejected" <<<"$clean" \
   || { echo "FAIL: W^X did not reject mmap RWX" >&2; ok=0; }
+# I6 — munmap of a file-backed mapping deactivates its demand-page VMA.
+grep -qF "mmapdemo: I6-OK file munmap drops stale VMA" <<<"$clean" \
+  || { echo "FAIL: stale file VMA survived munmap (old content served)" >&2; ok=0; }
+grep -qF "mmapdemo: I6-OK file vma slots recycled" <<<"$clean" \
+  || { echo "FAIL: file VMA slots are not recycled by munmap" >&2; ok=0; }
 grep -qF "mmapdemo: ALL-OK" <<<"$clean" || { echo "FAIL: mmapdemo did not finish cleanly" >&2; ok=0; }
 # A W^X breach (a live RWX mapping) must never have been reported.
 grep -qF "W^X breach" <<<"$clean" && { echo "FAIL: a W^X breach was reported" >&2; ok=0; }
