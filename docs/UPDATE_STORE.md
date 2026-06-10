@@ -278,4 +278,3 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   `active` into the writable boot-state (so activate needs no pre-signed alternate).
 - A real new-kernel *payload* source (today both kernel slots are the same build).
 - Key rotation / revocation.
-- Key rotation / revocation.

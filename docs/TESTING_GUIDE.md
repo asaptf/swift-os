@@ -187,6 +187,12 @@ Run the narrowest test that proves the path you changed.
 | Package payload overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |
 | Local package install flow | `make package-local-install-test` |
+| Base-image A/B update store | `./tests/ab_stage_test.sh` |
+| Base-image A/B rollback | `./tests/ab_rollback_test.sh` |
+| Base-image A/B durability | `./tests/ab_flush_test.sh` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh` |
+| Kernel-image runtime staging | `./tests/uefi_kstage_test.sh` |
+| Kernel-image runtime activation | `./tests/uefi_kactivate_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
 | TCP echo | `./tests/tcp_echo_test.sh` |
 | TCP client connect | `./tests/tcp_connect_test.sh` |
@@ -324,6 +330,36 @@ path, the QEMU command or make target, the guest command output, and the serial
 log around package discovery and activation.
 
 Use [Package Guide](PACKAGE_GUIDE.md) for package workflows.
+
+## Update And Rollback Tests
+
+Update tests cover the checked base-image A/B store and UEFI ESP kernel-slot
+flows. They are operator-facing acceptance tests: they boot QEMU, drive the
+guest command path where needed, and assert stable serial evidence.
+
+Base-image A/B store:
+
+```sh
+./tests/ab_update_test.sh
+./tests/ab_stage_test.sh
+./tests/ab_activate_test.sh
+./tests/ab_confirm_test.sh
+./tests/ab_rollback_test.sh
+./tests/ab_flush_test.sh
+```
+
+Kernel-image A/B through the UEFI ESP:
+
+```sh
+./tests/uefi_kernel_ab_test.sh
+./tests/uefi_kstage_test.sh
+./tests/uefi_kactivate_test.sh
+```
+
+Keep the store image, payload image, UEFI disk image, serial log, and the exact
+guest update command transcript when one of these tests fails. Use
+[Update And Rollback Guide](UPDATE_GUIDE.md) for operator steps and
+[Update Store](UPDATE_STORE.md) for slot state and trust boundaries.
 
 ## AI And Model Tests
 
