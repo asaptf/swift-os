@@ -331,6 +331,45 @@ private func checkReadmeDocumentationFrontDoorCoverage() {
     }
 }
 
+private func checkExampleVerificationCoverage() {
+    let path = "docs/EXAMPLES.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var currentHeading: String?
+    var currentStart = 0
+    var currentHasVerification = false
+
+    func finishCurrent(at line: Int) {
+        guard let heading = currentHeading else { return }
+        if !currentHasVerification {
+            fail("\(path):\(currentStart): numbered example `\(heading)` is missing a verification block before line \(line)")
+            ok = false
+        }
+    }
+
+    for (index, line) in lines.enumerated() {
+        if line.range(of: #"^## [0-9]+\. "#, options: .regularExpression) != nil {
+            finishCurrent(at: index + 1)
+            currentHeading = line
+            currentStart = index + 1
+            currentHasVerification = false
+            continue
+        }
+        if currentHeading != nil &&
+            (line == "Verification:" ||
+             line == "Equivalent automated check:" ||
+             line == "Automated checks:") {
+            currentHasVerification = true
+        }
+    }
+    finishCurrent(at: lines.count + 1)
+}
+
 private func stagedBaseCommands() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -572,6 +611,7 @@ for file in markdownFiles() {
 checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkReadmeDocumentationFrontDoorCoverage()
+checkExampleVerificationCoverage()
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
 checkPortRecipeDocumentationCoverage()
@@ -581,4 +621,4 @@ if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, command coverage, host tool coverage, and port recipe coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, example verification coverage, command coverage, host tool coverage, and port recipe coverage are valid")
