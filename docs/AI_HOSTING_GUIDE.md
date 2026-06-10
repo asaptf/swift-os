@@ -34,6 +34,22 @@ also links the verified bundle parser in
 The current engine is a CPU TinyStories proof of application and AI hosting. It
 is not a general ONNX, GGUF, PyTorch, or GPU runtime.
 
+## Choose An AI Workflow
+
+Pick the smallest workflow that proves the question you are asking:
+
+| Need | Use this path | What it proves | Minimum proof |
+| --- | --- | --- | --- |
+| Verify local model files and the inference core | `/bin/llm` | The small fp32 TinyStories model and tokenizer can mmap, tokenize, generate, and return to the shell | `./tests/llm_run_test.sh` |
+| Verify HTTP serving | Default `/bin/llmd` | The Q8_0 serving model binds TCP 8080, answers `/completion`, and exposes `/health` plus `/metrics` | `./tests/llm_serve_test.sh` |
+| Verify signed immutable bundles | Default `/bin/llmd` with `/models/stories15M` | Ed25519 manifest verification, payload SHA-256 checks, corrupt-generation rejection, and fallback to the newest valid generation | `./tests/llm_serve_test.sh`, `build/llm_bundle_test` |
+| Experiment with raw model paths | `/bin/llmd /models/stories260K.bin /models/tok512.bin` | The server can load explicit model/tokenizer paths for development | Manual run plus serial startup markers |
+| Prepare a deployment candidate | AI hosting profile in [Deployment Guide](DEPLOYMENT_GUIDE.md) | Model artifacts, base image hash, health responses, metrics, and rollback evidence are captured together | Deployment evidence bundle plus focused AI tests |
+
+Use the verified bundle path for any handoff or release candidate. Raw model
+overrides are development tools and do not prove manifest signature or payload
+hash enforcement.
+
 ## Artifact Map
 
 | Artifact | Built by | Staged as | Used by |
