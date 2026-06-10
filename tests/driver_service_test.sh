@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# driver_service_test.sh - C5a restartable driver-service boot smoke under SMP.
+# driver_service_test.sh - C5 restartable driver-service boot smoke under SMP.
 
 set -u
 
@@ -14,8 +14,8 @@ TIMEOUT="${TIMEOUT:-120}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
 
-LOG="$(mktemp -t swiftos-c5a-driver.XXXXXX)"
-PIDFILE="$(mktemp -t swiftos-c5a-driver-pid.XXXXXX)"
+LOG="$(mktemp -t swiftos-c5-driver.XXXXXX)"
+PIDFILE="$(mktemp -t swiftos-c5-driver-pid.XXXXXX)"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -52,8 +52,14 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
 C5a driver service demo exited, code 0}"
 
 FORBIDS="${FORBIDS:-panic:
@@ -62,6 +68,11 @@ drvinputd: invalid generation
 drvinputd: ready send failed
 drvinputd: command receive failed
 drvinputd: event send failed
+drvinputd: device handle missing
+drvinputd: duplicate device grant
+drvinputd: device info failed
+drvinputd: device info mismatch
+drvinputd: device ack send failed
 drvinputd: unknown command
 drvsvc: endpoint_create failed
 drvsvc: fork failed
@@ -69,6 +80,15 @@ drvsvc: exec drvinputd failed
 drvsvc: ready message mismatch
 drvsvc: ping send failed
 drvsvc: event message mismatch
+drvsvc: device claim failed
+drvsvc: device info mismatch
+drvsvc: device dup unexpectedly succeeded
+drvsvc: device grant send failed
+drvsvc: moved device fd still valid
+drvsvc: device ack mismatch
+drvsvc: busy claim failed
+drvsvc: reclaim claim failed
+drvsvc: reclaim info mismatch
 drvsvc: stop send failed
 drvsvc: service wait failed}"
 
@@ -93,7 +113,7 @@ while (( SECONDS < deadline )); do
       grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
     done <<<"$FORBIDS"
     if [[ "$ok" -eq 1 ]]; then
-      echo "PASS: C5a restartable driver-service boot smoke passed under -smp $SMP_CPU_COUNT"
+      echo "PASS: C5 restartable driver-service/device-handle boot smoke passed under -smp $SMP_CPU_COUNT"
       exit 0
     fi
     echo "--- serial tail ---" >&2
@@ -105,7 +125,7 @@ done
 
 stop_qemu
 QP=""
-echo "FAIL: timed out waiting for C5a driver-service markers under -smp $SMP_CPU_COUNT" >&2
+echo "FAIL: timed out waiting for C5 driver-service markers under -smp $SMP_CPU_COUNT" >&2
 echo "--- serial tail ---" >&2
 sed 's/\r//' "$LOG" | tail -160 >&2
 exit 1
