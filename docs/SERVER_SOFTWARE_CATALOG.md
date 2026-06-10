@@ -13,20 +13,24 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b-P13 add checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx `Port.json` recipes with
-> recipe validation, manifest generation, checksum-verified source fetch,
+> P6b-P13 add checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx
+> `Port.json` recipes with recipe validation, manifest generation,
+> checksum-verified source fetch,
 > `.swpkg` creation from clean staged roots, signed local repository fixture
 > generation, real AArch64 static cross-builds where applicable, and a
 > six-package signed seed repository fixture. The
 > `package-lua-repo-install-test` installs and runs Lua from its signed
 > repository inside QEMU. The `package-ports-seed-repo-install-test` boots
 > SwiftOS with a default repository URL, runs `pkg update`, installs `lua`,
-> `zlib`, `ca-certificates`, `pcre2`, `tzdata`, and `nginx`, and runs the package smoke commands. `make ports-static-host-publish`
+> `zlib`, `ca-certificates`, `pcre2`, `tzdata`, and `nginx`, and runs the
+> package smoke commands. `make ports-static-host-publish`
 > now emits a static-hostable web root for that seed repository, and
 > `make package-static-host-repo-install-test` proves installs from that layout.
 > P9 adds host-side hosted URL verification and a QEMU smoke where `/bin/pkg`
-> installs Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a DNS-resolved HTTP repository URL. Public> production domains/channels, target-side HTTPS, remove, upgrade,
-> version-constraint solving, and rollback flows are still roadmap work.
+> installs Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a
+> DNS-resolved HTTP repository URL. Public production domains/channels,
+> target-side HTTPS, remove, upgrade, version-constraint solving, and rollback
+> flows are still roadmap work.
 
 Use this guide with:
 
@@ -54,7 +58,8 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` || Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
+| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |

@@ -116,9 +116,9 @@ What exists today, in the order it was built:
 - **Package and ports fixtures:** `.swpkg` packages, writable package-store
   images, signed static repository catalogs, and target-side `pkg install NAME`
   are covered by executable fixtures. The current ports path also cross-builds
-  static AArch64 Lua, zlib, and pcre2 on the host, packages the pinned
-  ca-certificates bundle as data, publishes all four into one signed seed
-  repository, emits a static-hostable repository root that can be served to
+  static AArch64 Lua, zlib, pcre2, and nginx on the host, packages the pinned
+  ca-certificates and tzdata bundles as data, publishes all six into one signed
+  seed repository, emits a static-hostable repository root that can be served to
   QEMU, and proves install from a DNS-resolved hosted-style repository URL.
 
 ## Philosophy

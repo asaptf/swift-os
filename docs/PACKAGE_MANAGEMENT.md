@@ -925,8 +925,10 @@ validate`, `swport recipe manifest`, checksum-verified `swport recipe fetch`,
 staged-root `swport recipe package`, and signed `swport recipe repo-fixture`
 exist for those checked paths. P6e/P6f prove the Lua cross-build and target
 install path. P7 adds zlib, P10 adds ca-certificates, P11 adds pcre2, P12 adds
-tzdata, and P13 adds nginx to `make package-ports-seed-repo-install-test`, which installs all six packagesfrom one signed local seed repository in QEMU and runs Lua, `minigzip`, the CA
-bundle marker, `pcre2grep`, zoneinfo, and nginx version/marker smoke commands. P8 adds `make ports-static-host-publish` and
+tzdata, and P13 adds nginx to `make package-ports-seed-repo-install-test`, which
+installs all six packages from one signed local seed repository in QEMU and runs
+Lua, `minigzip`, the CA bundle marker, `pcre2grep`, zoneinfo, and nginx
+version/marker smoke commands. P8 adds `make ports-static-host-publish` and
 `make package-static-host-repo-install-test`, which publish that seed into a
 static-hostable web root and prove installs from that hosted layout. This is
 deliberately not the full ports tree yet; it makes package priorities,
@@ -965,7 +967,9 @@ Good early candidates:
 Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
-- `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx  recipes and proves the generated manifest can feed `swport recipe package`,
+- `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates,
+  pcre2, tzdata, and nginx recipes and proves the generated manifest can feed
+  `swport recipe package`,
   `swpkg verify`, and a signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
   the runtime interpreter into a signed local repository fixture.
@@ -984,7 +988,9 @@ Acceptance:
   their package smoke paths inside QEMU.
 - `make ports-static-host-publish` creates a deployable static web root for the
   seed repository, and `make package-static-host-repo-install-test` installs
-  Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from that layout inside QEMU.- CI builds and publishes packages.
+  Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from that layout inside
+  QEMU.
+- CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 
 ### P7: Upgrade, History, and Garbage Collection

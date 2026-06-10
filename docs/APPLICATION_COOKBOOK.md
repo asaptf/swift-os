@@ -374,12 +374,15 @@ solving are not current behavior.
 
 ### Recipe: Build And Install Source Ports
 
-Lua, zlib, ca-certificates, pcre2, tzdata, and nginx are the current real port fixtures. Theyprove checksum-verified source fetch, static AArch64 cross-build or data-only
+Lua, zlib, ca-certificates, pcre2, tzdata, and nginx are the current real port
+fixtures. They prove checksum-verified source fetch, static AArch64 cross-build or data-only
 staging, `.swpkg` creation, signed local repository publication, and
 target-side install from a default repository URL. The Lua-only smoke remains
 useful for the interpreter path; the seed repository smoke installs Lua, zlib,
 ca-certificates, pcre2, tzdata, and nginx and runs the `minigzip` round trip, CA bundle
-marker, `pcre2grep` regex match, zoneinfo marker read, and nginx version/marker smoke in the guest. The static-host smoke servesthe same seed repository from a deployable web-root layout and repeats that
+marker, `pcre2grep` regex match, zoneinfo marker read, and nginx version/marker
+smoke in the guest. The static-host smoke serves the same seed repository from a
+deployable web-root layout and repeats that
 install path; the hosted URL smoke proves that `/bin/pkg` can install from a
 DNS-resolved HTTP repository hostname.
 
