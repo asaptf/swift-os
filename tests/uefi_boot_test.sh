@@ -119,6 +119,9 @@ check "UEFI: kernel staged, launching"        # ExitBootServices handoff
 # was booted from (only the real GPT disk has a GPT; the fat path has none).
 if [[ "$UEFI_BOOT" == "disk" ]]; then
     check "kernel-store: ESP partition found at LBA"
+    # U1g-4b: the kernel reads the signed kernel A/B manifest from FAT32 (default
+    # disk is active slot A).
+    check "kernel-store: ESP kernel A/B active slot A"
 fi
 check "Hello from Swift kernel"               # kernel entered via UEFI
 check "M9 OK: hardware discovered from device tree"  # DTB the loader passed

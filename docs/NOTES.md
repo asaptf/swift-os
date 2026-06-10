@@ -3231,3 +3231,32 @@ FAT32 write to stage a kernel image + a pre-signed manifest into the inactive
 slot; a `/bin/` activate flow + reboot. Plus the signed-selection split (per-image
 signatures + CRC'd writable boot-state) so attempt-count/rollback can be written
 without re-signing.
+
+### U1g-4b — kernel FAT32 reader: read the kernel A/B manifest from the ESP (DONE, 2026-06-10)
+
+**Scope.** With the ESP reachable (U1g-4a), the kernel now reads the loader's
+kernel A/B manifest off the FAT32 ESP — the read half of runtime staging, and the
+groundwork for the FAT32 writer (U1g-4c).
+
+- `kernel/fs/esp.swift`: a minimal read-only FAT32 in `Fat32Vol` + helpers —
+  `fatReadBPB` (BPB at the partition's first sector: bytes/sec must be 512,
+  sec/clus, reserved, #FATs, FATSz32, rootClus → firstDataSector), `fatClusterLBA`,
+  `fatNext` (FAT32 chain lookup), and `fatFindChild` (directory walk matching a
+  path component against the assembled **LFN** long name OR the reconstructed 8.3
+  short name, case-insensitively — so it finds "EFI" (8.3), "swift-os" (lowercase
+  8.3), and "kernel-boot" (LFN, short name "KERNEL~1") robustly).
+  `fatReadKernelManifest` walks `\EFI\swift-os\kernel-boot`, reads the manifest's
+  first sector, validates "SWOSKERN", and returns the active slot + generation.
+  `espProbe` now logs "kernel-store: ESP kernel A/B active slot A gen N (read from
+  FAT32)". All InlineArray/stack scratch — no heap on the boot path.
+
+**Acceptance.** `tests/uefi_boot_test.sh` (disk + SMP-4) now also asserts the
+kernel reads the manifest from FAT32 and reports active slot A — so the BPB,
+cluster chain, LFN directory walk, and manifest parse are all exercised end-to-end
+(the value must match what the loader independently read and booted). The 4-case
+`uefi_kernel_ab_test` is unaffected (the kernel read is log-only).
+
+**Still future (U1g-4c/d).** FAT32 *write* (overwrite the inactive slot's image in
+its cluster chain + write a pre-signed manifest), then a `/bin/` activate flow +
+reboot. The courier trust model (OS writes pre-signed artifacts) and the
+signed-selection split still apply.

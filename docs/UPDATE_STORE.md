@@ -249,10 +249,13 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   recognizes it by the "EFI PART" GPT magic, and `kernel/fs/esp.swift` parses the
   GPT to locate the ESP partition at boot. Trust model decided: runtime staging
   follows U1f's courier model (the OS writes pre-signed artifacts; it never signs).
+- **U1g-4b (done):** a minimal read-only FAT32 in `kernel/fs/esp.swift` (BPB,
+  cluster chains, LFN/8.3 directory walk) reads the signed `kernel-boot` manifest
+  off the ESP and reports the active slot — the read half of runtime staging.
 
 ## Not implemented yet
 
-- Runtime kernel staging continued (U1g-4b/c/d): FAT32 read/write from the kernel;
+- Runtime kernel staging continued (U1g-4c/d): FAT32 *write* from the kernel —
   stage a kernel image + a pre-signed manifest into the inactive slot; activate +
   reboot. Plus the signed-selection split (per-image signatures + CRC'd writable
   boot-state) for attempt-count/rollback without re-signing.
