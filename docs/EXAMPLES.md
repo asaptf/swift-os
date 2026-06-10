@@ -44,16 +44,16 @@ Verification:
 Guest:
 
 ```sh
-mkdir /tmp/demo
-echo first >/tmp/demo/log.txt
-echo second >>/tmp/demo/log.txt
-cat /tmp/demo/log.txt
-wc /tmp/demo/log.txt
-chmod 600 /tmp/demo/log.txt
-chown 2 /tmp/demo/log.txt
-ls -l /tmp/demo/log.txt
-rm /tmp/demo/log.txt
-rmdir /tmp/demo
+mkdir /tmp/work
+echo first >/tmp/work/log.txt
+echo second >>/tmp/work/log.txt
+cat /tmp/work/log.txt
+wc /tmp/work/log.txt
+chmod 600 /tmp/work/log.txt
+chown 2 /tmp/work/log.txt
+ls -l /tmp/work/log.txt
+rm /tmp/work/log.txt
+rmdir /tmp/work
 ```
 
 This exercises tmpfs creation, append redirection, readback, metadata changes,
@@ -417,7 +417,7 @@ make package-static-host-repo-install-test
 make package-static-host-dns-repo-install-test
 ```
 
-## 12. Run The Native Swift LLM Demo
+## 12. Run Local Swift LLM Inference
 
 Host:
 
@@ -504,7 +504,7 @@ Equivalent automated check:
 ./tests/llm_serve_test.sh
 ```
 
-## 14. Exercise The Swift REPL Demos
+## 14. Exercise The Swift REPL Tools
 
 Guest:
 
