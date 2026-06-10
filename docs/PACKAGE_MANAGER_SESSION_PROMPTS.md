@@ -140,18 +140,19 @@ Acceptance:
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGREPO_FORMAT.md.
-Start from the current P5a state: `tools/pkgrepo.swift` builds a signed static
+Start from the current P5b state: `tools/pkgrepo.swift` builds a signed static
 HTTP repository fixture, `/bin/pkg update URL/search/info/install NAME` works
-for `pkghello`, and `make package-repo-install-test` passes.
+for `pkghello`, and `make package-repo-install-test` covers expired catalogs,
+wrong-arch catalogs, package SHA-256 mismatch, and the positive install path.
 
 Harden package-management milestone P5 without jumping to the ports tree yet.
 Keep HTTP acceptable for transport integrity because catalogs are signed and
 packages are content-addressed.
 
 Focus:
-- enforce catalog expiration;
-- reject wrong arch/target/ABI/linkage package entries target-side;
-- add a negative QEMU or host test for package SHA-256 mismatch;
+- add dependency metadata validation and a tiny dependency resolver;
+- add a default repository config format without breaking explicit `pkg update URL`;
+- reduce large-package risk by designing the streaming package download/store path;
 - keep `pkg update URL`, `pkg search <text>`, `pkg info <name>`, and
   `pkg install <name>` working;
 - leave `pkg upgrade` deferred unless dependency/version metadata is ready.
@@ -165,7 +166,7 @@ Requirements:
 Acceptance:
 - `make test` passes;
 - `make package-repo-install-test` passes;
-- expiration, arch/ABI, and package hash verification failures are tested;
+- dependency/default-repo/streaming changes are covered by focused tests;
 - commit the milestone and stop for review.
 ```
 

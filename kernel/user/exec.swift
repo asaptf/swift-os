@@ -11,7 +11,7 @@
 // exec resolves, loads, and elfLoad-copies into the new address space before
 // the next), so a single buffer is safe; it is allocated lazily on first use.
 // It comes from the PMM (physically contiguous, identity-mapped) rather than the
-// tiny 256 KiB bump heap, since busybox is ~1.1 MiB.
+// small bump heap, since busybox is ~1.1 MiB.
 private var elfBuf: UInt = 0
 private let elfBufMax = 2 * 1024 * 1024 // 2 MiB comfortably covers busybox
 

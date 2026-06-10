@@ -402,14 +402,16 @@ Risks:
 Goal: install packages by name from a signed static HTTP repository. Integrity
 comes from signed metadata and content hashes; HTTPS is not required for P5.
 
-Current state: the P5a bootstrap path is implemented. `tools/pkgrepo.swift`
+Current state: the P5b bootstrap path is implemented. `tools/pkgrepo.swift`
 builds a signed static repository fixture, the base image ships
 `/etc/pkg/repo-root.pub`, and `/bin/pkg` can update/search/info/install from an
-explicit HTTP repository URL. See `docs/PKGREPO_FORMAT.md`.
+explicit HTTP repository URL. It rejects expired catalogs, incompatible
+arch/target/ABI/linkage entries, and downloaded packages whose SHA-256 does not
+match the signed catalog. See `docs/PKGREPO_FORMAT.md`.
 
 Required commands:
 
-- `pkg update <url>` (implemented for P5a; explicit URL keeps QEMU tests
+- `pkg update <url>` (implemented for P5b; explicit URL keeps QEMU tests
   deterministic)
 - `pkg search <text>`
 - `pkg info <name>`
@@ -447,7 +449,6 @@ Likely files/modules:
 - `tests/`
   - `tests/pkg_repo_install_test.sh`
   - `tests/pkgrepo_tool_test.swift`
-  - Remaining: expiration, wrong arch, and wrong package hash tests.
 
 Repository fixture shape:
 
@@ -463,11 +464,14 @@ Tests to add:
 - Host-side catalog tests:
   - valid catalog verifies (implemented);
   - tampered catalog fails (implemented);
-  - expired catalog fails (remaining);
-  - package hash mismatch fails (remaining).
+  - negative fixture generation for expired, wrong-arch, and bad-hash catalogs
+    is covered by `tests/pkgrepo_tool_test.swift`.
 - QEMU network test:
   - start a host static HTTP server from the fixture directory;
   - boot QEMU with user networking;
+  - reject an expired catalog;
+  - reject an incompatible arch catalog;
+  - reject a package whose downloaded SHA-256 differs from the signed catalog;
   - run `pkg update`;
   - run `pkg search pkghello`;
   - run `pkg install pkghello`;
@@ -480,8 +484,8 @@ Smallest acceptance criteria:
 - `pkg install pkghello` downloads the content-addressed `.swpkg`, verifies its
   hash, installs it through the P4 path, and executes `/usr/bin/pkghello`.
 - Signature tampering is tested host-side.
-- `make package-repo-install-test` covers the QEMU repository flow; `make test`
-  includes the host repository tool test.
+- `make package-repo-install-test` covers the positive and negative QEMU
+  repository flow; `make test` includes the host repository tool test.
 
 Risks:
 
@@ -491,7 +495,7 @@ Risks:
   use HTTP plus signatures for integrity, exactly as the design says.
 - Catalog parsing must stay bounded. Reject oversized catalogs in P5 rather
   than trying to support the future full public repository immediately.
-- P5a downloads packages into tmpfs before install. Downloads must become
+- P5b downloads packages into tmpfs before install. Downloads must become
   streaming store writes before large packages such as Node.js, Swift,
   PostgreSQL, or a JVM are realistic.
 - DNS is available, but the QEMU acceptance should use `10.0.2.2:<port>` first
