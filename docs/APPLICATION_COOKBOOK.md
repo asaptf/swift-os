@@ -326,7 +326,7 @@ The current checked-in fixtures cover five levels:
 | Package-store activation | A package-store image can activate a payload at boot | `make package-store-test` |
 | Guest local install | `/bin/pkg install FILE` installs into a writable package-store disk | `make package-local-install-test` |
 | Signed repository install | `/bin/pkg install NAME` resolves dependencies and verifies a signed catalog | `make package-repo-install-test` |
-| Real source-port repository install | `/bin/pkg install lua` and `pkg install zlib` install real upstream packages | `make package-ports-seed-repo-install-test` |
+| Real source-port repository install | `/bin/pkg install lua`, `pkg install zlib`, and `pkg install ca-certificates` install real upstream/data packages | `make package-ports-seed-repo-install-test` |
 
 The sample fixture builds `/usr/bin/pkghello`:
 
@@ -428,7 +428,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.

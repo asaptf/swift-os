@@ -121,6 +121,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make package-store-fixture` | Build and inspect the sample package-store image. |
 | `make package-overlay-test` | Run the package overlay acceptance test. |
 | `make package-store-test` | Run the package-store boot activation acceptance test. |
+| `make ports-ca-certificates-repo-fixture` | Build the data-only CA certificate package and signed local repository fixture. |
 | `make package-static-host-repo-install-test` | Run the hosted-layout package repository install test. |
 | `make ports-hosted-url-verify-test` | Verify the static package host root through an HTTP URL from the host. |
 | `make package-static-host-dns-repo-install-test` | Run target-side package install from a DNS-resolved hosted repository URL. |
