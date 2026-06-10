@@ -16,8 +16,8 @@ maintainers planning `swift-os-ports` recipes.
 > P6b/P6c/P6d/P6e add the first Lua `Port.json` recipe with recipe validation,
 > manifest generation, checksum-verified source fetch, `.swpkg` creation from a
 > clean staged root, signed local repository fixture generation, and real
-> AArch64 static `lua`/`luac` cross-builds through `make
-> ports-lua-repo-fixture`. Public hosted repositories, remove, upgrade,
+> AArch64 static Lua cross-builds through `make ports-lua-repo-fixture`, with
+> the runtime interpreter packaged first. Public hosted repositories, remove, upgrade,
 > version-constraint solving, and rollback flows are still roadmap work.
 
 Use this guide with:
@@ -47,7 +47,7 @@ paths are available in the current tree:
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
 | Lua recipe repository path | Validate the first source recipe and prove its staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
-| Lua binary repository fixture | Cross-build real static AArch64 `lua`/`luac` and publish them into a signed local repository fixture | `make ports-lua-repo-fixture` |
+| Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path is the explicit test-fixture form:

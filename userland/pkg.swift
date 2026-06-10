@@ -334,6 +334,54 @@ private func httpStatusOK(_ header: [UInt8]) -> Bool {
     return header[i + 1] == 0x32 && header[i + 2] == 0x30 && header[i + 3] == 0x30
 }
 
+private func asciiLower(_ b: UInt8) -> UInt8 {
+    if b >= 0x41 && b <= 0x5A { return b + 0x20 }
+    return b
+}
+
+private func httpContentLength(_ header: [UInt8], upTo end: Int) -> Int {
+    let name = staticBytes("content-length:")
+    var line = 0
+    while line < end {
+        var lineEnd = line
+        while lineEnd < end && header[lineEnd] != 0x0D && header[lineEnd] != 0x0A {
+            lineEnd += 1
+        }
+        if lineEnd - line >= name.count {
+            var matched = true
+            var i = 0
+            while i < name.count {
+                if asciiLower(header[line + i]) != name[i] {
+                    matched = false
+                    break
+                }
+                i += 1
+            }
+            if matched {
+                var pos = line + name.count
+                while pos < lineEnd && (header[pos] == 0x20 || header[pos] == 0x09) {
+                    pos += 1
+                }
+                var value = 0
+                var any = false
+                while pos < lineEnd && header[pos] >= 0x30 && header[pos] <= 0x39 {
+                    let digit = Int(header[pos] - 0x30)
+                    if value > (Int.max - digit) / 10 { return -1 }
+                    value = value * 10 + digit
+                    any = true
+                    pos += 1
+                }
+                return any ? value : -1
+            }
+        }
+        while lineEnd < end && (header[lineEnd] == 0x0D || header[lineEnd] == 0x0A) {
+            lineEnd += 1
+        }
+        line = lineEnd
+    }
+    return -1
+}
+
 private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
     guard let url = parseURL(urlText) else {
         put("pkg: bad URL\n")
@@ -371,6 +419,8 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
     var header: [UInt8] = []
     var sawHeader = false
     var ok = false
+    var expectedBody = -1
+    var bodyWritten = 0
     withUnsafeTemporaryAllocation(of: UInt8.self, capacity: ioChunk) { buf in
         let base = buf.baseAddress!
         while true {
@@ -395,32 +445,54 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
                         ok = false
                         break
                     }
+                    expectedBody = httpContentLength(header, upTo: split)
                     sawHeader = true
                     ok = true
                     let bodyStart = split + 4
                     if bodyStart < header.count {
-                        let bodyCount = header.count - bodyStart
-                        let wrote = header.withUnsafeBytes { raw in
-                            writeAll(outfd, raw.baseAddress!.advanced(by: bodyStart), bodyCount)
+                        var bodyCount = header.count - bodyStart
+                        if expectedBody >= 0 && bodyCount > expectedBody {
+                            bodyCount = expectedBody
                         }
-                        if !wrote {
-                            put("pkg: cache write failed\n")
-                            ok = false
-                            break
+                        if bodyCount > 0 {
+                            let wrote = header.withUnsafeBytes { raw in
+                                writeAll(outfd, raw.baseAddress!.advanced(by: bodyStart), bodyCount)
+                            }
+                            if !wrote {
+                                put("pkg: cache write failed\n")
+                                ok = false
+                                break
+                            }
+                            bodyWritten += bodyCount
                         }
                     }
+                    if expectedBody >= 0 && bodyWritten >= expectedBody { break }
                 }
             } else {
-                if !writeAll(outfd, UnsafeRawPointer(base), Int(r)) {
-                    put("pkg: cache write failed\n")
-                    ok = false
-                    break
+                var bodyCount = Int(r)
+                if expectedBody >= 0 {
+                    let remaining = expectedBody - bodyWritten
+                    if remaining <= 0 { break }
+                    if bodyCount > remaining { bodyCount = remaining }
                 }
+                if bodyCount > 0 {
+                    if !writeAll(outfd, UnsafeRawPointer(base), bodyCount) {
+                        put("pkg: cache write failed\n")
+                        ok = false
+                        break
+                    }
+                    bodyWritten += bodyCount
+                }
+                if expectedBody >= 0 && bodyWritten >= expectedBody { break }
             }
         }
     }
     _ = swiftos_close(outfd)
     _ = swiftos_close(sock)
+    if sawHeader && ok && expectedBody >= 0 && bodyWritten != expectedBody {
+        put("pkg: response truncated\n")
+        ok = false
+    }
     if !sawHeader || !ok {
         if !sawHeader { put("pkg: response header missing\n") }
         unlinkPath(outputPath)

@@ -904,8 +904,8 @@ checked machine-readable seed catalog, `ports/catalog.json`, the host-side
 staged-root `swport recipe package` exist for the Lua path. P6d also adds
 `swport recipe repo-fixture`, which creates and verifies a signed local static
 repository from the staged recipe package. P6e adds `make
-ports-lua-repo-fixture`, which cross-builds real AArch64 static `lua` and
-`luac`, packages them, and publishes a signed local repository fixture. This is
+ports-lua-repo-fixture`, which cross-builds real AArch64 static Lua, packages
+the runtime interpreter, and publishes a signed local repository fixture. This is
 deliberately not the full ports tree yet; it makes package priorities,
 dependency names, OS prerequisite bundles, blockers, and the
 recipe-to-repository contract reviewable before the separate `swift-os-ports`
@@ -937,8 +937,8 @@ Acceptance:
 - `make ports-recipe-test` validates the first Lua recipe and proves the
   generated manifest can feed `swport recipe package`, `swpkg verify`, and a
   signed local `pkgrepo` repository fixture.
-- `make ports-lua-repo-fixture` builds real static AArch64 `lua`/`luac`
-  binaries and publishes them into a signed local repository fixture.
+- `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
+  the runtime interpreter into a signed local repository fixture.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

@@ -40,8 +40,7 @@
     "provides": ["lua"],
     "conflicts": [],
     "files": [
-      { "from": "destdir/usr/bin/lua", "to": "/usr/bin/lua", "mode": "0755" },
-      { "from": "destdir/usr/bin/luac", "to": "/usr/bin/luac", "mode": "0755" }
+      { "from": "destdir/usr/bin/lua", "to": "/usr/bin/lua", "mode": "0755" }
     ],
     "capabilities": {
       "default": [],
@@ -54,5 +53,5 @@
       "/usr/bin/lua -e 'print(21 * 2)'"
     ]
   },
-  "notes": "First real source-port recipe. scripts/build-lua.sh cross-builds AArch64 static lua/luac against newlib, packages them, and emits a signed repository fixture. QEMU smoke tests are the next P6 slice."
+  "notes": "First real source-port recipe. scripts/build-lua.sh cross-builds AArch64 static Lua against newlib, packages the runtime interpreter, and emits a signed repository fixture. QEMU smoke tests install and run it from the repository."
 }

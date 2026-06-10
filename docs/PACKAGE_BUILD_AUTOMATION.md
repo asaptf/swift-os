@@ -323,8 +323,7 @@ command = ["make", "install", "INSTALL_TOP=${DESTDIR}/usr"]
 [package]
 depends = []
 paths = [
-  { from = "destdir/usr/bin/lua", to = "/usr/bin/lua", mode = "0755" },
-  { from = "destdir/usr/bin/luac", to = "/usr/bin/luac", mode = "0755" }
+  { from = "destdir/usr/bin/lua", to = "/usr/bin/lua", mode = "0755" }
 ]
 
 [test]

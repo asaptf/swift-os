@@ -28,6 +28,7 @@ AR="${LUA_AR:-aarch64-elf-ar}"
 RANLIB="${LUA_RANLIB:-aarch64-elf-ranlib}"
 READELF="${LUA_READELF:-aarch64-elf-readelf}"
 NM="${LUA_NM:-aarch64-elf-nm}"
+STRIP="${LUA_STRIP:-aarch64-elf-strip}"
 JOBS="${JOBS:-4}"
 
 fail() {
@@ -44,6 +45,7 @@ require_exe "$AR"
 require_exe "$RANLIB"
 require_exe "$READELF"
 require_exe "$NM"
+require_exe "$STRIP"
 require_exe make
 require_exe tar
 
@@ -81,12 +83,12 @@ for bin in lua luac; do
     "$READELF" -h "$SRC/src/$bin" | grep -q 'Machine:[[:space:]]*AArch64' ||
         fail "$bin is not an AArch64 ELF"
 done
+"$STRIP" "$SRC/src/lua" "$SRC/src/luac"
 
 rm -rf "$STAGE" "$PACKAGE" "$REPO_ROOT" "$REPO_PUB"
 mkdir -p "$STAGE/usr/bin"
 cp "$SRC/src/lua" "$STAGE/usr/bin/lua"
-cp "$SRC/src/luac" "$STAGE/usr/bin/luac"
-chmod 0755 "$STAGE/usr/bin/lua" "$STAGE/usr/bin/luac"
+chmod 0755 "$STAGE/usr/bin/lua"
 
 "$ROOT/build/swport" recipe package lang/lua \
     --root "$STAGE" \
