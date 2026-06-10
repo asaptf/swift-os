@@ -182,7 +182,7 @@ When adding public docs:
    bridge, documentation map, README front-door, example verification blocks and
    commands, API recipe source and verification references, complete API example
    verification, API verification map references, command-reference, host tool
-   reference, and port recipe reference integrity.
+   reference and quick-map references, and port recipe reference integrity.
 6. Run at least the relevant build or test target before committing.
 7. For operational docs, name the acceptance test that proves each workflow when
    such a test exists.

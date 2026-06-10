@@ -781,6 +781,77 @@ private func checkHostToolReferenceCoverage() {
     }
 }
 
+private func checkHostToolQuickMapReferences() {
+    let path = "docs/HOST_TOOL_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inQuickMap = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Quick Map" {
+            inQuickMap = true
+            continue
+        }
+        if inQuickMap && line.hasPrefix("## ") {
+            break
+        }
+        guard inQuickMap,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 5 else { continue }
+        let tool = cells[1]
+        let buildTarget = cells[2]
+        let verification = cells[cells.count - 2]
+        if tool == "Tool or target" {
+            continue
+        }
+
+        let toolRefs = codeSpans(in: tool)
+        if toolRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row has no tool reference")
+            ok = false
+        }
+        for ref in toolRefs where ref.hasPrefix("scripts/") {
+            checkDocumentedPath(ref, in: path, lineNumber: index + 1)
+        }
+
+        let buildRefs = codeSpans(in: buildTarget)
+        if buildRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row for `\(tool)` has no build target")
+            ok = false
+        }
+        for ref in buildRefs {
+            validateVerificationCommand(ref,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
+        }
+
+        let verificationRefs = codeSpans(in: verification)
+        if verificationRefs.isEmpty {
+            fail("\(path):\(index + 1): host tool quick-map row for `\(tool)` has no verification reference")
+            ok = false
+        }
+        for ref in verificationRefs {
+            validateApiVerificationReference(ref,
+                                             in: path,
+                                             lineNumber: index + 1,
+                                             makeTargets: makeTargets)
+        }
+    }
+}
+
 private func checkedPortRecipePaths() -> [String] {
     guard let categories = try? FileManager.default.contentsOfDirectory(atPath: "ports") else {
         fail("ports: could not list ports directory")
@@ -942,6 +1013,7 @@ checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
 checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
+checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
 checkSwiftBridgeCoverage()
 
