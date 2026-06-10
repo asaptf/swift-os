@@ -23,21 +23,21 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | Ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures | `make ports-recipe-test` |
-| Lua, zlib, pcre2, nginx, and sqlite cross-build repository fixtures | Static AArch64 Lua, zlib, pcre2, nginx, and sqlite cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture` |
+| Recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/archivers/bzip2/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures | `make ports-recipe-test` |
+| Lua, zlib, bzip2, pcre2, nginx, and sqlite cross-build repository fixtures | Static AArch64 Lua, zlib, bzip2, pcre2, nginx, and sqlite cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture` |
 | ca-certificates repository fixture | The pinned Mozilla CA bundle is packaged as data and published into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | tzdata repository fixture | IANA zoneinfo data is compiled with host `zic`, packaged as data, and published into a signed local repository fixture | `make ports-tzdata-repo-fixture` |
 | Lua repository install smoke | QEMU installs real Lua from the signed local repository fixture and runs `lua -v` plus a small expression | `make package-lua-repo-install-test` |
-| Ports seed repository fixture | Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite publish into one signed local repository; SwiftOS boots with a default repo URL and installs all seven with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
+| Ports seed repository fixture | Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite publish into one signed local repository; SwiftOS boots with a default repo URL and installs all eight with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | The ports seed repository is copied into a deployable web root with a sidecar manifest, public key, and SHA-256 manifest suitable for nginx, object storage, or GitHub Pages | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | Hosted URL verifier | A deployed static-host root can be fetched and checked from the host, including `hosted-repo.json`, `SHA256SUMS`, package hashes, and catalog signature | `make ports-hosted-url-verify`, `make ports-hosted-url-verify-test` |
-| DNS-resolved target repository URL | `/bin/pkg` accepts HTTP repository URLs with DNS hostnames and installs Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from a hosted-style URL in QEMU | `make package-static-host-dns-repo-install-test` |
+| DNS-resolved target repository URL | `/bin/pkg` accepts HTTP repository URLs with DNS hostnames and installs Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite from a hosted-style URL in QEMU | `make package-static-host-dns-repo-install-test` |
 | `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
 | Public production repository | External deployment remains planned; production hosting, channels, key ceremony, target-side HTTPS, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, signed static
-repository path, checked seven-package seed catalog, recipe repository fixtures,
+repository path, checked eight-package seed catalog, recipe repository fixtures,
 and static-host publish root. Until the separate `swift-os-ports` repository and
 public hosted channels exist, maintainers should use the local fixture commands
 in this repository.
@@ -81,6 +81,7 @@ make ports-recipe-test
 make ports-lua-repo-fixture
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-bzip2-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -114,6 +115,7 @@ Inspect the checked source recipes and generate `.swpkg` manifests:
 ```sh
 build/swport recipe validate lang/lua
 build/swport recipe validate archivers/zlib
+build/swport recipe validate archivers/bzip2
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
@@ -121,6 +123,7 @@ build/swport recipe validate www/nginx
 build/swport recipe validate databases/sqlite
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
+build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
@@ -136,6 +139,7 @@ Build the current real package fixtures:
 ```sh
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
+make ports-bzip2-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -145,6 +149,7 @@ make ports-seed-repo-fixture
 make ports-static-host-publish
 build/swpkg verify build/lua.swpkg
 build/swpkg verify build/zlib.swpkg
+build/swpkg verify build/bzip2.swpkg
 build/swpkg verify build/ca-certificates.swpkg
 build/swpkg verify build/pcre2.swpkg
 build/swpkg verify build/tzdata.swpkg
@@ -833,7 +838,7 @@ hash matches, then publish the new catalog. A catalog must never reference a
 blob that is not already reachable.
 
 The current bootstrap implementation can already produce a deployable static
-web root from the checked Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite ports:
+web root from the checked Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite ports:
 ```sh
 make ports-static-host-publish
 python3 -m http.server --directory build/ports-static-host-root 8000
@@ -860,7 +865,7 @@ make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://pkg.swift-os.org
 ```
 
 The local acceptance gates serve this publish root over HTTP and prove that
-SwiftOS can install Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from both numeric and DNS-resolved repository URLs:
+SwiftOS can install Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite from both numeric and DNS-resolved repository URLs:
 
 ```sh
 make package-static-host-repo-install-test

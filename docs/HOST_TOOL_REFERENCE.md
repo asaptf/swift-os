@@ -19,15 +19,16 @@ end-to-end package workflow, use
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
-| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and `databases/sqlite` recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and `databases/sqlite` recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
+| `scripts/build-bzip2.sh` | `make ports-bzip2-repo-fixture` | Cross-build static bzip2 CLI tools, `libbz2.a`, header, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-bzip2-repo-fixture` |
 | `scripts/build-ca-certificates.sh` | `make ports-ca-certificates-repo-fixture` | Package the pinned Mozilla CA bundle and publish a signed local repository fixture. | `make ports-ca-certificates-repo-fixture` |
 | `scripts/build-pcre2.sh` | `make ports-pcre2-repo-fixture` | Cross-build static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep`, then publish a signed local repository fixture. | `make ports-pcre2-repo-fixture` |
 | `scripts/build-tzdata.sh` | `make ports-tzdata-repo-fixture` | Compile IANA time zone data with host `zic`, package `/usr/share/zoneinfo`, and publish a signed local repository fixture. | `make ports-tzdata-repo-fixture` |
 | `scripts/build-nginx.sh` | `make ports-nginx-repo-fixture` | Cross-build minimal static HTTP-only nginx, package it, and publish a signed local repository fixture. | `make ports-nginx-repo-fixture` |
 | `scripts/build-sqlite.sh` | `make ports-sqlite-repo-fixture` | Cross-build static SQLite, package `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-sqlite-repo-fixture` |
-| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
+| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
@@ -139,8 +140,8 @@ inside QEMU.
 ## Ports And Recipe Tool
 
 `swport` implements the checked ports catalog and recipe subcommands for the
-current seven-package seed: Lua, zlib, ca-certificates, pcre2, tzdata, nginx,
-and sqlite.
+current eight-package seed: Lua, zlib, bzip2, ca-certificates, pcre2, tzdata,
+nginx, and sqlite.
 The tool validates catalog metadata, validates recipes, emits `.swpkg`
 manifests, verifies source checksums, packages clean staged roots, and publishes
 signed local repository fixtures through `swpkg` and `pkgrepo`. The Makefile
@@ -176,6 +177,7 @@ build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
 build/swport recipe validate databases/sqlite
+build/swport recipe validate archivers/bzip2
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
@@ -183,6 +185,7 @@ build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
@@ -193,6 +196,7 @@ make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
 make ports-nginx-repo-fixture
 make ports-sqlite-repo-fixture
+make ports-bzip2-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-lua-repo-install-test
@@ -220,7 +224,8 @@ Use `make ports-catalog-test` before changing `ports/catalog.json`, and
 handling. Use the package-specific fixture targets (`make ports-lua-repo-fixture`,
 `make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`,
 `make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`,
-`make ports-nginx-repo-fixture`, and `make ports-sqlite-repo-fixture`) plus
+`make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture`, and
+`make ports-bzip2-repo-fixture`) plus
 `make package-ports-seed-repo-install-test` before changing the checked port
 packaging path. Use `make ports-static-host-publish` and
 `make package-static-host-repo-install-test` before changing the static

@@ -66,6 +66,7 @@ let swpkg = repo.appendingPathComponent("build/swpkg")
 let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
+let bzip2Recipe = repo.appendingPathComponent("ports/archivers/bzip2/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
@@ -73,6 +74,9 @@ let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
 let sqliteRecipe = repo.appendingPathComponent("ports/databases/sqlite/Port.json")
 guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
     fail("missing ports/sysutils/tzdata/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: bzip2Recipe.path) else {
+    fail("missing ports/archivers/bzip2/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -271,6 +275,99 @@ let zlibRepoInspect = run(pkgrepo, ["inspect", zlibCatalog.path])
 requireSuccess(zlibRepoInspect, "inspect zlib repository fixture")
 guard output(zlibRepoInspect).contains("zlib-1.3.1_1") else {
     fail("repo fixture catalog did not include zlib package: \(output(zlibRepoInspect))")
+}
+
+let bzip2Validate = run(swport, ["recipe", "validate", "archivers/bzip2"])
+requireSuccess(bzip2Validate, "validate bzip2 recipe")
+guard output(bzip2Validate).contains("recipe: OK bzip2-1.0.8_1") else {
+    fail("validate output did not confirm bzip2 recipe: \(output(bzip2Validate))")
+}
+
+let bzip2ManifestURL = temp.appendingPathComponent("bzip2-manifest.json")
+let bzip2Manifest = run(swport, ["recipe", "manifest", "archivers/bzip2", "--output", bzip2ManifestURL.path])
+requireSuccess(bzip2Manifest, "generate bzip2 manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: bzip2ManifestURL)) as? [String: Any] else {
+        fail("generated bzip2 manifest is not a JSON object")
+    }
+    requireString(object, "name", "bzip2")
+    requireString(object, "version", "1.0.8")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["bzip2", "bunzip2", "bzcat", "libbz2"] else {
+        fail("bzip2 manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/bzip2",
+        "/usr/bin/bunzip2",
+        "/usr/bin/bzcat",
+        "/usr/bin/bzip2recover",
+        "/usr/include/bzlib.h",
+        "/usr/lib/libbz2.a",
+        "/usr/lib/pkgconfig/bzip2.pc",
+        "/usr/share/bzip2/swiftos-bzip2.version",
+    ] else {
+        fail("unexpected bzip2 manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated bzip2 manifest: \(error)")
+}
+
+let bzip2Root = temp.appendingPathComponent("bzip2-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/bzip2", Data("#!/bin/sh\necho bzip2\n".utf8), 0o755),
+        ("usr/bin/bunzip2", Data("#!/bin/sh\necho bunzip2\n".utf8), 0o755),
+        ("usr/bin/bzcat", Data("#!/bin/sh\necho bzcat\n".utf8), 0o755),
+        ("usr/bin/bzip2recover", Data("#!/bin/sh\necho bzip2recover\n".utf8), 0o755),
+        ("usr/include/bzlib.h", Data("/* bzlib */\n".utf8), 0o644),
+        ("usr/lib/libbz2.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/bzip2.pc", Data("Name: bzip2\nVersion: 1.0.8\n".utf8), 0o644),
+        ("usr/share/bzip2/swiftos-bzip2.version", Data("bzip2 1.0.8 swift-os static-tools\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = bzip2Root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy bzip2 package root: \(error)")
+}
+
+let bzip2PackageURL = temp.appendingPathComponent("bzip2.swpkg")
+let bzip2PackageResult = run(swport, [
+    "recipe", "package", "archivers/bzip2",
+    "--root", bzip2Root.path,
+    "--output", bzip2PackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(bzip2PackageResult, "package dummy bzip2 root")
+let bzip2Verify = run(swpkg, ["verify", bzip2PackageURL.path])
+requireSuccess(bzip2Verify, "verify dummy bzip2 package")
+guard output(bzip2Verify).contains("OK: bzip2-1.0.8_1") else {
+    fail("swpkg verify did not identify bzip2 package: \(output(bzip2Verify))")
+}
+
+let bzip2RepoRoot = temp.appendingPathComponent("bzip2-repo-root", isDirectory: true)
+let bzip2Pubkey = temp.appendingPathComponent("bzip2-repo-root.pub")
+let bzip2RepoFixture = run(swport, [
+    "recipe", "repo-fixture", "archivers/bzip2",
+    "--root", bzip2Root.path,
+    "--output", bzip2RepoRoot.path,
+    "--pubkey", bzip2Pubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(bzip2RepoFixture, "create bzip2 repository fixture")
+let bzip2Catalog = bzip2RepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let bzip2RepoVerify = run(pkgrepo, ["verify", "--catalog-signed", bzip2Catalog.path, "--pubkey", bzip2Pubkey.path])
+requireSuccess(bzip2RepoVerify, "verify bzip2 repository fixture")
+let bzip2RepoInspect = run(pkgrepo, ["inspect", bzip2Catalog.path])
+requireSuccess(bzip2RepoInspect, "inspect bzip2 repository fixture")
+guard output(bzip2RepoInspect).contains("bzip2-1.0.8_1") else {
+    fail("repo fixture catalog did not include bzip2 package: \(output(bzip2RepoInspect))")
 }
 
 let caValidate = run(swport, ["recipe", "validate", "security/ca-certificates"])
@@ -595,4 +692,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")

@@ -83,14 +83,14 @@
       "portPath": "archivers/bzip2",
       "tier": 0,
       "category": "compression",
-      "status": "candidate",
+      "status": "packages",
       "difficulty": "S",
-      "upstream": "Sourceware bzip2 or maintained distribution mirror",
+      "upstream": "Sourceware bzip2",
       "summary": "Legacy archive support required by many upstream distfiles.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix"],
-      "smokeTest": "bzip2 -c fixture > fixture.bz2 && bzip2 -dc fixture.bz2",
-      "notes": "Small static build and useful for later libarchive coverage."
+      "smokeTest": "install from the seed repository and pipe a known string through bzip2 -c | bzip2 -dc in QEMU",
+      "notes": "Packaged as static bzip2/bunzip2/bzcat/bzip2recover tools, libbz2.a, bzlib.h, pkgconf metadata, and a version marker. Useful for later libarchive coverage."
     },
     {
       "name": "xz",

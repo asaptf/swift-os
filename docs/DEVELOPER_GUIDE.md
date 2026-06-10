@@ -43,7 +43,7 @@ Choose the delivery path before wiring the build:
 | Base image `/bin` | The command is part of the default OS image | `make build base-image` plus a QEMU command test |
 | Local `.swpkg` install | The command is optional but should install inside the guest from a package file | `make package-local-install-test` |
 | Signed repository fixture | The command should be resolved by package name through `/bin/pkg` | `make package-repo-install-test` |
-| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make ports-ca-certificates-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
+| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make ports-bzip2-repo-fixture`; `make ports-ca-certificates-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 
 Packages install under `/usr` today. Keep boot-critical tools in the immutable
 base image, and use package workflows for optional commands and maintainer-side
