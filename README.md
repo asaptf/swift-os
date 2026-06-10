@@ -150,6 +150,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   SwiftOS services such as `httpd`, `llmd`, `tcpecho`, and `udpecho`.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
+- [Performance And Sizing Guide](docs/PERFORMANCE_GUIDE.md): measure resource
+  usage, throughput guards, service metrics, and current sizing limits.
 - [Observability Guide](docs/OBSERVABILITY_GUIDE.md): read boot health,
   structured log markers, process snapshots, service metrics, and panic
   evidence.

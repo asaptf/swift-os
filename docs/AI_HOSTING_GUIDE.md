@@ -10,6 +10,8 @@ Use it with:
 - [Operations Guide](OPERATIONS_GUIDE.md) for QEMU boot profiles and evidence.
 - [Command Reference](COMMAND_REFERENCE.md) for exact `llm` and `llmd` syntax.
 - [API Reference](API_REFERENCE.md) for file-backed `mmap`, sockets, and `poll`.
+- [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for interpreting QEMU
+  inference metrics and sizing evidence.
 - [Support Guide](SUPPORT_GUIDE.md) for failure reports and support bundles.
 
 ## What Exists Today

@@ -15,6 +15,8 @@ Use this guide with:
 - [Installation Guide](INSTALLATION_GUIDE.md) for direct, UEFI, graphical, and
   VirtualBox boot profiles.
 - [Operations Guide](OPERATIONS_GUIDE.md) for runbooks and operational evidence.
+- [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for throughput guards,
+  service metrics, and sizing evidence.
 - [Support Guide](SUPPORT_GUIDE.md) for collecting logs and failure reports.
 - [Developer Guide](DEVELOPER_GUIDE.md) for building user programs.
 - [Porting Guide](PORTING_GUIDE.md) for validation expectations when bringing

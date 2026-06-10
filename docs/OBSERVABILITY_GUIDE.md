@@ -9,6 +9,8 @@ Use it with:
 - [Operations Guide](OPERATIONS_GUIDE.md) for boot and test profiles.
 - [Service Guide](SERVICE_GUIDE.md) for service readiness markers.
 - [AI Hosting Guide](AI_HOSTING_GUIDE.md) for `/bin/llmd` health and metrics.
+- [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for resource,
+  throughput, sizing, and performance-reporting guidance.
 - [Support Guide](SUPPORT_GUIDE.md) for report templates and handoff bundles.
 - [Logging Design](LOGGING.md) for the kernel logging architecture and roadmap.
 

@@ -26,6 +26,7 @@ format details.
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
 | Run, observe, test, and design SwiftOS services | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
+| Measure resource usage, throughput guards, service metrics, and sizing limits | [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) |
 | Read boot health, service metrics, process snapshots, and log evidence | [Observability Guide](OBSERVABILITY_GUIDE.md) |
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
