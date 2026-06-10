@@ -204,37 +204,40 @@ Risks:
 Goal: add a narrow persistent package store with activation generations. This
 is the storage and activation substrate for P4, not the final user-facing CLI.
 
-Current state: P3a is implemented. The kernel can discover one `SWPKGST1`
-package-store disk, scan payload/activation/active-pointer records, and mount
-payloads from the active generation at boot. `tools/pkgstore.swift` can create a
-preseeded store image from `.swpkg` artifacts, and
-`tests/pkg_store_boot_test.sh` boots that store and executes `/usr/bin/pkghello`.
-The remaining P3 work is target-side append/write support, active-generation
-updates from EL0, rollback, and garbage collection.
+Current state: P3a and the narrow P3b local-install path are implemented. The
+kernel can discover one `SWPKGST1` package-store disk, scan
+payload/activation/active-pointer records, and mount payloads from the active
+generation at boot. `tools/pkgstore.swift` can create a preseeded store image
+from `.swpkg` artifacts, initialize an empty writable store image, and inspect
+records. `/bin/pkg install FILE` can install the test `pkghello.swpkg` from the
+base image into a writable package store, switch the active generation, and
+live-mount `/usr/bin/pkghello`. Remaining P3/P4 work is rollback, remove,
+history, garbage collection, and broadening the package CLI beyond the first
+local install/list commands.
 
 Likely files/modules:
 
 - `kernel/drivers/virtio_blk.swift`
-  - Add write support for a selected writable package-store block device.
+  - Write support for the selected writable package-store block device exists.
+  - Each discovered virtio-blk device has private queue state so base-image
+    reads and package-store writes can interleave without resetting devices.
   - Keep base/package payload disks read-only by policy.
   - Expose device identity and capability flags: read-only image vs writable
     store.
-- New kernel package-store module, likely `kernel/pkg/store.swift`
+- `kernel/pkg/store.swift`
   - Parse a minimal store superblock.
-  - Append records for package blobs, payload images, catalogs, and activation
-    manifests.
-  - Track active generation atomically.
+  - Append records for verified local package payloads, activations, and active
+    pointers.
+  - Track active generation.
   - Implement rollback by selecting a previous activation.
 - `kernel/vfs/vfs.swift`
   - Load active activation manifests at boot.
   - Mount payload images listed by the active generation.
-  - Support live remount if it can be done cleanly; otherwise report
-    reboot-required activation through P4.
+  - Live-mount the newly active package-store payload after local install.
 - `kernel/syscall/syscall.swift`
-  - Add a small package-store syscall surface only if target userland must drive
-    store mutation before P4.
-  - Keep syscall records coarse: write verified blob, activate generation,
-    query installed packages/history.
+  - Coarse package-store syscalls currently cover install and active package
+    listing.
+  - Add rollback/history/remove syscalls before exposing those CLI commands.
 - `userland/lib/syscall.h`
   - Mirror any new syscall numbers.
 - `userland/lib/swift_user.h` and `userland/lib/swift_user.c`
@@ -248,28 +251,28 @@ Likely files/modules:
   - Add QEMU flags for a writable package-store disk in package tests without
     perturbing every existing test until the store is stable.
 - `tests/`
-  - Add `tests/pkg_store_test.sh`.
+  - `tests/pkg_store_boot_test.sh` covers boot activation from a preseeded
+    store.
+  - `tests/pkg_local_install_test.sh` covers `/bin/pkg install FILE`, live
+    activation, `pkg list`, and execution of `/usr/bin/pkghello`.
 
 Tests to add:
 
-- Host test for package-store image creation, record checksums, and active
-  generation selection.
-- QEMU test with a preseeded store:
-  - boot generation N containing `pkghello`;
-  - run `/usr/bin/pkghello`;
-  - reboot or activate generation N+1 without `pkghello`;
-  - prove `/usr/bin/pkghello` is gone;
-  - roll back to N and prove it returns.
-- If write support lands in P3, add a tiny target-side test helper that requests
-  store mutation without implementing the full `pkg` UX.
+- Host test for package-store image initialization, creation, record checksums,
+  and active generation selection is wired through `tests/pkgstore_tool_test.swift`.
+- QEMU tests already cover boot generation N containing `pkghello` and local
+  install into an empty writable store.
+- Remaining tests should cover remove generation, boot persistence after local
+  install, rollback to a previous generation, and garbage collection safety.
 
 Smallest acceptance criteria:
 
-- A package-store disk survives a QEMU reboot.
-- Active generation selection is atomic under the chosen block format.
 - Boot activation mounts package payloads from the active generation.
-- Rollback restores a previous package namespace.
+- Local `/bin/pkg install FILE` writes a package payload into a writable store
+  and live-mounts it.
 - Existing base image and `/tmp` tests still pass.
+- Next acceptance: a package-store disk survives a QEMU reboot after target-side
+  install, and rollback restores a previous package namespace.
 
 Risks:
 
@@ -289,15 +292,21 @@ Goal: ship a target-side package manager in the base image that installs local
 `.swpkg` files into the package store and activates them. No network repository
 catalogs yet.
 
+Current state: the smallest local subset is implemented: `pkg install FILE` and
+`pkg list`. It uses a tiny target manifest scanner for canonical P1 JSON and
+delegates hash verification/store append/live activation to the kernel. P4
+proper should add the remaining local commands, sharper exit codes, and negative
+fixtures.
+
 Required commands:
 
 - `pkg install ./name.swpkg`
 - `pkg list`
-- `pkg info <name>`
-- `pkg files <name>`
-- `pkg remove <name>`
-- `pkg history`
-- `pkg rollback [generation]`
+- `pkg info <name>` (remaining)
+- `pkg files <name>` (remaining)
+- `pkg remove <name>` (remaining)
+- `pkg history` (remaining)
+- `pkg rollback [generation]` (remaining)
 
 Likely files/modules:
 
@@ -371,8 +380,9 @@ Smallest acceptance criteria:
 
 - `/bin/pkg` is present in the base image.
 - Local install of `pkghello.swpkg` activates `/usr/bin/pkghello`.
-- `pkg remove pkghello` creates a new active generation without it.
-- `pkg rollback` restores the previous generation.
+- `pkg list` reports the installed package.
+- Next acceptance: `pkg remove pkghello` creates a new active generation without
+  it, and `pkg rollback` restores the previous generation.
 - `make test` includes the local package flow.
 
 Risks:
@@ -493,8 +503,9 @@ Risks:
 
 ## Top Risks Across P1-P5
 
-1. Multi-image storage is the first real architectural blocker. The current
-   virtio-blk and VFS paths assume one selected `SWOSBASE` disk.
+1. Multi-image storage remains a central architectural risk. P3b gives
+   virtio-blk per-device queue state and package-store writes, but larger
+   packages will stress streaming and VFS overlay limits.
 2. Generic executable loading from VFS is required for packages. The current
    path whitelist will block `/usr/bin/*`.
 3. Persistent writes must stay narrower than a filesystem. P3 should implement a

@@ -66,6 +66,8 @@
 #define SYS_NANOSLEEP     57
 #define SYS_MMAP_FILE     59
 #define SYS_SPAWN_HANDLES 58
+#define SYS_PKG_INSTALL   60
+#define SYS_PKG_INFO      61
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -263,6 +265,14 @@ static inline int security_info(struct security_info *info) {
 // negative on error (e.g. -1 EPERM). The new context survives execve.
 static inline int login(unsigned int principal, unsigned int session, unsigned long caps) {
     return (int)__syscall3(SYS_LOGIN, (long)principal, (long)session, (long)caps);
+}
+
+static inline int pkg_install(int fd, const char *name, const char *version_revision) {
+    return (int)__syscall3(SYS_PKG_INSTALL, fd, (long)name, (long)version_revision);
+}
+
+static inline int pkg_info(int index, char *buf, size_t cap) {
+    return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

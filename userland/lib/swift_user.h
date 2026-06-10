@@ -55,6 +55,8 @@ int  swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
 int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
+int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
 int  swiftos_exec_shell(const char *path);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.

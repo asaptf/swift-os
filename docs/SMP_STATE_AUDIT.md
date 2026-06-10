@@ -22,7 +22,7 @@ manifest entries left behind after globals move or disappear.
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work wires shootdowns to real address-space active masks. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints/package store | Shared fixed tables; C4 work may change them. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Do not change in S0c. Later protect table mutation, handle refcount paths, and target-side package-store append/activation before secondary CPUs can run package management or VFS mutation. |
-| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
+| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. | Protect interrupt/poll paths and virtio queue selection before real concurrent drivers; longer term move at least one driver toward a service boundary. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
 ## Machine-Checked Manifest
@@ -54,8 +54,14 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/virtio_blk.swift:blkCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDataBase`
 - `kernel/drivers/virtio_blk.swift:blkDeviceCapacity`
+- `kernel/drivers/virtio_blk.swift:blkDeviceAvailIdx`
 - `kernel/drivers/virtio_blk.swift:blkDeviceCount`
+- `kernel/drivers/virtio_blk.swift:blkDeviceDataBase`
+- `kernel/drivers/virtio_blk.swift:blkDeviceLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkDeviceMmio`
+- `kernel/drivers/virtio_blk.swift:blkDeviceQn`
+- `kernel/drivers/virtio_blk.swift:blkDeviceReady`
+- `kernel/drivers/virtio_blk.swift:blkDeviceRingBase`
 - `kernel/drivers/virtio_blk.swift:blkLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkMmio`
 - `kernel/drivers/virtio_blk.swift:blkQn`
@@ -142,6 +148,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/pkg/store.swift:pkgActiveGeneration`
 - `kernel/pkg/store.swift:pkgActivePayloadCountValue`
 - `kernel/pkg/store.swift:pkgActivePayloadIndex`
+- `kernel/pkg/store.swift:pkgMaxGeneration`
+- `kernel/pkg/store.swift:pkgNextRecordOffset`
 - `kernel/pkg/store.swift:pkgPayloads`
 - `kernel/runtime/heap.c:__stack_chk_guard`
 - `kernel/runtime/heap.c:heap_cursor`

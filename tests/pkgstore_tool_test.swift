@@ -70,6 +70,39 @@ defer { try? FileManager.default.removeItem(at: temp) }
 
 let storeA = temp.appendingPathComponent("pkgstore-a.img")
 let storeB = temp.appendingPathComponent("pkgstore-b.img")
+let emptyStore = temp.appendingPathComponent("pkgstore-empty.img")
+
+requireSuccess(run(tool, [
+    "init",
+    "--output", emptyStore.path,
+    "--size", "1048576",
+]), "init empty store")
+
+guard let emptyData = try? Data(contentsOf: emptyStore) else {
+    fail("could not read empty store image")
+}
+guard emptyData.count == 1_048_576 else {
+    fail("empty pkgstore image size is not the requested size")
+}
+guard emptyData.count % 512 == 0 else {
+    fail("empty pkgstore image is not sector-aligned")
+}
+guard String(decoding: emptyData[0..<8], as: UTF8.self) == "SWPKGST1" else {
+    fail("empty pkgstore image has bad magic")
+}
+guard emptyData[8] == 1, emptyData[12] == 0, emptyData[13] == 2 else {
+    fail("empty pkgstore image has bad superblock fields")
+}
+
+let emptyInspect = run(tool, ["inspect", emptyStore.path])
+requireSuccess(emptyInspect, "inspect empty store")
+let emptyText = commandOutput(emptyInspect)
+guard emptyText.contains("active_generation: 0") else {
+    fail("empty inspect output does not report generation 0")
+}
+guard !emptyText.contains("pkghello") else {
+    fail("empty inspect output unexpectedly contains a payload")
+}
 
 requireSuccess(run(tool, [
     "create",
@@ -107,4 +140,4 @@ guard text.contains("activations:") else {
     fail("inspect output does not include activations")
 }
 
-print("PASS: pkgstore create/inspect is deterministic and records active payload generation")
+print("PASS: pkgstore init/create/inspect is deterministic and records active payload generation")

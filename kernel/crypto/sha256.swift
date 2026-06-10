@@ -57,6 +57,108 @@ let sha256DigestLen = 32
 /// SHA-256 internal block size in bytes (also HMAC's block size).
 private let sha256BlockLen = 64
 
+private func sha256CompressBlock(_ block: UnsafeRawPointer,
+                                 _ h0: inout UInt32, _ h1: inout UInt32,
+                                 _ h2: inout UInt32, _ h3: inout UInt32,
+                                 _ h4: inout UInt32, _ h5: inout UInt32,
+                                 _ h6: inout UInt32, _ h7: inout UInt32) {
+    withUnsafeBytes(of: sha256K) { kraw in
+        let K = kraw.baseAddress!.assumingMemoryBound(to: UInt32.self)
+        withUnsafeTemporaryAllocation(of: UInt32.self, capacity: 64) { w in
+            for t in 0..<16 {
+                let o = t * 4
+                w[t] = (UInt32(sb8(block, o)) << 24) | (UInt32(sb8(block, o + 1)) << 16)
+                     | (UInt32(sb8(block, o + 2)) << 8) | UInt32(sb8(block, o + 3))
+            }
+            for t in 16..<64 {
+                let s0 = rotr32(w[t-15], 7) ^ rotr32(w[t-15], 18) ^ (w[t-15] >> 3)
+                let s1 = rotr32(w[t-2], 17) ^ rotr32(w[t-2], 19) ^ (w[t-2] >> 10)
+                w[t] = w[t-16] &+ s0 &+ w[t-7] &+ s1
+            }
+            var a = h0, bb = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7
+            for t in 0..<64 {
+                let S1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+                let ch = (e & f) ^ (~e & g)
+                let t1 = h &+ S1 &+ ch &+ K[t] &+ w[t]
+                let S0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+                let maj = (a & bb) ^ (a & c) ^ (bb & c)
+                let t2 = S0 &+ maj
+                h = g; g = f; f = e; e = d &+ t1; d = c; c = bb; bb = a; a = t1 &+ t2
+            }
+            h0 = h0 &+ a; h1 = h1 &+ bb; h2 = h2 &+ c; h3 = h3 &+ d
+            h4 = h4 &+ e; h5 = h5 &+ f; h6 = h6 &+ g; h7 = h7 &+ h
+        }
+    }
+}
+
+struct SHA256Stream {
+    private var h0: UInt32 = 0x6a09e667
+    private var h1: UInt32 = 0xbb67ae85
+    private var h2: UInt32 = 0x3c6ef372
+    private var h3: UInt32 = 0xa54ff53a
+    private var h4: UInt32 = 0x510e527f
+    private var h5: UInt32 = 0x9b05688c
+    private var h6: UInt32 = 0x1f83d9ab
+    private var h7: UInt32 = 0x5be0cd19
+    private var totalLen: UInt64 = 0
+    private var bufferLen = 0
+    private var buffer = (
+        UInt64(0), UInt64(0), UInt64(0), UInt64(0),
+        UInt64(0), UInt64(0), UInt64(0), UInt64(0)
+    )
+
+    mutating func update(_ msg: UnsafeRawPointer, _ len: Int) {
+        if len <= 0 { return }
+        var off = 0
+        while off < len {
+            let take = min(sha256BlockLen - bufferLen, len - off)
+            withUnsafeMutableBytes(of: &buffer) { raw in
+                let dst = raw.baseAddress!
+                var i = 0
+                while i < take {
+                    sb8set(dst, bufferLen + i, sb8(msg, off + i))
+                    i += 1
+                }
+            }
+            bufferLen += take
+            off += take
+            totalLen &+= UInt64(take)
+            if bufferLen == sha256BlockLen {
+                withUnsafeBytes(of: &buffer) { raw in
+                    sha256CompressBlock(raw.baseAddress!, &h0, &h1, &h2, &h3, &h4, &h5, &h6, &h7)
+                }
+                bufferLen = 0
+            }
+        }
+    }
+
+    mutating func finalize(_ out32: UnsafeMutableRawPointer) {
+        let bits = totalLen &* 8
+        var one = UInt8(0x80)
+        withUnsafeBytes(of: &one) { update($0.baseAddress!, 1) }
+        var zero = UInt8(0)
+        while bufferLen != 56 {
+            withUnsafeBytes(of: &zero) { update($0.baseAddress!, 1) }
+        }
+        var lenBytes = (
+            UInt8((bits >> 56) & 0xFF), UInt8((bits >> 48) & 0xFF),
+            UInt8((bits >> 40) & 0xFF), UInt8((bits >> 32) & 0xFF),
+            UInt8((bits >> 24) & 0xFF), UInt8((bits >> 16) & 0xFF),
+            UInt8((bits >> 8) & 0xFF), UInt8(bits & 0xFF)
+        )
+        withUnsafeBytes(of: &lenBytes) { update($0.baseAddress!, 8) }
+
+        @inline(__always) func put(_ v: UInt32, _ o: Int) {
+            sb8set(out32, o,     UInt8((v >> 24) & 0xFF))
+            sb8set(out32, o + 1, UInt8((v >> 16) & 0xFF))
+            sb8set(out32, o + 2, UInt8((v >> 8) & 0xFF))
+            sb8set(out32, o + 3, UInt8(v & 0xFF))
+        }
+        put(h0, 0);  put(h1, 4);  put(h2, 8);  put(h3, 12)
+        put(h4, 16); put(h5, 20); put(h6, 24); put(h7, 28)
+    }
+}
+
 /// Compute SHA-256 of `msg[0..<len]` and write the 32-byte digest to `out32`.
 /// `out32` must hold 32 bytes; it may not alias `msg`.
 func sha256(_ msg: UnsafeRawPointer, _ len: Int, _ out32: UnsafeMutableRawPointer) {
