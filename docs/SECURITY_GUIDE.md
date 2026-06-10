@@ -86,7 +86,7 @@ architecture.
 | No persistent user data store | `/tmp` is scratch; reboot clears it |
 | `capSpawn` and `capProcessInspect` are scaffold bits | They are part of the identity model, but not the main enforcement boundary yet |
 | `capLogExport` is reserved | No seeded account receives it by default |
-| Drivers and networking are still in kernel | C5c proves discovery metadata and an opaque pseudo-device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
+| Drivers and networking are still in kernel | C5c proves virtio-input or pseudo fallback discovery metadata plus an opaque device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
 | Single global cell today | `CellId` exists as a field; real Cells are future work |
 
 Do not describe the current system as a finished object-capability OS. It is a
