@@ -357,7 +357,7 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   discovered virtio-input metadata, and the focused boot gate requires
   `C5d OK: virtio input discovery metadata surfaced`.
 - `make c5-device-metadata-test` is the focused `-smp 4` gate. It attaches a
-  QEMU virtio keyboard while preserving the headless C5b/C5c tests.
+  QEMU virtio keyboard while preserving the headless fallback lifecycle tests.
 - Non-goals: C5d still does not map MMIO into userland, deliver IRQs as
   endpoints, create DMA windows, or replace the in-kernel virtio-input driver.
 
