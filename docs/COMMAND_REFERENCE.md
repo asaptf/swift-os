@@ -796,7 +796,7 @@ diagnostic fixtures than stable application interfaces.
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
 | `swos-kstage` | `swos-kstage` | Copy the active ESP kernel slot image into the inactive kernel slot and verify it. | `tests/uefi_kstage_test.sh` |
-| `swos-kactivate` | `swos-kactivate` | Install the pre-signed alternate ESP kernel manifest for the next boot. | `tests/uefi_kactivate_test.sh` |
+| `swos-kactivate` | `swos-kactivate` | Select the inactive ESP kernel slot in loader-managed `kernel-state` for the next boot. | `tests/uefi_kactivate_test.sh` |
 | `swos-kconfirm` | `swos-kconfirm` | Mark the booted ESP kernel slot confirmed healthy. | `tests/uefi_kconfirm_test.sh` |
 
 Examples:
@@ -902,7 +902,7 @@ Acceptance coverage: `tests/uefi_kstage_test.sh`
 
 ### `swos-kactivate`
 
-Install the pre-signed alternate ESP kernel manifest for the next boot.
+Select the inactive ESP kernel slot for the next boot.
 
 ```text
 swos-kactivate
@@ -938,7 +938,8 @@ Notes:
 - `swos-update`, `swos-activate`, and `swos-confirm` operate on the SWOSBOOT
   base-image update store.
 - `swos-kstage`, `swos-kactivate`, and `swos-kconfirm` operate on UEFI ESP
-  kernel-slot files, manifests, and the loader-managed `kernel-state`.
+  kernel-slot files, the signed slot manifest, and the loader-managed
+  `kernel-state`.
 - Permission failures print `permission denied (need capConsole)`.
 - Kernel-slot boot-attempt persistence is tested by `tests/uefi_kattempt_test.sh`;
   attempt-based kernel-slot rollback is tested by

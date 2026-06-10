@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# uefi_kactivate_test.sh — U1g-4d acceptance: flip the active kernel slot from a
-# running system, persisted, and the loader boots the newly-activated slot.
+# uefi_kactivate_test.sh — U1g-5d acceptance: flip the active kernel slot from a
+# running system via kernel-state, persisted, and boot the newly-activated slot.
 #
 # Boot 1: boot the default disk copy (active slot A), reach a root shell, run
-#         /bin/swos-kactivate — the kernel installs the pre-signed alternate
-#         manifest (kernel-boot-alt, active=B) over kernel-boot on the ESP.
-# Boot 2: reboot the SAME disk copy; the loader verifies the (offline-signed)
-#         manifest and boots slot B — proving the flip persisted and authenticity
-#         held (the OS only courier-copied an already-signed manifest).
+#         /bin/swos-kactivate — the kernel updates the loader-managed
+#         kernel-state active slot to B and resets B's attempt state.
+# Boot 2: reboot the SAME disk copy; the loader verifies the still-active-A
+#         signed manifest for slot hashes, then follows kernel-state and boots
+#         slot B — proving activation no longer needs kernel-boot-alt.
 #
 # cache=writethrough makes the kactivate write durable across the kill+reboot.
 
@@ -19,10 +19,13 @@ DISK_IMG="$ROOT/build/swift-os.img"
 BASE="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
+PART_OFFSET=$((2048 * 512))
 
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }
 [[ -f "$DISK_IMG" ]]   || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
 [[ -f "$BASE" ]]       || { echo "FAIL: $BASE missing (run 'make base-image')" >&2; exit 2; }
+[[ -x "$MDIR" ]]       || { echo "FAIL: missing mtools $MDIR" >&2; exit 2; }
 
 WORK="$(mktemp -t swiftos-kact-img.XXXXXX)"
 LOG="$(mktemp -t swiftos-kact-log.XXXXXX)"
@@ -39,6 +42,10 @@ stop_qemu() {
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$WORK" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 cp "$DISK_IMG" "$WORK"
+if "$MDIR" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernel-boot-alt >/dev/null 2>&1; then
+  echo "FAIL: disk image still stages retired kernel-boot-alt" >&2
+  exit 1
+fi
 
 QEMU_DRIVE=(-global virtio-mmio.force-legacy=false
             -bios "$AAVMF_CODE"
@@ -92,10 +99,11 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 boot_fifo
 if to_shell; then
   await "UEFI: booted kernel slot A" 30 || fail "boot1: loader did not boot slot A"
+  await "UEFI: kernel boot-state active slot A" 30 || fail "boot1: boot-state did not start at slot A"
   activated=0
   for _ in 1 2 3 4 5; do
     send $'/bin/swos-kactivate\n'
-    if await "kernel-store: activated kernel slot B for next boot (signed manifest)" 25; then activated=1; break; fi
+    if await "kernel-store: activated kernel slot B for next boot (kernel-state)" 25; then activated=1; break; fi
   done
   [[ "$activated" -eq 1 ]] || fail "boot1: kernel did not activate slot B"
   await "swos-kactivate: inactive kernel slot activated" 10 || fail "boot1: swos-kactivate program did not confirm"
@@ -104,9 +112,10 @@ else
 fi
 exec 3>&-; stop_qemu; QP=""
 
-# --- Boot 2: the loader boots the newly-activated, signed slot B -------------
+# --- Boot 2: the loader keeps the signed manifest but follows kernel-state ----
 boot_quiet
-await "UEFI: kernel A/B manifest active slot B" 90 || fail "boot2: manifest not active slot B (activate did not persist)"
+await "UEFI: kernel A/B manifest active slot A" 90 || fail "boot2: signed manifest did not remain active slot A"
+await "UEFI: kernel boot-state active slot B" 30 || fail "boot2: kernel-state did not activate slot B"
 await "UEFI: booted kernel slot B" 30 || fail "boot2: loader did not boot slot B"
 await "Hello from Swift kernel" 60 || fail "boot2: kernel did not start from slot B"
 if grep -qF "UEFI: kernel manifest signature INVALID" "$LOG"; then
@@ -115,7 +124,7 @@ fi
 stop_qemu; QP=""
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: kernel A/B activate — swos-kactivate installs the pre-signed alternate manifest; the loader verifies it and boots slot B after reboot"
+  echo "PASS: kernel A/B activate — swos-kactivate updates kernel-state active slot; the loader keeps the signed manifest and boots slot B after reboot"
   exit 0
 fi
 echo "--- serial (last boot) ---" >&2

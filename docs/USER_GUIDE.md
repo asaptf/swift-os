@@ -393,11 +393,12 @@ swos-kconfirm
 ```
 
 `swos-kstage` copies and verifies the active ESP kernel image into the inactive
-kernel slot. `swos-kactivate` installs the pre-signed alternate kernel manifest
-for the next boot. After the trial boot is healthy, `swos-kconfirm` marks the
-booted kernel slot confirmed in `kernel-state` so its attempt counter resets and
-it is not rolled back. Unconfirmed kernel slots still roll back after the checked
-attempt window.
+kernel slot. `swos-kactivate` selects the inactive slot in the loader-managed
+`kernel-state` for the next boot; the signed `kernel-boot` manifest still
+authenticates the slot hashes. After the trial boot is healthy, `swos-kconfirm`
+marks the booted kernel slot confirmed in `kernel-state` so its attempt counter
+resets and it is not rolled back. Unconfirmed kernel slots still roll back after
+the checked attempt window.
 
 All `swos-*` update commands require privileged update authority through the
 current `capConsole` path. The focused acceptance gates are in

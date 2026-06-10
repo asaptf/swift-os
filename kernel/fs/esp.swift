@@ -362,17 +362,20 @@ private func fatVerifyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UIn
     return true
 }
 
-// --- Kernel boot-state update (U1g-5c) --------------------------------------
+// --- Kernel boot-state update (U1g-5c/5d) -----------------------------------
 // The loader owns the self-managed \EFI\swift-os\kernel-state file. The kernel
-// only updates the already-created 512-byte record in place after a successful
-// boot, mirroring SWOSBOOT's health-confirm flow without signing anything.
+// updates the already-created 512-byte record in place for health confirmation
+// and mutable active-slot selection, mirroring SWOSBOOT without signing anything.
 private let kernelStateSeqOff = 12
 private let kernelStateAttemptAOff = 16
 private let kernelStateAttemptBOff = 20
 private let kernelStateStateAOff = 24
 private let kernelStateStateBOff = 28
 private let kernelStateLastBootedOff = 32
+private let kernelStateActiveOff = 36
+private let kernelStateUntried: UInt32 = 0
 private let kernelStateConfirmed: UInt32 = 1
+private let kernelStateNoSlot: UInt32 = 0xFFFF_FFFF
 
 @inline(__always) private func espSt32(_ p: UnsafeMutableRawPointer, _ o: Int, _ v: UInt32) {
     p.storeBytes(of: UInt8(v & 0xFF), toByteOffset: o, as: UInt8.self)
@@ -410,6 +413,14 @@ private func kernelStateValid(_ p: UnsafeRawPointer) -> Bool {
         i += 1
     }
     return true
+}
+
+private func kernelStateResolvedActive(_ p: UnsafeRawPointer, _ manifestActive: Int?) -> Int? {
+    if kernelStateValid(p) {
+        let active = espLd32(p, kernelStateActiveOff)
+        if active <= 1 { return Int(active) }
+    }
+    return manifestActive
 }
 
 private func kernelStateRehash(_ p: UnsafeMutableRawPointer) {
@@ -476,18 +487,9 @@ private func espStageInner() -> Int {
     guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 else { return -2 }
     if ka.1 == 0 || ka.1 != kb.1 { return -22 } // in-place copy needs equal sizes
 
-    // Active slot from the (signed) manifest decides src (active) and dst (inactive).
-    var active = -1
-    var buf = InlineArray<512, UInt8>(repeating: 0)
-    withUnsafeMutableBytes(of: &buf) { raw in
-        let p = raw.baseAddress!
-        if virtioBlkReadCurrent(fatClusterLBA(vol, mf.0), p) != 0 { return }
-        let magic: StaticString = "SWOSKERN"
-        var ok = true
-        magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
-        if ok { active = Int(espLd32(UnsafeRawPointer(p), 12)) }
-    }
-    if active != 0 && active != 1 { return -22 }
+    // Active slot comes from kernel-state when present; the signed manifest
+    // remains the default/authenticated slot-metadata source.
+    guard let active = fatReadEffectiveKernelActive(vol, sw.0, mf.0) else { return -22 }
 
     let srcClus = active == 0 ? ka.0 : kb.0
     let dstClus = active == 0 ? kb.0 : ka.0
@@ -515,41 +517,69 @@ private func fatReadManifestActive(_ vol: Fat32Vol, _ firstClus: UInt32) -> Int?
     return (active == 0 || active == 1) ? active : nil
 }
 
-// U1g-4d: flip the active kernel slot by copying the pre-signed alternate
-// manifest (\EFI\swift-os\kernel-boot-alt, which selects the OTHER slot and was
-// signed offline at image build) over the live kernel-boot, in place. Returns the
-// new active slot (0/1) on success, or a negative errno-style code. The OS never
-// signs — it only courier-copies an already-signed manifest, so the loader's
-// signature gate is preserved.
+private func fatReadEffectiveKernelActive(_ vol: Fat32Vol, _ swClus: UInt32, _ manifestClus: UInt32) -> Int? {
+    let manifestActive = fatReadManifestActive(vol, manifestClus)
+    guard let ks = fatFind(vol, swClus, "kernel-state"), !ks.2, ks.1 >= 512 else {
+        return manifestActive
+    }
+    var active: Int? = manifestActive
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkReadCurrent(fatClusterLBA(vol, ks.0), p) != 0 { return }
+        active = kernelStateResolvedActive(UnsafeRawPointer(p), manifestActive)
+    }
+    return active
+}
+
+// U1g-5d: flip the active kernel slot by updating the loader-managed
+// \EFI\swift-os\kernel-state record in place. The signed kernel-boot manifest
+// still authenticates slot hashes; mutable active selection now lives in the
+// hash-protected boot-state so activation no longer needs kernel-boot-alt.
 private func espActivateInner() -> Int {
     guard let (partLBA, _) = espFindPartition() else { return -2 }
     guard let vol = fatReadBPB(partLBA) else { return -5 }
     guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
     guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
     guard let cur = fatFind(vol, sw.0, "kernel-boot"), !cur.2 else { return -2 }
-    guard let alt = fatFind(vol, sw.0, "kernel-boot-alt"), !alt.2 else { return -2 }
-    guard let curA = fatReadManifestActive(vol, cur.0) else { return -22 }
-    guard let altA = fatReadManifestActive(vol, alt.0) else { return -22 }
-    if altA == curA { return -22 } // the alternate must select the other slot
+    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return -2 }
+    guard let active = fatReadEffectiveKernelActive(vol, sw.0, cur.0) else { return -22 }
+    let next = active == 0 ? 1 : 0
 
-    // Copy the alternate manifest's first sector over the live manifest's.
-    var ok = false
+    var rc = -5
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkReadCurrent(fatClusterLBA(vol, alt.0), p) != 0 { return }
-        if virtioBlkWriteSector(fatClusterLBA(vol, cur.0), UnsafeRawPointer(p)) != 0 { return }
-        ok = true
+        let lba = fatClusterLBA(vol, ks.0)
+        if virtioBlkReadCurrent(lba, p) != 0 { return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { rc = -22; return }
+        espSt32(p, kernelStateActiveOff, UInt32(next))
+        espSt32(p, kernelStateAttemptOff(next), 0)
+        espSt32(p, kernelStateStateOff(next), kernelStateUntried)
+        espSt32(p, kernelStateLastBootedOff, kernelStateNoSlot)
+        espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
+        kernelStateRehash(p)
+        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        rc = 0
     }
-    if !ok { return -5 }
+    if rc != 0 { return rc }
     if virtioBlkFlush() != 0 { return -5 }
-    // Verify the live manifest now selects the alternate's slot.
-    guard let newA = fatReadManifestActive(vol, cur.0), newA == altA else { return -5 }
-    return newA
+
+    var verify = false
+    var check = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &check) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkReadCurrent(fatClusterLBA(vol, ks.0), p) != 0 { return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { return }
+        if espLd32(UnsafeRawPointer(p), kernelStateActiveOff) != UInt32(next) { return }
+        if espLd32(UnsafeRawPointer(p), kernelStateAttemptOff(next)) != 0 { return }
+        verify = true
+    }
+    return verify ? next : -5
 }
 
-/// U1g-4d: activate the inactive kernel slot for the next boot by installing the
-/// pre-signed alternate manifest. capConsole-gated. Returns 0 on success, or a
+/// U1g-5d: activate the inactive kernel slot for the next boot by updating the
+/// writable ESP kernel-state. capConsole-gated. Returns 0 on success, or a
 /// negative errno-style code. Invoked from EL0 via syscall 69 (/bin/swos-kactivate).
 func espActivateOtherKernel() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
@@ -560,7 +590,7 @@ func espActivateOtherKernel() -> Int {
     if r >= 0 {
         uartPuts("kernel-store: activated kernel slot ")
         uartPuts(r == 0 ? "A" : "B")
-        uartPuts(" for next boot (signed manifest)\n")
+        uartPuts(" for next boot (kernel-state)\n")
         return 0
     }
     uartPuts("kernel-store: kernel activate failed rc ")
@@ -622,9 +652,18 @@ func espProbe() {
     let cap = virtioBlkSelectEsp()
     var part: (UInt64, UInt64)? = nil
     var manifest: (Int, UInt32)? = nil
+    var effectiveActive: Int? = nil
     if cap != 0 {
         part = espFindPartition()
-        if let (lba, _) = part { manifest = fatReadKernelManifest(lba) }
+        if let (lba, _) = part {
+            manifest = fatReadKernelManifest(lba)
+            if let vol = fatReadBPB(lba),
+               let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2,
+               let sw = fatFind(vol, efi.0, "swift-os"), sw.2,
+               let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 {
+                effectiveActive = fatReadEffectiveKernelActive(vol, sw.0, mf.0)
+            }
+        }
     }
     virtioBlkReselectServed()
 
@@ -638,11 +677,12 @@ func espProbe() {
     uartPutUInt(n)
     uartPuts(" sectors\n")
     if let (active, gen) = manifest {
+        let shown = effectiveActive ?? active
         uartPuts("kernel-store: ESP kernel A/B active slot ")
-        uartPuts(active == 0 ? "A" : "B")
+        uartPuts(shown == 0 ? "A" : "B")
         uartPuts(" gen ")
         uartPutUInt(UInt64(gen))
-        uartPuts(" (read from FAT32)\n")
+        uartPuts(shown == active ? " (read from FAT32)\n" : " (read from kernel-state)\n")
     } else {
         uartPuts("kernel-store: ESP kernel-boot manifest not readable\n")
     }

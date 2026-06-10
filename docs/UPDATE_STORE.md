@@ -227,9 +227,9 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   kernel image from the loader binary (a prerequisite for A/B). The embedded blob
   remains as a fallback.
 - **U1g-2 (done):** the loader reads a **SWOSKERN** boot manifest
-  (`\EFI\swift-os\kernel-boot`: magic, version, active/fallback slot, generation)
-  and loads the active slot (`kernelA.bin` / `kernelB.bin`), rolling back to the
-  fallback slot when the active file is missing/unopenable.
+  (`\EFI\swift-os\kernel-boot`: magic, version, default active/fallback slot,
+  generation) and loads the selected slot (`kernelA.bin` / `kernelB.bin`),
+  rolling back to the fallback slot when the active file is missing/unopenable.
 - **U1g-3a (done):** SWOSKERN **v2** carries each slot's SHA-256; the loader
   hashes the loaded image and rolls back to the other slot on a mismatch
   (integrity, catching a corrupt/truncated kernel). SHA-256 in the loader is
@@ -256,13 +256,11 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   capConsole) has the kernel copy the active kernel image over the inactive slot
   in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
   a bad write only spoils the inactive slot, which the loader's hash check rejects.
-- **U1g-4d (done):** the activate flow. `/bin/swos-kactivate` (syscall 69,
-  capConsole) installs the pre-signed alternate manifest (`kernel-boot-alt`,
-  active = other slot, signed offline at build) over `kernel-boot` on the ESP. On
-  reboot the loader verifies it and boots the new slot. The OS never signs — it
-  courier-copies an already-signed manifest. **Kernel-image A/B is now complete
-  end-to-end** (operator flow: `swos-kstage` → `swos-kactivate` → reboot),
-  mirroring the system-image U1f flow.
+- **U1g-4d (done):** the first activate flow. `/bin/swos-kactivate` (syscall 69,
+  capConsole) originally installed a pre-signed alternate manifest
+  (`kernel-boot-alt`, active = other slot, signed offline at build) over
+  `kernel-boot` on the ESP. U1g-5d retired this courier manifest; current
+  activation writes `kernel-state` instead.
 
 - **U1g-5a (done):** the writable boot-state half of the signed-selection split.
   The loader records a per-slot boot-attempt counter in a hash-protected
@@ -285,9 +283,15 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   confirms slot A and proves later boots stay on A with attempt 0 instead of
   rolling back.
 
+- **U1g-5d (done):** mutable kernel active selection moved into
+  `kernel-state`. The signed `kernel-boot` manifest now authenticates slot hashes
+  and provides a default active slot; `/bin/swos-kactivate` updates the
+  hash-protected `kernel-state` active field, resets the target slot attempt
+  counter/state, and flushes it. `kernel-boot-alt` is no longer staged into the
+  ESP. `tests/uefi_kactivate_test.sh` proves the signed manifest remains active A
+  while the boot-state selects and boots slot B.
+
 ## Not implemented yet
 
-- Move `active` into the writable boot-state, so activate needs no pre-signed
-  alternate manifest.
 - A real new-kernel *payload* source (today both kernel slots are the same build).
 - Key rotation / revocation.

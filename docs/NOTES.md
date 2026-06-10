@@ -3925,11 +3925,8 @@ boots from. Two findings shaped this:
 locates the ESP partition, and still boots to busybox. `uefi_kernel_ab_test.sh`
 (4 cases) unchanged in behavior with the ESP on mmio.
 
-**Still future (U1g-4b/c/d).** FAT32 read of the kernel manifest from the kernel;
-FAT32 write to stage a kernel image + a pre-signed manifest into the inactive
-slot; a `/bin/` activate flow + reboot. Plus the signed-selection split (per-image
-signatures + CRC'd writable boot-state) so attempt-count/rollback can be written
-without re-signing.
+**Then (U1g-4b/c/d + U1g-5).** FAT32 read/write, activation, and the
+signed-manifest/writable-boot-state split landed in later U1g slices.
 
 ### U1g-4b — kernel FAT32 reader: read the kernel A/B manifest from the ESP (DONE, 2026-06-10)
 
@@ -3955,10 +3952,8 @@ cluster chain, LFN directory walk, and manifest parse are all exercised end-to-e
 (the value must match what the loader independently read and booted). The 4-case
 `uefi_kernel_ab_test` is unaffected (the kernel read is log-only).
 
-**Still future (U1g-4c/d).** FAT32 *write* (overwrite the inactive slot's image in
-its cluster chain + write a pre-signed manifest), then a `/bin/` activate flow +
-reboot. The courier trust model (OS writes pre-signed artifacts) and the
-signed-selection split still apply.
+**Then (U1g-4c/d + U1g-5).** FAT32 write, activation, attempts, rollback, health
+confirmation, and mutable boot-state active selection landed in later U1g slices.
 
 ### U1g-4c — kernel FAT32 writer: stage the inactive slot image (DONE, 2026-06-10)
 
@@ -3989,10 +3984,9 @@ slot A over slot B and verifies — which only passes if the write landed (a no-
 would leave B corrupt and fail the in-kernel verify). Proves the FAT32 write path
 end-to-end without touching the bootable slot or the manifest.
 
-**Still future (U1g-4d).** Write a pre-signed "active = inactive" manifest (courier
-model) to actually flip the boot slot, then activate + reboot; plus the
-signed-selection split (per-image signatures + CRC'd writable boot-state) so
-attempt-count/rollback can be persisted without re-signing.
+**Then (U1g-4d/U1g-5).** The first activate path used a pre-signed courier
+manifest; U1g-5 later moved attempts, health confirmation, and mutable active
+selection into `kernel-state`.
 
 ### U1g-4d — runtime kernel-slot activate: /bin/swos-kactivate (DONE, 2026-06-10)
 
@@ -4020,17 +4014,13 @@ offline-signed alternate manifest rather than producing one.
 (signature OK)" and "booted kernel slot B", with no "signature INVALID" — proving
 the flip persisted and the offline signature held.
 
-**Kernel-image A/B is now complete end-to-end:** ESP file (U1g-1) → A/B manifest
-selection (U1g-2) → SHA-256 integrity (U1g-3a) → Ed25519 authenticity (U1g-3b) →
-kernel reaches the ESP (U1g-4a) → reads it (U1g-4b) → stages the inactive slot
-(U1g-4c) → activates it (U1g-4d). Operator flow: `swos-kstage` → `swos-kactivate`
-→ reboot, mirroring U1f for the system image.
+**Superseded by U1g-5d.** This courier-manifest flow proved activation end to
+end, then U1g-5d moved mutable active selection into the writable boot-state so
+activation no longer needs `kernel-boot-alt`.
 
 **Still future.** A real new-kernel *payload* source (today both slots are the
 same build; staging a genuinely different signed kernel needs a payload disk or
-an update channel) + per-slot attempt-count/rollback for the kernel (the
-signed-selection split: per-image signatures + a CRC'd writable boot-state, so
-boot-state can be written without re-signing). Key rotation / revocation.
+an update channel) plus key rotation / revocation.
 
 ### U1g-5a — loader boot-attempt counter on the ESP (DONE, 2026-06-10)
 
@@ -4056,8 +4046,8 @@ asserts the active slot's counter increments 1→2→3 across reboots — provin
 loader's EFI write lands and persists. The signed manifest (v3) is untouched, so
 the existing kernel-A/B tests are unaffected.
 
-**Still future.** Move `active` into the writable boot-state so activate
-(U1g-4d) needs no pre-signed alternate manifest.
+**Then.** U1g-5d moves `active` into the writable boot-state so activate no
+longer needs a pre-signed alternate manifest.
 
 ### U1g-5b — attempt-based kernel rollback in the loader (DONE, 2026-06-10)
 
@@ -4104,6 +4094,30 @@ to a root shell, run `/bin/swos-kconfirm`, then reboot the same writable ESP cop
 three more times. The loader stays on slot A, reports boot attempt 0 each time,
 and never rolls back.
 
-**Still future.** Move `active` into the writable boot-state, retiring the
-pre-signed alternate manifest (U1g-4d). A real new-kernel payload source and key
-rotation / revocation remain separate follow-ups.
+### U1g-5d — mutable kernel active slot in kernel-state (DONE, 2026-06-10)
+
+**Scope.** Retire `kernel-boot-alt`. The signed `kernel-boot` manifest now
+authenticates slot sizes/hashes and provides a default active slot; the mutable
+active slot lives in the loader-managed, hash-protected `kernel-state` record.
+This matches the SWOSBOOT split: signed immutable bytes plus writable health and
+selection state.
+
+- `boot/efi/loader.c`: kernel-state layout adds `active` at offset 36. The loader
+  verifies the signed manifest, resolves active from kernel-state when valid,
+  logs the boot-state active slot, and persists the actually booted slot as active
+  after successful load/rollback.
+- `kernel/fs/esp.swift`: `espActivateOtherKernel()` no longer reads
+  `kernel-boot-alt` or rewrites the signed manifest. It validates `kernel-state`,
+  flips active to the other slot, resets that slot to UNTRIED/attempt 0, clears
+  `lastBooted`, rehashes, writes, flushes, and verifies the sector.
+- `Makefile` and `scripts/make-disk.sh`: stop generating/copying
+  `kernel-boot-alt`; `make uefi` removes stale staged copies.
+
+**Acceptance.** `tests/uefi_kactivate_test.sh` now asserts the disk image has no
+`kernel-boot-alt`; after `/bin/swos-kactivate`, the next boot still reports the
+signed manifest default active slot A, then reports kernel-state active slot B
+and boots slot B. `uefi_kattempt_test`, `uefi_kconfirm_test`, and
+`uefi_krollback_test` cover the adjacent boot-state flows.
+
+**Still future.** A real new-kernel payload source and key rotation / revocation
+remain separate follow-ups.

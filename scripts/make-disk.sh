@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build"
 EFI_APP="$BUILD/BOOTAA64.EFI"
 KERNEL_BIN="$BUILD/kernel.bin"
-ESP_SRC="$BUILD/esp/EFI/swift-os"   # U1g-2: staged kernel A/B slots + boot manifest
+ESP_SRC="$BUILD/esp/EFI/swift-os"   # U1g-2: staged kernel A/B slots + signed manifest
 IMG="${1:-$BUILD/swift-os.img}"
 SIZE_MB="${DISK_MB:-96}"
 PART_START_SECTOR=2048
@@ -26,7 +26,7 @@ MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
 
 [[ -f "$EFI_APP" ]] || { echo "make-disk: $EFI_APP missing - run 'make uefi' first" >&2; exit 2; }
 [[ -f "$KERNEL_BIN" ]] || { echo "make-disk: $KERNEL_BIN missing - run 'make build' first" >&2; exit 2; }
-for f in kernelA.bin kernelB.bin kernel-boot kernel-boot-alt; do
+for f in kernelA.bin kernelB.bin kernel-boot; do
     [[ -f "$ESP_SRC/$f" ]] || { echo "make-disk: $ESP_SRC/$f missing - run 'make uefi' first" >&2; exit 2; }
 done
 for tool in "$SGDISK" "$MFORMAT" "$MMD" "$MCOPY" "$MDIR"; do
@@ -51,11 +51,11 @@ export MTOOLS_SKIP_CHECK=1
 "$MFORMAT" -i "${IMG}@@${PART_OFFSET}" -F -v ESP ::
 "$MMD"     -i "${IMG}@@${PART_OFFSET}" ::/EFI ::/EFI/BOOT ::/EFI/swift-os
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$EFI_APP" ::/EFI/BOOT/BOOTAA64.EFI
-# U1g-2: the kernel A/B slots + boot manifest the loader reads from the ESP.
+# U1g-2/U1g-5d: the kernel A/B slots + signed slot metadata the loader reads
+# from the ESP. Mutable active-slot selection is stored in kernel-state at boot.
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelA.bin"  ::/EFI/swift-os/kernelA.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelB.bin"  ::/EFI/swift-os/kernelB.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernel-boot"  ::/EFI/swift-os/kernel-boot
-"$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernel-boot-alt" ::/EFI/swift-os/kernel-boot-alt
 
 echo "make-disk: done -> $IMG"
 echo "make-disk: ESP contents:"
