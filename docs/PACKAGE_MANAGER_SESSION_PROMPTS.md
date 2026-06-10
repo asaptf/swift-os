@@ -140,19 +140,21 @@ Acceptance:
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGREPO_FORMAT.md.
-Start from the current P5b state: `tools/pkgrepo.swift` builds a signed static
-HTTP repository fixture, `/bin/pkg update URL/search/info/install NAME` works
-for `pkghello`, and `make package-repo-install-test` covers expired catalogs,
-wrong-arch catalogs, package SHA-256 mismatch, and the positive install path.
+Start from the current P5c state: `tools/pkgrepo.swift` builds a signed static
+HTTP repository fixture, `/bin/pkg repo set`, `pkg update [URL]`,
+`search/info/install NAME` work for `pkghello`, and
+`make package-repo-install-test` covers expired catalogs, wrong-arch catalogs,
+package SHA-256 mismatch, default repo config, dependency resolution
+(`pkgdep -> pkghello`), and the positive install path.
 
 Harden package-management milestone P5 without jumping to the ports tree yet.
 Keep HTTP acceptable for transport integrity because catalogs are signed and
 packages are content-addressed.
 
 Focus:
-- add dependency metadata validation and a tiny dependency resolver;
-- add a default repository config format without breaking explicit `pkg update URL`;
-- reduce large-package risk by designing the streaming package download/store path;
+- add version-constraint validation for dependency metadata;
+- design and start the streaming package download/store path;
+- prepare the transaction shape needed for `pkg upgrade`;
 - keep `pkg update URL`, `pkg search <text>`, `pkg info <name>`, and
   `pkg install <name>` working;
 - leave `pkg upgrade` deferred unless dependency/version metadata is ready.
@@ -166,7 +168,7 @@ Requirements:
 Acceptance:
 - `make test` passes;
 - `make package-repo-install-test` passes;
-- dependency/default-repo/streaming changes are covered by focused tests;
+- version-constraint/streaming changes are covered by focused tests;
 - commit the milestone and stop for review.
 ```
 

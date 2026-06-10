@@ -223,9 +223,10 @@ pkg list
 
 ### Signed Repository Install
 
-Signed static HTTP repository install is current P5a functionality. It verifies
-`catalog.signed`, downloads a content-addressed `.swpkg`, verifies SHA-256, then
-reuses the local package-store install path.
+Signed static HTTP repository install is current P5c functionality. It verifies
+`catalog.signed`, resolves dependency names, downloads content-addressed
+`.swpkg` files, verifies SHA-256, then reuses the local package-store install
+path.
 
 Build and test the fixture:
 
@@ -511,7 +512,7 @@ Useful markers:
 | `tcpecho: listening on 5555` | TCP echo server is waiting in accept |
 | `udpecho: listening on 5555` | UDP echo server bound |
 | `pkghello: hello from package overlay` | Package payload overlay was visible and executable |
-| `pkg: catalog updated` | `pkg update URL` accepted a signed repository catalog |
+| `pkg: catalog updated` | `pkg update [URL]` accepted a signed repository catalog |
 | `pkg: installed pkghello-1.0.0_1` | Package install activated `pkghello` from local file or repository |
 | `llm: done` | Inference demo completed and returned to userland |
 
@@ -569,10 +570,11 @@ Ctrl-A then X when using `-nographic`.
 Current limits that matter during operation:
 
 - No persistent writable filesystem.
-- No dependency-solving, remove, upgrade, rollback, public hosted package
-  channel, or streaming large-package install path yet.
-  Local `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` exist for
-  `.swpkg` fixtures.
+- No remove, upgrade, rollback, public hosted package channel, version-constraint
+  solver, or streaming large-package install path yet.
+  Local `pkg install FILE` and P5c `pkg repo set`/`pkg update [URL]`/
+  `pkg install NAME` exist for `.swpkg` fixtures, including name-based
+  dependency resolution.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.

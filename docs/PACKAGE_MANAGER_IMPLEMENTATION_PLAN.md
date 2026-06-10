@@ -402,32 +402,36 @@ Risks:
 Goal: install packages by name from a signed static HTTP repository. Integrity
 comes from signed metadata and content hashes; HTTPS is not required for P5.
 
-Current state: the P5b bootstrap path is implemented. `tools/pkgrepo.swift`
+Current state: the P5c bootstrap path is implemented. `tools/pkgrepo.swift`
 builds a signed static repository fixture, the base image ships
 `/etc/pkg/repo-root.pub`, and `/bin/pkg` can update/search/info/install from an
-explicit HTTP repository URL. It rejects expired catalogs, incompatible
-arch/target/ABI/linkage entries, and downloaded packages whose SHA-256 does not
-match the signed catalog. See `docs/PKGREPO_FORMAT.md`.
+explicit or configured HTTP repository URL. It rejects expired catalogs,
+incompatible arch/target/ABI/linkage entries, validates dependency names against
+the catalog, resolves dependencies by package name, and rejects downloaded
+packages whose SHA-256 does not match the signed catalog. See
+`docs/PKGREPO_FORMAT.md`.
 
 Required commands:
 
-- `pkg update <url>` (implemented for P5b; explicit URL keeps QEMU tests
-  deterministic)
+- `pkg repo set <url>` and `pkg repo show` (implemented for P5c)
+- `pkg update [url]` (implemented for P5c; explicit URL still keeps QEMU tests
+  deterministic when needed)
 - `pkg search <text>`
 - `pkg info <name>`
 - `pkg install <name>`
-- `pkg upgrade` only if the metadata and dependency rules are ready; otherwise
-  keep it deferred.
+- `pkg upgrade` remains deferred until version-constraint and transaction rules
+  are ready.
 
 Likely files/modules:
 
 - `userland/pkg.swift`
-  - Add repository config loading.
+  - Add repository config loading. (implemented for one active URL)
   - Add HTTP GET over `swiftos_socket_stream`, `swiftos_connect`, read/write,
     and optionally `swiftos_resolve`.
   - Parse `catalog.json` or a canonical catalog subset.
   - Verify catalog signature and expiration.
   - Verify package blob SHA-256 against the signed catalog.
+  - Resolve package-name dependencies from the signed catalog.
   - Reuse the P4 local install path after download.
 - New userland or shared crypto verifier
   - Add Ed25519 verification if the project keeps the design default.
@@ -439,9 +443,8 @@ Likely files/modules:
   - Reuse `kernel/crypto/sha256.swift` for host hashes if practical.
 - `base/etc/pkg/`
   - Add pinned root public key.
-  - Add default repository config only when the public or test URL shape is
-    stable. For QEMU tests, command-line `pkg repo add` or a test-only base seed
-    may be cleaner.
+  - Add default repository config only when the public URL shape is stable.
+    P5c already supports `/etc/pkg/repo-url` fallback plus `pkg repo set`.
 - `Makefile`
   - Build any host repo tool.
   - Stage base package keys/config.
@@ -472,9 +475,9 @@ Tests to add:
   - reject an expired catalog;
   - reject an incompatible arch catalog;
   - reject a package whose downloaded SHA-256 differs from the signed catalog;
-  - run `pkg update`;
+  - configure a default repo URL and run `pkg update`;
   - run `pkg search pkghello`;
-  - run `pkg install pkghello`;
+  - run `pkg install pkghello` and prove `pkgdep` is resolved first;
   - run `/usr/bin/pkghello`;
   - assert the package was fetched from the host server and activated.
 
@@ -482,7 +485,8 @@ Smallest acceptance criteria:
 
 - `pkg update` fetches and verifies a catalog from a static HTTP server.
 - `pkg install pkghello` downloads the content-addressed `.swpkg`, verifies its
-  hash, installs it through the P4 path, and executes `/usr/bin/pkghello`.
+  hash, installs its dependency first, installs through the P4 path, and
+  executes `/usr/bin/pkghello`.
 - Signature tampering is tested host-side.
 - `make package-repo-install-test` covers the positive and negative QEMU
   repository flow; `make test` includes the host repository tool test.
@@ -495,7 +499,7 @@ Risks:
   use HTTP plus signatures for integrity, exactly as the design says.
 - Catalog parsing must stay bounded. Reject oversized catalogs in P5 rather
   than trying to support the future full public repository immediately.
-- P5b downloads packages into tmpfs before install. Downloads must become
+- P5c downloads packages into tmpfs before install. Downloads must become
   streaming store writes before large packages such as Node.js, Swift,
   PostgreSQL, or a JVM are realistic.
 - DNS is available, but the QEMU acceptance should use `10.0.2.2:<port>` first

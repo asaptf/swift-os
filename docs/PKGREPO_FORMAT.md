@@ -1,6 +1,6 @@
 # SwiftOS Static Package Repository
 
-P5b provides the first network repository format for `pkg`: a signed, static HTTP
+P5c provides the first network repository format for `pkg`: a signed, static HTTP
 layout that can be served by any ordinary web server.
 
 ## Layout
@@ -45,7 +45,7 @@ for bootstrap.
 Example:
 
 ```json
-{"channel":"current","expires":4102444800,"format":1,"generation":1,"packages":[{"abi":"swos-0","arch":"aarch64","depends":[],"linkage":"static","name":"pkghello","revision":1,"sha256":"...","size":21406,"target":"swift-os","url":"packages/<sha256>.swpkg","version":"1.0.0"}],"repository":"swift-os-current","root_key_id":"swos-test-root"}
+{"channel":"current","expires":4102444800,"format":1,"generation":1,"packages":[{"abi":"swos-0","arch":"aarch64","depends":[{"constraint":">=1.0.0","name":"pkgdep"}],"linkage":"static","name":"pkghello","revision":1,"sha256":"...","size":21406,"target":"swift-os","url":"packages/<sha256>.swpkg","version":"1.0.0"}],"repository":"swift-os-current","root_key_id":"swos-test-root"}
 ```
 
 Each package entry currently carries:
@@ -64,24 +64,33 @@ Each package entry currently carries:
 
 ## Target Commands
 
-The P5b target-side flow is explicit about the repository URL so QEMU tests can
-use a random host port:
+The P5c target-side flow supports either an explicit URL or a configured
+repository URL:
 
 ```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
+pkg repo show
 pkg update http://10.0.2.2:<port>/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
 ```
 
-`pkg update URL` downloads `catalog.signed`, verifies the Ed25519 signature
-against `/etc/pkg/repo-root.pub`, rejects expired catalogs, rejects package
-entries for the wrong `arch`/`target`/`abi`/`linkage`, then caches the catalog
-and URL in `/tmp`.
+`pkg repo set URL` writes the active repository URL to `/tmp/pkg-repo-url`.
+`pkg repo show` prints the configured URL. `pkg update [URL]` downloads
+`catalog.signed`, verifies the Ed25519 signature against `/etc/pkg/repo-root.pub`,
+rejects expired catalogs, rejects package entries for the wrong
+`arch`/`target`/`abi`/`linkage`, validates that every dependency names another
+catalog package, then caches the catalog and URL in `/tmp`. If no URL is passed,
+`pkg update` uses `/tmp/pkg-repo-url`, falling back to `/etc/pkg/repo-url` when a
+base image or deployment provides one.
 
-`pkg install NAME` loads the verified cached catalog, downloads the
-content-addressed `.swpkg` listed by `url`, verifies SHA-256, then reuses the
-local `pkg install FILE` path.
+`pkg install NAME` loads the verified cached catalog, resolves dependencies by
+name, downloads each content-addressed `.swpkg` listed by `url`, verifies
+SHA-256, then reuses the local `pkg install FILE` path. The package store
+activation keeps prior active payloads mounted while adding the new payload, so
+dependency packages remain visible after the dependent package is installed.
 
 ## Host Tool
 
@@ -101,13 +110,15 @@ build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
 - `tests/pkgrepo_tool_test.swift` verifies creation, inspection, valid signature
   verification, negative fixture generation, and tamper rejection.
 - `tests/pkg_repo_install_test.sh` starts a host HTTP server, boots QEMU with
-  user networking, proves expired/wrong-arch/bad-hash repos are rejected, runs
-  `pkg update/search/info/install pkghello`, then executes `/usr/bin/pkghello`.
+  user networking, proves expired/wrong-arch/bad-hash repos are rejected,
+  configures a default repo URL, proves dependency resolution with
+  `pkgdep -> pkghello`, then executes `/usr/bin/pkghello`.
 
 ## Known Limits
 
 - HTTP is used for transport; integrity comes from Ed25519 metadata and SHA-256
   package hashes.
-- Dependencies and upgrades are not solved yet.
-- Downloaded packages are cached in tmpfs before install. P5b grows tmpfs files
+- Version constraints are recorded but not interpreted beyond dependency names.
+- `pkg upgrade`, removal, and rollback commands are not implemented yet.
+- Downloaded packages are cached in tmpfs before install. P5c grows tmpfs files
   as needed, but large server packages still need a streaming store-write path.

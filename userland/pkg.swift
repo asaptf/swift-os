@@ -13,9 +13,12 @@ private let httpHeaderMax = 8192
 private let catalogMax = 131072
 private let repoURLMax = 512
 private let trustRootPath = "/etc/pkg/repo-root.pub"
+private let defaultRepoURLPath = "/etc/pkg/repo-url"
 private let repoURLPath = "/tmp/pkg-repo-url"
 private let catalogCachePath = "/tmp/pkg-catalog.signed"
 private let packageCachePath = "/tmp/pkg-download.swpkg"
+private let maxCatalogPackages = 64
+private let maxPackageDepends = 8
 
 private struct HTTPURL {
     let ip: UInt32
@@ -31,6 +34,7 @@ private struct CatalogPackage {
     let sha256: String
     let size: UInt
     let url: String
+    let depends: [String]
 }
 
 private func cString(_ p: UnsafeMutablePointer<CChar>) -> String {
@@ -149,6 +153,16 @@ private func staticBytes(_ s: StaticString) -> [UInt8] {
         }
     }
     return out
+}
+
+private func bytesEqual(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+    if a.count != b.count { return false }
+    var i = 0
+    while i < a.count {
+        if a[i] != b[i] { return false }
+        i += 1
+    }
+    return true
 }
 
 private func parseIPv4Bytes(_ bytes: [UInt8], _ start: Int, _ end: Int) -> UInt32? {
@@ -280,10 +294,36 @@ private func trimASCII(_ bytes: [UInt8]) -> [UInt8] {
 }
 
 private func readRepoURL() -> String? {
-    guard let bytes = readFile(repoURLPath, maxSize: repoURLMax) else { return nil }
+    guard let bytes = readFile(repoURLPath, maxSize: repoURLMax) ??
+                      readFile(defaultRepoURLPath, maxSize: repoURLMax) else { return nil }
     let trimmed = trimASCII(bytes)
     if trimmed.isEmpty { return nil }
     return String(decoding: trimmed, as: UTF8.self)
+}
+
+private func repoSet(_ url: String) -> Int32 {
+    guard parseURL(url) != nil else {
+        put("pkg: bad URL\n")
+        return 1
+    }
+    if !writeTextFile(repoURLPath, url + "\n") {
+        put("pkg: cannot save repository URL\n")
+        return 1
+    }
+    put("pkg: repository set ")
+    putString(url)
+    put("\n")
+    return 0
+}
+
+private func repoShow() -> Int32 {
+    guard let url = readRepoURL() else {
+        put("pkg: no repository configured\n")
+        return 1
+    }
+    putString(url)
+    put("\n")
+    return 0
 }
 
 private func httpStatusOK(_ header: [UInt8]) -> Bool {
@@ -317,8 +357,11 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
         return false
     }
 
-    unlinkPath(outputPath)
-    let outfd = openCString(outputPath, oWrOnly | oCreat | oTrunc)
+    var outfd = openCString(outputPath, oWrOnly | oCreat | oTrunc)
+    if outfd < 0 {
+        unlinkPath(outputPath)
+        outfd = openCString(outputPath, oWrOnly | oCreat | oTrunc)
+    }
     if outfd < 0 {
         put("pkg: cannot create cache file\n")
         _ = swiftos_close(sock)
@@ -386,38 +429,147 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
     return true
 }
 
-private func jsonString(_ manifest: [UInt8], _ key: StaticString) -> String? {
-    var needle: [UInt8] = [0x22] // "
-    key.withUTF8Buffer { kb in
-        var i = 0
-        while i < kb.count { needle.append(kb[i]); i += 1 }
-    }
-    needle.append(0x22) // "
-    needle.append(0x3A) // :
-    needle.append(0x22) // "
-    let start = findBytes(manifest, needle)
-    if start < 0 { return nil }
-    var i = start + needle.count
-    var out: [UInt8] = []
-    while i < manifest.count && manifest[i] != 0x22 {
-        out.append(manifest[i])
+private func isJSONSpace(_ ch: UInt8) -> Bool {
+    ch == 0x20 || ch == 0x0A || ch == 0x0D || ch == 0x09
+}
+
+private func matchingJSONClose(_ bytes: [UInt8], start: Int, open: UInt8, close: UInt8) -> Int {
+    if start < 0 || start >= bytes.count || bytes[start] != open { return -1 }
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var i = start
+    while i < bytes.count {
+        let ch = bytes[i]
+        if inString {
+            if escaped {
+                escaped = false
+            } else if ch == 0x5C {
+                escaped = true
+            } else if ch == 0x22 {
+                inString = false
+            }
+        } else if ch == 0x22 {
+            inString = true
+        } else if ch == open {
+            depth += 1
+        } else if ch == close {
+            depth -= 1
+            if depth == 0 { return i }
+            if depth < 0 { return -1 }
+        }
         i += 1
     }
-    if i >= manifest.count || out.isEmpty { return nil }
-    return String(decoding: out, as: UTF8.self)
+    return -1
+}
+
+private func jsonValueEnd(_ bytes: [UInt8], start: Int) -> Int {
+    if start < 0 || start >= bytes.count { return -1 }
+    if bytes[start] == 0x7B {
+        let close = matchingJSONClose(bytes, start: start, open: 0x7B, close: 0x7D)
+        return close < 0 ? -1 : close + 1
+    }
+    if bytes[start] == 0x5B {
+        let close = matchingJSONClose(bytes, start: start, open: 0x5B, close: 0x5D)
+        return close < 0 ? -1 : close + 1
+    }
+    if bytes[start] == 0x22 {
+        var escaped = false
+        var i = start + 1
+        while i < bytes.count {
+            let ch = bytes[i]
+            if escaped {
+                escaped = false
+            } else if ch == 0x5C {
+                escaped = true
+            } else if ch == 0x22 {
+                return i + 1
+            }
+            i += 1
+        }
+        return -1
+    }
+
+    var i = start
+    while i < bytes.count && bytes[i] != 0x2C && bytes[i] != 0x7D && bytes[i] != 0x5D {
+        i += 1
+    }
+    return i
+}
+
+private func topLevelJSONValueStart(_ object: [UInt8], _ key: StaticString) -> Int {
+    var objectStart = 0
+    while objectStart < object.count && isJSONSpace(object[objectStart]) { objectStart += 1 }
+    if objectStart >= object.count || object[objectStart] != 0x7B { return -1 }
+    let objectEnd = matchingJSONClose(object, start: objectStart, open: 0x7B, close: 0x7D)
+    if objectEnd < 0 { return -1 }
+
+    let wanted = staticBytes(key)
+    var i = objectStart + 1
+    while i < objectEnd {
+        while i < objectEnd && (isJSONSpace(object[i]) || object[i] == 0x2C) { i += 1 }
+        if i >= objectEnd { break }
+        if object[i] != 0x22 { return -1 }
+        i += 1
+
+        var foundKey: [UInt8] = []
+        var escaped = false
+        while i < objectEnd {
+            let ch = object[i]
+            if escaped {
+                foundKey.append(ch)
+                escaped = false
+            } else if ch == 0x5C {
+                escaped = true
+            } else if ch == 0x22 {
+                break
+            } else {
+                foundKey.append(ch)
+            }
+            i += 1
+        }
+        if i >= objectEnd || object[i] != 0x22 { return -1 }
+        i += 1
+        while i < objectEnd && isJSONSpace(object[i]) { i += 1 }
+        if i >= objectEnd || object[i] != 0x3A { return -1 }
+        i += 1
+        while i < objectEnd && isJSONSpace(object[i]) { i += 1 }
+        if i >= objectEnd { return -1 }
+        if bytesEqual(foundKey, wanted) { return i }
+        let end = jsonValueEnd(object, start: i)
+        if end < 0 || end > objectEnd + 1 { return -1 }
+        i = end
+    }
+    return -1
+}
+
+private func jsonString(_ manifest: [UInt8], _ key: StaticString) -> String? {
+    let start = topLevelJSONValueStart(manifest, key)
+    if start < 0 || start >= manifest.count || manifest[start] != 0x22 { return nil }
+    var i = start + 1
+    var out: [UInt8] = []
+    var escaped = false
+    while i < manifest.count {
+        let ch = manifest[i]
+        if escaped {
+            out.append(ch)
+            escaped = false
+        } else if ch == 0x5C {
+            escaped = true
+        } else if ch == 0x22 {
+            return out.isEmpty ? nil : String(decoding: out, as: UTF8.self)
+        } else {
+            out.append(ch)
+        }
+        i += 1
+    }
+    return nil
 }
 
 private func jsonUInt(_ manifest: [UInt8], _ key: StaticString) -> UInt? {
-    var needle: [UInt8] = [0x22]
-    key.withUTF8Buffer { kb in
-        var i = 0
-        while i < kb.count { needle.append(kb[i]); i += 1 }
-    }
-    needle.append(0x22)
-    needle.append(0x3A)
-    let start = findBytes(manifest, needle)
+    let start = topLevelJSONValueStart(manifest, key)
     if start < 0 { return nil }
-    var i = start + needle.count
+    var i = start
     var value: UInt = 0
     var any = false
     while i < manifest.count && manifest[i] >= 0x30 && manifest[i] <= 0x39 {
@@ -426,6 +578,48 @@ private func jsonUInt(_ manifest: [UInt8], _ key: StaticString) -> UInt? {
         i += 1
     }
     return any ? value : nil
+}
+
+private func catalogPackageObjectRanges(_ catalog: [UInt8]) -> [Range<Int>]? {
+    let arrayStart = topLevelJSONValueStart(catalog, "packages")
+    if arrayStart < 0 || arrayStart >= catalog.count || catalog[arrayStart] != 0x5B { return nil }
+    let arrayEnd = matchingJSONClose(catalog, start: arrayStart, open: 0x5B, close: 0x5D)
+    if arrayEnd < 0 { return nil }
+    var ranges: [Range<Int>] = []
+    var i = arrayStart + 1
+    while i < arrayEnd {
+        while i < arrayEnd && (isJSONSpace(catalog[i]) || catalog[i] == 0x2C) { i += 1 }
+        if i >= arrayEnd { break }
+        if catalog[i] != 0x7B { return nil }
+        let objectEnd = matchingJSONClose(catalog, start: i, open: 0x7B, close: 0x7D)
+        if objectEnd < 0 || objectEnd > arrayEnd { return nil }
+        ranges.append(i..<(objectEnd + 1))
+        if ranges.count > maxCatalogPackages { return nil }
+        i = objectEnd + 1
+    }
+    return ranges
+}
+
+private func dependencyNames(_ object: [UInt8]) -> [String]? {
+    let arrayStart = topLevelJSONValueStart(object, "depends")
+    if arrayStart < 0 || arrayStart >= object.count || object[arrayStart] != 0x5B { return nil }
+    let arrayEnd = matchingJSONClose(object, start: arrayStart, open: 0x5B, close: 0x5D)
+    if arrayEnd < 0 { return nil }
+
+    var out: [String] = []
+    var i = arrayStart + 1
+    while i < arrayEnd {
+        while i < arrayEnd && (isJSONSpace(object[i]) || object[i] == 0x2C) { i += 1 }
+        if i >= arrayEnd { break }
+        if object[i] != 0x7B { return nil }
+        let objectEnd = matchingJSONClose(object, start: i, open: 0x7B, close: 0x7D)
+        if objectEnd < 0 || objectEnd > arrayEnd { return nil }
+        guard let name = jsonString(Array(object[i..<(objectEnd + 1)]), "name") else { return nil }
+        out.append(name)
+        if out.count > maxPackageDepends { return nil }
+        i = objectEnd + 1
+    }
+    return out
 }
 
 private func verifySignedCatalog(_ signed: [UInt8]) -> [UInt8]? {
@@ -465,26 +659,6 @@ private func loadVerifiedCatalog() -> [UInt8]? {
     return catalog
 }
 
-private func objectRangeForPackage(_ catalog: [UInt8], _ name: String) -> Range<Int>? {
-    var needle = staticBytes("\"name\":\"")
-    let nb = Array(name.utf8)
-    var i = 0
-    while i < nb.count {
-        needle.append(nb[i])
-        i += 1
-    }
-    needle.append(0x22)
-    let pos = findBytes(catalog, needle)
-    if pos < 0 { return nil }
-    var start = pos
-    while start >= 0 && catalog[start] != 0x7B { start -= 1 }
-    if start < 0 { return nil }
-    var end = pos
-    while end < catalog.count && catalog[end] != 0x7D { end += 1 }
-    if end >= catalog.count { return nil }
-    return start..<(end + 1)
-}
-
 private func parseCatalogPackageObject(_ object: [UInt8]) -> CatalogPackage? {
     guard let name = jsonString(object, "name"),
           let version = jsonString(object, "version"),
@@ -493,7 +667,8 @@ private func parseCatalogPackageObject(_ object: [UInt8]) -> CatalogPackage? {
           let abi = jsonString(object, "abi"),
           let linkage = jsonString(object, "linkage"),
           let sha = jsonString(object, "sha256"),
-          let url = jsonString(object, "url") else { return nil }
+          let url = jsonString(object, "url"),
+          let depends = dependencyNames(object) else { return nil }
     let revision = jsonUInt(object, "revision") ?? 1
     let size = jsonUInt(object, "size") ?? 0
     if arch != "aarch64" || target != "swift-os" || abi != "swos-0" || linkage != "static" {
@@ -503,7 +678,46 @@ private func parseCatalogPackageObject(_ object: [UInt8]) -> CatalogPackage? {
         return nil
     }
     return CatalogPackage(name: name, version: version, revision: revision,
-                          sha256: sha, size: size, url: url)
+                          sha256: sha, size: size, url: url, depends: depends)
+}
+
+private func collectCatalogPackages(_ catalog: [UInt8]) -> [CatalogPackage]? {
+    guard let ranges = catalogPackageObjectRanges(catalog), !ranges.isEmpty else {
+        put("pkg: catalog invalid\n")
+        return nil
+    }
+    var packages: [CatalogPackage] = []
+    var i = 0
+    while i < ranges.count {
+        guard let pkg = parseCatalogPackageObject(Array(catalog[ranges[i]])) else {
+            put("pkg: catalog incompatible\n")
+            return nil
+        }
+        packages.append(pkg)
+        i += 1
+    }
+
+    i = 0
+    while i < packages.count {
+        var d = 0
+        while d < packages[i].depends.count {
+            var found = false
+            var p = 0
+            while p < packages.count {
+                if packages[p].name == packages[i].depends[d] { found = true; break }
+                p += 1
+            }
+            if !found {
+                put("pkg: dependency missing ")
+                putString(packages[i].depends[d])
+                put("\n")
+                return nil
+            }
+            d += 1
+        }
+        i += 1
+    }
+    return packages
 }
 
 private func validateCatalogBody(_ catalog: [UInt8]) -> Bool {
@@ -516,43 +730,17 @@ private func validateCatalogBody(_ catalog: [UInt8]) -> Bool {
         put("pkg: catalog expired\n")
         return false
     }
-
-    let key = staticBytes("\"name\":\"")
-    var pos = 0
-    var sawPackage = false
-    while true {
-        let start = findBytesFrom(catalog, key, pos)
-        if start < 0 { break }
-        var objectStart = start
-        while objectStart >= 0 && catalog[objectStart] != 0x7B { objectStart -= 1 }
-        if objectStart < 0 {
-            put("pkg: catalog invalid\n")
-            return false
-        }
-        var objectEnd = start
-        while objectEnd < catalog.count && catalog[objectEnd] != 0x7D { objectEnd += 1 }
-        if objectEnd >= catalog.count {
-            put("pkg: catalog invalid\n")
-            return false
-        }
-        let object = Array(catalog[objectStart..<(objectEnd + 1)])
-        if parseCatalogPackageObject(object) == nil {
-            put("pkg: catalog incompatible\n")
-            return false
-        }
-        sawPackage = true
-        pos = objectEnd + 1
-    }
-    if !sawPackage {
-        put("pkg: catalog invalid\n")
-        return false
-    }
-    return true
+    return collectCatalogPackages(catalog) != nil
 }
 
 private func findCatalogPackage(_ catalog: [UInt8], _ name: String) -> CatalogPackage? {
-    guard let range = objectRangeForPackage(catalog, name) else { return nil }
-    return parseCatalogPackageObject(Array(catalog[range]))
+    guard let packages = collectCatalogPackages(catalog) else { return nil }
+    var i = 0
+    while i < packages.count {
+        if packages[i].name == name { return packages[i] }
+        i += 1
+    }
+    return nil
 }
 
 private func printPackageLine(_ pkg: CatalogPackage) {
@@ -566,26 +754,17 @@ private func printPackageLine(_ pkg: CatalogPackage) {
 
 private func searchCatalog(_ query: String) -> Int32 {
     guard let catalog = loadVerifiedCatalog() else { return 1 }
-    let key = staticBytes("\"name\":\"")
+    guard let packages = collectCatalogPackages(catalog) else { return 1 }
     let queryBytes = Array(query.utf8)
-    var pos = 0
+    var i = 0
     var found = false
-    while true {
-        let start = findBytesFrom(catalog, key, pos)
-        if start < 0 { break }
-        let nameStart = start + key.count
-        var nameEnd = nameStart
-        while nameEnd < catalog.count && catalog[nameEnd] != 0x22 { nameEnd += 1 }
-        if nameEnd >= catalog.count { break }
-        let nameBytes = Array(catalog[nameStart..<nameEnd])
+    while i < packages.count {
+        let nameBytes = Array(packages[i].name.utf8)
         if containsBytes(nameBytes, queryBytes) {
-            let name = String(decoding: nameBytes, as: UTF8.self)
-            if let pkg = findCatalogPackage(catalog, name) {
-                printPackageLine(pkg)
-                found = true
-            }
+            printPackageLine(packages[i])
+            found = true
         }
-        pos = nameEnd + 1
+        i += 1
     }
     if !found { put("no matching packages\n") }
     return 0
@@ -609,6 +788,17 @@ private func infoCatalog(_ name: String) -> Int32 {
     putString(pkg.sha256)
     put("\nurl: ")
     putString(pkg.url)
+    put("\ndepends: ")
+    if pkg.depends.isEmpty {
+        put("none")
+    } else {
+        var i = 0
+        while i < pkg.depends.count {
+            if i > 0 { put(",") }
+            putString(pkg.depends[i])
+            i += 1
+        }
+    }
     put("\n")
     return 0
 }
@@ -756,17 +946,28 @@ private func updateRepository(_ url: String) -> Int32 {
     return 0
 }
 
-private func installFromRepository(_ name: String) -> Int32 {
-    guard let repoURL = readRepoURL() else {
-        put("pkg: run pkg update first\n")
-        return 1
+private func installedPackageNamed(_ name: String) -> Bool {
+    let nameBytes = Array(name.utf8)
+    var index: Int32 = 0
+    while index < 16 {
+        var buf = [CChar](repeating: 0, count: 80)
+        let rc = buf.withUnsafeMutableBufferPointer { bp in
+            swiftos_pkg_info(Int32(index), bp.baseAddress!, UInt(bp.count))
+        }
+        if rc < 0 { break }
+        var ok = true
+        var i = 0
+        while i < nameBytes.count {
+            if UInt8(bitPattern: buf[i]) != nameBytes[i] { ok = false; break }
+            i += 1
+        }
+        if ok && buf[nameBytes.count] == CChar(bitPattern: 0x2D) { return true }
+        index += 1
     }
-    guard let catalog = loadVerifiedCatalog() else { return 1 }
-    guard let pkg = findCatalogPackage(catalog, name) else {
-        put("pkg: package not found\n")
-        return 1
-    }
+    return false
+}
 
+private func installCatalogPackage(_ pkg: CatalogPackage, repoURL: String) -> Int32 {
     put("pkg: fetching ")
     printPackageLine(pkg)
     let packageURL = joinURL(repoURL, pkg.url)
@@ -780,6 +981,42 @@ private func installFromRepository(_ name: String) -> Int32 {
         return 1
     }
     return install(packageCachePath)
+}
+
+private func installResolved(_ name: String, repoURL: String, catalog: [UInt8], stack: [String]) -> Int32 {
+    if installedPackageNamed(name) { return 0 }
+    var s = 0
+    while s < stack.count {
+        if stack[s] == name {
+            put("pkg: dependency cycle ")
+            putString(name)
+            put("\n")
+            return 1
+        }
+        s += 1
+    }
+    guard let pkg = findCatalogPackage(catalog, name) else {
+        put("pkg: package not found\n")
+        return 1
+    }
+    var nextStack = stack
+    nextStack.append(name)
+    var i = 0
+    while i < pkg.depends.count {
+        let rc = installResolved(pkg.depends[i], repoURL: repoURL, catalog: catalog, stack: nextStack)
+        if rc != 0 { return rc }
+        i += 1
+    }
+    return installCatalogPackage(pkg, repoURL: repoURL)
+}
+
+private func installFromRepository(_ name: String) -> Int32 {
+    guard let repoURL = readRepoURL() else {
+        put("pkg: run pkg update first\n")
+        return 1
+    }
+    guard let catalog = loadVerifiedCatalog() else { return 1 }
+    return installResolved(name, repoURL: repoURL, catalog: catalog, stack: [])
 }
 
 private func list() -> Int32 {
@@ -808,16 +1045,38 @@ func main(_ argc: Int32,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     guard let argv = argv, argc >= 2, let cmdp = argv[1] else {
-        put("usage: pkg update URL | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
+        put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
         return 1
     }
     let cmd = cString(cmdp)
-    if cmd == "update" {
-        guard argc >= 3, let urlp = argv[2] else {
-            put("usage: pkg update URL\n")
+    if cmd == "repo" {
+        guard argc >= 3, let subp = argv[2] else {
+            put("usage: pkg repo set URL|show\n")
             return 1
         }
-        return updateRepository(cString(urlp))
+        let sub = cString(subp)
+        if sub == "show" { return repoShow() }
+        if sub == "set" {
+            guard argc >= 4, let urlp = argv[3] else {
+                put("usage: pkg repo set URL\n")
+                return 1
+            }
+            return repoSet(cString(urlp))
+        }
+        put("usage: pkg repo set URL|show\n")
+        return 1
+    }
+    if cmd == "update" {
+        let url: String
+        if argc >= 3, let urlp = argv[2] {
+            url = cString(urlp)
+        } else if let configured = readRepoURL() {
+            url = configured
+        } else {
+            put("pkg: no repository configured\n")
+            return 1
+        }
+        return updateRepository(url)
     }
     if cmd == "search" {
         guard argc >= 3, let textp = argv[2] else {
@@ -847,6 +1106,6 @@ func main(_ argc: Int32,
         }
         return installFromRepository(arg)
     }
-    put("usage: pkg update URL | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
+    put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
     return 1
 }

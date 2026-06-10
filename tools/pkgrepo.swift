@@ -14,6 +14,7 @@ private struct PackageEntry {
     let size: Int
     let sha256: String
     let url: String
+    let depends: [[String: Any]]
 }
 
 private struct CatalogOverrides {
@@ -106,6 +107,20 @@ private func num(_ object: [String: Any], _ key: String) -> Int? {
     return nil
 }
 
+private func normalizedDepends(_ manifest: [String: Any]) throws -> [[String: Any]] {
+    guard let raw = manifest["depends"] else { return [] }
+    guard let deps = raw as? [[String: Any]] else {
+        throw RepoError.message("manifest depends must be an array of objects")
+    }
+    return try deps.map { dep in
+        guard let name = dep["name"] as? String, !name.isEmpty else {
+            throw RepoError.message("dependency name is empty")
+        }
+        let constraint = dep["constraint"] as? String ?? ""
+        return constraint.isEmpty ? ["name": name] : ["constraint": constraint, "name": name]
+    }
+}
+
 private func readPackage(_ path: String) throws -> (PackageEntry, Data) {
     let url = URL(fileURLWithPath: path)
     let data = try Data(contentsOf: url)
@@ -160,7 +175,8 @@ private func readPackage(_ path: String) throws -> (PackageEntry, Data) {
     let digest = hex(shaBytes(data))
     let entry = PackageEntry(name: name, version: version, revision: revision,
                              size: data.count, sha256: digest,
-                             url: "packages/\(digest).swpkg")
+                             url: "packages/\(digest).swpkg",
+                             depends: try normalizedDepends(manifest))
     return (entry, data)
 }
 
@@ -178,7 +194,7 @@ private func catalogData(packages: [PackageEntry], generation: Int,
             "sha256": overrides.sha256 ?? $0.sha256,
             "size": $0.size,
             "url": $0.url,
-            "depends": [],
+            "depends": $0.depends,
         ] as [String: Any]
     }
     let object: [String: Any] = [

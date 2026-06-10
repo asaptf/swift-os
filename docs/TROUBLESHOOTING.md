@@ -404,9 +404,11 @@ make package-overlay-test
 
 Remember: `.swpkg` creation and payload extraction are host-side today. Guest
 install works through the local-file form, `pkg install FILE`, and through the
-P5a signed static HTTP repository fixture, `pkg update URL` followed by
-`pkg install NAME`. Remove, upgrade, rollback, dependency solving, public hosted
-channels, and large-package streaming downloads are future work.
+P5c signed static HTTP repository fixture, `pkg repo set URL && pkg update`
+or `pkg update URL` followed by `pkg install NAME`. Name-based dependency
+resolution is implemented for signed catalogs. Remove, upgrade, rollback,
+version-constraint solving, public hosted channels, and large-package streaming
+downloads are future work.
 
 For the P3a package-store boot path, use:
 
@@ -448,7 +450,7 @@ pkg: catalog updated
 pkg: installed pkghello-1.0.0_1
 ```
 
-If `pkg update URL` fails, confirm that the base image contains
+If `pkg update [URL]` fails, confirm that the base image contains
 `/etc/pkg/repo-root.pub`, the host HTTP server is serving the same fixture that
 produced the key, and the guest was booted with virtio-net. If `pkg install NAME`
 fails after a successful update, inspect `build/pkgrepo-root/aarch64/current`

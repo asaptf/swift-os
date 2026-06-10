@@ -376,10 +376,10 @@ These are current implementation boundaries, not necessarily design goals:
 - No Linux syscall ABI.
 - Static userland only; no dynamic loader.
 - No persistent writable filesystem.
-- Package install exists for local `.swpkg` files and P5a signed static HTTP
-  repository fixtures. Dependency solving, remove, upgrade, rollback, public
-  hosted channels, and large-package streaming downloads are not implemented
-  yet.
+- Package install exists for local `.swpkg` files and P5c signed static HTTP
+  repository fixtures, including name-based dependency resolution. Remove,
+  upgrade, rollback, public hosted channels, version-constraint solving, and
+  large-package streaming downloads are not implemented yet.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

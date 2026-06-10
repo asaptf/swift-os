@@ -9,7 +9,9 @@ BASE_DISK="$ROOT/build/base.img"
 STORE_DISK="$ROOT/build/pkgstore-install.img"
 REPO_DIR="$ROOT/build/pkgrepo-root"
 PKGREPO="$ROOT/build/pkgrepo"
-SWPKG="$ROOT/build/pkghello.swpkg"
+SWPKG_TOOL="$ROOT/build/swpkg"
+PKGHELLO_PKG="$ROOT/build/pkghello.swpkg"
+PKGHELLO_ELF="$ROOT/build/pkghello.elf"
 SEED_HEX="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 QEMU="${QEMU:-qemu-system-aarch64}"
 PYTHON="${PYTHON:-python3}"
@@ -30,7 +32,9 @@ if [[ ! -d "$REPO_DIR/aarch64/current" ]]; then
   }
 fi
 [[ -x "$PKGREPO" ]] || { echo "FAIL: $PKGREPO missing (make pkgrepo)" >&2; exit 2; }
-[[ -f "$SWPKG" ]] || { echo "FAIL: $SWPKG missing (make package-fixture)" >&2; exit 2; }
+[[ -x "$SWPKG_TOOL" ]] || { echo "FAIL: $SWPKG_TOOL missing (make swpkg)" >&2; exit 2; }
+[[ -f "$PKGHELLO_PKG" ]] || { echo "FAIL: $PKGHELLO_PKG missing (make package-fixture)" >&2; exit 2; }
+[[ -f "$PKGHELLO_ELF" ]] || { echo "FAIL: $PKGHELLO_ELF missing (make package-fixture)" >&2; exit 2; }
 command -v "$PYTHON" >/dev/null 2>&1 || { echo "FAIL: $PYTHON not found" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-pkg-repo.XXXXXX)"
@@ -95,13 +99,34 @@ if [[ -f "$DTB" ]]; then
   dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
-"$PKGREPO" create --package "$SWPKG" --output "$HTTPROOT/good" \
+mkdir -p "$HTTPROOT/pkgdep-root/usr/bin" "$HTTPROOT/pkghello-root/usr/bin" "$HTTPROOT/pkgbad-root/usr/bin"
+cp "$PKGHELLO_ELF" "$HTTPROOT/pkgdep-root/usr/bin/pkgdep"
+cp "$PKGHELLO_ELF" "$HTTPROOT/pkghello-root/usr/bin/pkghello"
+cp "$PKGHELLO_ELF" "$HTTPROOT/pkgbad-root/usr/bin/pkgbad"
+cat >"$HTTPROOT/pkgdep.json" <<'JSON'
+{"format":1,"name":"pkgdep","version":"1.0.0","revision":1,"summary":"Dependency fixture","license":["swift-os-test"],"arch":"aarch64","target":"swift-os","abi":{"os":"swos-0","syscall":1,"libc":"newlib-4.6-swos","linkage":"static"},"depends":[],"provides":["pkgdep"],"conflicts":[],"files":[{"path":"/usr/bin/pkgdep","mode":"0755","sha256":"","size":0}],"capabilities":{"default":[],"services":[]}}
+JSON
+cat >"$HTTPROOT/pkghello-dep.json" <<'JSON'
+{"format":1,"name":"pkghello","version":"1.0.0","revision":1,"summary":"Dependent package fixture","license":["swift-os-test"],"arch":"aarch64","target":"swift-os","abi":{"os":"swos-0","syscall":1,"libc":"newlib-4.6-swos","linkage":"static"},"depends":[{"name":"pkgdep","constraint":">=1.0.0"}],"provides":["pkghello"],"conflicts":[],"files":[{"path":"/usr/bin/pkghello","mode":"0755","sha256":"","size":0}],"capabilities":{"default":[],"services":[]}}
+JSON
+cat >"$HTTPROOT/pkgbad.json" <<'JSON'
+{"format":1,"name":"pkgbad","version":"1.0.0","revision":1,"summary":"Bad hash fixture","license":["swift-os-test"],"arch":"aarch64","target":"swift-os","abi":{"os":"swos-0","syscall":1,"libc":"newlib-4.6-swos","linkage":"static"},"depends":[],"provides":["pkgbad"],"conflicts":[],"files":[{"path":"/usr/bin/pkgbad","mode":"0755","sha256":"","size":0}],"capabilities":{"default":[],"services":[]}}
+JSON
+"$SWPKG_TOOL" create --manifest "$HTTPROOT/pkgdep.json" \
+  --root "$HTTPROOT/pkgdep-root" --output "$HTTPROOT/pkgdep.swpkg" >/dev/null
+"$SWPKG_TOOL" create --manifest "$HTTPROOT/pkghello-dep.json" \
+  --root "$HTTPROOT/pkghello-root" --output "$HTTPROOT/pkghello-dep.swpkg" >/dev/null
+"$SWPKG_TOOL" create --manifest "$HTTPROOT/pkgbad.json" \
+  --root "$HTTPROOT/pkgbad-root" --output "$HTTPROOT/pkgbad.swpkg" >/dev/null
+
+"$PKGREPO" create --package "$HTTPROOT/pkgdep.swpkg" --package "$HTTPROOT/pkghello-dep.swpkg" \
+  --output "$HTTPROOT/good" \
   --seed-hex "$SEED_HEX" --generation 1 >/dev/null
-"$PKGREPO" create --package "$SWPKG" --output "$HTTPROOT/expired" \
+"$PKGREPO" create --package "$PKGHELLO_PKG" --output "$HTTPROOT/expired" \
   --seed-hex "$SEED_HEX" --generation 1 --expires 1 >/dev/null
-"$PKGREPO" create --package "$SWPKG" --output "$HTTPROOT/wrongarch" \
+"$PKGREPO" create --package "$PKGHELLO_PKG" --output "$HTTPROOT/wrongarch" \
   --seed-hex "$SEED_HEX" --generation 1 --arch riscv64 >/dev/null
-"$PKGREPO" create --package "$SWPKG" --output "$HTTPROOT/badhash" \
+"$PKGREPO" create --package "$HTTPROOT/pkgbad.swpkg" --output "$HTTPROOT/badhash" \
   --seed-hex "$SEED_HEX" --generation 1 \
   --sha256-override 0000000000000000000000000000000000000000000000000000000000000000 >/dev/null
 
@@ -143,21 +168,29 @@ send_line "pkg update http://10.0.2.2:$PORT/expired/aarch64/current"
 await "pkg: catalog expired" 120 || drive_fail "expired catalog was not rejected"
 send_line "pkg update http://10.0.2.2:$PORT/wrongarch/aarch64/current"
 await "pkg: catalog incompatible" 120 || drive_fail "wrong-arch catalog was not rejected"
-send_line "pkg update http://10.0.2.2:$PORT/good/aarch64/current"
+send_line "pkg repo set http://10.0.2.2:$PORT/good/aarch64/current"
+await "pkg: repository set http://10.0.2.2:$PORT/good/aarch64/current" 60 || drive_fail "pkg repo set did not complete"
+send_line 'pkg repo show'
+await "http://10.0.2.2:$PORT/good/aarch64/current" 60 || drive_fail "pkg repo show did not print configured repo"
+send_line "pkg update"
 await "pkg: catalog updated http://10.0.2.2:$PORT/good/aarch64/current" 120 || drive_fail "pkg update did not complete"
 send_line 'pkg search pkghello'
 await "pkghello-1.0.0_1" 60 || drive_fail "pkg search did not find pkghello"
 send_line 'pkg info pkghello'
 await "sha256:" 60 || drive_fail "pkg info did not show package metadata"
+await "depends: pkgdep" 60 || drive_fail "pkg info did not show dependencies"
 send_line 'pkg install pkghello'
+await "pkg: fetching pkgdep-1.0.0_1" 120 || drive_fail "dependency package was not fetched"
+await "pkg: installed pkgdep-1.0.0_1" 120 || drive_fail "dependency package was not installed"
 await "pkg: installed pkghello-1.0.0_1" 120 || drive_fail "pkg install by name did not complete"
 send_line 'pkg list'
+await "pkgdep-1.0.0_1" 60 || drive_fail "installed dependency package not listed"
 await "pkghello-1.0.0_1" 60 || drive_fail "installed package not listed"
 send_line '/usr/bin/pkghello'
 await "pkghello: hello from package overlay" 60 || drive_fail "/usr/bin/pkghello did not execute after repo install"
 send_line "pkg update http://10.0.2.2:$PORT/badhash/aarch64/current"
 await "pkg: catalog updated http://10.0.2.2:$PORT/badhash/aarch64/current" 120 || drive_fail "bad-hash catalog did not update"
-send_line 'pkg install pkghello'
+send_line 'pkg install pkgbad'
 await "pkg: package SHA-256 mismatch" 120 || drive_fail "package hash mismatch was not rejected"
 send_line 'exit'
 await "M12c: session ended" 60 || true
@@ -173,6 +206,9 @@ grep -qF "pkg: catalog updated" <<<"$clean" || { echo "FAIL: pkg update output m
 grep -qF "pkg: catalog expired" <<<"$clean" || { echo "FAIL: expired catalog rejection missing" >&2; ok=0; }
 grep -qF "pkg: catalog incompatible" <<<"$clean" || { echo "FAIL: incompatible catalog rejection missing" >&2; ok=0; }
 grep -qF "pkg: package SHA-256 mismatch" <<<"$clean" || { echo "FAIL: package hash rejection missing" >&2; ok=0; }
+grep -qF "pkg: repository set" <<<"$clean" || { echo "FAIL: repo set output missing" >&2; ok=0; }
+grep -qF "depends: pkgdep" <<<"$clean" || { echo "FAIL: dependency info output missing" >&2; ok=0; }
+grep -qF "pkg: installed pkgdep-1.0.0_1" <<<"$clean" || { echo "FAIL: dependency install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pkghello-1.0.0_1" <<<"$clean" || { echo "FAIL: repo pkg install output missing" >&2; ok=0; }
 grep -qF "P3b: package installed and activated" <<<"$clean" || { echo "FAIL: kernel did not activate installed package" >&2; ok=0; }
 grep -qF "pkghello: hello from package overlay" <<<"$clean" || { echo "FAIL: pkghello output missing" >&2; ok=0; }
@@ -185,7 +221,7 @@ grep -qF "GET /good/aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: 
 grep -qF "GET /good/aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: HTTP package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg rejected bad signed repos, installed pkghello by name, and ran it"
+  echo "PASS: /bin/pkg rejected bad signed repos, resolved deps, installed pkghello by name, and ran it"
   exit 0
 fi
 echo "--- serial (pkg repo region) ---" >&2

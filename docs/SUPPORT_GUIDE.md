@@ -234,7 +234,7 @@ acceptance path.
 | Linux binaries | Do not run |
 | Dynamic linking | Not supported |
 | `tlsget` trust | TLS runtime demo only; no production certificate verification |
-| Package remove, upgrade, rollback, dependency solving | Not implemented; local file install and P5a signed repository install are supported fixtures |
+| Package remove, upgrade, rollback, version-constraint solving | Not implemented; local file install and P5c signed repository install with name-based dependencies are supported fixtures |
 | General x86-64 boot | Not supported |
 
 ## Area-Specific Evidence

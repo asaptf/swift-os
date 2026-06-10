@@ -328,8 +328,9 @@ make package-local-install-fixture
 make package-local-install-test
 ```
 
-Repository install, dependency solving, remove, upgrade, and rollback remain
-future package-manager work.
+Repository install with name-based dependency resolution works for signed
+fixtures. Remove, upgrade, rollback, public hosting, and version-constraint
+solving remain future package-manager work.
 
 For the package-store boot profile and current package limits, see
 [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
@@ -481,10 +482,11 @@ These are intentional current limits:
 - No Linux ABI mode.
 - No dynamic loader.
 - No persistent writable filesystem.
-- No public hosted package channel, dependency-solving transaction, package
-  upgrade, remove, rollback, or streaming large-package install path. Local
-  `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` work for
-  signed fixtures when a writable package-store image is attached.
+- No public hosted package channel, package upgrade, remove, rollback,
+  version-constraint solver, or streaming large-package install path. Local
+  `pkg install FILE` and P5c `pkg repo set`/`pkg update [URL]`/
+  `pkg install NAME` work for signed fixtures when a writable package-store
+  image is attached.
 - No production certificate store for `tlsget`.
 - No default graphical desktop shell.
 
