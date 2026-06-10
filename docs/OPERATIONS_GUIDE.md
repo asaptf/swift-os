@@ -16,6 +16,9 @@ Use this guide with:
   ports, health checks, and service authoring rules.
 - [AI Hosting Guide](AI_HOSTING_GUIDE.md) for the local inference demo,
   serving daemon, model bundles, health checks, and metrics.
+- [Observability Guide](OBSERVABILITY_GUIDE.md) for boot health markers,
+  structured log smoke paths, process snapshots, service metrics, and panic
+  evidence.
 - [Troubleshooting](TROUBLESHOOTING.md) when a build, boot, login, or network
   path fails.
 - [Support Guide](SUPPORT_GUIDE.md) for evidence collection and handoff
@@ -422,7 +425,8 @@ Useful markers:
 
 The kernel has a structured in-memory log ring and sink indirection groundwork;
 userland log export remains gated by future capability work. See
-[LOGGING.md](LOGGING.md).
+[OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md) for practical signal reading
+and [LOGGING.md](LOGGING.md) for the design record.
 
 ## Verification Matrix
 

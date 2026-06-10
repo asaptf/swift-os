@@ -2,9 +2,10 @@
 
 This guide describes how to collect evidence, classify a problem, and report a
 SwiftOS issue in a way that another maintainer or operator can reproduce. It is
-the support companion to [TROUBLESHOOTING.md](TROUBLESHOOTING.md): use
-Troubleshooting to diagnose a known failure, and use this guide when you need to
-hand off a clear report.
+the support companion to [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and
+[OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md): use Troubleshooting to
+diagnose a known failure, Observability to understand available signals, and
+this guide when you need to hand off a clear report.
 
 SwiftOS is early product software. A useful support report should distinguish
 current design limits from regressions, include the exact repository revision,

@@ -4,6 +4,8 @@
 This document records the state, goals, design, and incremental plan for kernel and system logging/observability in swift-os.
 
 See also:
+- `OBSERVABILITY_GUIDE.md` (operator-facing guide to current logs, metrics,
+  health markers, and evidence collection).
 - `PHILOSOPHY.md` §Observability (the vision statement).
 - `ARCHITECTURE.md` (Solaris-style tracepoints, counters, per-cell accounting; future driver services and cells).
 - `docs/RISK_REMEDIATION_ROADMAP.md` (observability listed among the post-M13 gaps).
