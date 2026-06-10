@@ -21,7 +21,7 @@ Current supported support targets:
 | UEFI QEMU boot | `make disk base-image`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Serial console login | `./tests/console_login_test.sh` |
 | Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
-| Networking demos | socket tests plus the QEMU network profile |
+| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
 | Package overlay | `make package-overlay-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |

@@ -203,7 +203,8 @@ Network use requires:
 2. A process with `capNet` (`root` has it in the seeded image).
 
 See [GETTING_STARTED.md](GETTING_STARTED.md) for a full QEMU launch command with
-host forwarding.
+host forwarding, and [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md) for complete
+network runbooks and tests.
 
 ### HTTP Server
 

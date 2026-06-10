@@ -134,6 +134,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
   network demos, AI demo operation, logging evidence, and verification gates.
+- [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
+  host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
   SwiftOS services such as `httpd`, `llmd`, `tcpecho`, and `udpecho`.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories

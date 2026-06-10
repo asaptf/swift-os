@@ -445,6 +445,8 @@ Acceptance coverage: `tests/swift_date_test.sh`.
 
 Networking commands require a QEMU virtio-net device and `capNet`. The examples
 below assume the standard slirp setup from [GETTING_STARTED.md](GETTING_STARTED.md).
+For complete QEMU profiles, host-forwarding rules, and network test coverage,
+see [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
 
 ### `httpd`
 

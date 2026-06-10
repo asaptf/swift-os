@@ -293,7 +293,7 @@ Checks:
 2. Are you logged in as `root` or another principal with `capNet`?
 3. Did the kernel detect virtio-net during boot?
 
-Use the known-good network profile from [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md#network-boot).
+Use the known-good network profile from [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md#qemu-network-profiles).
 
 ### `curl 127.0.0.1:8080` Cannot Reach `/bin/httpd`
 

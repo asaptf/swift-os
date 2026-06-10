@@ -226,6 +226,9 @@ DNS defaults to QEMU slirp's resolver when the server IP is `0`:
 /bin/nslookup example.com
 ```
 
+For complete network launch profiles, service runbooks, TLS and IPv6 notes, and
+network test coverage, see [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
+
 ## UEFI Boot
 
 Build the UEFI disk image:

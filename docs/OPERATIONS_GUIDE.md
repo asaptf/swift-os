@@ -12,6 +12,8 @@ Use this guide with:
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.
+- [Networking Guide](NETWORKING_GUIDE.md) for virtio-net profiles, host
+  forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network test coverage.
 - [Service Guide](SERVICE_GUIDE.md) for service lifecycle, readiness markers,
   ports, health checks, and service authoring rules.
 - [AI Hosting Guide](AI_HOSTING_GUIDE.md) for the local inference demo,
@@ -106,7 +108,9 @@ UEFI framebuffer and virtio input path, not to provide a desktop environment.
 ### Network Boot
 
 Networking requires a NIC in the QEMU command. The common demo profile forwards
-host TCP 8080 to guest TCP 8080 and host TCP/UDP 5555 to guest port 5555:
+host TCP 8080 to guest TCP 8080 and host TCP/UDP 5555 to guest port 5555. For
+service-specific profiles and troubleshooting, see
+[NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
 
 ```sh
 make build base-image build/virt.dtb
@@ -234,6 +238,7 @@ mode.
 ## Networking Operations
 
 All socket tools require a NIC and `capNet`. See
+[NETWORKING_GUIDE.md](NETWORKING_GUIDE.md) for the full network runbook and
 [SERVICE_GUIDE.md](SERVICE_GUIDE.md) for the service catalog, readiness
 markers, health checks, and service design contract.
 

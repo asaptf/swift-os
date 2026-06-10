@@ -8,6 +8,8 @@ Use it with:
 
 - [Operations Guide](OPERATIONS_GUIDE.md) for boot profiles and verification
   gates.
+- [Networking Guide](NETWORKING_GUIDE.md) for virtio-net launch profiles, host
+  forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Command Reference](COMMAND_REFERENCE.md) for exact command syntax.
 - [Application Cookbook](APPLICATION_COOKBOOK.md) for build-and-test recipes.
 - [API Reference](API_REFERENCE.md) for syscall and Swift bridge details.
@@ -59,7 +61,8 @@ servers that keep accepting connections.
 ## Network Launch Profile
 
 `make run` does not attach a NIC by default. Use an explicit QEMU profile when
-running socket services:
+running socket services. For service-specific profiles and troubleshooting, see
+[NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
 
 ```sh
 make build base-image build/virt.dtb

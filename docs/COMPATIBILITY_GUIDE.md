@@ -247,6 +247,9 @@ Socket programs require:
 1. A QEMU virtio-net device.
 2. A process with `capNet`.
 
+For complete launch profiles, host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke
+paths, and troubleshooting, see [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
+
 Current user-visible network tools:
 
 | Tool | Protocol | Purpose |
@@ -284,7 +287,9 @@ decision.
 
 Acceptance coverage: `./tests/httpd_test.sh`, `./tests/llm_serve_test.sh`,
 `./tests/tcp_echo_test.sh`, `./tests/udp_echo_test.sh`,
-`./tests/tcp_connect_test.sh`, `./tests/dns_test.sh`, `./tests/tls_test.sh`.
+`./tests/tcp_connect_test.sh`, `./tests/dns_test.sh`, `./tests/tls_test.sh`,
+`./tests/ipv6_smoke_test.sh`, `./tests/ipv6_tcp_echo_test.sh`, and
+`./tests/ipv6_udp_echo_test.sh`.
 
 ## Security And Identity Compatibility
 
