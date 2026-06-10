@@ -208,6 +208,7 @@ These markers help locate the failing subsystem.
 | `llmd: bundle stories15M generation 1 verified (ed25519+sha256)` | Signed model fallback selected generation 1 |
 | `llmd: served` | LLM request completed and metrics were logged |
 | `C5a OK: restartable driver service recovered over IPC` | C5a pseudo driver service restarted and recovered |
+| `C5b OK: opaque device handle transferred and released` | C5b device grant moved to the service and reclaimed |
 | `C5c OK: virtio-input device grant discovered and matched` | C5c discovered and matched the virtio-input device grant |
 | `pkghello: hello from package overlay` | Package overlay was visible and executable |
 | `LOG-EXPORT-BEGIN` | Kernel log serialization smoke path ran |

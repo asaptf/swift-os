@@ -101,6 +101,7 @@ targets are:
 | Package payload fixture | `make package-fixture` |
 | Package store fixture | `make package-store-fixture` |
 | Local package install fixture | `make package-local-install-fixture` |
+| Lua/ports package install fixture | `make package-lua-install-fixture` |
 | Model files | `make model` or `make base-image` |
 
 The full `make test` target builds the prerequisites it owns. When running a
@@ -359,10 +360,13 @@ Common commands:
 make smp-state-audit
 make smp-mailbox-layout
 make smp-release-guard
+make smp-release-contract
 make smp-s1-preflight
 make smp-test
 make smp-headroom-test
 make smp-uefi-test
+make s4-resource-stress-test
+make s0c-test
 make s1-test
 make s5-run-any-placement-test
 make c5-driver-service-test
@@ -370,8 +374,10 @@ make c5-device-handle-test
 make c5-device-discovery-test
 ```
 
-Use the active roadmap milestone to choose the exact target. For broad SMP
-readiness, `make s1-test` is the current aggregate gate.
+Use the active roadmap milestone to choose the exact target. `smp-release-contract`
+is the review-facing alias for `smp-release-guard`; `s0c-test` is the narrow
+state-audit target. For broad SMP readiness, `make s1-test` is the current
+aggregate gate.
 
 ## Reading Failures
 

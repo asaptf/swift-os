@@ -4,12 +4,14 @@ The forward design for swift-os authority: the object-capability **handle** mode
 handle-passing **IPC**, and the decision to make **Cells** a userland composition over small kernel
 primitives rather than a fat in-kernel object.
 
-> **Status: record, don't build yet.** This is a plan, in the same spirit as the "future" sections of
-> [ARCHITECTURE.md](ARCHITECTURE.md) and the security model in [PHILOSOPHY.md](PHILOSOPHY.md). No code in
-> this note exists yet. It describes the C-series milestone arc (C1–C6) that future sessions will execute
-> one milestone at a time, each building, booting, passing a test, and stopping for review (per
-> [CLAUDE.md](../CLAUDE.md)). It exists so that arc is designed on paper before the same hot core files
-> (`kernel/security/security.swift`, `kernel/user/process.swift`, `kernel/vfs/vfs.swift`) get rewritten.
+> **Status: living design and implementation map.** C1-C5b now have checked-in
+> slices: typed handle entries and rights, `spawn_handles`, object-scoped
+> filesystem confinement, endpoint IPC with handle move semantics, a
+> restartable pseudo driver-service smoke, and an opaque pseudo-device handle
+> grant. The later parts of this note remain the target design for richer IPC
+> rings/VMOs, real userland drivers, and Cells. Future C-series work still lands
+> one milestone at a time, each building, booting, passing a test, and stopping
+> for review (per [CLAUDE.md](../CLAUDE.md)).
 
 The maintainer should read this against the **current** model, not an idealized one. Where the current
 model already does the right thing, this note says so; where it is a placeholder, this note says that too.
@@ -46,28 +48,43 @@ bits. Authorization is a bitmask test against the **running process's** word:
 - the logging subsystem reserves `capLogExport` for future ring export / sink installation hooks, but
   no current process receives that bit by default.
 
-Authority flows by **ambient inheritance**. In `kernel/user/process.swift`, `createProcess` →
-`setProcessSecurity` copies the parent's `(principal, session, caps)` to the child, `processFork` →
-`copyProcessSecurity` does the same, and `vfsProcessInit` copies the **entire fd table** (retaining each
-shared `OpenDescription`) plus the cwd. A child gets everything the parent had, minus close-on-exec fds.
+Authority no longer flows only by ambient inheritance. `fork` still copies the
+parent's handle table as the compatibility path, but `spawn(path)` starts with
+stdio only, and `spawn_handles` starts with exactly the caller-provided handle
+spec vector. The flat `(principal, session, caps)` context still gates coarse
+classes such as filesystem, network, console, and login authority.
 
-File descriptors are the one place the system already has something handle-shaped. `kernel/vfs/vfs.swift`
-has a per-process `FDEntry` table indexed by `(proc, fd)` and a reference-counted, shared `OpenDescription`
-pool. An `OpenDescription` is a tagged union (`fdKindTTY | fdKindVNode | fdKindPipe | fdKindSocket`) with
-rights already baked in as two booleans (`readable`, `writable`) and a `refCount`. `dup`/`fork`/`thread`
-share descriptions by bumping `refCount`. **This is a capability table in miniature — for one object kind,
-with two rights bits, reachable only through the integer-keyed fd namespace.** The whole of C1 below is the
-observation that the rest of the kernel's authority should look like this fd table, generalized.
+File descriptors are now the observable view of a typed handle table.
+`kernel/vfs/handle.swift` defines `HandleKind`, `Rights`, `HandleEntry`, and
+explicit inheritance specs. `kernel/vfs/vfs.swift` stores per-process
+`HandleEntry` slots and reference-counted `OpenDescription` objects behind
+them. C1 keeps POSIX fd numbering, but each fd now carries a kind and rights
+mask: `.file`, `.tty`, `.pipe`, `.socket`, `.endpoint`, or `.device`.
 
-This baseline is good enough for M13 (busybox with per-principal file access) and was the right amount of
-machinery to ship that milestone. It is **not** what the rest of ARCHITECTURE.md assumes.
+Implemented C-series pieces:
+
+- C1: fds-as-handles with per-handle rights and attenuation.
+- C2: `spawn_handles` explicit inheritance, with `spawn` kept stdio-only and
+  `fork` kept as the permissive compatibility path.
+- C3: object-scoped filesystem confinement plus per-handle read/write checks,
+  while the flat `caps` word remains a coarse class gate.
+- C4a: `endpoint_create`, `ipc_send`, and `ipc_recv` with byte messages and
+  one moved handle per message.
+- C5a/C5b: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, moves an
+  opaque `pseudo-input.0` device grant over IPC, proves the grant is busy while
+  owned by the service, and reclaims it after exit.
+
+This is still short of the full architecture. C5b's device grant deliberately
+does not expose MMIO ranges, IRQ endpoints, DMA windows, or real virtio-input
+ownership, and C4a is not the future zero-copy ring/VMO data path.
 
 ---
 
 ## 1. The gap: capability-as-flag vs. capability-as-reference
 
-There are two distinct things the word "capability" means, and swift-os currently implements the weaker one
-while its long-horizon docs assume the stronger one.
+There are two distinct things the word "capability" means. SwiftOS still keeps
+the weaker one as a coarse compatibility gate, while the C-series is moving
+toward the stronger one as checked object references.
 
 **Capability-as-permission-flag (today).** A capability is a *bit* in a process-global word that grants a
 *class* of operation. `capFsRead` means "this process may read files" — all files the namespace can name.
@@ -105,8 +122,9 @@ The deeper problems with the bitmask are structural, not cosmetic:
   authority on behalf of any caller. Reference-passing closes this: the caller hands the service the exact
   handle to act on, and the service can hold no more authority than it was given.
 
-This is not an argument that the bitmask was wrong to ship. It is an argument that it is a **floor**, and
-the ceiling is a handle table. The migration is C1–C3 below.
+This is not an argument that the bitmask was wrong to ship. It is an argument
+that it is a **floor**, and the ceiling is a handle table. The migration started
+with C1-C5b and continues through the remaining target design below.
 
 ---
 
@@ -135,14 +153,14 @@ struct CellId:     Equatable { let raw: UInt32 }
 struct VmoId:      Equatable { let raw: UInt32 }    // shared-memory region
 
 enum HandleKind: UInt8 {
-    case file        // a vnode opened for I/O      (folds in today's fdKindVNode)
+    case file        // a vnode or directory opened for I/O
     case dir         // a directory / namespace root
-    case socket      // a network endpoint          (folds in fdKindSocket)
-    case pipe        //                              (folds in fdKindPipe)
-    case tty         // console                      (folds in fdKindTTY)
-    case ipcEndpoint // a message/door endpoint      (new, C4)
-    case vmo         // a shared-memory region       (new, C4)
-    case device      // an MMIO/IRQ/DMA grant        (new, driver model)
+    case socket      // a network endpoint
+    case pipe
+    case tty         // console
+    case ipcEndpoint // a message/door endpoint
+    case vmo         // a shared-memory region       (future rich IPC path)
+    case device      // an opaque device grant today; MMIO/IRQ/DMA later
     case process     // a process control handle
     case cell        // a cell control handle        (C6)
     case clock       // time source
@@ -202,15 +220,15 @@ look up the handle, **check the per-handle right**, then dispatch on `kind`.
 
 The mapping is direct and is exactly why C1 is *behavior-preserving*:
 
-| Today (`vfs.swift`)                  | Generalized handle table                          |
-|--------------------------------------|---------------------------------------------------|
-| `FDEntry { inUse, file, cloexec }`   | `HandleEntry { inUse, kind, object, rights, … }`  |
-| `OpenDescription.kind` (tagged union)| `HandleEntry.kind` (`HandleKind`)                 |
-| `OpenDescription.readable/.writable` | `rights.contains(.read/.write)`                   |
-| `OpenDescription.refCount` + pool    | per-kind object pool with its own refcount        |
-| `(proc, fd)` index                   | `(proc, handleIndex)` index                       |
-| `dup` / `dup2` (bump `refCount`)     | `handle_duplicate` (with rights ⊆ source)         |
-| `vfsCloseCloexec` on exec            | drop handles with `cloexec` on exec               |
+| Former fd-table shape (`vfs.swift`)       | Current/generalized handle table                  |
+|-------------------------------------------|---------------------------------------------------|
+| `FDEntry { inUse, file, cloexec }`        | `HandleEntry { inUse, kind, object, rights, … }`  |
+| fd-kind tag on the shared description     | `HandleEntry.kind` (`HandleKind`)                 |
+| description-readable/writable booleans    | `rights.contains(.read/.write)`                   |
+| `OpenDescription.refCount` + pool         | per-kind object pool with its own refcount        |
+| `(proc, fd)` index                        | `(proc, handleIndex)` index                       |
+| `dup` / `dup2` (bump `refCount`)          | `handle_duplicate` (with rights ⊆ source)         |
+| `vfsCloseCloexec` on exec                 | drop handles with `cloexec` on exec               |
 
 So fds keep working as small-integer handles to `kind ∈ {file, dir, pipe, tty, socket}`; nothing about the
 busybox path changes at C1. The new object kinds (`ipcEndpoint`, `vmo`, `device`, `cell`) are simply more
@@ -288,9 +306,11 @@ and inherited handles" step the Identity-and-login model in ARCHITECTURE.md alre
 the Cells section already calls for ("M6 process launch should be shaped like `spawn(image, argv, env,
 inheritedHandles, limits)`").
 
-Contrast with today: `processSpawnChild` is fork+exec, and `vfsProcessInit(slot, parent)` copies the whole
-fd table and `copyProcessSecurity` copies the whole caps word. `spawn` inverts the default from *inherit
-everything* to *inherit nothing but what is named*.
+Current state: `processSpawnChild` uses the stdio-only inheritance mode,
+`processSpawnChildWithHandles` uses the explicit handle vector, and `fork`
+keeps the permissive "copy every handle" compatibility mode. `copyProcessSecurity`
+still copies the parent's coarse caps word; object authority is increasingly
+carried by the handle set.
 
 ### 3.2 Emulating `fork` on top
 
@@ -332,13 +352,12 @@ ARCHITECTURE.md commits to a set of things that **cannot exist without local IPC
 - **AI serving cells** ("Future AI-hosting model"): one model server per cell, reached by local RPC, with
   hot reload draining old generations — supervisor↔cell and client↔cell IPC.
 
-There is a standing contradiction worth stating plainly: **the current virtio drivers (virtio-blk,
-virtio-net, virtio-input) live in the kernel**, which contradicts the documented "restartable userland
-driver services" vision. That is a reasonable bring-up choice — you cannot run a userland driver before you
-have IPC, shared memory, and IRQ-as-handle — but it means the documented architecture is *aspirational
-until IPC exists*. IPC is the gate. Nothing on the restartable-services / hot-update / serving-cell roadmap
-unblocks until it lands. That is the argument for sequencing it as early as the dependency chain allows
-(C4, immediately after the handle table and spawn-with-handles it builds on).
+There is a standing contradiction worth stating plainly: **the current virtio
+drivers (virtio-blk, virtio-net, virtio-input) live in the kernel**, which
+contradicts the documented "restartable userland driver services" vision. That
+is a reasonable bring-up choice. C4a/C5b now prove the IPC and opaque-grant
+shape, but the documented architecture remains incomplete until real
+IRQ/DMA/MMIO grants and a restartable userland driver land.
 
 ### 4.2 Minimal shape
 
@@ -507,17 +526,20 @@ M-series; naming it C1–C6 (capabilities) keeps it distinct from the M and net 
 
 | # | Milestone | What lands | Acceptance (illustrative) | Risk / note |
 |---|-----------|------------|---------------------------|-------------|
-| **C1** | Handle table + fds-as-handles | Generalize `(proc, fd)`→`OpenDescription` into a typed `HandleEntry` table with per-handle `Rights`; fds become handles of `kind ∈ {file,dir,pipe,tty,socket}`. **Behavior-preserving.** | busybox `ls`/`cat`/`echo`/pipes/redirects still pass; existing VFS tests green; new unit tests for handle dup/attenuate/close. | Lowest-risk; pure refactor of an existing structure. Must not change observable fd behavior. |
-| **C2** | spawn-with-handles | Introduce `spawn(image, argv, env, inheritedHandles, limits)`; child starts with stdio + only named handles. Re-express `fork` as `spawn` with "all my handles" + the existing address-space clone. Flip the inheritance default. | busybox shell (which forks) still works via emulated fork; a new test shows a spawned child with a *restricted* handle set cannot reach what it was not given. | **Most expensive to retrofit → must be early.** Touches every process-create path. |
-| **C3** | Capability gating moves to per-handle rights | Replace `caps & capFsRead`-style checks in `vfs.swift` with per-handle `Rights` checks. The flat `caps` word is demoted to a *coarse class gate* (or removed) as object handles take over scoping. | `fs:read:/subtree`-style scoping demonstrable: a process holding only a handle to one dir cannot open outside it; old class-wide behavior reproducible as a compatibility default. | Where the bitmask→reference migration actually changes authorization semantics. Needs careful test coverage so nothing silently over- or under-grants. |
-| **C4** | Minimal handle-passing IPC | `endpoint_create`/`ipc_send`/`ipc_recv`/`ipc_call`; `vmo` shared-memory handles; async ring + doorbell; poll integration; **handle transfer** (move) between processes. Adopt the zero-copy/batching/async non-negotiables (§4.3). | Two processes exchange a message *and* a transferred handle (e.g. one hands the other a connected pipe/socket); a host/in-QEMU throughput check on the ring path guards the data path. | The keystone. Get the zero-copy/async shape right here or pay for it forever. |
-| **C5** | First restartable userland driver over IPC | Lift one non-boot-critical driver (candidate: **virtio-input**, then virtio-net) out of the kernel into a supervised userland service that receives device/IRQ/DMA + endpoint handles and serves clients over C4 IPC. | The driver runs as a process; killing and restarting it recovers service; clients reach it only via a handed endpoint handle. Resolves the §4.1 in-kernel-driver contradiction for that driver. | First real exercise of the whole stack (handles + spawn + IPC). Validates the driver-loading-model flow in ARCHITECTURE.md end to end. |
+| **C1** | Handle table + fds-as-handles | Implemented slice: typed `HandleEntry` table, `HandleKind`, per-handle `Rights`, and attenuation. POSIX fds remain the observable namespace. | busybox/coreutils fd behavior and handle unit tests stay green. | Landed as behavior-preserving groundwork. |
+| **C2** | spawn-with-handles | Implemented slice: `spawn_handles` explicit inheritance; `spawn` is stdio-only; `fork` remains the all-handles compatibility path. | A restricted spawned child cannot reach handles it was not given. | Resource limits/env-rich spawn shape remains future work. |
+| **C3** | Object-scoped authority | Implemented slice: filesystem confinement plus per-handle read/write rights. The flat `caps` word remains a coarse class gate. | Confined children cannot open outside their subtree; per-handle rights checks reject overuse. | Full bitmask retirement is not done. |
+| **C4a** | Minimal handle-passing IPC | Implemented slice: `endpoint_create`, `ipc_send`, `ipc_recv`, byte messages, and one moved handle per message. | Processes exchange bytes and moved handles safely. | VMOs, async rings, badges, `ipc_call`, and high-throughput data paths remain future work. |
+| **C5a/C5b** | Restartable pseudo driver-service smoke | Implemented slice: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, transfers an opaque `pseudo-input.0` device grant, observes busy ownership, and reclaims it. | `make c5-device-handle-test` passes under `-smp 4`. | This is not real MMIO/IRQ/DMA/virtio-input handoff yet. |
+| **C5 proper** | First real userland driver over IPC | Lift one non-boot-critical driver (candidate: **virtio-input**, then virtio-net) out of the kernel into a supervised userland service that receives device/IRQ/DMA + endpoint handles and serves clients over C4 IPC. | The driver runs as a process; killing and restarting it recovers service; clients reach it only via a handed endpoint handle. | First real exercise of the whole stack. |
 | **C6** | Cell as userland composition | Add the per-process `CellId` tag (accounting domain + namespace root). A userland **cell supervisor** assembles a cell = job + handle set + resource domain + namespace, and launches a process inside it. **No kernel `Cell` object.** | Two cells with separate namespaces/roots and separate resource accounting; a process in one cannot name objects in the other (handles + namespace root); per-cell counters reported. | Delivers the Cells vision as composition (§5). The tag is cheap; the policy is userland. |
 
-Dependencies are strict: C2 needs C1's handle table; C3 needs C2's explicit-grant model to have something
-to scope; C4 builds endpoints/VMOs as new handle kinds on C1's table and transfers them with C2's move
-mechanism; C5 is the first thing that needs all of C1–C4 at once; C6 needs C5's supervisor pattern and C4's
-IPC to assemble a cell. None of them is safely parallelizable.
+Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
+explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
+kinds on C1's table and transfers them with C2's move mechanism; C5 is the
+first thing that needs C1-C4 at once; C6 needs C5's supervisor pattern and C4's
+IPC to assemble a cell. The implemented C1-C5b slices do not remove those
+dependencies for the remaining richer work.
 
 ---
 
@@ -534,7 +556,8 @@ IPC to assemble a cell. None of them is safely parallelizable.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** implemented. This note is the plan; the code is the C-series, one reviewed milestone at a time.
+- **Not** fully implemented. C1-C5b slices exist; C5 proper, richer IPC, and
+  Cells remain planned work.
 
 ---
 

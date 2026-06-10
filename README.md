@@ -91,12 +91,15 @@ What exists today, in the order it was built:
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 
-- **Restartable driver-service smoke:** the C5a path stages `/bin/drvsvcdemo`
-  and `/bin/drvinputd`. The supervisor starts a pseudo input-driver service,
-  exchanges endpoint IPC messages, kills the service, restarts it, and proves
-  recovery with `C5a OK: restartable driver service recovered over IPC`.
-  The focused acceptance gate runs under `-smp 4`; real MMIO, IRQ, DMA, and
-  virtio-input ownership are still roadmap work.
+- **Restartable driver-service and device-handle smoke:** the C5a/C5b path
+  stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts a
+  pseudo input-driver service, exchanges endpoint IPC messages, transfers an
+  opaque pseudo-device handle, proves the grant moves, stays busy while the
+  service owns it, is reclaimed after exit, and recovers with
+  `C5a OK: restartable driver service recovered over IPC` plus
+  `C5b OK: opaque device handle transferred and released`. The focused
+  acceptance gate is `make c5-device-handle-test` under `-smp 4`; real MMIO,
+  IRQ, DMA, and virtio-input ownership are still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves
@@ -166,7 +169,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
-  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a/C5b
   driver-service smoke.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
@@ -405,8 +408,8 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals; C5a now proves the supervisor/service IPC shape with a
-pseudo driver service before real device handoff lands.
+work, not non-goals; C5a/C5b now prove the supervisor/service IPC shape plus an
+opaque pseudo-device handle transfer before real device handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 

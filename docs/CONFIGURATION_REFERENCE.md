@@ -127,10 +127,14 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make test` | Run host tests plus QEMU acceptance tests. |
 | `make smp-test` | Run the default SMP boot smoke. |
 | `make smp-release-guard` | Run static SMP release-readiness contract checks. |
+| `make smp-release-contract` | Alias for the SMP release-readiness guard. |
+| `make s4-resource-stress-test` | Run the SMP resource-boundary stress gate under `-smp 4`. |
 | `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
 | `make c5-driver-service-test` | Run the C5 driver-service/device-discovery smoke under `-smp 4`. |
+| `make c5-device-handle-test` | Run the C5b opaque device-handle handoff gate under `-smp 4`. |
 | `make c5-device-discovery-test` | Alias for the focused C5c virtio-input discovery and grant handoff gate. |
+| `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |
 | `make newlib` | Build the local newlib sysroot. |
@@ -161,6 +165,7 @@ inputs are missing or stale.
 | `build/pkghello.swpkg` | `make package-fixture` | Sample package file |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
 | `build/pkgstore-pkghello.img` | `make package-store-fixture` | Package-store bootstrap image |
+| `build/pkgstore-lua-install.img` | `make package-lua-install-fixture` | Writable package-store image used by Lua/ports install tests |
 
 ## Direct QEMU Profile
 
@@ -479,7 +484,7 @@ make package-overlay-test
 | Signed repository install | `make package-repo-install-test` |
 | Static-host or hosted package repository | `make package-static-host-repo-install-test`, `make ports-hosted-url-verify-test`, or `make package-static-host-dns-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
-| SMP boot parameters | `make s1-test` or the milestone-specific SMP target |
+| SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
 | C5 driver-service/device-discovery path | `make c5-device-discovery-test` |
 | Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 

@@ -66,8 +66,9 @@ C5a proves the service shape that future userland drivers need, C5b adds an
 opaque transferable device handle, and C5c matches that handle against a
 discovered QEMU virtio-input transport when one is attached. The demo supervisor
 starts `/bin/drvinputd` with only endpoint file descriptors, exchanges a pseudo
-input event, stops it, starts a fresh generation, and verifies that communication
-recovers.
+input event, transfers the opaque device handle, proves the grant moves and
+stays busy while the service owns it, stops the service, starts a fresh
+generation, and verifies that communication recovers.
 
 Focused host gate:
 
@@ -88,6 +89,8 @@ Expected serial output includes:
 
 ```text
 drvsvc: C5a supervisor starting
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched

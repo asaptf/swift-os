@@ -627,9 +627,14 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5b device grant claimed
 drvsvc: C5c virtio-input grant matched
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
 drvinputd: C5c virtio-input grant accepted
+drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched

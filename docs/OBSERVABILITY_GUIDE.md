@@ -79,7 +79,10 @@ These markers tell you how far the system got.
 | `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim demo passed |
 | `swift-os M12c: starting console-login (init)` | Login init was launched |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
+| `drvsvc: C5b device grant moved` | Opaque pseudo-device grant was moved out of the supervisor fd table |
+| `drvinputd: C5b device grant accepted` | Pseudo driver service validated the transferred device grant |
 | `C5a OK: restartable driver service recovered over IPC` | Pseudo driver service restarted and recovered over endpoint IPC |
+| `C5b OK: opaque device handle transferred and released` | Device grant was transferred and reclaimed |
 | `C5c OK: virtio-input device grant discovered and matched` | C5c matched a discovered virtio-input grant and completed handoff/reclaim |
 | `swift-os login:` | Console login prompt reached |
 | `Welcome to swift-os, root` | Root login succeeded |
