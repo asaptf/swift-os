@@ -145,6 +145,9 @@ See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 ## Documentation
 
 The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+That map now includes role-based paths for first-time operators, deployment
+owners, administrators, application developers, package maintainers, service
+operators, AI hosting operators, support engineers, and security reviewers.
 
 - [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
   and attach QEMU networking.
