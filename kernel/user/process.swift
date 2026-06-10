@@ -1132,6 +1132,21 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
     let rc = address_space_munmap(pTtbr0[me], addr, pages)
     if rc != 0 { return Int(rc) }
     pResPages[me] -= live
+    // I6: a lazily-reserved file VMA must not survive its munmap — the cursor
+    // reclaim below can hand the same VA range to a future mmap, and a stale
+    // VMA would demand-fill the new mapping from the OLD file's disk extent.
+    // Any overlap deactivates the whole VMA (and frees its slot). A partial
+    // munmap therefore drops demand paging for the VMA's remaining pages:
+    // already-materialized ones stay mapped, untouched ones become fatal on
+    // access — acceptable for the map-whole/unmap-whole file pattern, and
+    // documented here until a VMA split is needed.
+    for vi in 0..<maxFileVmas {
+        let idx = me * maxFileVmas + vi
+        if !pFileVmas[idx].active { continue }
+        let vBase = pFileVmas[idx].base
+        let vEnd = vBase + pFileVmas[idx].pages * PageAllocator.pageSize
+        if addr < vEnd && addr + bytes > vBase { pFileVmas[idx].active = false }
+    }
     // Cursor reclaim: if the freed region sat at the bottom of the arena, hand
     // the VA space back so a later mmap can reuse it. (Interior holes are left
     // as gaps — a free-list is a follow-up; the JIT pattern maps once.)
