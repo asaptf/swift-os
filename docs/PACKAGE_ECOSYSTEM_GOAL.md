@@ -118,14 +118,15 @@ Lives in `swift-os`.
 
 Milestones:
 
-1. P2: mount verified package payload images as read-only VFS overlays. (DONE)
-2. P3a: persistent package store and boot activation generations. (DONE)
-3. P3b: local target-side `/bin/pkg install FILE` and `pkg list`. (DONE)
-4. P4: complete local package lifecycle: files, remove, rollback, and
-   diagnostics.
-5. P5: signed static HTTP repository catalogs, network fetch, configured
-   repository URLs, and name-based dependency installation. (P5c fixture DONE;
-   public hosted channels remain future work)
+1. Package payload overlays: mount verified package payload images as read-only
+   VFS overlays. (DONE)
+2. Package-store boot activation: persistent package store and boot activation
+   generations. (DONE)
+3. Local target-side install: `/bin/pkg install FILE` and `pkg list`. (DONE)
+4. Complete local package lifecycle: files, remove, rollback, and diagnostics.
+5. Signed repository catalogs and network fetch: configured repository URLs,
+   name-based dependency installation, and signed static HTTP repository
+   fixtures are implemented; public hosted channels remain future work.
 
 ### 2. Ports Catalog
 
