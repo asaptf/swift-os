@@ -305,6 +305,19 @@ Current network-facing programs include `/bin/httpd`, `/bin/llmd`,
 See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md#networking-commands).
 
+### Does SwiftOS have restartable driver services yet?
+
+C5a has the first checked-in restartable driver-service smoke. `/bin/drvsvcdemo`
+supervises the pseudo driver service `/bin/drvinputd`, exchanges endpoint IPC,
+restarts the service, and verifies recovery:
+
+```sh
+make c5-driver-service-test
+```
+
+This is not a real device handoff yet. MMIO, IRQ, DMA, and virtio-input
+ownership remain roadmap work.
+
 ### Why can only one of `httpd` and `llmd` run?
 
 Both bind guest TCP port 8080. Run one at a time or boot a separate guest.

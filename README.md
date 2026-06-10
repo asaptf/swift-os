@@ -91,6 +91,12 @@ What exists today, in the order it was built:
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 
+- **Restartable driver-service smoke:** the C5a path stages `/bin/drvsvcdemo`
+  and `/bin/drvinputd`. The supervisor starts a pseudo input-driver service,
+  exchanges endpoint IPC messages, kills the service, restarts it, and proves
+  recovery with `C5a OK: restartable driver service recovered over IPC`.
+  Real MMIO, IRQ, DMA, and virtio-input ownership are still roadmap work.
+
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves
   correct concurrent increment across preemption.
@@ -159,7 +165,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
-  SwiftOS services such as `httpd`, `llmd`, `tcpecho`, and `udpecho`.
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a
+  driver-service smoke.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
 - [Performance And Sizing Guide](docs/PERFORMANCE_GUIDE.md): measure resource
@@ -397,7 +404,8 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals.
+work, not non-goals; C5a now proves the supervisor/service IPC shape with a
+pseudo driver service before real device handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 
