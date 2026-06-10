@@ -2,7 +2,7 @@
 
 This guide explains the current AI hosting surface in SwiftOS: local TinyStories
 inference, HTTP model serving, verified model bundles, health and metrics, and
-the operational limits that matter when demonstrating or extending the system.
+the operational limits that matter when validating or extending the system.
 
 Use it with:
 
@@ -43,7 +43,7 @@ is not a general ONNX, GGUF, PyTorch, or GPU runtime.
 | `models/stories15M.bin` | `make model` | Host source only | Quantized into `stories15M-q8.bin` |
 | `models/stories15M-q8.bin` | `make model` | `/models/stories15M/1/model.bin` | Default `/bin/llmd` |
 | `models/tokenizer.bin` | `make model` | `/models/stories15M/1/tokenizer.bin` | Default `/bin/llmd` |
-| `models/dev-signing.seed` | `make base-image` | Host signing seed, gitignored | Signs demo manifests |
+| `models/dev-signing.seed` | `make base-image` | Host signing seed, gitignored | Signs development manifests |
 | `models/dev-signing.pub` | `make base-image` | `/etc/swos/model-signing.pub` | Guest trust root |
 | `build/base.img` | `make base-image` | Read-only base image | Guest model storage |
 
@@ -297,7 +297,7 @@ Supported model families today:
 
 | Format | Use | Notes |
 | --- | --- | --- |
-| llama2.c fp32 checkpoint | `/bin/llm`, raw `llmd` experiments | Small `stories260K` demo path |
+| llama2.c fp32 checkpoint | `/bin/llm`, raw `llmd` experiments | Small `stories260K` inference path |
 | llama2.c version 2 Q8_0 checkpoint | Default `/bin/llmd` | Groupwise int8 quantized path |
 
 Unsupported today:
@@ -358,7 +358,7 @@ Limits to account for:
 - Production certificate stores and long-running TLS service policy are future
   work.
 
-For demos, keep host forwarding loopback-only unless you deliberately place a
+For validation, keep host forwarding loopback-only unless you deliberately place a
 separate trusted front end in front of QEMU.
 
 ## Performance Notes
@@ -415,7 +415,7 @@ separate expected slowness from functional failure:
 ```
 
 More failure patterns are documented in
-[Troubleshooting](TROUBLESHOOTING.md#llm-demo-problems).
+[Troubleshooting](TROUBLESHOOTING.md#llm-inference-problems).
 
 ## Evidence Checklist
 

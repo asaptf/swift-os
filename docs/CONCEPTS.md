@@ -298,7 +298,7 @@ Current behavior includes:
 - Immutable base image and `/tmp`.
 - Capability-gated filesystem and networking operations.
 - Read-only package payloads and package-store activation paths.
-- TinyStories local and HTTP serving demos.
+- TinyStories local and HTTP serving inference paths.
 - A broad host and QEMU test suite.
 
 Roadmap work includes:

@@ -34,7 +34,7 @@ Current supported support targets:
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh`, `./tests/ab_rollback_test.sh` |
 | Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_kconfirm_test.sh`, `./tests/uefi_krollback_test.sh` |
-| LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
+| LLM local and serving inference paths | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` or aggregate `make c5-test` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` and the aggregate S5 gate `make s5-test` |
 

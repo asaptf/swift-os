@@ -201,7 +201,7 @@ Run the narrowest test that proves the path you changed.
 | TCP client connect | `./tests/tcp_connect_test.sh` |
 | UDP echo | `./tests/udp_echo_test.sh` |
 | DNS resolver | `./tests/dns_test.sh` |
-| TLS client demo path | `./tests/tls_test.sh` |
+| TLS client smoke path | `./tests/tls_test.sh` |
 | IPv6 smoke | `./tests/ipv6_smoke_test.sh` |
 | LLM local inference | `./tests/llm_run_test.sh` |
 | LLM HTTP serving | `./tests/llm_serve_test.sh` |

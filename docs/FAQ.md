@@ -158,7 +158,7 @@ handle-right based. Do not assume traditional Unix superuser semantics.
 
 ### Is the default password safe?
 
-No. It is a seeded demo password for the checked-in image. SwiftOS does not yet
+No. It is a seeded password for the checked-in image. SwiftOS does not yet
 ship production password policy, rotation, or account provisioning.
 
 ### What does `capNet` mean?
@@ -349,9 +349,9 @@ verification is not complete.
 
 ## AI Hosting
 
-### What AI demo exists today?
+### What AI inference path exists today?
 
-SwiftOS includes TinyStories inference demos:
+SwiftOS includes TinyStories inference workflows:
 
 - `/bin/llm` for local serial-console completions.
 - `/bin/llmd` for HTTP completion serving with health and metrics endpoints.
@@ -369,7 +369,7 @@ verification.
 
 ### Is AI serving fast under QEMU?
 
-It is a correctness and isolation demo under QEMU TCG, not a performance target.
+It is a correctness and isolation proof under QEMU TCG, not a performance target.
 Use metrics from `/bin/llmd` to record actual request timing.
 
 ## Operations And Support
@@ -377,7 +377,7 @@ Use metrics from `/bin/llmd` to record actual request timing.
 ### Where are logs?
 
 The strongest current evidence is the serial log. Some structured log export
-markers and service metrics are available from checked-in demos.
+markers and service metrics are available from checked-in smoke paths.
 
 See [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md) and
 [LOGGING.md](LOGGING.md).

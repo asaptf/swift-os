@@ -33,7 +33,7 @@ end-to-end package workflow, use
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
-| `build/quantize` | `make model` | Quantize TinyStories checkpoints for the AI demo. | `./tests/llm_run_test.sh` |
+| `build/quantize` | `make model` | Quantize TinyStories checkpoints for AI inference. | `./tests/llm_run_test.sh` |
 
 ## Base Image Packer
 

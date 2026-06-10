@@ -33,7 +33,7 @@ Use this guide with:
 | User programs | Static EL0 binaries |
 | Storage | Read-only packed base image plus RAM-backed `/tmp` |
 | Networking | virtio-net with QEMU user networking in tests |
-| AI inference | CPU TinyStories demos under QEMU |
+| AI inference | CPU TinyStories inference paths under QEMU |
 | Persistent metrics store | Not implemented |
 | Production capacity claims | Not established yet |
 
@@ -68,7 +68,7 @@ Current SwiftOS documentation should not claim:
 - A completed scheduler load-balancing policy.
 - A finished per-cell resource accounting model.
 
-Those are roadmap topics. Current docs may describe working demos, acceptance
+Those are roadmap topics. Current docs may describe working smoke paths, acceptance
 criteria, and relative guardrails.
 
 ## Baseline Host Profile
@@ -191,8 +191,8 @@ The common QEMU profiles use:
 -m 256M
 ```
 
-This is enough for the checked-in boot, userland demos, networking tests,
-package tests, and TinyStories demos. Larger future workloads such as Node.js,
+This is enough for the checked-in boot, userland smoke programs, networking tests,
+package tests, and TinyStories inference paths. Larger future workloads such as Node.js,
 JVM, database ports, and full Swift runtime support will need deliberate sizing
 work.
 
@@ -296,7 +296,7 @@ not present them as hardware-independent service-level objectives.
 
 ## AI Inference Performance
 
-The TinyStories demos prove:
+The TinyStories inference paths prove:
 
 - Native EL0 inference can run.
 - Model data can live in the base image.

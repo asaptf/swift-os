@@ -1,10 +1,10 @@
 # SwiftOS Operations Guide
 
-This guide is for people who boot, test, demo, or operate a SwiftOS image. It
+This guide is for people who boot, test, validate, or operate a SwiftOS image. It
 describes the current checked-in system: QEMU `virt` on AArch64, serial console
 first, immutable base image, RAM scratch space, capability-scoped user sessions,
-native Swift tools, networking demos, package payload overlays, A/B update
-stores, and the AI inference demo, plus the C5a-C5f restartable
+native Swift tools, networking workflows, package payload overlays, A/B update
+stores, and AI inference, plus the C5a-C5f restartable
 driver-service/device-authority smoke.
 
 Use this guide with:
@@ -29,7 +29,7 @@ Use this guide with:
   forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network test coverage.
 - [Service Guide](SERVICE_GUIDE.md) for service lifecycle, readiness markers,
   ports, health checks, and service authoring rules.
-- [AI Hosting Guide](AI_HOSTING_GUIDE.md) for the local inference demo,
+- [AI Hosting Guide](AI_HOSTING_GUIDE.md) for local inference,
   serving daemon, model bundles, health checks, and metrics.
 - [Observability Guide](OBSERVABILITY_GUIDE.md) for boot health markers,
   structured log smoke paths, process snapshots, service metrics, and panic
@@ -125,7 +125,7 @@ UEFI framebuffer and virtio input path, not to provide a desktop environment.
 
 ### Network Boot
 
-Networking requires a NIC in the QEMU command. The common demo profile forwards
+Networking requires a NIC in the QEMU command. The common validation profile forwards
 host TCP 8080 to guest TCP 8080 and host TCP/UDP 5555 to guest port 5555. For
 service-specific profiles and troubleshooting, see
 [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
@@ -477,7 +477,7 @@ With QEMU user networking attached:
 The default resolver is QEMU slirp's DNS address (`10.0.2.3`). Tests may pass an
 explicit DNS responder address and port.
 
-## AI Hosting Demo
+## AI Hosting
 
 SwiftOS has two native Swift TinyStories inference entry points:
 
@@ -489,7 +489,7 @@ SwiftOS has two native Swift TinyStories inference entry points:
 For the complete AI runbook, bundle format, HTTP API, and support checklist, see
 [AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
 
-The local demo and the server intentionally use different default bundles:
+The local inference command and the server intentionally use different default bundles:
 `/bin/llm` loads the small fp32 `stories260K` checkpoint and `tok512`
 tokenizer, while `/bin/llmd` serves the larger Q8_0 `stories15M` checkpoint
 through a verified bundle rooted at `/models/stories15M`.
@@ -511,7 +511,7 @@ Inside the guest:
 ```
 
 Under QEMU TCG this is intentionally slow compared with native execution. Treat
-it as a correctness and isolation demo, not a performance target.
+it as a correctness and isolation proof, not a performance target.
 
 ### TCP Model Serving
 
@@ -545,7 +545,7 @@ curl http://127.0.0.1:8080/metrics
 
 `/bin/llmd` reports `llmd: trust root loaded (/etc/swos/model-signing.pub)`,
 `llmd: generation 2 rejected (model size/sha256 mismatch)` for the
-intentionally corrupt demo generation, then
+intentionally corrupt validation generation, then
 `llmd: bundle stories15M generation 1 verified (ed25519+sha256)`,
 `llmd: model int8 Q8_0 GS=32`, and `llmd: serving on 8080` when it is ready.
 `GET /health` reports the model shape, such as `ok model dim=288` for the
@@ -574,7 +574,7 @@ Useful markers:
 | `swift-os login:` | `console-login` is running |
 | `Welcome to swift-os, root` | Authentication succeeded |
 | `httpd: listening on 8080` | HTTP server bound and entered its event loop |
-| `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt demo generation was rejected |
+| `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt validation generation was rejected |
 | `llmd: bundle stories15M generation 1 verified (ed25519+sha256)` | Signed model-bundle fallback selected generation 1 |
 | `llmd: model int8 Q8_0 GS=32` | Quantized serving engine selected |
 | `llmd: serving on 8080` | Inference server bound and entered its event loop |
@@ -593,7 +593,7 @@ Useful markers:
 | `swos-kstage: active kernel image staged into the inactive ESP slot` | Active ESP kernel image was copied and verified in the inactive kernel slot |
 | `swos-kactivate: inactive kernel slot activated` | Inactive ESP kernel slot was selected in loader-managed `kernel-state` for the next boot |
 | `swos-kconfirm: booted kernel slot confirmed healthy` | Booted ESP kernel slot was marked healthy in loader-managed `kernel-state` |
-| `llm: done` | Inference demo completed and returned to userland |
+| `llm: done` | Inference command completed and returned to userland |
 
 The kernel has a structured in-memory log ring and sink indirection groundwork;
 userland log export remains gated by future capability work. See
@@ -636,7 +636,7 @@ Run the narrowest test that proves the path you touched:
 | DNS | `./tests/dns_test.sh` |
 | Swift coreutils | `./tests/swift_coreutils_test.sh` |
 | `top` | `./tests/top_test.sh` |
-| LLM demo | `./tests/llm_run_test.sh` |
+| LLM inference | `./tests/llm_run_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | Full gate | `make test` |
 
@@ -669,7 +669,7 @@ Current limits that matter during operation:
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.
-- No general service manager; demos are started manually from the shell. C5
+- No general service manager; services are started manually from the shell. C5
   proves a focused driver-service restart/device-grant/metadata path, not a
   general daemon manager.
 - SMP hardening can boot and test multiple scheduler CPUs, including the S5f

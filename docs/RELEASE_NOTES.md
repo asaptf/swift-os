@@ -115,7 +115,7 @@ service-oriented.
 - Ships `/bin/httpd` for static files under `/www`.
 - Ships `/bin/tcpecho`, `/bin/udpecho`, `/bin/tcpget`, and `/bin/nslookup` for
   network validation.
-- Ships `/bin/tlsget` as a TLS 1.3 client demo path. Production certificate
+- Ships `/bin/tlsget` as a TLS 1.3 client smoke path. Production certificate
   validation is not complete.
 - `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080, so run one at a
   time.
@@ -123,7 +123,7 @@ service-oriented.
 ### AI Hosting
 
 - `/bin/llm` runs a local TinyStories completion from the small `stories260K`
-  demo model.
+  model.
 - `/bin/llmd` serves TinyStories completions over HTTP on TCP 8080.
 - The default server resolves the verified bundle rooted at
   `/models/stories15M`.

@@ -749,7 +749,7 @@ Acceptance coverage: `tests/kv_test.sh`.
 
 ### `llm`
 
-Run the native Embedded Swift LLM demo.
+Run the native Embedded Swift LLM inference command.
 
 ```text
 llm [prompt] [steps]

@@ -29,7 +29,7 @@ Then identify the failing layer:
 | `swos-*` update command or rollback behaves unexpectedly | [Update And Rollback Problems](#update-and-rollback-problems) |
 | Socket tools fail | [Networking Problems](#networking-problems) |
 | `/usr/bin/pkghello` is missing | [Package Problems](#package-problems) |
-| `/bin/llm` cannot load files | [LLM Demo Problems](#llm-demo-problems) |
+| `/bin/llm` cannot load files | [LLM Inference Problems](#llm-inference-problems) |
 | A QEMU smoke test flakes | [Test Driver Problems](#test-driver-problems) |
 
 Keep the serial log when reporting a failure. It is usually the most useful
@@ -75,7 +75,7 @@ test -f build/busybox.elf
 
 ### Model Files Are Missing
 
-Cause: the AI demo model has not been fetched.
+Cause: the AI model has not been fetched.
 
 Fix:
 
@@ -149,9 +149,9 @@ If using a hand-written QEMU command, confirm it includes:
 - `-device virtio-blk-device,drive=swosbase`
 - `-kernel build/kernel.elf`
 
-### Boot Reaches The TTY Demo But Not Login
+### Boot Reaches The TTY Smoke Prompt But Not Login
 
-The early demo expects one line and then Ctrl-C:
+The early TTY smoke prompt expects one line and then Ctrl-C:
 
 ```text
 M7 tty: type a line then Enter
@@ -249,7 +249,7 @@ Common causes:
 - `user` cannot create sockets.
 - Only the console/login path should hold `capConsole`.
 
-Use `root` for network and full-system demos.
+Use `root` for network and full-system validation.
 
 ## Filesystem Problems
 
@@ -660,7 +660,7 @@ build/swpkg verify build/pkghello.swpkg
 
 Package paths must live under `/usr`.
 
-## LLM Demo Problems
+## LLM Inference Problems
 
 ### `/bin/llm` Cannot Load The Model
 
@@ -686,7 +686,7 @@ Run the acceptance test:
 
 ### `/bin/llm` Is Slow
 
-This is expected under QEMU TCG. The demo proves isolated EL0 inference and
+This is expected under QEMU TCG. The command proves isolated EL0 inference and
 reference output, not production throughput.
 
 ### `/bin/llmd` Cannot Load The Model Or Tokenizer
@@ -736,7 +736,7 @@ Run the acceptance test:
 This is expected under QEMU TCG. The default serving path verifies bundle
 manifest signatures and payload hashes, parses the full 32000-entry tokenizer,
 and demand-pages the quantized `stories15M` checkpoint before or during the
-first request. Treat the current serving demo as a correctness and integration
+first request. Treat the current serving path as a correctness and integration
 path, not as a throughput target.
 
 ## Driver-Service Smoke Problems
