@@ -520,6 +520,63 @@ private func checkApiCompleteExampleVerificationCoverage() {
     finishCurrent(at: lines.count + 1)
 }
 
+private func codeSpans(in text: String) -> [String] {
+    let regex = try! NSRegularExpression(pattern: #"`([^`]+)`"#)
+    let nsText = text as NSString
+    return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).map {
+        nsText.substring(with: $0.range(at: 1))
+    }
+}
+
+private func checkApiRecipeVerificationCoverage() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inRecipeIndex = false
+    for (index, line) in lines.enumerated() {
+        if line == "## API Recipe Index" {
+            inRecipeIndex = true
+            continue
+        }
+        if inRecipeIndex && line.hasPrefix("## ") {
+            break
+        }
+        guard inRecipeIndex,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = line
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard cells.count >= 5 else { continue }
+        let task = cells[1]
+        let verification = cells[cells.count - 2]
+        if task == "Task" {
+            continue
+        }
+
+        let commands = codeSpans(in: verification)
+        if commands.isEmpty {
+            fail("\(path):\(index + 1): API recipe `\(task)` has no verification command")
+            ok = false
+        }
+        for command in commands {
+            validateVerificationCommand(command,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
+        }
+    }
+}
+
 private func stagedBaseCommands() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -763,6 +820,7 @@ checkDocumentationMapCoverage()
 checkReadmeDocumentationFrontDoorCoverage()
 checkExampleVerificationCoverage()
 checkApiCompleteExampleVerificationCoverage()
+checkApiRecipeVerificationCoverage()
 checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
 checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
