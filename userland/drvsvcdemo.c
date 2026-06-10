@@ -40,6 +40,7 @@ struct device_expect {
 
 static int c5c_real_device_seen = 0;
 static int saw_virtio_input_metadata = 0;
+static int c5e_authority_withheld_seen = 0;
 
 static void u32_to_str(int v, char out[12]) {
     char tmp[12];
@@ -90,10 +91,16 @@ static int is_pseudo_input(const struct swiftos_device_info *info) {
            cstr_eq(info->name, "pseudo-input.0");
 }
 
+static int hardware_authority_withheld(const struct swiftos_device_info *info) {
+    return info->irq == 0 &&
+           (info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
+           (info->flags & SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY) == 0;
+}
+
 static int valid_device_info(const struct swiftos_device_info *info, int real,
                              unsigned int claimed) {
     if (info->claimed != claimed) { return 0; }
-    if ((info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) { return 0; }
+    if (!hardware_authority_withheld(info)) { return 0; }
     return real ? is_real_virtio_input(info) : is_pseudo_input(info);
 }
 
@@ -155,6 +162,7 @@ static int run_device_handoff(int command_fd, int event_fd, struct device_expect
         puts_raw("drvsvc: device info mismatch\n");
         return 0;
     }
+    c5e_authority_withheld_seen = 1;
     puts_raw("drvsvc: C5b device grant claimed\n");
     if (expect->real) {
         c5c_real_device_seen = 1;
@@ -317,6 +325,9 @@ int main(void) {
     }
     if (saw_virtio_input_metadata) {
         puts_raw("C5d OK: virtio input discovery metadata surfaced\n");
+    }
+    if (c5e_authority_withheld_seen) {
+        puts_raw("C5e OK: device authority withheld until explicit handoff\n");
     }
     return 0;
 }

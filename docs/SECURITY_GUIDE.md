@@ -362,7 +362,8 @@ Security properties:
 - The sender loses the fd when `ipc_send` moves the handle.
 - A second `device_claim` of the discovered name returns `-16` while the
   service owns the live grant.
-- The C5d metadata always carries `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT`.
+- The C5e metadata always carries `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT` and keeps
+  the `SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY` mask clear.
   `virtio-input.0` includes MMIO base/length as manifest metadata only; there is
   still no userland mapping, IRQ endpoint, DMA window, or queue ownership.
 - Closing the final device fd releases the claim.

@@ -361,6 +361,19 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 - Non-goals: C5d still does not map MMIO into userland, deliver IRQs as
   endpoints, create DMA windows, or replace the in-kernel virtio-input driver.
 
+### C5e — device authority envelope preflight (DONE, 2026-06-10)
+
+- The public device flag ABI now reserves explicit future hardware-authority
+  bits for MMIO, IRQ, and DMA grants. Current C5 grants must keep those bits
+  clear and continue to set `NO_MMIO_GRANT`.
+- `/bin/drvsvcdemo` and `/bin/drvinputd` reject device metadata that advertises
+  MMIO/IRQ/DMA authority before the kernel implements the corresponding handoff.
+  The smoke path emits `C5e OK: device authority withheld until explicit handoff`.
+- `make c5-device-authority-test` is the focused `-smp 4` gate. It attaches a
+  QEMU virtio keyboard and proves that discovered metadata remains metadata-only.
+- Non-goals: C5e does not choose the first real authority type or move the
+  virtio-input queue to userland. It creates the guardrail for that next step.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

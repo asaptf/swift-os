@@ -790,7 +790,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff and virtio-input discovery metadata over endpoint IPC. | `make c5-device-metadata-test` (`-smp 4`) |
+| `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
 | `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 
 Examples:
@@ -813,7 +813,8 @@ device is attached, it also expects
 `C5c OK: virtio-input device grant discovered and matched`. It is a
 driver-service shape smoke with an opaque registry grant, not a userland
 MMIO/IRQ/DMA driver handoff. The C5d metadata gate additionally expects
-`C5d OK: virtio input discovery metadata surfaced`.
+`C5d OK: virtio input discovery metadata surfaced`; the C5e authority gate
+expects `C5e OK: device authority withheld until explicit handoff`.
 
 ## Package Commands
 
@@ -968,8 +969,8 @@ are not the primary operator interface.
 | `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
-| `drvsvcdemo` | C5a-C5d pseudo/virtio-input driver supervisor, discovery metadata, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-device-metadata-test` |
-| `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-metadata-test` |
+| `drvsvcdemo` | C5a-C5e pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-device-authority-test` |
+| `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |
 
 Prefer the commands in the earlier sections for normal use. Use these demo
 commands when validating a specific milestone or investigating a regression.

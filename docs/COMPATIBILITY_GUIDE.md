@@ -462,10 +462,11 @@ Yes, with a virtio-net boot profile and `capNet`. Current examples are
 
 ### Can I run userland drivers?
 
-Not real hardware drivers yet. C5a-C5d prove the supervisor, endpoint IPC,
-opaque device handle, discovered virtio-input manifest shape, and surfaced
-virtio-mmio metadata with `/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO,
-IRQ, DMA, and virtio-input queue ownership are still roadmap work.
+Not real hardware drivers yet. C5a-C5e prove the supervisor, endpoint IPC,
+opaque device handle, discovered virtio-input manifest shape, surfaced
+virtio-mmio metadata, and withheld hardware-authority envelope with
+`/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
+virtio-input queue ownership are still roadmap work.
 
 ### Can I use TLS for production trust decisions?
 
@@ -495,7 +496,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
-| Driver-service/device-metadata smoke | `make c5-device-metadata-test` |
+| Driver-service/device-authority smoke | `make c5-device-authority-test` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP run-any placement | `make s5-run-any-placement-test` |

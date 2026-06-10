@@ -1722,6 +1722,21 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   c5-device-metadata-test` boots with a QEMU virtio keyboard and asserts
   `C5d OK: virtio input discovery metadata surfaced`.
 
+### C5e — device authority envelope preflight (DONE, 2026-06-10)
+
+- **Authority flags.** `userland/lib/syscall.h` now reserves
+  `SWIFTOS_DEVICE_FLAG_MMIO_GRANT`, `SWIFTOS_DEVICE_FLAG_IRQ_GRANT`, and
+  `SWIFTOS_DEVICE_FLAG_DMA_GRANT`, plus the combined
+  `SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY` mask. The current registry never sets
+  those bits.
+- **Executable boundary.** The supervisor and service both validate that device
+  grants keep the future hardware-authority mask clear, keep `NO_MMIO_GRANT`
+  set, and report `irq == 0`. This makes the current metadata-only contract a
+  testable boundary rather than a comment.
+- **Acceptance.** `make c5-device-authority-test` runs the focused C5 QEMU path
+  with `virtio-keyboard-device` attached and asserts
+  `C5e OK: device authority withheld until explicit handoff`.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

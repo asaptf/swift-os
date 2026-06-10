@@ -607,16 +607,17 @@ path, not as a throughput target.
 
 ## Driver-Service Smoke Problems
 
-### `make c5-device-metadata-test` Fails
+### `make c5-device-authority-test` Fails
 
 The C5 gate boots QEMU with `SMP_CPUS=4` and `virtio-keyboard-device`, starts
 `/bin/drvsvcdemo`, expects `/bin/drvinputd` to recover across two generations,
-and validates the discovered `virtio-input.0` device grant plus C5d metadata
-markers. Rebuild the normal prerequisites and run the focused gate:
+and validates the discovered `virtio-input.0` device grant plus C5d/C5e
+metadata and withheld-authority markers. Rebuild the normal prerequisites and
+run the focused gate:
 
 ```sh
 make build build/virt-smp4.dtb base-image
-make c5-device-metadata-test
+make c5-device-authority-test
 ```
 
 Expected serial markers include:
@@ -643,6 +644,7 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 C5d OK: virtio input discovery metadata surfaced
+C5e OK: device authority withheld until explicit handoff
 ```
 
 The broad headless boot path exercises the same lifecycle through
@@ -653,9 +655,9 @@ If the test fails, keep the serial tail printed by
 `tests/driver_service_test.sh`. A marker such as `drvinputd: missing endpoint
 args`, `drvsvc: ready message mismatch`, or `drvsvc: service wait failed`
 usually points at endpoint inheritance, IPC transfer, or process wait behavior
-rather than at real hardware. C5d exposes discovery metadata for matching, but
-it still does not hand MMIO, IRQ, DMA, or virtio-input queue ownership to
-userland yet.
+rather than at real hardware. C5e proves the future MMIO/IRQ/DMA authority bits
+remain clear; it still does not hand MMIO, IRQ, DMA, or virtio-input queue
+ownership to userland yet.
 
 ## Test Driver Problems
 

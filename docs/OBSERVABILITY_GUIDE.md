@@ -89,6 +89,7 @@ These markers tell you how far the system got.
 | `C5c OK: device discovery manifest matched pseudo input` | Headless fallback discovery, claim, transfer, and release completed |
 | `C5c OK: virtio-input device grant discovered and matched` | Focused C5c gate matched a discovered virtio-input grant and completed handoff/reclaim |
 | `C5d OK: virtio input discovery metadata surfaced` | Focused C5d gate surfaced virtio-input discovery metadata without MMIO authority |
+| `C5e OK: device authority withheld until explicit handoff` | Focused C5e gate proved future MMIO/IRQ/DMA authority bits remain clear |
 | `swift-os login:` | Console login prompt reached |
 | `Welcome to swift-os, root` | Root login succeeded |
 | `M12c: session ended` | Login session exited and init recovered |
@@ -196,7 +197,7 @@ Acceptance coverage:
 | `ps` | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | `top` | `./tests/top_test.sh`, `make smp-cpu-utilization-test` |
 | S5f placement markers | `make s5-run-any-placement-test` |
-| C5 driver-service/device-metadata markers | `make c5-device-metadata-test` |
+| C5 driver-service/device-authority markers | `make c5-device-authority-test` |
 
 ## Service Signals
 
@@ -209,7 +210,7 @@ socket and entered the serving path.
 | `/bin/llmd` | `llmd: serving on 8080` | `GET /health` | `GET /metrics` plus serial `llmd: served ...` |
 | `/bin/tcpecho` | `tcpecho: listening on 5555` | One host TCP echo | Serial byte count |
 | `/bin/udpecho` | `udpecho: listening on 5555` | One host UDP echo | Serial byte count and peer |
-| `/bin/drvsvcdemo` | `C5a OK: restartable driver service recovered over IPC`; C5d gate also expects `C5d OK: virtio input discovery metadata surfaced` | n/a | Serial supervisor markers |
+| `/bin/drvsvcdemo` | `C5a OK: restartable driver service recovered over IPC`; C5e gate also expects `C5e OK: device authority withheld until explicit handoff` | n/a | Serial supervisor markers |
 
 For service operation and authoring rules, see
 [Service Guide](SERVICE_GUIDE.md).

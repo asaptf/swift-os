@@ -553,19 +553,21 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 C5d OK: virtio input discovery metadata surfaced
+C5e OK: device authority withheld until explicit handoff
 ```
 
 This proves the current restartable service shape, virtio-input discovery
-metadata, and opaque device-grant transfer. It is still metadata-only authority:
-C5d does not hand MMIO, IRQ, DMA, or real virtio-input queue ownership to
-userland. A broad headless boot without a QEMU keyboard device exercises the
-same lifecycle through the `pseudo-input.0` fallback and emits
+metadata, opaque device-grant transfer, and withheld hardware authority. It is
+still metadata-only authority: C5e does not hand MMIO, IRQ, DMA, or real
+virtio-input queue ownership to userland. A broad headless boot without a QEMU
+keyboard device exercises the same lifecycle through the `pseudo-input.0`
+fallback and emits
 `C5c OK: device discovery manifest matched pseudo input`.
 
 Equivalent automated check:
 
 ```sh
-make c5-device-metadata-test
+make c5-device-authority-test
 ```
 
 The automated gate boots with `-smp 4`, attaches a QEMU virtio keyboard, and

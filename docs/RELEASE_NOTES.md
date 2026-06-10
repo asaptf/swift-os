@@ -24,7 +24,7 @@ service-oriented.
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
 | Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the P6 Lua ports recipe/cross-build/repository scaffold |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
-| Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c/C5d virtio-input discovery metadata/manifest matching over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
+| Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5e virtio-input discovery metadata plus withheld-authority matching over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
 
@@ -164,7 +164,7 @@ make ports-hosted-url-verify-test
 make package-static-host-dns-repo-install-test
 make smp-cpu-utilization-test
 make s5-el0-fanout-test
-make c5-device-metadata-test
+make c5-device-authority-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```
@@ -205,11 +205,11 @@ llmd: served
   large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. C5a-C5d prove
+- Many drivers and the network stack still live in the kernel. C5a-C5e prove
   the supervisor/service IPC shape, opaque device-handle ownership transfer,
-  discovered virtio-input metadata/manifest matching, and surfaced virtio-mmio
-  metadata; real restartable userland driver services with MMIO/IRQ/DMA
-  authority are still roadmap work.
+  discovered virtio-input metadata/manifest matching, surfaced virtio-mmio
+  metadata, and withheld hardware authority; real restartable userland driver
+  services with MMIO/IRQ/DMA authority are still roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

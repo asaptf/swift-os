@@ -52,9 +52,15 @@ static int is_real_virtio_input(const struct swiftos_device_info *info) {
            cstr_eq(info->name, "virtio-input.0");
 }
 
+static int hardware_authority_withheld(const struct swiftos_device_info *info) {
+    return info->irq == 0 &&
+           (info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
+           (info->flags & SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY) == 0;
+}
+
 static int valid_device_info(const struct swiftos_device_info *info) {
     if (info->claimed != 1) { return 0; }
-    if ((info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) { return 0; }
+    if (!hardware_authority_withheld(info)) { return 0; }
     if (is_real_virtio_input(info)) { return 1; }
     return info->kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_PSEUDO &&

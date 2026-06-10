@@ -11,6 +11,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
 TIMEOUT="${TIMEOUT:-120}"
 C5_INPUT_DEVICE="${C5_INPUT_DEVICE:-1}"
+C5_AUTHORITY_TEST="${C5_AUTHORITY_TEST:-0}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
@@ -75,6 +76,7 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 C5d OK: virtio input discovery metadata surfaced
+C5e OK: device authority withheld until explicit handoff
 C5a driver service demo exited, code 0"
   else
     EXPECTS="${EXPECTS}
@@ -86,6 +88,7 @@ drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: device discovery manifest matched pseudo input
+C5e OK: device authority withheld until explicit handoff
 C5a driver service demo exited, code 0"
   fi
 fi
@@ -144,7 +147,9 @@ while (( SECONDS < deadline )); do
       grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
     done <<<"$FORBIDS"
     if [[ "$ok" -eq 1 ]]; then
-      if [[ "$C5_INPUT_DEVICE" == "1" ]]; then
+      if [[ "$C5_AUTHORITY_TEST" == "1" ]]; then
+        echo "PASS: C5 restartable driver-service/device-authority boot smoke passed under -smp $SMP_CPU_COUNT"
+      elif [[ "$C5_INPUT_DEVICE" == "1" ]]; then
         echo "PASS: C5 restartable driver-service/device-metadata boot smoke passed under -smp $SMP_CPU_COUNT"
       else
         echo "PASS: C5 restartable driver-service/device-discovery boot smoke passed under -smp $SMP_CPU_COUNT"

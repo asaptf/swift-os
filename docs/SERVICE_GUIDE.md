@@ -17,7 +17,7 @@ Use it with:
 
 ## Current Service Model
 
-SwiftOS can run network-facing EL0 programs today, and C5a-C5d adds a narrow
+SwiftOS can run network-facing EL0 programs today, and C5a-C5e adds a narrow
 restartable driver-service plus device-discovery and opaque device-handle
 smoke. It does not yet have a general service manager. Most services are static
 user programs started from the serial shell after login. Long-running services
@@ -52,7 +52,7 @@ network services.
 | `/bin/tcpget` | Guest-to-host TCP client | Client-chosen | Request output | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | DNS client | UDP client | Query output | `./tests/dns_test.sh` |
 | `/bin/tlsget` | TLS client demo | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
-| `/bin/drvsvcdemo` | C5 driver-service/device-metadata smoke | n/a | `C5a OK: restartable driver service recovered over IPC`; C5d gate also expects `C5d OK: virtio input discovery metadata surfaced` | `make c5-device-metadata-test` |
+| `/bin/drvsvcdemo` | C5 driver-service/device-authority smoke | n/a | `C5a OK: restartable driver service recovered over IPC`; C5e gate also expects `C5e OK: device authority withheld until explicit handoff` | `make c5-device-authority-test` |
 
 `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080. Run one of them at a
 time.
@@ -64,7 +64,7 @@ servers that keep accepting connections.
 ## Restartable Driver-Service Smoke
 
 C5a proves the service shape that future userland drivers need, C5b adds an
-opaque transferable device handle, and C5c/C5d match that handle against a
+opaque transferable device handle, and C5c/C5d/C5e match that handle against a
 discovered QEMU virtio-input transport and surface its metadata when one is
 attached. The demo supervisor
 starts `/bin/drvinputd` with only endpoint file descriptors, exchanges a pseudo
@@ -75,7 +75,7 @@ generation, and verifies that communication recovers.
 Focused host gate:
 
 ```sh
-make c5-device-metadata-test
+make c5-device-authority-test
 ```
 
 The target boots QEMU with `SMP_CPUS=4` and uses
@@ -100,15 +100,17 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 C5d OK: virtio input discovery metadata surfaced
+C5e OK: device authority withheld until explicit handoff
 ```
 
 The ordinary headless boot path has no QEMU keyboard device, so it exercises
 the same lifecycle with the `pseudo-input.0` fallback and emits
 `C5c OK: device discovery manifest matched pseudo input`.
 
-This is not a production device manager yet. C5d exposes discovery metadata for
-manifest matching, but it still does not grant MMIO ranges, IRQ endpoints, DMA
-windows, or real virtio-input queue ownership to userland.
+This is not a production device manager yet. C5e exposes discovery metadata for
+manifest matching and proves future authority bits stay clear, but it still does
+not grant MMIO ranges, IRQ endpoints, DMA windows, or real virtio-input queue
+ownership to userland.
 
 ## Network Launch Profile
 
@@ -464,8 +466,8 @@ make test
 ## Known Limits
 
 - There is no general service manager, restart policy, dependency graph, or
-  background service registry yet. C5a-C5d only prove a focused
-  driver-service supervisor/restart/discovery/device-grant metadata path.
+  background service registry yet. C5a-C5e only prove a focused
+  driver-service supervisor/restart/discovery/device-grant authority path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.
 - `/tmp` is the only writable runtime area and is lost on reboot.
