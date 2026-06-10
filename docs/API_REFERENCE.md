@@ -8,6 +8,22 @@ The build-time contracts are the headers in `userland/lib/` and
 `userland/compat/`. This document mirrors those contracts for people writing or
 porting applications.
 
+## Public Header Map
+
+Use this document for narrative guidance, but include the project headers when
+building code:
+
+| Header | Audience | Defines |
+| --- | --- | --- |
+| `userland/lib/syscall.h` | Raw C and low-level ports | Syscall numbers, inline syscall wrappers, mmap constants, handle rights |
+| `userland/lib/swift_user.h` | Native Embedded Swift tools | `swiftos_*` bridge functions and Swift-friendly constants |
+| `userland/lib/fs.h` | Raw C filesystem code | `stat`, `dirent`, open flags, file type helpers |
+| `userland/lib/termios.h` | Raw C terminal code | Minimal `termios` layout and flags |
+| `userland/compat/*` | newlib and C ports | POSIX-shaped declarations and compatibility shims |
+
+The headers are the build contract. This reference should change in the same
+commit whenever a public header or syscall dispatcher contract changes.
+
 ## ABI Summary
 
 SwiftOS exposes its own POSIX-like syscall ABI. It is not the Linux syscall ABI.
@@ -50,8 +66,11 @@ int main(void) {
 }
 ```
 
-Raw helpers generally return negative errors directly. newlib wrappers convert
-many failures to `-1` plus `errno`.
+Raw helpers generally return negative errors directly. Native `swiftos_*`
+helpers return negative errors for most integer-returning calls, but some
+address-returning helpers use a sentinel such as 0. newlib and compatibility
+wrappers convert many failures to `-1` plus `errno`. Do not mix those error
+conventions without checking the wrapper you are calling.
 
 ## Syscall Table
 
@@ -118,6 +137,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 56 | `mprotect` | `addr`, `length`, `prot` | 0 or negative error |
 | 57 | `nanosleep` | `seconds`, `nanoseconds` | 0 or negative error |
 | 58 | `spawn_handles` | `path`, `argv`, `HandleSpec*`, `count` | child exit status or negative error |
+| 59 | `mmap_file` | `fd`, `length`, `prot` | base VA or negative error |
 
 Notes:
 
@@ -126,8 +146,8 @@ Notes:
 - `spawn` inherits only stdio by default. Use `spawn_handles` for explicit
   handle inheritance.
 - `fork` remains for compatibility and inherits the full handle table.
-- `time`, `resolve`, `sbrk`, and raw `mmap` are value-returning paths and need
-  wrapper-specific error handling.
+- `time`, `resolve`, `sbrk`, raw `mmap`, and raw `mmap_file` are
+  value-returning paths and need wrapper-specific error handling.
 - `fcntl` command numbers match the active newlib `<fcntl.h>` used by the
   sysroot. The kernel handles the subset needed by shell redirection and status
   flags.
@@ -475,6 +495,35 @@ mprotect(p, 4096, PROT_READ | PROT_EXEC);
 munmap(p, 4096);
 ```
 
+### `mmap_file`
+
+The native Swift bridge exposes file-backed read-only mappings for model files
+and other large immutable inputs:
+
+```c
+unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot);
+```
+
+Current behavior:
+
+- The file must be a readable disk-backed file descriptor.
+- `prot` must be exactly `PROT_READ`.
+- The mapping is demand-paged from the backing file.
+- The Swift bridge returns 0 on failure; the raw syscall returns a base VA or a
+  negative errno encoded in the return register.
+
+Example:
+
+```c
+int fd = open("/models/stories15M-q8.bin", O_RDONLY);
+unsigned long base = swiftos_mmap_file(fd, size, PROT_READ);
+if (base == 0) {
+    close(fd);
+    return 1;
+}
+close(fd);
+```
+
 ## Threads And Futexes
 
 Thread creation:
@@ -724,12 +773,13 @@ void swiftos_set_raw(int on);
 ```c
 unsigned long swiftos_heap_break(void);
 unsigned long swiftos_mmap(unsigned long len, int prot);
+unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot);
 int swiftos_munmap(unsigned long addr, unsigned long len);
 int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 ```
 
-`swiftos_mmap` returns 0 on failure because valid mappings are never placed at
-VA 0.
+`swiftos_mmap` and `swiftos_mmap_file` return 0 on failure because valid
+mappings are never placed at VA 0.
 
 ### Networking, Threads, Atomics
 
