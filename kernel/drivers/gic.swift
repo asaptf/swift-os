@@ -12,6 +12,7 @@ private let gicdIsenabler: UInt = 0x100
 private let gicdIpriorityr: UInt = 0x400
 private let gicdItargetsr: UInt = 0x800
 private let gicdIcfgr: UInt = 0xC00
+private let gicdSgir: UInt = 0xF00
 
 private let giccCtlr: UInt = 0x000
 private let giccPmr: UInt = 0x004
@@ -19,6 +20,7 @@ private let giccIar: UInt = 0x00C
 private let giccEoir: UInt = 0x010
 
 let gicSpuriousInterrupt: UInt32 = 1023
+let smpIpiInterruptId: UInt32 = 1
 
 func gicInit() {
     mmio_write32(gicdBase + gicdCtlr, 0)
@@ -33,6 +35,7 @@ func gicInitCpuInterfaceForCurrentCpu() {
     mmio_write32(giccBase + giccCtlr, 0)
     mmio_write32(giccBase + giccPmr, 0xFF)
     mmio_write32(giccBase + giccCtlr, 0x3)
+    gicEnableInterrupt(smpIpiInterruptId)
 }
 
 func gicEnableInterrupt(_ id: UInt32) {
@@ -69,4 +72,40 @@ func gicAcknowledge() -> UInt32 {
 
 func gicEndInterrupt(_ interruptAck: UInt32) {
     mmio_write32(giccBase + giccEoir, interruptAck)
+}
+
+func gicSoftwareGeneratedInterruptSource(_ interruptAck: UInt32) -> UInt32 {
+    (interruptAck >> 10) & 0x7
+}
+
+private func gicBuildSgirValue(id: UInt32, targetMask: UInt32) -> UInt32 {
+    // GICD_SGIR target-list mode: SGIINTID[3:0], CPUTargetList[23:16],
+    // TargetListFilter[25:24] = 0b00. QEMU 11.0.1 arm_gic.c handles this at
+    // distributor offset 0xf00 and maps CPUTargetList bits to CPU interfaces.
+    (id & 0xF) | ((targetMask & 0xFF) << 16)
+}
+
+func gicSendSoftwareGeneratedInterrupt(_ id: UInt32, targetMask: UInt32) -> Bool {
+    if id >= 16 { return false }
+    let mask = targetMask & 0xFF
+    if mask == 0 { return false }
+
+    smpStoreBarrier()
+    mmio_write32(gicdBase + gicdSgir, gicBuildSgirValue(id: id, targetMask: mask))
+    smpMemoryBarrier()
+    return true
+}
+
+func gicSendSoftwareGeneratedInterruptToCpu(_ id: UInt32, _ cpu: UInt32) -> Bool {
+    if cpu >= 8 { return false }
+    return gicSendSoftwareGeneratedInterrupt(id, targetMask: UInt32(1) << cpu)
+}
+
+func gicSoftwareGeneratedInterruptSelfTest() -> Bool {
+    if gicdSgir != 0xF00 { return false }
+    if smpIpiInterruptId >= 16 { return false }
+    if gicBuildSgirValue(id: 1, targetMask: 0x01) != 0x0001_0001 { return false }
+    if gicBuildSgirValue(id: 7, targetMask: 0xA5) != 0x00A5_0007 { return false }
+    if gicSoftwareGeneratedInterruptSource(0x0000_0801) != 2 { return false }
+    return true
 }

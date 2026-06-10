@@ -9,6 +9,7 @@ BOOT_OBJ="$ROOT/build/boot.o"
 BOOT_SRC="$ROOT/kernel/arch/aarch64/boot.S"
 IO_HDR="$ROOT/kernel/arch/aarch64/io.h"
 MAIN_SWIFT="$ROOT/kernel/main.swift"
+GIC_SWIFT="$ROOT/kernel/drivers/gic.swift"
 PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
 SECONDARY_SWIFT="$ROOT/kernel/smp/secondary.swift"
 PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
@@ -246,13 +247,33 @@ fi
 for needle in \
   'smpCpuFlagKernelSchedulerReady' \
   'kernelSchedulerActivityCount' \
+  'smpIpiReceivedCount' \
+  'smpIpiProbeTargetMaskStorage' \
+  'smpIpiProbeDeliveredMaskStorage' \
   'smpMarkKernelSchedulerReadyForCurrentCpu' \
   'smpRecordKernelSchedulerActivityForCurrentCpu' \
+  'smpRecordIpiForCurrentCpu' \
+  'smpPerCpuIpiReceivedCount' \
   'smpPerCpuKernelSchedulerReady' \
   'smpPerCpuKernelSchedulerActivityCount' \
   'smpPerCpuCurrentThreadIs'; do
   if ! grep -q "$needle" "$PERCPU_SWIFT"; then
     echo "FAIL: S2c per-CPU kernel scheduler ownership state missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'private let gicdSgir: UInt = 0xF00' \
+  'let smpIpiInterruptId: UInt32 = 1' \
+  'gicSendSoftwareGeneratedInterruptToCpu' \
+  'gicSoftwareGeneratedInterruptSource' \
+  'gicSoftwareGeneratedInterruptSelfTest' \
+  '((targetMask & 0xFF) << 16)' \
+  'smpStoreBarrier()' \
+  'mmio_write32(gicdBase + gicdSgir'; do
+  if ! grep -q "$needle" "$GIC_SWIFT"; then
+    echo "FAIL: S3b GIC SGI substrate missing $needle." >&2
     exit 1
   fi
 done
@@ -327,6 +348,11 @@ if ! grep -q 'S3a OK: address-space CPU mask scaffold ready' "$MAIN_SWIFT" ||
   echo "FAIL: S3a must log address-space CPU mask readiness and CPU0-owned markers." >&2
   exit 1
 fi
+if ! grep -q 'S3b OK: GIC SGI IPI substrate ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S3b OK: IPI delivery stayed scheduler-safe' "$MAIN_SWIFT"; then
+  echo "FAIL: S3b must log GIC SGI/IPI readiness and scheduler-safe delivery markers." >&2
+  exit 1
+fi
 if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
   echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
@@ -342,6 +368,7 @@ s2e_line="$(rg -n 'processDormantSchedulerCpusSelfTest\(\)' "$MAIN_SWIFT" | head
 s2f_line="$(rg -n 'processDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2h_line="$(rg -n 'processSecondaryEl0GateSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3a_line="$(rg -n 'processAddressSpaceCpuMaskSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3b_line="$(rg -n 'smpIpiSubstrateSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -354,6 +381,7 @@ s2e_no_secondary_line="$(rg -n 'processNoSecondarySchedulerDispatchSelfTest\(\)'
 s2f_no_secondary_line="$(rg -n 'processDispatchTelemetryNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2h_no_secondary_line="$(rg -n 'processSecondaryEl0GateHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3a_no_secondary_line="$(rg -n 'processAddressSpaceCpuMaskNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s3b_no_secondary_line="$(rg -n 'smpS3bIpiSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
@@ -383,6 +411,10 @@ if [[ -z "$s2h_line" || "$s2f_line" -ge "$s2h_line" || "$s2h_line" -ge "$demo_li
 fi
 if [[ -z "$s3a_line" || "$s2h_line" -ge "$s3a_line" || "$s3a_line" -ge "$demo_line" ]]; then
   echo "FAIL: S3a address-space CPU mask self-test must run after S2h readiness and before scheduler/userland demos." >&2
+  exit 1
+fi
+if [[ -z "$s3b_line" || "$s3a_line" -ge "$s3b_line" || "$s3b_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S3b IPI substrate self-test must run after S3a readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
@@ -427,5 +459,39 @@ if [[ -z "$s3a_no_secondary_line" ||
   echo "FAIL: S3a address-space CPU mask guard must run after S2h and before S2b no-secondary-EL0." >&2
   exit 1
 fi
+if [[ -z "$s3b_no_secondary_line" ||
+      "$s3a_no_secondary_line" -ge "$s3b_no_secondary_line" ||
+      "$s3b_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S3b IPI scheduler-boundary guard must run after S3a and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
+if ! grep -q 'smpHandleIpi(iar)' "$MAIN_SWIFT" ||
+   ! grep -q 'interruptId == smpIpiInterruptId' "$MAIN_SWIFT"; then
+  echo "FAIL: S3b IRQ path must dispatch SGIs to the SMP IPI handler." >&2
+  exit 1
+fi
+ipi_irq_line="$(rg -n 'interruptId == smpIpiInterruptId' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+unexpected_irq_line="$(rg -n 'unexpected IRQ' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+if [[ -z "$ipi_irq_line" || -z "$unexpected_irq_line" ||
+      "$ipi_irq_line" -ge "$unexpected_irq_line" ]]; then
+  echo "FAIL: S3b IRQ path must recognize SGIs before the unexpected-IRQ branch." >&2
+  exit 1
+fi
+
+ipi_handler_block="$(sed -n '/^func smpHandleIpi/,/^}/p' "$SECONDARY_SWIFT")"
+if [[ -z "$ipi_handler_block" ]] ||
+   rg -n 'klog\(|schedulerTick|processOnTick|schedYield|yieldToScheduler|cpu_switch_context|address_space_switch|tlbi|vmalle1|vae1|markProcessReady|processRun|vfs|virtio|pmm_' <<<"$ipi_handler_block" >/dev/null; then
+  echo "FAIL: S3b IPI handler must stay side-effect-light: no logging, scheduler, process, VFS, PMM, virtio, or TLB work." >&2
+  exit 1
+fi
+
+secondary_irq_park_block="$(sed -n '/enable_irq()/,$p' "$SECONDARY_SWIFT")"
+if [[ -z "$secondary_irq_park_block" ]] ||
+   ! grep -q 'while true { wfi() }' <<<"$secondary_irq_park_block" ||
+   grep -q 'disable_irq()' <<<"$secondary_irq_park_block"; then
+  echo "FAIL: S3b parked secondaries must remain IRQ-enabled for SGI/IPI delivery." >&2
+  exit 1
+fi
+
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI boundary)"

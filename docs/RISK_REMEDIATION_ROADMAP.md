@@ -165,6 +165,10 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   `address_space_switch(pTtbr0[slot])` path. The gate remains CPU0-only, so the
   marker proves no secondary address-space activation happened yet while giving
   S3 a concrete mask source for future shootdown targeting.
+- S3b preflight (2026-06-10): the GICv2 SGI path now provides a minimal IPI
+  substrate. Parked secondary CPUs remain IRQ-enabled after their timer
+  heartbeat, can receive the reserved SGI, and only update fixed atomic IPI
+  counters. Scheduler, VFS, PMM, and EL0 work remain gated to CPU0.
 - Implement a minimal IPI / SGI mechanism (or use GIC SGI) for "reschedule this CPU", "TLB invalidate range on these CPUs", etc.
 - When a page table change (munmap, mprotect, process exec/exit) happens on CPU A for an address space that may be active on CPU B, we must shoot down the TLB on B (or the relevant set of CPUs). Single-CPU `tlbi vmalle1` / `tlbi vae1` is no longer sufficient.
 - `address_space_switch` and the TTBR0 install path must be safe when the same AS can be on multiple CPUs (or when we migrate a process).

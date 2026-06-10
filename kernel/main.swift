@@ -572,6 +572,8 @@ func irqHandler() {
     if interruptId == physicalTimerIrq && currentCpuId() != 0 {
         smpRecordTimerTickForCurrentCpu()
         timerScheduleNext()
+    } else if interruptId == smpIpiInterruptId {
+        smpHandleIpi(iar)
     } else if interruptId == physicalTimerIrq {
         timerHandleTick()
     } else if interruptId == uartIrqId {
@@ -806,6 +808,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S3a OK: address-space CPU mask scaffold ready", UInt64(smpMaxCpuCount()))
+    if !smpIpiSubstrateSelfTest() {
+        uartPuts("panic: S3b IPI substrate self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3b OK: GIC SGI IPI substrate ready", UInt64(platform.cpuCount))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
@@ -878,6 +885,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S3a OK: address-space CPU masks stayed CPU0-owned", UInt64(platform.cpuCount))
+        if !smpS3bIpiSchedulerBoundarySelfTest() {
+            uartPuts("panic: S3b IPI scheduler boundary guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3b OK: IPI delivery stayed scheduler-safe", UInt64(platform.cpuCount))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}
