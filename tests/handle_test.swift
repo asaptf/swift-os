@@ -130,12 +130,18 @@ struct HandleTest {
 
         // ---- 10. C5 device handle vocabulary --------------------------------
         let device = HandleEntry(inUse: true, kind: .device, object: 13,
-                                 rights: [.getattr, .transfer])
+                                 rights: deviceMetadataGrantRights())
         check(device.kind == .device, "device grant is a device handle")
         check(device.rights == [.getattr, .transfer],
               "device grant carries metadata+transfer rights")
+        check(device.rights == deviceMetadataGrantRights(),
+              "device grant rights come from the shared metadata-only helper")
         check(!device.rights.contains(.duplicate),
               "device grant is not duplicable by default")
+        check(!deviceGrantHasHardwareAuthorityRights(device.rights),
+              "device grant does not carry read/write/execute/map/setattr authority")
+        check(deviceGrantHasHardwareAuthorityRights([.getattr, .transfer, .map]),
+              "C5f guard catches accidental MMIO map authority")
 
         if failed {
             FileHandle.standardError.write(Data("handle_test: FAILURES\n".utf8))

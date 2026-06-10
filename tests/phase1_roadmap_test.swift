@@ -148,6 +148,15 @@ private let milestones: [Milestone] = [
         targetFragments: ["C5_AUTHORITY_TEST=1", "C5_INPUT_DEVICE=1", "./tests/driver_service_test.sh"],
         markerNeedles: ["C5e OK: device authority withheld until explicit handoff"],
         docsNeedles: ["make c5-device-authority-test"]
+    ),
+    Milestone(
+        id: "C5f",
+        roadmapNeedle: "### C5f — metadata-only device grant rights contract (DONE, 2026-06-10)",
+        notesNeedle: "### C5f — metadata-only device grant rights contract (DONE, 2026-06-10)",
+        target: "c5-device-rights-test",
+        targetFragments: ["tests/handle_test.swift", "tests/device_authority_guard_test.sh"],
+        markerNeedles: ["C5f OK: device grant rights stayed metadata-only"],
+        docsNeedles: ["make c5-device-rights-test"]
     )
 ]
 
