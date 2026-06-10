@@ -40,6 +40,13 @@ private var smpTlbShootdownReceivedCount: InlineArray<8, UInt64> = .init(repeati
 private var smpTlbShootdownProbeGenerationStorage: UInt64 = 0
 private var smpTlbShootdownProbeTargetMaskStorage: UInt64 = 0
 private var smpTlbShootdownProbeAckMaskStorage: UInt64 = 0
+private var smpPmmStressRequestGeneration: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpPmmStressAckGeneration: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpPmmStressReceivedCount: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpPmmStressProbeGenerationStorage: UInt64 = 0
+private var smpPmmStressProbeTargetMaskStorage: UInt64 = 0
+private var smpPmmStressProbeAckMaskStorage: UInt64 = 0
+private var smpPmmStressProbeFailureMaskStorage: UInt64 = 0
 
 @inline(__always)
 private func smpValidCpu(_ cpu: UInt32) -> Bool {
@@ -377,6 +384,130 @@ func smpTlbShootdownProbeAckMask() -> UInt64 {
     }
 }
 
+func smpPerCpuPmmStressReceivedCount(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpPmmStressReceivedCount[Int(cpu)]) { count in
+        smpAtomicLoad(count)
+    }
+}
+
+func smpPerCpuPmmStressRequestGeneration(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpPmmStressRequestGeneration[Int(cpu)]) { generation in
+        smpAtomicLoad(generation)
+    }
+}
+
+func smpPerCpuPmmStressAckGeneration(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpPmmStressAckGeneration[Int(cpu)]) { generation in
+        smpAtomicLoad(generation)
+    }
+}
+
+func smpBeginPmmStressProbe(targetMask: UInt64) -> UInt64 {
+    let generation = withUnsafeMutablePointer(to: &smpPmmStressProbeGenerationStorage) { current in
+        smpAtomicFetchAdd(current, 1) &+ 1
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeTargetMaskStorage) { mask in
+        smpAtomicStore(mask, targetMask)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeAckMaskStorage) { mask in
+        smpAtomicStore(mask, 0)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeFailureMaskStorage) { mask in
+        smpAtomicStore(mask, 0)
+    }
+    smpStoreBarrier()
+    return generation
+}
+
+@discardableResult
+func smpPublishPmmStressRequest(cpu: UInt32, generation: UInt64) -> Bool {
+    if generation == 0 || !smpValidCpu(cpu) { return false }
+    withUnsafeMutablePointer(to: &smpPmmStressRequestGeneration[Int(cpu)]) { request in
+        smpAtomicStore(request, generation)
+    }
+    smpStoreBarrier()
+    return true
+}
+
+private func smpMarkPmmStressProbeAcked(cpu: UInt32) {
+    if !smpValidCpu(cpu) { return }
+    let bit = UInt64(1) << UInt64(cpu)
+    withUnsafeMutablePointer(to: &smpPmmStressProbeAckMaskStorage) { mask in
+        var current = smpAtomicLoad(mask)
+        while true {
+            var expected = current
+            let desired = current | bit
+            if smpAtomicCompareExchange(mask, expected: &expected, desired: desired) {
+                break
+            }
+            current = expected
+        }
+    }
+}
+
+private func smpMarkPmmStressProbeFailed(cpu: UInt32) {
+    if !smpValidCpu(cpu) { return }
+    let bit = UInt64(1) << UInt64(cpu)
+    withUnsafeMutablePointer(to: &smpPmmStressProbeFailureMaskStorage) { mask in
+        var current = smpAtomicLoad(mask)
+        while true {
+            var expected = current
+            let desired = current | bit
+            if smpAtomicCompareExchange(mask, expected: &expected, desired: desired) {
+                break
+            }
+            current = expected
+        }
+    }
+}
+
+func smpHandlePmmStressForCurrentCpu() -> Bool {
+    let cpu = currentCpuId()
+    if !smpValidCpu(cpu) { return false }
+    let idx = Int(cpu)
+    let request = withUnsafeMutablePointer(to: &smpPmmStressRequestGeneration[idx]) { generation in
+        smpAtomicLoad(generation)
+    }
+    if request == 0 { return false }
+    let ack = withUnsafeMutablePointer(to: &smpPmmStressAckGeneration[idx]) { generation in
+        smpAtomicLoad(generation)
+    }
+    if ack == request { return false }
+
+    if !pmmS4aBoundedStressForCurrentCpu() {
+        smpMarkPmmStressProbeFailed(cpu: cpu)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressAckGeneration[idx]) { generation in
+        smpAtomicStore(generation, request)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressReceivedCount[idx]) { count in
+        _ = smpAtomicFetchAdd(count, 1)
+    }
+    smpMarkPmmStressProbeAcked(cpu: cpu)
+    return true
+}
+
+func smpPmmStressProbeTargetMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpPmmStressProbeTargetMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
+func smpPmmStressProbeAckMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpPmmStressProbeAckMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
+func smpPmmStressProbeFailureMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpPmmStressProbeFailureMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
 func smpPerCpuKernelSchedulerReady(_ cpu: UInt32) -> Bool {
     if !smpValidCpu(cpu) { return false }
     let idx = Int(cpu)
@@ -436,6 +567,9 @@ func smpPerCpuSelfTest() -> Bool {
         smpTlbShootdownRequestGeneration[slot] = UInt64(slot + 8)
         smpTlbShootdownAckGeneration[slot] = UInt64(slot + 9)
         smpTlbShootdownReceivedCount[slot] = UInt64(slot + 10)
+        smpPmmStressRequestGeneration[slot] = UInt64(slot + 11)
+        smpPmmStressAckGeneration[slot] = UInt64(slot + 12)
+        smpPmmStressReceivedCount[slot] = UInt64(slot + 13)
         if smpCpuState[slot].logicalId != UInt32(slot) { return false }
         if smpCpuState[slot].timerTicks != UInt64(slot) { return false }
         if smpCpuState[slot].currentThread != Int32(slot) { return false }
@@ -450,12 +584,18 @@ func smpPerCpuSelfTest() -> Bool {
         if smpPerCpuTlbShootdownRequestGeneration(UInt32(slot)) != UInt64(slot + 8) { return false }
         if smpPerCpuTlbShootdownAckGeneration(UInt32(slot)) != UInt64(slot + 9) { return false }
         if smpPerCpuTlbShootdownReceivedCount(UInt32(slot)) != UInt64(slot + 10) { return false }
+        if smpPerCpuPmmStressRequestGeneration(UInt32(slot)) != UInt64(slot + 11) { return false }
+        if smpPerCpuPmmStressAckGeneration(UInt32(slot)) != UInt64(slot + 12) { return false }
+        if smpPerCpuPmmStressReceivedCount(UInt32(slot)) != UInt64(slot + 13) { return false }
         smpCpuState[slot] = SMPPerCpuState()
         smpIpiReceivedCount[slot] = 0
         smpIpiLastSourceCpu[slot] = UInt64.max
         smpTlbShootdownRequestGeneration[slot] = 0
         smpTlbShootdownAckGeneration[slot] = 0
         smpTlbShootdownReceivedCount[slot] = 0
+        smpPmmStressRequestGeneration[slot] = 0
+        smpPmmStressAckGeneration[slot] = 0
+        smpPmmStressReceivedCount[slot] = 0
         slot += 1
     }
 
@@ -485,6 +625,15 @@ func smpPerCpuSelfTest() -> Bool {
     }
     let savedTlbShootdownProbeTargetMask = smpTlbShootdownProbeTargetMask()
     let savedTlbShootdownProbeAckMask = smpTlbShootdownProbeAckMask()
+    let savedPmmStressReceivedCount = smpPerCpuPmmStressReceivedCount(cpu)
+    let savedPmmStressRequestGeneration = smpPerCpuPmmStressRequestGeneration(cpu)
+    let savedPmmStressAckGeneration = smpPerCpuPmmStressAckGeneration(cpu)
+    let savedPmmStressProbeGeneration = withUnsafeMutablePointer(to: &smpPmmStressProbeGenerationStorage) { generation in
+        smpAtomicLoad(generation)
+    }
+    let savedPmmStressProbeTargetMask = smpPmmStressProbeTargetMask()
+    let savedPmmStressProbeAckMask = smpPmmStressProbeAckMask()
+    let savedPmmStressProbeFailureMask = smpPmmStressProbeFailureMask()
     let savedFlags = withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicLoad(flags)
     }
@@ -542,6 +691,18 @@ func smpPerCpuSelfTest() -> Bool {
     if smpTlbShootdownProbeTargetMask() != tlbMask { return false }
     if smpTlbShootdownProbeAckMask() != tlbMask { return false }
 
+    let pmmMask = UInt64(1) << UInt64(cpu)
+    let pmmGeneration = smpBeginPmmStressProbe(targetMask: pmmMask)
+    if pmmGeneration == 0 { return false }
+    if !smpPublishPmmStressRequest(cpu: cpu, generation: pmmGeneration) { return false }
+    if smpPerCpuPmmStressRequestGeneration(cpu) != pmmGeneration { return false }
+    if !smpHandlePmmStressForCurrentCpu() { return false }
+    if smpPerCpuPmmStressAckGeneration(cpu) != pmmGeneration { return false }
+    if smpPerCpuPmmStressReceivedCount(cpu) != (savedPmmStressReceivedCount &+ 1) { return false }
+    if smpPmmStressProbeTargetMask() != pmmMask { return false }
+    if smpPmmStressProbeAckMask() != pmmMask { return false }
+    if smpPmmStressProbeFailureMask() != 0 { return false }
+
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags | smpCpuFlagOnline)
     }
@@ -583,6 +744,27 @@ func smpPerCpuSelfTest() -> Bool {
     }
     withUnsafeMutablePointer(to: &smpTlbShootdownProbeAckMaskStorage) { mask in
         smpAtomicStore(mask, savedTlbShootdownProbeAckMask)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressReceivedCount[idx]) { count in
+        smpAtomicStore(count, savedPmmStressReceivedCount)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressRequestGeneration[idx]) { generation in
+        smpAtomicStore(generation, savedPmmStressRequestGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressAckGeneration[idx]) { generation in
+        smpAtomicStore(generation, savedPmmStressAckGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeGenerationStorage) { generation in
+        smpAtomicStore(generation, savedPmmStressProbeGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeTargetMaskStorage) { mask in
+        smpAtomicStore(mask, savedPmmStressProbeTargetMask)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeAckMaskStorage) { mask in
+        smpAtomicStore(mask, savedPmmStressProbeAckMask)
+    }
+    withUnsafeMutablePointer(to: &smpPmmStressProbeFailureMaskStorage) { mask in
+        smpAtomicStore(mask, savedPmmStressProbeFailureMask)
     }
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags)

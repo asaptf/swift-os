@@ -827,6 +827,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S3d OK: address-space TLB flush facade ready", UInt64(smpMaxCpuCount()))
+    if !pmmS4aConcurrencySelfTest() {
+        uartPuts("panic: S4a PMM lock boundary self-test failed\n")
+        while true {}
+    }
+    if !smpPmmStressSelfTest() {
+        uartPuts("panic: S4a PMM SMP stress self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4a OK: PMM lock boundary ready", UInt64(pmmS4aLockAcquireCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     pkgStoreInit()      // P3: read active package-store generation, if present
@@ -915,6 +924,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S3d OK: address-space TLB flush stayed CPU0-owned", UInt64(platform.cpuCount))
+        if !pmmS4aLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4a PMM lock boundary did not stay balanced\n")
+            while true {}
+        }
+        if !smpS4aPmmStressSchedulerBoundarySelfTest() {
+            uartPuts("panic: S4a PMM stress scheduler boundary failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4a OK: PMM lock boundary stayed balanced", UInt64(pmmS4aLockContentionCount()))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

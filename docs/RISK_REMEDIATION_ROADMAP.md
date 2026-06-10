@@ -186,6 +186,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 - Acceptance: a test that maps a page on one CPU, writes from another CPU's user thread, then unmaps from a third CPU, with TLB invalidation, and observes correct behavior (no stale translations, no kernel data abort). Existing mmap/mprotect/W^X tests plus a new cross-CPU variant pass. No regression in fork/exec heavy workloads.
 
 ### S4 — Concurrent physical memory and VFS / kernel object pools
+- S4a preflight (2026-06-10): PMM allocation/free/refcount entry points now
+  serialize access to the shared `PageAllocator` with a small IRQ-save coarse
+  spinlock. The COW last-reference release path is a single locked PMM
+  operation, host PageAllocator tests include a threaded allocation/free stress,
+  and boot runs a bounded SGI-delivered PMM stress on discovered secondary CPUs.
+  VFS/kernel object pools remain the next S4 target.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase".

@@ -14,6 +14,7 @@ PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
 SECONDARY_SWIFT="$ROOT/kernel/smp/secondary.swift"
 PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
 VM_SWIFT="$ROOT/kernel/mm/vm.swift"
+PMM_SWIFT="$ROOT/kernel/mm/pmm.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
@@ -248,6 +249,51 @@ if grep -q 'address_space_mmap(pTtbr0\[me\]' "$PROCESS_SWIFT" ||
   exit 1
 fi
 
+for needle in \
+  'private var pmmLockWord: UInt64 = 0' \
+  'private var pmmLockAcquireCount: UInt64 = 0' \
+  'private var pmmLockContentionCount: UInt64 = 0' \
+  'private func pmmLock() -> UInt64' \
+  'let daif = irq_save()' \
+  'smpAtomicCompareExchange(word, expected: &expected, desired: 1)' \
+  'private func pmmUnlock(_ daif: UInt64)' \
+  'irq_restore(daif)' \
+  'private func pmmWithAllocator' \
+  '@_cdecl("pmm_frame_release")' \
+  'pmmS4aBoundedStressForCurrentCpu' \
+  'pmmS4aConcurrencySelfTest' \
+  'pmmS4aLockBoundaryHeldSelfTest'; do
+  if ! grep -q "$needle" "$PMM_SWIFT"; then
+    echo "FAIL: S4a PMM lock boundary missing $needle." >&2
+    exit 1
+  fi
+done
+
+direct_pmm_access="$(rg -n 'pmm[!?]\.' "$PMM_SWIFT" || true)"
+if [[ -n "$direct_pmm_access" ]]; then
+  echo "FAIL: S4a PMM exported operations must not access the allocator outside pmmWithAllocator." >&2
+  echo "$direct_pmm_access" >&2
+  exit 1
+fi
+
+if ! grep -q 'pmm_frame_release' "$IO_HDR" ||
+   ! grep -q 'pmm_frame_release(pa)' "$VM_SWIFT" ||
+   grep -q 'if pmm_frame_unref(pa)' "$VM_SWIFT"; then
+  echo "FAIL: S4a VM user-frame release must use atomic pmm_frame_release instead of split unref/free." >&2
+  exit 1
+fi
+
+for needle in \
+  'smpPmmStressSelfTest' \
+  'smpRequestPmmStressForCpuMask' \
+  'smpS4aPmmStressSchedulerBoundarySelfTest' \
+  'smpHandlePmmStressForCurrentCpu()'; do
+  if ! grep -q "$needle" "$SECONDARY_SWIFT" "$MAIN_SWIFT"; then
+    echo "FAIL: S4a secondary PMM stress path missing $needle." >&2
+    exit 1
+  fi
+done
+
 pair_capture_line="$(rg -n 'captureLastPairDispatchTelemetry\(a, b\)' "$PROCESS_SWIFT" | head -1 | cut -d: -f1)"
 pair_reap_line="$(rg -n 'reapProcess\(a\)' "$PROCESS_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$pair_capture_line" || -z "$pair_reap_line" ||
@@ -289,6 +335,11 @@ for needle in \
   'smpTlbShootdownAckGeneration' \
   'smpTlbShootdownProbeTargetMaskStorage' \
   'smpTlbShootdownProbeAckMaskStorage' \
+  'smpPmmStressRequestGeneration' \
+  'smpPmmStressAckGeneration' \
+  'smpPmmStressProbeTargetMaskStorage' \
+  'smpPmmStressProbeAckMaskStorage' \
+  'smpPmmStressProbeFailureMaskStorage' \
   'smpMarkKernelSchedulerReadyForCurrentCpu' \
   'smpRecordKernelSchedulerActivityForCurrentCpu' \
   'smpRecordIpiForCurrentCpu' \
@@ -296,6 +347,10 @@ for needle in \
   'smpBeginTlbShootdownProbe' \
   'smpPublishTlbShootdownRequest' \
   'smpHandleTlbShootdownForCurrentCpu' \
+  'smpBeginPmmStressProbe' \
+  'smpPublishPmmStressRequest' \
+  'smpHandlePmmStressForCurrentCpu' \
+  'smpPmmStressProbeFailureMask' \
   'smpPerCpuTlbShootdownAckGeneration' \
   'smpPerCpuKernelSchedulerReady' \
   'smpPerCpuKernelSchedulerActivityCount' \
@@ -406,6 +461,11 @@ if ! grep -q 'S3d OK: address-space TLB flush facade ready' "$MAIN_SWIFT" ||
   echo "FAIL: S3d must log address-space TLB flush facade readiness and CPU0-owned markers." >&2
   exit 1
 fi
+if ! grep -q 'S4a OK: PMM lock boundary ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S4a OK: PMM lock boundary stayed balanced' "$MAIN_SWIFT"; then
+  echo "FAIL: S4a must log PMM lock boundary readiness and balanced markers." >&2
+  exit 1
+fi
 if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
   echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
@@ -424,6 +484,8 @@ s3a_line="$(rg -n 'processAddressSpaceCpuMaskSelfTest\(\)' "$MAIN_SWIFT" | head 
 s3b_line="$(rg -n 'smpIpiSubstrateSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3c_line="$(rg -n 'smpTlbShootdownSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3d_line="$(rg -n 'processAddressSpaceTlbFlushFacadeSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4a_line="$(rg -n 'pmmS4aConcurrencySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4a_smp_line="$(rg -n 'smpPmmStressSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -439,6 +501,8 @@ s3a_no_secondary_line="$(rg -n 'processAddressSpaceCpuMaskNoSecondarySelfTest\(\
 s3b_no_secondary_line="$(rg -n 'smpS3bIpiSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3c_no_secondary_line="$(rg -n 'smpS3cTlbShootdownSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s3d_no_secondary_line="$(rg -n 'processAddressSpaceTlbFlushNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4a_no_secondary_line="$(rg -n 'pmmS4aLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
+s4a_smp_no_secondary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
@@ -480,6 +544,13 @@ if [[ -z "$s3c_line" || "$s3b_line" -ge "$s3c_line" || "$s3c_line" -ge "$demo_li
 fi
 if [[ -z "$s3d_line" || "$s3c_line" -ge "$s3d_line" || "$s3d_line" -ge "$demo_line" ]]; then
   echo "FAIL: S3d TLB flush facade self-test must run after S3c readiness and before scheduler/userland demos." >&2
+  exit 1
+fi
+if [[ -z "$s4a_line" || -z "$s4a_smp_line" ||
+      "$s3d_line" -ge "$s4a_line" ||
+      "$s4a_line" -ge "$s4a_smp_line" ||
+      "$s4a_smp_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S4a PMM lock and SMP stress self-tests must run after S3d readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
@@ -542,6 +613,13 @@ if [[ -z "$s3d_no_secondary_line" ||
   echo "FAIL: S3d address-space TLB flush guard must run after S3c and before S2b no-secondary-EL0." >&2
   exit 1
 fi
+if [[ -z "$s4a_no_secondary_line" || -z "$s4a_smp_no_secondary_line" ||
+      "$s3d_no_secondary_line" -ge "$s4a_no_secondary_line" ||
+      "$s4a_no_secondary_line" -ge "$s4a_smp_no_secondary_line" ||
+      "$s4a_smp_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S4a PMM lock/stress guards must run after S3d and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
 if ! grep -q 'smpHandleIpi(iar)' "$MAIN_SWIFT" ||
    ! grep -q 'interruptId == smpIpiInterruptId' "$MAIN_SWIFT"; then
@@ -571,6 +649,14 @@ if [[ -z "$tlb_handler_block" ]] ||
   exit 1
 fi
 
+pmm_stress_handler_block="$(awk '/^func smpHandlePmmStressForCurrentCpu/ { flag=1 } flag { print } /^func smpPmmStressProbeTargetMask/ { exit }' "$PERCPU_SWIFT")"
+if [[ -z "$pmm_stress_handler_block" ]] ||
+   ! grep -q 'pmmS4aBoundedStressForCurrentCpu()' <<<"$pmm_stress_handler_block" ||
+   rg -n 'klog\(|schedulerTick|processOnTick|schedYield|yieldToScheduler|cpu_switch_context|address_space_switch|markProcessReady|processRun|vfs|virtio|pkgStore|tableStore|linkPage|unmapRange|tlbi|vmalle1|vae1' <<<"$pmm_stress_handler_block" >/dev/null; then
+  echo "FAIL: S4a PMM stress handler must stay bounded to PMM stress plus atomic ack/counters." >&2
+  exit 1
+fi
+
 secondary_irq_park_block="$(sed -n '/enable_irq()/,$p' "$SECONDARY_SWIFT")"
 if [[ -z "$secondary_irq_park_block" ]] ||
    ! grep -q 'while true { wfi() }' <<<"$secondary_irq_park_block" ||
@@ -579,4 +665,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB/PMM boundary)"

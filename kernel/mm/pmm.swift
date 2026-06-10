@@ -14,6 +14,60 @@
 // by platformInit (default RAM base 0x4000_0000 + 256 MiB = 0x5000_0000).
 
 private var pmm: PageAllocator? = nil
+private var pmmLockWord: UInt64 = 0
+private var pmmLockAcquireCount: UInt64 = 0
+private var pmmLockContentionCount: UInt64 = 0
+
+@inline(__always)
+private func pmmLock() -> UInt64 {
+    let daif = irq_save()
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &pmmLockWord) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
+        }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &pmmLockContentionCount) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &pmmLockAcquireCount) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
+    }
+}
+
+@inline(__always)
+private func pmmUnlock(_ daif: UInt64) {
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &pmmLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+@inline(__always)
+private func pmmWithAllocator<T>(default defaultValue: T,
+                                 _ body: (inout PageAllocator) -> T) -> T {
+    let daif = pmmLock()
+    defer { pmmUnlock(daif) }
+    guard pmm != nil else { return defaultValue }
+    return body(&pmm!)
+}
+
+@inline(__always)
+private func pmmLockAtomicLoad(_ word: inout UInt64) -> UInt64 {
+    withUnsafeMutablePointer(to: &word) { ptr in
+        smpAtomicLoad(ptr)
+    }
+}
 
 /// Initialise the PMM over all RAM past the kernel image. Must run once, early
 /// (after platformInit so the RAM size is known).
@@ -59,6 +113,15 @@ func pmmInit() {
         }
     }
 
+    withUnsafeMutablePointer(to: &pmmLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    withUnsafeMutablePointer(to: &pmmLockAcquireCount) { count in
+        smpAtomicStore(count, 0)
+    }
+    withUnsafeMutablePointer(to: &pmmLockContentionCount) { count in
+        smpAtomicStore(count, 0)
+    }
     pmm = allocator
 
     uartPuts("M4.5 pmm: ")
@@ -68,46 +131,66 @@ func pmmInit() {
 
 @_cdecl("pmm_alloc_page")
 func pmmAllocPage() -> UInt {
-    if pmm == nil { return 0 }
-    return pmm!.allocate() ?? 0
+    pmmWithAllocator(default: UInt(0)) { allocator in
+        allocator.allocate() ?? 0
+    }
 }
 
 @_cdecl("pmm_alloc_pages")
 func pmmAllocPages(_ count: Int) -> UInt {
-    if pmm == nil { return 0 }
-    return pmm!.allocateContiguous(count) ?? 0
+    pmmWithAllocator(default: UInt(0)) { allocator in
+        allocator.allocateContiguous(count) ?? 0
+    }
 }
 
 @_cdecl("pmm_free_page")
 func pmmFreePage(_ addr: UInt) {
-    if pmm == nil { return }
-    pmm!.free(addr)
+    let _: Void = pmmWithAllocator(default: ()) { allocator in
+        allocator.free(addr)
+    }
 }
 
 /// A second address space now shares `addr`; bump its COW reference count.
 @_cdecl("pmm_frame_ref")
 func pmmFrameRef(_ addr: UInt) {
-    if pmm == nil { return }
-    pmm!.ref(addr)
+    let _: Void = pmmWithAllocator(default: ()) { allocator in
+        allocator.ref(addr)
+    }
 }
 
 /// Drop one COW reference to `addr`. Returns true when this was the last
 /// reference and the caller should raw-free the frame with pmm_free_page().
 @_cdecl("pmm_frame_unref")
 func pmmFrameUnref(_ addr: UInt) -> Bool {
-    if pmm == nil { return false }
-    return pmm!.unref(addr)
+    pmmWithAllocator(default: false) { allocator in
+        allocator.unref(addr)
+    }
+}
+
+/// Drop one COW reference and raw-free the frame when it was the last owner.
+/// This keeps the last-unref -> free transition under one PMM lock.
+@_cdecl("pmm_frame_release")
+func pmmFrameRelease(_ addr: UInt) {
+    let _: Void = pmmWithAllocator(default: ()) { allocator in
+        if allocator.unref(addr) {
+            allocator.free(addr)
+        }
+    }
 }
 
 /// Current COW reference count for `addr`, or 0 if it is free/untracked.
 @_cdecl("pmm_frame_refcount")
 func pmmFrameRefcount(_ addr: UInt) -> Int {
-    return pmm?.refcount(addr) ?? 0
+    pmmWithAllocator(default: 0) { allocator in
+        allocator.refcount(addr)
+    }
 }
 
 @_cdecl("pmm_free_count")
 func pmmFreeCount() -> Int {
-    return pmm?.freePages ?? 0
+    pmmWithAllocator(default: 0) { allocator in
+        allocator.freePages
+    }
 }
 
 /// Total managed frames (the PMM's bitmap size). Used by /bin/top to report the
@@ -115,7 +198,9 @@ func pmmFreeCount() -> Int {
 /// kernel image itself are not counted here (they are never free frames).
 @_cdecl("pmm_total_count")
 func pmmTotalCount() -> Int {
-    return pmm?.pageCount ?? 0
+    pmmWithAllocator(default: 0) { allocator in
+        allocator.pageCount
+    }
 }
 
 /// Allocate a zeroed 4 KiB frame. Returns 0 on failure.
@@ -125,4 +210,47 @@ func pmmAllocZeroedPage() -> UInt {
     let words = UnsafeMutablePointer<UInt64>(bitPattern: addr)!
     for i in 0..<Int(PageAllocator.pageSize / 8) { words[i] = 0 }
     return addr
+}
+
+func pmmS4aLockAcquireCount() -> UInt64 {
+    pmmLockAtomicLoad(&pmmLockAcquireCount)
+}
+
+func pmmS4aLockContentionCount() -> UInt64 {
+    pmmLockAtomicLoad(&pmmLockContentionCount)
+}
+
+func pmmS4aLockBoundaryHeldSelfTest() -> Bool {
+    pmmLockAtomicLoad(&pmmLockWord) == 0 && pmmS4aLockAcquireCount() != 0
+}
+
+private func pmmS4aExerciseOnePage() -> Bool {
+    let page = pmmAllocPage()
+    if page == 0 { return false }
+
+    pmmFrameRef(page)
+    let sharedCount = pmmFrameRefcount(page)
+    let sharedDropWasLast = pmmFrameUnref(page)
+    let finalCount = pmmFrameRefcount(page)
+    pmmFrameRelease(page)
+
+    return sharedCount == 2 &&
+           !sharedDropWasLast &&
+           finalCount == 1
+}
+
+func pmmS4aBoundedStressForCurrentCpu() -> Bool {
+    var i = 0
+    while i < 8 {
+        if !pmmS4aExerciseOnePage() { return false }
+        i += 1
+    }
+
+    return true
+}
+
+func pmmS4aConcurrencySelfTest() -> Bool {
+    let before = pmmFreeCount()
+    if !pmmS4aBoundedStressForCurrentCpu() { return false }
+    return pmmFreeCount() == before && pmmS4aLockBoundaryHeldSelfTest()
 }

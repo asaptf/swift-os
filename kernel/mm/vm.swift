@@ -250,9 +250,7 @@ private func copyFrame(_ srcPA: UInt) -> UInt {
 
 @inline(__always)
 private func releaseUserFrame(_ pa: UInt) {
-    if pmm_frame_unref(pa) {
-        pmm_free_page(pa)
-    }
+    pmm_frame_release(pa)
 }
 
 private func resolveCow(_ ttbr0: UInt, _ faultVA: UInt, activeCpuMask: UInt64) -> Bool {

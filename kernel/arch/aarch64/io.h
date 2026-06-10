@@ -28,6 +28,7 @@ uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
 void pmm_frame_ref(uintptr_t addr);
 bool pmm_frame_unref(uintptr_t addr);
+void pmm_frame_release(uintptr_t addr);
 long pmm_frame_refcount(uintptr_t addr);
 long pmm_free_count(void);
 long pmm_total_count(void); // total managed frames (for /bin/top memory stats)
