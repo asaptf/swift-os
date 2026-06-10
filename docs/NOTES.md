@@ -1224,6 +1224,32 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   no small-object heap synchronization, and no VFS/handle/package-store pool
   locking in this slice.
 
+### S4b — VFS lock boundary and handle accounting guard (DONE, 2026-06-10)
+
+- **Coarse VFS lock.** `kernel/vfs/vfs.swift` now protects the shared VFS
+  mutable pools (node table, per-process handle slots, shared open descriptions,
+  pipes, endpoints, cwd nodes, and confinement roots) with an IRQ-save spinlock
+  built from the S0b atomic CAS primitive. The lock has acquire/contention
+  counters so boot can prove the boundary was exercised and left balanced.
+- **Borrowed open descriptions.** Long operations borrow the open description
+  before dropping the VFS lock. Pipe reads/writes and endpoint receives release
+  the lock before `processYieldForIO()`, sockets run the TCP/UDP work without
+  the VFS lock held, and disk-backed reads reserve the shared file offset before
+  block I/O. `close`/`dup`/`fork`/`exec` handle refcount paths are serialized by
+  the same boundary.
+- **Executable checks.** Boot runs `vfsS4bReadinessSelfTest()` immediately after
+  `vfsInit()` and logs `S4b OK: VFS lock boundary ready`. After userland demos
+  it runs `vfsS4bLockBoundaryHeldSelfTest()`, which verifies the lock word is
+  clear and fd/open-description/pipe/endpoint accounting is balanced, then logs
+  `S4b OK: VFS lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the VFS lock
+  helpers, borrowed-description helpers, socket borrow helper, accounting
+  self-test, and S4b boot-marker order. The SMP and UEFI boot smokes now require
+  both S4b markers.
+- **Non-goals.** S4b does not enable secondary EL0 execution, does not make the
+  small-object kernel heap concurrent, and does not protect package-store
+  mutation or network engine state beyond keeping VFS socket descriptors alive.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

@@ -840,6 +840,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     pkgStoreInit()      // P3: read active package-store generation, if present
     vfsInit()           // M11c: serves the read-only base from disk when present
+    if !vfsS4bReadinessSelfTest() {
+        uartPuts("panic: S4b VFS lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4b OK: VFS lock boundary ready", UInt64(vfsS4bLockAcquireCount()))
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     ttyInit()
     signalReset()
@@ -933,6 +938,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S4a OK: PMM lock boundary stayed balanced", UInt64(pmmS4aLockContentionCount()))
+        if !vfsS4bLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4b VFS lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4b OK: VFS lock boundary stayed balanced", UInt64(vfsS4bLockContentionCount()))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}
