@@ -1082,6 +1082,31 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   changed, no IPI/cross-CPU wake path is added, and no process migration is
   enabled in this checkpoint.
 
+### S3a — address-space active CPU mask preflight (DONE, 2026-06-10)
+
+- **Active-address-space evidence.** The EL0 scheduler now records
+  `pAddressSpaceCpuMask[slot]` and a per-CPU
+  `processAddressSpaceActivationCount` after installing a process TTBR0 with
+  `address_space_switch(pTtbr0[s])` and before accounting the EL0 switch. This
+  is the cheap active-CPU evidence S3 needs before real TLB shootdown targeting
+  can be implemented.
+- **Current invariant remains CPU0-only.** The recorder is still protected by
+  the S2h secondary-EL0 gate and cross-checks against the dispatch telemetry, so
+  any secondary address-space activation before S3 proper panics instead of
+  silently widening the execution model.
+- **Runtime acceptance.** Boot runs `processAddressSpaceCpuMaskSelfTest` after
+  S2h readiness and logs `S3a OK: address-space CPU mask scaffold ready`. After
+  the userland demos, boot runs `processAddressSpaceCpuMaskNoSecondarySelfTest`
+  after the S2h held guard and logs
+  `S3a OK: address-space CPU masks stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the S3a fields,
+  recorder, self-tests, marker ordering, and the exact switch-path order:
+  `address_space_switch(pTtbr0[s])` -> `recordProcessAddressSpaceActivation`
+  -> `smpRecordEl0SwitchForCurrentCpu`.
+- **Non-goals.** No IPI/SGI is added, no TLB invalidation behavior changes, no
+  secondary CPU dispatches EL0 work, and no process migrates between CPUs in
+  this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
