@@ -9,7 +9,8 @@ this guide when you need to hand off a clear report.
 
 SwiftOS is early product software. A useful support report should distinguish
 current design limits from regressions, include the exact repository revision,
-and attach the serial or test output that proves the failure.
+and attach the serial or test output that proves the failure. For choosing and
+reading focused gates, see [TESTING_GUIDE.md](TESTING_GUIDE.md).
 
 For common product and support questions before opening a report, see
 [FAQ.md](FAQ.md).

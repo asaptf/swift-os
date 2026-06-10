@@ -18,6 +18,8 @@ Use this guide with:
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.
+- [Testing Guide](TESTING_GUIDE.md) for choosing focused gates, interpreting
+  failures, and adding validation tests.
 - [Package Guide](PACKAGE_GUIDE.md) for `.swpkg` artifacts, payload overlays,
   package-store images, and package verification workflows.
 - [Networking Guide](NETWORKING_GUIDE.md) for virtio-net profiles, host

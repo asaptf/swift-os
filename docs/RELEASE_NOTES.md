@@ -199,6 +199,7 @@ make base-image
 - Use [USER_GUIDE.md](USER_GUIDE.md) for interactive operation.
 - Use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) for command syntax.
 - Use [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for tested runbooks.
+- Use [TESTING_GUIDE.md](TESTING_GUIDE.md) for choosing and interpreting gates.
 - Use [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for artifact updates and rollback.
 - Use [API_REFERENCE.md](API_REFERENCE.md) and
   [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for application development.

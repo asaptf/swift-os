@@ -138,6 +138,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   overlay.
 - [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
+- [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
+  suite, interpret failures, and add host or QEMU acceptance tests.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
   network demos, AI demo operation, logging evidence, and verification gates.
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,

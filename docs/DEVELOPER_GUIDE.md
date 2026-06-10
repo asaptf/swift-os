@@ -9,7 +9,8 @@ For platform, runtime, package, filesystem, and porting compatibility decisions,
 see [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md).
 For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
 For copy-paste application recipes, see
-[APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md).
+[APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md). For validation strategy,
+see [TESTING_GUIDE.md](TESTING_GUIDE.md).
 
 ## Development Model
 

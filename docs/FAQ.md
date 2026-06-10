@@ -108,6 +108,9 @@ UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
 Use `make test` for the full gate.
 
+See [TESTING_GUIDE.md](TESTING_GUIDE.md) for the full validation matrix and
+failure-reading workflow.
+
 ## Accounts And Security
 
 ### What are the default accounts?
