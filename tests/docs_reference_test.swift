@@ -528,6 +528,23 @@ private func codeSpans(in text: String) -> [String] {
     }
 }
 
+private func markdownTableCells(_ line: String) -> [String] {
+    var cells: [String] = []
+    var current = ""
+    var previous: Character?
+    for char in line {
+        if char == "|" && previous != "\\" {
+            cells.append(current.trimmingCharacters(in: .whitespaces))
+            current = ""
+        } else {
+            current.append(char)
+        }
+        previous = char
+    }
+    cells.append(current.trimmingCharacters(in: .whitespaces))
+    return cells
+}
+
 private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int) {
     if ref.hasSuffix("/*") {
         let dir = String(ref.dropLast(2))
@@ -548,6 +565,28 @@ private func checkDocumentedPath(_ ref: String, in path: String, lineNumber: Int
     if !FileManager.default.fileExists(atPath: ref) {
         fail("\(path):\(lineNumber): missing documented path `\(ref)`")
         ok = false
+    }
+}
+
+private func isMachineVerificationReference(_ ref: String) -> Bool {
+    ref.hasPrefix("make ") || ref.hasPrefix("./tests/") || ref.hasPrefix("tests/")
+}
+
+private func validateCoverageReferences(_ text: String,
+                                        in path: String,
+                                        lineNumber: Int,
+                                        makeTargets: Set<String>,
+                                        subject: String) {
+    let refs = codeSpans(in: text).filter(isMachineVerificationReference)
+    if refs.isEmpty {
+        fail("\(path):\(lineNumber): \(subject) has no machine-checkable coverage reference")
+        ok = false
+    }
+    for ref in refs {
+        validateApiVerificationReference(ref,
+                                         in: path,
+                                         lineNumber: lineNumber,
+                                         makeTargets: makeTargets)
     }
 }
 
@@ -732,6 +771,70 @@ private func checkCommandReferenceCoverage() {
             fail("\(path): missing command reference entry for /bin/\(command)")
             ok = false
         }
+    }
+}
+
+private func checkCommandReferenceAcceptanceCoverageRefs() {
+    let path = "docs/COMMAND_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var index = 0
+    while index < lines.count {
+        let line = lines[index]
+        if line.hasPrefix("Acceptance coverage:") {
+            let start = index
+            var block = line
+            index += 1
+            while index < lines.count &&
+                  !lines[index].isEmpty &&
+                  !lines[index].hasPrefix("#") {
+                block += " " + lines[index]
+                index += 1
+            }
+            validateCoverageReferences(block,
+                                       in: path,
+                                       lineNumber: start + 1,
+                                       makeTargets: makeTargets,
+                                       subject: "acceptance coverage block")
+            continue
+        }
+        index += 1
+    }
+
+    var inCoverageTable = false
+    var coverageColumn = -1
+    for (lineIndex, line) in lines.enumerated() {
+        if !line.hasPrefix("|") {
+            inCoverageTable = false
+            coverageColumn = -1
+            continue
+        }
+        let cells = markdownTableCells(line)
+        if cells.contains("Acceptance coverage") {
+            inCoverageTable = true
+            coverageColumn = cells.firstIndex(of: "Acceptance coverage") ?? -1
+            continue
+        }
+        if inCoverageTable && line.contains("---") {
+            continue
+        }
+        guard inCoverageTable,
+              coverageColumn >= 0,
+              coverageColumn < cells.count else {
+            continue
+        }
+        let subject = cells.count > 1 && !cells[1].isEmpty ? "`\(cells[1])` row" : "table row"
+        validateCoverageReferences(cells[coverageColumn],
+                                   in: path,
+                                   lineNumber: lineIndex + 1,
+                                   makeTargets: makeTargets,
+                                   subject: subject)
     }
 }
 
@@ -1012,6 +1115,7 @@ checkApiVerificationMapReferences()
 checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
 checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
+checkCommandReferenceAcceptanceCoverageRefs()
 checkHostToolReferenceCoverage()
 checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
