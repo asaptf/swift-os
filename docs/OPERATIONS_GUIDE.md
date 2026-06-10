@@ -64,6 +64,23 @@ The most important operational consequence is that a running guest has no
 persistent writable root. Rebuild the base image or attach a package payload to
 change installed software. Use `/tmp` only for runtime scratch.
 
+## Choose An Operational Workflow
+
+Start from the operational task, then use the narrowest profile and proof that
+answers it. Keep the serial log whenever another person needs to reproduce the
+run.
+
+| Task | Start with | Primary proof | Evidence to save |
+| --- | --- | --- | --- |
+| Confirm a checkout boots | Direct serial boot | `./tests/boot_test.sh` | `git log -1 --oneline`, serial log |
+| Validate the UEFI disk path | UEFI disk boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` | `build/swift-os.img` hash, UEFI serial log |
+| Run a static HTTP or echo service | Network boot | Service-specific network test | Readiness marker plus host `curl` or `nc` output |
+| Run AI inference or serving | AI operation path | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` | Bundle verification lines, `/health`, `/metrics` |
+| Prove package content | Package overlay, store, local install, or repository runbook | Matching package make target | Package image/repository path and guest command output |
+| Validate A/B update behavior | Update-store or UEFI kernel-slot runbook | Matching `ab_*` or `uefi_k*` test | Stage/activate/confirm output and rollback evidence |
+| Investigate a failure | Troubleshooting first triage | Narrow failing test | First failure line and support bundle |
+| Prepare a handoff | Deployment evidence bundle | Candidate validation matrix | Manifest, hashes, serial log, rollback artifact |
+
 ## Artifact Map
 
 | Artifact | Built by | Used for |
