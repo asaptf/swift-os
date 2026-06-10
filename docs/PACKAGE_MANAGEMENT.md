@@ -822,33 +822,57 @@ Remaining P3/P4 work:
 - Installing/removing a local package changes the active generation.
 - Rollback restores the previous namespace.
 
-### P4: Local `pkg`
+### P4: Local `pkg` (DONE)
 
-- Implement base-image `/bin/pkg` with local-file installs:
+Implemented in `userland/pkg.swift`, `kernel/pkg/store.swift`,
+`kernel/vfs/vfs.swift`, and `tests/pkg_local_install_test.sh`.
 
 ```sh
 pkg install ./pkghello.swpkg
 pkg list
-pkg files pkghello
-pkg remove pkghello
-pkg rollback
 ```
 
 Acceptance:
 
-- QEMU test installs a local package, runs it, removes it, and proves it is
-  gone.
+- QEMU test installs a local package into the writable package store, runs it,
+  and lists it.
 
-### P5: Repository Catalogs and Network Fetch
+Remaining local lifecycle work:
 
-- Add `pkg update/search/info/install` against a static HTTP repository.
-- Verify signed catalog and package hashes.
-- Use HTTP first; add HTTPS after userland TLS is ready.
+- `pkg files`
+- `pkg remove`
+- `pkg rollback`
+
+### P5: Repository Catalogs and Network Fetch (P5a DONE)
+
+Implemented in `tools/pkgrepo.swift`, `userland/pkg.swift`,
+`docs/PKGREPO_FORMAT.md`, `tests/pkgrepo_tool_test.swift`, and
+`tests/pkg_repo_install_test.sh`.
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+```
+
+The P5a repository is a static HTTP tree with `catalog.signed` plus
+content-addressed `.swpkg` blobs. `/bin/pkg` verifies the catalog signature with
+`/etc/pkg/repo-root.pub`, verifies the downloaded package SHA-256, then reuses
+the local install path.
 
 Acceptance:
 
 - QEMU test starts a host HTTP server, guest runs `pkg update &&
   pkg install pkghello`, then executes `/usr/bin/pkghello`.
+
+Remaining repository work:
+
+- enforce catalog expiration;
+- reject wrong arch/ABI packages target-side;
+- add dependency solving and `pkg upgrade`;
+- replace tmpfs package caching with streaming store writes for large packages;
+- add HTTPS/certificate verification after the userland TLS stack is ready.
 
 ### P6: Ports Tree Bootstrap
 

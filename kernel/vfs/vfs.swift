@@ -943,6 +943,30 @@ private func createTmpNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
     return n
 }
 
+private func ensureTmpFileCapacity(_ node: Int, _ needed: Int) -> Bool {
+    if needed <= nodes[node].dataCap { return true }
+    var cap = nodes[node].dataCap
+    if cap < 4096 { cap = 4096 }
+    while cap < needed {
+        let next = cap * 2
+        if next <= cap { return false }
+        cap = next
+    }
+    guard let dataBuf = swiftos_kernel_alloc(UInt(cap), 16) else { return false }
+    let dst = dataBuf.bindMemory(to: UInt8.self, capacity: cap)
+    if nodes[node].dataLen > 0 {
+        let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+        var i = 0
+        while i < nodes[node].dataLen {
+            dst[i] = src[i]
+            i += 1
+        }
+    }
+    nodes[node].dataPtr = UInt(bitPattern: dataBuf)
+    nodes[node].dataCap = cap
+    return true
+}
+
 private func pipeCount(_ p: Int) -> Int {
     (pipes[p].tail - pipes[p].head + pipes[p].cap) % pipes[p].cap
 }
@@ -1190,6 +1214,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     let node = file.node
     if nodes[node].isDir { return errIsDir }
     if nodes[node].readOnly { return errReadOnly }
+    if !ensureTmpFileCapacity(node, file.offset + Int(count)) { return errNoSpace }
 
     let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     var w = 0

@@ -402,14 +402,20 @@ Risks:
 Goal: install packages by name from a signed static HTTP repository. Integrity
 comes from signed metadata and content hashes; HTTPS is not required for P5.
 
+Current state: the P5a bootstrap path is implemented. `tools/pkgrepo.swift`
+builds a signed static repository fixture, the base image ships
+`/etc/pkg/repo-root.pub`, and `/bin/pkg` can update/search/info/install from an
+explicit HTTP repository URL. See `docs/PKGREPO_FORMAT.md`.
+
 Required commands:
 
-- `pkg update`
+- `pkg update <url>` (implemented for P5a; explicit URL keeps QEMU tests
+  deterministic)
 - `pkg search <text>`
 - `pkg info <name>`
 - `pkg install <name>`
 - `pkg upgrade` only if the metadata and dependency rules are ready; otherwise
-  keep it as a clear "not implemented yet" command.
+  keep it deferred.
 
 Likely files/modules:
 
@@ -439,14 +445,14 @@ Likely files/modules:
   - Stage base package keys/config.
   - Add a static-repo fixture build target for tests.
 - `tests/`
-  - Add `tests/pkg_repo_test.sh`.
-  - Add host tests for catalog signature failure, expiration, wrong arch, and
-    wrong package hash.
+  - `tests/pkg_repo_install_test.sh`
+  - `tests/pkgrepo_tool_test.swift`
+  - Remaining: expiration, wrong arch, and wrong package hash tests.
 
 Repository fixture shape:
 
 ```text
-fixtures/pkgrepo/
+build/pkgrepo-root/
   aarch64/current/catalog.json
   aarch64/current/catalog.signed
   aarch64/current/packages/<sha256>.swpkg
@@ -455,10 +461,10 @@ fixtures/pkgrepo/
 Tests to add:
 
 - Host-side catalog tests:
-  - valid catalog verifies;
-  - tampered catalog fails;
-  - expired catalog fails;
-  - package hash mismatch fails.
+  - valid catalog verifies (implemented);
+  - tampered catalog fails (implemented);
+  - expired catalog fails (remaining);
+  - package hash mismatch fails (remaining).
 - QEMU network test:
   - start a host static HTTP server from the fixture directory;
   - boot QEMU with user networking;
@@ -473,18 +479,20 @@ Smallest acceptance criteria:
 - `pkg update` fetches and verifies a catalog from a static HTTP server.
 - `pkg install pkghello` downloads the content-addressed `.swpkg`, verifies its
   hash, installs it through the P4 path, and executes `/usr/bin/pkghello`.
-- Signature/hash/expiration failures are tested.
-- `make test` includes the repository flow.
+- Signature tampering is tested host-side.
+- `make package-repo-install-test` covers the QEMU repository flow; `make test`
+  includes the host repository tool test.
 
 Risks:
 
-- Ed25519 is not currently present in the repo. Add small known-answer tests for
-  the verifier before trusting signed catalogs.
+- Ed25519 is present and covered by `tests/ed25519_test.swift`; repository
+  signing uses the same implementation.
 - Userland TLS exists only as a demo without certificate verification. P5 should
   use HTTP plus signatures for integrity, exactly as the design says.
 - Catalog parsing must stay bounded. Reject oversized catalogs in P5 rather
   than trying to support the future full public repository immediately.
-- Downloads must become streaming before large packages such as Node.js, Swift,
+- P5a downloads packages into tmpfs before install. Downloads must become
+  streaming store writes before large packages such as Node.js, Swift,
   PostgreSQL, or a JVM are realistic.
 - DNS is available, but the QEMU acceptance should use `10.0.2.2:<port>` first
   to keep failures focused on package logic.
