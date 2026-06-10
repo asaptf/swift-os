@@ -17,6 +17,7 @@ VM_SWIFT="$ROOT/kernel/mm/vm.swift"
 PMM_SWIFT="$ROOT/kernel/mm/pmm.swift"
 VFS_SWIFT="$ROOT/kernel/vfs/vfs.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
+RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
@@ -472,6 +473,11 @@ if ! grep -q 'S4b OK: VFS lock boundary ready' "$MAIN_SWIFT" ||
   echo "FAIL: S4b must log VFS lock boundary readiness and balanced markers." >&2
   exit 1
 fi
+if ! grep -q 'S4c OK: kernel heap lock boundary ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S4c OK: kernel heap lock boundary stayed balanced' "$MAIN_SWIFT"; then
+  echo "FAIL: S4c must log kernel heap lock boundary readiness and balanced markers." >&2
+  exit 1
+fi
 if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
   echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
@@ -500,6 +506,35 @@ for needle in \
   fi
 done
 
+for needle in \
+  'static uint64_t heap_lock_word' \
+  'static uint64_t heap_lock_acquire_count' \
+  'static uint64_t heap_lock_contention_count' \
+  'static uint64_t heap_lock(void)' \
+  'uint64_t daif = irq_save();' \
+  'smp_atomic_compare_exchange_u64(&heap_lock_word, &expected, 1)' \
+  'static void heap_unlock(uint64_t daif)' \
+  'irq_restore(daif);' \
+  'static void heap_init_unlocked(void)' \
+  'swiftos_kernel_alloc(uintptr_t byte_count, uintptr_t alignment)' \
+  'uint64_t swiftos_heap_lock_acquire_count(void)' \
+  'uint64_t swiftos_heap_lock_contention_count(void)' \
+  'bool swiftos_heap_lock_boundary_self_test(void)' \
+  'bool swiftos_heap_s4c_self_test(void)'; do
+  if ! grep -q "$needle" "$RUNTIME_HEAP"; then
+    echo "FAIL: S4c kernel heap lock boundary missing $needle." >&2
+    exit 1
+  fi
+done
+
+if ! grep -q 'swiftos_heap_lock_acquire_count' "$IO_HDR" ||
+   ! grep -q 'swiftos_heap_lock_contention_count' "$IO_HDR" ||
+   ! grep -q 'swiftos_heap_lock_boundary_self_test' "$IO_HDR" ||
+   ! grep -q 'swiftos_heap_s4c_self_test' "$IO_HDR"; then
+  echo "FAIL: S4c heap lock self-test/counter prototypes must be exported through io.h." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -516,6 +551,7 @@ s3d_line="$(rg -n 'processAddressSpaceTlbFlushFacadeSelfTest\(\)' "$MAIN_SWIFT" 
 s4a_line="$(rg -n 'pmmS4aConcurrencySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4a_smp_line="$(rg -n 'smpPmmStressSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4b_line="$(rg -n 'vfsS4bReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4c_line="$(rg -n 'swiftos_heap_s4c_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -534,6 +570,7 @@ s3d_no_secondary_line="$(rg -n 'processAddressSpaceTlbFlushNoSecondarySelfTest\(
 s4a_no_secondary_line="$(rg -n 'pmmS4aLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
 s4a_smp_no_secondary_line="$(rg -n 'smpS4aPmmStressSchedulerBoundarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s4b_no_secondary_line="$(rg -n 'vfsS4bLockBoundaryHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s4c_no_secondary_line="$(rg -n 'swiftos_heap_lock_boundary_self_test\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
@@ -588,6 +625,12 @@ if [[ -z "$s4b_line" ||
       "$s4a_smp_line" -ge "$s4b_line" ||
       "$s4b_line" -ge "$demo_line" ]]; then
   echo "FAIL: S4b VFS lock self-test must run after S4a readiness and before scheduler/userland demos." >&2
+  exit 1
+fi
+if [[ -z "$s4c_line" ||
+      "$s4b_line" -ge "$s4c_line" ||
+      "$s4c_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S4c kernel heap lock self-test must run after S4b readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
@@ -663,6 +706,12 @@ if [[ -z "$s4b_no_secondary_line" ||
   echo "FAIL: S4b VFS lock guard must run after S4a and before S2b no-secondary-EL0." >&2
   exit 1
 fi
+if [[ -z "$s4c_no_secondary_line" ||
+      "$s4b_no_secondary_line" -ge "$s4c_no_secondary_line" ||
+      "$s4c_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S4c kernel heap lock guard must run after S4b and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
 if ! grep -q 'smpHandleIpi(iar)' "$MAIN_SWIFT" ||
    ! grep -q 'interruptId == smpIpiInterruptId' "$MAIN_SWIFT"; then
@@ -708,4 +757,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB/PMM/VFS boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a/S4b/S4c release-readiness contract holds (PSCI CPU_ON + early timer + scheduler/IPI/TLB/PMM/VFS/heap boundary)"
