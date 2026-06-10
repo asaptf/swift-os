@@ -306,9 +306,10 @@ make package-repo-install-test
 
 Package payloads are read-only once active. The current system also has a narrow
 local target-side install path: `pkg install FILE` can append a local `.swpkg`
-to a writable package-store image and live-mount it. P5a signed repository
+to a writable package-store image and live-mount it. P5b signed repository
 install can run `pkg update URL`, `pkg search`, `pkg info`, and
-`pkg install NAME` against the static HTTP fixture. Dependency solving, remove,
+`pkg install NAME` against the static HTTP fixture while rejecting expired or
+incompatible catalogs and package hash mismatches. Dependency solving, remove,
 upgrade, rollback, public hosted package channels, and large-package streaming
 downloads remain roadmap work.
 

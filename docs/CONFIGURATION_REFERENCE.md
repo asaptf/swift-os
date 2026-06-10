@@ -483,8 +483,10 @@ These are intentional current limits:
 - No persistent writable filesystem.
 - No public hosted package channel, dependency-solving transaction, package
   upgrade, remove, rollback, or streaming large-package install path. Local
-  `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` work for
-  signed fixtures when a writable package-store image is attached.
+  `pkg install FILE` and P5b `pkg update URL`/`pkg install NAME` work for
+  signed fixtures when a writable package-store image is attached, including
+  rejection paths for expired or incompatible catalogs and package hash
+  mismatches.
 - No production certificate store for `tlsget`.
 - No default graphical desktop shell.
 

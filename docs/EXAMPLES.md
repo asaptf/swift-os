@@ -298,7 +298,7 @@ The automated test starts a host HTTP server, boots QEMU with virtio-net and a
 writable package-store image, then drives this guest flow:
 
 ```sh
-pkg update http://10.0.2.2:<port>/aarch64/current
+pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello

@@ -838,7 +838,7 @@ pkghello: hello from package overlay
 Example signed repository fixture:
 
 ```sh
-pkg update http://10.0.2.2:<port>/aarch64/current
+pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
@@ -860,10 +860,12 @@ pkghello: hello from package overlay
 Notes:
 
 - `pkg install FILE` expects a local `.swpkg`.
-- `pkg update URL` expects a P5a signed static HTTP repository URL, such as the
-  QEMU fixture path under `http://10.0.2.2:<port>/aarch64/current`.
+- `pkg update URL` expects a P5b signed static HTTP repository URL, such as the
+  QEMU fixture path under `http://10.0.2.2:<port>/good/aarch64/current`.
+  It rejects expired catalogs and incompatible package entries.
 - `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
-  cached by `pkg update`.
+  cached by `pkg update`; install by name verifies the downloaded package
+  SHA-256 before activation.
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active

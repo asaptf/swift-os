@@ -223,9 +223,10 @@ pkg list
 
 ### Signed Repository Install
 
-Signed static HTTP repository install is current P5a functionality. It verifies
-`catalog.signed`, downloads a content-addressed `.swpkg`, verifies SHA-256, then
-reuses the local package-store install path.
+Signed static HTTP repository install is current P5b functionality. It verifies
+`catalog.signed`, rejects expired or incompatible catalogs, downloads a
+content-addressed `.swpkg`, verifies SHA-256, then reuses the local
+package-store install path.
 
 Build and test the fixture:
 
@@ -238,7 +239,7 @@ make package-repo-install-test
 Inside the tested guest flow:
 
 ```sh
-pkg update http://10.0.2.2:<port>/aarch64/current
+pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
@@ -512,6 +513,9 @@ Useful markers:
 | `udpecho: listening on 5555` | UDP echo server bound |
 | `pkghello: hello from package overlay` | Package payload overlay was visible and executable |
 | `pkg: catalog updated` | `pkg update URL` accepted a signed repository catalog |
+| `pkg: catalog expired` | Repository metadata was signed but past its expiry |
+| `pkg: catalog incompatible` | Repository metadata did not match the current target contract |
+| `pkg: package SHA-256 mismatch` | Downloaded package blob did not match the signed catalog |
 | `pkg: installed pkghello-1.0.0_1` | Package install activated `pkghello` from local file or repository |
 | `llm: done` | Inference demo completed and returned to userland |
 
@@ -571,7 +575,7 @@ Current limits that matter during operation:
 - No persistent writable filesystem.
 - No dependency-solving, remove, upgrade, rollback, public hosted package
   channel, or streaming large-package install path yet.
-  Local `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` exist for
+  Local `pkg install FILE` and P5b `pkg update URL`/`pkg install NAME` exist for
   `.swpkg` fixtures.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
