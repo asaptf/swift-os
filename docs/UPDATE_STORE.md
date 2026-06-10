@@ -206,8 +206,18 @@ attempt-based rollback returns to the fallback. `tests/ab_stage_test.sh` stages 
 valid payload over a deliberately-corrupt inactive slot and asserts the slot
 verifies and boots after activate + reboot.
 
+## Durable writes via FLUSH (U1h)
+
+The kernel negotiates `VIRTIO_BLK_F_FLUSH` at bring-up and calls
+`virtioBlkFlush()` (a `VIRTIO_BLK_T_FLUSH` request) after every commit:
+`updateStoreWriteBack` flushes the manifest sector (and fails the write-back if
+the flush is rejected), and `updateStoreStagePayload` flushes the staged slot
+data before pointing the manifest at it. Boot-state is therefore durable under a
+normal write-back cache, without depending on a `cache=writethrough` host
+backend. `updateStoreInit` logs "write durability via virtio FLUSH".
+`tests/ab_flush_test.sh` proves the path with the default write-back cache.
+
 ## Not implemented yet
 
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
-- virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
-  revocation.
+- Key rotation / revocation.

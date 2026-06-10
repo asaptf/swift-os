@@ -3013,3 +3013,34 @@ swos-update → swos-activate → reboot on trial → swos-confirm (U1c) / rollb
 **Still future.** Kernel-image A/B via the loader (Ed25519 + EFI Block I/O);
 virtio-blk FLUSH (durability without `cache=writethrough`); key rotation. Next
 free syscall = 63.
+
+### U1h — virtio-blk FLUSH: durable boot-state writes (DONE, 2026-06-10)
+
+**Scope.** Until now, durability of the manifest/stage writes relied on a host
+`cache=writethrough` backend (forced in the A/B tests). U1h negotiates
+`VIRTIO_BLK_F_FLUSH` and flushes the device write cache after each commit, so
+boot-state survives a crash under a normal write-back cache.
+
+- `kernel/drivers/virtio_blk.swift`: bring-up now reads device-feature word 0
+  (`R_DEVFEAT`/`R_DEVFEATSEL` = 0x010/0x014) and accepts `VIRTIO_BLK_F_FLUSH`
+  (bit 9) when offered, recording it in `blkFlushOK` (one new SMP-audit global,
+  set per bring-up; reflects the currently-bound device). `blkDoFlush()` issues a
+  `VIRTIO_BLK_T_FLUSH` (type 4) request — a header(device-read)+status
+  (device-write) chain, no data. Public `virtioBlkFlush()` (0 also when the
+  device exposes no cache — the write is then already durable) and
+  `virtioBlkFlushSupported()`.
+- `kernel/fs/updatestore.swift`: `updateStoreWriteBack` flushes after the manifest
+  sector write (treating a failed flush as a failed write-back, so a rejected
+  FLUSH stalls rather than silently loses state); `updateStoreStagePayload`
+  flushes the staged slot data before the manifest is pointed at it (so a crash
+  can never leave a committed manifest referencing half-written slot bytes).
+  `updateStoreInit` logs the durability mode ("write durability via virtio FLUSH").
+
+**Acceptance.** `tests/ab_flush_test.sh` (in `make test`): boots the SAME store
+with the default **write-back** cache (no `cache=writethrough`) and asserts the
+FLUSH marker AND that the boot-attempt counter persists 1→2→3 — which also
+verifies the flush request succeeds (a rejected FLUSH would fail the write-back
+and stall the counter). Caveat: QEMU writes land in the host page cache, which
+survives a kill, so this exercises the negotiate+flush+commit path under the
+realistic cache mode but cannot simulate host power loss. boot_test, ab_persist
+(writethrough path), and the rest of the A/B suite unaffected. No new syscalls.

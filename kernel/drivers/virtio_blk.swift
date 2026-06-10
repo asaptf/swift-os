@@ -23,6 +23,8 @@ private let R_VERSION: UInt    = 0x004
 private let R_DEVID: UInt      = 0x008
 private let R_DRVFEAT: UInt    = 0x020
 private let R_DRVFEATSEL: UInt = 0x024
+private let R_DEVFEAT: UInt    = 0x010
+private let R_DEVFEATSEL: UInt = 0x014
 private let R_QSEL: UInt       = 0x030
 private let R_QNUMMAX: UInt    = 0x034
 private let R_QNUM: UInt       = 0x038
@@ -51,8 +53,10 @@ private let BLK_QSZ = 8
 private let VIRTQ_DESC_F_NEXT: UInt16  = 1
 private let VIRTQ_DESC_F_WRITE: UInt16 = 2
 
-private let VIRTIO_BLK_T_IN: UInt32 = 0  // read from disk into memory
-private let VIRTIO_BLK_T_OUT: UInt32 = 1 // write from memory to disk (U1b)
+private let VIRTIO_BLK_T_IN: UInt32 = 0    // read from disk into memory
+private let VIRTIO_BLK_T_OUT: UInt32 = 1   // write from memory to disk (U1b)
+private let VIRTIO_BLK_T_FLUSH: UInt32 = 4 // flush the device write cache to media (U1h)
+private let VIRTIO_BLK_F_FLUSH: UInt32 = 1 << 9 // device feature: cache-flush command supported
 private let SECTOR_SIZE = 512
 
 // U1f-2a: multi-sector transfers. One request can move up to BLK_MULTI_SECTORS
@@ -84,6 +88,7 @@ private var blkQn: UInt32 = 0
 private var blkAvailIdx: UInt16 = 0
 private var blkLastUsed: UInt16 = 0
 private var blkCapacity: UInt64 = 0 // device capacity in 512-byte sectors
+private var blkFlushOK: Bool = false // U1h: the currently-bound device negotiated VIRTIO_BLK_F_FLUSH
 
 // U1a (A/B update store): byte offset added to every base-image read
 // (virtioBlkReadRange). 0 means "the base image starts at sector 0 of the
@@ -156,9 +161,16 @@ private func blkBringUp(_ m: UInt) -> UInt64 {
     mmio_write32(m + R_STATUS, 0)               // reset
     mmio_write32(m + R_STATUS, S_ACK)
     mmio_write32(m + R_STATUS, S_ACK | S_DRV)
-    // Accept only VIRTIO_F_VERSION_1 (feature bit 32); ignore block features.
+    // Accept VIRTIO_F_VERSION_1 (feature bit 32, word 1). In word 0 accept only
+    // VIRTIO_BLK_F_FLUSH if the device offers it (U1h: durable writes); ignore
+    // every other block feature.
+    blkFlushOK = false
+    mmio_write32(m + R_DEVFEATSEL, 0)
+    let dev0 = mmio_read32(m + R_DEVFEAT)
+    var drv0: UInt32 = 0
+    if (dev0 & VIRTIO_BLK_F_FLUSH) != 0 { drv0 |= VIRTIO_BLK_F_FLUSH; blkFlushOK = true }
     mmio_write32(m + R_DRVFEATSEL, 1); mmio_write32(m + R_DRVFEAT, 1)
-    mmio_write32(m + R_DRVFEATSEL, 0); mmio_write32(m + R_DRVFEAT, 0)
+    mmio_write32(m + R_DRVFEATSEL, 0); mmio_write32(m + R_DRVFEAT, drv0)
     mmio_write32(m + R_STATUS, S_ACK | S_DRV | S_FEATOK)
     if (mmio_read32(m + R_STATUS) & S_FEATOK) == 0 { blkMmio = 0; return 0 }
 
@@ -375,6 +387,51 @@ private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
     return 0
 }
 
+// U1h: ask the device to flush its write cache to stable media. A two-descriptor
+// chain — header (device-read, type=FLUSH, sector 0) + status (device-write) —
+// with no data. Returns 0 on success (or when the device does not support FLUSH:
+// there is nothing to flush, so a write was already as durable as it gets). The
+// kernel issues this after committing a manifest or staged-slot write so those
+// survive a host crash even with a write-back host cache (no cache=writethrough).
+private func blkDoFlush() -> Int32 {
+    if blkMmio == 0 { return -1 }
+    if !blkFlushOK { return 0 } // device has no volatile write cache to flush
+
+    let hdr = blkDataBase + OFF_HDR
+    let status = blkDataBase + OFF_STATUS
+
+    let hp = UnsafeMutableRawPointer(bitPattern: hdr)!
+    hp.storeBytes(of: VIRTIO_BLK_T_FLUSH, toByteOffset: 0, as: UInt32.self)
+    hp.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self) // reserved
+    hp.storeBytes(of: UInt64(0), toByteOffset: 8, as: UInt64.self) // sector (ignored for FLUSH)
+    UnsafeMutableRawPointer(bitPattern: status)!.storeBytes(of: UInt8(0xFF), toByteOffset: 0, as: UInt8.self)
+    blkClean(hdr, 16)
+    blkClean(status, 1)
+
+    blkDescSet(0, addr: UInt64(hdr), len: 16, flags: VIRTQ_DESC_F_NEXT, next: 1)
+    blkDescSet(1, addr: UInt64(status), len: 1, flags: VIRTQ_DESC_F_WRITE, next: 0)
+    blkClean(blkRingBase + OFF_DESC, BLK_QSZ * 16)
+
+    blkAvailAdd(descIdx: 0)
+    blkClean(blkRingBase + OFF_AVAIL, 32)
+
+    mmio_write32(blkMmio + R_QNOTIFY, 0)
+
+    let target = blkLastUsed &+ 1
+    while true {
+        blkInvalidate(blkRingBase + OFF_USED, 72)
+        if blkUsedIdx() == target { break }
+    }
+    blkLastUsed = target
+
+    let ist = mmio_read32(blkMmio + R_ISTATUS)
+    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+
+    blkInvalidate(status, 1)
+    if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
+    return 0
+}
+
 // Scan the virtio-mmio window (base/stride/count from the HAL) for block
 // devices and select the disk to serve the read-only base from. A boot medium
 // may carry several disks (e.g. a GPT boot disk plus the base storage), so we
@@ -547,6 +604,16 @@ func virtioBlkFillMulti(_ sector: UInt64, _ count: Int) -> Int32 { blkDoMulti(se
 // Write the internal DMA buffer's first `count` sectors to absolute `sector` of
 // the current device. Pair with virtioBlkFillMulti.
 func virtioBlkFlushMulti(_ sector: UInt64, _ count: Int) -> Int32 { blkDoMulti(sector, count, write: true) }
+
+// U1h: true if the currently-bound device negotiated VIRTIO_BLK_F_FLUSH, i.e. it
+// has a volatile write cache that virtioBlkFlush() can push to stable media.
+func virtioBlkFlushSupported() -> Bool { blkFlushOK }
+
+// U1h: flush the device write cache to stable media. 0 on success (also when the
+// device exposes no flush, since the write is then already durable). Call after
+// committing a manifest or staged-slot write so it survives a host crash even
+// without a cache=writethrough host backend.
+func virtioBlkFlush() -> Int32 { blkDoFlush() }
 
 // Read an arbitrary byte range [byteOff, byteOff+len) into `buf`, spanning
 // sectors as needed. Returns 0 on success, negative on error. Used to back the

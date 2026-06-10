@@ -844,6 +844,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/ab_payload_test.sh
 	./tests/multisector_test.sh
 	./tests/ab_stage_test.sh
+	./tests/ab_flush_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh

@@ -62,6 +62,9 @@ private func updateStoreWriteBack(_ updated: SwosbootManifest, currentLBA: UInt6
         let writeLBA: UInt64 = currentLBA == 0 ? 1 : 0
         ok = virtioBlkWriteSector(writeLBA, UnsafeRawPointer(raw.baseAddress!)) == 0
     }
+    // U1h: push the manifest write through any volatile device/host write cache so
+    // it survives a crash without relying on a cache=writethrough backend.
+    if ok && virtioBlkFlush() != 0 { ok = false }
     return ok
 }
 
@@ -129,6 +132,13 @@ func updateStoreInit() {
         uartPuts(", no fallback")
     }
     uartPuts("\n")
+
+    // U1h: report how boot-state writes reach stable media. With FLUSH the kernel
+    // flushes after each manifest/stage write, so durability does not depend on a
+    // cache=writethrough host backend.
+    uartPuts(virtioBlkFlushSupported()
+        ? "update-store: write durability via virtio FLUSH\n"
+        : "update-store: device has no write cache (writes are durable on completion)\n")
 
     // Record this boot attempt for the (possibly new) active slot, and persist
     // any rollback swap. A CONFIRMED slot is trusted: it does not accumulate
@@ -322,6 +332,13 @@ func updateStoreStagePayload() -> Int {
     virtioBlkReselectStore()
     if !copyOK {
         uartPuts("update-store: stage copy failed\n")
+        return -5
+    }
+    // U1h: make the staged slot data durable before the manifest is pointed at it
+    // (the manifest write-back below flushes itself), so a crash can never leave a
+    // committed manifest referencing half-written slot bytes.
+    if virtioBlkFlush() != 0 {
+        uartPuts("update-store: stage flush failed\n")
         return -5
     }
 
