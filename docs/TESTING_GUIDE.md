@@ -189,6 +189,7 @@ Run the narrowest test that proves the path you changed.
 | LLM HTTP serving | `./tests/llm_serve_test.sh` |
 | Busybox shell compatibility | `./tests/busybox_test.sh` |
 | `vi` serial path | `./tests/vi_test.sh` |
+| Restartable driver-service smoke | `make c5-driver-service-test` |
 | SMP readiness | `make s1-test` or the active milestone target, for example `make s5-run-any-placement-test` |
 
 When a focused test passes but the full gate fails, the failure is probably in a
@@ -362,6 +363,7 @@ make smp-headroom-test
 make smp-uefi-test
 make s1-test
 make s5-run-any-placement-test
+make c5-driver-service-test
 ```
 
 Use the active roadmap milestone to choose the exact target. For broad SMP

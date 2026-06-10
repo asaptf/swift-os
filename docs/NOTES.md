@@ -1628,6 +1628,23 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   service supervisor, userland drivers, Cells/resource domains, endpoint
   close-on-exec policy change, and SMP work remain later C/S milestones.
 
+### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)
+
+- **Supervisor/service shape.** Added `/bin/drvsvcdemo`, a tiny userland
+  supervisor, and `/bin/drvinputd`, a pseudo input-driver service. The supervisor
+  creates two endpoint pairs, forks/execs the service with only the service-side
+  endpoint fds left open, waits for a ready message, sends a command, receives an
+  event, stops the service, and repeats the sequence with a fresh generation.
+- **Restart evidence.** The service returns a generation-specific exit status
+  after `STOP`, so the supervisor proves both the old service stopped and a new
+  service instance recovered the endpoint protocol.
+- **Executable checks.** Boot now runs the smoke and prints
+  `C5a OK: restartable driver service recovered over IPC`; `make
+  c5-driver-service-test` runs the focused direct-boot acceptance.
+- **Non-goals.** No real device handle, MMIO mapping, IRQ endpoint, DMA window, or
+  virtio-input ownership is moved to userland yet. This is the C5 supervisor/IPC
+  contract that the next device-handoff slice can attach hardware authority to.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

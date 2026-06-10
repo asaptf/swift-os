@@ -282,6 +282,18 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 
 After S5 we have a credible multi-core OS. At that point we immediately follow with C5 (move a driver) so that the architecture vision and the implementation are aligned again.
 
+### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)
+
+- `/bin/drvsvcdemo` now supervises `/bin/drvinputd`, a pseudo input-driver
+  service. The supervisor creates endpoint pairs, starts the service, receives a
+  readiness message, sends a command, receives an event, stops the service, and
+  repeats the flow with a fresh generation.
+- The boot path requires `C5a OK: restartable driver service recovered over IPC`;
+  `make c5-driver-service-test` is the focused direct-boot gate.
+- Non-goals: C5a does not grant MMIO, IRQ, DMA, or real virtio-input ownership to
+  userland yet. C5b/C5 proper still owns the device-handle and real driver
+  extraction work.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
