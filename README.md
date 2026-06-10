@@ -180,6 +180,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   troubleshoot `.swpkg`, payload overlay, and package-store artifacts.
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
   recipe, CI smoke-test, and repository publishing workflow for maintainers.
+- [Ports Seed Catalog](ports/README.md): P6a package-priority catalog,
+  `swport catalog` validation, and first server package blockers.
 - [SWPKG Format](docs/SWPKG_FORMAT.md): `.swpkg` container layout, manifest,
   payload, and verification rules.
 - [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
