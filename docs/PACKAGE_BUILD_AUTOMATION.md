@@ -29,13 +29,16 @@ prove the package model locally:
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
-repository path, and P6a seed catalog. Until the separate `swift-os-ports`
-repository and public hosted channels exist, maintainers should use the local
-fixture commands in this repository.
+repository path, P6a seed catalog, and P6b/P6c/P6d Lua recipe repository
+scaffold. Until the separate `swift-os-ports` repository and public hosted
+channels exist, maintainers should use the local fixture commands in this
+repository.
 
 Use this guide with:
 
 - [Package Guide](PACKAGE_GUIDE.md) for package commands that work today.
+- [Host Tool Reference](HOST_TOOL_REFERENCE.md) for exact host-side tool
+  syntax and examples.
 - [Package Management](PACKAGE_MANAGEMENT.md) for target-side package-manager
   design and roadmap boundaries.
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container contract.

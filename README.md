@@ -140,6 +140,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
   limits, and acceptance coverage for the current base image and package
   overlay.
+- [Host Tool Reference](docs/HOST_TOOL_REFERENCE.md): host-side package,
+  repository, ports catalog, base-image, and model-bundle tools.
 - [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full

@@ -52,8 +52,27 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `/bin/pkg list` reports active package-store records;
   - `make package-local-install-test` proves the flow with
     `/packages/pkghello.swpkg`.
-- Repository catalogs, hosted binary repository publishing, network fetch,
-  dependency solving, remove, upgrade, and rollback remain future work.
+- P5c signed static HTTP repository install is implemented as a fixture:
+  - `tools/pkgrepo.swift` builds signed catalogs and content-addressed package
+    trees;
+  - `/bin/pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
+    `pkg install NAME` work against the fixture;
+  - install by name resolves catalog dependencies by package name;
+  - `make package-repo-install-test` proves negative catalog rejection,
+    dependency installation, package SHA-256 rejection, and execution of
+    `/usr/bin/pkghello`.
+- P6a/P6b/P6c/P6d ports scaffolding is implemented in this repository:
+  - `ports/catalog.json` records the first package priorities, prerequisite
+    bundles, runtime dependency names, and blockers;
+  - `ports/lang/lua/Port.json` is the first source recipe scaffold;
+  - `build/swport catalog validate/list/inspect` and
+    `build/swport recipe validate/manifest/fetch/package/repo-fixture`
+    provide host-side checks;
+  - `make ports-catalog-test` and `make ports-recipe-test` keep the catalog and
+    Lua recipe package/repository path machine-readable.
+- Public hosted binary repository publishing, version-constraint solving,
+  remove, upgrade, rollback, full cross-build/test recipes, package
+  publication, and streaming large-package downloads remain future work.
 
 ## Workstreams
 
@@ -71,11 +90,15 @@ Milestones:
 3. P3b: local target-side `/bin/pkg install FILE` and `pkg list`. (DONE)
 4. P4: complete local package lifecycle: files, remove, rollback, and
    diagnostics.
-5. P5: signed static HTTP repository catalogs and network fetch.
+5. P5: signed static HTTP repository catalogs, network fetch, configured
+   repository URLs, and name-based dependency installation. (P5c fixture DONE;
+   public hosted channels remain future work)
 
 ### 2. Ports Catalog
 
-Lives in `swift-os-ports` once that repository exists.
+The P6a/P6b/P6c/P6d seed lives in this repository under `ports/`; the full
+ports tree should move to `swift-os-ports` once cross-building, testing,
+publishing, and broader package maintenance are ready.
 
 Outputs:
 
