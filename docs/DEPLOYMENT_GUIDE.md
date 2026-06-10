@@ -94,7 +94,8 @@ Do not present the current system as having:
 - A persistent writable root filesystem.
 - Public hosted package channels, package upgrade, remove, or rollback commands.
 - A production online update service.
-- Automatic A/B boot slot rollback.
+- Production health-driven update channels beyond the checked A/B validation
+  paths.
 - A production bare-metal certification matrix.
 - A service supervisor that starts, restarts, and orders services.
 - Production secret provisioning or password rotation.
@@ -478,8 +479,9 @@ UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 ```
 
 For packages and models, keep the previous payload image, package-store image,
-or verified base image available. The guest does not perform automatic rollback
-after a failed boot or service start.
+or verified base image available. The checked base-image and kernel-image A/B
+paths have attempt-based rollback for unconfirmed boot slots; service-level
+health rollback and package/model rollback commands are not implemented yet.
 
 ## Release Checklist
 

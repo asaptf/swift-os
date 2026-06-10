@@ -60,9 +60,9 @@ Current limitations:
 - No target-side package `upgrade` or rollback transaction.
 - No production image signing policy for the whole OS image.
 - Base-image rollback is implemented for the checked A/B update-store path.
-- Kernel-image staging, activation, and boot-attempt counting are implemented
-  for the checked UEFI ESP slot path; kernel health confirmation and rollback
-  are still future work.
+- Kernel-image staging, activation, boot-attempt counting, and attempt-based
+  rollback are implemented for the checked UEFI ESP slot path; kernel health
+  confirmation is still future work.
 
 The current verified model-bundle flow is a narrow working example of signed
 manifest verification and generation fallback for AI assets. It is not a whole

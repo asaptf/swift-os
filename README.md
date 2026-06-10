@@ -440,7 +440,7 @@ handoff lands.
 
 Toward a complete hosting/embedded OS: richer observability and metrics;
 production update channels beyond the checked A/B validation paths; kernel-slot
-health confirmation and rollback; the native Swift application runtime plus
+health confirmation; the native Swift application runtime plus
 Node.js and JVM hosting; the embedded footprint profile (small static image,
 deterministic boot, fewer services); TLS 1.3 record layer and handshake; Cells
 (kernel-native capability-based isolated execution domains); and a

@@ -149,7 +149,7 @@ The implementation target is aarch64 (QEMU `virt`, plus a UEFI+GPT disk path). W
   SMP, and move drivers and the network stack toward restartable userland services. See
   `docs/RISK_REMEDIATION_ROADMAP.md`.
 - **Phase 2 — full-OS capabilities (forward).** Observability and metrics, production update channels beyond
-  the checked A/B validation paths, remaining kernel rollback pieces, the native Swift application runtime
+  the checked A/B validation paths, kernel-slot health confirmation, the native Swift application runtime
   plus Node.js/JVM hosting, and the embedded footprint profile.
   Recorded, not built early.
 
