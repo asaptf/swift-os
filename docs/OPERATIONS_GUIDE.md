@@ -10,6 +10,8 @@ Use this guide with:
 
 - [Getting Started](GETTING_STARTED.md) for the first boot.
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
+- [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
+  boot defaults, QEMU profiles, and test knobs.
 - [Troubleshooting](TROUBLESHOOTING.md) when a build, boot, login, or network
   path fails.
 - [Examples](EXAMPLES.md) for copy-paste operational recipes.

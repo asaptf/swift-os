@@ -127,6 +127,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
   limits, and acceptance coverage for the current base image and package
   overlay.
+- [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
+  boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
   network demos, AI demo operation, logging evidence, and verification gates.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
