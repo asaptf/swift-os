@@ -116,6 +116,19 @@ The design is intentionally narrow:
 
 See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 
+## Documentation
+
+The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+
+- [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
+  and attach QEMU networking.
+- [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
+  process tools, networking tools, and current system limits.
+- [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
+  programs, port C/newlib programs, and stage binaries into the base image.
+- [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,
+  handle rights, native Swift bridge, and compatibility API notes.
+
 ## Architecture
 
 ```text
