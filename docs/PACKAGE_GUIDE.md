@@ -12,10 +12,10 @@ file install, `pkg install FILE`, into a writable package-store disk, plus a
 P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
 and `pkg install NAME`. Repository installs resolve dependencies by package
 name. Public hosted repositories, version-constraint solving, remove, upgrade,
-and rollback are staged work, not current behavior. The P6e ports workflow can
-also cross-build static AArch64 `lua` and `luac` binaries on the host and
-publish them into a signed local repository fixture; target-side `pkg install
-lua` smoke coverage is the next package slice, not current guest behavior.
+and rollback are staged work, not current behavior. The ports workflow can
+cross-build static AArch64 Lua and zlib packages on the host, publish them into
+one signed local repository fixture, boot SwiftOS with a default repository URL,
+and install both packages by name from the guest.
 
 Use this guide with:
 
@@ -49,8 +49,10 @@ Use this guide with:
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
 | Target-side dependency resolution by package name | Implemented for signed repository catalogs |
-| Ports catalog and Lua recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, and `build/swport` |
-| Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture`; host-side only today |
+| Ports catalog and Lua/zlib recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, and `build/swport` |
+| Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture` |
+| zlib cross-build repository fixture | Implemented as `make ports-zlib-repo-fixture` |
+| Multi-package ports seed repository fixture | Implemented as `make ports-seed-repo-fixture`; guest install smoke is `make package-ports-seed-repo-install-test` |
 | Target-side remove, upgrade, rollback, version-constraint solving | Not implemented yet |
 | Public hosted repositories and channel policy | Not implemented yet |
 | Streaming large-package downloads | Not implemented yet |
@@ -63,11 +65,11 @@ disk. It can also be installed by name from the P5c signed HTTP fixture after
 `pkg repo set URL && pkg update` or `pkg update URL` caches a verified repository
 catalog.
 
-The current real source-port fixture is Lua. It is useful for package
-maintainers and release owners because it proves source fetch, checksum
-verification, static cross-build, `.swpkg` creation, and signed local repository
-publication for `lua` and `luac`. It is not yet a public user repository or a
-target-side `pkg install lua` acceptance path.
+The current real source-port fixtures are Lua and zlib. They are useful for
+package maintainers and release owners because they prove source fetch,
+checksum verification, static cross-build, `.swpkg` creation, signed local
+repository publication, and target-side install from a default repository URL.
+They are still local fixtures, not public hosted channels.
 
 ## Mental Model
 
@@ -91,11 +93,14 @@ The three package artifact types have different jobs:
 | `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for target-side local install tests |
 | `build/pkgrepo-root` | `build/pkgrepo create` | P5c signed static HTTP repository tree |
 | `build/pkgrepo-root.pub` | `build/pkgrepo pubkey` | Public key copied into the base image as `/etc/pkg/repo-root.pub` |
+| `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua and zlib packages |
 
 Use the direct payload overlay when you want the simplest package-content boot.
 Use the package-store image when you want to test the current activation-record
 path. Use the local install path when you want to prove the guest can append a
 local `.swpkg` payload to a writable package-store disk and live-mount it.
+Use the ports seed repository path when you want to prove the first multi-package
+hosted-style workflow.
 
 ## Quick Start
 
