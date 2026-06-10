@@ -807,6 +807,8 @@ Examples:
 /bin/busybox vi /tmp/note.txt
 /bin/drvsvcdemo
 pkg list
+swos-update
+swos-activate
 swos-confirm
 swos-kstage
 swos-kactivate
@@ -823,6 +825,104 @@ driver-service shape smoke with an opaque registry grant, not a userland
 MMIO/IRQ/DMA driver handoff. The C5d metadata gate additionally expects
 `C5d OK: virtio input discovery metadata surfaced`; the C5e authority gate
 expects `C5e OK: device authority withheld until explicit handoff`.
+
+## System Update Commands
+
+These commands are part of the checked A/B validation paths. They require the
+matching boot profile and update media; they are not a general online updater.
+Use [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for the operator runbook.
+
+### `swos-update`
+
+Stage the attached signed SWOSBASE payload disk into the inactive base-image
+A/B slot.
+
+```text
+swos-update
+```
+
+Expected success:
+
+```text
+swos-update: payload staged into the inactive slot; run swos-activate then reboot
+```
+
+Acceptance coverage: `tests/ab_stage_test.sh`
+
+### `swos-activate`
+
+Promote the inactive base-image A/B slot for the next boot.
+
+```text
+swos-activate
+```
+
+Expected success:
+
+```text
+swos-activate: inactive slot activated (on trial); reboot to use it
+```
+
+Acceptance coverage: `tests/ab_activate_test.sh`
+
+### `swos-confirm`
+
+Mark the currently booted base-image A/B slot healthy.
+
+```text
+swos-confirm
+```
+
+Expected success:
+
+```text
+swos-confirm: active slot confirmed healthy
+```
+
+Acceptance coverage: `tests/ab_confirm_test.sh`
+
+### `swos-kstage`
+
+Copy the active ESP kernel image into the inactive kernel slot and verify the
+copy.
+
+```text
+swos-kstage
+```
+
+Expected success:
+
+```text
+swos-kstage: active kernel image staged into the inactive ESP slot (verified)
+```
+
+Acceptance coverage: `tests/uefi_kstage_test.sh`
+
+### `swos-kactivate`
+
+Install the pre-signed alternate ESP kernel manifest for the next boot.
+
+```text
+swos-kactivate
+```
+
+Expected success:
+
+```text
+swos-kactivate: inactive kernel slot activated; reboot to use it
+```
+
+Acceptance coverage: `tests/uefi_kactivate_test.sh`, `tests/uefi_kattempt_test.sh`
+
+Notes:
+
+- `swos-update`, `swos-activate`, and `swos-confirm` operate on the SWOSBOOT
+  base-image update store.
+- `swos-kstage` and `swos-kactivate` operate on UEFI ESP kernel-slot files and
+  manifests.
+- Permission failures print `permission denied (need capConsole)`.
+- Kernel-slot boot-attempt persistence is tested by `tests/uefi_kattempt_test.sh`;
+  kernel-slot health confirmation and rollback are future work.
 
 ## Package Commands
 

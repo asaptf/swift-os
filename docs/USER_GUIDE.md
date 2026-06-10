@@ -154,6 +154,8 @@ Common native Swift tools:
 | `kv` | In-memory key-value REPL |
 | `llm`, `llmd` | Native Swift TinyStories inference demo and HTTP serving daemon |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
+| `swos-update`, `swos-activate`, `swos-confirm` | Checked base-image A/B update-store commands |
+| `swos-kstage`, `swos-kactivate` | Checked UEFI ESP kernel-slot commands |
 | `threadsdemo`, `mmapdemo` | Runtime and VM demos |
 
 Busybox is staged as `/bin/busybox` and is used for the login shell. It is a
@@ -362,6 +364,42 @@ Run the anonymous mmap, mprotect, and W^X demo:
 The demo maps zero-filled RAM, writes and reads across a page boundary, switches
 a page from RW to RX for a small JIT-style call, and confirms RWX mappings are
 rejected.
+
+## Update Commands
+
+SwiftOS has checked A/B validation paths for base images and UEFI kernel slots.
+They are operator/test workflows, not a general online updater. Run them only in
+the matching boot profile described by [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+
+Base-image A/B store commands:
+
+```sh
+swos-update
+swos-activate
+swos-confirm
+```
+
+`swos-update` stages an attached signed SWOSBASE payload disk into the inactive
+slot. `swos-activate` promotes that inactive slot for the next boot. After a
+healthy trial boot, `swos-confirm` marks the slot healthy so boot-attempt
+rollback will not fail back to the previous slot.
+
+UEFI ESP kernel-slot commands:
+
+```sh
+swos-kstage
+swos-kactivate
+```
+
+`swos-kstage` copies and verifies the active ESP kernel image into the inactive
+kernel slot. `swos-kactivate` installs the pre-signed alternate kernel manifest
+for the next boot. The loader also records a per-slot boot-attempt counter in
+`kernel-state`; kernel-slot health confirmation and rollback remain future work.
+
+All `swos-*` update commands require privileged update authority through the
+current `capConsole` path. The focused acceptance gates are in
+[TESTING_GUIDE.md](TESTING_GUIDE.md), and the on-disk trust model is in
+[UPDATE_STORE.md](UPDATE_STORE.md).
 
 ## Security Notes
 
