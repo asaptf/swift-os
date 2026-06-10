@@ -12,11 +12,11 @@ maintainers planning `swift-os-ports` recipes.
 > path. It also has a P5c signed static HTTP repository fixture with
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
-> checked `ports/catalog.json` seed catalog and `swport catalog` validator. P6b
-> adds the first Lua `Port.json` recipe scaffold with recipe validation,
-> manifest generation, and checksum-verified source fetch. Public hosted
-> repositories, remove, upgrade, version-constraint solving, and rollback flows
-> are still roadmap work.
+> checked `ports/catalog.json` seed catalog and `swport catalog` validator.
+> P6b/P6c add the first Lua `Port.json` recipe scaffold with recipe validation,
+> manifest generation, checksum-verified source fetch, and `.swpkg` creation
+> from a clean staged root. Public hosted repositories, remove, upgrade,
+> version-constraint solving, and rollback flows are still roadmap work.
 
 Use this guide with:
 
@@ -44,7 +44,7 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Lua recipe scaffold | Validate the first source recipe and prove its generated manifest can feed `swpkg create` | `make ports-recipe-test` |
+| Lua recipe package path | Validate the first source recipe and prove its staged-root package flow can feed `swpkg create`/`verify` | `make ports-recipe-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path is the explicit test-fixture form:
@@ -68,6 +68,7 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
+build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 ```
 
 The local-file form remains available:

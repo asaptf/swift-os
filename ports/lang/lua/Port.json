@@ -51,5 +51,5 @@
       "/usr/bin/lua -e 'print(21 * 2)'"
     ]
   },
-  "notes": "First real source-port recipe scaffold. Fetch and manifest generation are implemented; cross-build/package/test are the next P6 slices."
+  "notes": "First real source-port recipe scaffold. Fetch, manifest generation, and package creation from a staged root are implemented; cross-build and QEMU smoke tests are the next P6 slices."
 }
