@@ -58,91 +58,11 @@ Current limitations:
 - No persistent writable root filesystem.
 - No target-side package `upgrade` or rollback transaction.
 - No production image signing policy for the whole OS image.
-- Base-image rollback is implemented for the checked A/B update-store path.
-- Kernel-image staging, activation, and boot-attempt counting are implemented
-  for the checked UEFI ESP slot path; kernel health confirmation and rollback
-  are still future work.
+- Automatic rollback is limited to the checked A/B store boot path.
 
 The current verified model-bundle flow is a narrow working example of signed
 manifest verification and generation fallback for AI assets. It is not a whole
 OS updater.
-
-## Stage Base Images In The A/B Update Store
-
-Use this path when validating the checked SWOSBOOT base-image update flow. The
-store is a narrow, writable, two-slot virtio-blk disk; each slot holds a signed
-SWOSBASE image. The OS never trusts the store manifest as code authority: each
-slot image is still verified by its own Ed25519 signature and per-file hashes.
-
-Build the store tooling and base image:
-
-```sh
-make updatestore base-image
-```
-
-For an end-to-end target-side update, attach a store disk and a read-only
-payload disk, then run the guest flow as `root`:
-
-```sh
-swos-update
-swos-activate
-```
-
-After rebooting into the trial slot, confirm it healthy:
-
-```sh
-swos-confirm
-```
-
-Minimum verification:
-
-```sh
-./tests/ab_stage_test.sh
-./tests/ab_activate_test.sh
-./tests/ab_confirm_test.sh
-```
-
-Rollback is automatic for the checked base-image A/B path when a trial slot
-exhausts its boot attempts without confirmation. Verify that behavior with:
-
-```sh
-./tests/ab_rollback_test.sh
-```
-
-Use [Update Store](UPDATE_STORE.md) for the manifest format, slot state model,
-and trust boundary.
-
-## Stage Kernel Slots From The UEFI ESP
-
-Use this path when validating the checked kernel-image A/B flow. The UEFI loader
-selects between signed ESP kernel slots using the signed `kernel-boot` manifest;
-the running OS can courier-copy already-signed artifacts but never signs new
-kernel manifests.
-
-The current operator sequence is:
-
-```sh
-swos-kstage
-swos-kactivate
-```
-
-Then reboot through the UEFI disk profile. On the next boot, the loader verifies
-the alternate signed manifest and selected kernel slot before handoff. The
-loader also persists a per-slot boot-attempt counter in `kernel-state`; automatic
-kernel-slot rollback and `swos-kconfirm` remain future U1g-5 work.
-
-Minimum verification:
-
-```sh
-./tests/uefi_kernel_ab_test.sh
-./tests/uefi_kstage_test.sh
-./tests/uefi_kactivate_test.sh
-./tests/uefi_kattempt_test.sh
-```
-
-Kernel-image A/B has end-to-end staging and activation for the checked ESP
-layout. A real new-kernel payload source and per-kernel-slot health rollback are
-future work.
 
 ## Release Identity
 
@@ -439,13 +359,11 @@ touches shared code.
 | Base image contents | `make base-image`, `./tests/boot_test.sh` | Relevant command or service test |
 | UEFI loader or disk image | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` | SMP UEFI smoke plus `make test` |
 | Framebuffer or input | `./tests/fb_vi_test.sh` | UEFI disk smoke |
-| Networking | `./tests/httpd_test.sh`, `./tests/tcp_echo_test.sh`, or `./tests/udp_echo_test.sh` | Full networking smoke set |
+| Networking | Relevant network test | Full networking smoke set |
 | Package payload | `make package-overlay-test` | Package store test |
 | Package store | `make package-store-test` | Overlay test plus boot smoke |
-| Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` | `./tests/uefi_kattempt_test.sh`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh`, `make test` |
 | AI model bundle | `./tests/llm_run_test.sh` | `./tests/llm_serve_test.sh` |
-| Documentation only | `make docs-test`, `git diff --check` | `make build`, `./tests/boot_test.sh` |
+| Documentation only | `git diff --check`, link/fence check | `make build`, `./tests/boot_test.sh` |
 
 Common networking proofs:
 

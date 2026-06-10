@@ -3,9 +3,9 @@
 This guide is for people who boot, test, demo, or operate a SwiftOS image. It
 describes the current checked-in system: QEMU `virt` on AArch64, serial console
 first, immutable base image, RAM scratch space, capability-scoped user sessions,
-native Swift tools, networking demos, package payload overlays, A/B update
-stores, and the AI inference demo, plus the C5a-C5e restartable
-driver-service/device-authority smoke.
+native Swift tools, networking demos, package payload overlays, and the AI
+inference demo, plus the C5a-C5e restartable driver-service/device-authority
+smoke.
 
 Use this guide with:
 
@@ -51,12 +51,11 @@ SwiftOS is intentionally small and static.
 | Console | Serial console through QEMU `-nographic`; framebuffer smoke exists |
 | Boot paths | Direct `-kernel` fallback and UEFI disk image through AAVMF |
 | Root filesystem | Read-only packed `SWOSBASE` image served from virtio-blk |
-| Writable storage | `/tmp` tmpfs for guest scratch; the dedicated SWOSBOOT update store persists only A/B boot state and staged signed image slots |
+| Writable storage | `/tmp` tmpfs only; contents are lost on reboot |
 | User sessions | `/bin/console-login` authenticates principals from `/etc/swos/passwd` |
 | Program model | Static binaries; native Embedded Swift userland is the direction |
 | Networking | virtio-net plus capability-gated socket syscalls |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
-| A/B updates | Checked SWOSBOOT base-image slots plus UEFI ESP kernel slots; see [Update And Rollback Guide](UPDATE_GUIDE.md) |
 | SMP status | Single-core is still the default profile; SMP tests cover CPU bring-up, per-CPU telemetry, restricted EL0 fanout, shared-address-space threads, and gated S5f run-any placement |
 | Driver-service status | C5a-C5e supervisor, opaque device handle, virtio-input discovery metadata, and withheld-authority smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
 
@@ -71,10 +70,8 @@ change installed software. Use `/tmp` only for runtime scratch.
 | `build/kernel.elf` | `make build` | Direct QEMU `-kernel` boot |
 | `build/base.img` | `make base-image` | Immutable base filesystem |
 | `build/virt.dtb` | `make build/virt.dtb` or `make test` prerequisites | Device tree loaded for direct QEMU boot |
-| `build/swift-os.img` | `make disk` | UEFI/GPT boot disk with ESP kernel slots and signed kernel manifests |
+| `build/swift-os.img` | `make disk` | UEFI/GPT boot disk |
 | `build/BOOTAA64.EFI` | `make uefi` | AArch64 UEFI loader |
-| `build/updatestore` | `make updatestore` | Host tool for checked SWOSBOOT base-image A/B stores |
-| `build/kernelboot` | `make kernelboot` | Host tool for signed ESP kernel slot manifests |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample host package artifact |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
 | `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for local target-side install tests |
@@ -254,60 +251,6 @@ pkg install pkghello
 Dependency solving, remove, upgrade, rollback, public hosted channels, and
 large-package streaming downloads are not implemented yet.
 
-## Update Store Operations
-
-SwiftOS has two checked A/B update paths: SWOSBOOT base-image slots and UEFI ESP
-kernel slots. They are validation-grade operator paths, not an online package
-manager or a production update service. The OS can stage and activate already
-signed artifacts; it does not sign new operating-system images at runtime.
-
-### Base-Image A/B Store
-
-The SWOSBOOT store is a dedicated writable virtio-blk disk. Each slot contains a
-complete signed SWOSBASE image, and normal base-image signature/hash validation
-still decides whether a slot can mount.
-
-Inside the guest as `root`, the current target-side flow is:
-
-```sh
-swos-update
-swos-activate
-```
-
-After rebooting into the trial slot:
-
-```sh
-swos-confirm
-```
-
-If the trial slot is not confirmed within the checked attempt window, the store
-rolls back to the fallback slot. Acceptance coverage:
-`./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`,
-`./tests/ab_confirm_test.sh`, `./tests/ab_rollback_test.sh`, and
-`./tests/ab_flush_test.sh`.
-
-### Kernel-Image ESP Slots
-
-The UEFI disk carries signed kernel slot manifests and kernel slot files on the
-ESP. The running OS can reach the ESP, copy the active kernel image over the
-inactive slot, and install the pre-signed alternate manifest.
-
-Inside the guest as `root`:
-
-```sh
-swos-kstage
-swos-kactivate
-```
-
-Then reboot through the UEFI disk profile. The loader verifies the selected
-manifest and kernel slot before handoff. Acceptance coverage:
-`./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, and
-`./tests/uefi_kactivate_test.sh`.
-
-For the complete operator runbook and rollback boundaries, see
-[Update And Rollback Guide](UPDATE_GUIDE.md). For on-disk format and trust
-details, see [Update Store](UPDATE_STORE.md).
-
 ## Access And Accounts
 
 The default identity store is `base/etc/swos/passwd`.
@@ -354,9 +297,7 @@ Operational rules:
 1. A reboot clears `/tmp`.
 2. A base-image change requires rebuilding `build/base.img`.
 3. A package change requires building and attaching a package payload image.
-4. A/B update state lives on a dedicated store or ESP, not in the root
-   filesystem namespace.
-5. File ownership and modes are visible with `ls -l`, but the current security
+4. File ownership and modes are visible with `ls -l`, but the current security
    boundary is still capability-first.
 
 ## Process And Resource Monitoring
@@ -585,11 +526,6 @@ Useful markers:
 | `pkg: catalog incompatible` | Repository metadata did not match the current target contract |
 | `pkg: package SHA-256 mismatch` | Downloaded package blob did not match the signed catalog |
 | `pkg: installed pkghello-1.0.0_1` | Package install activated `pkghello` from local file or repository |
-| `swos-update: payload staged into the inactive slot` | Signed SWOSBASE payload was copied into the inactive base-image slot |
-| `swos-activate: inactive slot activated` | Inactive base-image slot was promoted for the next boot |
-| `swos-confirm: active slot confirmed healthy` | Booted base-image slot was confirmed healthy |
-| `swos-kstage: active kernel image staged into the inactive ESP slot` | Active ESP kernel image was copied and verified in the inactive kernel slot |
-| `swos-kactivate: inactive kernel slot activated` | Pre-signed alternate ESP kernel manifest was installed for the next boot |
 | `llm: done` | Inference demo completed and returned to userland |
 
 The kernel has a structured in-memory log ring and sink indirection groundwork;
@@ -620,9 +556,6 @@ Run the narrowest test that proves the path you touched:
 | Package store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
-| Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` |
-| Base-image rollback/durability | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` |
 | Console login | `./tests/console_login_test.sh` |
 | Capability enforcement | `./tests/cap_enforce_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
