@@ -113,10 +113,8 @@ sink capability hook active
 log: recent
 detail=100
 detail=4
-pid=1 principal=1
 LOG-EXPORT bytes=
 LOG-EXPORT-BEGIN
-source=proc msg=\"psinfo\" pid=1 principal=1
 source=log_export msg=\"tail serialization ready\"
 LOG-EXPORT-END}"
 
