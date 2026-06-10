@@ -393,6 +393,7 @@ build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-bzip2-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -415,6 +416,7 @@ pkg install lua
 /usr/bin/lua -v
 /usr/bin/lua -e 'print(21 * 2)'
 pkg install zlib
+pkg install bzip2
 pkg install ca-certificates
 pkg install pcre2
 pkg install tzdata
@@ -424,6 +426,10 @@ echo zlib-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
+echo bzip2-ok > /tmp/bzip2.txt
+/usr/bin/bzip2 /tmp/bzip2.txt
+/usr/bin/bzip2 -d /tmp/bzip2.txt.bz2
+cat /tmp/bzip2.txt
 cat /usr/share/certs/swiftos-ca-bundle.version
 echo nginx-lighttpd > /tmp/pcre2.txt
 /usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
