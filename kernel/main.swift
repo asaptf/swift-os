@@ -785,6 +785,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S2e OK: dormant process scheduler CPUs published", UInt64(smpMaxCpuCount()))
+    if !processDispatchTelemetrySelfTest() {
+        uartPuts("panic: S2f process dispatch telemetry self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2f OK: process dispatch telemetry ready", UInt64(smpMaxCpuCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
@@ -835,6 +840,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S2e OK: secondary process scheduler contexts stayed dormant", UInt64(platform.cpuCount))
+        if !processDispatchTelemetryNoSecondarySelfTest() {
+            uartPuts("panic: S2f process dispatch telemetry guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2f OK: process dispatch telemetry stayed CPU0-owned", UInt64(platform.cpuCount))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

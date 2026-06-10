@@ -172,10 +172,13 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
+- `kernel/user/process.swift:pDispatchCount`
+- `kernel/user/process.swift:pDispatchCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pIsThread`
 - `kernel/user/process.swift:pKilled`
 - `kernel/user/process.swift:pKstack`
+- `kernel/user/process.swift:pLastDispatchCpu`
 - `kernel/user/process.swift:pMmapTop`
 - `kernel/user/process.swift:pName`
 - `kernel/user/process.swift:pNameLen`
@@ -190,6 +193,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pTtbr0`
 - `kernel/user/process.swift:pWait`
 - `kernel/user/process.swift:pWakeTick`
+- `kernel/user/process.swift:processDispatchTelemetryCount`
 - `kernel/user/process.swift:processRunQueueCpuCount`
 - `kernel/user/process.swift:processRunQueueDispatchCount`
 - `kernel/user/process.swift:processRunQueueEnqueueCount`
@@ -210,9 +214,10 @@ manifest entries left behind after globals move or disappear.
 ## Immediate S1/S2 Risks
 
 - `currentProc`, `currentThread`, the S2d/S2e process run queue/context
-  scaffold, and timer accounting must become per-CPU or protected before any
-  secondary CPU can run scheduler code. S2e publishes dormant secondary
-  scheduler resources; it does not make those structures concurrency-safe.
+  scaffold, the S2f dispatch telemetry counters, and timer accounting must
+  become per-CPU or protected before any secondary CPU can run scheduler code.
+  S2e publishes dormant secondary scheduler resources and S2f records CPU0
+  dispatch evidence; neither milestone makes those structures concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - VFS handle/open-description/pipe/endpoint tables are deliberately left as an
