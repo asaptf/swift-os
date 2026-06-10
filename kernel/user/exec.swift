@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // exec.swift — resolve a program path to an ELF image and marshal argv.
 //
-// spawn()/execve() resolve a small built-in table of program paths. M11d makes
-// the loader prefer the packed base image on disk: a path that exists there as
-// a disk-backed file is read into a reusable kernel buffer and run from disk;
-// only when the disk has no such file (e.g. the -kernel test paths with no
-// packed disk) do we fall back to the ELF blob baked into the kernel image.
-// argv is read from the caller's address space (active during the syscall) and
-// packed into a kernel buffer, so it survives the switch into the child's space.
+// spawn()/execve() resolve executable paths through the packed base image and
+// package overlays. A disk-backed executable is read into a reusable kernel
+// buffer and run from disk. argv is read from the caller's address space (active
+// during the syscall) and packed into a kernel buffer, so it survives the switch
+// into the child's space.
 
 // Reusable staging buffer for an ELF read off disk. Loads are sequential (one
 // exec resolves, loads, and elfLoad-copies into the new address space before
@@ -17,13 +15,8 @@
 private var elfBuf: UInt = 0
 private let elfBufMax = 2 * 1024 * 1024 // 2 MiB comfortably covers busybox
 
-/// Resolve an absolute kernel path on the packed disk and read its ELF into the
-/// staging buffer. Returns (buffer, length) on success, or (0, 0) if the path
-/// is not a disk-backed file or the read fails.
-private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
-    var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
-    path.withUTF8Buffer { b in for i in 0..<b.count { name[i] = b[i] } }
-    let (found, off, len) = name.withUnsafeBufferPointer { vfsDiskImageExtent($0.baseAddress!) }
+private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
+    let (found, image, off, len) = vfsDiskImageExtent(path)
     if !found || len <= 0 || len > elfBufMax { return (0, 0) }
 
     if elfBuf == 0 {
@@ -31,9 +24,18 @@ private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
         if pa == 0 { return (0, 0) }
         elfBuf = pa
     }
-    let rc = virtioBlkReadRange(UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
+    let rc = virtioBlkReadRangeFromImage(image, UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
     if rc != 0 { return (0, 0) }
     return (elfBuf, UInt(len))
+}
+
+/// Resolve an absolute kernel path on a packed image and read its ELF into the
+/// staging buffer. Returns (buffer, length) on success, or (0, 0) if the path
+/// is not a disk-backed file or the read fails.
+private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
+    var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
+    path.withUTF8Buffer { b in for i in 0..<b.count { name[i] = b[i] } }
+    return name.withUnsafeBufferPointer { loadElfFromCString($0.baseAddress!) }
 }
 
 /// Load a program ELF from the packed base image, logging the source. Returns
@@ -74,54 +76,18 @@ private func userPathEquals(_ va: UInt, _ expected: StaticString) -> Bool {
     return ok
 }
 
+private func uartPutsCString(_ p: UnsafePointer<UInt8>) {
+    var i = 0
+    while p[i] != 0 {
+        uartPutc(p[i])
+        i += 1
+    }
+}
+
 /// Resolve a program path to (ELF address, length), or (0, 0) if unknown.
-/// Every program is read from the packed base image on disk.
+/// Normal executable paths are read from the VFS, so package overlays can expose
+/// `/usr/bin/*`. Busybox's synthetic re-exec paths still map to `/bin/busybox`.
 func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
-    if userPathEquals(pathVA, "/bin/hello") { return loadProgramImage("/bin/hello") }
-    if userPathEquals(pathVA, "/bin/argvdemo") { return loadProgramImage("/bin/argvdemo") }
-    if userPathEquals(pathVA, "/bin/ttydemo") { return loadProgramImage("/bin/ttydemo") }
-    if userPathEquals(pathVA, "/bin/spawndemo") { return loadProgramImage("/bin/spawndemo") }
-    if userPathEquals(pathVA, "/bin/selfexecdemo") { return loadProgramImage("/bin/selfexecdemo") }
-    if userPathEquals(pathVA, "/bin/fsdemo") { return loadProgramImage("/bin/fsdemo") }
-    if userPathEquals(pathVA, "/bin/brkdemo") { return loadProgramImage("/bin/brkdemo") }
-    if userPathEquals(pathVA, "/bin/newlibtest") { return loadProgramImage("/bin/newlibtest") }
-    if userPathEquals(pathVA, "/bin/coproc") { return loadProgramImage("/bin/coproc") }
-    if userPathEquals(pathVA, "/bin/forkdemo") { return loadProgramImage("/bin/forkdemo") }
-    if userPathEquals(pathVA, "/bin/execdemo") { return loadProgramImage("/bin/execdemo") }
-    if userPathEquals(pathVA, "/bin/fdopsdemo") { return loadProgramImage("/bin/fdopsdemo") }
-    if userPathEquals(pathVA, "/bin/securitydemo") { return loadProgramImage("/bin/securitydemo") }
-    if userPathEquals(pathVA, "/bin/identitydemo") { return loadProgramImage("/bin/identitydemo") }
-    if userPathEquals(pathVA, "/bin/ps") { return loadProgramImage("/bin/ps") }
-    if userPathEquals(pathVA, "/bin/id") { return loadProgramImage("/bin/id") }
-    if userPathEquals(pathVA, "/bin/ls") { return loadProgramImage("/bin/ls") }
-    if userPathEquals(pathVA, "/bin/cat") { return loadProgramImage("/bin/cat") }
-    if userPathEquals(pathVA, "/bin/echo") { return loadProgramImage("/bin/echo") }
-    if userPathEquals(pathVA, "/bin/pwd") { return loadProgramImage("/bin/pwd") }
-    if userPathEquals(pathVA, "/bin/mkdir") { return loadProgramImage("/bin/mkdir") }
-    if userPathEquals(pathVA, "/bin/rmdir") { return loadProgramImage("/bin/rmdir") }
-    if userPathEquals(pathVA, "/bin/rm") { return loadProgramImage("/bin/rm") }
-    if userPathEquals(pathVA, "/bin/mv") { return loadProgramImage("/bin/mv") }
-    if userPathEquals(pathVA, "/bin/chmod") { return loadProgramImage("/bin/chmod") }
-    if userPathEquals(pathVA, "/bin/chown") { return loadProgramImage("/bin/chown") }
-    if userPathEquals(pathVA, "/bin/date") { return loadProgramImage("/bin/date") }
-    if userPathEquals(pathVA, "/bin/calc") { return loadProgramImage("/bin/calc") }
-    if userPathEquals(pathVA, "/bin/kv") { return loadProgramImage("/bin/kv") }
-    if userPathEquals(pathVA, "/bin/llm") { return loadProgramImage("/bin/llm") }
-    if userPathEquals(pathVA, "/bin/head") { return loadProgramImage("/bin/head") }
-    if userPathEquals(pathVA, "/bin/touch") { return loadProgramImage("/bin/touch") }
-    if userPathEquals(pathVA, "/bin/wc") { return loadProgramImage("/bin/wc") }
-    if userPathEquals(pathVA, "/bin/top") { return loadProgramImage("/bin/top") }
-    if userPathEquals(pathVA, "/bin/udpecho") { return loadProgramImage("/bin/udpecho") }
-    if userPathEquals(pathVA, "/bin/tcpecho") { return loadProgramImage("/bin/tcpecho") }
-    if userPathEquals(pathVA, "/bin/threadsdemo") { return loadProgramImage("/bin/threadsdemo") }
-    if userPathEquals(pathVA, "/bin/mmapdemo") { return loadProgramImage("/bin/mmapdemo") }
-    if userPathEquals(pathVA, "/bin/tcpget") { return loadProgramImage("/bin/tcpget") }
-    if userPathEquals(pathVA, "/bin/tlsget") { return loadProgramImage("/bin/tlsget") }
-    if userPathEquals(pathVA, "/bin/httpd") { return loadProgramImage("/bin/httpd") }
-    if userPathEquals(pathVA, "/bin/nslookup") { return loadProgramImage("/bin/nslookup") }
-    if userPathEquals(pathVA, "/bin/c4b-sockxfer") { return loadProgramImage("/bin/c4b-sockxfer") }
-    if userPathEquals(pathVA, "/bin/console-login") { return loadProgramImage("/bin/console-login") }
-    if userPathEquals(pathVA, "/bin/sleepprobe") { return loadProgramImage("/bin/sleepprobe") }
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
     // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
     // named by argv[0]. This is how the standalone shell runs ls/cat/echo.
@@ -130,6 +96,14 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
         || userPathEquals(pathVA, "/bin/sh")
         || userPathEquals(pathVA, "/bin/vi") {
         return loadProgramImage("/bin/busybox")
+    }
+    guard let path = userCString(pathVA) else { return (0, 0) }
+    let loaded = loadElfFromCString(path)
+    if loaded.0 != 0 {
+        uartPuts("M11d: exec loaded from disk ")
+        uartPutsCString(path)
+        uartPuts("\n")
+        return loaded
     }
     return (0, 0)
 }

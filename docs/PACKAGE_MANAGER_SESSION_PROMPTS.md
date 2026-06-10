@@ -4,11 +4,16 @@ Copy-paste prompts for future Codex sessions that implement package management.
 Each prompt intentionally covers one milestone. Do not combine them unless the
 maintainer explicitly asks for a larger unstable branch.
 
-## Prompt 1: P1 Host-Only `.swpkg` Format
+P1 and P2 are already implemented in the current tree. The next implementation
+prompt is Prompt 3.
+
+## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, docs/BASE_IMAGE.md, and the current
 tools/basepack.swift implementation.
+
+This prompt is historical. Use it only if P1 needs to be recreated from scratch.
 
 Implement package-management milestone P1 only: a host-only `.swpkg` artifact
 format and verifier. Do not change the kernel or VFS yet.
@@ -32,11 +37,13 @@ Acceptance:
 - commit the milestone and stop for review.
 ```
 
-## Prompt 2: P2 VFS Package Image Overlay
+## Prompt 2: P2 VFS Package Image Overlay (Historical)
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, docs/BASE_IMAGE.md, and the P1
 package tooling commit.
+
+This prompt is historical. Use it only if P2 needs to be recreated from scratch.
 
 Implement package-management milestone P2 only: mount one or more verified
 package payload images as read-only VFS overlays. Do not implement downloads,

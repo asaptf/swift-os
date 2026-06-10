@@ -214,6 +214,12 @@ private func verifyPackage(_ url: URL) throws -> [String: Any] {
     return manifest
 }
 
+private func writeAtomically(_ data: Data, to output: URL) throws {
+    try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
+                                            withIntermediateDirectories: true)
+    try data.write(to: output, options: .atomic)
+}
+
 private func value(after flag: String, in args: [String]) throws -> String {
     guard let i = args.firstIndex(of: flag), i + 1 < args.count else {
         throw ToolError.message("missing \(flag)")
@@ -227,6 +233,7 @@ private func usage() -> String {
       swpkg create --manifest <manifest.json> --root <root-dir> --output <out.swpkg>
       swpkg inspect <package.swpkg>
       swpkg verify <package.swpkg>
+      swpkg extract-payload <package.swpkg> <payload.img>
     """
 }
 
@@ -241,8 +248,7 @@ struct SWPackageTool {
                 let package = try makePackage(manifestURL: URL(fileURLWithPath: try value(after: "--manifest", in: args)),
                                               rootURL: URL(fileURLWithPath: try value(after: "--root", in: args)))
                 let output = URL(fileURLWithPath: try value(after: "--output", in: args))
-                try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try package.write(to: output, options: .atomic)
+                try writeAtomically(package, to: output)
                 print("created \(output.path)")
             case "inspect":
                 guard args.count == 3 else { throw ToolError.message(usage()) }
@@ -262,6 +268,14 @@ struct SWPackageTool {
                 guard args.count == 3 else { throw ToolError.message(usage()) }
                 let manifest = try verifyPackage(URL(fileURLWithPath: args[2]))
                 print("OK: \(str(manifest, "name") ?? "")-\(str(manifest, "version") ?? "")_\(num(manifest, "revision") ?? 0)")
+            case "extract-payload":
+                guard args.count == 4 else { throw ToolError.message(usage()) }
+                let input = URL(fileURLWithPath: args[2])
+                let manifest = try verifyPackage(input)
+                let (_, _, payload, _) = try readPackage(input)
+                let output = URL(fileURLWithPath: args[3])
+                try writeAtomically(payload, to: output)
+                print("extracted payload for \(str(manifest, "name") ?? "") to \(output.path)")
             default:
                 throw ToolError.message(usage())
             }

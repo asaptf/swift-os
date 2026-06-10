@@ -66,6 +66,7 @@ private struct VNode {
     var dataPtr: UInt = 0   // file contents (in RAM: static literal or tmpfs)
     var dataLen = 0
     var dataCap = 0         // tmpfs growth capacity
+    var diskImage = 0       // SWOSBASE image index for on-disk files
     var diskOffset = 0      // byte offset of contents within the disk image
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
@@ -75,7 +76,7 @@ private struct VNode {
     var nextSibling = -1
 }
 
-private let maxNodes = 96
+private let maxNodes = 128
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
 
@@ -230,6 +231,16 @@ private func le64(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt64 {
     return v
 }
 
+private func bytesEqual(_ a: UnsafePointer<UInt8>, _ aLen: Int, _ b: UnsafePointer<UInt8>, _ bLen: Int) -> Bool {
+    if aLen != bLen { return false }
+    var i = 0
+    while i < aLen {
+        if a[i] != b[i] { return false }
+        i += 1
+    }
+    return true
+}
+
 private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
                         _ owner: UInt32, _ mode: UInt32) -> Int {
     let n = allocNode()
@@ -245,7 +256,7 @@ private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
 }
 
 private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
-                         _ diskOffset: Int, _ dataLen: Int,
+                         _ diskImage: Int, _ diskOffset: Int, _ dataLen: Int,
                          _ owner: UInt32, _ mode: UInt32) {
     let n = allocNode()
     if n < 0 { return }
@@ -253,6 +264,7 @@ private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
     nodes[n].nameLen = nameLen
     nodes[n].readOnly = true
     nodes[n].onDisk = true
+    nodes[n].diskImage = diskImage
     nodes[n].diskOffset = diskOffset
     nodes[n].dataLen = dataLen
     nodes[n].owner = owner
@@ -286,45 +298,95 @@ private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ 
     return (cur, UInt(bitPattern: pathPtr + leafStart), pathLen - leafStart)
 }
 
-/// Build the read-only base tree from a packed SWOSBASE image on the virtio-blk
-/// disk. Returns false (leaving the tree untouched) if there is no disk, the
-/// magic does not match, or the image is malformed, so the caller can fall back
-/// to the compiled-in literals. The metadata buffer (entries + string table) is
-/// kept permanently: vnode names point straight into it.
-private func buildBaseFromDisk(_ root: Int) -> Bool {
+private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>) -> (Bool, Int, UInt64, UInt64, UInt64, UInt64) {
+    let magic: StaticString = "SWOSBASE"
+    var magicOk = true
+    magic.withUTF8Buffer { m in
+        for i in 0..<m.count where hdr[i] != m[i] { magicOk = false }
+    }
+    if !magicOk { return (false, 0, 0, 0, 0, 0) }
+    if le32(hdr, 8) != 2 { return (false, 0, 0, 0, 0, 0) }   // version
+    if le32(hdr, 16) != 40 { return (false, 0, 0, 0, 0, 0) } // entry size
+
+    let entryCount = Int(le32(hdr, 20))
+    let entriesOffset = le64(hdr, 24)
+    let stringsOffset = le64(hdr, 32)
+    let stringsSize = le64(hdr, 40)
+    let dataOffset = le64(hdr, 48)
+
+    if entryCount <= 0 || entryCount > maxNodes { return (false, 0, 0, 0, 0, 0) }
+    if stringsOffset < entriesOffset { return (false, 0, 0, 0, 0, 0) }
+    let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
+    if metaLen <= 0 || metaLen > 1 << 20 { return (false, 0, 0, 0, 0, 0) }
+    if dataOffset < stringsOffset + stringsSize { return (false, 0, 0, 0, 0, 0) }
+    return (true, entryCount, entriesOffset, stringsOffset, stringsSize, dataOffset)
+}
+
+private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
     if !virtioBlkAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
-        virtioBlkReadRange(0, raw.baseAddress, 64) == 0
+        virtioBlkReadRangeFromImage(image, 0, raw.baseAddress, 64) == 0
     }
     if !hok { return false }
 
     return hdr.withUnsafeBufferPointer { hp -> Bool in
         let h = hp.baseAddress!
-        let magic: StaticString = "SWOSBASE"
-        var magicOk = true
-        magic.withUTF8Buffer { m in
-            for i in 0..<m.count where h[i] != m[i] { magicOk = false }
+        let (ok, entryCount, entriesOffset, stringsOffset, stringsSize, _) = readPackedImageHeader(h)
+        if !ok { return false }
+
+        var found = false
+        target.withUTF8Buffer { targetBuf in
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 40) { entry in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: targetBuf.count) { path in
+                    var k = 0
+                    while k < entryCount && !found {
+                        let entryOffset = entriesOffset + UInt64(k * 40)
+                        if virtioBlkReadRangeFromImage(image, entryOffset, entry.baseAddress, 40) != 0 {
+                            return
+                        }
+                        let e = entry.baseAddress!
+                        let pathOff = Int(le32(e, 0))
+                        let pathLen = Int(le32(e, 4))
+                        if pathLen == targetBuf.count && UInt64(pathOff + pathLen) <= stringsSize {
+                            let pathOffset = stringsOffset + UInt64(pathOff)
+                            if virtioBlkReadRangeFromImage(image, pathOffset, path.baseAddress, UInt32(pathLen)) == 0 {
+                                if bytesEqual(path.baseAddress!, pathLen, targetBuf.baseAddress!, targetBuf.count) {
+                                    found = true
+                                }
+                            }
+                        }
+                        k += 1
+                    }
+                }
+            }
         }
-        if !magicOk { return false }
-        if le32(h, 8) != 2 { return false }   // version (M13c: v2 adds mode+owner)
-        if le32(h, 16) != 40 { return false } // entry size
+        return found
+    }
+}
 
-        let entryCount = Int(le32(h, 20))
-        let entriesOffset = le64(h, 24)
-        let stringsOffset = le64(h, 32)
-        let stringsSize = le64(h, 40)
-        let dataOffset = le64(h, 48)
+/// Build a read-only tree from a packed SWOSBASE image. The metadata buffer
+/// (entries + string table) is kept permanently: vnode names point straight
+/// into it.
+private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bool) -> Bool {
+    if !virtioBlkAvailable() { return false }
 
-        if entryCount <= 0 || entryCount > maxNodes { return false }
-        if stringsOffset < entriesOffset { return false }
+    var hdr = [UInt8](repeating: 0, count: 64)
+    let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
+        virtioBlkReadRangeFromImage(image, 0, raw.baseAddress, 64) == 0
+    }
+    if !hok { return false }
+
+    return hdr.withUnsafeBufferPointer { hp -> Bool in
+        let h = hp.baseAddress!
+        let (ok, entryCount, entriesOffset, stringsOffset, stringsSize, dataOffset) = readPackedImageHeader(h)
+        if !ok { return false }
         let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
-        if metaLen <= 0 || metaLen > 1 << 20 { return false } // 1 MiB ceiling
 
         guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
         let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
-        if virtioBlkReadRange(entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+        if virtioBlkReadRangeFromImage(image, entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
 
         let stringsBase = Int(stringsOffset - entriesOffset)
         for k in 0..<entryCount {
@@ -340,13 +402,56 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             let pathPtr = meta + stringsBase + pathOff
             let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
             if parent < 0 || leafLen <= 0 { continue }
+            let existing = findChild(parent, UnsafePointer<UInt8>(bitPattern: leafPtr)!, leafLen)
             if kind == 1 {
+                if existing != -1 {
+                    if allowExistingDirs && nodes[existing].isDir { continue }
+                    return false
+                }
                 _ = addDiskDir(parent, leafPtr, leafLen, owner, mode)
             } else if kind == 2 {
-                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen, owner, mode)
+                if existing != -1 { return false }
+                addDiskFile(parent, leafPtr, leafLen, image, Int(dataOffset) + dOff, dLen, owner, mode)
             }
         }
         return true
+    }
+}
+
+/// Build the read-only base tree from whichever SWOSBASE image contains the
+/// boot shell. QEMU's virtio-mmio scan order is not a package contract, so the
+/// VFS chooses by contents and mounts the remaining images as package overlays.
+private func buildBaseFromDisk(_ root: Int) -> Int {
+    let count = virtioBlkSwosbaseImageCount()
+    if count <= 0 { return -1 }
+    var image = 0
+    while image < count {
+        if packedImageHasPath(image, "bin/busybox") || packedImageHasPath(image, "bin/console-login") {
+            if buildImageFromDisk(image, root, allowExistingDirs: false) {
+                return image
+            }
+        }
+        image += 1
+    }
+    if count == 1 && buildImageFromDisk(0, root, allowExistingDirs: false) {
+        return 0
+    }
+    return -1
+}
+
+private func mountPackageImages(_ root: Int, baseImage: Int) {
+    let count = virtioBlkSwosbaseImageCount()
+    if count <= 1 { return }
+    var image = 0
+    while image < count {
+        if image != baseImage {
+            if buildImageFromDisk(image, root, allowExistingDirs: true) {
+                klog(.info, "vfs", "P2: package image mounted", UInt64(image))
+            } else {
+                klog(.info, "vfs", "P2: package image rejected", UInt64(image))
+            }
+        }
+        image += 1
     }
 }
 
@@ -366,8 +471,10 @@ func vfsInit() {
     // M11c: serve the read-only base from the packed disk image when one is
     // attached; otherwise fall back to the compiled-in literals (the -kernel
     // test paths and UEFI GPT boot, where the disk is not a SWOSBASE image).
-    if buildBaseFromDisk(root) {
+    let baseImage = buildBaseFromDisk(root)
+    if baseImage >= 0 {
         klog(.info, "vfs", "M11c: read-only base mounted from disk")
+        mountPackageImages(root, baseImage: baseImage)
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")
@@ -946,7 +1053,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         if avail <= 0 { return 0 }
         let want = min(Int(count), avail)
         let off = UInt64(nodes[node].diskOffset + file.offset)
-        let rc = virtioBlkReadRange(off, UnsafeMutableRawPointer(dst), UInt32(want))
+        let rc = virtioBlkReadRangeFromImage(nodes[node].diskImage, off, UnsafeMutableRawPointer(dst), UInt32(want))
         if rc != 0 { return errInvalid }
         file.offset += want
         openDescriptions[d] = file
@@ -1974,14 +2081,16 @@ func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
 
 // ---- executable lookup (M11d) ---------------------------------------------
 
-/// Resolve an absolute kernel path to a disk-backed file's extent. Returns
-/// (found, diskByteOffset, length); found is false for a missing path, a
-/// directory, or a RAM-backed (non-disk) node. Lets the ELF loader pull a
-/// program straight off the packed base image instead of an embedded blob.
-func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int) {
+/// Resolve an absolute kernel path to an executable disk-backed file's extent.
+/// Returns (found, image, diskByteOffset, length); found is false for a missing
+/// path, directory, RAM-backed node, or non-executable file. Lets the ELF loader
+/// pull a program straight off the packed base/package images instead of an
+/// embedded blob.
+func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
     let node = resolve(path)
-    if node < 0 { return (false, 0, 0) }
-    if !confinedAllows(node) { return (false, 0, 0) }
-    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0) }
-    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+    if node < 0 { return (false, 0, 0, 0) }
+    if !confinedAllows(node) { return (false, 0, 0, 0) }
+    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0, 0) }
+    if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0) }
+    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }

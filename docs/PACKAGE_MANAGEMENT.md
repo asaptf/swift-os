@@ -2,9 +2,10 @@
 
 Design for binary package installation on swift-os.
 
-> Status: record, do not build yet. This document defines the target shape and a
-> staged implementation plan. The package work should still follow the project
-> rule: one milestone at a time, build, boot, test, commit, then stop for review.
+> Status: P1 host tooling and P2 package payload overlays are implemented. P3
+> and later are still staged design work. The package work should continue to
+> follow the project rule: one milestone at a time, build, boot, test, commit,
+> then stop for review.
 
 ## Goals
 
@@ -31,6 +32,20 @@ The design must preserve the existing swift-os stance:
 - read-only base image plus tmpfs scratch at runtime;
 - small trusted core;
 - signed immutable updates rather than mutating the root filesystem in place.
+
+Related package ecosystem documents:
+
+- [PACKAGE_ECOSYSTEM_GOAL.md](PACKAGE_ECOSYSTEM_GOAL.md) - active end-to-end
+  goal, workstreams, and deployment inputs.
+- [SWPKG_FORMAT.md](SWPKG_FORMAT.md) - implemented P1 `.swpkg` container.
+- [PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md)
+  - concrete P1-P5 implementation readiness plan.
+- [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md) - `swport`, CI,
+  and repository publishing automation.
+- [SERVER_SOFTWARE_CATALOG.md](SERVER_SOFTWARE_CATALOG.md) - staged server
+  package catalog and porting prerequisites.
+- [PACKAGE_MANAGER_SESSION_PROMPTS.md](PACKAGE_MANAGER_SESSION_PROMPTS.md) -
+  ready-to-paste prompts for future milestone sessions.
 
 ## Non-Goals
 
@@ -756,27 +771,27 @@ Package management requires new OS features, but they can land in small slices.
 Ready-to-paste prompts for these slices live in
 [PACKAGE_MANAGER_SESSION_PROMPTS.md](PACKAGE_MANAGER_SESSION_PROMPTS.md).
 
-### P1: Host-Only Package Format
+### P1: Host-Only Package Format (DONE)
 
-- Define `.swpkg` header and manifest.
-- Reuse or extend `tools/basepack.swift` to build package payload images.
-- Add host-side package verifier tests.
-- No kernel change.
+Implemented in `tools/swpkg.swift`, `tools/packfs.swift`,
+`docs/SWPKG_FORMAT.md`, and `tests/swpkg_tool_test.swift`.
 
 Acceptance:
 
-- `make test` verifies a sample package manifest and payload hash.
+- host tests verify deterministic `.swpkg` creation, inspection, payload hash
+  validation, manifest hash validation, and corrupt-package rejection.
 
-### P2: VFS Package Image Overlay
+### P2: VFS Package Image Overlay (DONE)
 
-- Teach the VFS to mount more than one read-only packed image.
-- Add deterministic overlay priority and conflict rejection.
-- Boot with a built-in sample package image attached as an extra virtio-blk
-  disk or packed into a test disk.
+Implemented in `kernel/drivers/virtio_blk.swift`, `kernel/vfs/vfs.swift`,
+`kernel/user/exec.swift`, `tools/swpkg.swift`, and
+`tests/package_overlay_test.sh`.
 
 Acceptance:
 
-- QEMU boot assertion runs `/usr/bin/pkghello` from a package image.
+- QEMU boots with a base image and package payload image.
+- VFS selects the base image by contents rather than virtio-mmio scan order.
+- QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
 ### P3: Package Store
 

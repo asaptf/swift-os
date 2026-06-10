@@ -58,6 +58,11 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  printf '%s\n' "$1" >&3
+  sleep 0.05
+}
+
 # `printf '%s\n'` for every calc line so shell metacharacters (notably `%`) pass
 # through verbatim.
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -81,25 +86,24 @@ printf 'swordfish\n' >&3
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 printf '/bin/calc\n' >&3
 await "swift-os calc" 120 || drive_fail "calc did not start"
+await "for commands" 30 || drive_fail "calc prompt did not become ready"
 
-{
-  printf '%s\n' '2+3*4'                 # precedence -> 14
-  printf '%s\n' '(2+3)*4'               # parens -> 20
-  printf '%s\n' 'x = 10'                # assignment -> 10
-  printf '%s\n' 'x*x'                   # variable lookup -> 100
-  printf '%s\n' '17 % 5'                # modulo -> 2
-  printf '%s\n' '-(3+4)*2'              # unary minus + precedence -> -14
-  printf '%s\n' '10 / 0'                # division by zero -> error
-  printf '%s\n' ':sum'                  # generic fold over history
-  printf '%s\n' ':mem'                  # heap break A (after warmup)
-  for _ in $(seq 1 24); do              # churn: build + drop an AST per line
-    printf '%s\n' '(1+2)*(3+4)-x'
-  done
-  printf '%s\n' ':mem'                  # heap break B (must equal A)
-  printf '%s\n' ':q'
-  printf 'echo BACK-IN-SHELL\n'
-  printf 'exit\n'
-} >&3
+send_line '2+3*4'                 # precedence -> 14
+send_line '(2+3)*4'               # parens -> 20
+send_line 'x = 10'                # assignment -> 10
+send_line 'x*x'                   # variable lookup -> 100
+send_line '17 % 5'                # modulo -> 2
+send_line '-(3+4)*2'              # unary minus + precedence -> -14
+send_line '10 / 0'                # division by zero -> error
+send_line ':sum'                  # generic fold over history
+send_line ':mem'                  # heap break A (after warmup)
+for _ in $(seq 1 24); do          # churn: build + drop an AST per line
+  send_line '(1+2)*(3+4)-x'
+done
+send_line ':mem'                  # heap break B (must equal A)
+send_line ':q'
+send_line 'echo BACK-IN-SHELL'
+send_line 'exit'
 
 await "BACK-IN-SHELL" 360 || drive_fail "did not return to a working shell"
 await "M12c: session ended" 60 || true

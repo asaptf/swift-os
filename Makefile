@@ -44,6 +44,9 @@ BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
 SWPKG     := $(BUILD)/swpkg
 BASE_ROOT := $(BUILD)/base-root
+PKGHELLO_ROOT := $(BUILD)/pkghello-root
+PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
+PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -256,6 +259,7 @@ USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
+USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
@@ -304,7 +308,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg package-fixture package-overlay-test
 
 build: $(KERNEL_ELF)
 
@@ -486,6 +490,9 @@ $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/nslookup.swift -o $@
 
+$(BUILD)/user_pkghello.o: userland/pkghello.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkghello.swift -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -629,6 +636,9 @@ $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_NSLOOKUP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o -o $@
 
+$(USER_PKGHELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -684,7 +694,7 @@ $(MODEL_TOK): $(MODEL_BIN)
 
 model: $(MODEL_BIN) $(MODEL_TOK)
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $(MODEL_TOK)
+test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
@@ -736,6 +746,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/package_overlay_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -845,6 +856,24 @@ $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefi
 
 swpkg: $(SWPKG)
 
+$(PKGHELLO_ROOT)/usr/bin/pkghello: $(USER_PKGHELLO_ELF) Makefile | $(BUILD)/.dir
+	rm -rf $(PKGHELLO_ROOT)
+	mkdir -p $(PKGHELLO_ROOT)/usr/bin
+	cp $(USER_PKGHELLO_ELF) $@
+	chmod 755 $@
+
+$(PKGHELLO_PKG): $(SWPKG) fixtures/pkghello/manifest.json $(PKGHELLO_ROOT)/usr/bin/pkghello Makefile
+	$(SWPKG) create --manifest fixtures/pkghello/manifest.json --root $(PKGHELLO_ROOT) --output $@
+
+$(PKGHELLO_PAYLOAD_IMG): $(SWPKG) $(PKGHELLO_PKG) Makefile
+	$(SWPKG) extract-payload $(PKGHELLO_PKG) $@
+
+package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG)
+	$(SWPKG) verify $(PKGHELLO_PKG)
+
+package-overlay-test: build $(QEMU_DTB) base-image package-fixture
+	./tests/package_overlay_test.sh
+
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
@@ -917,8 +946,8 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/base_image_test \
-		$(BUILD)/swpkg_tool_test $(BASE_ROOT) $(ESP_DIR)
+		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/base_image_test \
+		$(BUILD)/swpkg_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:
