@@ -64,6 +64,7 @@ private let sysPkgInstall: UInt = 60   // pkg_install(fd, name, version_revision
 private let sysPkgInfo: UInt = 61      // pkg_info(index, buf, cap) — active package summary
 private let sysDeviceClaim: UInt = 62  // device_claim(name, info*) -> fd (C5b opaque grant)
 private let sysDeviceInfo: UInt = 63   // device_info(fd, info*) -> 0 (C5b metadata)
+private let sysDeviceDiscover: UInt = 64 // device_discover(index, info*) -> 0 (C5c manifest)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -243,6 +244,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsDeviceClaim(name: frame[0], info: frame[1])
     } else if number == sysDeviceInfo {
         result = vfsDeviceInfo(fd: Int(bitPattern: frame[0]), info: frame[1])
+    } else if number == sysDeviceDiscover {
+        result = vfsDeviceDiscover(index: Int(bitPattern: frame[0]), info: frame[1])
     } else if number == sysMunmap {
         result = processMunmap(frame[0], frame[1])
     } else if number == sysMprotect {

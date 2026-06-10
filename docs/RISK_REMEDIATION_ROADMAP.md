@@ -309,9 +309,25 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 - The boot path requires `C5b OK: opaque device handle transferred and released`;
   `make c5-device-handle-test` is the focused direct-boot gate.
 - Non-goals: C5b still does not expose MMIO mapping, IRQ endpoints, DMA windows,
-  or real virtio-input ownership. The next C5 slice should replace the pseudo
-  registry entry with real device discovery/manifest matching and then begin
-  moving a non-boot-critical driver out of the kernel.
+  or real virtio-input ownership. The next C5 slice should make discovery
+  manifest matching executable and then begin moving a non-boot-critical driver
+  out of the kernel.
+
+### C5c — device discovery manifest matching (DONE, 2026-06-10)
+
+- New `device_discover(index, info*)` syscall exposes read-only device registry
+  metadata to the boot authority. It returns the same fixed `device_info` record
+  used by device handles and reports `-2` when enumeration is exhausted.
+- `/bin/drvsvcdemo` now discovers `pseudo-input.0` by matching kind, bus, flags,
+  claim state, and manifest name before calling `device_claim`; it also proves
+  the current registry exhausts after the single pseudo device.
+- The boot path requires `C5c OK: device discovery manifest matched pseudo input`;
+  `make c5-device-discovery-test` is the focused direct-boot gate, with
+  `make c5-device-handle-test` kept as a compatible alias.
+- Non-goals: C5c still does not expose MMIO mapping, IRQ endpoints, DMA windows,
+  or real virtio-input ownership. The next C5 slice should attach real
+  device-tree/virtio discovery metadata and start replacing an in-kernel driver
+  path with a userland service.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

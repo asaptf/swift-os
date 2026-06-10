@@ -4,14 +4,15 @@ The forward design for swift-os authority: the object-capability **handle** mode
 handle-passing **IPC**, and the decision to make **Cells** a userland composition over small kernel
 primitives rather than a fat in-kernel object.
 
-> **Status: living design and implementation map.** C1-C5b now have checked-in
+> **Status: living design and implementation map.** C1-C5c now have checked-in
 > slices: typed handle entries and rights, `spawn_handles`, object-scoped
 > filesystem confinement, endpoint IPC with handle move semantics, a
-> restartable pseudo driver-service smoke, and an opaque pseudo-device handle
-> grant. The later parts of this note remain the target design for richer IPC
-> rings/VMOs, real userland drivers, and Cells. Future C-series work still lands
-> one milestone at a time, each building, booting, passing a test, and stopping
-> for review (per [CLAUDE.md](../CLAUDE.md)).
+> restartable pseudo driver-service smoke, pseudo-device discovery, and an
+> opaque pseudo-device handle grant. The later parts of this note remain the
+> target design for richer IPC rings/VMOs, real userland drivers, and Cells.
+> Future C-series work still lands one milestone at a time, each building,
+> booting, passing a test, and stopping for review (per
+> [CLAUDE.md](../CLAUDE.md)).
 
 The maintainer should read this against the **current** model, not an idealized one. Where the current
 model already does the right thing, this note says so; where it is a placeholder, this note says that too.
@@ -70,13 +71,13 @@ Implemented C-series pieces:
   while the flat `caps` word remains a coarse class gate.
 - C4a: `endpoint_create`, `ipc_send`, and `ipc_recv` with byte messages and
   one moved handle per message.
-- C5a/C5b: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, moves an
-  opaque `pseudo-input.0` device grant over IPC, proves the grant is busy while
-  owned by the service, and reclaims it after exit.
+- C5a-C5c: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it,
+  discovers `pseudo-input.0`, moves an opaque device grant over IPC, proves the
+  grant is busy while owned by the service, and reclaims it after exit.
 
-This is still short of the full architecture. C5b's device grant deliberately
-does not expose MMIO ranges, IRQ endpoints, DMA windows, or real virtio-input
-ownership, and C4a is not the future zero-copy ring/VMO data path.
+This is still short of the full architecture. C5c's device discovery and grant
+deliberately do not expose MMIO ranges, IRQ endpoints, DMA windows, or real
+virtio-input ownership, and C4a is not the future zero-copy ring/VMO data path.
 
 ---
 
@@ -124,7 +125,7 @@ The deeper problems with the bitmask are structural, not cosmetic:
 
 This is not an argument that the bitmask was wrong to ship. It is an argument
 that it is a **floor**, and the ceiling is a handle table. The migration started
-with C1-C5b and continues through the remaining target design below.
+with C1-C5c and continues through the remaining target design below.
 
 ---
 
@@ -355,9 +356,9 @@ ARCHITECTURE.md commits to a set of things that **cannot exist without local IPC
 There is a standing contradiction worth stating plainly: **the current virtio
 drivers (virtio-blk, virtio-net, virtio-input) live in the kernel**, which
 contradicts the documented "restartable userland driver services" vision. That
-is a reasonable bring-up choice. C4a/C5b now prove the IPC and opaque-grant
-shape, but the documented architecture remains incomplete until real
-IRQ/DMA/MMIO grants and a restartable userland driver land.
+is a reasonable bring-up choice. C4a/C5c now prove the IPC, discovery metadata,
+and opaque-grant shape, but the documented architecture remains incomplete
+until real IRQ/DMA/MMIO grants and a restartable userland driver land.
 
 ### 4.2 Minimal shape
 
@@ -530,7 +531,7 @@ M-series; naming it C1–C6 (capabilities) keeps it distinct from the M and net 
 | **C2** | spawn-with-handles | Implemented slice: `spawn_handles` explicit inheritance; `spawn` is stdio-only; `fork` remains the all-handles compatibility path. | A restricted spawned child cannot reach handles it was not given. | Resource limits/env-rich spawn shape remains future work. |
 | **C3** | Object-scoped authority | Implemented slice: filesystem confinement plus per-handle read/write rights. The flat `caps` word remains a coarse class gate. | Confined children cannot open outside their subtree; per-handle rights checks reject overuse. | Full bitmask retirement is not done. |
 | **C4a** | Minimal handle-passing IPC | Implemented slice: `endpoint_create`, `ipc_send`, `ipc_recv`, byte messages, and one moved handle per message. | Processes exchange bytes and moved handles safely. | VMOs, async rings, badges, `ipc_call`, and high-throughput data paths remain future work. |
-| **C5a/C5b** | Restartable pseudo driver-service smoke | Implemented slice: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, transfers an opaque `pseudo-input.0` device grant, observes busy ownership, and reclaims it. | `make c5-device-handle-test` passes under `-smp 4`. | This is not real MMIO/IRQ/DMA/virtio-input handoff yet. |
+| **C5a-C5c** | Restartable pseudo driver-service smoke | Implemented slice: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, discovers `pseudo-input.0`, transfers an opaque device grant, observes busy ownership, and reclaims it. | `make c5-device-discovery-test` passes under `-smp 4`. | This is not real MMIO/IRQ/DMA/virtio-input handoff yet. |
 | **C5 proper** | First real userland driver over IPC | Lift one non-boot-critical driver (candidate: **virtio-input**, then virtio-net) out of the kernel into a supervised userland service that receives device/IRQ/DMA + endpoint handles and serves clients over C4 IPC. | The driver runs as a process; killing and restarting it recovers service; clients reach it only via a handed endpoint handle. | First real exercise of the whole stack. |
 | **C6** | Cell as userland composition | Add the per-process `CellId` tag (accounting domain + namespace root). A userland **cell supervisor** assembles a cell = job + handle set + resource domain + namespace, and launches a process inside it. **No kernel `Cell` object.** | Two cells with separate namespaces/roots and separate resource accounting; a process in one cannot name objects in the other (handles + namespace root); per-cell counters reported. | Delivers the Cells vision as composition (§5). The tag is cheap; the policy is userland. |
 
@@ -538,7 +539,7 @@ Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
 explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
 kinds on C1's table and transfers them with C2's move mechanism; C5 is the
 first thing that needs C1-C4 at once; C6 needs C5's supervisor pattern and C4's
-IPC to assemble a cell. The implemented C1-C5b slices do not remove those
+IPC to assemble a cell. The implemented C1-C5c slices do not remove those
 dependencies for the remaining richer work.
 
 ---
@@ -556,7 +557,7 @@ dependencies for the remaining richer work.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** fully implemented. C1-C5b slices exist; C5 proper, richer IPC, and
+- **Not** fully implemented. C1-C5c slices exist; C5 proper, richer IPC, and
   Cells remain planned work.
 
 ---

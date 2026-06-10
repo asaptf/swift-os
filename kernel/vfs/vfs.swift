@@ -1377,6 +1377,25 @@ func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
     return fd
 }
 
+func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
+    if index < 0 { return errInvalid }
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    var ordinal = 0
+    for dev in 0..<maxDevices where devices[dev].inUse {
+        if ordinal == index {
+            writeDeviceInfoLocked(dev, out)
+            return 0
+        }
+        ordinal += 1
+    }
+    return errNoEntry
+}
+
 func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
     guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
     let proc = currentVFSProcess()

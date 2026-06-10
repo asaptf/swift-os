@@ -515,7 +515,50 @@ SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 Use this path before claiming firmware, disk-image, or VirtualBox-related
 changes are healthy.
 
-## 16. Run The Full Gate
+## 16. Run The Driver-Service Device-Discovery Smoke
+
+Guest:
+
+```sh
+/bin/drvsvcdemo
+```
+
+Expected serial markers:
+
+```text
+drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
+drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
+C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
+C5c OK: device discovery manifest matched pseudo input
+```
+
+This proves the current restartable service shape, pseudo-device discovery, and
+opaque pseudo-device grant transfer. It is still metadata-only authority: C5c
+does not hand MMIO, IRQ, DMA, or real virtio-input ownership to userland.
+
+Equivalent automated check:
+
+```sh
+make c5-device-discovery-test
+```
+
+The automated gate boots with `-smp 4` and checks the same serial markers.
+`make c5-device-handle-test` remains a compatible alias.
+
+## 17. Run The Full Gate
 
 Host:
 

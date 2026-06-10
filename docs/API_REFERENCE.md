@@ -56,6 +56,7 @@ source, then follow its Makefile rule and acceptance test.
 | Process launch and explicit handles | `userland/argvdemo.c`, `userland/spawndemo.c` | `spawn`, `spawn_handles`, `swiftos_spawn_handle`, handle rights | `./tests/boot_test.sh`, `./tests/spawn_self_exec_test.sh` |
 | Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
+| Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-discovery-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
@@ -227,6 +228,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 61 | `pkg_info` | `index`, `buf`, `cap` | bytes copied or negative error |
 | 62 | `device_claim` | `name`, `device_info*` | device fd or negative error |
 | 63 | `device_info` | `fd`, `device_info*` | 0 or negative error |
+| 64 | `device_discover` | `index`, `device_info*` | 0 or negative error |
 
 Notes:
 
@@ -423,10 +425,11 @@ if rc >= 0 {
 
 ## Device Grants
 
-C5b adds an opaque device-handle scaffold for restartable driver services. The
-current registry has one pseudo device, `pseudo-input.0`, used by
-`/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over IPC.
-It is not a real MMIO, IRQ, or DMA grant yet.
+C5b adds an opaque device-handle scaffold for restartable driver services. C5c
+adds read-only discovery so a supervisor can match a device manifest before
+claiming it. The current registry has one pseudo device, `pseudo-input.0`, used
+by `/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over
+IPC. It is not a real MMIO, IRQ, or DMA grant yet.
 
 ```c
 struct swiftos_device_info {
@@ -443,18 +446,91 @@ struct swiftos_device_info {
 
 int device_claim(const char *name, struct swiftos_device_info *info);
 int device_info(int fd, struct swiftos_device_info *info);
+int device_discover(int index, struct swiftos_device_info *info);
 ```
 
 Contract:
 
+- `device_discover(index, &info)` enumerates the registry by stable manifest
+  ordinal. It writes the same 64-byte record as `device_info`; `claimed` reports
+  whether a live grant owns the device. An out-of-range ordinal returns `-2`.
 - `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
-  transfer authority, or a negative error.
+  `getattr`/`transfer` authority, or a negative error.
 - A second claim while a live handle owns the grant returns `-16`.
 - Moving the handle through `ipc_send` invalidates the sender's source fd.
 - Closing the final fd for the device releases the registry claim.
 - `device_info` fills the fixed 64-byte metadata record. `mmio_base`,
-  `mmio_len`, and `irq` are zero in C5b because hardware access is deliberately
-  not granted.
+  `mmio_len`, and `irq` are zero in the current scaffold because hardware
+  access is deliberately not granted.
+
+Supervisor-side handoff pattern:
+
+```c
+struct swiftos_device_info info;
+int found = 0;
+for (int i = 0; i < 4; i += 1) {
+    int r = device_discover(i, &info);
+    if (r == -2) {
+        break;
+    }
+    if (r < 0) {
+        return r;
+    }
+    if (info.kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
+        info.bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
+        (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
+        info.claimed == 0) {
+        found = 1;
+        break;
+    }
+}
+if (!found) {
+    return -2;
+}
+
+int dev_fd = device_claim(info.name, &info);
+if (dev_fd < 0) {
+    return dev_fd;
+}
+if (info.kind != SWIFTOS_DEVICE_KIND_PSEUDO_INPUT ||
+    info.bus != SWIFTOS_DEVICE_BUS_PSEUDO ||
+    (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0 ||
+    info.claimed != 1) {
+    close(dev_fd);
+    return -22;
+}
+
+long sent = ipc_send(command_endpoint, "DEVH", 4, dev_fd);
+if (sent < 0) {
+    close(dev_fd);
+    return (int)sent;
+}
+
+// The transfer moved the handle; the sender no longer owns dev_fd.
+if (device_info(dev_fd, &info) != -9) {
+    return -22;
+}
+```
+
+Service-side receive pattern:
+
+```c
+char cmd[8];
+int received_fd = -1;
+long n = ipc_recv(command_endpoint, cmd, sizeof(cmd), &received_fd);
+if (n == 4 && received_fd >= 0) {
+    struct swiftos_device_info info;
+    if (device_info(received_fd, &info) == 0) {
+        // Current grants are metadata-only authority, not MMIO/IRQ/DMA access.
+        close(received_fd);
+    }
+}
+```
+
+The complete checked-in example is `userland/drvsvcdemo.c` supervising
+`userland/drvinputd.c`; `make c5-device-discovery-test` validates the discovery,
+handoff, busy-claim, and release markers under `-smp 4`.
+`make c5-device-handle-test` remains a compatible alias for the same harness.
 
 ## Terminal API
 
@@ -570,6 +646,7 @@ Current handle kinds are:
 | `pipe` | Pipe endpoint |
 | `socket` | Network socket |
 | `endpoint` | IPC endpoint |
+| `device` | Opaque device-ownership grant |
 
 Rights constants from `userland/lib/syscall.h`:
 
@@ -1024,6 +1101,12 @@ long swiftos_getpid(void);
 #define SWIFTOS_TOP_MAX 16
 #define SWIFTOS_CPU_MAX 8
 
+int swiftos_ps_refresh(void);
+unsigned int swiftos_ps_pid(int index);
+unsigned int swiftos_ps_ppid(int index);
+unsigned int swiftos_ps_state(int index);
+const char *swiftos_ps_name(int index);
+
 int swiftos_sysinfo_refresh(void);
 unsigned long swiftos_sys_uptime_ticks(void);
 unsigned long swiftos_sys_idle_ticks(void);
@@ -1069,6 +1152,10 @@ void swiftos_set_raw(int on);
 
 ```c
 unsigned long swiftos_heap_break(void);
+#define SWIFTOS_PROT_READ  0x1
+#define SWIFTOS_PROT_WRITE 0x2
+#define SWIFTOS_PROT_EXEC  0x4
+
 unsigned long swiftos_mmap(unsigned long len, int prot);
 unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot);
 int swiftos_munmap(unsigned long addr, unsigned long len);
@@ -1078,9 +1165,53 @@ int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 `swiftos_mmap` and `swiftos_mmap_file` return 0 on failure because valid
 mappings are never placed at VA 0.
 
-### Networking, Threads, Atomics
+### Networking
 
-See the networking and threads sections above for the full list.
+```c
+int swiftos_socket(void);
+int swiftos_socket_ipv6(void);
+int swiftos_socket_stream(void);
+int swiftos_socket_stream_ipv6(void);
+int swiftos_bind(int fd, unsigned short port);
+
+long swiftos_sendto(int fd, const void *buf, unsigned long len,
+                    unsigned int ip, unsigned short port);
+long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
+                      unsigned int *ip, unsigned short *port);
+long swiftos_sendto_ipv6(int fd, const void *buf, unsigned long len,
+                         const unsigned char ip6[16], unsigned short port);
+long swiftos_recvfrom_ipv6(int fd, void *buf, unsigned long cap,
+                           unsigned char ip6[16], unsigned short *port);
+
+int swiftos_listen(int fd, int backlog);
+int swiftos_accept(int fd);
+int swiftos_connect(int fd, unsigned int ip, unsigned short port);
+long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
+unsigned int swiftos_resolve(const char *name, unsigned int server_ip,
+                             unsigned short server_port);
+```
+
+IPv4 addresses are host order. IPv6 addresses are 16 bytes in network order.
+
+### Threads And Atomics
+
+```c
+#define SWIFTOS_FUTEX_WAIT 0
+#define SWIFTOS_FUTEX_WAKE 1
+
+int swiftos_thread_create(unsigned long entry,
+                          unsigned long arg,
+                          unsigned long stack_top);
+int swiftos_futex(unsigned int *uaddr, int op, unsigned int val);
+void swiftos_thread_exit(void) __attribute__((noreturn));
+
+unsigned int swiftos_atomic_cas(unsigned int *p,
+                                unsigned int expected,
+                                unsigned int desired);
+unsigned int swiftos_atomic_swap(unsigned int *p, unsigned int desired);
+unsigned int swiftos_atomic_load(unsigned int *p);
+unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta);
+```
 
 ## Compatibility Layer
 
@@ -1112,6 +1243,7 @@ one booting acceptance path:
 | Filesystem and native Swift file tools | `kernel/vfs/vfs.swift`, `userland/lib/fs.h`, `userland/lib/swift_user.h` | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/boot_test.sh` |
 | Terminal and signals | `userland/lib/termios.h`, `kernel/tty/tty.swift`, `kernel/signal/signal.swift` | `./tests/boot_test.sh`, focused interactive smoke where needed |
 | IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
+| Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-discovery-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |

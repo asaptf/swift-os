@@ -56,24 +56,57 @@ static int expect_msg(int fd, const char *want, int len, const char *fail) {
     return 1;
 }
 
-static int valid_device_info(const struct swiftos_device_info *info) {
+static int valid_device_info(const struct swiftos_device_info *info, unsigned int claimed) {
     return info->kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
            info->mmio_base == 0 &&
            info->mmio_len == 0 &&
            (info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
-           info->claimed == 1 &&
+           info->claimed == claimed &&
            cstr_eq(info->name, "pseudo-input.0");
+}
+
+static int discover_input_device(struct swiftos_device_info *info) {
+    int found = 0;
+    for (int i = 0; i < 4; i += 1) {
+        int r = device_discover(i, info);
+        if (r == -2) { break; }
+        if (r != 0) {
+            puts_raw("drvsvc: device discovery failed\n");
+            return 0;
+        }
+        if (valid_device_info(info, 0)) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        puts_raw("drvsvc: device manifest mismatch\n");
+        return 0;
+    }
+    puts_raw("drvsvc: C5c device manifest matched\n");
+
+    struct swiftos_device_info extra;
+    if (device_discover(1, &extra) != -2) {
+        puts_raw("drvsvc: device discovery exhaustion failed\n");
+        return 0;
+    }
+    puts_raw("drvsvc: C5c discovery exhausted\n");
+    return 1;
 }
 
 static int run_device_handoff(int command_fd, int event_fd) {
     struct swiftos_device_info info;
-    int dev_fd = device_claim("pseudo-input.0", &info);
+    if (!discover_input_device(&info)) {
+        return 0;
+    }
+
+    int dev_fd = device_claim(info.name, &info);
     if (dev_fd < 0) {
         puts_raw("drvsvc: device claim failed\n");
         return 0;
     }
-    if (!valid_device_info(&info)) {
+    if (!valid_device_info(&info, 1)) {
         close(dev_fd);
         puts_raw("drvsvc: device info mismatch\n");
         return 0;
@@ -122,7 +155,7 @@ static int verify_device_reclaimed(void) {
         puts_raw("drvsvc: reclaim claim failed\n");
         return 0;
     }
-    if (!valid_device_info(&info)) {
+    if (!valid_device_info(&info, 1)) {
         close(fd);
         puts_raw("drvsvc: reclaim info mismatch\n");
         return 0;
@@ -222,5 +255,6 @@ int main(void) {
     if (!run_generation(2)) { return 1; }
     puts_raw("C5a OK: restartable driver service recovered over IPC\n");
     puts_raw("C5b OK: opaque device handle transferred and released\n");
+    puts_raw("C5c OK: device discovery manifest matched pseudo input\n");
     return 0;
 }

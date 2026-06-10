@@ -79,10 +79,13 @@ These markers tell you how far the system got.
 | `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim demo passed |
 | `swift-os M12c: starting console-login (init)` | Login init was launched |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
+| `drvsvc: C5c device manifest matched` | Pseudo-device registry metadata matched the expected manifest |
+| `drvsvc: C5c discovery exhausted` | Device discovery reported end-of-registry after the pseudo device |
 | `drvsvc: C5b device grant moved` | Opaque pseudo-device grant was moved out of the supervisor fd table |
 | `drvinputd: C5b device grant accepted` | Pseudo driver service validated the transferred device grant |
 | `C5a OK: restartable driver service recovered over IPC` | Pseudo driver service restarted and recovered over endpoint IPC |
 | `C5b OK: opaque device handle transferred and released` | Pseudo device grant was transferred and reclaimed |
+| `C5c OK: device discovery manifest matched pseudo input` | Device discovery, claim, transfer, and release completed |
 | `swift-os login:` | Console login prompt reached |
 | `Welcome to swift-os, root` | Root login succeeded |
 | `M12c: session ended` | Login session exited and init recovered |
@@ -190,7 +193,7 @@ Acceptance coverage:
 | `ps` | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | `top` | `./tests/top_test.sh`, `make smp-cpu-utilization-test` |
 | S5f placement markers | `make s5-run-any-placement-test` |
-| C5 driver-service/device-handle markers | `make c5-device-handle-test` |
+| C5 driver-service/device-discovery markers | `make c5-device-discovery-test` |
 
 ## Service Signals
 
@@ -203,7 +206,7 @@ socket and entered the serving path.
 | `/bin/llmd` | `llmd: serving on 8080` | `GET /health` | `GET /metrics` plus serial `llmd: served ...` |
 | `/bin/tcpecho` | `tcpecho: listening on 5555` | One host TCP echo | Serial byte count |
 | `/bin/udpecho` | `udpecho: listening on 5555` | One host UDP echo | Serial byte count and peer |
-| `/bin/drvsvcdemo` | `C5b OK: opaque device handle transferred and released` | n/a | Serial supervisor markers |
+| `/bin/drvsvcdemo` | `C5c OK: device discovery manifest matched pseudo input` | n/a | Serial supervisor markers |
 
 For service operation and authoring rules, see
 [Service Guide](SERVICE_GUIDE.md).

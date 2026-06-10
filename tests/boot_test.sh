@@ -92,6 +92,8 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
@@ -100,6 +102,7 @@ drvsvc: generation 2 stopped
 drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
+C5c OK: device discovery manifest matched pseudo input
 C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
@@ -176,6 +179,9 @@ drvsvc: exec drvinputd failed
 drvsvc: ready message mismatch
 drvsvc: ping send failed
 drvsvc: event message mismatch
+drvsvc: device discovery failed
+drvsvc: device manifest mismatch
+drvsvc: device discovery exhaustion failed
 drvsvc: device claim failed
 drvsvc: device info mismatch
 drvsvc: device dup unexpectedly succeeded
