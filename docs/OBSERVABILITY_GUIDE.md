@@ -35,6 +35,22 @@ focused test output, and host client output for network services.
 There is no persistent log store in the guest. `/tmp` is RAM scratch and is lost
 on reboot. Capture logs on the host when the evidence matters.
 
+## Choose An Observation Set
+
+Collect the smallest set of signals that answers the question. Prefer host-side
+files for reports because guest `/tmp` does not survive reboot.
+
+| Question | Signals to capture | Suggested files | Focused proof |
+| --- | --- | --- | --- |
+| Did the system boot far enough? | Boot markers, absence of forbidden failure markers | `support/boot-test.txt`, `support/serial.log` | `./tests/boot_test.sh` |
+| Which account and authority ran the command? | `id`, login transcript, capability denial line | `support/guest-id.txt`, serial excerpt | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
+| What was running and how much memory was visible? | `ps -f`, `top -b -n 2 -d 1` | `support/processes.txt`, `support/top.txt` | `./tests/top_test.sh` |
+| Did a service become ready? | Service-prefixed readiness marker and host-visible check | `support/serial.log`, `support/curl-*.txt` or `support/nc-*.txt` | Service-specific test |
+| Did AI serving verify the right model and respond? | Bundle verification lines, `/health`, `/completion`, `/metrics` | `support/llm-serve-test.txt`, `support/llmd-*.txt` | `./tests/llm_serve_test.sh` |
+| Did networking fail before or after the guest service? | QEMU network profile, `id`, readiness marker, host client output | `support/network-qemu.txt`, `support/curl-*.txt` | Relevant networking test |
+| Did an update slot roll back? | Stage/activate/confirm output, loader slot markers, boot-attempt lines | `support/update-*.txt`, `support/uefi-serial.log` | Matching A/B update test |
+| Did the kernel panic or hang? | First fatal line, register dump, last healthy marker, QEMU command | `support/panic-context.txt`, `support/serial.log` | Reproducer command plus panic context |
+
 ## Operator Triage Order
 
 When a SwiftOS run looks unhealthy, collect signals in this order before
