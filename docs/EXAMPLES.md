@@ -319,7 +319,52 @@ Equivalent automated check:
 make package-repo-install-test
 ```
 
-## 11. Run The Native Swift LLM Demo
+## 11. Install Source-Built Packages From A Static-Host Fixture
+
+The current ports fixture cross-builds Lua and zlib, publishes them into one
+signed seed repository, copies that repository into a static-hostable web root,
+and proves that the guest can install from the hosted layout.
+
+Host:
+
+```sh
+make ports-static-host-publish
+make package-static-host-repo-install-test
+```
+
+The automated test serves `build/ports-static-host-root`, injects the default
+repository URL into the base image, attaches a writable package-store image, and
+drives this guest flow:
+
+```sh
+pkg update
+pkg search lua
+pkg search zlib
+pkg install lua
+pkg install zlib
+/usr/bin/lua -e 'print(21 * 2)'
+echo static-host-ok > /tmp/zlib.txt
+/usr/bin/minigzip /tmp/zlib.txt
+/usr/bin/minigzip -d /tmp/zlib.txt.gz
+cat /tmp/zlib.txt
+```
+
+Expected signals:
+
+- `pkg update` accepts the static-hosted signed catalog.
+- `pkg search lua` and `pkg search zlib` find `lua-5.4.8_1` and
+  `zlib-1.3.1_1`.
+- `pkg install lua` and `pkg install zlib` activate both packages.
+- Lua evaluates the expression and prints `42`; `minigzip` round-trips
+  `/tmp/zlib.txt` and prints `static-host-ok` after decompression.
+
+Equivalent automated check:
+
+```sh
+make package-static-host-repo-install-test
+```
+
+## 12. Run The Native Swift LLM Demo
 
 Host:
 
@@ -357,7 +402,7 @@ Equivalent automated check:
 ./tests/llm_run_test.sh
 ```
 
-## 12. Serve LLM Completions Over TCP
+## 13. Serve LLM Completions Over TCP
 
 Host:
 
@@ -406,7 +451,7 @@ Equivalent automated check:
 ./tests/llm_serve_test.sh
 ```
 
-## 13. Exercise The Swift REPL Demos
+## 14. Exercise The Swift REPL Demos
 
 Guest:
 
@@ -442,7 +487,7 @@ Automated checks:
 ./tests/kv_test.sh
 ```
 
-## 14. Validate UEFI Boot
+## 15. Validate UEFI Boot
 
 Host:
 
@@ -461,7 +506,7 @@ SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 Use this path before claiming firmware, disk-image, or VirtualBox-related
 changes are healthy.
 
-## 15. Run The Full Gate
+## 16. Run The Full Gate
 
 Host:
 
