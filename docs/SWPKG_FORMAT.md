@@ -112,7 +112,8 @@ Current related package milestones:
   files staged in the guest.
 - P4 completes the local package lifecycle with files, remove, rollback, and
   stronger diagnostics.
-- P5a adds signed static HTTP repository catalogs and network fetch for
+- P5c adds signed static HTTP repository catalogs, configured or explicit
+  repository updates, dependency metadata validation, and network fetch for
   `pkg install NAME`.
 
 For the package-store image layout, see

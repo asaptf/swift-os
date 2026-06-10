@@ -185,7 +185,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
   activation record, and local install layout.
 - [Static Package Repository](docs/PKGREPO_FORMAT.md): signed static HTTP
-  catalog layout and P5a repository install flow.
+  catalog layout and P5c repository install flow.
 - [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,
   handle rights, native Swift bridge, and compatibility API notes.
 - [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized

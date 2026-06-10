@@ -26,7 +26,7 @@ prove the package model locally:
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
-implemented `.swpkg`, package-store, local guest install, and P5a signed static
+implemented `.swpkg`, package-store, local guest install, and P5c signed static
 repository paths. Until `swift-os-ports`, `swport`, and public hosted channels
 exist, maintainers should use the local fixture commands in this repository.
 
@@ -38,7 +38,7 @@ Use this guide with:
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container contract.
 - [Package Store Format](PKGSTORE_FORMAT.md) for package-store image and
   activation records.
-- [Static Package Repository](PKGREPO_FORMAT.md) for the P5a signed HTTP
+- [Static Package Repository](PKGREPO_FORMAT.md) for the P5c signed HTTP
   catalog layout.
 - [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for package priorities
   and OS prerequisite bundles.

@@ -9,9 +9,10 @@ maintainers planning `swift-os-ports` recipes.
 > Status: planning input for the package ecosystem. The current checked-in
 > system already has host `.swpkg` tooling, read-only package payload overlays,
 > package-store boot activation, and a narrow local `/bin/pkg install FILE`
-> path. It also has a P5a signed static HTTP repository fixture with
-> `pkg update URL`, `pkg search`, `pkg info`, and `pkg install NAME`.
-> Public hosted repositories, dependency resolution, remove, upgrade, and
+> path. It also has a P5c signed static HTTP repository fixture with
+> `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
+> `pkg install NAME`, including name-based dependency resolution.
+> Public hosted repositories, version-constraint solving, remove, upgrade, and
 > rollback flows are still roadmap work.
 
 Use this guide with:
