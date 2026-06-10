@@ -138,11 +138,11 @@ cat /hello.txt
 Create scratch data in tmpfs:
 
 ```sh
-mkdir /tmp/demo
-echo hello >/tmp/demo/message.txt
-cat /tmp/demo/message.txt
-rm /tmp/demo/message.txt
-rmdir /tmp/demo
+mkdir /tmp/work
+echo hello >/tmp/work/message.txt
+cat /tmp/work/message.txt
+rm /tmp/work/message.txt
+rmdir /tmp/work
 ```
 
 Inspect processes:

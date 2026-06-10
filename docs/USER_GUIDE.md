@@ -111,10 +111,10 @@ rmdir /tmp/work
 Change tmpfs metadata:
 
 ```sh
-echo abc >/tmp/mode-demo
-chmod 600 /tmp/mode-demo
-chown 2 /tmp/mode-demo
-ls -l /tmp/mode-demo
+echo abc >/tmp/mode-sample
+chmod 600 /tmp/mode-sample
+chown 2 /tmp/mode-sample
+ls -l /tmp/mode-sample
 ```
 
 Writes to the base image fail by design:

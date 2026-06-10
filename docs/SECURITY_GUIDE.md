@@ -269,10 +269,10 @@ that metadata:
 
 ```sh
 ls -l /etc
-echo sample >/tmp/mode-demo
-chmod 600 /tmp/mode-demo
-chown 2 /tmp/mode-demo
-ls -l /tmp/mode-demo
+echo sample >/tmp/mode-sample
+chmod 600 /tmp/mode-sample
+chown 2 /tmp/mode-sample
+ls -l /tmp/mode-sample
 ```
 
 Current authorization is still capability-first. Mode and owner metadata are
