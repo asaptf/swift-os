@@ -134,6 +134,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
   network demos, AI demo operation, logging evidence, and verification gates.
+- [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
+  SwiftOS services such as `httpd`, `llmd`, `tcpecho`, and `udpecho`.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
   network, package overlay, LLM, and QEMU test failure diagnosis.
 - [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,

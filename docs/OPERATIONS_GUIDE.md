@@ -12,6 +12,8 @@ Use this guide with:
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.
+- [Service Guide](SERVICE_GUIDE.md) for service lifecycle, readiness markers,
+  ports, health checks, and service authoring rules.
 - [Troubleshooting](TROUBLESHOOTING.md) when a build, boot, login, or network
   path fails.
 - [Support Guide](SUPPORT_GUIDE.md) for evidence collection and handoff
@@ -226,7 +228,9 @@ mode.
 
 ## Networking Operations
 
-All socket tools require a NIC and `capNet`.
+All socket tools require a NIC and `capNet`. See
+[SERVICE_GUIDE.md](SERVICE_GUIDE.md) for the service catalog, readiness
+markers, health checks, and service design contract.
 
 ### HTTP
 

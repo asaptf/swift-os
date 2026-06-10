@@ -361,7 +361,8 @@ Before merging a new application:
 - Filesystem writes stay under `/tmp` unless the design adds a new writable
   service.
 - Networking tools document the required QEMU host forwarding and `capNet`.
-- Long-running services expose a clear ready marker on serial.
+- Long-running services expose a clear ready marker on serial; see
+  [SERVICE_GUIDE.md](SERVICE_GUIDE.md) for the current service contract.
 - The Makefile rule includes all source dependencies that should trigger a
   rebuild.
 - `make build base-image` passes.
