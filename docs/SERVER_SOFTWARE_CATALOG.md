@@ -247,7 +247,7 @@ and, later, the network.
 
 ### Tier 2: Web Hosting Core
 
-This tier should produce the first convincing server demo: static site,
+This tier should produce the first convincing server proof path: static site,
 automatic certificate path, reverse proxy path, logs, and a small app behind it.
 
 | Package | Role and why it matters | Likely upstream/project | Difficulty | Runtime dependencies | Syscall/libc/kernel prerequisites | Static-linking concerns | First smoke test |
@@ -286,7 +286,7 @@ the first package manager. Each runtime must be treated as an ABI test suite.
 
 | Package | Role and why it matters | Likely upstream/project | Difficulty | Runtime dependencies | Syscall/libc/kernel prerequisites | Static-linking concerns | First smoke test |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `lua` | Small scripting runtime; ideal first real port and package demo. | Lua. | S | libc, readline optional. | `base-posix`; `term-ui` for interactive REPL. | Static build is simple. Dynamic C modules disabled until loader policy exists. | `lua -e 'print(_VERSION)'`. |
+| `lua` | Small scripting runtime; ideal first real port and package proof point. | Lua. | S | libc, readline optional. | `base-posix`; `term-ui` for interactive REPL. | Static build is simple. Dynamic C modules disabled until loader policy exists. | `lua -e 'print(_VERSION)'`. |
 | `python-minimal` | Automation scripts, admin tooling, many ACME/build utilities, and later app support. | CPython. | XL | libffi optional, openssl, zlib, xz, bzip2, sqlite. | `base-posix`, `proc-basic`, `net-client`, `tls-base`, `db-fs`, `threads`, `mmap-vm`, signals. | Static CPython is possible but extension modules are normally dynamic. Build a curated static module set. | `python3 -c 'import ssl,sqlite3,json; print("ok")'`. |
 | `nodejs` | JavaScript server runtime for modern web apps and tooling. | Node.js. | XL | V8, OpenSSL, zlib, ICU, c-ares or resolver. | `base-posix`, `net-client`, `net-server`, `tls-base`, `threads`, `mmap-vm`, signals, high-resolution timers, event notification. | Static Node is hard but possible in custom builds. V8 JIT needs executable memory; start with JIT policy decision or interpreter/JITless mode. Native addons are deferred without dynamic loading. | `node -e 'require("http").createServer((_,r)=>r.end("ok")).listen(8080)'` and fetch from host. |
 | `openjdk-runtime` | JVM target for Java services and long-horizon project goal. | OpenJDK, with Adoptium as packaging reference. | XL | zlib, libffi optional, font/rendering pieces disabled for headless, ca-certificates. | `base-posix`, `net-client`, `net-server`, `tls-base`, `threads`, `mmap-vm`, signals, atomics, large files, entropy. | Static HotSpot is not the normal distribution model. Expect major build-system and runtime porting. Dynamic class loading is fine at Java level, but native JNI libraries are deferred. | `java -version`; then run a one-file HTTP server or `HelloWorld.class`. |
@@ -356,7 +356,7 @@ Packages:
 - `patch`
 - `pkgconf`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg update
@@ -383,7 +383,7 @@ Packages:
 - `nano`
 - `mc` with reduced features
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install admin-basic
@@ -406,7 +406,7 @@ Packages:
 - `swos-service`
 - `swos-syslogd`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install web-basic
@@ -430,7 +430,7 @@ Packages:
 - `php-cli` before `php-fpm`
 - `python-minimal`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install postgresql-server
@@ -453,7 +453,7 @@ Packages:
 - `swift-runtime-minimal`
 - `swift-toolchain` much later
 
-Acceptance demos:
+Acceptance workflows:
 
 ```sh
 node -e 'console.log(process.version)'
