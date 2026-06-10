@@ -11,6 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build"
 EFI_APP="$BUILD/BOOTAA64.EFI"
+KERNEL_BIN="$BUILD/kernel.bin"
 IMG="${1:-$BUILD/swift-os.img}"
 SIZE_MB="${DISK_MB:-96}"
 PART_START_SECTOR=2048
@@ -23,6 +24,7 @@ MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
 MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
 
 [[ -f "$EFI_APP" ]] || { echo "make-disk: $EFI_APP missing - run 'make uefi' first" >&2; exit 2; }
+[[ -f "$KERNEL_BIN" ]] || { echo "make-disk: $KERNEL_BIN missing - run 'make build' first" >&2; exit 2; }
 for tool in "$SGDISK" "$MFORMAT" "$MMD" "$MCOPY" "$MDIR"; do
     [[ -x "$tool" ]] || { echo "make-disk: missing executable $tool" >&2; exit 2; }
 done
@@ -43,10 +45,13 @@ echo "make-disk: formatting + populating the ESP (FAT32)"
 # mtools accesses the partition at a byte offset inside the image (drive@@offset).
 export MTOOLS_SKIP_CHECK=1
 "$MFORMAT" -i "${IMG}@@${PART_OFFSET}" -F -v ESP ::
-"$MMD"     -i "${IMG}@@${PART_OFFSET}" ::/EFI ::/EFI/BOOT
+"$MMD"     -i "${IMG}@@${PART_OFFSET}" ::/EFI ::/EFI/BOOT ::/EFI/swift-os
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$EFI_APP" ::/EFI/BOOT/BOOTAA64.EFI
+# U1g: the kernel image the loader reads from the ESP (decoupled from the loader).
+"$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$KERNEL_BIN" ::/EFI/swift-os/kernel.bin
 
 echo "make-disk: done -> $IMG"
 echo "make-disk: ESP contents:"
 "$MDIR" -i "${IMG}@@${PART_OFFSET}" ::/EFI/BOOT
+"$MDIR" -i "${IMG}@@${PART_OFFSET}" ::/EFI/swift-os
 ls -l "$IMG"

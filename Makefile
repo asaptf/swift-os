@@ -915,7 +915,14 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 	@mkdir -p $(ESP_DIR)/EFI/BOOT
 	cp $(EFI_APP) $@
 
-uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
+# U1g: stage the kernel image on the ESP at \EFI\swift-os\kernel.bin. The loader
+# reads it from there (decoupled from the loader binary); the embedded blob stays
+# as a fallback. make-disk.sh copies this same file into the real GPT image.
+$(ESP_DIR)/EFI/swift-os/kernel.bin: $(KERNEL_BIN)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(KERNEL_BIN) $@
+
+uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI $(ESP_DIR)/EFI/swift-os/kernel.bin
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
 uefi-run: uefi base-image

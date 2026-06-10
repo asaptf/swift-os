@@ -138,6 +138,78 @@ static void clean_dcache(UINT64 start, UINT64 len) {
 // GetMemoryMap and ExitBootServices). QEMU virt's map is well under this.
 static UINT8 mmap_buf[16384];
 
+// U1g: the kernel image path on the ESP, as a CHAR16 (UTF-16) array so we do not
+// depend on the toolchain's u"" literal. "\EFI\swift-os\kernel.bin".
+static CHAR16 KERNEL_ESP_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','.','b','i','n', 0
+};
+
+// Open the kernel image file on the volume the loader was loaded from (the ESP)
+// and return its handle (*out_file) and size (*out_size). Returns 1 on success,
+// 0 on any failure (the caller falls back to the embedded blob). U1g decouples
+// the kernel image from the loader binary so it can be A/B-staged on disk.
+static int open_esp_kernel(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
+                           EFI_FILE_PROTOCOL **out_file, UINT64 *out_size) {
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID info_guid = EFI_FILE_INFO_ID;
+
+    EFI_LOADED_IMAGE_PROTOCOL *li = 0;
+    if (bs->HandleProtocol(image_handle, &li_guid, (void **)&li) != EFI_SUCCESS || !li) {
+        return 0;
+    }
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
+    if (bs->HandleProtocol(li->DeviceHandle, &fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) {
+        return 0;
+    }
+    EFI_FILE_PROTOCOL *root = 0;
+    if (fs->OpenVolume(fs, &root) != EFI_SUCCESS || !root) {
+        return 0;
+    }
+    EFI_FILE_PROTOCOL *f = 0;
+    if (root->Open(root, &f, KERNEL_ESP_PATH, EFI_FILE_MODE_READ, 0) != EFI_SUCCESS || !f) {
+        root->Close(root);
+        return 0;
+    }
+    root->Close(root);
+
+    // GetInfo returns the full EFI_FILE_INFO: the fixed prefix (80 bytes) PLUS
+    // the file name as a CHAR16 string, so the buffer must be generous or the
+    // firmware answers EFI_BUFFER_TOO_SMALL.
+    UINT8 info[512];
+    UINTN isz = sizeof(info);
+    if (f->GetInfo(f, &info_guid, &isz, info) != EFI_SUCCESS) {
+        f->Close(f);
+        return 0;
+    }
+    UINT64 fsize = ((EFI_FILE_INFO *)info)->FileSize;
+    if (fsize == 0) {
+        f->Close(f);
+        return 0;
+    }
+    *out_file = f;
+    *out_size = fsize;
+    return 1;
+}
+
+// Read the whole open file into [dst, dst+size). The File protocol may return
+// fewer bytes than requested per call, so loop until the file is consumed.
+// Returns 1 on success, 0 if a read failed or EOF arrived early.
+static int read_file_into(EFI_FILE_PROTOCOL *f, UINT64 dst, UINT64 size) {
+    UINT64 off = 0;
+    while (off < size) {
+        UINTN chunk = (UINTN)(size - off);
+        EFI_STATUS rs = f->Read(f, &chunk, (void *)(UINTN)(dst + off));
+        if (rs != EFI_SUCCESS || chunk == 0) {
+            return 0;
+        }
+        off += chunk;
+    }
+    return 1;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     EFI_BOOT_SERVICES *bs = st->BootServices;
 
@@ -219,8 +291,16 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         }
     }
 
-    // Reserve the kernel's fixed load address and stage the embedded image.
-    UINTN ksize = (UINTN)(kernel_blob_end - kernel_blob);
+    // U1g: prefer the kernel image from a file on the ESP (decoupled from the
+    // loader binary, so it can be A/B-staged on disk); fall back to the embedded
+    // blob if the file is absent or unreadable. Open the file first to learn its
+    // size, so we reserve the right number of pages before reading into place.
+    UINTN blob_size = (UINTN)(kernel_blob_end - kernel_blob);
+    EFI_FILE_PROTOCOL *kfile = 0;
+    UINT64 file_size = 0;
+    int from_file = open_esp_kernel(image_handle, st, &kfile, &file_size);
+
+    UINTN ksize = from_file ? (UINTN)file_size : blob_size;
     UINTN npages = (ksize + 0xFFF) / 0x1000;
     EFI_PHYSICAL_ADDRESS kaddr = KERNEL_LOAD_ADDR;
     EFI_STATUS s = bs->AllocatePages(AllocateAddress, EfiLoaderData, npages, &kaddr);
@@ -230,7 +310,25 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         puts16(st, "\r\n");
         for (;;) {}
     }
-    copy_mem((unsigned char *)(UINTN)KERNEL_LOAD_ADDR, kernel_blob, ksize);
+
+    if (from_file) {
+        if (read_file_into(kfile, KERNEL_LOAD_ADDR, file_size)) {
+            puts16(st, "UEFI: kernel loaded from ESP file ");
+            puthex(st, file_size);
+            puts16(st, " bytes\r\n");
+        } else {
+            // The read failed after the pages were reserved; fall back to the
+            // embedded blob in place (same build, so it fits the reservation).
+            copy_mem((unsigned char *)(UINTN)KERNEL_LOAD_ADDR, kernel_blob, blob_size);
+            ksize = blob_size;
+            from_file = 0;
+            puts16(st, "UEFI: ESP kernel read failed, using embedded blob\r\n");
+        }
+        kfile->Close(kfile);
+    } else {
+        copy_mem((unsigned char *)(UINTN)KERNEL_LOAD_ADDR, kernel_blob, blob_size);
+        puts16(st, "UEFI: no ESP kernel file, using embedded blob\r\n");
+    }
     clean_dcache(KERNEL_LOAD_ADDR, ksize);
     puts16(st, "UEFI: kernel staged, launching (no more firmware output)\r\n");
 

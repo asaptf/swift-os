@@ -217,7 +217,21 @@ normal write-back cache, without depending on a `cache=writethrough` host
 backend. `updateStoreInit` logs "write durability via virtio FLUSH".
 `tests/ab_flush_test.sh` proves the path with the default write-back cache.
 
+## Kernel-image A/B via the loader (U1g, in progress)
+
+The base-image A/B above covers the userland/system image. The kernel image
+itself is A/B'd through the UEFI loader, which is being built in slices.
+
+- **U1g-1 (done):** the loader reads the kernel from a file on the ESP
+  (`\EFI\swift-os\kernel.bin`) via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL` instead of an
+  embedded blob, decoupling the kernel image from the loader binary (a
+  prerequisite for A/B). The embedded blob remains as a fallback.
+  `tests/uefi_boot_test.sh` asserts the ESP-file load and full boot.
+- **Next:** a kernel A/B manifest on the ESP + a second kernel image + slot
+  selection; then Ed25519 verification of the selected kernel against the
+  compiled-in trust root.
+
 ## Not implemented yet
 
-- Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
+- Kernel A/B manifest + slot selection + Ed25519 (U1g-2/3).
 - Key rotation / revocation.

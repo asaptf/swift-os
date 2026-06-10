@@ -105,7 +105,7 @@ typedef struct {
     void                  *InstallProtocolInterface;
     void                  *ReinstallProtocolInterface;
     void                  *UninstallProtocolInterface;
-    void                  *HandleProtocol;
+    EFI_STATUS (*HandleProtocol)(EFI_HANDLE Handle, EFI_GUID *Protocol, void **Interface);
     void                  *Reserved;
     void                  *RegisterProtocolNotify;
     void                  *LocateHandle;
@@ -194,5 +194,65 @@ typedef struct {
     void                             *Blt;
     EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
 } EFI_GRAPHICS_OUTPUT_PROTOCOL;
+
+// --- Simple File System: read the kernel image from the ESP (U1g) -----------
+// The loader gets the volume it was loaded from via the Loaded Image protocol,
+// opens its root with the Simple File System protocol, and reads a kernel image
+// file with the File protocol. Only the members the loader calls are typed.
+
+#define EFI_LOADED_IMAGE_PROTOCOL_GUID \
+    { 0x5b1b31a1, 0x9562, 0x11d2, { 0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }
+#define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID \
+    { 0x964e5b22, 0x6459, 0x11d2, { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }
+#define EFI_FILE_INFO_ID \
+    { 0x09576e92, 0x6d3f, 0x11d2, { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }
+
+#define EFI_FILE_MODE_READ 0x0000000000000001ULL
+
+// Loaded Image: we read only up to DeviceHandle (the volume we booted from).
+typedef struct {
+    UINT32            Revision;
+    EFI_HANDLE        ParentHandle;
+    EFI_SYSTEM_TABLE *SystemTable;
+    EFI_HANDLE        DeviceHandle;   // the handle of the device we were loaded from
+    void             *FilePath;
+    void             *Reserved;
+    UINT32            LoadOptionsSize;
+    void             *LoadOptions;
+    void             *ImageBase;
+    UINT64            ImageSize;
+    // Remaining members unused.
+} EFI_LOADED_IMAGE_PROTOCOL;
+
+struct EFI_FILE_PROTOCOL;
+typedef struct EFI_FILE_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (*Open)(struct EFI_FILE_PROTOCOL *This, struct EFI_FILE_PROTOCOL **New,
+                       CHAR16 *FileName, UINT64 OpenMode, UINT64 Attributes);
+    EFI_STATUS (*Close)(struct EFI_FILE_PROTOCOL *This);
+    EFI_STATUS (*Delete)(struct EFI_FILE_PROTOCOL *This);
+    EFI_STATUS (*Read)(struct EFI_FILE_PROTOCOL *This, UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (*Write)(struct EFI_FILE_PROTOCOL *This, UINTN *BufferSize, void *Buffer);
+    EFI_STATUS (*GetPosition)(struct EFI_FILE_PROTOCOL *This, UINT64 *Position);
+    EFI_STATUS (*SetPosition)(struct EFI_FILE_PROTOCOL *This, UINT64 Position);
+    EFI_STATUS (*GetInfo)(struct EFI_FILE_PROTOCOL *This, EFI_GUID *InformationType,
+                          UINTN *BufferSize, void *Buffer);
+    void *SetInfo;
+    void *Flush;
+} EFI_FILE_PROTOCOL;
+
+typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
+    UINT64 Revision;
+    EFI_STATUS (*OpenVolume)(struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
+                             EFI_FILE_PROTOCOL **Root);
+} EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
+
+// EFI_FILE_INFO prefix: FileSize sits at byte offset 8 (after the Size field).
+typedef struct {
+    UINT64 Size;
+    UINT64 FileSize;
+    UINT64 PhysicalSize;
+    // Times / Attribute / FileName[] follow; unused here.
+} EFI_FILE_INFO;
 
 #endif // SWIFT_OS_EFI_H

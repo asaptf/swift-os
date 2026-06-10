@@ -3044,3 +3044,40 @@ and stall the counter). Caveat: QEMU writes land in the host page cache, which
 survives a kill, so this exercises the negotiate+flush+commit path under the
 realistic cache mode but cannot simulate host power loss. boot_test, ab_persist
 (writethrough path), and the rest of the A/B suite unaffected. No new syscalls.
+
+### U1g-1 — UEFI loader reads the kernel from an ESP file (DONE, 2026-06-10)
+
+**Scope.** First slice of kernel-image A/B (U1g). The loader compiled the kernel
+in as an embedded blob (`kernel_blob.S` `.incbin`), which cannot be A/B-staged on
+disk. U1g-1 decouples the kernel image from the loader binary: the loader now
+reads the kernel from a file on the ESP via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`.
+Mechanism chosen with the maintainer: ESP file (Simple File System), not raw
+Block I/O — lowest risk, the ESP is already FAT. Later slices add an A/B manifest
++ second kernel image + Ed25519 verification.
+
+- `boot/efi/efi.h`: added `EFI_LOADED_IMAGE_PROTOCOL` (to reach the boot volume's
+  `DeviceHandle`), `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`/`EFI_FILE_PROTOCOL`,
+  `EFI_FILE_INFO`, the three GUIDs, and typed `BootServices->HandleProtocol`.
+- `boot/efi/loader.c`: `open_esp_kernel()` (HandleProtocol(LoadedImage) →
+  HandleProtocol(SimpleFileSystem) on its DeviceHandle → OpenVolume → Open
+  `\EFI\swift-os\kernel.bin` → GetInfo for the size) and `read_file_into()` (a
+  Read loop, since the File protocol may return short). `efi_main` opens the file
+  to learn its size, reserves the right number of pages at `KERNEL_LOAD_ADDR`,
+  reads it in, and logs "UEFI: kernel loaded from ESP file N bytes". The embedded
+  blob stays as a **fallback** (file absent/unreadable → "using embedded blob"),
+  so the boot path is never less robust than before.
+- `Makefile` stages `kernel.bin` to `build/esp/EFI/swift-os/kernel.bin`;
+  `scripts/make-disk.sh` copies it into the real GPT ESP (`::/EFI/swift-os/`).
+
+**Gotcha caught.** First run fell back to the blob: `GetInfo` needs the full
+`EFI_FILE_INFO` (80-byte prefix + the CHAR16 file name), so an 88-byte buffer
+returned `EFI_BUFFER_TOO_SMALL` — bumped to 512.
+
+**Acceptance.** `tests/uefi_boot_test.sh` (in `make test`, disk + SMP-4 variants)
+now also asserts "UEFI: kernel loaded from ESP file"; the kernel boots all the way
+to busybox from the ESP-loaded image (single-core and `-smp 4`). The embedded-blob
+fallback keeps the path safe if the file is ever missing.
+
+**Still future (U1g-2/3).** A kernel A/B manifest on the ESP + a second kernel
+image + slot selection; then Ed25519 verification of the selected kernel against
+the compiled-in trust root.

@@ -110,6 +110,7 @@ QP=""
 ok=1
 check() { grep -qF "$1" "$LOG" || { echo "FAIL: missing '$1'" >&2; ok=0; }; }
 check "swift-os UEFI loader (M10)"            # loader ran under firmware
+check "UEFI: kernel loaded from ESP file"     # U1g: kernel read from \EFI\swift-os\kernel.bin, not the embedded blob
 check "UEFI: kernel staged, launching"        # ExitBootServices handoff
 check "Hello from Swift kernel"               # kernel entered via UEFI
 check "M9 OK: hardware discovered from device tree"  # DTB the loader passed
