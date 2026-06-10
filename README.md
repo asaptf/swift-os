@@ -157,6 +157,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Observability Guide](docs/OBSERVABILITY_GUIDE.md): read boot health,
   structured log markers, process snapshots, service metrics, and panic
   evidence.
+- [Logging Reference](docs/LOGGING.md): understand kernel log lines, ring
+  buffers, export samples, filtering, and log authority.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
   network, package overlay, LLM, and QEMU test failure diagnosis.
 - [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,

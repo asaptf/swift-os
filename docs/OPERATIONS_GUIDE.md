@@ -491,7 +491,7 @@ Useful markers:
 The kernel has a structured in-memory log ring and sink indirection groundwork;
 userland log export remains gated by future capability work. See
 [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md) for practical signal reading
-and [LOGGING.md](LOGGING.md) for the design record.
+and [LOGGING.md](LOGGING.md) for the logging reference.
 
 ## Verification Matrix
 

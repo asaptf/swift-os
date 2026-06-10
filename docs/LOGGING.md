@@ -1,238 +1,337 @@
-// SPDX-License-Identifier: Apache-2.0
-# Logging and Observability (LOGGING.md)
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-This document records the state, goals, design, and incremental plan for kernel and system logging/observability in swift-os.
+# SwiftOS Logging Reference
 
-See also:
-- `OBSERVABILITY_GUIDE.md` (operator-facing guide to current logs, metrics,
-  health markers, and evidence collection).
-- `PHILOSOPHY.md` §Observability (the vision statement).
-- `ARCHITECTURE.md` (Solaris-style tracepoints, counters, per-cell accounting; future driver services and cells).
-- `docs/RISK_REMEDIATION_ROADMAP.md` (observability listed among the post-M13 gaps).
-- `docs/NOTES.md` (milestone log; hardware; decisions — new logging work is recorded here too).
+This reference describes the current SwiftOS kernel logging surface, what an
+operator or developer can rely on today, and how the logging path is expected to
+grow. It is the detailed companion to the operator-focused
+[Observability Guide](OBSERVABILITY_GUIDE.md).
 
-## Current State (L0-L4 Context Landed)
+SwiftOS logging is still serial-first. The current system provides human-readable
+UART log lines, a fixed in-memory kernel ring, a panic tail dump, runtime
+filtering, compact structured payloads, and a boot-time serialization sample for
+future export. It does not yet provide a persistent guest log store, `/dev/klog`,
+remote log shipping, or a production log daemon.
 
-The current tree has the first logging foundation:
+Use this guide with:
 
-- `kernel/log/log.swift` defines `LogLevel`, `klog(level, source, message, detail)`, `klogInfo`, `logDumpRecent`, and `kpanic`.
-- `klog` emits `[tick] [L] source: message` through the UART path, so the framebuffer mirror still works through `uartPutc`.
-- A fixed 256-entry in-memory ring stores accepted `StaticString` records plus an optional `UInt64` detail payload and compact process/security context (`pid`, `principal`) captured at emit time.
-- `logDumpRecent` renders nonzero structured payloads as `detail=...` and non-kernel context as `pid=... principal=...`; live UART lines stay text-only for now.
-- `logFormatRecentTail` serializes recent records into caller-provided buffers as stable key=value lines for future export paths.
-- `kpanic` records a panic entry and dumps the recent ring tail before halting.
-- Global runtime filtering is present via `klogSetMinLevel` / `klogGetMinLevel`; default `.info` suppresses `.debug`, while `.panic` is never filtered.
-- Per-source runtime filtering is present via `klogSetSourceMinLevel` / `klogClearSourceMinLevels`; an exact source override wins over the global minimum, while `.panic` is still never filtered.
-- Live `klog` records now render through a tiny current-sink dispatch; the default sink is UART, and capability hook helpers reserve `capLogExport` for future ring export / sink install paths.
-- Early adoption has moved or mirrored a small set of core boot events onto `klog`: platform discovery (mirrored after timer init), scheduler online/context-switch markers, disk/base mount success, reclaim success, the Swift `ps` launch marker, and a process syscall event stored ring-only.
-- `tests/boot_test.sh` asserts the L0 line, the L2/L4 filtering announcements, the sink/capability-hook markers, representative structured details, a userland context suffix, the ring dump header, and a small LOG-EXPORT serialization sample; it also forbids the intentionally filtered per-source demo line.
+- [Observability Guide](OBSERVABILITY_GUIDE.md) for day-to-day evidence
+  collection.
+- [Operations Guide](OPERATIONS_GUIDE.md) for boot profiles and serial capture.
+- [Support Guide](SUPPORT_GUIDE.md) for support bundles and report templates.
+- [Security Guide](SECURITY_GUIDE.md) for `capLogExport` and authority limits.
+- [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for metrics and
+  performance-reporting boundaries.
+- [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) for future
+  observability hardening.
 
-Most legacy milestone/probe output is still emitted by direct UART calls:
+## Current Contract
 
-- `kernel/main.swift` still owns most "M3: ...", "Mxx OK:", probe dumps, and demo banners.
-- Driver, exception, VFS, and TTY paths still have many direct `uartPuts` call sites.
-- The TTY layer (`kernel/tty/tty.swift`) remains userland console only; kernel logging does not flow through TTY.
+| Area | Current behavior | Evidence |
+| --- | --- | --- |
+| Live log sink | UART serial output through the current sink dispatch | `./tests/boot_test.sh` |
+| Log format | `[tick] [level] source: message` plus optional detail in dumps | `./tests/boot_test.sh` |
+| Ring buffer | Fixed 256-entry in-memory ring of accepted records | `kernel/log/log.swift` |
+| Panic handling | `kpanic` records a panic entry and dumps a recent ring tail | panic path and boot assertions |
+| Filtering | Global minimum level plus exact-source overrides | `./tests/boot_test.sh` |
+| Structured detail | Optional `UInt64` detail payload | `detail=...` boot markers |
+| Context | Ring records can carry `pid` and `principal` | `pid=... principal=...` dump/export lines |
+| Export sample | Allocation-free key=value serializer for ring tail | `LOG-EXPORT-BEGIN` block |
+| Capability hook | `capLogExport` is reserved for future export/sink authority | security docs and boot marker |
 
-Further L4+ candidate slices exist in external worktrees, but they are not authoritative until individually reviewed, rebased onto current `main`, verified, and committed.
+The live UART path remains the primary user-visible logging path. The ring and
+serializer are current internal foundations, not stable external APIs.
 
-## Goals
+## Capture Logs
 
-1. **Event recording from the very beginning of life.** The kernel and early userland must emit structured events so that "the OS only starting its life" does not mean "we have no idea what happened on a failed boot or a mysterious crash."
-2. **Human + machine readable.** Serial console (and graphical mirror) must stay useful for developers. At the same time records must be easy to parse for tools and a future collector.
-3. **Foundation for central log analysis (the AI use case).** A (not-yet-existing) central server will receive logs from many swift-os instances (dev, test, production AI appliances). An AI pipeline will:
-   - cluster failures across boots/builds/cells;
-   - correlate "symptom X within 300 ms of event Y" with source locations or model inputs;
-   - suggest or automatically trigger rollbacks / targeted diagnostics.
-   Therefore the format and the set of emitted events must be designed with remote ingestion and correlation in mind (principal/session/cell ids, monotonic time, request-ish correlation tokens, error codes, latency hints, etc.).
-4. **Lightweight and predictable.** Value types, `StaticString` where possible, no heap traffic on the logging hot path, safe under IRQ-masked scheduler paths, tiny code size.
-5. **Evolvable toward cells + restartable services.** Logging must not assume a single global context forever. Later records will carry (or be namespaced by) cell, principal, driver instance, etc.
-6. **Testable.** Every increment has an executable check (boot assertion, host unit, or stress in `make test`).
+For a direct QEMU boot:
 
-Non-goals (early phases):
-- Full dynamic tracing (DTrace-style) or arbitrary probe points.
-- Backtraces attached to every log line.
-- Persistent on-disk logs (tmpfs is the scratch tier; data loss on reboot is by design).
-- High-cardinality metrics (counters and histograms come later, alongside accounting).
+```sh
+mkdir -p support
+make build base-image build/virt.dtb
 
-## Design Principles
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=build/virt.dtb,addr=0x4FF00000,force-raw=on \
+  -drive file=build/base.img,format=raw,if=none,id=swosbase,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -kernel build/kernel.elf >support/serial.log 2>&1
+```
 
-- **One sink at a time, swappable in the future.** L0–L2 are UART + optional in-memory ring. Later a capability-gated log service (userland) can become the primary sink; the UART becomes a debug console only.
-- **Structured records first, pretty text second.** The internal representation (or the wire format we eventually emit) must be machine-readable. Human formatting is a renderer on top.
-- **Cheap timestamping.** Monotonic tick (`systemTicks`) is always available after M2. Wall time (`rtcNow()`) is best-effort (0 on boards without PL031). Records carry both when possible.
-- **Source discipline.** Every log line carries a small, stable source tag (`StaticString` or a tiny enum). "vfs", "pmm", "sched", "virtio_blk", "user:42", etc. This is the primary key for filtering and for the AI correlator.
-- **Level model** (minimal):
-  - `debug` — verbose; usually compiled out or filtered at runtime in production images.
-  - `info` — normal progress, boot milestones, service ready.
-  - `warn` — recoverable anomaly, degraded path taken.
-  - `error` — operation failed but system continues.
-  - `panic` — fatal; will be followed by a register dump + ring tail and halt.
-- **No allocation on the emit path.** Early boot (pre-heap, pre-PMM) and IRQ contexts must be able to log. Use `StaticString`, fixed buffers, or caller-provided scratch.
-- **Panic paths are special.** A panic log path must not itself panic or allocate. It may bypass the normal logger and go straight to UART.
-- **Future export shape (for the central server).** Records (or batches) should be serializable to a simple line-oriented format:
-  - JSONL (human-inspectable, easy for Python/Go collectors), or
-  - a tiny binary envelope (length-prefixed, little-endian, fixed header + UTF-8 msg) for lower bandwidth.
-  Required fields (minimum for AI usefulness):
-  - `ts_mono` (ticks or ns)
-  - `ts_wall` (Unix seconds or 0)
-  - `level`
-  - `source`
-  - `msg`
-  - optional context: `pid`, `principal`, `session`, `cell`, `cpu`, `corr_id`, numeric details.
-- **Integration with the capability / cell model.** A future `capLog` or `capLogExport` will control who can read the kernel ring or attach a log sink. Per-cell logs are a natural extension once cells exist.
+For the standard boot log gate:
 
-## Phased Implementation Plan (L-series)
+```sh
+./tests/boot_test.sh >support/boot-test.txt 2>&1
+```
 
-All L work follows the project rule: **one (sub)milestone at a time**. After each:
-- code builds (`make build`)
-- boots in QEMU (both classic and any `-smp` paths that exist at the time)
-- meets a crisp acceptance criterion
-- has an executable test (new or extended `boot_test`, a dedicated `tests/log_*_test.sh`, or host unit)
-- is committed
-- then **stop, report, wait for review** before the next L piece.
+There is no persistent guest log store. Capture serial output on the host when
+the evidence matters.
 
-### L0 — Kernel log facade (DONE, 2026-06-08)
+## Live Log Lines
 
-**Scope (keep tiny):**
-- New module `kernel/log/log.swift` (pure Swift, no C bridge yet).
-- `enum LogLevel: UInt8`
-- `func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString)`
-- Output format (example):
-  ```
-  [0000000042] [I] sched: scheduler online
-  [0000000123] [W] pmm: free frames low (512)
-  ```
-  Early boot (ticks==0) may emit `[0000000000]` or omit the tick field; the exact spelling is part of the acceptance.
-- Safe before timer, before heap, with IRQs masked.
-- Still uses the UART driver underneath (so the fb mirror continues to work for free).
-- **Do not rewrite existing boot banners in L0.** The hundreds of `uartPuts("M3 OK: ...")` strings stay exactly as they are so that `boot_test.sh` and all other tests are untouched. Add *new* log lines that exercise the facade (e.g. "L0 kernel logger active", a couple of info lines from platform or vfs, one warn in a probe if natural).
-- One or two tiny helper shims if needed for numbers during the transition (`klogUInt` etc.) — or document the interleaving pattern.
-- Acceptance:
-  - `make build` succeeds.
-  - `make run` (or the test QEMU invocation) shows at least one new `[..] [I] log: L0 ...` style line on the serial output.
-  - The full existing `make test` suite (all 13+ suites) still passes with no EXPECT changes required.
-  - A new line is added to the default EXPECTS in `tests/boot_test.sh` (or a tiny dedicated `log_test.sh`) that greps for the L0 demo line.
-- Decision record: add a short "L0 — kernel log facade" entry in `docs/NOTES.md`.
+Live kernel log lines use a compact shape:
 
-**What L0 deliberately does NOT do:**
-- Change any panic path.
-- Introduce a ring buffer.
-- Alter the format of any existing milestone message.
-- Add runtime level filtering.
-- Touch userland (except that userland continues to see the same UART behavior).
+```text
+[23] [I] sched: M4.5 sched: scheduler online
+```
 
-### L1 — Ring buffer + panic tail dump (DONE, 2026-06-08)
+Fields:
 
-- Fixed-size ring (power-of-two, 256–1024 entries) of lightweight records or pre-formatted text.
-- Overwrite policy (oldest first).
-- On panic (and on explicit request) dump the most recent N lines to the UART **after** the panic banner but before the final halt. This gives a developer (and the future AI collector) the last events that led to the failure.
-- Minimal read path: a privileged debug call or a special read-only vnode (`/dev/klog` or similar) that a future log daemon can open.
-- Test: generate a burst of events, force a recoverable "error" path, capture the log, assert the ring tail is present and in order.
-- Still no change to the legacy banner strings.
+| Field | Meaning |
+| --- | --- |
+| `[23]` | Monotonic kernel tick |
+| `[I]` | Level: `D`, `I`, `W`, `E`, or `P` |
+| `sched` | Stable source tag |
+| message | Static event text |
 
-### L2 — Global filtering (DONE, 2026-06-08); categories and boot policy deferred
+The live UART renderer intentionally keeps context compact. The ring dump and
+export formatter can include extra fields such as `detail=`, `pid=`, and
+`principal=` when available.
 
-- Done in this slice: a global minimum level (`.info` by default), `klogSetMinLevel`, and a boot assertion that `.debug` is suppressed.
-- Deferred follow-ups:
-- Richer filtering policy beyond the L4b exact-source override table.
-- `klogSetLevel(.warn)` etc. (or a single "consoleLogLevel" for the UART sink).
-- Compile-time `DEBUG` vs release stripping of `.debug` (or a simple `#if`).
-- Source taxonomy documented (vfs, mm, sched, timer, net, security, user, ...).
+## Levels
 
-### L3 — Structured payload foundation (DONE, 2026-06-08); serialization deferred
+| Level | Letter | Meaning |
+| --- | --- | --- |
+| `debug` | `D` | Verbose diagnostic detail; filtered by default |
+| `info` | `I` | Normal progress, boot milestones, service readiness |
+| `warn` | `W` | Recoverable anomaly or degraded path |
+| `error` | `E` | Operation failed but the system continues |
+| `panic` | `P` | Fatal path; never filtered |
 
-- Done in this slice: `LogEntry` now carries `detail: UInt64` (`0` means none), `klog` accepts an optional trailing detail argument without breaking existing three-argument call sites, and ring dumps append `detail=...` for nonzero payloads.
-- Added real post-heap example call sites for timer frequency, PMM free-frame counts, scheduler capacity, and several core boot/adoption markers.
-- Deferred follow-ups:
-- A pure function that can render a record to a caller buffer as JSONL line (host-testable).
-- Prepare the schema expected by the future central collector in this file or a dedicated `docs/log-format.md`.
-- No wire protocol yet.
+The default global minimum is `info`. Panic records bypass filtering.
 
-### L4a — Ring context enrichment (DONE, 2026-06-08)
+## Source Tags
 
-- `LogEntry` now carries the current `pid` and `principal` alongside `tick`, `level`, `source`, `message`, and `detail`.
-- `klog` captures context through `processCurrentPid()` / `processCurrentPrincipal()` after filtering, so dropped records do no extra work and early/no-process paths use the kernel defaults (`pid=0`, `principal=1`).
-- `logDumpRecent` prints context only when it is useful (`pid != 0` or `principal != 1`), keeping kernel-only boot lines compact.
-- The live UART format is unchanged: `[tick] [L] source: message`.
-- `klogRing` records accepted events without rendering a live UART line; `psinfo` uses it to populate the ring from real EL0 process context without perturbing foreground console stdout/prompt behavior.
-- Boot acceptance checks both the old structured detail fields and the new context suffix.
+Every log record carries a small source tag. Current source tags include tags
+such as:
 
-### L4b — Per-Source Filtering (DONE, 2026-06-08)
+```text
+log
+log_filter
+log_export
+platform
+sched
+timer
+pmm
+boot
+disk
+vfs
+```
 
-- A tiny fixed table holds exact source-tag minimum-level overrides.
-- `klogSetSourceMinLevel(source, level)` sets or replaces an override; `klogClearSourceMinLevels()` removes all source overrides.
-- Filtering now uses per-source override first, then the global `minLogLevel`; `.panic` bypasses both.
-- The same filtering path applies to live `klog` and ring-only `klogRing`, so suppressed records are absent from both UART and the ring.
-- Boot acceptance proves a `.info` record from `log_filter` is suppressed while a `.error` record from the same source passes.
+Use stable, low-cardinality tags. They are the primary keys for filtering and
+for future remote correlation. Avoid embedding path names, addresses, package
+names, prompts, user input, or other high-cardinality data in the source tag.
+Put variable data in a numeric `detail` field or in a future structured field.
 
-### L4c — Wire-Format Serialization (DONE, 2026-06-08)
+## Filtering
 
-- `logFormatRecentTail(maxCount, into:capacity:)` serializes recent ring entries into a caller-supplied byte buffer without allocation or UART side effects.
-- Each record is one key=value line: `tick=N level=I source=tag msg="text"` with optional `detail=N` and `pid=N principal=N`.
-- Message strings are quoted with minimal escaping for `"` and `\`.
-- A boot-time `log_export` ring-only marker plus `LOG-EXPORT-BEGIN` / `LOG-EXPORT-END` serial output prove the path is consumable and captures context-rich entries.
-- This is still an internal formatter, not a user-visible `/dev/klog` or remote protocol.
+The logger supports:
 
-### L4d — Kernel Log Sink Indirection + Capability Hook (DONE, 2026-06-09)
+- a global minimum level through `klogSetMinLevel` and `klogGetMinLevel`;
+- exact-source overrides through `klogSetSourceMinLevel` and
+  `klogClearSourceMinLevels`;
+- shared filtering for live `klog` and ring-only `klogRing`.
 
-- Live `klog` output now routes through a tiny current-sink dispatch rather than hard-coding the UART renderer inside `klog`.
-- The default and only current sink is UART; no protocol existential, class, heap allocation, userland service, or IPC path is introduced in this slice.
-- `capLogExport` is reserved as a future authority bit, but is not granted to the boot/root context by default.
-- `klogCanInstallSink(capabilities:)` and `klogCanExportRing(capabilities:)` are the hook points a future syscall/service path will use before installing a userland sink or exporting the ring.
-- Boot acceptance proves the default sink path and the capability hook shape without changing the live UART line format.
+The boot smoke path proves both global and per-source filtering:
 
-### L5+ (after C-arc + basic net service model) — Remote export path
+```text
+level filtering active (min INFO)
+source filtering active
+source override allows error
+```
 
-- A supervised userland `logd` (or integrated into an existing small daemon) that holds an explicit `capLogExport` handle.
-- It drains the kernel ring (or receives pushed records via IPC), batches them, optionally adds local context, and ships over a TLS connection (or the future capability-gated net service) to the central collector.
-- The collector side (out of scope for the OS) stores logs keyed by (build hash, boot id, principal/cell, time window) and feeds an analysis LLM / classifier.
-- Kernel and critical services emit "liveness markers" at a steady low rate so that "missing expected healthy event" is itself a detectable signal.
-- Panic logs are tagged with a "crash" envelope and uploaded with priority.
+The same test forbids an intentionally filtered source line, so the gate proves
+that suppressed records do not leak to serial output.
 
-Longer term (recorded, not scheduled):
-- Per-cell log namespaces.
-- Correlation IDs propagated from user requests through the stack (especially useful for AI model serving cells).
-- Integration with the future A/B health checks (a "bad" generation can be detected from its own log patterns before a human looks).
-- Tracepoints (cheap, disabled by default) that can emit the same record shape.
+## Ring Buffer
 
-## Usage Examples (kernel Swift)
+`kernel/log/log.swift` stores accepted records in a fixed 256-entry ring. The
+ring overwrites the oldest entries first. Records currently carry:
+
+- monotonic tick;
+- level;
+- source tag;
+- static message;
+- optional `UInt64` detail;
+- current process id when available;
+- current principal when available.
+
+`logDumpRecent(n)` renders recent entries to UART. During boot, the smoke path
+prints a compact ring-tail marker:
+
+```text
+log: recent
+detail=100
+detail=4
+```
+
+Kernel-only entries omit default context. Entries recorded from EL0 context can
+include:
+
+```text
+pid=1 principal=1
+```
+
+## Export Serialization Sample
+
+SwiftOS has an internal serializer for recent ring entries:
+
+```text
+logFormatRecentTail(maxCount, into:capacity:)
+```
+
+It writes newline-separated key=value records into a caller-provided buffer
+without allocation and without UART side effects. The boot smoke path prints a
+small sample:
+
+```text
+LOG-EXPORT bytes=...
+LOG-EXPORT-BEGIN
+tick=23 level=I source=log_export msg="tail serialization ready"
+LOG-EXPORT-END
+```
+
+Optional fields appear only when present:
+
+```text
+tick=23 level=I source=psinfo msg="process snapshot" detail=4 pid=1 principal=1
+```
+
+This is not a supported external wire protocol yet. Treat it as evidence that
+the ring can already produce a stable machine-readable shape for a future
+log-export service.
+
+## Capability Boundary
+
+`capLogExport` is reserved as the future authority for exporting the kernel log
+ring or installing a non-UART log sink. It is not granted to the default demo
+authority today.
+
+Current hook helpers:
+
+```text
+klogCanExportRing(capabilities:)
+klogCanInstallSink(capabilities:)
+```
+
+Current boot evidence:
+
+```text
+sink indirection active
+sink capability hook active
+```
+
+There is no target command today that reads the ring through this capability.
+When that changes, update this reference, the security docs, and the relevant
+acceptance tests in the same milestone.
+
+## Panic Behavior
+
+`kpanic` records the panic event, prints the fatal line, and dumps recent ring
+context before halting. Panic logging must remain allocation-free and defensive.
+
+For support handoff, include:
+
+- the first `panic` line;
+- nearby register lines such as `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, or
+  `SCTLR_EL1`;
+- the preceding boot or service markers;
+- the `log: recent` ring tail if present;
+- the exact commit and QEMU command.
+
+See [Observability Guide](OBSERVABILITY_GUIDE.md#panic-triage) for a complete
+panic triage recipe.
+
+## Kernel API
+
+Current kernel-side helpers include:
 
 ```swift
-import ... // whatever module boundary we choose
-
 klog(.info, "log", "L0 kernel logger active")
-
-klog(.info, "platform", "M9 OK: hardware discovered from device tree") // once we migrate
-
-klog(.warn, "pmm", "free frames below threshold")
-
-if rc != 0 {
-    klog(.error, "virtio_blk", "sector read failed")
-}
+klog(.info, "timer", "tick rate (Hz)", 100)
+klogRing(.info, "psinfo", "process snapshot", detail)
+klogSetMinLevel(.warn)
+klogSetSourceMinLevel("vfs", .debug)
+klogClearSourceMinLevels()
+logDumpRecent(5)
 ```
 
-During L0–L2, for values that do not fit a single StaticString, the transitional pattern is acceptable:
+Use `StaticString` source tags and messages where possible. The emit path must
+avoid heap allocation and remain safe in early boot and panic-adjacent paths.
 
-```swift
-klog(.info, "pmm", "free frames ")
-uartPutUInt(UInt64(pmmFreeCount()))
-uartPuts("\n")
+## Current Acceptance Markers
+
+`./tests/boot_test.sh` asserts the current logging foundation through these
+markers:
+
+```text
+L0 kernel logger active
+level filtering active (min INFO)
+source filtering active
+source override allows error
+sink indirection active
+sink capability hook active
+log: recent
+detail=100
+detail=4
+LOG-EXPORT bytes=
+LOG-EXPORT-BEGIN
+source=log_export msg="tail serialization ready"
+LOG-EXPORT-END
 ```
 
-Later the logger will absorb the formatting.
+Run:
 
-Panic paths may continue to use raw `uartPuts` (or a `kpanic` wrapper that is guaranteed not to re-enter the logger) until L1+.
+```sh
+make build
+./tests/boot_test.sh
+```
 
-## Open Decisions (record here when made)
+For broad release confidence, run:
 
-- Exact tick formatting width and zero-padding (acceptance of L0 will lock a spelling).
-- Whether the first ring implementation stores `StaticString` pointers (requires the strings to have program lifetime, which they do) or copies a truncated UTF-8 prefix into the ring entries.
-- Name of the user-visible debug device (`/dev/klog`, a sysctl-like, or a handle-only API with no path).
-- Default level for production vs. debug builds.
+```sh
+make test
+```
 
-## Migration Notes
+## Current Limits
 
-Existing `uartPuts("M...")` and panic dumps are left in place for L0. A later dedicated cleanup sub-milestone (after L1 or L2 is stable) can systematically replace the informational banners with `klog(.info, "boot", "...")` calls and update the corresponding EXPECT strings in the test scripts. Panics should stay extremely defensive.
+- No persistent guest log store.
+- No supported `/dev/klog`, sysctl, or target command for ring export.
+- No remote log daemon or collector protocol.
+- No production central log ingestion service.
+- No per-cell log namespace yet.
+- No high-cardinality metrics or histograms in the logger.
+- Most historical milestone banners still use direct UART output.
+- Service metrics remain service-specific.
+- `capLogExport` is reserved but not a seeded operational capability.
 
-This document is the living spec. Update it when a sub-milestone lands or a design decision is locked.
+These limits are current behavior, not design gaps to paper over. Consumer docs
+should describe them directly.
 
-(End of LOGGING.md)
+## Roadmap
+
+The implemented logging arc is:
+
+| Milestone | State | Result |
+| --- | --- | --- |
+| L0 | Done | Kernel log facade and live UART line shape |
+| L1 | Done | Fixed ring buffer and panic tail dump |
+| L2 | Done | Global minimum-level filtering |
+| L3 | Done | Structured numeric detail payload |
+| L4a | Done | Ring context enrichment with pid and principal |
+| L4b | Done | Exact-source filtering |
+| L4c | Done | Allocation-free key=value ring serializer |
+| L4d | Done | Log sink indirection and `capLogExport` hook |
+
+Future work:
+
+- user-visible ring export through an explicit authority path;
+- supervised userland `logd` or equivalent collector;
+- remote batch export over a verified transport;
+- per-cell log namespaces;
+- correlation ids for request and service flows;
+- integration with future health checks and rollback decisions;
+- richer metrics and tracepoints that share the same source discipline.
+
+Logging work follows the repository milestone rule: build, boot, test, commit,
+then review before the next slice.

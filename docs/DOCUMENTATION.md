@@ -29,6 +29,7 @@ format details.
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
 | Measure resource usage, throughput guards, service metrics, and sizing limits | [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) |
 | Read boot health, service metrics, process snapshots, and log evidence | [Observability Guide](OBSERVABILITY_GUIDE.md) |
+| Understand kernel log lines, ring buffers, export samples, and log authority | [Logging Reference](LOGGING.md) |
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
 | Answer common product, install, compatibility, package, networking, AI, and support questions | [FAQ](FAQ.md) |
@@ -69,19 +70,18 @@ The API reference mirrors those sources so application authors can work from one
 document, but the headers remain the build-time contract.
 
 Installation and boot profile procedures live in
-[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), administrative procedures live
 [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), deployment candidate runbooks
 live in [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), administrative procedures
 live in [ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md), operational
 procedures live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), update and
 rollback runbooks live in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking
 runbooks live in [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle
-rules live in [SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability
-procedures live in [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them
-aligned with the acceptance tests under `tests/`; a command in the installation,
-deployment, operations, networking, service, or observability guide should
-either be a normal manual workflow or have a nearby test that proves the same
-path.
+rules live in [SERVICE_GUIDE.md](SERVICE_GUIDE.md), observability procedures
+live in [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md), and the logging
+reference lives in [LOGGING.md](LOGGING.md). Keep them aligned with the
+acceptance tests under `tests/`; a command in the installation, deployment,
+operations, networking, service, observability, or logging guide should either
+be a normal manual workflow or have a nearby test that proves the same path.
 
 ## Product State
 

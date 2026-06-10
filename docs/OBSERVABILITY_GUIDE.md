@@ -12,7 +12,8 @@ Use it with:
 - [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for resource,
   throughput, sizing, and performance-reporting guidance.
 - [Support Guide](SUPPORT_GUIDE.md) for report templates and handoff bundles.
-- [Logging Design](LOGGING.md) for the kernel logging architecture and roadmap.
+- [Logging Reference](LOGGING.md) for kernel log lines, ring buffers, export
+  samples, filtering, and log authority.
 
 ## Current Signal Model
 

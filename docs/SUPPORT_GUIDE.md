@@ -399,4 +399,4 @@ Before handing the issue to another person, confirm:
   QEMU profiles, and test knobs.
 - [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md): supported and unsupported
   compatibility paths.
-- [LOGGING.md](LOGGING.md): logging and observability design state.
+- [LOGGING.md](LOGGING.md): logging reference, current limits, and roadmap.
