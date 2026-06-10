@@ -24,6 +24,49 @@ building code:
 The headers are the build contract. This reference should change in the same
 commit whenever a public header or syscall dispatcher contract changes.
 
+## Choosing An API Layer
+
+SwiftOS exposes several layers over the same EL0 ABI. Choose the highest layer
+that fits the program you are writing:
+
+| Layer | Use it for | Include or entry point | Error convention |
+| --- | --- | --- | --- |
+| Native Swift bridge | First-party Embedded Swift tools and new SwiftOS applications | `-import-objc-header userland/lib/swift_user.h` | Most helpers return negative errno-like values; address-returning helpers return 0 on failure |
+| Raw C syscall wrappers | ABI probes, very small utilities, and tests that need exact kernel behavior | `#include "lib/syscall.h"` | Negative errno-like values are returned directly |
+| C filesystem/terminal headers | Small C programs that want SwiftOS layouts without newlib | `lib/fs.h`, `lib/termios.h` | Negative errno-like values are returned directly |
+| newlib compatibility | Larger C ports and POSIX-shaped source builds | `crt0_newlib.o`, `newlib_syscalls.o`, `userland/compat/*`, newlib | Most failures become `-1` plus `errno` |
+| User commands | Normal administration and package workflows | `/bin/pkg`, `/bin/top`, `/bin/ps`, shell tools | Human-readable command output and exit status |
+
+Prefer the native Swift bridge for new SwiftOS programs. Prefer newlib only
+when porting existing C code that expects POSIX-shaped declarations. Avoid
+calling raw syscalls from application code unless you need an ABI test or a
+feature that has no bridge helper yet.
+
+## Building Against The API
+
+Use the Makefile as the source of truth for toolchain flags. The Embedded Swift
+flags, target triple, linker script, and support objects are toolchain-version
+specific and should not be copied from memory.
+
+Native Swift programs use this shape:
+
+1. Compile the Swift source with `$(USER_SWIFT_FLAGS)` and
+   `-import-objc-header userland/lib/swift_user.h`.
+2. Link with `$(BUILD)/user_crt0.o`, `$(BUILD)/user_swift_user.o`, the program
+   object, and `userland/user.ld`.
+3. Add the resulting ELF to the base image or package it into a `.swpkg`.
+
+C/newlib ports use this shape:
+
+1. Compile with `$(USER_CFLAGS)` and the project compatibility include paths.
+2. Link with `crt0_newlib.o`, `newlib_syscalls.o`, compatibility objects,
+   newlib, libm, and libgcc.
+3. Keep the binary static; SwiftOS does not have a dynamic loader.
+
+For copy-paste build recipes, see
+[APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md). For package payloads, see
+[PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
+
 ## ABI Summary
 
 SwiftOS exposes its own POSIX-like syscall ABI. It is not the Linux syscall ABI.
@@ -71,6 +114,22 @@ helpers return negative errors for most integer-returning calls, but some
 address-returning helpers use a sentinel such as 0. newlib and compatibility
 wrappers convert many failures to `-1` plus `errno`. Do not mix those error
 conventions without checking the wrapper you are calling.
+
+### Error Handling By Layer
+
+Use the wrapper's convention rather than guessing from the syscall table:
+
+| Call style | Success | Failure |
+| --- | --- | --- |
+| Raw integer syscall wrapper | Nonnegative syscall-specific value | Negative errno-like value |
+| Raw value-returning syscall (`time`, `resolve`, `sbrk`, `mmap`, `mmap_file`) | Returned directly in `x0` | Wrapper-specific sentinel or encoded negative value |
+| Native Swift bridge integer helper | Nonnegative result or 0 | Negative errno-like value |
+| Native Swift bridge address helper | Nonzero virtual address | 0 |
+| newlib compatibility call | POSIX-shaped result | Usually `-1` plus `errno` |
+
+When writing examples or tests, print the raw negative value near the failing
+operation. It makes QEMU serial logs much easier to diagnose and matches the
+style used by the shipped demo programs.
 
 ## Syscall Table
 
@@ -912,6 +971,28 @@ emulation. Important files:
 
 Expect some POSIX calls to be no-ops or `ENOSYS` stubs until a port needs real
 behavior and tests are added.
+
+## API Verification Map
+
+When changing a public API, run the narrow test for that surface and at least
+one booting acceptance path:
+
+| API area | Primary files | Focused verification |
+| --- | --- | --- |
+| Syscall numbers and dispatch | `userland/lib/syscall.h`, `kernel/syscall/syscall.swift` | `make test`, plus a header/reference table sync check |
+| Handle rights and explicit inheritance | `kernel/vfs/handle.swift`, `userland/lib/syscall.h` | `tests/handle_test.swift`, `./tests/boot_test.sh` |
+| Filesystem and native Swift file tools | `kernel/vfs/vfs.swift`, `userland/lib/fs.h`, `userland/lib/swift_user.h` | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/boot_test.sh` |
+| Terminal and signals | `userland/lib/termios.h`, `kernel/tty/tty.swift`, `kernel/signal/signal.swift` | `./tests/boot_test.sh`, focused interactive smoke where needed |
+| IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
+| Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
+| mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
+| Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
+| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test` |
+| Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
+
+Documentation must move with the code. If a syscall number, structure layout,
+constant, or bridge helper changes, update this reference, the relevant guide,
+and the acceptance test in the same milestone.
 
 ## Error Codes
 
