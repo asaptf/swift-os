@@ -846,7 +846,7 @@ Acceptance:
 - QEMU test installs a local package, runs it, removes it, proves it is gone,
   then rolls back to the previous active generation.
 
-### P5: Repository Catalogs and Network Fetch (P5a DONE)
+### P5: Repository Catalogs and Network Fetch (P5b DONE)
 
 Implemented in `tools/pkgrepo.swift`, `userland/pkg.swift`,
 `docs/PKGREPO_FORMAT.md`, `tests/pkgrepo_tool_test.swift`, and
@@ -859,20 +859,19 @@ pkg info pkghello
 pkg install pkghello
 ```
 
-The P5a repository is a static HTTP tree with `catalog.signed` plus
+The P5b repository is a static HTTP tree with `catalog.signed` plus
 content-addressed `.swpkg` blobs. `/bin/pkg` verifies the catalog signature with
-`/etc/pkg/repo-root.pub`, verifies the downloaded package SHA-256, then reuses
-the local install path.
+`/etc/pkg/repo-root.pub`, rejects expired and incompatible catalogs, verifies
+the downloaded package SHA-256, then reuses the local install path.
 
 Acceptance:
 
-- QEMU test starts a host HTTP server, guest runs `pkg update &&
-  pkg install pkghello`, then executes `/usr/bin/pkghello`.
+- QEMU test starts a host HTTP server, rejects expired/wrong-arch/bad-hash
+  repository fixtures, guest runs `pkg update && pkg install pkghello`, then
+  executes `/usr/bin/pkghello`.
 
 Remaining repository work:
 
-- enforce catalog expiration;
-- reject wrong arch/ABI packages target-side;
 - add dependency solving and `pkg upgrade`;
 - replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.

@@ -1,6 +1,6 @@
 # SwiftOS Static Package Repository
 
-P5a adds the first network repository format for `pkg`: a signed, static HTTP
+P5b provides the first network repository format for `pkg`: a signed, static HTTP
 layout that can be served by any ordinary web server.
 
 ## Layout
@@ -64,7 +64,7 @@ Each package entry currently carries:
 
 ## Target Commands
 
-The P5a target-side flow is explicit about the repository URL so QEMU tests can
+The P5b target-side flow is explicit about the repository URL so QEMU tests can
 use a random host port:
 
 ```sh
@@ -75,7 +75,9 @@ pkg install pkghello
 ```
 
 `pkg update URL` downloads `catalog.signed`, verifies the Ed25519 signature
-against `/etc/pkg/repo-root.pub`, then caches the catalog and URL in `/tmp`.
+against `/etc/pkg/repo-root.pub`, rejects expired catalogs, rejects package
+entries for the wrong `arch`/`target`/`abi`/`linkage`, then caches the catalog
+and URL in `/tmp`.
 
 `pkg install NAME` loads the verified cached catalog, downloads the
 content-addressed `.swpkg` listed by `url`, verifies SHA-256, then reuses the
@@ -87,6 +89,9 @@ local `pkg install FILE` path.
 make pkgrepo
 build/pkgrepo pubkey --seed-hex <hex32> --output build/pkgrepo-root.pub
 build/pkgrepo create --package build/pkghello.swpkg --output build/pkgrepo-root --seed-hex <hex32>
+build/pkgrepo create --package build/pkghello.swpkg --output /tmp/expired --seed-hex <hex32> --expires 1
+build/pkgrepo create --package build/pkghello.swpkg --output /tmp/wrongarch --seed-hex <hex32> --arch riscv64
+build/pkgrepo create --package build/pkghello.swpkg --output /tmp/badhash --seed-hex <hex32> --sha256-override 0000000000000000000000000000000000000000000000000000000000000000
 build/pkgrepo verify --catalog-signed build/pkgrepo-root/aarch64/current/catalog.signed --pubkey build/pkgrepo-root.pub
 build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
 ```
@@ -94,16 +99,15 @@ build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
 ## Tests
 
 - `tests/pkgrepo_tool_test.swift` verifies creation, inspection, valid signature
-  verification, and tamper rejection.
+  verification, negative fixture generation, and tamper rejection.
 - `tests/pkg_repo_install_test.sh` starts a host HTTP server, boots QEMU with
-  user networking, runs `pkg update/search/info/install pkghello`, then executes
-  `/usr/bin/pkghello`.
+  user networking, proves expired/wrong-arch/bad-hash repos are rejected, runs
+  `pkg update/search/info/install pkghello`, then executes `/usr/bin/pkghello`.
 
 ## Known Limits
 
 - HTTP is used for transport; integrity comes from Ed25519 metadata and SHA-256
   package hashes.
-- Catalog expiration is carried in metadata but not yet enforced by `/bin/pkg`.
 - Dependencies and upgrades are not solved yet.
-- Downloaded packages are cached in tmpfs before install. P5a grows tmpfs files
+- Downloaded packages are cached in tmpfs before install. P5b grows tmpfs files
   as needed, but large server packages still need a streaming store-write path.

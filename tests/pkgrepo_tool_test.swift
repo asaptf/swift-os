@@ -70,6 +70,9 @@ do {
 defer { try? FileManager.default.removeItem(at: temp) }
 
 let repoRoot = temp.appendingPathComponent("repo", isDirectory: true)
+let expiredRepo = temp.appendingPathComponent("repo-expired", isDirectory: true)
+let wrongArchRepo = temp.appendingPathComponent("repo-wrongarch", isDirectory: true)
+let badHashRepo = temp.appendingPathComponent("repo-badhash", isDirectory: true)
 let pubkey = temp.appendingPathComponent("repo-root.pub")
 
 requireSuccess(run(tool, [
@@ -145,4 +148,43 @@ guard badVerify.status != 0, commandOutput(badVerify).contains("signature: INVAL
     fail("tampered catalog unexpectedly verified")
 }
 
-print("PASS: pkgrepo creates deterministic signed catalogs and rejects tampering")
+requireSuccess(run(tool, [
+    "create",
+    "--package", swpkg.path,
+    "--output", expiredRepo.path,
+    "--seed-hex", seed,
+    "--expires", "1",
+]), "create expired repo")
+let expiredCatalog = expiredRepo.appendingPathComponent("aarch64/current/catalog.json")
+let expiredText = String(decoding: try Data(contentsOf: expiredCatalog), as: UTF8.self)
+guard expiredText.contains("\"expires\":1") else {
+    fail("expired repo catalog did not carry the requested expires value")
+}
+
+requireSuccess(run(tool, [
+    "create",
+    "--package", swpkg.path,
+    "--output", wrongArchRepo.path,
+    "--seed-hex", seed,
+    "--arch", "riscv64",
+]), "create wrong-arch repo")
+let wrongArchCatalog = wrongArchRepo.appendingPathComponent("aarch64/current/catalog.json")
+let wrongArchText = String(decoding: try Data(contentsOf: wrongArchCatalog), as: UTF8.self)
+guard wrongArchText.contains("\"arch\":\"riscv64\"") else {
+    fail("wrong-arch repo catalog did not carry the requested arch override")
+}
+
+requireSuccess(run(tool, [
+    "create",
+    "--package", swpkg.path,
+    "--output", badHashRepo.path,
+    "--seed-hex", seed,
+    "--sha256-override", "0000000000000000000000000000000000000000000000000000000000000000",
+]), "create bad-hash repo")
+let badHashCatalog = badHashRepo.appendingPathComponent("aarch64/current/catalog.json")
+let badHashText = String(decoding: try Data(contentsOf: badHashCatalog), as: UTF8.self)
+guard badHashText.contains("\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"") else {
+    fail("bad-hash repo catalog did not carry the requested sha override")
+}
+
+print("PASS: pkgrepo creates signed catalogs, supports negative fixtures, and rejects tampering")

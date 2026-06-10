@@ -12,7 +12,7 @@ ENTRY(_start)
 
 PHYS_BASE = DEFINED(__kernel_phys_base) ? __kernel_phys_base : 0x40080000;
 STACK_SIZE = 0x10000; /* 64 KiB boot stack */
-HEAP_SIZE = 0x40000;  /* 256 KiB early bump heap */
+HEAP_SIZE = 0x80000;  /* 512 KiB early bump heap */
 
 SECTIONS
 {

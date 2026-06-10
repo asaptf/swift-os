@@ -16,6 +16,15 @@ private struct PackageEntry {
     let url: String
 }
 
+private struct CatalogOverrides {
+    let expires: Int
+    let arch: String
+    let target: String
+    let abi: String
+    let linkage: String
+    let sha256: String?
+}
+
 private enum RepoError: Error, CustomStringConvertible {
     case message(String)
 
@@ -155,17 +164,18 @@ private func readPackage(_ path: String) throws -> (PackageEntry, Data) {
     return (entry, data)
 }
 
-private func catalogData(packages: [PackageEntry], generation: Int) throws -> Data {
+private func catalogData(packages: [PackageEntry], generation: Int,
+                         overrides: CatalogOverrides) throws -> Data {
     let packageObjects: [[String: Any]] = packages.sorted { $0.name < $1.name }.map {
         [
             "name": $0.name,
             "version": $0.version,
             "revision": $0.revision,
-            "arch": "aarch64",
-            "target": "swift-os",
-            "abi": "swos-0",
-            "linkage": "static",
-            "sha256": $0.sha256,
+            "arch": overrides.arch,
+            "target": overrides.target,
+            "abi": overrides.abi,
+            "linkage": overrides.linkage,
+            "sha256": overrides.sha256 ?? $0.sha256,
             "size": $0.size,
             "url": $0.url,
             "depends": [],
@@ -176,7 +186,7 @@ private func catalogData(packages: [PackageEntry], generation: Int) throws -> Da
         "repository": "swift-os-current",
         "channel": "current",
         "generation": generation,
-        "expires": 4_102_444_800, // 2100-01-01T00:00:00Z
+        "expires": overrides.expires,
         "root_key_id": "swos-test-root",
         "packages": packageObjects,
     ]
@@ -238,7 +248,7 @@ private func usage() -> String {
     """
     usage:
       pkgrepo pubkey --seed-hex HEX --output <pubkey>
-      pkgrepo create --package <pkg.swpkg> [--package <pkg.swpkg> ...] --output <repo-dir> --seed-hex HEX [--generation N]
+      pkgrepo create --package <pkg.swpkg> [--package <pkg.swpkg> ...] --output <repo-dir> --seed-hex HEX [--generation N] [--expires UNIX] [--arch ARCH] [--target TARGET] [--abi ABI] [--linkage LINKAGE] [--sha256-override HEX]
       pkgrepo verify --catalog-signed <catalog.signed> --pubkey <pubkey>
       pkgrepo inspect <catalog.signed>
     """
@@ -272,6 +282,22 @@ struct PackageRepoTool {
                 let output = URL(fileURLWithPath: try value(after: "--output", in: args), isDirectory: true)
                 let seed = try hexDecode(try value(after: "--seed-hex", in: args))
                 let generation = Int((try? value(after: "--generation", in: args)) ?? "1") ?? 1
+                let expires = Int((try? value(after: "--expires", in: args)) ?? "4102444800") ?? 4_102_444_800
+                let arch = (try? value(after: "--arch", in: args)) ?? "aarch64"
+                let target = (try? value(after: "--target", in: args)) ?? "swift-os"
+                let abi = (try? value(after: "--abi", in: args)) ?? "swos-0"
+                let linkage = (try? value(after: "--linkage", in: args)) ?? "static"
+                let shaOverride = try? value(after: "--sha256-override", in: args)
+                if let shaOverride {
+                    guard shaOverride.utf8.count == 64 else {
+                        throw RepoError.message("--sha256-override must be 64 hex characters")
+                    }
+                    _ = try hexDecode(shaOverride)
+                }
+                let overrides = CatalogOverrides(expires: expires, arch: arch,
+                                                 target: target, abi: abi,
+                                                 linkage: linkage,
+                                                 sha256: shaOverride)
 
                 var packages: [PackageEntry] = []
                 var blobs: [(String, Data)] = []
@@ -289,7 +315,8 @@ struct PackageRepoTool {
                 for (relative, data) in blobs {
                     try data.write(to: channel.appendingPathComponent(relative), options: .atomic)
                 }
-                let catalog = try catalogData(packages: packages, generation: generation)
+                let catalog = try catalogData(packages: packages, generation: generation,
+                                              overrides: overrides)
                 try catalog.write(to: channel.appendingPathComponent("catalog.json"), options: .atomic)
                 try sign(catalog, seed: seed).write(to: channel.appendingPathComponent("catalog.signed"), options: .atomic)
                 print("created \(channel.path)")

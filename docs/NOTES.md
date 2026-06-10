@@ -446,7 +446,7 @@ because `fork` needs parent and child alive at once. Staged:
 - **M1 (2026-06-04) — DONE.** Runtime/memory bring-up:
   - EL1 vector table installed in `boot.S`; unexpected exceptions dump `ESR_EL1`, `ELR_EL1`,
     `FAR_EL1`, `SCTLR_EL1`, and `CPACR_EL1`.
-  - Early 256 KiB linker-reserved bump heap, Swift raw allocation hook (`swift_slowAlloc` /
+  - Early linker-reserved bump heap, Swift raw allocation hook (`swift_slowAlloc` /
     `swift_slowDealloc`), class allocation support (`posix_memalign` / `free`), and stack
     protector stubs.
   - Physical page allocator added as a Swift bitmap allocator with host unit coverage.
@@ -1662,7 +1662,7 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - `kernel/user/user_blob.S` and the `*_elf_*` symbols in `io.h` are **gone**; the kernel no longer carries
   any userland code. The image shrank from ~1.4 MiB to ~208 KiB. The packed base image on disk is the sole
   source of busybox, `/bin/ps`, and every demo (loaded into a 2 MiB physically-contiguous PMM buffer, not
-  the 256 KiB bump heap).
+  the small bump heap).
 - `virtio_blk_init` now brings up each block device, reads sector 0, and **selects the disk whose magic is
   `SWOSBASE`** (falling back to the first block device). This lets a medium carry both a boot disk and the
   base image — needed for UEFI/gfx, where the firmware boots a GPT/ESP disk and the base image rides along
@@ -2412,13 +2412,11 @@ Recorded because `/bin/top`'s `Kernel:` line reports it live. For the QEMU `virt
 time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + the boot log):
 - Static: `.text`+`.rodata`+`.got` ≈ 140 KiB, `.data` ≈ 2.3 KiB, `.bss` ≈ 55 KiB → ELF `dec` ≈ 197 KiB;
   `kernel.bin` (flat, loadable) ≈ 142 KiB.
-- Resident at boot (`_start` 0x4008_0000 → `__image_end`, = 0x81A50 ≈ **519 KiB**): 144 KiB code/data +
-  55 KiB bss + 64 KiB boot stack + 256 KiB early bump heap (of which only ~96 B used at M1, ~50 KiB
-  after full boot).
-- Dynamic: of 256 MiB RAM the PMM reports **65276 free frames** right after init (~254.98 MiB free), so
-  the kernel + the 512 KiB sub-load-base hole + the bitmap consume ~1.02 MiB before any process runs.
-  The accounting/syscalls added by this feature grow the image by ~3 KiB (top's `Kernel:` line then
-  reads ~522 KiB).
+- Resident at boot (`_start` 0x4008_0000 → `__image_end`, roughly **775 KiB** with the current linker
+  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 512 KiB early bump heap.
+- Dynamic: of 256 MiB RAM the kernel, the 512 KiB sub-load-base hole, and the PMM bitmap consume about
+  1.3 MiB before any process runs.
+  The accounting/syscalls added by this feature grow the image by ~3 KiB.
 
 ### net-f — DNS resolver: sans-IO codec + resolve syscall + /bin/nslookup (DONE, 2026-06-07)
 

@@ -347,7 +347,11 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
                 if header.count > httpHeaderMax { ok = false; break }
                 let split = findBytes(header, [0x0D, 0x0A, 0x0D, 0x0A])
                 if split >= 0 {
-                    if !httpStatusOK(header) { ok = false; break }
+                    if !httpStatusOK(header) {
+                        put("pkg: HTTP status not OK\n")
+                        ok = false
+                        break
+                    }
                     sawHeader = true
                     ok = true
                     let bodyStart = split + 4
@@ -356,17 +360,26 @@ private func downloadHTTP(_ urlText: String, to outputPath: String) -> Bool {
                         let wrote = header.withUnsafeBytes { raw in
                             writeAll(outfd, raw.baseAddress!.advanced(by: bodyStart), bodyCount)
                         }
-                        if !wrote { ok = false; break }
+                        if !wrote {
+                            put("pkg: cache write failed\n")
+                            ok = false
+                            break
+                        }
                     }
                 }
             } else {
-                if !writeAll(outfd, UnsafeRawPointer(base), Int(r)) { ok = false; break }
+                if !writeAll(outfd, UnsafeRawPointer(base), Int(r)) {
+                    put("pkg: cache write failed\n")
+                    ok = false
+                    break
+                }
             }
         }
     }
     _ = swiftos_close(outfd)
     _ = swiftos_close(sock)
     if !sawHeader || !ok {
+        if !sawHeader { put("pkg: response header missing\n") }
         unlinkPath(outputPath)
         return false
     }
@@ -448,6 +461,7 @@ private func loadVerifiedCatalog() -> [UInt8]? {
         put("pkg: catalog verification failed\n")
         return nil
     }
+    if !validateCatalogBody(catalog) { return nil }
     return catalog
 }
 
@@ -474,15 +488,66 @@ private func objectRangeForPackage(_ catalog: [UInt8], _ name: String) -> Range<
 private func parseCatalogPackageObject(_ object: [UInt8]) -> CatalogPackage? {
     guard let name = jsonString(object, "name"),
           let version = jsonString(object, "version"),
+          let arch = jsonString(object, "arch"),
+          let target = jsonString(object, "target"),
+          let abi = jsonString(object, "abi"),
+          let linkage = jsonString(object, "linkage"),
           let sha = jsonString(object, "sha256"),
           let url = jsonString(object, "url") else { return nil }
     let revision = jsonUInt(object, "revision") ?? 1
     let size = jsonUInt(object, "size") ?? 0
+    if arch != "aarch64" || target != "swift-os" || abi != "swos-0" || linkage != "static" {
+        return nil
+    }
     if sha.utf8.count != 64 || url.isEmpty || name.isEmpty || version.isEmpty {
         return nil
     }
     return CatalogPackage(name: name, version: version, revision: revision,
                           sha256: sha, size: size, url: url)
+}
+
+private func validateCatalogBody(_ catalog: [UInt8]) -> Bool {
+    guard let expires = jsonUInt(catalog, "expires"), expires > 0 else {
+        put("pkg: catalog invalid\n")
+        return false
+    }
+    let now = swiftos_time()
+    if now != 0 && expires <= now {
+        put("pkg: catalog expired\n")
+        return false
+    }
+
+    let key = staticBytes("\"name\":\"")
+    var pos = 0
+    var sawPackage = false
+    while true {
+        let start = findBytesFrom(catalog, key, pos)
+        if start < 0 { break }
+        var objectStart = start
+        while objectStart >= 0 && catalog[objectStart] != 0x7B { objectStart -= 1 }
+        if objectStart < 0 {
+            put("pkg: catalog invalid\n")
+            return false
+        }
+        var objectEnd = start
+        while objectEnd < catalog.count && catalog[objectEnd] != 0x7D { objectEnd += 1 }
+        if objectEnd >= catalog.count {
+            put("pkg: catalog invalid\n")
+            return false
+        }
+        let object = Array(catalog[objectStart..<(objectEnd + 1)])
+        if parseCatalogPackageObject(object) == nil {
+            put("pkg: catalog incompatible\n")
+            return false
+        }
+        sawPackage = true
+        pos = objectEnd + 1
+    }
+    if !sawPackage {
+        put("pkg: catalog invalid\n")
+        return false
+    }
+    return true
 }
 
 private func findCatalogPackage(_ catalog: [UInt8], _ name: String) -> CatalogPackage? {
@@ -672,8 +737,12 @@ private func updateRepository(_ url: String) -> Int32 {
         return 1
     }
     guard let signed = readFile(catalogCachePath, maxSize: catalogMax + signedHeaderSize),
-          verifySignedCatalog(signed) != nil else {
+          let catalog = verifySignedCatalog(signed) else {
         put("pkg: catalog verification failed\n")
+        unlinkPath(catalogCachePath)
+        return 1
+    }
+    if !validateCatalogBody(catalog) {
         unlinkPath(catalogCachePath)
         return 1
     }
@@ -681,7 +750,9 @@ private func updateRepository(_ url: String) -> Int32 {
         put("pkg: cannot save repository URL\n")
         return 1
     }
-    put("pkg: catalog updated\n")
+    put("pkg: catalog updated ")
+    putString(url)
+    put("\n")
     return 0
 }
 
