@@ -49,14 +49,17 @@ trap cleanup EXIT
 # Seed tree with a marker motd and an extra file absent from the static tree.
 # busybox must be on this disk too: it is the shell, and since M11d the kernel
 # loads /bin/busybox only from the packed image (no embedded blob). /bin/ps is
-# also needed by the S2b boot guard that verifies EL0 stayed on CPU0 before init.
+# also needed by the S2b/S2d boot guards, and /bin/coproc feeds the S2g
+# coproc-dispatch telemetry guard before init.
 mkdir -p "$WORK/seed/etc" "$WORK/seed/bin"
 printf '%s\n' "$MARKER" > "$WORK/seed/etc/motd"
 printf 'only-on-disk\n'  > "$WORK/seed/diskonly.txt"
 [[ -f "$ROOT/build/busybox.elf" ]] || { echo "FAIL: build/busybox.elf missing (make busybox)" >&2; exit 2; }
 [[ -f "$ROOT/build/ps.elf" ]] || { echo "FAIL: build/ps.elf missing (make base-image)" >&2; exit 2; }
+[[ -f "$ROOT/build/coproc.elf" ]] || { echo "FAIL: build/coproc.elf missing (make build)" >&2; exit 2; }
 cp "$ROOT/build/busybox.elf" "$WORK/seed/bin/busybox"
 cp "$ROOT/build/ps.elf" "$WORK/seed/bin/ps"
+cp "$ROOT/build/coproc.elf" "$WORK/seed/bin/coproc"
 IMG="$WORK/disk.img"
 "$PACKER" "$WORK/seed" "$IMG" >/dev/null || { echo "FAIL: basepack failed" >&2; exit 2; }
 
@@ -99,8 +102,9 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-# This throwaway disk intentionally carries only busybox, ps, and test files.
-# With no /bin/ttydemo or /bin/console-login, init falls back directly to raw ash.
+# This throwaway disk intentionally carries only busybox, guard fixtures, and
+# test files. With no /bin/ttydemo or /bin/console-login, init falls back
+# directly to raw ash.
 await "built-in shell (ash)" 90 || drive_fail "busybox shell did not start"
 send_line 'cat /etc/motd'
 await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
