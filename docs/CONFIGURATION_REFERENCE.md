@@ -42,6 +42,24 @@ The target is static and intentionally small. There is no Linux syscall ABI, no
 dynamic loader, and no persistent writable guest filesystem in the current
 product profile.
 
+## Choose A Configuration Change
+
+Use this table before editing Make variables, QEMU commands, or guest seed
+files. It names the configuration source, the rebuild step, and the proof that
+the change took effect.
+
+| Need | Change | Rebuild or run | Proof |
+| --- | --- | --- | --- |
+| Use a different Embedded Swift toolchain | Override `TOOLCHAIN` or `SWIFTC` | `make tools-check`, then `make build` | Tool path in `tools-check` and successful kernel build |
+| Use a different QEMU binary or firmware | Override `QEMU` or `AAVMF_CODE` | `make tools-check`, then `make run` or `make disk-run` | Boot test for the chosen profile |
+| Switch from QEMU to VirtualBox board constants | Set `BOARD=virtualbox` | `make BOARD=virtualbox disk` | VirtualBox evidence from [VIRTUALBOX.md](VIRTUALBOX.md) |
+| Change base files, web content, accounts, or model bundle trust roots | Edit `base/` or model inputs | `make base-image` | `./tests/vfs_disk_test.sh`, login or service test as applicable |
+| Add or remove a `/bin` program | Update userland build/staging rules | `make build base-image` | Command-specific QEMU test and command reference update |
+| Attach networking for service tests | Add `-netdev user,...` and `virtio-net-device` | Manual QEMU profile or network test | Focused network test |
+| Change host-forwarded ports | Change only host-side `hostfwd` port unless guest code also changes | Manual QEMU profile | Host `curl` or `nc` output plus readiness marker |
+| Change package fixture contents | Update package source, manifest, or recipe | Package or ports fixture target | Matching package install/overlay test |
+| Change test pacing, ports, or SMP CPU count | Override test harness variables such as `SMP_CPUS` or profile-specific port vars | Focused test target | Test output records the override |
+
 ## Toolchain Variables
 
 The top-level `Makefile` is the source of truth for host tool defaults. Every
