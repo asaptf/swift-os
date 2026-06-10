@@ -30,7 +30,7 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
-| Driver-service model | C5a/C5b pseudo driver-service supervisor plus opaque device-handle smoke over endpoint IPC |
+| Driver-service model | C5a-C5c pseudo driver-service supervisor plus device discovery and opaque handle handoff over endpoint IPC |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
@@ -461,9 +461,10 @@ Yes, with a virtio-net boot profile and `capNet`. Current examples are
 
 ### Can I run userland drivers?
 
-Not real hardware drivers yet. C5a/C5b proves the supervisor, endpoint IPC, and
-opaque pseudo-device handle shape with `/bin/drvsvcdemo` and `/bin/drvinputd`,
-but real MMIO, IRQ, DMA, and virtio-input ownership are still roadmap work.
+Not real hardware drivers yet. C5a-C5c proves the supervisor, endpoint IPC,
+read-only pseudo-device discovery, and opaque pseudo-device handle shape with
+`/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
+virtio-input ownership are still roadmap work.
 
 ### Can I use TLS for production trust decisions?
 
@@ -493,7 +494,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
-| Driver-service/device-handle smoke | `make c5-device-handle-test` |
+| Driver-service/device-discovery smoke | `make c5-device-discovery-test` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP run-any placement | `make s5-run-any-placement-test` |

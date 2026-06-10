@@ -307,13 +307,14 @@ See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 
 ### Does SwiftOS have restartable driver services yet?
 
-The C5a/C5b path provides the first checked-in restartable driver-service and
-opaque device-handle smoke. `/bin/drvsvcdemo` supervises the pseudo driver
-service `/bin/drvinputd`, exchanges endpoint IPC, transfers a pseudo-input
-device grant, restarts the service, and verifies recovery:
+The C5a-C5c path provides the first checked-in restartable driver-service,
+device-discovery, and opaque device-handle smoke. `/bin/drvsvcdemo` supervises
+the pseudo driver service `/bin/drvinputd`, exchanges endpoint IPC, discovers
+and claims a pseudo-input device grant, transfers it to the service, restarts
+the service, and verifies recovery:
 
 ```sh
-make c5-device-handle-test
+make c5-device-discovery-test
 ```
 
 This is not a real device handoff yet. MMIO, IRQ, DMA, and virtio-input
