@@ -9,17 +9,18 @@ SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
 content under `/usr`. The current target-side package manager supports local
 file install, `pkg install FILE`, into a writable package-store disk, plus a
-P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
+signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
 and `pkg install NAME`. Repository installs resolve dependencies by package
 name. Public production channels, version-constraint solving, remove, upgrade,
 and rollback are staged work, not current behavior. The ports workflow can
-cross-build static AArch64 Lua, zlib, pcre2, and nginx packages on the host,
-package the pinned CA certificate and tzdata bundles, publish them into signed
-local repository fixtures, install Lua by package name in QEMU, and boot
-SwiftOS with a default repository URL to install Lua, zlib, ca-certificates,
-pcre2, tzdata, and nginx from one seed repository. It can also produce a
-static-hostable web root for that seed repository, verify a hosted URL from the
-host, and prove that SwiftOS installs from a DNS-resolved HTTP repository URL.
+cross-build static AArch64 Lua, zlib, pcre2, nginx, and sqlite packages on the
+host, package the pinned CA certificate bundle and IANA time zone data, publish
+them into signed local repository fixtures, install Lua by package name in QEMU,
+and boot SwiftOS with a default repository URL to install Lua, zlib,
+ca-certificates, pcre2, tzdata, nginx, and sqlite from one seed repository. It
+can also produce a static-hostable web root for that seed repository, verify a
+hosted URL from the host, and prove that SwiftOS installs from a DNS-resolved
+HTTP repository URL.
 
 Use this guide with:
 
@@ -28,8 +29,8 @@ Use this guide with:
 - [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) for package
   recipe, CI smoke-test, and repository publishing plans.
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container format.
-- [Package Store Format](PKGSTORE_FORMAT.md) for the P3a package-store image.
-- [Static Package Repository](PKGREPO_FORMAT.md) for the P5c signed HTTP
+- [Package Store Format](PKGSTORE_FORMAT.md) for the package-store image.
+- [Static Package Repository](PKGREPO_FORMAT.md) for the signed HTTP
   repository layout.
 - [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for prioritized server
   packages and porting prerequisites.
@@ -53,7 +54,7 @@ Use this guide with:
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
 | Target-side dependency resolution by package name | Implemented for signed repository catalogs |
-| Ports catalog and Lua/zlib/ca-certificates/pcre2/tzdata/nginx recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and `build/swport` |
+| Ports catalog and Lua/zlib/ca-certificates/pcre2/tzdata/nginx/sqlite recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, `ports/databases/sqlite/Port.json`, and `build/swport` |
 | Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture` |
 | Target-side `pkg install lua` from the signed Lua repository fixture | Implemented and proven by `make package-lua-repo-install-test` |
 | zlib cross-build repository fixture | Implemented as `make ports-zlib-repo-fixture` |
@@ -61,15 +62,16 @@ Use this guide with:
 | pcre2 cross-build repository fixture | Implemented as `make ports-pcre2-repo-fixture` |
 | tzdata repository fixture | Implemented as `make ports-tzdata-repo-fixture` |
 | nginx repository fixture | Implemented as `make ports-nginx-repo-fixture` |
-| Six-package ports seed repository fixture | Implemented and proven by `make package-ports-seed-repo-install-test` |
+| sqlite cross-build repository fixture | Implemented as `make ports-sqlite-repo-fixture` |
+| Seven-package ports seed repository fixture | Implemented and proven by `make package-ports-seed-repo-install-test` |
 
 The current real port fixtures are Lua, zlib, ca-certificates, pcre2, tzdata,
-and nginx. They are useful for package maintainers and release owners because
-they prove source fetch, checksum verification, static cross-build or data-only
-staging, `.swpkg` creation, signed local repository publication, target-side Lua
-install from a signed repository, and target-side seed package install from a
-default repository URL. They are still local fixtures, not public hosted
-channels.
+nginx, and sqlite. They are useful for package maintainers and release owners
+because they prove source
+fetch, checksum verification, static cross-build or data-only staging, `.swpkg`
+creation, signed local repository publication, target-side Lua install from a
+signed repository, and target-side seed package install from a default
+repository URL. They are still local fixtures, not public hosted channels.
 
 ## Mental Model
 
@@ -89,11 +91,11 @@ The three package artifact types have different jobs:
 | --- | --- | --- |
 | `build/pkghello.swpkg` | `build/swpkg create` | Host package container with manifest and payload |
 | `build/pkghello-payload.img` | `build/swpkg extract-payload` | Sector-aligned read-only payload image attached as a virtio-blk disk |
-| `build/pkgstore-pkghello.img` | `build/pkgstore create` | P3a package-store image with payload records and an active generation |
+| `build/pkgstore-pkghello.img` | `build/pkgstore create` | Package-store image with payload records and an active generation |
 | `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for target-side local install tests |
-| `build/pkgrepo-root` | `build/pkgrepo create` | P5c signed static HTTP repository tree |
+| `build/pkgrepo-root` | `build/pkgrepo create` | Signed static HTTP repository tree |
 | `build/pkgrepo-root.pub` | `build/pkgrepo pubkey` | Public key copied into the base image as `/etc/pkg/repo-root.pub` |
-| `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx packages |
+| `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite packages |
 | `build/ports-static-host-root` | `make ports-static-host-publish` | Deployable static web root containing the ports seed repository, public key, sidecar manifest, and SHA-256 sums |
 
 Use the direct payload overlay when you want the simplest package-content boot.
@@ -192,7 +194,7 @@ make package-fixture
 
 ### `build/pkgstore`
 
-`build/pkgstore` is the host-side P3a package-store image tool.
+`build/pkgstore` is the host-side package-store image tool.
 
 ```sh
 make pkgstore
@@ -215,7 +217,7 @@ make package-local-install-fixture
 
 ### `build/pkgrepo`
 
-`build/pkgrepo` is the host-side P5c static repository tool.
+`build/pkgrepo` is the host-side signed static repository tool.
 
 ```sh
 make pkgrepo
@@ -279,7 +281,7 @@ make package-overlay-test
 
 ## Boot A Package Store
 
-This is the P3a package-store activation path. Build the fixture:
+This is the package-store activation path. Build the fixture:
 
 ```sh
 make build base-image build/virt.dtb
@@ -385,7 +387,7 @@ make package-local-install-test
 
 ## Install From A Signed HTTP Repository Fixture
 
-This is the current P5c repository path. It uses an explicit or configured
+This is the current signed repository path. It uses an explicit or configured
 repository URL, verifies `catalog.signed` with `/etc/pkg/repo-root.pub`,
 rejects expired or incompatible catalogs, resolves dependencies by package
 name, downloads content-addressed `.swpkg` files, verifies SHA-256, then reuses
@@ -496,11 +498,11 @@ pkg install lua
 
 ## Build The Ports Seed Repository Fixture
 
-The checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes publish
-into one signed local seed repository. This is the closest current stand-in for
-the future hosted package channel: the guest boots with a default repository
-URL, runs `pkg update`, installs all six packages by name, and exercises the
-installed payloads.
+The checked Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes
+publish into one signed local seed repository. This is the closest current
+stand-in for the future hosted package channel: the guest boots with a default
+repository URL, runs `pkg update`, installs all seven packages by name, and
+exercises the installed payloads.
 
 ```sh
 make ports-lua-repo-fixture
@@ -509,6 +511,7 @@ make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
 make ports-nginx-repo-fixture
+make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
 ```
 
@@ -520,7 +523,9 @@ Key artifacts:
 | `build/tzdata-repo-root` | Signed local repository fixture for the standalone tzdata package |
 | `build/nginx.swpkg` | `.swpkg` containing a minimal static HTTP-only nginx binary, default config, web root marker, and version marker |
 | `build/nginx-repo-root` | Signed local repository fixture for the standalone nginx package |
-| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, and nginx |
+| `build/sqlite.swpkg` | `.swpkg` containing the static sqlite3 shell, libsqlite3.a, headers, pkgconf metadata, and version marker |
+| `build/sqlite-repo-root` | Signed local repository fixture for the standalone sqlite package |
+| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite |
 
 The seed smoke reuses `build/pkgstore-lua-install.img` as its writable
 package-store image.
@@ -535,6 +540,7 @@ pkg install ca-certificates
 pkg install pcre2
 pkg install tzdata
 pkg install nginx
+pkg install sqlite
 /usr/bin/lua -e 'print(21 * 2)'
 echo zlib-ok >/tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
@@ -547,6 +553,8 @@ cat /usr/share/zoneinfo/swiftos-tzdata.version
 cat /usr/share/zoneinfo/zone1970.tab
 /usr/sbin/nginx -v
 cat /usr/share/nginx/swiftos-nginx.version
+/usr/bin/sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;'
+cat /usr/share/sqlite/swiftos-sqlite.version
 ```
 
 ## Package Fixture Anatomy
@@ -577,7 +585,10 @@ gate.
 | `build/tzdata-repo-root` | Signed local repository fixture for tzdata |
 | `build/nginx.swpkg` | Minimal static nginx package artifact |
 | `build/nginx-repo-root` | Signed local repository fixture for nginx |
-| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, and nginx |
+| `build/sqlite.swpkg` | Static SQLite package artifact |
+| `build/sqlite-repo-root` | Signed local repository fixture for sqlite |
+| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite |
+
 Package files install under `/usr`. The current package verifier rejects package
 payload paths outside `/usr`.
 
@@ -599,10 +610,10 @@ Keep current package experiments simple:
 
 - Install real executable paths such as `/usr/bin/tool`.
 - Do not rely on symlinks, maintainer scripts, or dynamic libraries.
-- Keep dependency metadata simple: P5c resolves package names, but does not
-  interpret version constraints yet.
+- Keep dependency metadata simple: the current repository resolver handles
+  package names, but does not interpret version constraints yet.
 - Do not expect files to persist in `/tmp` after reboot.
-- Treat P5c repository signatures as catalog signatures. `.swpkg` reserved
+- Treat repository signatures as catalog signatures. `.swpkg` reserved
   signature fields are still not package-level publisher signatures.
 
 For reusable application recipes, see
@@ -687,15 +698,15 @@ For general package diagnosis, see
 Current limits that matter for package use:
 
 - Package content is read-only in the guest.
-- The current target-side write paths are local `.swpkg` install and P5c
+- The current target-side write paths are local `.swpkg` install and signed
   repository install into a writable package-store disk.
-- The Lua/zlib/ca-certificates/pcre2/tzdata/nginx port fixtures and static-host
-  publish path prove
+- The Lua/zlib/ca-certificates/pcre2/tzdata/nginx/sqlite port fixtures and
+  static-host publish path prove
   source/data packaging, signed repository publication, target-side repository
   install, and guest execution through `make package-lua-repo-install-test`,
   `make package-ports-seed-repo-install-test`, and
   `make package-static-host-repo-install-test`.
-- `.swpkg` hashes prove container integrity. P5c catalog signatures prove the
+- `.swpkg` hashes prove container integrity. Catalog signatures prove the
   repository metadata used to find and hash package blobs; package SHA-256
   checks prove the downloaded blob matches the catalog.
 - Public hosted channels, package-level publisher signatures, version-constraint

@@ -6,8 +6,31 @@ dependency names, OS prerequisite bundles, blockers, and smoke tests, while the
 checked recipes prove the package format and repository flow against real
 artifacts.
 
-This is not a full ports tree. It is the contract that lets SwiftOS harden the
-target-side package manager before broad public package publishing exists.
+This is not a full ports tree yet. The checked-in recipes are `lang/lua`,
+`archivers/zlib`, `security/ca-certificates`, `devel/pcre2`,
+`sysutils/tzdata`, `www/nginx`, and `databases/sqlite`, with validation,
+manifest generation, checksum-verified distfile fetching, `.swpkg` creation
+from clean staged roots, and signed static repository fixture generation.
+`make ports-lua-repo-fixture` cross-builds real AArch64 static Lua against the
+local newlib sysroot and packages the runtime interpreter.
+`make ports-zlib-repo-fixture` cross-builds static zlib, headers, pkgconf
+metadata, and the small `minigzip` smoke-test helper.
+`make ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA bundle
+as a data-only trust-store package. `make ports-pcre2-repo-fixture`
+cross-builds static PCRE2 libraries, headers, pkgconf metadata, and
+`pcre2grep`. `make ports-tzdata-repo-fixture` compiles portable IANA TZif
+zoneinfo files and packages the `/usr/share/zoneinfo` tree.
+`make ports-nginx-repo-fixture` cross-builds a minimal static HTTP-only nginx
+package. `make ports-sqlite-repo-fixture` cross-builds static SQLite,
+`libsqlite3.a`, headers, pkgconf metadata, and the `sqlite3` CLI.
+`make ports-seed-repo-fixture` publishes all seven packages into one signed
+seed repository. `make ports-static-host-publish` copies that seed repository
+into a deployable static-host web root with `hosted-repo.json`,
+`repo-root.pub`, and `SHA256SUMS`.
+Patches, QEMU smoke tests, and trusted public publishing workflows still belong
+to the planned `swift-os-ports` repository. The seed catalog keeps that work
+ordered and reviewable while the target-side package manager is still being
+hardened inside `swift-os`.
 
 ## Checked Seed Packages
 
@@ -19,8 +42,9 @@ target-side package manager before broad public package publishing exists.
 | PCRE2 | `ports/devel/pcre2/Port.json` | Static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep` |
 | tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
+| SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
 
-`make ports-seed-repo-fixture` publishes all six packages into one signed local
+`make ports-seed-repo-fixture` publishes all seven packages into one signed local
 repository. `make ports-static-host-publish` turns that seed into a deployable
 static-host web root containing `hosted-repo.json`, `repo-root.pub`, and
 `SHA256SUMS`.
@@ -36,23 +60,26 @@ make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
 make ports-nginx-repo-fixture
+make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make ports-hosted-url-verify-test
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
+build/swport recipe validate databases/sqlite
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
+build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua, zlib, pcre2, and nginx cross-build targets require
+The Lua, zlib, pcre2, nginx, and sqlite cross-build targets require
 `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib` if the generated
 sysroot is not present.
 
