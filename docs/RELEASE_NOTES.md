@@ -89,15 +89,14 @@ service-oriented.
 - Installs real Lua from the signed local repository fixture inside QEMU and
   runs `lua -v` plus a small expression smoke with
   `make package-lua-repo-install-test`.
-- Publishes Lua, zlib, ca-certificates, pcre2, and tzdata into one signed local seed
+- Publishes Lua, zlib, ca-certificates, and pcre2 into one signed local seed
   repository and verifies `pkg install lua`, `pkg install zlib`,
-  `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`, Lua
-  smoke commands, a `minigzip` round trip, the CA bundle marker, a `pcre2grep`
-  regex match, and the tzdata zoneinfo marker
+  `pkg install ca-certificates`, `pkg install pcre2`, Lua smoke commands, a
+  `minigzip` round trip, the CA bundle marker, and a `pcre2grep` regex match
   with `make package-ports-seed-repo-install-test`.
 - Publishes that seed into a static-hostable web root with `hosted-repo.json`,
   `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua, zlib,
-  ca-certificates, pcre2, and tzdata install from that hosted layout with
+  ca-certificates, and pcre2 install from that hosted layout with
   `make package-static-host-repo-install-test`.
 - Verifies hosted static-root URLs from the host and proves target-side install
   from a DNS-resolved HTTP repository hostname with
@@ -206,12 +205,11 @@ llmd: served
   large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. C5a-C5f prove
+- Many drivers and the network stack still live in the kernel. C5a-C5e prove
   the supervisor/service IPC shape, opaque device-handle ownership transfer,
   discovered virtio-input metadata/manifest matching, surfaced virtio-mmio
-  metadata, withheld hardware authority, and metadata-only grant rights; real
-  restartable userland driver services with MMIO/IRQ/DMA authority are still
-  roadmap work.
+  metadata, and withheld hardware authority; real restartable userland driver
+  services with MMIO/IRQ/DMA authority are still roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

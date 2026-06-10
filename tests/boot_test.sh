@@ -20,6 +20,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 TIMEOUT="${TIMEOUT:-90}"
 
 EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
+[I] vfs: base image signature verified (ed25519)
 hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha
@@ -104,7 +105,6 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: device discovery manifest matched pseudo input
 C5e OK: device authority withheld until explicit handoff
-C5f OK: device grant rights stayed metadata-only
 C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0

@@ -46,18 +46,19 @@ does not preserve `/tmp`, and a reboot clears it.
 
 ## What Is Not Implemented Yet
 
-The architecture calls for signed image updates, A/B slots, health-check-based
-rollback, repository metadata, and target-side package upgrade transactions.
-Those are roadmap items, not current product behavior.
+The current tree has a narrow signed SWOSBASE A/B update-store path with
+`swos-update`, `swos-activate`, `swos-confirm`, boot-attempt rollback, and host
+tools for generating the store and kernel boot manifest. It is still a
+controlled validation path, not a production updater.
 
 Current limitations:
 
-- No `swos-update` target-side command.
-- No live kernel or root filesystem replacement.
+- No live in-place kernel or root filesystem replacement; updates stage an
+  inactive slot and require reboot.
 - No persistent writable root filesystem.
 - No target-side package `upgrade` or rollback transaction.
 - No production image signing policy for the whole OS image.
-- No automatic rollback after a failed boot.
+- Automatic rollback is limited to the checked A/B store boot path.
 
 The current verified model-bundle flow is a narrow working example of signed
 manifest verification and generation fallback for AI assets. It is not a whole

@@ -71,6 +71,9 @@
 #define SYS_DEVICE_CLAIM  62
 #define SYS_DEVICE_INFO   63
 #define SYS_DEVICE_DISCOVER 64
+#define SYS_UPDATE_CONFIRM 65
+#define SYS_UPDATE_ACTIVATE 66
+#define SYS_UPDATE_STAGE 67
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -313,6 +316,29 @@ static inline int device_info(int fd, struct swiftos_device_info *info) {
 
 static inline int device_discover(int index, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
+}
+
+// U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops
+// accruing boot attempts and is never rolled back. Privileged: needs CAP_CONSOLE.
+// 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
+static inline int update_confirm(void) {
+    return (int)__syscall3(SYS_UPDATE_CONFIRM, 0, 0, 0);
+}
+
+// U1e: promote the inactive A/B slot to active for the next boot (the current
+// slot becomes the fallback); the new active boots "on trial". Needs CAP_CONSOLE.
+// 0 on success; negative on error (-1 EPERM, -19 ENODEV, -2 no inactive slot).
+static inline int update_activate(void) {
+    return (int)__syscall3(SYS_UPDATE_ACTIVATE, 0, 0, 0);
+}
+
+// U1f-2b: copy the attached read-only payload disk (a signed SWOSBASE image)
+// into the inactive A/B slot, ready for update_activate + reboot. Needs
+// CAP_CONSOLE. 0 on success; negative on error (-1 EPERM, -19 ENODEV when not
+// store-booted or no payload disk, -22 EINVAL bad/non-v3 payload, -27 EFBIG
+// payload too big for the slot, -5 EIO copy/write-back failure).
+static inline int update_stage(void) {
+    return (int)__syscall3(SYS_UPDATE_STAGE, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

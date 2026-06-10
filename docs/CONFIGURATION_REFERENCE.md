@@ -114,7 +114,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make disk` | Build the bootable GPT image `build/swift-os.img`. |
 | `make disk-run` | Boot the GPT disk image through AAVMF. |
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
-| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map/front-door coverage, example/API verification refs, command references, host tool references, and port recipe refs. |
+| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map coverage, command references, and host tool references. |
 | `make model` | Fetch LLM demo checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
 | `make pkgstore` | Build the host-side package-store image tool. |
@@ -156,7 +156,6 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make c5-device-discovery-test` | Compatibility alias for the C5 driver-service/device-metadata gate under `-smp 4`. |
 | `make c5-device-metadata-test` | Run the focused C5d virtio-input discovery metadata gate under `-smp 4`. |
 | `make c5-device-authority-test` | Run the focused C5e device authority envelope gate under `-smp 4`. |
-| `make c5-device-rights-test` | Run the focused C5f metadata-only device grant rights guard. |
 | `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |
@@ -509,7 +508,7 @@ make package-overlay-test
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
 | C5 driver-service/device-authority path | `make c5-device-authority-test` |
-| Documentation-only configuration update | `make docs-test`, `git diff --check`, and a build or relevant acceptance test |
+| Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this
 repository revision.

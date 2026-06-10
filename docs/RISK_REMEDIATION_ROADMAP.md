@@ -374,23 +374,6 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 - Non-goals: C5e does not choose the first real authority type or move the
   virtio-input queue to userland. It creates the guardrail for that next step.
 
-### C5f — metadata-only device grant rights contract (DONE, 2026-06-10)
-
-- Device handles are minted through the shared `deviceMetadataGrantRights()`
-  helper. Until a real MMIO/IRQ/DMA handoff lands, the only device rights are
-  `.getattr` and `.transfer`: services can inspect and receive a grant, but they
-  cannot duplicate it, map it, or treat it as read/write/execute authority.
-- `/bin/drvsvcdemo` now emits
-  `C5f OK: device grant rights stayed metadata-only` after proving the grant can
-  be inspected and transferred but cannot be duplicated.
-- `make c5-device-rights-test` runs the host handle vocabulary test plus a
-  static guard that the VFS claim path uses the shared metadata-only rights
-  helper and that the C5 runtime marker is wired into the focused driver-service
-  smoke.
-- Non-goals: C5f still does not expose a userland MMIO mapping syscall, IRQ
-  endpoint, DMA window, or virtio-input queue ownership. It is the rights-side
-  contract before the first real authority grant.
-
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

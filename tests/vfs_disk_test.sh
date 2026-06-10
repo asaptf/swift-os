@@ -14,10 +14,18 @@ DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
 PACKER="$ROOT/build/basepack"
 MARKER="swift-os-DISK-MARKER-M11c"
+# I8: the kernel embeds an image-signing trust root and refuses any base image
+# that is not signed v3, so this throwaway disk must be signed with the same dev
+# image key that `make base-image` mints.
+SEED="$ROOT/models/dev-image-signing.seed"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -x "$PACKER" ]]; then
-  ( cd "$ROOT" && swiftc tools/basepack.swift -o "$PACKER" ) || { echo "FAIL: cannot build basepack" >&2; exit 2; }
+  # Mirror the Makefile $(BASEPACK) rule: basepack now needs packfs plus the
+  # crypto sources to emit the signed v3 layout.
+  ( cd "$ROOT" && swiftc -O tools/basepack.swift tools/packfs.swift \
+      kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+      -o "$PACKER" ) || { echo "FAIL: cannot build basepack" >&2; exit 2; }
 fi
 
 WORK="$(mktemp -d -t swiftos-vfs.XXXXXX)"
@@ -57,11 +65,12 @@ printf 'only-on-disk\n'  > "$WORK/seed/diskonly.txt"
 [[ -f "$ROOT/build/busybox.elf" ]] || { echo "FAIL: build/busybox.elf missing (make busybox)" >&2; exit 2; }
 [[ -f "$ROOT/build/ps.elf" ]] || { echo "FAIL: build/ps.elf missing (make base-image)" >&2; exit 2; }
 [[ -f "$ROOT/build/coproc.elf" ]] || { echo "FAIL: build/coproc.elf missing (make build)" >&2; exit 2; }
+[[ -f "$SEED" ]] || { echo "FAIL: $SEED missing (make base-image)" >&2; exit 2; }
 cp "$ROOT/build/busybox.elf" "$WORK/seed/bin/busybox"
 cp "$ROOT/build/ps.elf" "$WORK/seed/bin/ps"
 cp "$ROOT/build/coproc.elf" "$WORK/seed/bin/coproc"
 IMG="$WORK/disk.img"
-"$PACKER" "$WORK/seed" "$IMG" >/dev/null || { echo "FAIL: basepack failed" >&2; exit 2; }
+"$PACKER" "$WORK/seed" "$IMG" "$SEED" >/dev/null || { echo "FAIL: basepack failed" >&2; exit 2; }
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")

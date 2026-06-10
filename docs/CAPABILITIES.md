@@ -4,14 +4,13 @@ The forward design for swift-os authority: the object-capability **handle** mode
 handle-passing **IPC**, and the decision to make **Cells** a userland composition over small kernel
 primitives rather than a fat in-kernel object.
 
-> **Status: living design and implementation map.** C1-C5f now have checked-in
+> **Status: living design and implementation map.** C1-C5d now have checked-in
 > slices: typed handle entries and rights, `spawn_handles`, object-scoped
 > filesystem confinement, endpoint IPC with handle move semantics, a
 > restartable driver-service smoke, pseudo/virtio-input discovery metadata,
-> discovered MMIO metadata, an opaque device-handle grant, and a guarded
-> metadata-only device-rights contract. The later parts of this note remain the
-> target design for richer IPC rings/VMOs, real MMIO/IRQ/DMA driver handoff, and
-> Cells.
+> discovered MMIO metadata, and an opaque device-handle grant. The later parts of
+> this note remain the target design for richer IPC rings/VMOs, real
+> MMIO/IRQ/DMA driver handoff, and Cells.
 > Future C-series work still lands one milestone at a time, each building,
 > booting, passing a test, and stopping for review (per
 > [CLAUDE.md](../CLAUDE.md)).
@@ -73,13 +72,12 @@ Implemented C-series pieces:
   while the flat `caps` word remains a coarse class gate.
 - C4a: `endpoint_create`, `ipc_send`, and `ipc_recv` with byte messages and
   one moved handle per message.
-- C5a-C5f: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it,
+- C5a-C5e: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it,
   discovers a `virtio-input.0` grant when QEMU exposes one or the
   `pseudo-input.0` fallback on headless boots, moves the opaque device grant
   over IPC, proves the grant is busy while owned by the service, surfaces
   discovered MMIO metadata without granting mapping authority, proves future
-  MMIO/IRQ/DMA authority bits stay clear, keeps the grant rights metadata-only,
-  and reclaims it after exit.
+  MMIO/IRQ/DMA authority bits stay clear, and reclaims it after exit.
 
 This is still short of the full architecture. C5c-C5e discovery metadata and
 grants deliberately do not expose MMIO ranges, IRQ endpoints, DMA windows, or
@@ -132,7 +130,7 @@ The deeper problems with the bitmask are structural, not cosmetic:
 
 This is not an argument that the bitmask was wrong to ship. It is an argument
 that it is a **floor**, and the ceiling is a handle table. The migration started
-with C1-C5f and continues through the remaining target design below.
+with C1-C5d and continues through the remaining target design below.
 
 ---
 
@@ -538,7 +536,7 @@ M-series; naming it C1–C6 (capabilities) keeps it distinct from the M and net 
 | **C2** | spawn-with-handles | Implemented slice: `spawn_handles` explicit inheritance; `spawn` is stdio-only; `fork` remains the all-handles compatibility path. | A restricted spawned child cannot reach handles it was not given. | Resource limits/env-rich spawn shape remains future work. |
 | **C3** | Object-scoped authority | Implemented slice: filesystem confinement plus per-handle read/write rights. The flat `caps` word remains a coarse class gate. | Confined children cannot open outside their subtree; per-handle rights checks reject overuse. | Full bitmask retirement is not done. |
 | **C4a** | Minimal handle-passing IPC | Implemented slice: `endpoint_create`, `ipc_send`, `ipc_recv`, byte messages, and one moved handle per message. | Processes exchange bytes and moved handles safely. | VMOs, async rings, badges, `ipc_call`, and high-throughput data paths remain future work. |
-| **C5a-C5f** | Restartable driver-service smoke + device discovery authority envelope | Implemented slice: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, discovers `virtio-input.0` when attached or `pseudo-input.0` as fallback, transfers the opaque grant, observes busy ownership, surfaces discovered MMIO metadata, proves future authority bits stay clear, keeps the grant rights metadata-only, and reclaims it. | `make c5-device-authority-test` passes under `-smp 4` with a QEMU virtio keyboard; `make c5-device-rights-test` guards the handle-rights contract; broad boot covers the pseudo fallback. | This is not real MMIO/IRQ/DMA/virtio-input queue handoff yet. |
+| **C5a-C5e** | Restartable driver-service smoke + device discovery authority envelope | Implemented slice: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it, discovers `virtio-input.0` when attached or `pseudo-input.0` as fallback, transfers the opaque grant, observes busy ownership, surfaces discovered MMIO metadata, proves future authority bits stay clear, and reclaims it. | `make c5-device-authority-test` passes under `-smp 4` with a QEMU virtio keyboard; broad boot covers the pseudo fallback. | This is not real MMIO/IRQ/DMA/virtio-input queue handoff yet. |
 | **C5 proper** | First real userland driver over IPC | Lift one non-boot-critical driver (candidate: **virtio-input**, then virtio-net) out of the kernel into a supervised userland service that receives device/IRQ/DMA + endpoint handles and serves clients over C4 IPC. | The driver runs as a process; killing and restarting it recovers service; clients reach it only via a handed endpoint handle. | First real exercise of the whole stack. |
 | **C6** | Cell as userland composition | Add the per-process `CellId` tag (accounting domain + namespace root). A userland **cell supervisor** assembles a cell = job + handle set + resource domain + namespace, and launches a process inside it. **No kernel `Cell` object.** | Two cells with separate namespaces/roots and separate resource accounting; a process in one cannot name objects in the other (handles + namespace root); per-cell counters reported. | Delivers the Cells vision as composition (§5). The tag is cheap; the policy is userland. |
 
@@ -546,7 +544,7 @@ Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
 explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
 kinds on C1's table and transfers them with C2's move mechanism; C5 is the
 first thing that needs C1-C4 at once; C6 needs C5's supervisor pattern and C4's
-IPC to assemble a cell. The implemented C1-C5f slices do not remove those
+IPC to assemble a cell. The implemented C1-C5d slices do not remove those
 dependencies for the remaining richer work.
 
 ---
@@ -564,7 +562,7 @@ dependencies for the remaining richer work.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** fully implemented. C1-C5f slices exist; C5 proper, richer IPC, and
+- **Not** fully implemented. C1-C5d slices exist; C5 proper, richer IPC, and
   Cells remain planned work.
 
 ---

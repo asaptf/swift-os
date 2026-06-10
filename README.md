@@ -91,15 +91,14 @@ What exists today, in the order it was built:
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 
-- **Restartable driver-service and device-discovery smoke:** the C5a-C5f path
+- **Restartable driver-service and device-discovery smoke:** the C5a-C5d path
   stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts an
   input-driver service, exchanges endpoint IPC messages, discovers and claims
   `virtio-input.0` when QEMU exposes a keyboard device, falls back to
   `pseudo-input.0` in headless boots, surfaces virtio-mmio base/length as
   discovery metadata, transfers an opaque device handle, proves the grant moves,
-  stays busy while the service owns it, keeps only metadata/transfer rights, is
-  reclaimed after exit, and recovers with
-  `C5a OK: restartable driver service recovered over IPC`, `C5b OK: opaque
+  stays busy while the service owns it, is reclaimed after exit, and recovers
+  with `C5a OK: restartable driver service recovered over IPC`, `C5b OK: opaque
   device handle transferred and released`, `C5c OK: virtio-input device grant
   discovered and matched`, and `C5d OK: virtio input discovery metadata
   surfaced`. The focused acceptance gate is `make c5-device-metadata-test`
@@ -175,7 +174,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
-  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5f
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5d
   driver-service smoke.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
@@ -224,13 +223,6 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   notes.
 - [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
   server packages, current package limits, and porting prerequisites.
-
-Maintainers and reviewers should also keep the planning and audit artifacts
-reachable from the front door: [Package Ecosystem Goal](docs/PACKAGE_ECOSYSTEM_GOAL.md),
-[Package Manager Implementation Plan](docs/PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md),
-[Package Manager Session Prompts](docs/PACKAGE_MANAGER_SESSION_PROMPTS.md),
-[Ports Seed Catalog](ports/README.md), [SMP Mutable State Audit](docs/SMP_STATE_AUDIT.md),
-and [Next Session](docs/NEXT_SESSION.md).
 
 ## Architecture
 
@@ -425,10 +417,10 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals; C5a-C5f now prove the supervisor/service IPC shape,
+work, not non-goals; C5a-C5d now prove the supervisor/service IPC shape,
 virtio-input discovery metadata, fallback pseudo-device discovery, surfaced
-virtio-mmio metadata, opaque device-handle transfer, and metadata-only device
-grant rights before real device handoff lands.
+virtio-mmio metadata, and opaque device-handle transfer before real device
+handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 

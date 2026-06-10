@@ -932,6 +932,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S4c OK: kernel heap lock boundary ready", UInt64(swiftos_heap_lock_acquire_count()))
+    espProbe()          // U1g-4a: locate the ESP on the GPT boot disk (if attached on mmio)
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     if !netS4eReadinessSelfTest() {
         uartPuts("panic: S4e network lock boundary self-test failed\n")

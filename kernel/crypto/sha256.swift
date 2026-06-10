@@ -325,3 +325,104 @@ func hkdfExpand(prk: UnsafeRawPointer,
         }
     }
 }
+
+// MARK: - Streaming SHA-256 (I8)
+//
+// Incremental hashing for inputs that cannot be held contiguously — the kernel
+// verifies base-image file content by streaming it off virtio-blk in chunks.
+// InlineArray state, no heap. Self-contained compress loop (the proven one-shot
+// above is left untouched); equivalence is pinned by tests/ed25519_test.swift's
+// streaming check and by every signed-image content verification.
+
+struct Sha256Stream {
+    private var h: InlineArray<8, UInt32> = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ]
+    private var tail = InlineArray<64, UInt8>(repeating: 0)
+    private var tailLen = 0
+    private var total: UInt64 = 0
+
+    init() {}
+
+    private mutating func compress(_ block: UnsafeRawPointer) {
+        withUnsafeBytes(of: sha256K) { kraw in
+            let K = kraw.baseAddress!.assumingMemoryBound(to: UInt32.self)
+            var w = InlineArray<64, UInt32>(repeating: 0)
+            for t in 0..<16 {
+                let o = t * 4
+                w[t] = (UInt32(sb8(block, o)) << 24) | (UInt32(sb8(block, o + 1)) << 16)
+                     | (UInt32(sb8(block, o + 2)) << 8) | UInt32(sb8(block, o + 3))
+            }
+            for t in 16..<64 {
+                let s0 = rotr32(w[t-15], 7) ^ rotr32(w[t-15], 18) ^ (w[t-15] >> 3)
+                let s1 = rotr32(w[t-2], 17) ^ rotr32(w[t-2], 19) ^ (w[t-2] >> 10)
+                w[t] = w[t-16] &+ s0 &+ w[t-7] &+ s1
+            }
+            var a = h[0], b = h[1], c = h[2], d = h[3]
+            var e = h[4], f = h[5], g = h[6], hh = h[7]
+            for t in 0..<64 {
+                let S1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+                let ch = (e & f) ^ (~e & g)
+                let t1 = hh &+ S1 &+ ch &+ K[t] &+ w[t]
+                let S0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+                let maj = (a & b) ^ (a & c) ^ (b & c)
+                let t2 = S0 &+ maj
+                hh = g; g = f; f = e; e = d &+ t1; d = c; c = b; b = a; a = t1 &+ t2
+            }
+            h[0] = h[0] &+ a; h[1] = h[1] &+ b; h[2] = h[2] &+ c; h[3] = h[3] &+ d
+            h[4] = h[4] &+ e; h[5] = h[5] &+ f; h[6] = h[6] &+ g; h[7] = h[7] &+ hh
+        }
+    }
+
+    mutating func update(_ p: UnsafeRawPointer, _ len: Int) {
+        total &+= UInt64(len)
+        var off = 0
+        // Top up a partial tail block first.
+        if tailLen > 0 {
+            while tailLen < 64 && off < len {
+                tail[tailLen] = sb8(p, off)
+                tailLen += 1
+                off += 1
+            }
+            if tailLen == 64 {
+                withUnsafeBytes(of: tail) { compress($0.baseAddress!) }
+                tailLen = 0
+            }
+        }
+        // Whole blocks straight from the input.
+        while off + 64 <= len {
+            compress(p + off)
+            off += 64
+        }
+        // Stash the remainder.
+        while off < len {
+            tail[tailLen] = sb8(p, off)
+            tailLen += 1
+            off += 1
+        }
+    }
+
+    mutating func final(_ out32: UnsafeMutableRawPointer) {
+        let bits = total &* 8
+        tail[tailLen] = 0x80
+        tailLen += 1
+        if tailLen > 56 {
+            while tailLen < 64 { tail[tailLen] = 0; tailLen += 1 }
+            withUnsafeBytes(of: tail) { compress($0.baseAddress!) }
+            tailLen = 0
+        }
+        while tailLen < 56 { tail[tailLen] = 0; tailLen += 1 }
+        for b in 0..<8 {
+            tail[56 + b] = UInt8((bits >> (UInt64(7 - b) &* 8)) & 0xFF)
+        }
+        withUnsafeBytes(of: tail) { compress($0.baseAddress!) }
+        for i in 0..<8 {
+            let v = h[i]
+            sb8set(out32, i * 4,     UInt8((v >> 24) & 0xFF))
+            sb8set(out32, i * 4 + 1, UInt8((v >> 16) & 0xFF))
+            sb8set(out32, i * 4 + 2, UInt8((v >> 8) & 0xFF))
+            sb8set(out32, i * 4 + 3, UInt8(v & 0xFF))
+        }
+    }
+}

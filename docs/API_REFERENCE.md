@@ -63,6 +63,7 @@ source, then follow its Makefile rule and acceptance test.
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
+| A/B update store operations | `userland/swos-confirm.swift`, `userland/swos-activate.swift`, `userland/swos-update.swift` | `update_confirm`, `update_activate`, `update_stage`, `swiftos_update_*` | `./tests/ab_confirm_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_stage_test.sh` |
 
 When copying an example, keep the same API layer unless you are deliberately
 testing a lower layer. Mixing raw syscalls, native Swift bridge helpers, and
@@ -229,6 +230,9 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 62 | `device_claim` | `name`, `device_info*` | device fd or negative error |
 | 63 | `device_info` | `fd`, `device_info*` | 0 or negative error |
 | 64 | `device_discover` | `index`, `device_info*` | 0 or negative error |
+| 65 | `update_confirm` | none | 0 or negative error |
+| 66 | `update_activate` | none | 0 or negative error |
+| 67 | `update_stage` | none | 0 or negative error |
 
 Notes:
 
@@ -1111,6 +1115,14 @@ int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
 ```
 
+### Update Store
+
+```c
+int swiftos_update_confirm(void);
+int swiftos_update_activate(void);
+int swiftos_update_stage(void);
+```
+
 ### Security And Process
 
 ```c
@@ -1331,13 +1343,6 @@ int main(void) {
 }
 ```
 
-Verification:
-
-```sh
-./tests/spawn_self_exec_test.sh
-./tests/boot_test.sh
-```
-
 ## Complete Example: Native Swift Hello
 
 ```swift
@@ -1352,10 +1357,4 @@ func main(_ argc: Int32,
     swiftos_puts("hello from native Swift\n")
     return 0
 }
-```
-
-Verification:
-
-```sh
-./tests/swift_coreutils_test.sh
 ```

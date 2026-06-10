@@ -5,8 +5,15 @@ import Foundation
 
 let swosPackedMagic = Array("SWOSBASE".utf8)
 let swosPackedVersion: UInt32 = 2
+// I8: version 3 is the signed layout — each entry carries a 32-byte SHA-256 of
+// its file data (zero for directories), and a 64-byte Ed25519 signature over
+// [header | entries | strings] sits between the string table and the payload.
+// swpkg payloads stay on version 2 (SWPKG_FORMAT.md); the base image is v3.
+let swosPackedVersionSigned: UInt32 = 3
 let swosPackedHeaderSize: UInt32 = 64
 let swosPackedEntrySize: UInt32 = 40
+let swosPackedEntrySizeSigned: UInt32 = 72
+let swosPackedSignatureSize = 64
 let swosPackedKindDir: UInt32 = 1
 let swosPackedKindFile: UInt32 = 2
 let swosPackedRootOwner: UInt32 = 1
@@ -134,8 +141,18 @@ func buildPackedFS(root: URL, options: PackedFSBuildOptions = PackedFSBuildOptio
     try buildPackedFS(entries: collectPackedFSEntries(root: root, options: options))
 }
 
-func buildPackedFS(entries: [PackedFSEntry]) throws -> PackedFSImage {
+/// Build a packed image. With `hashEntry` and `sign` both supplied (closures,
+/// so this shared file stays free of crypto dependencies — swpkg passes
+/// neither and keeps emitting v2), the signed v3 layout is produced:
+/// `hashEntry(data)` must return the 32-byte digest stored per entry, and
+/// `sign(bytes)` the 64-byte signature over header|entries|strings.
+func buildPackedFS(entries: [PackedFSEntry],
+                   hashEntry: ((Data) -> Data)? = nil,
+                   sign: ((Data) -> Data)? = nil) throws -> PackedFSImage {
     if entries.isEmpty { throw PackedFSError.emptyTree("<entries>") }
+    let signed = hashEntry != nil && sign != nil
+    let version = signed ? swosPackedVersionSigned : swosPackedVersion
+    let entrySize = signed ? swosPackedEntrySizeSigned : swosPackedEntrySize
 
     var strings = Data()
     var pathOffsets: [UInt32] = []
@@ -155,14 +172,15 @@ func buildPackedFS(entries: [PackedFSEntry]) throws -> PackedFSImage {
     }
 
     let entriesOffset = UInt64(swosPackedHeaderSize)
-    let stringsOffset = entriesOffset + UInt64(entries.count) * UInt64(swosPackedEntrySize)
-    let dataOffset = stringsOffset + UInt64(strings.count)
+    let stringsOffset = entriesOffset + UInt64(entries.count) * UInt64(entrySize)
+    let sigSize = signed ? UInt64(swosPackedSignatureSize) : 0
+    let dataOffset = stringsOffset + UInt64(strings.count) + sigSize
 
     var out = Data()
     out.append(contentsOf: swosPackedMagic)
-    appendLE32(&out, swosPackedVersion)
+    appendLE32(&out, version)
     appendLE32(&out, swosPackedHeaderSize)
-    appendLE32(&out, swosPackedEntrySize)
+    appendLE32(&out, entrySize)
     appendLE32(&out, UInt32(entries.count))
     appendLE64(&out, entriesOffset)
     appendLE64(&out, stringsOffset)
@@ -180,8 +198,23 @@ func buildPackedFS(entries: [PackedFSEntry]) throws -> PackedFSImage {
         appendLE64(&out, UInt64(entry.data.count))
         appendLE32(&out, entry.mode)
         appendLE32(&out, entry.owner)
+        if signed {
+            // 32-byte content digest; directories carry zeros.
+            if entry.kind == swosPackedKindFile {
+                let digest = hashEntry!(entry.data)
+                precondition(digest.count == 32, "hashEntry must return 32 bytes")
+                out.append(digest)
+            } else {
+                out.append(Data(repeating: 0, count: 32))
+            }
+        }
     }
     out.append(strings)
+    if signed {
+        let signature = sign!(out)   // covers header | entries | strings
+        precondition(signature.count == swosPackedSignatureSize, "sign must return 64 bytes")
+        out.append(signature)
+    }
     out.append(payload)
     return PackedFSImage(entries: entries, data: out)
 }
@@ -191,7 +224,9 @@ func parsePackedFS(_ data: Data) throws -> PackedFSImage {
     let magic = String(decoding: data[0..<8], as: UTF8.self)
     guard Array(data[0..<8]) == swosPackedMagic else { throw PackedFSError.badMagic(magic) }
     let version = try readLE32(data, 8)
-    guard version == swosPackedVersion else { throw PackedFSError.badVersion(version) }
+    guard version == swosPackedVersion || version == swosPackedVersionSigned else {
+        throw PackedFSError.badVersion(version)
+    }
     let headerSize = Int(try readLE32(data, 12))
     let entrySize = Int(try readLE32(data, 16))
     let entryCount = Int(try readLE32(data, 20))
@@ -200,7 +235,9 @@ func parsePackedFS(_ data: Data) throws -> PackedFSImage {
     let stringsSize = Int(try readLE64(data, 40))
     let dataOffset = Int(try readLE64(data, 48))
     let dataSize = Int(try readLE64(data, 56))
-    guard headerSize == Int(swosPackedHeaderSize), entrySize == Int(swosPackedEntrySize) else {
+    let wantEntrySize = version == swosPackedVersionSigned
+        ? Int(swosPackedEntrySizeSigned) : Int(swosPackedEntrySize)
+    guard headerSize == Int(swosPackedHeaderSize), entrySize == wantEntrySize else {
         throw PackedFSError.badLayout
     }
     guard entriesOffset + entryCount * entrySize <= data.count else { throw PackedFSError.outOfBounds("entries") }

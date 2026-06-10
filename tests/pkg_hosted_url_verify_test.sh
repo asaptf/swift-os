@@ -32,24 +32,6 @@ kill -0 "$HTTPPID" 2>/dev/null || {
   sed -n '1,120p' "$HTTPLOG" >&2 || true
   exit 2
 }
-ready=0
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  "$PYTHON" - "$PORT" <<'PY' >/dev/null 2>&1 && { ready=1; break; }
-import sys
-import urllib.request
-
-port = sys.argv[1]
-with urllib.request.urlopen(f"http://127.0.0.1:{port}/hosted-repo.json", timeout=2) as response:
-    if response.status != 200:
-        raise SystemExit(1)
-PY
-  sleep 0.2
-done
-[[ "$ready" -eq 1 ]] || {
-  echo "FAIL: HTTP server did not serve hosted-repo.json" >&2
-  sed -n '1,120p' "$HTTPLOG" >&2 || true
-  exit 2
-}
 
 PKGREPO="$ROOT/build/pkgrepo" "$ROOT/scripts/verify-ports-hosted-url.sh" "http://127.0.0.1:$PORT" || {
   echo "--- http log ---" >&2

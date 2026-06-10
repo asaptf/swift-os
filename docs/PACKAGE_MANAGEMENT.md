@@ -925,7 +925,7 @@ validate`, `swport recipe manifest`, checksum-verified `swport recipe fetch`,
 staged-root `swport recipe package`, and signed `swport recipe repo-fixture`
 exist for those checked paths. P6e/P6f prove the Lua cross-build and target
 install path. P7 adds zlib, P10 adds ca-certificates, and P11 adds pcre2 to
-`make package-ports-seed-repo-install-test`, which installs all five packages
+`make package-ports-seed-repo-install-test`, which installs all four packages
 from one signed local seed repository in QEMU and runs Lua, `minigzip`, the CA
 bundle marker, and `pcre2grep` smoke commands. P8 adds `make ports-static-host-publish` and
 `make package-static-host-repo-install-test`, which publish that seed into a
@@ -965,7 +965,7 @@ Good early candidates:
 Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
-- `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates, pcre2, and tzdata
+- `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates, and pcre2
   recipes and proves the generated manifest can feed `swport recipe package`,
   `swpkg verify`, and a signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
@@ -976,14 +976,12 @@ Acceptance:
   bundle as a data-only `.swpkg`.
 - `make ports-pcre2-repo-fixture` builds real static AArch64 PCRE2 libraries,
   headers, pkgconf metadata, and `pcre2grep`.
-- `make ports-tzdata-repo-fixture` compiles IANA TZif zoneinfo files and
-  packages the `/usr/share/zoneinfo` tree.
 - `make package-ports-seed-repo-install-test` installs Lua, zlib,
-  ca-certificates, pcre2, and tzdata from one signed local seed repository and runs
+  ca-certificates, and pcre2 from one signed local seed repository and runs
   their package smoke paths inside QEMU.
 - `make ports-static-host-publish` creates a deployable static web root for the
   seed repository, and `make package-static-host-repo-install-test` installs
-  Lua, zlib, ca-certificates, pcre2, and tzdata from that layout inside QEMU.
+  Lua, zlib, ca-certificates, and pcre2 from that layout inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

@@ -32,13 +32,6 @@ Expected signals:
 - `/bin`, `/etc`, `/tmp`, and `/www` are visible.
 - `top` renders two frames and returns to the shell.
 
-Verification:
-
-```sh
-./tests/boot_test.sh
-./tests/top_test.sh
-```
-
 ## 2. Use `/tmp` As Scratch Space
 
 Guest:
@@ -58,13 +51,6 @@ rmdir /tmp/demo
 
 This exercises tmpfs creation, append redirection, readback, metadata changes,
 and cleanup. The data is gone after reboot.
-
-Verification:
-
-```sh
-./tests/swift_fileops_test.sh
-./tests/swift_rm_r_test.sh
-```
 
 ## 3. Compare Account Capabilities
 
@@ -96,13 +82,6 @@ cat /etc/motd
 
 The read should fail because `guest` has only spawn authority in the seeded
 image.
-
-Verification:
-
-```sh
-./tests/console_login_test.sh
-./tests/cap_enforce_test.sh
-```
 
 ## 4. Serve Static Files Over HTTP
 
@@ -386,7 +365,7 @@ Expected signals:
 - `pkg search lua`, `pkg search zlib`, `pkg search ca-certificates`, and
   `pkg search pcre2` find the current seed packages.
 - `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`, and
-  `pkg install pcre2` activate all five packages.
+  `pkg install pcre2` activate all four packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; the CA
   marker prints `curl-ca-bundle 2026-05-14 121 certificates`; `pcre2grep`
@@ -607,9 +586,3 @@ make test
 The full gate builds the kernel, base image, package fixture, model artifacts,
 host-side unit tests, and many QEMU acceptance tests. For day-to-day work, run a
 targeted test first, then `make test` before merging a milestone.
-
-Verification:
-
-```sh
-make test
-```

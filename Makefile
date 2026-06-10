@@ -43,6 +43,8 @@ QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
+UPDATESTORE := $(BUILD)/updatestore
+KERNELBOOT := $(BUILD)/kernelboot
 SWPKG     := $(BUILD)/swpkg
 PKGSTORE  := $(BUILD)/pkgstore
 PKGREPO   := $(BUILD)/pkgrepo
@@ -125,6 +127,8 @@ SWIFT_SRCS := \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/crypto/sha256.swift \
+	kernel/crypto/sha512.swift \
+	kernel/crypto/ed25519.swift \
 	kernel/pkg/store.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
@@ -146,6 +150,9 @@ SWIFT_SRCS := \
 	kernel/user/ustack.swift \
 	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
+	kernel/fs/swosboot.swift \
+	kernel/fs/updatestore.swift \
+	kernel/fs/esp.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift \
 	kernel/mm/vm.swift
@@ -216,9 +223,12 @@ ESP_DIR    := $(BUILD)/esp
 UEFI_BASE_DISK := -global virtio-mmio.force-legacy=false \
 	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 	-device virtio-blk-device,drive=swosbase
+# U1g-4: the ESP is on virtio-mmio (if=none + virtio-blk-device), not if=virtio
+# (PCI), so the running kernel — which drives only virtio-mmio — can also read it.
 UEFI_QEMU_FLAGS := -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
 	-bios $(AAVMF_CODE) \
-	-drive file=fat:rw:$(ESP_DIR),format=raw,if=virtio \
+	-drive file=fat:rw:$(ESP_DIR),format=raw,if=none,id=esp \
+	-device virtio-blk-device,drive=esp \
 	$(UEFI_BASE_DISK)
 
 # ---- Objects ---------------------------------------------------------------
@@ -231,6 +241,7 @@ VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
 SMP_SECONDARY_OBJ := $(BUILD)/smp_secondary.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
+TRUST_ROOT_OBJ := $(BUILD)/trust_root.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
@@ -255,6 +266,9 @@ USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
+USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
+USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
+USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
 USER_LS_ELF := $(BUILD)/ls.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
@@ -310,6 +324,9 @@ BASE_EXEC_ELFS := \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
+	$(USER_SWOSCONFIRM_ELF) \
+	$(USER_SWOSACTIVATE_ELF) \
+	$(USER_SWOSUPDATE_ELF) \
 	$(USER_LS_ELF) \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
@@ -340,7 +357,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 
 build: $(KERNEL_ELF)
 
@@ -356,6 +373,12 @@ $(BUILD)/.dir:
 
 # Assemble the boot stub with the LLVM cross clang.
 $(BOOT_OBJ): $(ARCH_DIR)/boot.S Makefile | $(BUILD)/.dir
+	$(CLANG) $(ASM_FLAGS) $< -o $@
+
+# I8: embed the image-signing trust root (the .S incbins build/image_trust_root.bin).
+$(BUILD)/image_trust_root.bin: $(IMG_SIGNING_PUB) | $(BUILD)/.dir
+	cp $(IMG_SIGNING_PUB) $@
+$(TRUST_ROOT_OBJ): kernel/security/trust_root.S $(BUILD)/image_trust_root.bin Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 # Compile all kernel Swift into a single object (whole-module).
@@ -457,6 +480,15 @@ $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h 
 
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
+
+$(BUILD)/user_swosconfirm.o: userland/swos-confirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-confirm.swift -o $@
+
+$(BUILD)/user_swosactivate.o: userland/swos-activate.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-activate.swift -o $@
+
+$(BUILD)/user_swosupdate.o: userland/swos-update.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-update.swift -o $@
 
 $(BUILD)/user_ls.o: userland/ls.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ls.swift -o $@
@@ -615,6 +647,15 @@ $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
 
+$(USER_SWOSCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o -o $@
+
+$(USER_SWOSACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosactivate.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosactivate.o -o $@
+
+$(USER_SWOSUPDATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosupdate.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosupdate.o -o $@
+
 $(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
 
@@ -728,7 +769,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(EL0_OBJ) $(SMP_SECONDARY_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(EL0_OBJ) $(SMP_SECONDARY_OBJ) $(TRUST_ROOT_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -792,17 +833,32 @@ $(SIGNING_PUB): | $(MODELSIGN)
 	$(MODELSIGN) keygen $(SIGNING_SEED) $@
 $(SIGNING_SEED): $(SIGNING_PUB)
 
+# I8: the IMAGE-signing keypair (distinct from the model key — different
+# lifecycle: image key = OS vendor, model key = model publisher). The public
+# half is compiled into the kernel as the trust root.
+IMG_SIGNING_SEED := $(MODEL_DIR)/dev-image-signing.seed
+IMG_SIGNING_PUB := $(MODEL_DIR)/dev-image-signing.pub
+$(IMG_SIGNING_PUB): | $(MODELSIGN)
+	$(MODELSIGN) keygen $(IMG_SIGNING_SEED) $@
+$(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
+
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
 docs-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/docs_reference_test.swift -o $(BUILD)/docs_reference_test
 	$(BUILD)/docs_reference_test
 
-test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
+test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
-	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
+	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
+	$(HOST_SWIFTC) tests/updatestore_test.swift kernel/fs/swosboot.swift -o $(BUILD)/updatestore_test
+	$(BUILD)/updatestore_test
+	$(CLANG) -O2 -Wall -Wextra tests/loader_sha256_test.c -o $(BUILD)/loader_sha256_test
+	$(BUILD)/loader_sha256_test
+	$(CLANG) -O2 -Wall -Wextra tests/loader_ed25519_test.c -o $(BUILD)/loader_ed25519_test
+	$(BUILD)/loader_ed25519_test
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
 	$(HOST_SWIFTC) tests/pkgstore_tool_test.swift -o $(BUILD)/pkgstore_tool_test
@@ -819,7 +875,6 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
 	$(BUILD)/handle_test
-	./tests/device_authority_guard_test.sh
 	./tests/smp_mailbox_layout_test.sh
 	./tests/smp_release_guard_test.sh
 	./tests/smp_state_audit_test.sh
@@ -866,6 +921,16 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
+	./tests/signed_image_test.sh
+	./tests/ab_update_test.sh
+	./tests/ab_persist_test.sh
+	./tests/ab_confirm_test.sh
+	./tests/ab_rollback_test.sh
+	./tests/ab_activate_test.sh
+	./tests/ab_payload_test.sh
+	./tests/multisector_test.sh
+	./tests/ab_stage_test.sh
+	./tests/ab_flush_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -889,6 +954,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/vi_test.sh
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+	./tests/uefi_kernel_ab_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -952,11 +1018,6 @@ c5-device-metadata-test: build $(QEMU_DTB_SMP4) base-image
 c5-device-authority-test: build $(QEMU_DTB_SMP4) base-image
 	C5_AUTHORITY_TEST=1 C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
 
-c5-device-rights-test: $(BUILD)/.dir
-	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
-	$(BUILD)/handle_test
-	./tests/device_authority_guard_test.sh
-
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
 s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
@@ -968,10 +1029,15 @@ s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-s1-prefligh
 $(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_BIN) Makefile | $(BUILD)/.dir
 	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/kernel_blob.S -o $@
 
-$(EFI_APP): boot/efi/loader.c boot/efi/efi.h $(BUILD)/kernel_blob.obj Makefile | $(BUILD)/.dir
+# U1g-3b: the image-signing public key embedded in the loader (incbins the same
+# build/image_trust_root.bin the kernel's trust_root.S uses).
+$(BUILD)/efi_pubkey.obj: boot/efi/efi_pubkey.S $(BUILD)/image_trust_root.bin Makefile | $(BUILD)/.dir
+	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/efi_pubkey.S -o $@
+
+$(EFI_APP): boot/efi/loader.c boot/efi/efi.h boot/efi/loader_sha256.h boot/efi/loader_ed25519.h $(BUILD)/kernel_blob.obj $(BUILD)/efi_pubkey.obj Makefile | $(BUILD)/.dir
 	$(CLANG) $(EFI_CFLAGS) boot/efi/loader.c -o $(BUILD)/loader.obj
 	$(LLDLINK) -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ \
-		$(BUILD)/loader.obj $(BUILD)/kernel_blob.obj
+		$(BUILD)/loader.obj $(BUILD)/kernel_blob.obj $(BUILD)/efi_pubkey.obj
 	@echo "Built $(EFI_APP)"
 
 # Stage the EFI System Partition firmware boots from.
@@ -979,7 +1045,25 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 	@mkdir -p $(ESP_DIR)/EFI/BOOT
 	cp $(EFI_APP) $@
 
-uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI
+# U1g: stage the kernel A/B slots + boot manifest on the ESP under \EFI\swift-os.
+# The loader reads the manifest, picks the active slot (kernelA.bin / kernelB.bin),
+# and loads it (decoupled from the loader binary; the embedded blob is a fallback).
+# Both slots are the same image for now; A/B differentiation comes with staging a
+# new kernel into the inactive slot. make-disk.sh copies these into the GPT image.
+$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(KERNEL_BIN) $@
+$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(KERNEL_BIN) $@
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+
+uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
+      $(ESP_DIR)/EFI/swift-os/kernelA.bin \
+      $(ESP_DIR)/EFI/swift-os/kernelB.bin \
+      $(ESP_DIR)/EFI/swift-os/kernel-boot
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
 uefi-run: uefi base-image
@@ -991,10 +1075,12 @@ DISK_IMG := $(BUILD)/swift-os.img
 disk: uefi
 	./scripts/make-disk.sh $(DISK_IMG)
 
-# Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT).
+# Boot the real disk image under AAVMF (a genuine -drive, not virtual FAT). The
+# ESP/GPT disk is on virtio-mmio (U1g-4) so the kernel can read it too.
 disk-run: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -nographic -no-reboot \
-		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-bios $(AAVMF_CODE) \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
 		$(UEFI_BASE_DISK)
 
 # Boot the UEFI disk in a graphical window. `ramfb` gives the firmware a linear
@@ -1006,13 +1092,14 @@ disk-run: disk base-image
 run-gfx: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
 		-global virtio-mmio.force-legacy=false \
-		-bios $(AAVMF_CODE) -drive file=$(DISK_IMG),format=raw,if=virtio \
+		-bios $(AAVMF_CODE) \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
 		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
-$(BASEPACK): tools/basepack.swift tools/packfs.swift Makefile | $(BUILD)/.dir
-	$(HOST_SWIFTC) tools/basepack.swift tools/packfs.swift -o $@
+$(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
@@ -1044,7 +1131,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
@@ -1059,10 +1146,7 @@ ports-ca-certificates-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/security
 ports-pcre2-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/devel/pcre2/Port.json scripts/build-pcre2.sh
 	./scripts/build-pcre2.sh
 
-ports-tzdata-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/sysutils/tzdata/Port.json scripts/build-tzdata.sh
-	./scripts/build-tzdata.sh
-
-ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-ca-certificates.sh scripts/build-pcre2.sh scripts/build-tzdata.sh scripts/build-ports-seed-repo.sh
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-ca-certificates.sh scripts/build-pcre2.sh scripts/build-ports-seed-repo.sh
 	./scripts/build-ports-seed-repo.sh
 
 ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-host.sh
@@ -1152,7 +1236,22 @@ package-hosted-url-install-test: build $(QEMU_DTB) package-lua-install-fixture
 	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host/aarch64/current" >&2; exit 2; fi
 	PKG_HOSTED_REPO_URL="$(PKG_HOSTED_REPO_URL)" ./tests/pkg_hosted_url_install_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
+# U1a: host builder for the SWOSBOOT A/B update-store disk. Shares the manifest
+# format/CRC with the kernel via kernel/fs/swosboot.swift.
+$(UPDATESTORE): tools/updatestore.swift kernel/fs/swosboot.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/updatestore.swift kernel/fs/swosboot.swift -o $@
+
+updatestore: $(UPDATESTORE)
+
+# U1g-2/3a/3b: host builder for the SWOSKERN kernel A/B boot manifest (read by the
+# UEFI loader from the ESP). Embeds per-slot SHA-256 (U1g-3a) and signs the body
+# with Ed25519 (U1g-3b, image-signing key); the loader parses + verifies in C.
+$(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+
+kernelboot: $(KERNELBOOT)
+
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -1200,6 +1299,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
+	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm
+	cp $(USER_SWOSACTIVATE_ELF) $(BASE_ROOT)/bin/swos-activate
+	cp $(USER_SWOSUPDATE_ELF) $(BASE_ROOT)/bin/swos-update
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo
@@ -1232,7 +1334,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
-	$(BASEPACK) $(BASE_ROOT) $@
+	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
 base-image: $(BASE_IMG)
 
@@ -1258,7 +1360,6 @@ clean:
 		$(BUILD)/zlib-port-work $(BUILD)/zlib-port-runtime $(BUILD)/zlib-root $(BUILD)/zlib-repo-root $(BUILD)/zlib-repo-root.pub \
 		$(BUILD)/ca-certificates-root $(BUILD)/ca-certificates-repo-root $(BUILD)/ca-certificates-repo-root.pub \
 		$(BUILD)/pcre2-port-work $(BUILD)/pcre2-port-runtime $(BUILD)/pcre2-root $(BUILD)/pcre2-repo-root $(BUILD)/pcre2-repo-root.pub \
-		$(BUILD)/tzdata-port-work $(BUILD)/tzdata-root $(BUILD)/tzdata-repo-root $(BUILD)/tzdata-repo-root.pub \
 		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(BUILD)/base-ports-static-host-dns.img $(BUILD)/base-hosted-url.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.

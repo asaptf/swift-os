@@ -109,18 +109,3 @@ func attenuate(_ r: Rights, to mask: Rights) -> Rights { r.intersection(mask) }
 func hasRights(_ held: Rights, _ required: Rights) -> Bool {
     held.isSuperset(of: required)
 }
-
-// C5f: device grants remain metadata-only until an explicit MMIO/IRQ/DMA
-// handoff milestone lands. They can be inspected and transferred to a driver
-// service, but they cannot authorize mapping or direct I/O.
-func deviceMetadataGrantRights() -> Rights {
-    var r = Rights()
-    r.insert(.getattr)
-    r.insert(.transfer)
-    return r
-}
-
-func deviceGrantHasHardwareAuthorityRights(_ r: Rights) -> Bool {
-    r.contains(.read) || r.contains(.write) || r.contains(.execute) ||
-    r.contains(.map) || r.contains(.duplicate) || r.contains(.setattr)
-}

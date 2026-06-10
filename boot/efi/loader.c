@@ -19,6 +19,13 @@
 // data-cache clean of the freshly written kernel image.
 
 #include "efi.h"
+#include "loader_sha256.h"
+#include "loader_ed25519.h"
+
+// U1g-3b: the image-signing Ed25519 public key (boot/efi/efi_pubkey.S, the same
+// root the kernel embeds). The loader verifies the signed kernel A/B manifest
+// against it before trusting any slot selection.
+extern const unsigned char efi_image_signing_pubkey[32];
 
 // Kernel link/load base (kernel.ld). The embedded flat image's byte 0 maps here.
 // Supplied by the Makefile per board (-DKERNEL_LOAD_ADDR=…); the default matches
@@ -138,6 +145,192 @@ static void clean_dcache(UINT64 start, UINT64 len) {
 // GetMemoryMap and ExitBootServices). QEMU virt's map is well under this.
 static UINT8 mmap_buf[16384];
 
+// U1g: ESP paths, as CHAR16 (UTF-16) arrays so we do not depend on the
+// toolchain's u"" literal. U1g-2 selects between two kernel slots (A/B) named by
+// a small manifest; the manifest and both slot images live under \EFI\swift-os.
+static CHAR16 KERNEL_A_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','A','.','b','i','n', 0
+};
+static CHAR16 KERNEL_B_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','B','.','b','i','n', 0
+};
+static CHAR16 KERNEL_MANIFEST_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'k','e','r','n','e','l','-','b','o','o','t', 0
+};
+
+static UINT32 ld32(const UINT8 *p) {
+    return (UINT32)p[0] | ((UINT32)p[1] << 8) | ((UINT32)p[2] << 16) | ((UINT32)p[3] << 24);
+}
+
+// Open a file on the volume the loader was loaded from (the ESP) and return its
+// handle (*out_file) and size (*out_size). Returns 1 on success, 0 on any
+// failure. U1g decouples the kernel image (and its A/B manifest) from the loader
+// binary so they can be staged on disk.
+static int open_esp_file(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, CHAR16 *path,
+                         EFI_FILE_PROTOCOL **out_file, UINT64 *out_size) {
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID info_guid = EFI_FILE_INFO_ID;
+
+    EFI_LOADED_IMAGE_PROTOCOL *li = 0;
+    if (bs->HandleProtocol(image_handle, &li_guid, (void **)&li) != EFI_SUCCESS || !li) {
+        return 0;
+    }
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = 0;
+    if (bs->HandleProtocol(li->DeviceHandle, &fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) {
+        return 0;
+    }
+    EFI_FILE_PROTOCOL *root = 0;
+    if (fs->OpenVolume(fs, &root) != EFI_SUCCESS || !root) {
+        return 0;
+    }
+    EFI_FILE_PROTOCOL *f = 0;
+    if (root->Open(root, &f, path, EFI_FILE_MODE_READ, 0) != EFI_SUCCESS || !f) {
+        root->Close(root);
+        return 0;
+    }
+    root->Close(root);
+
+    // GetInfo returns the full EFI_FILE_INFO: the fixed prefix (80 bytes) PLUS
+    // the file name as a CHAR16 string, so the buffer must be generous or the
+    // firmware answers EFI_BUFFER_TOO_SMALL.
+    UINT8 info[512];
+    UINTN isz = sizeof(info);
+    if (f->GetInfo(f, &info_guid, &isz, info) != EFI_SUCCESS) {
+        f->Close(f);
+        return 0;
+    }
+    UINT64 fsize = ((EFI_FILE_INFO *)info)->FileSize;
+    if (fsize == 0) {
+        f->Close(f);
+        return 0;
+    }
+    *out_file = f;
+    *out_size = fsize;
+    return 1;
+}
+
+// Read the whole open file into [dst, dst+size). The File protocol may return
+// fewer bytes than requested per call, so loop until the file is consumed.
+// Returns 1 on success, 0 if a read failed or EOF arrived early.
+static int read_file_into(EFI_FILE_PROTOCOL *f, UINT64 dst, UINT64 size) {
+    UINT64 off = 0;
+    while (off < size) {
+        UINTN chunk = (UINTN)(size - off);
+        EFI_STATUS rs = f->Read(f, &chunk, (void *)(UINTN)(dst + off));
+        if (rs != EFI_SUCCESS || chunk == 0) {
+            return 0;
+        }
+        off += chunk;
+    }
+    return 1;
+}
+
+// U1g-2/3a/3b: the kernel A/B boot manifest (\EFI\swift-os\kernel-boot). Layout (LE):
+//   0  u8[8] "SWOSKERN"   8  u32 version   12 u32 active(0/1)
+//   16 u32 fallback(0/1)  20 u32 generation
+//   24 u64 slotA_size   32 u8[32] slotA_sha256   (U1g-3a, integrity)
+//   64 u64 slotB_size   72 u8[32] slotB_sha256   (104-byte signed body)
+//   --- version 3 (U1g-3b, authenticity): ---
+//   104 u8[64] Ed25519 signature over bytes [0,104)
+// Returns 1 ONLY for a TRUSTED manifest: version 3 with a valid signature over
+// its body, verified against the compiled-in image-signing key. Fills
+// *active/*fallback/*gen and hashA/hashB. Returns 0 for absent / malformed /
+// unsigned (v1/v2 — a signature is required) / bad-signature manifests; the
+// caller then boots the embedded blob rather than honor an untrusted selection.
+#define SWOSKERN_BODY_LEN 104
+static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
+                                int *active, int *fallback, UINT32 *gen,
+                                UINT8 hashA[32], UINT8 hashB[32]) {
+    EFI_FILE_PROTOCOL *f = 0;
+    UINT64 sz = 0;
+    if (!open_esp_file(image_handle, st, KERNEL_MANIFEST_PATH, &f, &sz)) {
+        return 0;
+    }
+    UINT8 buf[256];
+    if (sz < SWOSKERN_BODY_LEN + 64 || sz > sizeof(buf)) { f->Close(f); return 0; }
+    UINTN n = (UINTN)sz;
+    EFI_STATUS rs = f->Read(f, &n, buf);
+    f->Close(f);
+    if (rs != EFI_SUCCESS || n < SWOSKERN_BODY_LEN + 64) {
+        return 0;
+    }
+    static const char magic[8] = { 'S','W','O','S','K','E','R','N' };
+    for (int i = 0; i < 8; i++) {
+        if (buf[i] != (UINT8)magic[i]) return 0;
+    }
+    UINT32 version = ld32(buf + 8);
+    if (version != 3) {
+        puts16(st, "UEFI: kernel manifest is unsigned (version != 3), ignoring\r\n");
+        return 0;
+    }
+    // Authenticity: the 64-byte signature at offset 104 must verify over the body.
+    if (!ed25519_verify(buf + SWOSKERN_BODY_LEN, buf, SWOSKERN_BODY_LEN, efi_image_signing_pubkey)) {
+        puts16(st, "UEFI: kernel manifest signature INVALID\r\n");
+        return 0;
+    }
+    UINT32 a = ld32(buf + 12), fb = ld32(buf + 16);
+    if (a > 1 || fb > 1) return 0;                // slot indices out of range
+    *active = (int)a;
+    *fallback = (int)fb;
+    *gen = ld32(buf + 20);
+    for (int i = 0; i < 32; i++) {
+        hashA[i] = buf[32 + i];
+        hashB[i] = buf[72 + i];
+    }
+    return 1;
+}
+
+// U1g-3a: load a kernel slot's image into KERNEL_LOAD_ADDR and, if a hash is
+// given, verify its SHA-256. Returns the image size, or 0 on any failure (file
+// missing/unreadable, allocation failed, or integrity mismatch) with the staging
+// pages freed so the caller can try another slot at the same address.
+static UINT64 load_slot(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, int slot,
+                        const UINT8 *expect_hash) {
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    CHAR16 *path = slot == 0 ? KERNEL_A_PATH : KERNEL_B_PATH;
+    EFI_FILE_PROTOCOL *f = 0;
+    UINT64 size = 0;
+    if (!open_esp_file(image_handle, st, path, &f, &size)) {
+        return 0;
+    }
+    UINTN npages = (UINTN)((size + 0xFFF) / 0x1000);
+    EFI_PHYSICAL_ADDRESS kaddr = KERNEL_LOAD_ADDR;
+    if (bs->AllocatePages(AllocateAddress, EfiLoaderData, npages, &kaddr) != EFI_SUCCESS) {
+        f->Close(f);
+        return 0;
+    }
+    int okread = read_file_into(f, KERNEL_LOAD_ADDR, size);
+    f->Close(f);
+    if (!okread) {
+        bs->FreePages(KERNEL_LOAD_ADDR, npages);
+        return 0;
+    }
+    if (expect_hash) {
+        unsigned char got[32];
+        sha256_hash((const unsigned char *)(UINTN)KERNEL_LOAD_ADDR, size, got);
+        int match = 1;
+        for (int i = 0; i < 32; i++) {
+            if (got[i] != expect_hash[i]) match = 0;
+        }
+        if (!match) {
+            puts16(st, "UEFI: kernel slot ");
+            puts16(st, slot == 0 ? "A" : "B");
+            puts16(st, " FAILED integrity check (sha256)\r\n");
+            bs->FreePages(KERNEL_LOAD_ADDR, npages);
+            return 0;
+        }
+        puts16(st, "UEFI: kernel slot ");
+        puts16(st, slot == 0 ? "A" : "B");
+        puts16(st, " integrity verified (sha256)\r\n");
+    }
+    return size;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     EFI_BOOT_SERVICES *bs = st->BootServices;
 
@@ -219,18 +412,73 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         }
     }
 
-    // Reserve the kernel's fixed load address and stage the embedded image.
-    UINTN ksize = (UINTN)(kernel_blob_end - kernel_blob);
-    UINTN npages = (ksize + 0xFFF) / 0x1000;
-    EFI_PHYSICAL_ADDRESS kaddr = KERNEL_LOAD_ADDR;
-    EFI_STATUS s = bs->AllocatePages(AllocateAddress, EfiLoaderData, npages, &kaddr);
-    if (s != EFI_SUCCESS) {
-        puts16(st, "UEFI: FAIL could not reserve kernel load address ");
-        puthex(st, (UINT64)s);
-        puts16(st, "\r\n");
-        for (;;) {}
+    // U1g: load the kernel image from a file on the ESP (decoupled from the loader
+    // binary so it can be A/B-staged). The kernel A/B manifest is TRUSTED only if
+    // it is a v3 manifest with a valid Ed25519 signature over its body (U1g-3b,
+    // authenticity); then it selects the active slot (kernelA.bin / kernelB.bin)
+    // and load_slot verifies that slot's SHA-256 (U1g-3a, integrity), rolling back
+    // to the other slot if the active one is missing or fails its hash. If there
+    // is NO trusted manifest (absent / unsigned / bad signature), the loader boots
+    // its own embedded blob rather than honor an untrusted slot selection. All of
+    // this happens before ExitBootServices.
+    UINTN blob_size = (UINTN)(kernel_blob_end - kernel_blob);
+
+    int active = 0, fallback = 1;
+    UINT32 kgen = 0;
+    UINT8 hashA[32], hashB[32];
+    int trusted = read_kernel_manifest(image_handle, st, &active, &fallback, &kgen, hashA, hashB);
+
+    UINTN ksize = 0;
+    int loaded_slot = -1;
+    if (trusted) {
+        puts16(st, "UEFI: kernel A/B manifest active slot ");
+        puts16(st, active == 0 ? "A" : "B");
+        puts16(st, " gen ");
+        puthex(st, kgen);
+        puts16(st, " (signature OK)\r\n");
+
+        const UINT8 *active_hash = active == 0 ? hashA : hashB;
+        const UINT8 *fallback_hash = fallback == 0 ? hashA : hashB;
+
+        // Try the active slot (load + SHA-256 verify); on any failure roll back to
+        // the other slot if distinct. load_slot frees its pages on failure.
+        UINT64 sz = load_slot(image_handle, st, active, active_hash);
+        if (sz) {
+            loaded_slot = active;
+            ksize = (UINTN)sz;
+        } else if (fallback != active) {
+            puts16(st, "UEFI: active slot unusable, rolling back to slot ");
+            puts16(st, fallback == 0 ? "A" : "B");
+            puts16(st, "\r\n");
+            sz = load_slot(image_handle, st, fallback, fallback_hash);
+            if (sz) {
+                loaded_slot = fallback;
+                ksize = (UINTN)sz;
+            }
+        }
     }
-    copy_mem((unsigned char *)(UINTN)KERNEL_LOAD_ADDR, kernel_blob, ksize);
+
+    if (loaded_slot >= 0) {
+        puts16(st, "UEFI: kernel loaded from ESP file ");
+        puthex(st, (UINT64)ksize);
+        puts16(st, " bytes\r\n");
+        puts16(st, "UEFI: booted kernel slot ");
+        puts16(st, loaded_slot == 0 ? "A\r\n" : "B\r\n");
+    } else {
+        // No slot file was usable: reserve and stage the embedded blob in place.
+        UINTN npages = (blob_size + 0xFFF) / 0x1000;
+        EFI_PHYSICAL_ADDRESS kaddr = KERNEL_LOAD_ADDR;
+        EFI_STATUS s = bs->AllocatePages(AllocateAddress, EfiLoaderData, npages, &kaddr);
+        if (s != EFI_SUCCESS) {
+            puts16(st, "UEFI: FAIL could not reserve kernel load address ");
+            puthex(st, (UINT64)s);
+            puts16(st, "\r\n");
+            for (;;) {}
+        }
+        copy_mem((unsigned char *)(UINTN)KERNEL_LOAD_ADDR, kernel_blob, blob_size);
+        ksize = blob_size;
+        puts16(st, "UEFI: no usable ESP kernel slot, using embedded blob\r\n");
+    }
     clean_dcache(KERNEL_LOAD_ADDR, ksize);
     puts16(st, "UEFI: kernel staged, launching (no more firmware output)\r\n");
 
@@ -239,7 +487,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     UINTN msize = sizeof(mmap_buf), mkey = 0, dsize = 0;
     UINT32 dver = 0;
     bs->GetMemoryMap(&msize, mmap_buf, &mkey, &dsize, &dver);
-    s = bs->ExitBootServices(image_handle, mkey);
+    EFI_STATUS s = bs->ExitBootServices(image_handle, mkey);
     if (s != EFI_SUCCESS) {
         msize = sizeof(mmap_buf);
         bs->GetMemoryMap(&msize, mmap_buf, &mkey, &dsize, &dver);

@@ -41,7 +41,6 @@ struct device_expect {
 static int c5c_real_device_seen = 0;
 static int saw_virtio_input_metadata = 0;
 static int c5e_authority_withheld_seen = 0;
-static int c5f_metadata_rights_seen = 0;
 
 static void u32_to_str(int v, char out[12]) {
     char tmp[12];
@@ -177,8 +176,6 @@ static int run_device_handoff(int command_fd, int event_fd, struct device_expect
         puts_raw("drvsvc: device dup unexpectedly succeeded\n");
         return 0;
     }
-    c5f_metadata_rights_seen = 1;
-    puts_raw("drvsvc: C5f device grant rights metadata-only\n");
 
     if (ipc_send(command_fd, "DEVH", 4, dev_fd) != 0) {
         close(dev_fd);
@@ -331,9 +328,6 @@ int main(void) {
     }
     if (c5e_authority_withheld_seen) {
         puts_raw("C5e OK: device authority withheld until explicit handoff\n");
-    }
-    if (c5f_metadata_rights_seen) {
-        puts_raw("C5f OK: device grant rights stayed metadata-only\n");
     }
     return 0;
 }

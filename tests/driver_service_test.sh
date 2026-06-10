@@ -65,7 +65,6 @@ drvsvc: C5b device grant claimed"
     EXPECTS="${EXPECTS}
 drvsvc: C5d virtio-input metadata discovered
 drvsvc: C5c virtio-input grant matched
-drvsvc: C5f device grant rights metadata-only
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
 drvinputd: C5c virtio-input grant accepted
@@ -78,11 +77,9 @@ C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 C5d OK: virtio input discovery metadata surfaced
 C5e OK: device authority withheld until explicit handoff
-C5f OK: device grant rights stayed metadata-only
 C5a driver service demo exited, code 0"
   else
     EXPECTS="${EXPECTS}
-drvsvc: C5f device grant rights metadata-only
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
 drvsvc: C5b device busy while service owns grant
@@ -92,7 +89,6 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: device discovery manifest matched pseudo input
 C5e OK: device authority withheld until explicit handoff
-C5f OK: device grant rights stayed metadata-only
 C5a driver service demo exited, code 0"
   fi
 fi

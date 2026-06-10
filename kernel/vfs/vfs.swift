@@ -72,15 +72,20 @@ private struct VNode {
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
+    // I8 (signed base image): pointer to this entry's 32-byte content SHA-256
+    // inside its kept signed-metadata buffer (0 for unsigned package payloads),
+    // plus a once-per-boot cache so each disk file is verified on first use only.
+    var hashPtr: UInt = 0
+    var contentVerified = false
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
 }
 
-// Keep fixed-table tmpfs churn headroom above the packed base image and active
-// package payloads. Data packages such as tzdata add hundreds of read-only
-// files, so this early fixed table must be sized for real repository smokes.
-private let maxNodes = 4096
+// Keep fixed-table tmpfs churn headroom above the packed base image. S4f runs
+// after normal boot/login demos, so it needs space for transient vnode names
+// even though unlink/rmdir only detach nodes in this simple VFS.
+private let maxNodes = 192
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
 private var mountedPackageStorePayloads = 0
@@ -338,7 +343,7 @@ private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
 
 private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
                          _ diskImage: Int, _ diskOffset: Int, _ dataLen: Int,
-                         _ owner: UInt32, _ mode: UInt32) {
+                         _ owner: UInt32, _ mode: UInt32, _ hashPtr: UInt) {
     let n = allocNode()
     if n < 0 { return }
     nodes[n].namePtr = namePtr
@@ -350,6 +355,7 @@ private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
     nodes[n].dataLen = dataLen
     nodes[n].owner = owner
     nodes[n].mode = mode
+    nodes[n].hashPtr = hashPtr
     linkChild(parent, n)
 }
 
@@ -379,15 +385,22 @@ private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ 
     return (cur, UInt(bitPattern: pathPtr + leafStart), pathLen - leafStart)
 }
 
-private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>) -> (Bool, Int, UInt64, UInt64, UInt64, UInt64) {
+private let vfsActiveBaseImage = -1
+
+private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>)
+    -> (Bool, Bool, Int, Int, UInt64, UInt64, UInt64, UInt64, Int) {
     let magic: StaticString = "SWOSBASE"
     var magicOk = true
     magic.withUTF8Buffer { m in
         for i in 0..<m.count where hdr[i] != m[i] { magicOk = false }
     }
-    if !magicOk { return (false, 0, 0, 0, 0, 0) }
-    if le32(hdr, 8) != 2 { return (false, 0, 0, 0, 0, 0) }   // version
-    if le32(hdr, 16) != 40 { return (false, 0, 0, 0, 0, 0) } // entry size
+    if !magicOk { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let version = le32(hdr, 8)
+    let signed = version == 3
+    if version != 2 && version != 3 { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let entrySize = signed ? 72 : 40
+    if le32(hdr, 12) != 64 { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if le32(hdr, 16) != UInt32(entrySize) { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
 
     let entryCount = Int(le32(hdr, 20))
     let entriesOffset = le64(hdr, 24)
@@ -395,15 +408,22 @@ private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>) -> (Bool, Int, U
     let stringsSize = le64(hdr, 40)
     let dataOffset = le64(hdr, 48)
 
-    if entryCount <= 0 || entryCount > maxNodes { return (false, 0, 0, 0, 0, 0) }
-    if stringsOffset < entriesOffset { return (false, 0, 0, 0, 0, 0) }
-    let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
-    if metaLen <= 0 || metaLen > 1 << 20 { return (false, 0, 0, 0, 0, 0) }
-    if dataOffset < stringsOffset + stringsSize { return (false, 0, 0, 0, 0, 0) }
-    return (true, entryCount, entriesOffset, stringsOffset, stringsSize, dataOffset)
+    if entryCount <= 0 || entryCount > maxNodes { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if entriesOffset != 64 || stringsOffset < entriesOffset { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let signedLen64 = stringsOffset + stringsSize
+    let sigSize: UInt64 = signed ? 64 : 0
+    if dataOffset != signedLen64 + sigSize { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if signedLen64 <= 64 || signedLen64 > UInt64(1 << 20) {
+        return (false, false, 0, 0, 0, 0, 0, 0, 0)
+    }
+    return (true, signed, entryCount, entrySize, entriesOffset, stringsOffset,
+            stringsSize, dataOffset, Int(signedLen64))
 }
 
 func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if image == vfsActiveBaseImage {
+        return virtioBlkReadRange(byteOff, buf, len)
+    }
     let rawCount = virtioBlkSwosbaseImageCount()
     if image >= 0 && image < rawCount {
         return virtioBlkReadRangeFromImage(image, byteOff, buf, len)
@@ -411,6 +431,10 @@ func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawP
     let storeIndex = image - rawCount
     return pkgStoreReadActivePayloadRange(storeIndex, byteOff, buf, len)
 }
+
+// Fixed scratch for streaming content verification off the disk (4 KiB chunk
+// per virtio read). SMP: single-CPU kernel today; serialize before S5.
+private var vfsVerifyScratch = InlineArray<4096, UInt8>(repeating: 0)
 
 private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
     if !virtioBlkAvailable() { return false }
@@ -423,17 +447,17 @@ private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
 
     return hdr.withUnsafeBufferPointer { hp -> Bool in
         let h = hp.baseAddress!
-        let (ok, entryCount, entriesOffset, stringsOffset, stringsSize, _) = readPackedImageHeader(h)
+        let (ok, _, entryCount, entrySize, entriesOffset, stringsOffset, stringsSize, _, _) = readPackedImageHeader(h)
         if !ok { return false }
 
         var found = false
         target.withUTF8Buffer { targetBuf in
-            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 40) { entry in
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: entrySize) { entry in
                 withUnsafeTemporaryAllocation(of: UInt8.self, capacity: targetBuf.count) { path in
                     var k = 0
                     while k < entryCount && !found {
-                        let entryOffset = entriesOffset + UInt64(k * 40)
-                        if vfsImageReadRange(image, entryOffset, entry.baseAddress, 40) != 0 {
+                        let entryOffset = entriesOffset + UInt64(k * entrySize)
+                        if vfsImageReadRange(image, entryOffset, entry.baseAddress, UInt32(entrySize)) != 0 {
                             return
                         }
                         let e = entry.baseAddress!
@@ -457,9 +481,11 @@ private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
 }
 
 /// Build a read-only tree from a packed SWOSBASE image. The metadata buffer
-/// (entries + string table) is kept permanently: vnode names point straight
-/// into it.
-private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bool) -> Bool {
+/// (header + entries + string table) is kept permanently: vnode names and signed
+/// per-file hashes point straight into it.
+private func buildImageFromDisk(_ image: Int, _ root: Int,
+                                allowExistingDirs: Bool,
+                                requireSigned: Bool) -> Bool {
     if !virtioBlkAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
@@ -470,17 +496,42 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
 
     return hdr.withUnsafeBufferPointer { hp -> Bool in
         let h = hp.baseAddress!
-        let (ok, entryCount, entriesOffset, stringsOffset, stringsSize, dataOffset) = readPackedImageHeader(h)
+        let (ok, signed, entryCount, entrySize, entriesOffset, stringsOffset, _, dataOffset, signedLen) =
+            readPackedImageHeader(h)
         if !ok { return false }
-        let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
+        if requireSigned && !signed {
+            uartPuts("vfs: unsigned base image refused - signed v3 required\n")
+            return false
+        }
 
-        guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
-        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
-        if vfsImageReadRange(image, entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+        // Read the metadata range (header + entries + strings). For v3 this is
+        // the signed message. For v2 package payloads it is kept so names remain
+        // stable for the lifetime of the mount.
+        guard let metaRaw = swiftos_kernel_alloc(UInt(signedLen), 16) else { return false }
+        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: signedLen)
+        if vfsImageReadRange(image, 0, metaRaw, UInt32(signedLen)) != 0 { return false }
 
-        let stringsBase = Int(stringsOffset - entriesOffset)
+        if signed {
+            var sig = [UInt8](repeating: 0, count: 64)
+            let sok = sig.withUnsafeMutableBytes { raw -> Bool in
+                vfsImageReadRange(image, UInt64(signedLen), raw.baseAddress, 64) == 0
+            }
+            if !sok { return false }
+            let sigOK = sig.withUnsafeBytes { sb -> Bool in
+                withUnsafeBytes(of: image_trust_root) { tr in
+                    ed25519Verify(message: metaRaw, signedLen,
+                                  signature: sb.baseAddress!, publicKey: tr.baseAddress!)
+                }
+            }
+            if !sigOK {
+                uartPuts("vfs: base image signature INVALID - refusing disk image\n")
+                return false
+            }
+            klog(.info, "vfs", "base image signature verified (ed25519)")
+        }
+
         for k in 0..<entryCount {
-            let e = meta + k * 40
+            let e = meta + Int(entriesOffset) + k * entrySize
             let pathOff = Int(le32(e, 0))
             let pathLen = Int(le32(e, 4))
             let kind = le32(e, 8)
@@ -488,8 +539,8 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
             let dLen = Int(le64(e, 24))
             let mode = le32(e, 32)
             let owner = le32(e, 36)
-            if pathLen <= 0 || stringsBase + pathOff + pathLen > metaLen { continue }
-            let pathPtr = meta + stringsBase + pathOff
+            if pathLen <= 0 || Int(stringsOffset) + pathOff + pathLen > signedLen { continue }
+            let pathPtr = meta + Int(stringsOffset) + pathOff
             let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
             if parent < 0 || leafLen <= 0 { continue }
             let existing = findChild(parent, UnsafePointer<UInt8>(bitPattern: leafPtr)!, leafLen)
@@ -501,7 +552,9 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
                 _ = addDiskDir(parent, leafPtr, leafLen, owner, mode)
             } else if kind == 2 {
                 if existing != -1 { return false }
-                addDiskFile(parent, leafPtr, leafLen, image, Int(dataOffset) + dOff, dLen, owner, mode)
+                let hashPtr = signed ? UInt(bitPattern: e + 40) : 0
+                addDiskFile(parent, leafPtr, leafLen, image, Int(dataOffset) + dOff,
+                            dLen, owner, mode, hashPtr)
             }
         }
         return true
@@ -510,49 +563,115 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
 
 /// Build the read-only base tree from whichever SWOSBASE image contains the
 /// boot shell. QEMU's virtio-mmio scan order is not a package contract, so the
-/// VFS chooses by contents and mounts the remaining images as package overlays.
-private func buildBaseFromDisk(_ root: Int) -> Int {
+/// VFS chooses by contents. Base images must be signed v3; package overlays may
+/// still be v2 because swpkg payloads deliberately keep the v2 layout.
+private func buildBaseFromDisk(_ root: Int) -> (mounted: Bool, image: Int) {
+    if virtioBlkUsingStore() {
+        if buildImageFromDisk(vfsActiveBaseImage, root,
+                              allowExistingDirs: false,
+                              requireSigned: true) {
+            return (true, vfsActiveBaseImage)
+        }
+        return (false, -1)
+    }
+
     let count = virtioBlkSwosbaseImageCount()
-    if count <= 0 { return -1 }
+    if count <= 0 {
+        if buildImageFromDisk(vfsActiveBaseImage, root,
+                              allowExistingDirs: false,
+                              requireSigned: true) {
+            return (true, vfsActiveBaseImage)
+        }
+        return (false, -1)
+    }
     var image = 0
     while image < count {
         if packedImageHasPath(image, "bin/busybox") || packedImageHasPath(image, "bin/console-login") {
-            if buildImageFromDisk(image, root, allowExistingDirs: false) {
-                return image
+            if buildImageFromDisk(image, root, allowExistingDirs: false, requireSigned: true) {
+                return (true, image)
             }
         }
         image += 1
     }
-    if count == 1 && buildImageFromDisk(0, root, allowExistingDirs: false) {
-        return 0
+    if count == 1 && buildImageFromDisk(0, root, allowExistingDirs: false, requireSigned: true) {
+        return (true, 0)
     }
-    return -1
+    return (false, -1)
 }
 
 private func mountPackageImages(_ root: Int, baseImage: Int) {
     let count = virtioBlkSwosbaseImageCount()
-    var image = 0
-    while image < count {
-        if image != baseImage {
-            if buildImageFromDisk(image, root, allowExistingDirs: true) {
-                klog(.info, "vfs", "P2: package image mounted", UInt64(image))
-            } else {
-                klog(.info, "vfs", "P2: package image rejected", UInt64(image))
+    if !virtioBlkUsingStore() {
+        var image = 0
+        while image < count {
+            if image != baseImage {
+                if buildImageFromDisk(image, root,
+                                      allowExistingDirs: true,
+                                      requireSigned: false) {
+                    klog(.info, "vfs", "P2: package image mounted", UInt64(image))
+                } else {
+                    klog(.info, "vfs", "P2: package image rejected", UInt64(image))
+                }
             }
+            image += 1
         }
-        image += 1
     }
     let storeCount = pkgStoreActivePayloadCount()
     var store = 0
     while store < storeCount {
         let storeImage = count + store
-        if buildImageFromDisk(storeImage, root, allowExistingDirs: true) {
+        if buildImageFromDisk(storeImage, root,
+                              allowExistingDirs: true,
+                              requireSigned: false) {
             klog(.info, "pkg", "P3: package store payload mounted", UInt64(store))
         } else {
             klog(.info, "pkg", "P3: package store payload rejected", UInt64(store))
         }
         store += 1
     }
+}
+
+/// I8: verify a disk-backed file's content against its signed hash, once per
+/// boot (cached in the vnode). Unsigned package payloads are accepted by their
+/// package/store verification path and carry hashPtr == 0 here.
+private func vfsVerifyNodeContent(_ node: Int) -> Bool {
+    if node < 0 || nodes[node].isDir || !nodes[node].onDisk { return true }
+    if nodes[node].contentVerified { return true }
+    if nodes[node].hashPtr == 0 {
+        nodes[node].contentVerified = true
+        return true
+    }
+    guard let expect = UnsafePointer<UInt8>(bitPattern: nodes[node].hashPtr) else { return false }
+
+    var stream = Sha256Stream()
+    var remaining = nodes[node].dataLen
+    var off = UInt64(nodes[node].diskOffset)
+    var ok = true
+    withUnsafeMutableBytes(of: &vfsVerifyScratch) { raw in
+        let buf = raw.baseAddress!
+        while remaining > 0 {
+            let chunk = remaining < 4096 ? remaining : 4096
+            if vfsImageReadRange(nodes[node].diskImage, off, buf, UInt32(chunk)) != 0 {
+                ok = false
+                return
+            }
+            stream.update(buf, chunk)
+            remaining -= chunk
+            off += UInt64(chunk)
+        }
+    }
+    if !ok { return false }
+
+    var digest = [UInt8](repeating: 0, count: 32)
+    digest.withUnsafeMutableBytes { stream.final($0.baseAddress!) }
+    var diff: UInt8 = 0
+    for i in 0..<32 { diff |= digest[i] ^ expect[i] }
+    if diff != 0 {
+        uartPuts("vfs: content hash mismatch - rejecting file\n")
+        return false
+    }
+    nodes[node].contentVerified = true
+    return true
 }
 
 private func registerDevice(_ slot: Int, _ name: StaticString,
@@ -614,10 +733,27 @@ func vfsInit() {
     // M11c: serve the read-only base from the packed disk image when one is
     // attached; otherwise fall back to the compiled-in literals (the -kernel
     // test paths and UEFI GPT boot, where the disk is not a SWOSBASE image).
-    let baseImage = buildBaseFromDisk(root)
-    if baseImage >= 0 {
+    //
+    // U1a: if an A/B update-store disk is attached, updateStoreInit picks the
+    // active slot and points base reads at it; if that slot's image fails its
+    // Ed25519/SHA-256 verification, roll back to the known-good fallback slot
+    // and mount that instead (the verified-fallback half of A/B).
+    updateStoreInit()
+    updateStorePayloadProbe() // U1f: report an attached A/B update payload disk
+    var baseMount = buildBaseFromDisk(root)
+    var usedFallback = false
+    if !baseMount.mounted && virtioBlkUseFallbackBase() {
+        uartPuts("update-store: active slot failed verification - rolling back to fallback slot\n")
+        baseMount = buildBaseFromDisk(root)
+        usedFallback = baseMount.mounted
+    }
+    if baseMount.mounted {
         klog(.info, "vfs", "M11c: read-only base mounted from disk")
-        mountPackageImages(root, baseImage: baseImage)
+        if virtioBlkUsingStore() {
+            if usedFallback { uartPuts("update-store: mounted fallback slot\n") }
+            else { uartPuts("update-store: mounted active slot\n") }
+        }
+        mountPackageImages(root, baseImage: baseMount.image)
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")
@@ -653,7 +789,9 @@ func vfsMountActivePackageStore() -> Int {
     var store = mountedPackageStorePayloads
     while store < storeCount {
         let storeImage = rawCount + store
-        if buildImageFromDisk(storeImage, 0, allowExistingDirs: true) {
+        if buildImageFromDisk(storeImage, 0,
+                              allowExistingDirs: true,
+                              requireSigned: false) {
             klog(.info, "pkg", "P3b: package store payload live-mounted", UInt64(store))
             mountedPackageStorePayloads += 1
         } else {
@@ -1032,7 +1170,10 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
 }
 
 private func deviceRights() -> Rights {
-    deviceMetadataGrantRights()
+    var r = Rights()
+    r.insert(.getattr)
+    r.insert(.transfer)
+    return r
 }
 
 private func discardUninstalledDescription(_ d: Int) {
@@ -1468,6 +1609,12 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
         } else {
             return errNoEntry
         }
+    }
+
+    // I8: a disk-backed file must match its signed content hash before the
+    // first descriptor is handed out (verified once per boot, then cached).
+    if !nodes[node].isDir && nodes[node].onDisk && !vfsVerifyNodeContent(node) {
+        return errAccess
     }
 
     // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
@@ -2754,6 +2901,8 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
     if !confinedAllows(node) { return (false, 0, 0, 0) }
     if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0, 0) }
     if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0) }
+    // I8: an executable from a signed image must match its content hash before load.
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0) }
     return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }
 
@@ -2770,5 +2919,7 @@ func vfsFileExtent(fd: Int) -> (Bool, Int, Int, Int) {
     guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0, 0) }
     let node = openDescriptions[entry.object].node
     guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0, 0) }
+    // I8: mmap'd content must match its signed hash too (cached after open).
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0) }
     return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }

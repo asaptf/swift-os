@@ -64,14 +64,8 @@ private struct InstallSpec {
 }
 
 private struct PackageFileSpec {
-    let type: String
     let from: String
     let to: String
-    let mode: String
-}
-
-private struct ResolvedPackageFile {
-    let path: String
     let mode: String
 }
 
@@ -126,7 +120,7 @@ private func usage() -> String {
       swport catalog list [catalog.json]
       swport catalog inspect <name> [catalog.json]
       swport recipe validate <port|Port.json> [--catalog catalog.json]
-      swport recipe manifest <port|Port.json> [--output manifest.json] [--root root-dir] [--catalog catalog.json]
+      swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
       swport recipe fetch <port|Port.json> [--cache dir]
       swport recipe package <port|Port.json> --root root-dir --output out.swpkg [--swpkg build/swpkg] [--catalog catalog.json]
       swport recipe repo-fixture <port|Port.json> --root root-dir --output repo-root [--swpkg build/swpkg] [--pkgrepo build/pkgrepo] [--seed-hex hex] [--generation N]
@@ -136,14 +130,6 @@ private func usage() -> String {
 private func str(_ object: [String: Any], _ key: String, context: String) throws -> String {
     guard let value = object[key] as? String, !value.isEmpty else {
         throw ToolError.message("\(context): missing string field '\(key)'")
-    }
-    return value
-}
-
-private func str(_ object: [String: Any], _ key: String, context: String, fallback defaultValue: String) throws -> String {
-    guard let raw = object[key] else { return defaultValue }
-    guard let value = raw as? String, !value.isEmpty else {
-        throw ToolError.message("\(context): field '\(key)' must be a non-empty string")
     }
     return value
 }
@@ -246,7 +232,6 @@ private func parseCatalog(_ path: String) throws -> Catalog {
 
 private func parsePackageFile(_ object: [String: Any], context: String) throws -> PackageFileSpec {
     PackageFileSpec(
-        type: try str(object, "type", context: context, fallback: "file"),
         from: try str(object, "from", context: context),
         to: try str(object, "to", context: context),
         mode: try str(object, "mode", context: context)
@@ -449,23 +434,17 @@ private func validate(_ recipe: Recipe, catalog: Catalog? = nil) throws {
 
     var paths = Set<String>()
     for file in recipe.package.files {
-        if file.type != "file" && file.type != "tree" {
-            throw ToolError.message("recipe \(recipe.name): unsupported package file type \(file.type)")
-        }
         if file.from.isEmpty {
             throw ToolError.message("recipe \(recipe.name): package file source is empty")
         }
         if !file.to.hasPrefix("/usr/") {
             throw ToolError.message("recipe \(recipe.name): package file target must live under /usr: \(file.to)")
         }
-        if file.type == "tree", file.to.hasSuffix("/") {
-            throw ToolError.message("recipe \(recipe.name): package tree target must not end with /: \(file.to)")
-        }
         if !validMode(file.mode) {
             throw ToolError.message("recipe \(recipe.name): invalid file mode \(file.mode)")
         }
         if !paths.insert(file.to).inserted {
-            throw ToolError.message("recipe \(recipe.name): duplicate package target \(file.to)")
+            throw ToolError.message("recipe \(recipe.name): duplicate package file target \(file.to)")
         }
     }
     for dep in recipe.package.depends where !validPackageName(dep) {
@@ -500,65 +479,11 @@ private func loadAndValidateRecipe(_ spec: String, catalogPath: String = default
     return (recipe, path)
 }
 
-private func resolvedPackageFiles(for recipe: Recipe, root: URL?) throws -> [ResolvedPackageFile] {
-    var files: [ResolvedPackageFile] = []
-    var seen = Set<String>()
-    let fm = FileManager.default
-
-    for spec in recipe.package.files {
-        switch spec.type {
-        case "file":
-            let file = ResolvedPackageFile(path: spec.to, mode: spec.mode)
-            if !seen.insert(file.path).inserted {
-                throw ToolError.message("recipe \(recipe.name): duplicate resolved package file \(file.path)")
-            }
-            files.append(file)
-        case "tree":
-            guard let root else {
-                throw ToolError.message("recipe \(recipe.name): package tree \(spec.to) requires a staged root")
-            }
-            let relativeTree = String(spec.to.dropFirst())
-            let treeRoot = root.appendingPathComponent(relativeTree, isDirectory: true)
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: treeRoot.path, isDirectory: &isDir), isDir.boolValue else {
-                throw ToolError.message("recipe \(recipe.name): staged tree missing \(spec.to)")
-            }
-            guard let enumerator = fm.enumerator(at: treeRoot,
-                                                 includingPropertiesForKeys: [.isRegularFileKey],
-                                                 options: [.skipsHiddenFiles]) else {
-                throw ToolError.message("recipe \(recipe.name): cannot enumerate staged tree \(spec.to)")
-            }
-            let treePath = treeRoot.standardizedFileURL.path
-            var count = 0
-            for case let url as URL in enumerator {
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey])
-                guard values.isRegularFile == true else { continue }
-                var rel = String(url.standardizedFileURL.path.dropFirst(treePath.count))
-                while rel.first == "/" { rel.removeFirst() }
-                if rel.isEmpty { continue }
-                let path = "\(spec.to)/\(rel)"
-                if !seen.insert(path).inserted {
-                    throw ToolError.message("recipe \(recipe.name): duplicate resolved package file \(path)")
-                }
-                files.append(ResolvedPackageFile(path: path, mode: spec.mode))
-                count += 1
-            }
-            if count == 0 {
-                throw ToolError.message("recipe \(recipe.name): staged tree \(spec.to) has no files")
-            }
-        default:
-            throw ToolError.message("recipe \(recipe.name): unsupported package file type \(spec.type)")
-        }
-    }
-
-    return files.sorted { $0.path < $1.path }
-}
-
-private func manifestObject(for recipe: Recipe, root: URL? = nil) throws -> [String: Any] {
+private func manifestObject(for recipe: Recipe) -> [String: Any] {
     let depends = recipe.package.depends.map { ["name": $0] as [String: Any] }
-    let files = try resolvedPackageFiles(for: recipe, root: root).map {
+    let files = recipe.package.files.map {
         [
-            "path": $0.path,
+            "path": $0.to,
             "mode": $0.mode,
             "sha256": "",
             "size": 0,
@@ -587,8 +512,8 @@ private func manifestObject(for recipe: Recipe, root: URL? = nil) throws -> [Str
     ]
 }
 
-private func manifestData(for recipe: Recipe, root: URL? = nil) throws -> Data {
-    try JSONSerialization.data(withJSONObject: try manifestObject(for: recipe, root: root),
+private func manifestData(for recipe: Recipe) throws -> Data {
+    try JSONSerialization.data(withJSONObject: manifestObject(for: recipe),
                                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
 }
 
@@ -617,12 +542,6 @@ private func optionValue(_ flag: String, in args: [String], default defaultValue
         if let defaultValue { return defaultValue }
         throw ToolError.message("missing \(flag)")
     }
-    guard index + 1 < args.count else { throw ToolError.message("missing value after \(flag)") }
-    return args[index + 1]
-}
-
-private func optionalOptionValue(_ flag: String, in args: [String]) throws -> String? {
-    guard let index = args.firstIndex(of: flag) else { return nil }
     guard index + 1 < args.count else { throw ToolError.message("missing value after \(flag)") }
     return args[index + 1]
 }
@@ -689,8 +608,7 @@ private func collectStagedFiles(root: URL) throws -> Set<String> {
 }
 
 private func validateStagedRoot(_ root: URL, for recipe: Recipe) throws {
-    let expectedFiles = try resolvedPackageFiles(for: recipe, root: root)
-    let expected = Dictionary(uniqueKeysWithValues: expectedFiles.map { ($0.path, $0) })
+    let expected = Dictionary(uniqueKeysWithValues: recipe.package.files.map { ($0.to, $0) })
     let actual = try collectStagedFiles(root: root)
     let expectedPaths = Set(expected.keys)
     let missing = expectedPaths.subtracting(actual).sorted()
@@ -766,9 +684,7 @@ private func validateRecipeCommand(_ spec: String, args: [String]) throws {
 private func manifestRecipeCommand(_ spec: String, args: [String]) throws {
     let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
     let (recipe, _) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
-    let root = try optionalOptionValue("--root", in: args)
-        .map { absoluteURL(for: $0, isDirectory: true) }
-    let data = try manifestData(for: recipe, root: root)
+    let data = try manifestData(for: recipe)
     if let outputIndex = args.firstIndex(of: "--output") {
         guard outputIndex + 1 < args.count else { throw ToolError.message("missing value after --output") }
         let output = URL(fileURLWithPath: args[outputIndex + 1])
@@ -815,7 +731,7 @@ private func createPackage(recipe: Recipe, root: URL, output: URL, swpkgPath: St
     defer { try? FileManager.default.removeItem(at: temp) }
 
     let manifest = temp.appendingPathComponent("manifest.json")
-    try manifestData(for: recipe, root: root).write(to: manifest, options: .atomic)
+    try manifestData(for: recipe).write(to: manifest, options: .atomic)
     try FileManager.default.createDirectory(at: output.deletingLastPathComponent(),
                                             withIntermediateDirectories: true)
 

@@ -65,6 +65,9 @@ private let sysPkgInfo: UInt = 61      // pkg_info(index, buf, cap) — active p
 private let sysDeviceClaim: UInt = 62  // device_claim(name, info*) -> fd (C5b opaque grant)
 private let sysDeviceInfo: UInt = 63   // device_info(fd, info*) -> 0 (C5b metadata)
 private let sysDeviceDiscover: UInt = 64 // device_discover(index, info*) -> 0 (C5c manifest)
+private let sysUpdateConfirm: UInt = 65 // update_confirm() — mark the booted A/B slot healthy (U1c); needs capConsole
+private let sysUpdateActivate: UInt = 66 // update_activate() — promote the inactive A/B slot (U1e); needs capConsole
+private let sysUpdateStage: UInt = 67    // update_stage() — copy the payload disk into the inactive A/B slot (U1f-2b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -252,6 +255,12 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processMprotect(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]))
     } else if number == sysNanosleep {
         result = processNanosleep(seconds: frame[0], nanos: frame[1])
+    } else if number == sysUpdateConfirm {
+        result = updateStoreConfirm() // U1c: capConsole-gated A/B health-confirm
+    } else if number == sysUpdateActivate {
+        result = updateStoreActivateOther() // U1e: capConsole-gated promote inactive slot
+    } else if number == sysUpdateStage {
+        result = updateStoreStagePayload() // U1f-2b: capConsole-gated payload→inactive slot copy
     } else {
         result = -38 // ENOSYS
     }

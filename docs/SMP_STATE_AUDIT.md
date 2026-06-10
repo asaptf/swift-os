@@ -51,25 +51,34 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/fb.swift:g_w`
 - `kernel/drivers/virtio_blk.swift:blkActiveDevice`
 - `kernel/drivers/virtio_blk.swift:blkAvailIdx`
+- `kernel/drivers/virtio_blk.swift:blkBaseByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDataBase`
-- `kernel/drivers/virtio_blk.swift:blkDeviceCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDeviceAvailIdx`
+- `kernel/drivers/virtio_blk.swift:blkDeviceCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDeviceCount`
 - `kernel/drivers/virtio_blk.swift:blkDeviceDataBase`
+- `kernel/drivers/virtio_blk.swift:blkDeviceFlushOK`
 - `kernel/drivers/virtio_blk.swift:blkDeviceLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkDeviceMmio`
 - `kernel/drivers/virtio_blk.swift:blkDeviceQn`
 - `kernel/drivers/virtio_blk.swift:blkDeviceReady`
 - `kernel/drivers/virtio_blk.swift:blkDeviceRingBase`
+- `kernel/drivers/virtio_blk.swift:blkEspDevice`
+- `kernel/drivers/virtio_blk.swift:blkFallbackByteOffset`
+- `kernel/drivers/virtio_blk.swift:blkFlushOK`
 - `kernel/drivers/virtio_blk.swift:blkLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkMmio`
+- `kernel/drivers/virtio_blk.swift:blkMultiBase`
+- `kernel/drivers/virtio_blk.swift:blkPayloadDevice`
 - `kernel/drivers/virtio_blk.swift:blkQn`
 - `kernel/drivers/virtio_blk.swift:blkRingBase`
 - `kernel/drivers/virtio_blk.swift:pkgStoreCapacity`
 - `kernel/drivers/virtio_blk.swift:pkgStoreDevice`
 - `kernel/drivers/virtio_blk.swift:swosbaseCount`
 - `kernel/drivers/virtio_blk.swift:swosbaseDevice`
+- `kernel/drivers/virtio_blk.swift:blkServedDevice`
+- `kernel/drivers/virtio_blk.swift:blkStoreDevice`
 - `kernel/drivers/virtio_input.swift:kbdAvailIdx`
 - `kernel/drivers/virtio_input.swift:kbdDbgVersion`
 - `kernel/drivers/virtio_input.swift:kbdKm`
@@ -98,6 +107,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/virtio_net.swift:txStaged`
 - `kernel/drivers/virtio_net.swift:txState`
 - `kernel/drivers/virtio_net.swift:txq`
+- `kernel/fs/updatestore.swift:updateStoreActiveSlot`
 - `kernel/log/log.swift:currentLogSink`
 - `kernel/log/log.swift:minLogLevel`
 - `kernel/log/log.swift:ring`
@@ -339,6 +349,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/vfs/vfs.swift:vfsLockAcquireCount`
 - `kernel/vfs/vfs.swift:vfsLockContentionCount`
 - `kernel/vfs/vfs.swift:vfsLockWord`
+- `kernel/vfs/vfs.swift:vfsVerifyScratch`
 
 ## Immediate S1/S2 Risks
 

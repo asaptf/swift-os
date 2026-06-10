@@ -53,6 +53,15 @@ int  swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
                   unsigned int *gid, unsigned int *nlink, unsigned long *size,
                   unsigned long *mtime);
 int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
+// U1c: confirm the booted A/B update slot healthy (CONFIRMED). Needs CAP_CONSOLE.
+// 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
+int  swiftos_update_confirm(void);
+// U1e: promote the inactive A/B slot to active for the next boot (on trial).
+// Needs CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_update_activate(void);
+// U1f-2b: copy the attached payload disk into the inactive A/B slot. Needs
+// CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_update_stage(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
