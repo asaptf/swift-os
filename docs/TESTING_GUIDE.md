@@ -42,6 +42,24 @@ It builds the kernel and key artifacts, runs host-side Swift tests, boots QEMU
 through direct and UEFI paths, exercises networking and package flows, and runs
 the current user-visible command and service checks.
 
+## Choose A Test Scope
+
+Use the narrowest scope that proves the change, then broaden when the change
+touches shared behavior or a release candidate.
+
+| Change | First gate | Broaden when |
+| --- | --- | --- |
+| Documentation only | `git diff --check`, `make docs-test` | Links, commands, or examples depend on changed code |
+| Host-only parser, manifest, or crypto logic | Host Swift unit test for that file | The logic feeds a booting user-visible path |
+| Kernel or userland build rule | `make build` | The artifact is staged into `build/base.img` or booted |
+| Base-image contents or accounts | `make base-image`, then the focused VFS/login test | A release candidate or shared boot path is affected |
+| One guest command | Command-specific QEMU test | Shell, VFS, process, or capability behavior changes broadly |
+| Network service or client | Service-specific network test | Shared socket, virtio-net, DNS, TLS, or polling behavior changes |
+| Package or ports workflow | Matching package/ports make target | Repository metadata, package-store activation, or seed catalog changes |
+| Update-store or kernel-slot workflow | Matching `ab_*` or `uefi_k*` test | Boot selection, rollback, or release-candidate policy changes |
+| Security boundary | Focused capability, handle, mmap, package, or C5 test | The boundary touches syscall, VFS, process, or driver-service internals |
+| Release candidate | `make test` plus the deployment validation matrix | Always |
+
 ## Quick Start
 
 For a clean local confidence pass:
@@ -62,11 +80,11 @@ For documentation-only changes, use:
 
 ```sh
 git diff --check
-make build
-./tests/boot_test.sh
+make docs-test
 ```
 
-Also run a Markdown link/fence check when docs add or move links.
+Run the focused build or QEMU test too when a documentation change describes a
+new or changed executable workflow.
 
 ## Required Host Tools
 
