@@ -1341,6 +1341,24 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   for the current in-kernel polled engine; C5/network service work still owns
   the architectural move out of the kernel.
 
+### S4f — SMP resource stress gate (DONE, 2026-06-10)
+
+- **Dedicated SMP stress.** `tests/smp_resource_stress_test.sh` boots with
+  `-smp 4`, logs in after the normal boot demos, then reruns resource-heavy
+  userland paths: `forkdemo` for fork/wait/IPC handle transfer, `fdopsdemo` for
+  dup/pipe/poll/tmpfs rename/unlink/rmdir churn, `execdemo` for exec status
+  handling, `threadsdemo` for futex-thread churn, and a shell tmpfs
+  create/write/pipe/move/remove loop.
+- **Boundary evidence.** The stress test checks the S4a-S4e post-demo
+  lock-boundary markers and its own `S4F-*` completion/status markers, so it
+  catches both kernel corruption and harness input loss. It is wired into
+  `make test` immediately after the SMP boot smoke and is available as
+  `make smp-resource-stress-test`.
+- **Scope.** S4f does not widen scheduler policy: general EL0 work remains
+  CPU0-owned except for the existing restricted S2h coproc dispatch. The point
+  is to keep all discovered CPUs online/ticking while CPU0 churns the shared
+  S4-protected resources repeatedly before S5 enables broad multi-CPU EL0.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

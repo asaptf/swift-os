@@ -296,7 +296,8 @@ manifest entries left behind after globals move or disappear.
   boundary. Target-side installs are still serialized through one writer gate;
   package-management service work should keep that single-writer contract unless
   a later milestone adds a transactional store journal.
-- The in-kernel network/socket engine is now protected by the S4e lock boundary.
+- The in-kernel network/socket engine is now protected by the S4e lock boundary,
+  and S4f keeps a dedicated `-smp 4` resource-stress test in `make test`.
   Device/service migration is still future work: before interrupts or network
   service work move away from CPU 0, the virtio driver/service boundary needs a
   reviewed ownership model rather than only a coarse in-kernel lock.

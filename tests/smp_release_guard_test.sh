@@ -8,6 +8,7 @@ KERNEL="$ROOT/build/kernel.elf"
 BOOT_OBJ="$ROOT/build/boot.o"
 BOOT_SRC="$ROOT/kernel/arch/aarch64/boot.S"
 IO_HDR="$ROOT/kernel/arch/aarch64/io.h"
+MAKEFILE_PATH="$ROOT/Makefile"
 MAIN_SWIFT="$ROOT/kernel/main.swift"
 GIC_SWIFT="$ROOT/kernel/drivers/gic.swift"
 PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
@@ -20,6 +21,7 @@ PKG_SWIFT="$ROOT/kernel/pkg/store.swift"
 NET_SWIFT="$ROOT/kernel/net/socket.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
+SMP_RESOURCE_STRESS_TEST="$ROOT/tests/smp_resource_stress_test.sh"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
@@ -616,6 +618,35 @@ if rg -n 'gNet|virtioNetPoll|virtioNetTxSubmit|virtioNetTxBuffer' "$MAIN_SWIFT" 
   exit 1
 fi
 
+if [[ ! -f "$SMP_RESOURCE_STRESS_TEST" ]]; then
+  echo "FAIL: S4f resource stress test script is missing." >&2
+  exit 1
+fi
+for needle in \
+  '-smp "$SMP_CPUS"' \
+  '/bin/forkdemo; echo S4F-FORK-RC=$?' \
+  '/bin/fdopsdemo; echo S4F-FDOPS-RC=$?' \
+  '/bin/execdemo; echo S4F-EXEC-RC=$?' \
+  '/bin/threadsdemo; echo S4F-THREADS-RC=$?' \
+  'S4F-TMPFS-DONE' \
+  'S4F-TMPFS-CLEAN' \
+  'S4F-RESOURCE-STRESS-DONE' \
+  'S4a OK: PMM lock boundary stayed balanced' \
+  'S4b OK: VFS lock boundary stayed balanced' \
+  'S4c OK: kernel heap lock boundary stayed balanced' \
+  'S4d OK: package-store lock boundary stayed balanced' \
+  'S4e OK: network lock boundary stayed balanced'; do
+  if ! grep -Fq -- "$needle" "$SMP_RESOURCE_STRESS_TEST"; then
+    echo "FAIL: S4f resource stress test missing $needle." >&2
+    exit 1
+  fi
+done
+if ! grep -Fq 'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh' "$MAKEFILE_PATH" ||
+   ! grep -q '^smp-resource-stress-test:' "$MAKEFILE_PATH"; then
+  echo "FAIL: S4f resource stress test must be wired into make test and expose a dedicated make target." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -864,4 +895,4 @@ if [[ -z "$secondary_irq_park_block" ]] ||
   exit 1
 fi
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4e release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary)"
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network/resource-stress boundary)"
