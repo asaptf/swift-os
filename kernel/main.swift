@@ -230,15 +230,16 @@ private func runNewlibDemo() {
     uartPuts("\n")
 }
 
-private func runConcurrentDemo() {
+private func runConcurrentDemo() -> Bool {
     uartPuts("swift-os M8d: preemptive EL0 multitasking\n")
     let (img, sz) = demoImage("/bin/coproc")
-    if img == 0 { return }
+    if img == 0 { return false }
     let (pa, na, ca) = packArgs(["coproc", "A"])
     let (pb, nb, cb) = packArgs(["coproc", "B"])
     processRunPair(img, sz, pa, na, ca,
                    img, sz, pb, nb, cb)
     uartPuts("M8d OK: two EL0 processes ran concurrently\n")
+    return true
 }
 
 private func runForkDemo() {
@@ -826,12 +827,14 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runSpawnDemo()
         runBrkDemo()
         runNewlibDemo()
-        runConcurrentDemo()
-        if !processCoprocPairDispatchTelemetrySelfTest() {
-            uartPuts("panic: S2g coproc dispatch telemetry guard failed\n")
-            while true {}
+        let ranConcurrentDemo = runConcurrentDemo()
+        if ranConcurrentDemo {
+            if !processCoprocPairDispatchTelemetrySelfTest() {
+                uartPuts("panic: S2g coproc dispatch telemetry guard failed\n")
+                while true {}
+            }
+            klog(.info, "smp", "S2g OK: coproc pair dispatch telemetry CPU0-owned", UInt64(platform.cpuCount))
         }
-        klog(.info, "smp", "S2g OK: coproc pair dispatch telemetry CPU0-owned", UInt64(platform.cpuCount))
         runForkDemo()
         runExecDemo()
         runFdOpsDemo()
