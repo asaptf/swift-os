@@ -22,7 +22,7 @@ service-oriented.
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, P3a package-store boot activation, P3b local `pkg install FILE`, and P5c signed HTTP repository install |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the P6 Lua ports recipe/cross-build/repository scaffold |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
 
 ## Highlights
@@ -35,8 +35,8 @@ service-oriented.
 - Supports the primary UEFI/GPT disk image flow and a direct `-kernel` fallback.
 - Mounts the immutable base image from virtio-blk.
 - Keeps VirtualBox ARM notes as a best-effort hardware-adjacent path.
-- Has SMP readiness work and smoke tests, while broad multi-core EL0 execution
-  remains roadmap work.
+- Has SMP readiness work, smoke tests, and S5a per-CPU utilization telemetry in
+  `/bin/top`, while broad multi-core EL0 execution remains roadmap work.
 
 ### User Experience
 
@@ -46,6 +46,8 @@ service-oriented.
 - Ships native SwiftOS tools for common workflows: `ls`, `cat`, `echo`, `pwd`,
   `ps`, `top`, `id`, `mkdir`, `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`,
   `touch`, `wc`, `date`, `calc`, `kv`, and more.
+- `/bin/top` can render process/resource snapshots and, under the SMP test
+  profile, per-CPU busy/idle utilization lines.
 - Uses `/tmp` as writable scratch storage. `/tmp` is RAM-backed and cleared on
   reboot.
 
@@ -72,8 +74,16 @@ service-oriented.
   `pkg update [URL]`, `pkg search`, `pkg info`, dependency resolution by package
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
+- Provides P6a/P6b/P6c/P6d/P6e maintainer-side ports scaffolding:
+  `ports/catalog.json`, the first `ports/lang/lua/Port.json` recipe,
+  `swport catalog validate/list/inspect`, and `swport recipe` commands for
+  `validate`, `manifest`, `fetch`, `package`, and `repo-fixture`.
+- Cross-builds real static AArch64 `lua` and `luac` binaries against the local
+  newlib sysroot and publishes them into a signed local repository fixture with
+  `make ports-lua-repo-fixture`.
 - Does not yet provide public hosted package channels, version-constraint
-  solving, remove, upgrade, rollback, or streaming large-package downloads.
+  solving, broad source-port coverage, target-side Lua repository smoke tests,
+  remove, upgrade, rollback, or streaming large-package downloads.
 
 ### Networking And Services
 
@@ -120,6 +130,11 @@ Focused gates:
 ./tests/package_overlay_test.sh
 ./tests/pkg_store_boot_test.sh
 ./tests/pkg_local_install_test.sh
+make package-repo-install-test
+make ports-catalog-test
+make ports-recipe-test
+make ports-lua-repo-fixture
+make s5-cpu-util-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```
@@ -151,14 +166,16 @@ llmd: served
   the current product surface.
 - Package payloads are read-only once active. Local target-side package install
   and P5c signed repository fixture install with name-based dependencies exist,
-  but public hosted channels, version-constraint solving, removal, upgrade,
+  and P6e can cross-build static Lua artifacts into a signed local repository
+  fixture. Public hosted channels, broad source-port coverage, target-side Lua
+  repository smoke tests, version-constraint solving, removal, upgrade,
   rollback, and streaming large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable
   userland services are roadmap work.
-- SMP foundations exist, but broad multi-core EL0 scheduling is not the default
-  product contract yet.
+- SMP foundations and per-CPU utilization telemetry exist, but broad multi-core
+  EL0 scheduling is not the default product contract yet.
 - TLS client support is a demo path. Treat production trust validation as
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,
@@ -206,9 +223,13 @@ make base-image
 - Start with [GETTING_STARTED.md](GETTING_STARTED.md) for the first boot.
 - Use [USER_GUIDE.md](USER_GUIDE.md) for interactive operation.
 - Use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) for command syntax.
+- Use [HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md) for host-side package,
+  repository, ports, image, and model tools.
 - Use [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for tested runbooks.
 - Use [TESTING_GUIDE.md](TESTING_GUIDE.md) for choosing and interpreting gates.
 - Use [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for artifact updates and rollback.
+- Use [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md) for the current
+  ports recipe and package automation path.
 - Use [API_REFERENCE.md](API_REFERENCE.md) and
   [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for application development.
 - Use [SUPPORT_GUIDE.md](SUPPORT_GUIDE.md) when collecting evidence for an
