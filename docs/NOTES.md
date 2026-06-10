@@ -958,6 +958,31 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   on a secondary CPU, no cross-CPU wake/IPI path is added, and PMM/VFS/process
   locking policy remains S2+ work.
 
+### S2d — EL0 process run queue scaffold (DONE, 2026-06-09)
+
+- **Queue-backed EL0 scheduling.** The EL0 process scheduler no longer picks
+  runnable slots by scanning `pState` with a global round-robin cursor. Every
+  `pReady` transition now goes through `markProcessReady`, which records a
+  home CPU, links the slot into that CPU's FIFO run queue, and mirrors the
+  queue head/tail into the fixed per-CPU state. `pickReady` dequeues from the
+  current CPU's queue and verifies the slot still belongs to that CPU.
+- **CPU0 placement, deliberately.** `processHomeCpuForNewReadySlot` is the new
+  placement hook, but S2d intentionally returns CPU0 for every runnable process
+  and panics if a process is enqueued to any secondary CPU. This makes the S2
+  policy boundary explicit without enabling secondary EL0 execution early.
+- **Runtime acceptance.** Boot runs `processRunQueueScaffoldSelfTest` after the
+  S2b process scheduler context check and logs
+  `S2d OK: process run queue scaffold ready`. After the Swift `ps` userland
+  demo, boot verifies CPU0 observed run queue enqueue/dispatch activity and
+  every secondary CPU still has an empty process run queue, then logs
+  `S2d OK: process run queue stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the per-CPU
+  process run queue mirror helpers, the process scheduler run queue arrays,
+  rejects the old `rrCursor`/linear-scan scheduler path, and verifies that
+  `pReady` transitions are centralized through `markProcessReady`.
+- **Non-goals.** No EL0 work moves to secondary CPUs, no cross-CPU wake/IPI
+  path is added, and PMM/VFS/process locking policy remains S2+ work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

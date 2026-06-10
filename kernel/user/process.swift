@@ -5,7 +5,9 @@
 // space, kernel stack, and saved CPUContext (the M4.5 switch primitive). The
 // scheduler runs on the kernel_main stack as a dedicated context: it switches
 // INTO a runnable process and regains control when that process yields, blocks,
-// is preempted by the timer, or exits — classic per-CPU scheduler context.
+// is preempted by the timer, or exits — classic per-CPU scheduler context. S2d
+// also routes every pReady transition through a CPU-owned run queue scaffold;
+// placement still chooses CPU0 until S2 deliberately enables secondary EL0 work.
 //
 // The kernel launches a top process and drives the scheduler until it exits
 // (processRunElf). EL0 processes can spawn children and block waiting for them;
@@ -55,6 +57,9 @@ private let pZombie: Int32 = 4
 
 private let waitNone = -2 // not waiting
 private let waitAny = -1  // any child
+private let noProcessSlot: Int32 = -1
+private let unassignedCpu: UInt32 = 0xFFFF_FFFF
+private let processSchedulerCpuSlots = 8
 
 // Stable context storage for cpu_switch_context.
 private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [maxProc]
@@ -101,9 +106,17 @@ private var idleTicks: UInt64 = 0
 // carry a nonzero deadline, so the per-tick wake scan can pick them out without
 // disturbing the others.
 private var pWakeTick = [UInt64](repeating: 0, count: maxProc)
+private var pHomeCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
+private var pRunNext = [Int32](repeating: noProcessSlot, count: maxProc)
+private var pRunQueued = [Bool](repeating: false, count: maxProc)
+
+private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
+private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
+private var processRunQueueEnqueueCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processRunQueueCpuCount: UInt32 = 0
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
-private var rrCursor = 0     // round-robin hint
 private var lastReapedKilled = false
 
 func processInit() {
@@ -117,13 +130,24 @@ func processInit() {
     procCtx = c.bindMemory(to: CPUContext.self, capacity: maxProc)
     schedCtx = s.bindMemory(to: CPUContext.self, capacity: Int(cpuCount))
     schedCtxCpuCount = cpuCount
+    processRunQueueCpuCount = cpuCount
     var cpu: UInt32 = 0
     while cpu < cpuCount {
         schedCtx[Int(cpu)] = CPUContext()
+        processRunQueueHead[Int(cpu)] = noProcessSlot
+        processRunQueueTail[Int(cpu)] = noProcessSlot
+        processRunQueueEnqueueCount[Int(cpu)] = 0
+        processRunQueueDispatchCount[Int(cpu)] = 0
         cpu += 1
     }
     smpSetProcessSchedulerContextForCurrentCpu(UInt(bitPattern: schedCtx))
-    for i in 0..<maxProc { pState[i] = pUnused }
+    smpSetProcessRunQueueForCurrentCpu(head: noProcessSlot, tail: noProcessSlot)
+    for i in 0..<maxProc {
+        pState[i] = pUnused
+        pHomeCpu[i] = unassignedCpu
+        pRunNext[i] = noProcessSlot
+        pRunQueued[i] = false
+    }
 }
 
 private func processSchedulerCpuIndex() -> Int {
@@ -143,6 +167,8 @@ func processSchedulerContextSelfTest() -> Bool {
     if schedCtx == nil { return false }
     if MemoryLayout<CPUContext>.stride != 104 { return false }
     if schedCtxCpuCount != smpMaxCpuCount() { return false }
+    if processRunQueueCpuCount != schedCtxCpuCount { return false }
+    if processSchedulerCpuSlots != Int(smpMaxCpuCount()) { return false }
     if currentCpuId() >= schedCtxCpuCount { return false }
     if (UInt(bitPattern: schedCtx) & 0xF) != 0 { return false }
     if !smpPerCpuProcessSchedulerContextReady(currentCpuId()) { return false }
@@ -156,6 +182,129 @@ func processSchedulerContextSelfTest() -> Bool {
            ctx.x27 != 0 || ctx.x28 != 0 || ctx.fp != 0 || ctx.lr != 0 ||
            ctx.sp != 0 {
             return false
+        }
+        cpu += 1
+    }
+    return true
+}
+
+private func processValidSchedulerCpu(_ cpu: UInt32) -> Bool {
+    cpu < processRunQueueCpuCount && cpu < UInt32(processSchedulerCpuSlots)
+}
+
+private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
+    if currentCpuId() != cpu { return }
+    let idx = Int(cpu)
+    smpSetProcessRunQueueForCurrentCpu(head: processRunQueueHead[idx],
+                                       tail: processRunQueueTail[idx])
+}
+
+private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
+    // S2d records a placement decision but deliberately keeps all EL0 work on
+    // CPU0 until S2 enables real secondary scheduling.
+    if slot < 0 || slot >= maxProc { return unassignedCpu }
+    return 0
+}
+
+private func clearProcessSchedulerSlot(_ slot: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    pHomeCpu[slot] = unassignedCpu
+    pRunNext[slot] = noProcessSlot
+    pRunQueued[slot] = false
+}
+
+private func markProcessReady(_ slot: Int, cpu: UInt32) {
+    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
+        uartPuts("panic: invalid EL0 process run queue target\n")
+        while true {}
+    }
+    if cpu != 0 {
+        uartPuts("panic: EL0 process scheduled on secondary before S2\n")
+        while true {}
+    }
+    pState[slot] = pReady
+    pHomeCpu[slot] = cpu
+    if pRunQueued[slot] { return }
+
+    let idx = Int(cpu)
+    pRunNext[slot] = noProcessSlot
+    if processRunQueueTail[idx] == noProcessSlot {
+        processRunQueueHead[idx] = Int32(slot)
+    } else {
+        pRunNext[Int(processRunQueueTail[idx])] = Int32(slot)
+    }
+    processRunQueueTail[idx] = Int32(slot)
+    pRunQueued[slot] = true
+    processRunQueueEnqueueCount[idx] &+= 1
+    processMirrorRunQueueForCpu(cpu)
+}
+
+private func markProcessReadyOnHomeCpu(_ slot: Int) {
+    markProcessReady(slot, cpu: processHomeCpuForNewReadySlot(slot))
+}
+
+private func pickReady() -> Int {
+    let cpu = UInt32(processSchedulerCpuIndex())
+    if !processValidSchedulerCpu(cpu) { return -1 }
+    let idx = Int(cpu)
+    let head = processRunQueueHead[idx]
+    if head == noProcessSlot { return -1 }
+
+    let slot = Int(head)
+    processRunQueueHead[idx] = pRunNext[slot]
+    if processRunQueueHead[idx] == noProcessSlot {
+        processRunQueueTail[idx] = noProcessSlot
+    }
+    pRunNext[slot] = noProcessSlot
+    pRunQueued[slot] = false
+    processRunQueueDispatchCount[idx] &+= 1
+    processMirrorRunQueueForCpu(cpu)
+
+    if pState[slot] != pReady || pHomeCpu[slot] != cpu {
+        uartPuts("panic: EL0 process run queue corrupted\n")
+        while true {}
+    }
+    return slot
+}
+
+func processRunQueueScaffoldSelfTest() -> Bool {
+    if processRunQueueCpuCount != smpMaxCpuCount() { return false }
+    if processSchedulerCpuSlots != Int(smpMaxCpuCount()) { return false }
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    if smpPerCpuProcessRunQueueHead(primary) != noProcessSlot { return false }
+    if smpPerCpuProcessRunQueueTail(primary) != noProcessSlot { return false }
+    if !smpPerCpuProcessRunQueueIdle(primary) { return false }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueHead[idx] != noProcessSlot { return false }
+        if processRunQueueTail[idx] != noProcessSlot { return false }
+        if processRunQueueEnqueueCount[idx] != 0 { return false }
+        if processRunQueueDispatchCount[idx] != 0 { return false }
+        cpu += 1
+    }
+    return true
+}
+
+func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    if processRunQueueEnqueueCount[Int(primary)] == 0 { return false }
+    if processRunQueueDispatchCount[Int(primary)] == 0 { return false }
+    if smpPerCpuProcessRunQueueHead(primary) != noProcessSlot { return false }
+    if smpPerCpuProcessRunQueueTail(primary) != noProcessSlot { return false }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueHead[idx] != noProcessSlot { return false }
+        if processRunQueueTail[idx] != noProcessSlot { return false }
+        if cpu != primary {
+            if processRunQueueEnqueueCount[idx] != 0 { return false }
+            if processRunQueueDispatchCount[idx] != 0 { return false }
+            if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
         }
         cpu += 1
     }
@@ -282,7 +431,6 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     ctx.pointee.lr = UInt64(user_thread_launch_addr())
     ctx.pointee.sp = UInt64(kstackTop)
 
-    pState[slot] = pReady
     pParent[slot] = parent
     pTtbr0[slot] = ttbr0
     pKstack[slot] = kstack
@@ -302,6 +450,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     setProcessSecurity(slot: slot, parent: parent)
     vfsProcessInit(slot: slot, parent: parent, inherit: inherit,
                    specsVA: inheritSpecsVA, specCount: inheritSpecCount)
+    markProcessReadyOnHomeCpu(slot)
     return slot
 }
 
@@ -332,14 +481,6 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
     return (ttbr0, entry, userSP)
 }
 
-private func pickReady() -> Int {
-    for step in 1...maxProc {
-        let i = (rrCursor + step) % maxProc
-        if pState[i] == pReady { rrCursor = i; return i }
-    }
-    return -1
-}
-
 // Switch from the current process back into the scheduler. Returns when this
 // process is scheduled again.
 //
@@ -361,7 +502,7 @@ private func yieldToScheduler() {
 private func wakeParent(of slot: Int) {
     let pp = pParent[slot]
     if pp >= 0 && pState[pp] == pBlocked && (pWait[pp] == slot || pWait[pp] == waitAny) {
-        pState[pp] = pReady
+        markProcessReadyOnHomeCpu(pp)
     }
 }
 
@@ -385,6 +526,7 @@ private func reapProcess(_ slot: Int) {
         pKstack[slot] = 0
     }
     pState[slot] = pUnused
+    clearProcessSchedulerSlot(slot)
 }
 
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
@@ -493,7 +635,7 @@ func processCurrentPid() -> Int { currentProc >= 0 ? currentProc + 1 : 0 }
 
 func processYieldForIO() {
     if currentProc < 0 { return }
-    pState[currentProc] = pReady
+    markProcessReadyOnHomeCpu(currentProc)
     yieldToScheduler()
 }
 
@@ -526,7 +668,6 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     ctx.pointee.sp = UInt64(childFrameAddr)
     ctx.pointee.lr = UInt64(trap_return_addr())
 
-    pState[child] = pReady
     pParent[child] = parent
     pTtbr0[child] = childTtbr0
     pKstack[child] = kstack
@@ -548,6 +689,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
+    markProcessReadyOnHomeCpu(child)
     return child + 1 // pid
 }
 
@@ -587,7 +729,6 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     ctx.pointee.lr = UInt64(user_thread_launch_arg_addr())
     ctx.pointee.sp = UInt64(kstackTop)
 
-    pState[slot] = pReady
     // Parent is the creator's parent so the thread is a sibling, not a child:
     // it must not be reapable by the creator's waitpid (threads join via futex).
     pParent[slot] = pParent[creator]
@@ -607,6 +748,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
     // needs shared stdout; full fd-table aliasing is a follow-up — see NOTES).
     vfsProcessInit(slot: slot, parent: creator)
+    markProcessReadyOnHomeCpu(slot)
     return slot + 1 // thread id (a pid in the shared table)
 }
 
@@ -623,7 +765,7 @@ func processBlockOnFutex() {
 /// FUTEX_WAKE backend: mark a futex-blocked thread runnable again.
 func processWakeFromFutex(_ slot: Int) {
     if slot < 0 || slot >= maxProc { return }
-    if pState[slot] == pBlocked { pState[slot] = pReady }
+    if pState[slot] == pBlocked { markProcessReadyOnHomeCpu(slot) }
 }
 
 /// nanosleep(seconds, nanos): block the current process until at least the
@@ -881,7 +1023,7 @@ func processOnTick(fromEL0: Bool) {
     // a nonzero pWakeTick, so futex/waitpid/IO blockers are left untouched.
     for i in 0..<maxProc where pState[i] == pBlocked && pWakeTick[i] != 0 {
         if systemTicks >= pWakeTick[i] {
-            pState[i] = pReady
+            markProcessReadyOnHomeCpu(i)
             pWakeTick[i] = 0
         }
     }
@@ -899,7 +1041,7 @@ func processOnTick(fromEL0: Bool) {
         idleTicks &+= 1
     }
     if currentProc >= 0 && pState[currentProc] == pRunning {
-        pState[currentProc] = pReady
+        markProcessReadyOnHomeCpu(currentProc)
         yieldToScheduler()
     }
 }
@@ -915,6 +1057,7 @@ func processExit(_ code: Int) {
     if pIsThread[me] {
         futexForgetSlot(me)
         pState[me] = pUnused
+        clearProcessSchedulerSlot(me)
         yieldToScheduler()
         while true { wfi() }
     }

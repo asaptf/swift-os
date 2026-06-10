@@ -107,6 +107,50 @@ if grep -Fq 'schedCtx = s.bindMemory(to: CPUContext.self, capacity: 1)' "$PROCES
   exit 1
 fi
 
+for needle in \
+  'smpSetProcessRunQueueForCurrentCpu' \
+  'smpPerCpuProcessRunQueueIdle' \
+  'smpPerCpuProcessRunQueueHead' \
+  'smpPerCpuProcessRunQueueTail'; do
+  if ! grep -q "$needle" "$PERCPU_SWIFT"; then
+    echo "FAIL: S2d per-CPU process run queue mirror missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'private var pHomeCpu = \[UInt32\]' \
+  'private var pRunNext = \[Int32\]' \
+  'private var pRunQueued = \[Bool\]' \
+  'private var processRunQueueHead = \[Int32\]' \
+  'private var processRunQueueTail = \[Int32\]' \
+  'private var processRunQueueEnqueueCount = \[UInt64\]' \
+  'private var processRunQueueDispatchCount = \[UInt64\]' \
+  'markProcessReady' \
+  'processHomeCpuForNewReadySlot' \
+  'processRunQueueScaffoldSelfTest' \
+  'processRunQueueNoSecondaryExecutionSelfTest'; do
+  if ! grep -q "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S2d process scheduler run queue scaffold missing $needle." >&2
+    exit 1
+  fi
+done
+
+if grep -q 'private var rrCursor' "$PROCESS_SWIFT" ||
+   grep -q 'for step in 1...maxProc' "$PROCESS_SWIFT"; then
+  echo "FAIL: S2d must not retain the old scan/rrCursor EL0 scheduler path." >&2
+  exit 1
+fi
+
+ready_assignments="$(rg -n 'pState\[[^]]+\][[:space:]]*=[[:space:]]*pReady' "$PROCESS_SWIFT" || true)"
+ready_assignment_count="$(rg -c 'pState\[[^]]+\][[:space:]]*=[[:space:]]*pReady' "$PROCESS_SWIFT" || true)"
+ready_assignment_count="${ready_assignment_count:-0}"
+if [[ "$ready_assignment_count" != "1" ]]; then
+  echo "FAIL: S2d requires pReady transitions to go through markProcessReady; found:" >&2
+  echo "$ready_assignments" >&2
+  exit 1
+fi
+
 if ! grep -q 'cpu != 0 || cpu >= schedCtxCpuCount' "$PROCESS_SWIFT" ||
    ! grep -q 'processOnTick entered on non-owner CPU' "$PROCESS_SWIFT"; then
   echo "FAIL: S2b process scheduler paths must panic if entered from a non-owner CPU." >&2
@@ -180,14 +224,24 @@ if ! grep -q 'smpS2cKernelSchedulerReadinessSelfTest' "$SECONDARY_SWIFT" ||
   exit 1
 fi
 
+if ! grep -q 'S2d OK: process run queue scaffold ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S2d OK: process run queue stayed CPU0-owned' "$MAIN_SWIFT"; then
+  echo "FAIL: S2d must log process run queue scaffold and CPU0-owned acceptance markers." >&2
+  exit 1
+fi
+
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 proc_line="$(rg -n '^[[:space:]]*processInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2a_line="$(rg -n 'smpS2ReadinessSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_line="$(rg -n 'processSchedulerContextSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2d_line="$(rg -n 'processRunQueueScaffoldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+runps_line="$(rg -n '^[[:space:]]*runPsDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2d_no_secondary_line="$(rg -n 'processRunQueueNoSecondaryExecutionSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
       "$proc_line" -ge "$s2a_line" ]]; then
@@ -198,11 +252,21 @@ if [[ -z "$s2b_line" || "$s2a_line" -ge "$s2b_line" ]]; then
   echo "FAIL: S2b process scheduler context self-test must run after the S2a scheduler readiness check." >&2
   exit 1
 fi
+if [[ -z "$s2d_line" || "$s2b_line" -ge "$s2d_line" ]]; then
+  echo "FAIL: S2d process run queue scaffold self-test must run after the S2b context scaffold." >&2
+  exit 1
+fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
       "$demo_line" -ge "$s2c_no_secondary_line" ||
       "$s2c_no_secondary_line" -ge "$process_demo_line" ]]; then
   echo "FAIL: S2c no-secondary-kernel guard must run after the kernel scheduler demo and before EL0 demos." >&2
   exit 1
 fi
+if [[ -z "$runps_line" || -z "$s2d_no_secondary_line" || -z "$s2b_no_secondary_line" ||
+      "$runps_line" -ge "$s2d_no_secondary_line" ||
+      "$s2d_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S2d run queue CPU0-owned guard must run after Swift ps and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
-echo "PASS: S1/S2a/S2b/S2c release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
