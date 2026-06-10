@@ -34,6 +34,12 @@ private var smpIpiReceivedCount: InlineArray<8, UInt64> = .init(repeating: 0)
 private var smpIpiLastSourceCpu: InlineArray<8, UInt64> = .init(repeating: UInt64.max)
 private var smpIpiProbeTargetMaskStorage: UInt64 = 0
 private var smpIpiProbeDeliveredMaskStorage: UInt64 = 0
+private var smpTlbShootdownRequestGeneration: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpTlbShootdownAckGeneration: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpTlbShootdownReceivedCount: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpTlbShootdownProbeGenerationStorage: UInt64 = 0
+private var smpTlbShootdownProbeTargetMaskStorage: UInt64 = 0
+private var smpTlbShootdownProbeAckMaskStorage: UInt64 = 0
 
 @inline(__always)
 private func smpValidCpu(_ cpu: UInt32) -> Bool {
@@ -274,6 +280,103 @@ func smpIpiProbeDeliveredMask() -> UInt64 {
     }
 }
 
+func smpPerCpuTlbShootdownReceivedCount(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpTlbShootdownReceivedCount[Int(cpu)]) { count in
+        smpAtomicLoad(count)
+    }
+}
+
+func smpPerCpuTlbShootdownRequestGeneration(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpTlbShootdownRequestGeneration[Int(cpu)]) { generation in
+        smpAtomicLoad(generation)
+    }
+}
+
+func smpPerCpuTlbShootdownAckGeneration(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpTlbShootdownAckGeneration[Int(cpu)]) { generation in
+        smpAtomicLoad(generation)
+    }
+}
+
+func smpBeginTlbShootdownProbe(targetMask: UInt64) -> UInt64 {
+    let generation = withUnsafeMutablePointer(to: &smpTlbShootdownProbeGenerationStorage) { current in
+        smpAtomicFetchAdd(current, 1) &+ 1
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeTargetMaskStorage) { mask in
+        smpAtomicStore(mask, targetMask)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeAckMaskStorage) { mask in
+        smpAtomicStore(mask, 0)
+    }
+    smpStoreBarrier()
+    return generation
+}
+
+@discardableResult
+func smpPublishTlbShootdownRequest(cpu: UInt32, generation: UInt64) -> Bool {
+    if generation == 0 || !smpValidCpu(cpu) { return false }
+    withUnsafeMutablePointer(to: &smpTlbShootdownRequestGeneration[Int(cpu)]) { request in
+        smpAtomicStore(request, generation)
+    }
+    smpStoreBarrier()
+    return true
+}
+
+func smpMarkTlbShootdownProbeAcked(cpu: UInt32) {
+    if !smpValidCpu(cpu) { return }
+    let bit = UInt64(1) << UInt64(cpu)
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeAckMaskStorage) { mask in
+        var current = smpAtomicLoad(mask)
+        while true {
+            var expected = current
+            let desired = current | bit
+            if smpAtomicCompareExchange(mask, expected: &expected, desired: desired) {
+                break
+            }
+            current = expected
+        }
+    }
+}
+
+func smpHandleTlbShootdownForCurrentCpu() -> Bool {
+    let cpu = currentCpuId()
+    if !smpValidCpu(cpu) { return false }
+    let idx = Int(cpu)
+    let request = withUnsafeMutablePointer(to: &smpTlbShootdownRequestGeneration[idx]) { generation in
+        smpAtomicLoad(generation)
+    }
+    if request == 0 { return false }
+    let ack = withUnsafeMutablePointer(to: &smpTlbShootdownAckGeneration[idx]) { generation in
+        smpAtomicLoad(generation)
+    }
+    if ack == request { return false }
+
+    tlbi_all()
+    withUnsafeMutablePointer(to: &smpTlbShootdownAckGeneration[idx]) { generation in
+        smpAtomicStore(generation, request)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownReceivedCount[idx]) { count in
+        _ = smpAtomicFetchAdd(count, 1)
+    }
+    smpMarkTlbShootdownProbeAcked(cpu: cpu)
+    return true
+}
+
+func smpTlbShootdownProbeTargetMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeTargetMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
+func smpTlbShootdownProbeAckMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeAckMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
 func smpPerCpuKernelSchedulerReady(_ cpu: UInt32) -> Bool {
     if !smpValidCpu(cpu) { return false }
     let idx = Int(cpu)
@@ -330,6 +433,9 @@ func smpPerCpuSelfTest() -> Bool {
         smpCpuState[slot].el0SwitchCount = UInt64(slot + 5)
         smpIpiReceivedCount[slot] = UInt64(slot + 6)
         smpIpiLastSourceCpu[slot] = UInt64(slot + 7)
+        smpTlbShootdownRequestGeneration[slot] = UInt64(slot + 8)
+        smpTlbShootdownAckGeneration[slot] = UInt64(slot + 9)
+        smpTlbShootdownReceivedCount[slot] = UInt64(slot + 10)
         if smpCpuState[slot].logicalId != UInt32(slot) { return false }
         if smpCpuState[slot].timerTicks != UInt64(slot) { return false }
         if smpCpuState[slot].currentThread != Int32(slot) { return false }
@@ -341,9 +447,15 @@ func smpPerCpuSelfTest() -> Bool {
         if smpCpuState[slot].el0SwitchCount != UInt64(slot + 5) { return false }
         if smpPerCpuIpiReceivedCount(UInt32(slot)) != UInt64(slot + 6) { return false }
         if smpPerCpuIpiLastSource(UInt32(slot)) != UInt64(slot + 7) { return false }
+        if smpPerCpuTlbShootdownRequestGeneration(UInt32(slot)) != UInt64(slot + 8) { return false }
+        if smpPerCpuTlbShootdownAckGeneration(UInt32(slot)) != UInt64(slot + 9) { return false }
+        if smpPerCpuTlbShootdownReceivedCount(UInt32(slot)) != UInt64(slot + 10) { return false }
         smpCpuState[slot] = SMPPerCpuState()
         smpIpiReceivedCount[slot] = 0
         smpIpiLastSourceCpu[slot] = UInt64.max
+        smpTlbShootdownRequestGeneration[slot] = 0
+        smpTlbShootdownAckGeneration[slot] = 0
+        smpTlbShootdownReceivedCount[slot] = 0
         slot += 1
     }
 
@@ -365,6 +477,14 @@ func smpPerCpuSelfTest() -> Bool {
     let savedIpiLastSource = smpPerCpuIpiLastSource(cpu)
     let savedIpiProbeTargetMask = smpIpiProbeTargetMask()
     let savedIpiProbeDeliveredMask = smpIpiProbeDeliveredMask()
+    let savedTlbShootdownReceivedCount = smpPerCpuTlbShootdownReceivedCount(cpu)
+    let savedTlbShootdownRequestGeneration = smpPerCpuTlbShootdownRequestGeneration(cpu)
+    let savedTlbShootdownAckGeneration = smpPerCpuTlbShootdownAckGeneration(cpu)
+    let savedTlbShootdownProbeGeneration = withUnsafeMutablePointer(to: &smpTlbShootdownProbeGenerationStorage) { generation in
+        smpAtomicLoad(generation)
+    }
+    let savedTlbShootdownProbeTargetMask = smpTlbShootdownProbeTargetMask()
+    let savedTlbShootdownProbeAckMask = smpTlbShootdownProbeAckMask()
     let savedFlags = withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicLoad(flags)
     }
@@ -411,6 +531,17 @@ func smpPerCpuSelfTest() -> Bool {
     if smpIpiProbeTargetMask() != 0x5 { return false }
     if smpIpiProbeDeliveredMask() != 0x5 { return false }
 
+    let tlbMask = UInt64(1) << UInt64(cpu)
+    let tlbGeneration = smpBeginTlbShootdownProbe(targetMask: tlbMask)
+    if tlbGeneration == 0 { return false }
+    if !smpPublishTlbShootdownRequest(cpu: cpu, generation: tlbGeneration) { return false }
+    if smpPerCpuTlbShootdownRequestGeneration(cpu) != tlbGeneration { return false }
+    if !smpHandleTlbShootdownForCurrentCpu() { return false }
+    if smpPerCpuTlbShootdownAckGeneration(cpu) != tlbGeneration { return false }
+    if smpPerCpuTlbShootdownReceivedCount(cpu) != (savedTlbShootdownReceivedCount &+ 1) { return false }
+    if smpTlbShootdownProbeTargetMask() != tlbMask { return false }
+    if smpTlbShootdownProbeAckMask() != tlbMask { return false }
+
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags | smpCpuFlagOnline)
     }
@@ -434,6 +565,24 @@ func smpPerCpuSelfTest() -> Bool {
     smpResetIpiProbe(targetMask: savedIpiProbeTargetMask)
     withUnsafeMutablePointer(to: &smpIpiProbeDeliveredMaskStorage) { mask in
         smpAtomicStore(mask, savedIpiProbeDeliveredMask)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownReceivedCount[idx]) { count in
+        smpAtomicStore(count, savedTlbShootdownReceivedCount)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownRequestGeneration[idx]) { generation in
+        smpAtomicStore(generation, savedTlbShootdownRequestGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownAckGeneration[idx]) { generation in
+        smpAtomicStore(generation, savedTlbShootdownAckGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeGenerationStorage) { generation in
+        smpAtomicStore(generation, savedTlbShootdownProbeGeneration)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeTargetMaskStorage) { mask in
+        smpAtomicStore(mask, savedTlbShootdownProbeTargetMask)
+    }
+    withUnsafeMutablePointer(to: &smpTlbShootdownProbeAckMaskStorage) { mask in
+        smpAtomicStore(mask, savedTlbShootdownProbeAckMask)
     }
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags)

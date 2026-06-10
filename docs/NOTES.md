@@ -1134,6 +1134,34 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   IPI is consumed by the scheduler, no secondary CPU dispatches EL0 work, and
   no PMM/VFS/process locking policy changes in this checkpoint.
 
+### S3c — TLB shootdown IPI scaffold (DONE, 2026-06-10)
+
+- **Fixed request/ack protocol.** `kernel/smp/percpu.swift` now has separate
+  fixed atomic TLB shootdown generations, ack generations, received counters,
+  and probe masks. These stay outside `SMPPerCpuState`, preserving the 64-byte
+  scheduler slot while giving S3 a concrete per-CPU protocol to wire into
+  future address-space active masks.
+- **IPI handler consumption.** SGI ID 1 still records the generic S3b IPI
+  counters, then consumes any pending TLB shootdown generation for the current
+  CPU. The S3c path performs only a local `tlbi_all()` plus atomic ack/counter
+  updates; it does not log, schedule, touch process state, allocate pages, or
+  call VFS/driver code from a parked secondary CPU.
+- **Runtime acceptance.** Boot runs `smpTlbShootdownSelfTest` after S3b
+  readiness. On SMP boots CPU0 publishes a generation to every discovered
+  secondary, sends the reserved SGI, waits for the ack mask, verifies each
+  target's ack generation and received count, and logs
+  `S3c OK: TLB shootdown IPI scaffold ready`. After userland demos, boot
+  verifies the ack mask stayed complete and secondary scheduler state stayed
+  idle, then logs `S3c OK: TLB shootdown path stayed scheduler-safe`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the S3c
+  request/ack globals and helpers, boot-order placement, and the narrow TLB
+  handler contract. The generic S3b handler still cannot inline logging,
+  scheduler/process work, VFS/driver/PMM calls, or raw TLB instructions.
+- **Non-goals.** Existing VM page-table mutation sites still perform local
+  invalidation because secondary EL0/address-space activation remains gated.
+  The next S3 slice can connect this protocol to per-address-space active CPU
+  masks once multi-CPU process execution is intentionally opened.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

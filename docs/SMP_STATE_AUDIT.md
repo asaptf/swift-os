@@ -19,7 +19,7 @@ manifest entries left behind after globals move or disappear.
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
 | Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
-| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b adds separate fixed IPI probe counters so the 64-byte per-CPU scheduler slot stays stable. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI counters atomic and side-effect-free until S3 TLB shootdown work consumes them. |
+| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work wires shootdowns to real address-space active masks. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints | Shared fixed tables; C4 work may change them. | Do not change in S0c. Later protect table mutation and handle refcount paths after C4 settles. |
 | Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
@@ -155,6 +155,12 @@ manifest entries left behind after globals move or disappear.
 - `kernel/smp/percpu.swift:smpIpiProbeDeliveredMaskStorage`
 - `kernel/smp/percpu.swift:smpIpiProbeTargetMaskStorage`
 - `kernel/smp/percpu.swift:smpIpiReceivedCount`
+- `kernel/smp/percpu.swift:smpTlbShootdownAckGeneration`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeAckMaskStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeGenerationStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeTargetMaskStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownReceivedCount`
+- `kernel/smp/percpu.swift:smpTlbShootdownRequestGeneration`
 - `kernel/smp/secondary.c:smp_secondary_mailboxes`
 - `kernel/smp/secondary.c:smp_secondary_stacks`
 - `kernel/timer/generic_timer.swift:systemTicks`

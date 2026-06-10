@@ -169,6 +169,11 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   substrate. Parked secondary CPUs remain IRQ-enabled after their timer
   heartbeat, can receive the reserved SGI, and only update fixed atomic IPI
   counters. Scheduler, VFS, PMM, and EL0 work remain gated to CPU0.
+- S3c preflight (2026-06-10): TLB shootdown now has a fixed request/ack
+  generation protocol on top of the S3b SGI path. CPU0 can publish a shootdown
+  request to discovered secondaries, send the reserved IPI, and wait for each
+  target to run a local `tlbi vmalle1` and atomically acknowledge it while the
+  scheduler and EL0 gates remain CPU0-owned.
 - Implement a minimal IPI / SGI mechanism (or use GIC SGI) for "reschedule this CPU", "TLB invalidate range on these CPUs", etc.
 - When a page table change (munmap, mprotect, process exec/exit) happens on CPU A for an address space that may be active on CPU B, we must shoot down the TLB on B (or the relevant set of CPUs). Single-CPU `tlbi vmalle1` / `tlbi vae1` is no longer sufficient.
 - `address_space_switch` and the TTBR0 install path must be safe when the same AS can be on multiple CPUs (or when we migrate a process).
