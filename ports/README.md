@@ -9,7 +9,8 @@ This is not a full ports tree yet. The first `Port.json` recipe is checked in
 for `lang/lua`, with validation, manifest generation, checksum-verified
 distfile fetching, `.swpkg` creation from a clean staged root, and signed static
 repository fixture generation. `make ports-lua-repo-fixture` also cross-builds
-real AArch64 static `lua` and `luac` binaries against the local newlib sysroot.
+real AArch64 static Lua against the local newlib sysroot and packages the
+runtime interpreter.
 Patches, QEMU smoke tests, and trusted public publishing workflows still belong
 to the planned `swift-os-ports` repository. The seed catalog keeps that work
 ordered and reviewable while the target-side package manager is still being

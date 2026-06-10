@@ -827,6 +827,8 @@ func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int) -
         }
         let n = tcpConns[c].read(dst, cap)
         if n > 0 {
+            tcpConns[c].advertiseReadWindow()
+            tcpDrain(c, systemTicks)
             netUnlock(daif)
             return n
         }

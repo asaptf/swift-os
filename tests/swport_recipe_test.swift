@@ -118,7 +118,7 @@ do {
         fail("manifest ABI does not target static swos-0")
     }
     let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
-    guard filePaths == ["/usr/bin/lua", "/usr/bin/luac"] else {
+    guard filePaths == ["/usr/bin/lua"] else {
         fail("unexpected manifest files: \(filePaths.sorted())")
     }
 } catch {
@@ -128,7 +128,7 @@ do {
 do {
     let binDir = temp.appendingPathComponent("root/usr/bin", isDirectory: true)
     try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
-    for name in ["lua", "luac"] {
+    for name in ["lua"] {
         let executable = binDir.appendingPathComponent(name)
         try Data("#!/bin/sh\necho \(name)\n".utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
@@ -187,18 +187,14 @@ guard output(repoInspect).contains("lua-5.4.8_1") else {
 
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
-    let binDir = badRoot.appendingPathComponent("usr/bin", isDirectory: true)
-    try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
-    let executable = binDir.appendingPathComponent("lua")
-    try Data("#!/bin/sh\necho lua\n".utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
     let bad = run(swport, [
         "recipe", "package", "lang/lua",
         "--root", badRoot.path,
         "--output", temp.appendingPathComponent("bad-missing.swpkg").path,
         "--swpkg", swpkg.path,
     ])
-    guard bad.status != 0, output(bad).contains("staged root missing /usr/bin/luac") else {
+    guard bad.status != 0, output(bad).contains("staged root missing /usr/bin/lua") else {
         fail("incomplete staged root unexpectedly packaged: \(output(bad))")
     }
 } catch {
@@ -226,17 +222,17 @@ do {
     guard var root = try JSONSerialization.jsonObject(with: Data(contentsOf: recipe)) as? [String: Any],
           var package = root["package"] as? [String: Any],
           var files = package["files"] as? [[String: Any]],
-          files.count >= 2 else {
+          files.count >= 1 else {
         fail("could not parse lua recipe files for negative test")
     }
-    files[1]["to"] = "/usr/bin/lua"
+    files[0]["mode"] = "75x5"
     package["files"] = files
     root["package"] = package
     let badRecipe = temp.appendingPathComponent("bad-files/Port.json")
     try writeJSON(root, to: badRecipe)
     let bad = run(swport, ["recipe", "validate", badRecipe.path])
-    guard bad.status != 0, output(bad).contains("duplicate package file target /usr/bin/lua") else {
-        fail("duplicate package file target unexpectedly passed: \(output(bad))")
+    guard bad.status != 0, output(bad).contains("invalid file mode 75x5") else {
+        fail("invalid package file mode unexpectedly passed: \(output(bad))")
     }
 } catch {
     fail("negative file test failed: \(error)")

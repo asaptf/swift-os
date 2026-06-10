@@ -2462,8 +2462,8 @@ Recorded because `/bin/top`'s `Kernel:` line reports it live. For the QEMU `virt
 time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + the boot log):
 - Static: `.text`+`.rodata`+`.got` ≈ 140 KiB, `.data` ≈ 2.3 KiB, `.bss` ≈ 55 KiB → ELF `dec` ≈ 197 KiB;
   `kernel.bin` (flat, loadable) ≈ 142 KiB.
-- Resident at boot (`_start` 0x4008_0000 → `__image_end`, roughly **775 KiB** with the current linker
-  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 512 KiB early bump heap.
+- Resident at boot (`_start` 0x4008_0000 → `__image_end`, roughly **2.3 MiB** with the current linker
+  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 2 MiB early bump heap.
 - Dynamic: of 256 MiB RAM the kernel, the 512 KiB sub-load-base hole, and the PMM bitmap consume about
   1.3 MiB before any process runs.
   The accounting/syscalls added by this feature grow the image by ~3 KiB.

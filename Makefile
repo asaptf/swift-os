@@ -55,6 +55,7 @@ PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
 PKGHELLO_STORE_IMG := $(BUILD)/pkgstore-pkghello.img
 PKG_EMPTY_STORE_IMG := $(BUILD)/pkgstore-empty.img
 PKG_INSTALL_STORE_IMG := $(BUILD)/pkgstore-install.img
+PKG_LUA_INSTALL_STORE_IMG := $(BUILD)/pkgstore-lua-install.img
 PKGREPO_ROOT := $(BUILD)/pkgrepo-root
 PKGREPO_PUB := $(BUILD)/pkgrepo-root.pub
 PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
@@ -327,7 +328,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -1027,11 +1028,18 @@ package-local-install-fixture: $(PKG_EMPTY_STORE_IMG)
 	cp $(PKG_EMPTY_STORE_IMG) $(PKG_INSTALL_STORE_IMG)
 	$(PKGSTORE) inspect $(PKG_INSTALL_STORE_IMG)
 
+package-lua-install-fixture: $(PKGSTORE)
+	$(PKGSTORE) init --output $(PKG_LUA_INSTALL_STORE_IMG) --size 8388608
+	$(PKGSTORE) inspect $(PKG_LUA_INSTALL_STORE_IMG)
+
 package-local-install-test: build $(QEMU_DTB) base-image package-local-install-fixture
 	./tests/pkg_local_install_test.sh
 
 package-repo-install-test: build $(QEMU_DTB) base-image package-local-install-fixture package-repo-fixture
 	./tests/pkg_repo_install_test.sh
+
+package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-fixture ports-lua-repo-fixture
+	./tests/pkg_lua_repo_install_test.sh
 
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)

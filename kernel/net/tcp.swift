@@ -273,6 +273,15 @@ struct TCPConnection {
         return n
     }
 
+    mutating func advertiseReadWindow() {
+        switch state {
+        case .established, .finWait1, .finWait2, .closeWait:
+            emit(flags: tcpFlagACK, seq: sndNxt)
+        default:
+            break
+        }
+    }
+
     private mutating func queueFIN(now: UInt64) {
         if finQueued { return }
         finQueued = true
