@@ -56,6 +56,9 @@ int  swiftos_login(unsigned int principal, unsigned int session, unsigned long c
 // U1c: confirm the booted A/B update slot healthy (CONFIRMED). Needs CAP_CONSOLE.
 // 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
 int  swiftos_update_confirm(void);
+// U1e: promote the inactive A/B slot to active for the next boot (on trial).
+// Needs CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_update_activate(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.

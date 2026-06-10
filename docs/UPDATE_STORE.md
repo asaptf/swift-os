@@ -148,10 +148,23 @@ are exhausted and asserts the failover to the fallback persists across reboots.
 
 The read + write + confirm + rollback halves of A/B are now complete.
 
+## Promote the inactive slot (U1e)
+
+`/bin/swos-activate` (capConsole-gated; root yes, guest EPERM) calls
+`SYS_UPDATE_ACTIVATE` (61) → `updateStoreActivateOther()`, which makes the
+inactive slot the active slot for the next boot (the current slot becomes the
+fallback) and marks it UNTRIED with its attempt counter reset, so it boots "on
+trial" under U1d's rollback. The full operator promotion workflow, for slots that
+already hold images: activate → reboot → boots on trial → `/bin/swos-confirm` if
+healthy, else attempt-based rollback returns to the fallback.
+`tests/ab_activate_test.sh` activates from a shell and verifies slot B is active
+and on trial after a reboot.
+
 ## Not implemented yet
 
-- Staging a new generation into the inactive slot + atomic active-slot flip from
-  a running system (a target-side `swos-update`).
+- Writing a new generation into the inactive slot from a running system (a
+  target-side `swos-update`) — needs an image-source decision (read-only payload
+  disk vs network vs tmpfs) plus multi-device virtio-blk support.
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.

@@ -237,6 +237,7 @@ USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
+USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
 USER_LS_ELF := $(BUILD)/ls.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
@@ -286,6 +287,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
+	$(USER_SWOSACTIVATE_ELF) \
 	$(USER_LS_ELF) \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
@@ -433,6 +435,9 @@ $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_swosconfirm.o: userland/swos-confirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-confirm.swift -o $@
 
+$(BUILD)/user_swosactivate.o: userland/swos-activate.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-activate.swift -o $@
+
 $(BUILD)/user_ls.o: userland/ls.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ls.swift -o $@
 
@@ -576,6 +581,9 @@ $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id
 
 $(USER_SWOSCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o -o $@
+
+$(USER_SWOSACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosactivate.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosactivate.o -o $@
 
 $(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
@@ -824,6 +832,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/ab_persist_test.sh
 	./tests/ab_confirm_test.sh
 	./tests/ab_rollback_test.sh
+	./tests/ab_activate_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -983,6 +992,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm
+	cp $(USER_SWOSACTIVATE_ELF) $(BASE_ROOT)/bin/swos-activate
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo

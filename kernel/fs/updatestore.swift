@@ -189,3 +189,45 @@ func updateStoreConfirm() -> Int {
     uartPuts(" confirmed healthy\n")
     return 0
 }
+
+/// U1e: promote the inactive slot — make it the active slot for the next boot
+/// (the current slot becomes the fallback), marked UNTRIED with its attempt
+/// counter reset so it boots "on trial" under U1d's attempt-based rollback. The
+/// operator runs this after staging a new image into the inactive slot. Gated on
+/// capConsole. Returns 0 on success, or a negative errno-style code. Invoked
+/// from EL0 via syscall 61 (/bin/swos-activate).
+func updateStoreActivateOther() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
+    if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return -19 }
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return -5 } // EIO
+
+    let cur = updateStoreActiveSlot
+    let other = 1 - cur
+    if other < 0 || other >= SwosbootFormat.slotCount || !chosen.slot(other).present {
+        return -2 // ENOENT: no inactive slot to activate
+    }
+
+    var updated = chosen
+    updated.activeSlot = other
+    updated.fallbackSlot = cur
+    // The newly-activated slot boots on trial: untried, attempt counter reset.
+    if other == 0 {
+        updated.slot0.state = SwosbootFormat.stateUntried
+        updated.slot0.attemptCount = 0
+    } else {
+        updated.slot1.state = SwosbootFormat.stateUntried
+        updated.slot1.attemptCount = 0
+    }
+    updated.sequence = chosen.sequence &+ 1
+    if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
+        uartPuts("update-store: activate write failed\n")
+        return -5
+    }
+    uartPuts("update-store: activated slot ")
+    updateStoreLogSlot(other)
+    uartPuts(" (on trial), fallback slot ")
+    updateStoreLogSlot(cur)
+    uartPuts("\n")
+    return 0
+}

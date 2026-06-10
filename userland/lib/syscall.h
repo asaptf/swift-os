@@ -67,6 +67,7 @@
 #define SYS_MMAP_FILE     59
 #define SYS_SPAWN_HANDLES 58
 #define SYS_UPDATE_CONFIRM 60
+#define SYS_UPDATE_ACTIVATE 61
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -271,6 +272,13 @@ static inline int login(unsigned int principal, unsigned int session, unsigned l
 // 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
 static inline int update_confirm(void) {
     return (int)__syscall3(SYS_UPDATE_CONFIRM, 0, 0, 0);
+}
+
+// U1e: promote the inactive A/B slot to active for the next boot (the current
+// slot becomes the fallback); the new active boots "on trial". Needs CAP_CONSOLE.
+// 0 on success; negative on error (-1 EPERM, -19 ENODEV, -2 no inactive slot).
+static inline int update_activate(void) {
+    return (int)__syscall3(SYS_UPDATE_ACTIVATE, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

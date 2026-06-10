@@ -2834,3 +2834,35 @@ disk path are unaffected.
 build-out: stage-into-inactive-slot + atomic active flip from a running system,
 and kernel-image A/B via the loader (Ed25519 + EFI Block I/O); hardening:
 virtio-blk FLUSH (durability without cache=writethrough).
+
+### U1e — promote the inactive slot: /bin/swos-activate (DONE, 2026-06-10)
+
+**Scope.** The operator "promote" control — switch which slot boots next, from a
+running system. This is the activation/atomic-flip half of staging; writing a NEW
+image into the inactive slot (the data half) is a separate piece with a genuine
+fork (image source + multi-device virtio-blk), surfaced before it is built.
+
+- New syscall `SYS_UPDATE_ACTIVATE` (61), capConsole-gated → `updateStoreActivateOther()`
+  (`kernel/fs/updatestore.swift`): makes the inactive slot (1 − booted slot) the
+  active slot, the current slot the fallback, marks the new active UNTRIED +
+  attempts=0 (boots "on trial"), and persists via the U1b double-buffered
+  write-back. Reuses `updateStoreReadChosen`/`updateStoreWriteBack`. Bridge:
+  `syscall.h` `update_activate()` + `swiftos_update_activate()`.
+- `/bin/swos-activate` (`userland/swos-activate.swift`): calls it, prints the
+  result; registered in execResolve + staged in the base image. root only
+  (capConsole); guest EPERM.
+- No new globals (reuses `updateStoreActiveSlot`); SMP audit unchanged (174).
+
+**Operator workflow now complete for slots that already hold images:** activate
+the inactive slot → reboot → it boots on trial → `/bin/swos-confirm` if healthy
+(U1c), else attempt-based rollback returns to the fallback (U1d).
+
+**Acceptance.** `tests/ab_activate_test.sh` (in `make test`): boot slot A, run
+`/bin/swos-activate` from a shell → "activated slot B (on trial)"; reboot → slot
+B is active, UNTRIED, records its first attempt. U1a–U1d + the legacy disk path
+are unaffected.
+
+**Still future.** Writing a new image into the inactive slot from a running
+system (target-side `swos-update`) needs an image-source decision (read-only
+payload disk vs network vs tmpfs) + multi-device virtio-blk; then kernel-image
+A/B via the loader.
