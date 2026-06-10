@@ -117,7 +117,14 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 grep -qF "She loved to play outside in the sunshine" "$OC" || fail "completion body diverged from the runq.c reference"
 grep -qF "It was the sun!" "$OC"                        || fail "completion body diverged from the runq.c reference (tail)"
 grep -qF "ok model dim=288" "$OH"                       || fail "GET /health did not report the model"
-grep -qF "llmd: model int8 Q8_0 GS=32" <<<"$(sed 's/\r//' "$LOG")" || fail "llmd did not select the quantized engine"
+grep -qF "llmd: model int8 Q8_0 GS=32" <<<"$CLEAN"      || fail "llmd did not select the quantized engine"
+# I5: the deliberately-corrupt generation 2 is rejected by sha256/size checks,
+# and serving falls back to the verified generation 1 — the documented
+# verify-and-roll-back bundle flow, exercised on every boot.
+grep -qF "llmd: generation 2 rejected (model size/sha256 mismatch)" <<<"$CLEAN" \
+                                                        || fail "corrupt generation 2 was not rejected"
+grep -qF "llmd: bundle stories15M generation 1 verified (sha256)" <<<"$CLEAN" \
+                                                        || fail "generation 1 was not verified"
 grep -qE "requests [1-9]" "$OM"                         || fail "GET /metrics did not count the request"
 grep -qE "tokens_total [1-9][0-9]*" "$OM"               || fail "GET /metrics did not count generated tokens"
 grep -qE "last_tok_s [0-9]+" "$OM"                      || fail "GET /metrics missing a tok/s figure"

@@ -462,9 +462,10 @@ $(BUILD)/user_kv.o: userland/kv.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llm.swift userland/lib/llama2.swift -o $@
 
-# /bin/llmd: the TCP model-serving daemon + the shared engine (WMO).
-$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift -o $@
+# /bin/llmd: the TCP model-serving daemon + the shared engine + bundle
+# verification (manifest parse + sha256), compiled together (WMO).
+$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift -o $@
 
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
@@ -716,6 +717,11 @@ $(MODEL_Q8): $(MODEL_BIN) $(QUANTIZE)
 $(MODEL15_Q8): $(MODEL15_BIN) $(QUANTIZE)
 	$(QUANTIZE) $(MODEL15_BIN) $@
 
+# I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
+MODELMANIFEST := $(BUILD)/modelmanifest
+$(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/modelmanifest.swift kernel/crypto/sha256.swift -o $@
+
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
 test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
@@ -748,6 +754,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	$(BUILD)/llm_engine_test
 	$(HOST_SWIFTC) -O tests/llm_q8_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_q8_engine_test
 	$(BUILD)/llm_q8_engine_test
+	$(HOST_SWIFTC) tests/llm_bundle_test.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift -o $(BUILD)/llm_bundle_test
+	$(BUILD)/llm_bundle_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
@@ -902,13 +910,24 @@ package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG)
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 	./tests/package_overlay_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
 	mkdir -p $(BASE_ROOT)/models
-	cp $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(BASE_ROOT)/models/
+	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
+	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
+	# real q8 bundle; generation 2 is DELIBERATELY corrupt (a truncated model
+	# with gen-1's manifest hashes) so every boot demonstrates — and the serve
+	# test asserts — the verify-and-fall-back path from ARCHITECTURE.md.
+	mkdir -p $(BASE_ROOT)/models/stories15M/1 $(BASE_ROOT)/models/stories15M/2
+	cp $(MODEL15_Q8) $(BASE_ROOT)/models/stories15M/1/model.bin
+	cp $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/1/tokenizer.bin
+	$(MODELMANIFEST) stories15M 1 $(MODEL15_Q8) $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/1/manifest.toml
+	$(MODELMANIFEST) stories15M 2 $(MODEL15_Q8) $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/2/manifest.toml
+	printf 'corrupt-model-payload' > $(BASE_ROOT)/models/stories15M/2/model.bin
+	cp $(MODEL_TOK32) $(BASE_ROOT)/models/stories15M/2/tokenizer.bin
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo

@@ -2658,3 +2658,43 @@ streaming — a real, visibly coherent TinyStories model served by an isolated
 Swift process. `tests/llm_serve_test.sh` asserts the richer 15M reference text
 ("She loved to play outside in the sunshine", "It was the sun!"), the
 quantized-engine marker (`llmd: model int8 Q8_0 GS=32`), and live metrics.
+
+### I5 — verified model bundles with generation fallback (DONE, 2026-06-09)
+
+**Scope.** The model-storage model from ARCHITECTURE.md made executable:
+`/models/<name>/<generation>/{manifest.toml, model.bin, tokenizer.bin}` with
+integrity verification at load and the verify-and-roll-back policy. Userland +
+host tooling only; no kernel change.
+
+**Pieces.**
+- `userland/lib/modelbundle.swift` — I/O-free (host + Embedded, the
+  llama2.swift pattern): a small-TOML-subset manifest parser (`key = value`,
+  `[table]`, `#` comments; unknown keys/tables tolerated for forward
+  compatibility — a `[signature]` table slot is reserved for when an Ed25519
+  primitive exists), payload verification (size first, then SHA-256 via
+  kernel/crypto/sha256.swift), and the newest-first generation policy.
+  `tests/llm_bundle_test.swift` (host, in `make test`) covers parse, corrupt
+  and size-mismatch rejection, case-insensitive hex, and ordering.
+- `tools/modelmanifest.swift` — host generator: hashes the payloads and emits
+  the manifest; `make base-image` stages generation 1 (the real q8 bundle) and
+  a DELIBERATELY corrupt generation 2 (gen-1 manifest hashes over a truncated
+  model.bin), so every boot demonstrates the fallback.
+- `/bin/llmd` resolves the bundle by default: scan `/models/stories15M` via
+  getdents for numeric generations, try newest first — parse manifest, mmap
+  payloads, verify; a bad generation logs
+  `llmd: generation 2 rejected (model size/sha256 mismatch)` and the loop
+  falls back, then logs `llmd: bundle stories15M generation 1 verified
+  (sha256)`. argv still overrides with raw paths (no verification) for
+  debugging. A rejected generation's partial mapping stays mapped until exit
+  (lazy-VMA munmap remains a recorded follow-up; verify-model-first ordering
+  bounds the cost to one VMA slot per bad generation).
+
+**Measured effect.** Verifying the mmap'd weights hashes every byte, which
+demand-pages the whole model in at startup: first-request ttft dropped from
+1150 ms (I4, cold fault-in) to **90 ms** — verified means resident. Steady
+rate unchanged (~10 tok/s, QEMU TCG). `tests/llm_serve_test.sh` asserts the
+rejection + verification markers plus the I4 checks.
+
+**Still future.** Real signatures (needs Ed25519), staging new generations at
+runtime (needs a writable model store — tmpfs or the persistent update store)
+and hot reload/drain, per-cell model servers (C6).

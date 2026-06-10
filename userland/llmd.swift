@@ -78,6 +78,123 @@ private func staticPath(_ s: StaticString) -> UnsafePointer<CChar> {
     return UnsafeRawPointer(s.utf8Start).assumingMemoryBound(to: CChar.self)
 }
 
+// ---- verified model bundles (I5) ---------------------------------------------
+// /models/<name>/<generation>/{manifest.toml, model.bin, tokenizer.bin}.
+// Policy: serve the highest generation whose manifest parses and whose payloads
+// pass the size + SHA-256 checks (userland/lib/modelbundle.swift); a bad
+// generation is logged and skipped — the documented "roll back if the new
+// generation is unhealthy" flow, applied at load time. Verifying an mmap'd
+// payload also faults it fully in, so "verified" implies "resident".
+
+private let bundleRoot: StaticString = "/models/stories15M"
+private let dentsCap = 2048
+private let manifestCap = 4096
+
+/// Run `body` with a NUL-terminated C path "<root>/<gen>/<leaf>". `leaf` must
+/// be a bare filename (manifest paths with '/' are rejected by the caller).
+private func withBundlePath<R>(_ root: StaticString, _ gen: Int, _ leaf: String,
+                               _ body: (UnsafePointer<CChar>) -> R) -> R {
+    var bytes: [UInt8] = []
+    root.withUTF8Buffer { for b in $0 { bytes.append(b) } }
+    bytes.append(0x2F)
+    var digits: [UInt8] = []
+    var g = gen
+    repeat { digits.append(0x30 + UInt8(g % 10)); g /= 10 } while g > 0
+    bytes.append(contentsOf: digits.reversed())
+    bytes.append(0x2F)
+    bytes.append(contentsOf: Array(leaf.utf8))
+    bytes.append(0)
+    return bytes.withUnsafeBufferPointer { raw in
+        body(UnsafeRawPointer(raw.baseAddress!).assumingMemoryBound(to: CChar.self))
+    }
+}
+
+/// List the numeric child directories of the bundle root (candidate generations).
+private func scanGenerations(_ root: StaticString) -> [Int] {
+    let fd = swiftos_open(staticPath(root), oRdOnly)
+    if fd < 0 { return [] }
+    var gens: [Int] = []
+    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: dentsCap) { dbuf in
+        let dbase = dbuf.baseAddress!
+        while true {
+            let n = swiftos_getdents(fd, UnsafeMutableRawPointer(dbase), UInt(dentsCap))
+            if n <= 0 { break }
+            var off = 0
+            while off < Int(n) {
+                let rec = dbase + off
+                let reclen = Int(UInt16(rec[16]) | (UInt16(rec[17]) << 8))
+                if reclen <= 0 { break }
+                let namePtr = rec + 19
+                var v = 0
+                var len = 0
+                var numeric = true
+                while namePtr[len] != 0 {
+                    let c = namePtr[len]
+                    if c < 0x30 || c > 0x39 { numeric = false; break }
+                    v = v * 10 + Int(c - 0x30)
+                    len += 1
+                }
+                if numeric && len > 0 { gens.append(v) }
+                off += reclen
+            }
+        }
+    }
+    _ = swiftos_close(fd)
+    return gens
+}
+
+/// Read + parse "<root>/<gen>/manifest.toml". The manifest is small; payloads
+/// are mmap'd separately by the caller.
+private func readManifest(_ root: StaticString, _ gen: Int) -> ModelManifest? {
+    return withBundlePath(root, gen, "manifest.toml") { cpath -> ModelManifest? in
+        let fd = swiftos_open(cpath, oRdOnly)
+        if fd < 0 { return nil }
+        defer { _ = swiftos_close(fd) }
+        return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: manifestCap) { buf in
+            let r = swiftos_read(fd, buf.baseAddress!, UInt(manifestCap))
+            if r <= 0 { return nil }
+            return modelManifestParse(UnsafeRawBufferPointer(start: buf.baseAddress!, count: Int(r)))
+        }
+    }
+}
+
+/// mmap + verify one bundle payload. Returns the mapped bytes on success.
+private func loadVerified(_ root: StaticString, _ gen: Int, _ entry: ModelBundleFile)
+    -> (UnsafeRawPointer, Int)? {
+    if entry.path.isEmpty || entry.path.utf8.contains(0x2F) { return nil } // no '/' escapes
+    guard let (ptr, len) = withBundlePath(root, gen, entry.path, { loadFile($0) }) else { return nil }
+    if !modelBundleVerify(entry, ptr, len) { return nil }
+    return (ptr, len)
+}
+
+/// Resolve the newest verified generation of the bundle. NOTE: a rejected
+/// generation's partial mapping stays mapped until exit (lazy-VMA munmap is a
+/// recorded follow-up); with 8 VMA slots and verify-model-first ordering a
+/// rejected generation costs one slot, which the serving path never exhausts.
+private func resolveBundle(_ root: StaticString)
+    -> (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? {
+    let gens = modelGenerationsNewestFirst(scanGenerations(root))
+    for gen in gens {
+        guard let m = readManifest(root, gen) else {
+            swiftos_puts("llmd: generation "); putUInt(UInt(gen))
+            swiftos_puts(" rejected (manifest missing or malformed)\n")
+            continue
+        }
+        guard let (modelPtr, _) = loadVerified(root, gen, m.model) else {
+            swiftos_puts("llmd: generation "); putUInt(UInt(gen))
+            swiftos_puts(" rejected (model size/sha256 mismatch)\n")
+            continue
+        }
+        guard let (tokPtr, _) = loadVerified(root, gen, m.tokenizer) else {
+            swiftos_puts("llmd: generation "); putUInt(UInt(gen))
+            swiftos_puts(" rejected (tokenizer size/sha256 mismatch)\n")
+            continue
+        }
+        return (modelPtr, tokPtr, gen, m.name)
+    }
+    return nil
+}
+
 // ---- wall clock (scheduler ticks) -------------------------------------------
 
 private func nowTicks() -> UInt64 {
@@ -304,22 +421,34 @@ func main(_ argc: Int32,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
 
-    // Default served model: the int8-quantized stories15M bundle (I4). argv can
-    // override: llmd [model.bin] [tokenizer.bin].
-    var modelPath = staticPath("/models/stories15M-q8.bin")
-    var tokPath = staticPath("/models/tokenizer.bin")
-    if let argv = argv {
-        if argc > 1, let a = argv[1] { modelPath = UnsafePointer(a) }
-        if argc > 2, let a = argv[2] { tokPath = UnsafePointer(a) }
-    }
-
-    guard let (modelPtr, _) = loadFile(modelPath) else {
-        swiftos_puts("llmd: cannot load model file\n")
-        return 1
-    }
-    guard let (tokPtr, _) = loadFile(tokPath) else {
-        swiftos_puts("llmd: cannot load tokenizer file\n")
-        return 1
+    // Default: resolve the verified stories15M bundle (I5) — newest generation
+    // that passes manifest + sha256 checks. argv overrides with raw paths
+    // (no verification): llmd [model.bin] [tokenizer.bin].
+    let modelPtr: UnsafeRawPointer
+    let tokPtr: UnsafeRawPointer
+    if argc > 1, let argv = argv, let a = argv[1] {
+        guard let (mp, _) = loadFile(UnsafePointer(a)) else {
+            swiftos_puts("llmd: cannot load model file\n")
+            return 1
+        }
+        var tp = staticPath("/models/tok512.bin")
+        if argc > 2, let t = argv[2] { tp = UnsafePointer(t) }
+        guard let (kp, _) = loadFile(tp) else {
+            swiftos_puts("llmd: cannot load tokenizer file\n")
+            return 1
+        }
+        modelPtr = mp; tokPtr = kp
+    } else {
+        guard let bundle = resolveBundle(bundleRoot) else {
+            swiftos_puts("llmd: no verifiable model bundle generation\n")
+            return 1
+        }
+        swiftos_puts("llmd: bundle ")
+        let nameBytes = Array(bundle.name.utf8)
+        nameBytes.withUnsafeBytes { _ = swiftos_write(1, $0.baseAddress, UInt($0.count)) }
+        swiftos_puts(" generation "); putUInt(UInt(bundle.gen))
+        swiftos_puts(" verified (sha256)\n")
+        modelPtr = bundle.model; tokPtr = bundle.tok
     }
     swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
 
