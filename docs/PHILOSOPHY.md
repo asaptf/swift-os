@@ -148,8 +148,9 @@ The implementation target is aarch64 (QEMU `virt`, plus a UEFI+GPT disk path). W
 - **Phase 1 — hardening for the product profile (active).** Complete the capability/handle model, deliver
   SMP, and move drivers and the network stack toward restartable userland services. See
   `docs/RISK_REMEDIATION_ROADMAP.md`.
-- **Phase 2 — full-OS capabilities (forward).** Observability and metrics, A/B signed-image updates with
-  rollback, the native Swift application runtime plus Node.js/JVM hosting, and the embedded footprint profile.
+- **Phase 2 — full-OS capabilities (forward).** Observability and metrics, production update channels beyond
+  the checked A/B validation paths, remaining kernel rollback pieces, the native Swift application runtime
+  plus Node.js/JVM hosting, and the embedded footprint profile.
   Recorded, not built early.
 
 AI-hosting is the flagship hosting workload, and embedded/appliance use is a co-primary profile; both build on

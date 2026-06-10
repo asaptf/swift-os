@@ -32,7 +32,7 @@ Use this guide with:
 | Runtime state | Use `/tmp`; it is RAM-backed and cleared on reboot |
 | Services | Launch manually from the serial shell under the chosen principal |
 | Logs and evidence | Capture QEMU serial output and run observability commands |
-| Updates | Promote host-built artifacts, not live in-place changes |
+| Updates | Promote host-built artifacts, or use the checked A/B store and ESP slot commands for validation paths |
 
 The current product profile is serial-first. There is no SSH server, web admin
 console, target-side user database editor, or service supervisor yet.
@@ -439,9 +439,11 @@ application-hosting profile. Future work includes:
 - Service manifests and a supervisor.
 - Remote administration through an SSH or equivalent package.
 - Persistent package install, upgrade, rollback, and repository metadata.
-- Signed OS image update slots with health-check rollback.
+- Production update channels, key rotation, and kernel-slot health rollback
+  beyond the checked A/B validation paths.
 - Per-cell resource accounting and administrative policy.
 
-Until those land, administer SwiftOS by treating the image as the source of
-truth: edit host-side inputs, rebuild immutable artifacts, boot, verify, and
-keep rollback artifacts available.
+Until those land, administer SwiftOS by treating signed images as the source of
+truth: edit host-side inputs, rebuild immutable artifacts, stage through the
+checked A/B paths when appropriate, boot, verify, and keep rollback artifacts
+available.

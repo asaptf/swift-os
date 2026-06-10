@@ -98,10 +98,13 @@ See [BASE_IMAGE.md](BASE_IMAGE.md), [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md), and
 
 ### How do I update or roll back SwiftOS?
 
-Today updates are host-driven. Rebuild immutable artifacts with `make build`,
-`make base-image`, `make disk`, package tooling, or model targets; boot the new
-artifacts; run the relevant acceptance tests; and keep the previous artifacts or
-commit available for rollback.
+Rebuild immutable artifacts with `make build`, `make base-image`, `make disk`,
+package tooling, or model targets; boot the new artifacts; run the relevant
+acceptance tests; and keep the previous artifacts or commit available for
+rollback. The checked A/B validation paths also support target-side base-image
+slot staging (`swos-update`, `swos-activate`, `swos-confirm`) and UEFI ESP
+kernel-slot staging (`swos-kstage`, `swos-kactivate`). Production update
+channels and kernel-slot health rollback are still future work.
 
 See [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
 

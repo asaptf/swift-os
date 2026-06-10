@@ -6,9 +6,10 @@ need a predictable way to move from one checked-in revision or artifact set to
 another.
 
 SwiftOS does not yet provide an on-target graphical installer, online updater,
-or live package upgrade command. The supported update model today is host-driven:
-rebuild immutable artifacts, boot the new artifacts, verify health, and keep the
-previous artifacts available for rollback.
+or live package upgrade command. The supported update model starts from
+host-built immutable artifacts, then either boots those artifacts directly or
+stages them through the checked A/B validation paths. Keep the previous artifacts
+available for rollback.
 
 Use this guide with:
 

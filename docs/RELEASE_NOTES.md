@@ -247,13 +247,12 @@ make model
 make base-image
 ```
 
-- The long-term signed image and A/B rollback model is described in
-  [ARCHITECTURE.md](ARCHITECTURE.md) and
-  [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The current
-  verified LLM bundle is a narrow, working example of generation verification
-  and fallback.
-- For the current host-driven update and rollback procedure, use
-  [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+- The checked A/B validation model now covers base-image slot staging,
+  activation, confirmation, rollback, and durable writes, plus UEFI ESP kernel
+  slot staging/activation and boot-attempt counting. Production update channels,
+  key rotation, and kernel-slot health rollback remain roadmap work.
+- For the current update and rollback procedures, use [UPDATE_GUIDE.md](UPDATE_GUIDE.md);
+  for the store and manifest formats, use [UPDATE_STORE.md](UPDATE_STORE.md).
 
 ## More Information
 

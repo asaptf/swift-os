@@ -410,7 +410,7 @@ This roadmap turns the current set of "we deliberately didn't do X" into a delib
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:
 
 - **Observability & metrics:** per-cell/per-process accounting, health states, request/latency/throughput metrics, memory-pressure and restart counters (see PHILOSOPHY.md "Observability" and the hosting metrics list in ARCHITECTURE.md).
-- **A/B signed-image updates with rollback:** immutable signed base images, two slots, atomic switch, automatic rollback on failed health checks. This is shared between the hosting and embedded profiles.
+- **Production A/B update channels and rollback:** build beyond the checked A/B validation paths toward immutable signed base/kernel images, update channels, key lifecycle, atomic switch, and automatic rollback on failed health checks. This is shared between the hosting and embedded profiles.
 - **Application runtimes:** native Swift application runtime first, then Node.js and the JVM, on the threads + futex + `mmap`(W^X) + poll + TLS primitives the ABI already keeps open.
 - **Embedded footprint profile:** a build/config profile that strips optional services, minimizes the static image, and tightens deterministic boot for single-purpose appliances.
 - **Service-ization completion:** move the remaining drivers and the network stack into restartable userland services reachable only via capability-gated IPC.
