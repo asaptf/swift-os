@@ -314,9 +314,15 @@ static void loader_bump_attempt(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, i
     if (fs->OpenVolume(fs, &root) != EFI_SUCCESS || !root) return;
     EFI_FILE_PROTOCOL *f = 0;
     EFI_STATUS os = root->Open(root, &f, KERNEL_STATE_PATH,
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                               EFI_FILE_ARCHIVE);
     root->Close(root);
-    if (os != EFI_SUCCESS || !f) return;
+    if (os != EFI_SUCCESS || !f) {
+        puts16(st, "UEFI: kernel-state open failed ");
+        puthex(st, (UINT64)os);
+        puts16(st, "\r\n");
+        return;
+    }
 
     static UINT8 buf[512];
     for (int i = 0; i < 512; i++) buf[i] = 0;

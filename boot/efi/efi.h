@@ -210,6 +210,7 @@ typedef struct {
 #define EFI_FILE_MODE_READ   0x0000000000000001ULL
 #define EFI_FILE_MODE_WRITE  0x0000000000000002ULL
 #define EFI_FILE_MODE_CREATE 0x8000000000000000ULL
+#define EFI_FILE_ARCHIVE     0x0000000000000020ULL
 
 // Loaded Image: we read only up to DeviceHandle (the volume we booted from).
 typedef struct {
