@@ -44,6 +44,7 @@ BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
 SWPKG     := $(BUILD)/swpkg
 PKGSTORE  := $(BUILD)/pkgstore
+PKGREPO   := $(BUILD)/pkgrepo
 BASE_ROOT := $(BUILD)/base-root
 PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
@@ -51,6 +52,9 @@ PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
 PKGHELLO_STORE_IMG := $(BUILD)/pkgstore-pkghello.img
 PKG_EMPTY_STORE_IMG := $(BUILD)/pkgstore-empty.img
 PKG_INSTALL_STORE_IMG := $(BUILD)/pkgstore-install.img
+PKGREPO_ROOT := $(BUILD)/pkgrepo-root
+PKGREPO_PUB := $(BUILD)/pkgrepo-root.pub
+PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -318,7 +322,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore package-fixture package-store-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -508,8 +512,9 @@ $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Make
 $(BUILD)/user_pkghello.o: userland/pkghello.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkghello.swift -o $@
 
-$(BUILD)/user_pkg.o: userland/pkg.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkg.swift -o $@
+PKG_SWIFT_SRCS := kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+$(BUILD)/user_pkg.o: userland/pkg.swift $(PKG_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkg.swift $(PKG_SWIFT_SRCS) -o $@
 
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
@@ -762,6 +767,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package
 	$(BUILD)/swpkg_tool_test
 	$(HOST_SWIFTC) tests/pkgstore_tool_test.swift -o $(BUILD)/pkgstore_tool_test
 	$(BUILD)/pkgstore_tool_test
+	$(HOST_SWIFTC) tests/pkgrepo_tool_test.swift -o $(BUILD)/pkgrepo_tool_test
+	$(BUILD)/pkgrepo_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(QEMU_DTB) 1
 	$(BUILD)/fdt_test $(QEMU_DTB_SMP4) 4
@@ -932,6 +939,14 @@ $(PKGSTORE): tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift 
 
 pkgstore: $(PKGSTORE)
 
+$(PKGREPO): tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+
+pkgrepo: $(PKGREPO)
+
+$(PKGREPO_PUB): $(PKGREPO) Makefile
+	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
+
 $(PKGHELLO_ROOT)/usr/bin/pkghello: $(USER_PKGHELLO_ELF) Makefile | $(BUILD)/.dir
 	rm -rf $(PKGHELLO_ROOT)
 	mkdir -p $(PKGHELLO_ROOT)/usr/bin
@@ -959,6 +974,13 @@ package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG) $(PKGHELLO_STORE_IMG)
 package-store-fixture: $(PKGHELLO_STORE_IMG)
 	$(PKGSTORE) inspect $(PKGHELLO_STORE_IMG)
 
+$(PKGREPO_ROOT): $(PKGREPO) $(PKGHELLO_PKG) Makefile
+	$(PKGREPO) create --package $(PKGHELLO_PKG) --output $@ --seed-hex $(PKGREPO_SEED_HEX) --generation 1
+
+package-repo-fixture: $(PKGREPO_ROOT) $(PKGREPO_PUB)
+	$(PKGREPO) verify --catalog-signed $(PKGREPO_ROOT)/aarch64/current/catalog.signed --pubkey $(PKGREPO_PUB)
+	$(PKGREPO) inspect $(PKGREPO_ROOT)/aarch64/current/catalog.signed
+
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 	./tests/package_overlay_test.sh
 
@@ -972,14 +994,19 @@ package-local-install-fixture: $(PKG_EMPTY_STORE_IMG)
 package-local-install-test: build $(QEMU_DTB) base-image package-local-install-fixture
 	./tests/pkg_local_install_test.sh
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
+package-repo-install-test: build $(QEMU_DTB) base-image package-local-install-fixture package-repo-fixture
+	./tests/pkg_repo_install_test.sh
+
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
+	mkdir -p $(BASE_ROOT)/etc/pkg
 	mkdir -p $(BASE_ROOT)/packages
 	mkdir -p $(BASE_ROOT)/models
 	cp $(PKGHELLO_PKG) $(BASE_ROOT)/packages/pkghello.swpkg
+	cp $(PKGREPO_PUB) $(BASE_ROOT)/etc/pkg/repo-root.pub
 	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
 	# real q8 bundle; generation 2 is DELIBERATELY corrupt (a truncated model
@@ -1064,8 +1091,8 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/pkgstore $(BUILD)/base_image_test \
-		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(ESP_DIR)
+		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/pkgstore $(BUILD)/pkgrepo $(BUILD)/base_image_test \
+		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BUILD)/pkgrepo_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(PKGREPO_ROOT) $(PKGREPO_PUB) $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

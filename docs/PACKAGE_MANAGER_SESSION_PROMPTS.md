@@ -139,33 +139,33 @@ Acceptance:
 ## Prompt 5: P5 Static HTTP Repository
 
 ```text
-Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P4 local `/bin/pkg`
-state.
+Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGREPO_FORMAT.md.
+Start from the current P5a state: `tools/pkgrepo.swift` builds a signed static
+HTTP repository fixture, `/bin/pkg update URL/search/info/install NAME` works
+for `pkghello`, and `make package-repo-install-test` passes.
 
-Implement package-management milestone P5 only: signed static repository
-catalogs and network fetch. Use HTTP first; do not require HTTPS for integrity.
+Harden package-management milestone P5 without jumping to the ports tree yet.
+Keep HTTP acceptable for transport integrity because catalogs are signed and
+packages are content-addressed.
 
-Required commands:
-- `pkg update`
-- `pkg search <text>`
-- `pkg info <name>`
-- `pkg install <name>`
-- `pkg upgrade` if dependency/version metadata is ready; otherwise document why
-  it is deferred.
+Focus:
+- enforce catalog expiration;
+- reject wrong arch/target/ABI/linkage package entries target-side;
+- add a negative QEMU or host test for package SHA-256 mismatch;
+- keep `pkg update URL`, `pkg search <text>`, `pkg info <name>`, and
+  `pkg install <name>` working;
+- leave `pkg upgrade` deferred unless dependency/version metadata is ready.
 
 Requirements:
-- ship a pinned repository root key in the base image;
-- verify signed catalog metadata;
-- verify content-addressed `.swpkg` hashes;
-- reject expired catalogs and wrong ABI/arch packages;
-- add a host-side static repository fixture;
-- add a QEMU test that starts a host HTTP server, runs `pkg update &&
-  pkg install pkghello`, then executes `/usr/bin/pkghello`.
+- do not break local `pkg install FILE`;
+- do not add a large JSON/TLS dependency to `/bin/pkg`;
+- keep parsers bounded and canonical;
+- update docs/PKGREPO_FORMAT.md if the catalog shape changes.
 
 Acceptance:
 - `make test` passes;
-- installing from a static HTTP repository works end to end;
-- verification failures are tested;
+- `make package-repo-install-test` passes;
+- expiration, arch/ABI, and package hash verification failures are tested;
 - commit the milestone and stop for review.
 ```
 
