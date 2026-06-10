@@ -16,7 +16,7 @@ A default SwiftOS boot gives you:
 - Native Embedded Swift userland tools such as `ls`, `cat`, `ps`, `top`, `id`,
   `calc`, `kv`, `httpd`, `udpecho`, and `tcpecho`.
 - Package fixtures for local `.swpkg` install, signed repository install, and
-  the host-built Lua source-port repository fixture.
+  the seven-package ports seed repository fixture.
 - A POSIX-like syscall ABI that is intentionally not the Linux ABI.
 
 ## Host Requirements
@@ -84,9 +84,10 @@ The normal serial-console boot is:
 make run
 ```
 
-You should see early kernel logs, the tty demo prompt, and then the login prompt.
-During the bring-up demo, type a line when asked, press Enter, then press Ctrl-C
-when the next prompt asks for it. The system then starts `console-login`.
+You should see early kernel logs, an interactive TTY smoke prompt, and then the
+login prompt. At the smoke prompt, type a line when asked, press Enter, then
+press Ctrl-C when the next prompt asks for it. The system then starts
+`console-login`.
 
 ## First Login
 
