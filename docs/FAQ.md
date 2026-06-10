@@ -4,6 +4,20 @@ This FAQ answers the questions people usually ask before building, testing,
 porting to, or reporting an issue against SwiftOS. It describes the current
 checked-in system, not only the long-term roadmap.
 
+## Quick Decision Table
+
+| I want to... | Start with | Minimum proof |
+| --- | --- | --- |
+| Boot SwiftOS for the first time | [Getting Started](GETTING_STARTED.md) | `./tests/boot_test.sh` |
+| Choose a QEMU, UEFI, graphical, or VirtualBox profile | [Installation Guide](INSTALLATION_GUIDE.md) | Profile-specific test from the guide |
+| Use the serial-console system | [User Guide](USER_GUIDE.md) | `id`, `ls -l /`, `top -b -n 1` |
+| Prepare a release or handoff artifact set | [Deployment Guide](DEPLOYMENT_GUIDE.md) | Deployment manifest plus evidence bundle |
+| Run a network service | [Networking Guide](NETWORKING_GUIDE.md) and [Service Guide](SERVICE_GUIDE.md) | Service test plus host-visible check |
+| Serve TinyStories inference | [AI Hosting Guide](AI_HOSTING_GUIDE.md) | `./tests/llm_run_test.sh` and `./tests/llm_serve_test.sh` |
+| Add a native program | [Developer Guide](DEVELOPER_GUIDE.md) and [Application Cookbook](APPLICATION_COOKBOOK.md) | Focused host or QEMU acceptance test |
+| Package optional software | [Package Guide](PACKAGE_GUIDE.md) | Local, repository, or source-port package test |
+| Diagnose a failure | [Troubleshooting](TROUBLESHOOTING.md) and [Support Guide](SUPPORT_GUIDE.md) | Exact command, revision, and serial/test evidence |
+
 ## Product And Scope
 
 ### What is SwiftOS?
