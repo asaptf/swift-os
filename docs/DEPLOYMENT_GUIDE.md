@@ -45,6 +45,7 @@ artifacts:
 | `build/swift-os.img` | `make disk` | UEFI/GPT disk with EFI loader |
 | Package payload image | `make package-fixture` or package tooling | Optional read-only `/usr` payload |
 | Package-store image | `make package-store-fixture` or `build/pkgstore` | Optional active package generation |
+| Writable package-store image | `make package-local-install-fixture` | Optional local `pkg install FILE` target |
 | Model artifacts | `make model`, then `make base-image` | Optional TinyStories local and served models |
 
 A complete deployment candidate records:
@@ -89,7 +90,7 @@ Do not present the current system as having:
 - A graphical end-user installer.
 - A Linux, Docker, OCI, DEB, RPM, APK, Homebrew, or Nix deployment path.
 - A persistent writable root filesystem.
-- Target-side `pkg install`, package upgrade, or package rollback commands.
+- Target-side repository install, package upgrade, remove, or rollback commands.
 - A production online update service.
 - Automatic A/B boot slot rollback.
 - A production bare-metal certification matrix.
@@ -141,8 +142,8 @@ make package-fixture
 make package-store-fixture
 ```
 
-For the local package install flow, which is tested but not yet the normal
-operator-facing install command, build the fixture with:
+For the local package install flow, build the writable package-store fixture
+with:
 
 ```sh
 make package-local-install-fixture
@@ -380,9 +381,10 @@ make package-store-test
 make package-local-install-test
 ```
 
-`make package-local-install-test` proves the current local install plumbing, but
-the operator-facing package model remains host-built and boot-activated. Do not
-document it as a general target-side package manager yet.
+`make package-local-install-test` proves the current local-file install path.
+The operator-facing repository model remains staged work: do not document
+`pkg update`, dependency solving, remove, upgrade, or rollback as current
+features yet.
 
 ### Embedded Or Appliance-Style Candidate
 

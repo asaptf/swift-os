@@ -44,6 +44,7 @@ format details.
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Build, inspect, boot, test, and troubleshoot package artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
+| Plan server package priorities and porting prerequisites | [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) |
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |
 

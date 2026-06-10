@@ -1,10 +1,55 @@
-# Server Software Catalog
+# SwiftOS Server Software Catalog
 
-Practical package catalog for swift-os server workloads.
+This catalog explains which server and administration packages SwiftOS should
+support first, what those packages require from the OS, and how each future
+package should prove that it works. It is written for operators evaluating the
+platform direction, application owners choosing target workloads, and port
+maintainers planning `swift-os-ports` recipes.
 
-> Status: planning input for the package ecosystem. This document is a catalog
-> and porting guide, not permission to skip the package-management milestones in
-> `docs/PACKAGE_MANAGEMENT.md`.
+> Status: planning input for the package ecosystem. The current checked-in
+> system already has host `.swpkg` tooling, read-only package payload overlays,
+> package-store boot activation, and a narrow local `/bin/pkg install FILE`
+> path. The repository catalog, signed online install, dependency resolution,
+> remove, upgrade, and rollback flows are still roadmap work.
+
+Use this guide with:
+
+- [Package Guide](PACKAGE_GUIDE.md) for the package workflows that work today.
+- [Package Management](PACKAGE_MANAGEMENT.md) for the full package-manager
+  design.
+- [Package Build Automation](PACKAGE_BUILD_AUTOMATION.md) for `swport`, CI, and
+  repository publishing plans.
+- [Compatibility Guide](COMPATIBILITY_GUIDE.md) for platform and runtime
+  compatibility boundaries.
+- [Porting Guide](PORTING_GUIDE.md) for the source-port workflow.
+- [Service Guide](SERVICE_GUIDE.md) for daemon lifecycle and supervisor limits.
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) for validated candidate handoff.
+
+## Current User-Visible Package State
+
+SwiftOS does not yet have a public package repository. These package paths are
+available in the current tree:
+
+| Path | User-visible result | Proof |
+| --- | --- | --- |
+| Host `.swpkg` tooling | Build, inspect, and verify `build/pkghello.swpkg` | `make package-fixture` |
+| Direct payload overlay | Boot with read-only `/usr/bin/pkghello` | `make package-overlay-test` |
+| Package-store boot activation | Boot a preseeded active package generation | `make package-store-test` |
+| Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
+
+The `pkg install` examples later in this catalog are the intended repository
+UX. Until repository catalogs land, the implemented target-side command is the
+local-file form:
+
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+The installed payload is still immutable package content under `/usr`; SwiftOS
+does not unpack packages into a mutable root filesystem.
 
 ## Purpose
 
@@ -15,6 +60,10 @@ small Ubuntu machine:
 pkg update
 pkg install web-basic postgresql nodejs
 ```
+
+Those commands describe the intended repository experience, not the current
+checked-in target CLI. Today, use `pkg install FILE` for local `.swpkg` smoke
+tests and the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run

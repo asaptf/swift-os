@@ -54,7 +54,7 @@ SwiftOS is intentionally small and static.
 | User sessions | `/bin/console-login` authenticates principals from `/etc/swos/passwd` |
 | Program model | Static binaries; native Embedded Swift userland is the direction |
 | Networking | virtio-net plus capability-gated socket syscalls |
-| Packages | Host-built `.swpkg` plus read-only package payload overlay support |
+| Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
 | SMP status | SMP foundations and smoke tests exist; EL0 execution remains constrained by the current roadmap |
 
 The most important operational consequence is that a running guest has no
@@ -72,6 +72,7 @@ change installed software. Use `/tmp` only for runtime scratch.
 | `build/BOOTAA64.EFI` | `make uefi` | AArch64 UEFI loader |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample host package artifact |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
+| `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for local target-side install tests |
 | `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` local inference inputs |
 | `models/stories15M-q8.bin`, `models/tokenizer.bin` | `make model` or `make base-image` | Source payloads for the `/bin/llmd` verified serving bundle |
 
@@ -143,8 +144,8 @@ Inside the guest, log in as `root` before running socket programs. The seeded
 ### Package Overlay Boot
 
 Package payload overlays are current P2 functionality. They are read-only VFS
-overlays attached at boot, not target-side `pkg install` yet. For the complete
-package runbook, including package-store activation, see
+overlays attached at boot. For the complete package runbook, including
+package-store activation and local `pkg install FILE`, see
 [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 Build the sample package and boot with the payload image:
@@ -197,6 +198,30 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
 
 Inside the guest, `/usr/bin/pkghello` should produce the same output as the
 direct overlay path. Acceptance coverage: `make package-store-test`.
+
+### Local Package Install
+
+Local target-side install is current P3b functionality. It installs a local
+`.swpkg` into a writable package-store image and live-mounts the payload.
+
+Build and test the fixture:
+
+```sh
+make package-local-install-fixture
+make package-local-install-test
+```
+
+Inside the tested guest flow:
+
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+Repository install by package name, dependency solving, remove, upgrade, and
+rollback are not implemented yet.
 
 ## Access And Accounts
 
@@ -514,7 +539,8 @@ Ctrl-A then X when using `-nographic`.
 Current limits that matter during operation:
 
 - No persistent writable filesystem.
-- No target-side package install/remove command yet.
+- No repository package install, remove, upgrade, or rollback command yet.
+  Local `pkg install FILE` exists for `.swpkg` fixtures.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.

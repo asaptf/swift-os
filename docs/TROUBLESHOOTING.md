@@ -402,14 +402,23 @@ Run:
 make package-overlay-test
 ```
 
-Remember: `.swpkg` creation and payload extraction are host-side today.
-Target-side `pkg install` is future P4 work.
+Remember: `.swpkg` creation and payload extraction are host-side today. The
+current guest install path is only the local-file form, `pkg install FILE`,
+against a writable package-store image. Repository install by package name,
+remove, upgrade, and rollback are future work.
 
 For the P3a package-store boot path, use:
 
 ```sh
 make package-store-fixture
 make package-store-test
+```
+
+For the local install path, use:
+
+```sh
+make package-local-install-fixture
+make package-local-install-test
 ```
 
 The serial log should include:

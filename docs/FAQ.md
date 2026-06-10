@@ -185,11 +185,27 @@ truth remains the headers and kernel dispatcher named in
 
 ### Does `pkg install` work inside the guest?
 
-Not yet. The current package system is host-built and boot-activated:
+Yes, in a narrow local-file form. The current checked-in system can install a
+local `.swpkg` from the guest into a writable package-store disk:
 
-- `.swpkg` host package artifacts.
-- Direct read-only package payload overlays.
-- P3a package-store boot activation from a preseeded store image.
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+That path is proven by:
+
+```sh
+make package-local-install-test
+```
+
+The broader package system is still not a public repository manager. Network
+`pkg update`, repository `pkg install <name>`, dependency solving, remove,
+upgrade, and rollback are future work. Host-built `.swpkg` artifacts, direct
+read-only payload overlays, and preseeded package-store boot activation also
+remain supported.
 
 See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 

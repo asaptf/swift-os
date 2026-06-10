@@ -788,6 +788,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
+| `pkg` | `pkg install FILE` or `pkg list` | Install a local `.swpkg` into a writable package-store image and list active package records. | `tests/pkg_local_install_test.sh` |
 
 Examples:
 
@@ -796,9 +797,49 @@ Examples:
 /bin/mmapdemo
 /bin/sleepprobe
 /bin/busybox vi /tmp/note.txt
+pkg list
 ```
 
-## Package Overlay Commands
+## Package Commands
+
+### `pkg`
+
+Install a local SwiftOS package file or list active package-store records.
+
+```text
+pkg install FILE
+pkg list
+```
+
+Example local install fixture:
+
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+Expected output includes:
+
+```text
+no packages installed
+pkg: installed pkghello-1.0.0_1
+pkghello-1.0.0_1
+pkghello: hello from package overlay
+```
+
+Notes:
+
+- `pkg install FILE` expects a local `.swpkg`; repository install by package
+  name is not implemented yet.
+- The guest must be booted with a writable package-store image for install to
+  succeed.
+- `pkg list` reports the package records currently visible through the active
+  package store.
+- See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for the complete runbook.
+
+Acceptance coverage: `tests/pkg_local_install_test.sh`.
 
 ### `pkghello`
 

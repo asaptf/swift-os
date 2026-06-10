@@ -7,8 +7,10 @@ content, and collect support evidence.
 
 SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
-content under `/usr`. Target-side `pkg install`, online repositories, live
-activation, and rollback are staged work, not current behavior.
+content under `/usr`. The current target-side package manager supports a narrow
+local-file install path, `pkg install FILE`, into a writable package-store disk.
+Online repositories, dependency resolution, remove, upgrade, and rollback are
+staged work, not current behavior.
 
 Use this guide with:
 
@@ -16,6 +18,8 @@ Use this guide with:
   design and roadmap.
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container format.
 - [Package Store Format](PKGSTORE_FORMAT.md) for the P3a package-store image.
+- [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for prioritized server
+  packages and porting prerequisites.
 - [Operations Guide](OPERATIONS_GUIDE.md) for QEMU boot profiles.
 - [Application Cookbook](APPLICATION_COOKBOOK.md) for package authoring context.
 - [Troubleshooting](TROUBLESHOOTING.md) for package failure diagnosis.
@@ -30,13 +34,17 @@ Use this guide with:
 | Direct payload overlay boot | Implemented and proven by `make package-overlay-test` |
 | Package-store bootstrap image | Implemented as `build/pkgstore-pkghello.img` |
 | Package-store boot activation | Implemented and proven by `make package-store-test` |
-| Target-side `/bin/pkg` install/remove | Not implemented yet |
+| Target-side `/bin/pkg install FILE` | Implemented for local `.swpkg` files and proven by `make package-local-install-test` |
+| Target-side `/bin/pkg list` | Implemented for the active package-store records |
+| Target-side remove, upgrade, rollback, dependency solving | Not implemented yet |
 | Signed online repositories | Not implemented yet |
-| Live activation and rollback commands | Not implemented yet |
+| Network package downloads | Not implemented yet |
 
 The current user-visible package fixture is `/usr/bin/pkghello`. It is not part
-of the base image. It appears only when a package payload image or package-store
-image is attached at boot.
+of the base image. It appears when a package payload image is attached at boot,
+when a preseeded package-store image is attached at boot, or after
+`pkg install /packages/pkghello.swpkg` succeeds against a writable package-store
+disk.
 
 ## Mental Model
 
@@ -57,10 +65,12 @@ The three package artifact types have different jobs:
 | `build/pkghello.swpkg` | `build/swpkg create` | Host package container with manifest and payload |
 | `build/pkghello-payload.img` | `build/swpkg extract-payload` | Sector-aligned read-only payload image attached as a virtio-blk disk |
 | `build/pkgstore-pkghello.img` | `build/pkgstore create` | P3a package-store image with payload records and an active generation |
+| `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for target-side local install tests |
 
 Use the direct payload overlay when you want the simplest package-content boot.
 Use the package-store image when you want to test the current activation-record
-path.
+path. Use the local install path when you want to prove the guest can append a
+local `.swpkg` payload to a writable package-store disk and live-mount it.
 
 ## Quick Start
 
@@ -90,6 +100,7 @@ Run the acceptance tests:
 ```sh
 make package-overlay-test
 make package-store-test
+make package-local-install-test
 ```
 
 ## Host Tools
@@ -129,6 +140,12 @@ The package-store fixture target builds and inspects the sample store:
 
 ```sh
 make package-store-fixture
+```
+
+Build an empty writable store for local guest installs:
+
+```sh
+make package-local-install-fixture
 ```
 
 ## Boot A Direct Package Payload
@@ -221,6 +238,62 @@ Proof:
 make package-store-test
 ```
 
+## Install A Local Package In The Guest
+
+This is the current P3b local install path. It does not fetch from a repository
+and it does not resolve dependencies. It verifies a local `.swpkg`, appends its
+payload to a writable package-store disk, activates a new generation, and
+live-mounts the payload under `/usr`.
+
+Build the package fixture, base image, and writable package-store image:
+
+```sh
+make build base-image build/virt.dtb
+make package-fixture
+make package-local-install-fixture
+```
+
+Boot QEMU with the base image plus the writable store image:
+
+```sh
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=build/virt.dtb,addr=0x4FF00000,force-raw=on \
+  -drive file=build/base.img,format=raw,if=none,id=swosbase,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -drive file=build/pkgstore-install.img,format=raw,if=none,id=swpkgstore \
+  -device virtio-blk-device,drive=swpkgstore \
+  -kernel build/kernel.elf
+```
+
+Log in as `root`, then run:
+
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+Expected output includes:
+
+```text
+no packages installed
+pkg: installed pkghello-1.0.0_1
+pkghello-1.0.0_1
+pkghello: hello from package overlay
+```
+
+The `.swpkg` file is staged in the read-only base image under `/packages` for
+the fixture. Real packages will come from the ports and repository flow once the
+repository milestones land.
+
+Proof:
+
+```sh
+make package-local-install-test
+```
+
 ## Package Fixture Anatomy
 
 The sample fixture is intentionally small so it can run in every acceptance
@@ -271,6 +344,7 @@ Run the narrowest proof for the path you changed:
 | Host package-store create/inspect | `make package-store-fixture` |
 | Direct payload overlay boot | `make package-overlay-test` |
 | Package-store activation boot | `make package-store-test` |
+| Local target-side `.swpkg` install | `make package-local-install-test` |
 | Full package tooling in the full gate | `make test` |
 
 The underlying host tests are:
@@ -282,6 +356,7 @@ The QEMU tests are:
 
 - [tests/package_overlay_test.sh](../tests/package_overlay_test.sh)
 - [tests/pkg_store_boot_test.sh](../tests/pkg_store_boot_test.sh)
+- [tests/pkg_local_install_test.sh](../tests/pkg_local_install_test.sh)
 
 ## Troubleshooting
 
@@ -291,8 +366,10 @@ The QEMU tests are:
 | QEMU boots but no package-store markers appear | The package-store image was not attached with the expected virtio-blk device | Use the package-store boot profile or run `make package-store-test` |
 | `build/swpkg verify` fails | Manifest and payload do not match, hashes are stale, or paths are outside `/usr` | Rebuild the package root and run `make package-fixture` |
 | `build/pkgstore inspect` fails | Store image is stale, missing, or corrupt | Rebuild with `make package-store-fixture` |
-| Guest command says `/bin/pkg` is missing | Target-side package manager is not implemented yet | Use host tools and boot-time package images |
-| Package content disappears after reboot | The package image was not attached to the new boot | Attach the payload image or package-store image each time |
+| Guest command says `/bin/pkg` is missing | The base image is stale or was not rebuilt after `/bin/pkg` was added | Run `make build base-image` |
+| `pkg install /packages/pkghello.swpkg` says `cannot open package` | The base image does not contain the fixture package, or the path is wrong | Run `make package-fixture base-image` and use `/packages/pkghello.swpkg` |
+| `pkg: install failed` | The writable package-store disk is missing, read-only, full, or corrupt | Attach `build/pkgstore-install.img` without `readonly=on` or rebuild it with `make package-local-install-fixture` |
+| Package content disappears after reboot | The package image or writable package-store image was not attached to the new boot | Attach the same package payload, package-store, or writable install-store image each time |
 
 For general package diagnosis, see
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#package-problems).
@@ -302,11 +379,11 @@ For general package diagnosis, see
 Current limits that matter for package use:
 
 - Package content is read-only in the guest.
-- The package store is read by the kernel at boot; target-side writes are not
-  implemented yet.
+- The current target-side write path is only local `.swpkg` install into a
+  writable package-store disk.
 - `.swpkg` hashes prove container integrity, not publisher identity.
-- Package signatures, repository catalogs, online installs, and rollback
-  commands are future milestones.
+- Package signatures, repository catalogs, online installs, dependency solving,
+  remove, upgrade, and rollback commands are future milestones.
 - Packages cannot grant themselves process capabilities. Authority remains a
   property of the process identity and launch path.
 - The base image remains immutable and wins over package content unless future
@@ -314,4 +391,4 @@ Current limits that matter for package use:
 
 Do not use current package images as a production software update mechanism.
 They are the verified bring-up path for the package format, VFS overlay model,
-and package-store activation substrate.
+package-store activation substrate, and local install plumbing.

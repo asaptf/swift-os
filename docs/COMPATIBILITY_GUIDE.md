@@ -326,7 +326,8 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 
 ## Package And Distribution Compatibility
 
-SwiftOS package compatibility is currently host-side and boot-activation based.
+SwiftOS package compatibility is currently image-based, with a narrow local
+target-side install path.
 
 Supported now:
 
@@ -335,13 +336,15 @@ Supported now:
 - Payload extraction.
 - Read-only package payload image attachment at boot.
 - Preseeded package-store image attachment at boot.
+- Local target-side `pkg install FILE` into a writable package-store image.
+- Target-side `pkg list` for active package-store records.
 - Guest execution from attached package namespace, proven by `/usr/bin/pkghello`.
 
 Not supported now:
 
-- Target-side `pkg install`.
 - Target-side remove/upgrade transactions.
 - Network package repositories.
+- Repository `pkg update`, `pkg search`, or `pkg install <name>`.
 - RPM, DEB, APK, Homebrew, Nix, or OCI image compatibility.
 
 Example:
@@ -350,6 +353,7 @@ Example:
 make package-fixture
 make package-overlay-test
 make package-store-test
+make package-local-install-test
 ```
 
 For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See

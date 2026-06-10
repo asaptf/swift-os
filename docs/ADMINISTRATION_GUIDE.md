@@ -297,8 +297,10 @@ make package-store-fixture
 make package-store-test
 ```
 
-Package images are attached at boot and are read-only in the current system.
-Target-side install, remove, upgrade, and rollback transactions remain roadmap
+Package payloads are read-only once active. The current system also has a narrow
+local target-side install path: `pkg install FILE` can append a local `.swpkg`
+to a writable package-store image and live-mount it. Repository install,
+dependency solving, remove, upgrade, and rollback transactions remain roadmap
 work.
 
 ## Administer Services
@@ -386,6 +388,7 @@ Current limits:
 | Command added to base image | Command-specific test plus `./tests/boot_test.sh` |
 | Package payload | `make package-overlay-test` |
 | Package store image | `make package-store-test` |
+| Local package install | `make package-local-install-test` |
 | Service launch path | Service-specific QEMU test |
 | Network authority or network tool | Relevant networking test |
 | AI serving admin change | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |

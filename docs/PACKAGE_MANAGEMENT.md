@@ -806,7 +806,7 @@ Acceptance:
 - VFS selects the base image by contents rather than virtio-mmio scan order.
 - QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
-### P3: Package Store (P3a Boot Activation DONE)
+### P3: Package Store (P3a Boot Activation, P3b Local Install DONE)
 
 P3a adds the read-only boot side of the package store:
 
@@ -816,15 +816,25 @@ P3a adds the read-only boot side of the package store:
 - `tests/pkg_store_boot_test.sh` boots a preseeded store image and runs
   `/usr/bin/pkghello` from the active package generation.
 
-Remaining P3/P4 work:
+P3b adds the first target-side write path:
 
-- Target-side writes to the package store.
-- Installing/removing a local package changes the active generation.
-- Rollback restores the previous namespace.
+- `/bin/pkg install FILE` parses a local `.swpkg` staged in the base image.
+- The kernel verifies hashes, appends the payload to a writable package-store
+  disk, switches the active generation, and live-mounts the payload.
+- `/bin/pkg list` reports active package-store records.
+- `tests/pkg_local_install_test.sh` installs `/packages/pkghello.swpkg` and
+  runs `/usr/bin/pkghello` without rebooting.
 
-### P4: Local `pkg`
+Remaining P4 work:
 
-- Implement base-image `/bin/pkg` with local-file installs:
+- `pkg files NAME`.
+- `pkg remove NAME`.
+- `pkg rollback [generation]`.
+- Stronger user-facing diagnostics for failed local installs.
+
+### P4: Complete Local `pkg` Lifecycle
+
+Extend the base-image `/bin/pkg` local-file workflow:
 
 ```sh
 pkg install ./pkghello.swpkg
@@ -836,8 +846,8 @@ pkg rollback
 
 Acceptance:
 
-- QEMU test installs a local package, runs it, removes it, and proves it is
-  gone.
+- QEMU test installs a local package, runs it, removes it, proves it is gone,
+  then rolls back to the previous active generation.
 
 ### P5: Repository Catalogs and Network Fetch
 

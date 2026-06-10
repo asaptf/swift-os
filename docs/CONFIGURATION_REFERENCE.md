@@ -320,8 +320,16 @@ Inside the guest:
 /usr/bin/pkghello
 ```
 
-Package overlays are read-only. Target-side package installation is future
-package-manager work, not current behavior.
+Package overlays are read-only. The current target-side install path is the
+narrow local `.swpkg` flow backed by a writable package-store image:
+
+```sh
+make package-local-install-fixture
+make package-local-install-test
+```
+
+Repository install, dependency solving, remove, upgrade, and rollback remain
+future package-manager work.
 
 For the package-store boot profile and current package limits, see
 [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).

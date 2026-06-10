@@ -22,7 +22,7 @@ service-oriented.
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, and P3a package-store boot activation |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, P3a package-store boot activation, and P3b local `pkg install FILE` |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
 
 ## Highlights
@@ -67,7 +67,9 @@ service-oriented.
 - Provides tmpfs mutation under `/tmp` for writable runtime state.
 - Builds sample `.swpkg` artifacts, read-only package payload overlays, and a
   preseeded package-store image.
-- Does not yet provide target-side persistent package install/remove.
+- Provides a narrow local target-side `pkg install FILE` and `pkg list` path.
+- Does not yet provide repository install, dependency solving, remove, upgrade,
+  or rollback.
 
 ### Networking And Services
 
@@ -113,6 +115,7 @@ Focused gates:
 ./tests/httpd_test.sh
 ./tests/package_overlay_test.sh
 ./tests/pkg_store_boot_test.sh
+./tests/pkg_local_install_test.sh
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```
@@ -142,9 +145,9 @@ llmd: served
 - User programs are statically linked. There is no dynamic loader.
 - The base filesystem is read-only. Persistent writable storage is not part of
   the current product surface.
-- Package overlays and package-store boot activation are read-only at runtime.
-  Target-side package installation, removal, live activation, and rollback
-  remain roadmap work.
+- Package payloads are read-only once active. Local target-side package install
+  exists for `.swpkg` files, but repository install, removal, upgrade, and
+  rollback remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable

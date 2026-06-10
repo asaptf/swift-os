@@ -178,6 +178,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   troubleshoot `.swpkg`, payload overlay, and package-store artifacts.
 - [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,
   handle rights, native Swift bridge, and compatibility API notes.
+- [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
+  server packages, current package limits, and porting prerequisites.
 
 ## Architecture
 
