@@ -38,6 +38,7 @@ ARCH_DIR  := kernel/arch/aarch64
 BRIDGE    := $(ARCH_DIR)/io.h
 LINKER    := $(ARCH_DIR)/kernel.ld
 BUILD     := build
+MODEL_DIR := models
 QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
 QEMU_DTB_ADDR := 0x4FF00000
@@ -51,6 +52,8 @@ PKGREPO   := $(BUILD)/pkgrepo
 SWPORT    := $(BUILD)/swport
 SWPORT_CATALOG_TEST := $(BUILD)/swport_catalog_test
 SWPORT_RECIPE_TEST := $(BUILD)/swport_recipe_test
+IMG_SIGNING_SEED := $(MODEL_DIR)/dev-image-signing.seed
+IMG_SIGNING_PUB := $(MODEL_DIR)/dev-image-signing.pub
 BASE_ROOT := $(BUILD)/base-root
 PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
@@ -806,7 +809,6 @@ gdb:
 # Tiny TinyStories checkpoint (stories260K) + tokenizer (tok512) used by the
 # llm engine test and the /bin/llm demo. Fetched on demand (small, permissively
 # published llama2.c test artifacts), kept out of git like the newlib sysroot.
-MODEL_DIR := models
 MODEL_BIN := $(MODEL_DIR)/stories260K.bin
 MODEL_TOK := $(MODEL_DIR)/tok512.bin
 MODEL15_BIN := $(MODEL_DIR)/stories15M.bin
@@ -852,8 +854,6 @@ $(SIGNING_SEED): $(SIGNING_PUB)
 # I8: the IMAGE-signing keypair (distinct from the model key — different
 # lifecycle: image key = OS vendor, model key = model publisher). The public
 # half is compiled into the kernel as the trust root.
-IMG_SIGNING_SEED := $(MODEL_DIR)/dev-image-signing.seed
-IMG_SIGNING_PUB := $(MODEL_DIR)/dev-image-signing.pub
 $(IMG_SIGNING_PUB): | $(MODELSIGN)
 	$(MODELSIGN) keygen $(IMG_SIGNING_SEED) $@
 $(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
@@ -989,6 +989,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_kstage_test.sh
 	./tests/uefi_kactivate_test.sh
 	./tests/uefi_kattempt_test.sh
+	./tests/uefi_krollback_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
