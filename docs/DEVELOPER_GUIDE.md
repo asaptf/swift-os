@@ -5,6 +5,8 @@ recommended native Embedded Swift path, the C/newlib compatibility path, and the
 workflow for adding programs to the base image.
 
 For exact syscall and structure details, see [API_REFERENCE.md](API_REFERENCE.md).
+For platform, runtime, package, filesystem, and porting compatibility decisions,
+see [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md).
 
 ## Development Model
 

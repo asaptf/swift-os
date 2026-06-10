@@ -19,6 +19,7 @@ format details.
 | Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
+| Check hardware, application, package, runtime, and network compatibility | [Compatibility Guide](COMPATIBILITY_GUIDE.md) |
 | Understand current login, capabilities, handle rights, and security limits | [Security Guide](SECURITY_GUIDE.md) |
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |
 | Call the EL0 syscall ABI or Swift bridge directly | [API Reference](API_REFERENCE.md) |

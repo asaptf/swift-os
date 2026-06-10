@@ -135,6 +135,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
   network, package overlay, LLM, and QEMU test failure diagnosis.
 - [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
+- [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
+  application paths, porting constraints, packages, and non-goals.
 - [Security Guide](docs/SECURITY_GUIDE.md): current login flow, capability
   bits, handle rights, confinement, immutable images, and security limits.
 - [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
