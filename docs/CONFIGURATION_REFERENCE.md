@@ -8,6 +8,8 @@ runtime paths, or acceptance-test knobs.
 Use this with:
 
 - [GETTING_STARTED.md](GETTING_STARTED.md) for the first boot.
+- [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) for choosing and verifying
+  direct, UEFI, graphical, and VirtualBox boot profiles.
 - [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for operator workflows.
 - [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for package artifact and package-store
   workflows.

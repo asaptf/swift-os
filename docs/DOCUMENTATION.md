@@ -13,6 +13,7 @@ format details.
 | Need | Document |
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
+| Choose and verify a direct, UEFI, graphical, or VirtualBox boot profile | [Installation Guide](INSTALLATION_GUIDE.md) |
 | Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
@@ -58,11 +59,13 @@ Normative API details live in:
 The API reference mirrors those sources so application authors can work from one
 document, but the headers remain the build-time contract.
 
-Operational procedures live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md),
-networking runbooks live in [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service
-lifecycle rules live in [SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability
-procedures live in [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them
-aligned with the acceptance tests under `tests/`; a command in the operations,
+Installation and boot profile procedures live in
+[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), operational procedures live in
+[OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), networking runbooks live in
+[NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle rules live in
+[SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability procedures live in
+[OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them aligned with the
+acceptance tests under `tests/`; a command in the installation, operations,
 networking, service, or observability guide should either be a normal manual
 workflow or have a nearby test that proves the same path.
 

@@ -17,8 +17,8 @@ Current supported support targets:
 
 | Area | Supported evidence path |
 | --- | --- |
-| Direct QEMU boot | `make build base-image build/virt.dtb`, `./tests/boot_test.sh` |
-| UEFI QEMU boot | `make disk base-image`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| Direct QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `./tests/boot_test.sh` |
+| UEFI QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Serial console login | `./tests/console_login_test.sh` |
 | Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
 | Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
