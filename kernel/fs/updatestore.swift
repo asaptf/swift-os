@@ -18,6 +18,11 @@
 // did not boot from an update-store disk. SMP: set once at boot before EL0.
 var updateStoreActiveSlot: Int = -1
 
+// U1d: a freshly-activated, unconfirmed slot gets this many boot attempts before
+// it is presumed unhealthy and rolled back to the fallback. /bin/swos-confirm
+// (U1c) marks a slot CONFIRMED, which exempts it from counting and rollback.
+private let maxBootAttempts: UInt32 = 3
+
 @inline(__always) private func updateStoreLogSlot(_ slot: Int) {
     uartPuts(slot == 0 ? "A" : "B")
 }
@@ -73,21 +78,51 @@ func updateStoreInit() {
         return
     }
 
-    let active = chosen.activeSlot
-    let fallback = chosen.fallbackSlot
+    var manifest = chosen
+    var active = chosen.activeSlot
+    var fallback = chosen.fallbackSlot
+
+    // U1d: attempt-based rollback. An unconfirmed active slot that has used up
+    // its boot attempts is presumed unhealthy (it booted but was never confirmed
+    // via /bin/swos-confirm); mark it FAILED and switch to the known-good
+    // fallback. This is the "boots but never confirmed" path; the BAD-IMAGE path
+    // (signature/content verification failure) is handled separately at mount
+    // time in vfsInit. The swap + FAILED mark are persisted with the boot-state
+    // write-back below.
+    var rolledBack = false
+    if manifest.slot(active).state != SwosbootFormat.stateConfirmed
+        && manifest.slot(active).attemptCount >= maxBootAttempts
+        && fallback != active && manifest.slot(fallback).present {
+        if active == 0 { manifest.slot0.state = SwosbootFormat.stateFailed }
+        else { manifest.slot1.state = SwosbootFormat.stateFailed }
+        let old = active
+        active = fallback
+        fallback = old
+        manifest.activeSlot = active
+        manifest.fallbackSlot = fallback
+        rolledBack = true
+        uartPuts("update-store: active slot ")
+        updateStoreLogSlot(old)
+        uartPuts(" exhausted ")
+        uartPutUInt(UInt64(maxBootAttempts))
+        uartPuts(" attempts — rolling back to slot ")
+        updateStoreLogSlot(active)
+        uartPuts("\n")
+    }
+
     updateStoreActiveSlot = active // remembered so updateStoreConfirm can mark it
-    virtioBlkSetBaseByteOffset(chosen.slotByteOffset(active))
-    if fallback != active && chosen.slot(fallback).present {
-        virtioBlkSetFallbackByteOffset(chosen.slotByteOffset(fallback))
+    virtioBlkSetBaseByteOffset(manifest.slotByteOffset(active))
+    if fallback != active && manifest.slot(fallback).present {
+        virtioBlkSetFallbackByteOffset(manifest.slotByteOffset(fallback))
     }
 
     uartPuts("update-store: SWOSBOOT manifest valid, active slot ")
     updateStoreLogSlot(active)
     uartPuts(" gen ")
-    uartPutUInt(UInt64(chosen.slot(active).generation))
+    uartPutUInt(UInt64(manifest.slot(active).generation))
     uartPuts(" ")
-    updateStoreLogState(chosen.slot(active).state)
-    if fallback != active && chosen.slot(fallback).present {
+    updateStoreLogState(manifest.slot(active).state)
+    if fallback != active && manifest.slot(fallback).present {
         uartPuts(", fallback slot ")
         updateStoreLogSlot(fallback)
     } else {
@@ -95,21 +130,32 @@ func updateStoreInit() {
     }
     uartPuts("\n")
 
-    // U1b: record this boot attempt for the active slot. A CONFIRMED slot is
-    // trusted and stops accumulating attempts (set by updateStoreConfirm, U1c).
-    if chosen.slot(active).state == SwosbootFormat.stateConfirmed { return }
-    var updated = chosen
-    if active == 0 { updated.slot0.attemptCount &+= 1 } else { updated.slot1.attemptCount &+= 1 }
+    // Record this boot attempt for the (possibly new) active slot, and persist
+    // any rollback swap. A CONFIRMED slot is trusted: it does not accumulate
+    // attempts (U1c). If nothing changed (confirmed active, no rollback), there
+    // is nothing to write.
+    let activeConfirmed = manifest.slot(active).state == SwosbootFormat.stateConfirmed
+    if !rolledBack && activeConfirmed { return }
+    var updated = manifest
+    if !activeConfirmed {
+        if active == 0 { updated.slot0.attemptCount &+= 1 } else { updated.slot1.attemptCount &+= 1 }
+    }
     updated.sequence = chosen.sequence &+ 1
     let attempts = active == 0 ? updated.slot0.attemptCount : updated.slot1.attemptCount
     if updateStoreWriteBack(updated, currentLBA: chosenLBA) {
-        uartPuts("update-store: recorded boot attempt ")
-        uartPutUInt(UInt64(attempts))
-        uartPuts(" for active slot ")
-        updateStoreLogSlot(active)
-        uartPuts("\n")
+        if !activeConfirmed {
+            uartPuts("update-store: recorded boot attempt ")
+            uartPutUInt(UInt64(attempts))
+            uartPuts(" for active slot ")
+            updateStoreLogSlot(active)
+            uartPuts("\n")
+        } else {
+            uartPuts("update-store: persisted rollback to confirmed slot ")
+            updateStoreLogSlot(active)
+            uartPuts("\n")
+        }
     } else {
-        uartPuts("update-store: WARNING failed to persist boot attempt\n")
+        uartPuts("update-store: WARNING failed to persist boot-state\n")
     }
 }
 

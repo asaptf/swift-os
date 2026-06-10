@@ -129,16 +129,29 @@ An operator confirms a freshly-activated slot healthy by running
 `SYS_UPDATE_CONFIRM` (60) → `updateStoreConfirm()`, which marks the slot booted
 this session (tracked in `updateStoreActiveSlot`) `CONFIRMED` and resets its
 attempt counter, persisted via the same double-buffered write-back. A CONFIRMED
-slot is trusted: `updateStoreInit` stops recording boot attempts for it (and,
-once U1d lands, it is never rolled back). `tests/ab_confirm_test.sh` confirms a
-slot from a shell and verifies the state persists across a reboot with no new
-attempt recorded.
+slot is trusted: `updateStoreInit` stops recording boot attempts for it and
+never rolls it back (see below). `tests/ab_confirm_test.sh` confirms a slot from
+a shell and verifies the state persists across a reboot with no new attempt
+recorded.
+
+## Attempt-based rollback (U1d)
+
+`updateStoreInit` decides, before committing to a slot: if the active slot is not
+`CONFIRMED` and its `attempt_count` has reached `maxBootAttempts` (3) and a
+distinct present fallback exists, the slot is presumed unhealthy — it booted but
+was never confirmed. The kernel marks it `FAILED`, swaps active↔fallback in the
+manifest, and boots the fallback, persisting the swap with the same write-back.
+This is the "boots but never confirmed" failover; a bad *image* (signature or
+content verification failure) is caught earlier, at mount time in `vfsInit`
+(U1a). `tests/ab_rollback_test.sh` boots an unconfirmed slot until its attempts
+are exhausted and asserts the failover to the fallback persists across reboots.
+
+The read + write + confirm + rollback halves of A/B are now complete.
 
 ## Not implemented yet
 
-- Attempt-based rollback: switch active↔fallback when an unconfirmed slot exceeds
-  a max-attempts threshold, marking the exhausted slot `FAILED` (U1d).
-- Staging a new generation into the inactive slot + atomic active-slot flip (U1d).
+- Staging a new generation into the inactive slot + atomic active-slot flip from
+  a running system (a target-side `swos-update`).
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.

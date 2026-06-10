@@ -2802,3 +2802,35 @@ tests + the legacy disk path are unaffected.
 **Still future (U1d).** Attempt-based rollback (switch active↔fallback past a
 max-attempts threshold; mark the exhausted slot FAILED) + stage-into-inactive-slot
 + atomic active flip; then kernel-image A/B via the loader (Ed25519 + EFI Block I/O).
+
+### U1d — attempt-based rollback: unconfirmed slot fails over (DONE, 2026-06-10)
+
+**Scope.** Closes the "rollback on failed health check" loop. The counter (U1b)
++ confirm (U1c) infrastructure is now driven by a policy: an active slot that is
+not CONFIRMED and has reached `maxBootAttempts` (=3) boot attempts is presumed
+unhealthy (it booted but the operator never ran /bin/swos-confirm). The kernel
+marks it FAILED, swaps active↔fallback in the manifest, and boots the known-good
+fallback — all persisted via the U1b double-buffered write-back.
+
+- `kernel/fs/updatestore.swift`: `updateStoreInit` gains the rollback decision
+  before it commits to a slot — `maxBootAttempts` (a `let`, no new global). The
+  write-back now persists both the rollback swap and the (new) active slot's
+  attempt increment in one update. This is the "boots-but-never-confirmed" path;
+  the BAD-IMAGE path (Ed25519/content verification failure) stays in vfsInit
+  (U1a, immediate verified fallback at mount). Markers: "active slot X exhausted
+  N attempts — rolling back to slot Y".
+- A CONFIRMED slot (U1c) is exempt — never counted, never rolled back. A FAILED
+  slot is still a valid rollback *target* (if both slots are unconfirmable the
+  system fails over back and forth until an operator confirms a good one — honest
+  behavior; an availability concern, documented).
+
+**Acceptance.** `tests/ab_rollback_test.sh` (in `make test`): boots the SAME
+store (active=A, both valid, neither confirmed) 4×; slot A records attempts
+1/2/3, then boot 4 exhausts them and rolls over to slot B (which records its own
+first attempt) — persisted across the reboots. U1a–U1c A/B tests + the legacy
+disk path are unaffected.
+
+**A/B story complete (read + write + confirm + rollback).** Remaining is forward
+build-out: stage-into-inactive-slot + atomic active flip from a running system,
+and kernel-image A/B via the loader (Ed25519 + EFI Block I/O); hardening:
+virtio-blk FLUSH (durability without cache=writethrough).
