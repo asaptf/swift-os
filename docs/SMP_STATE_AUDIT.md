@@ -168,6 +168,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/elf.swift:elfLoadPages`
 - `kernel/user/exec.swift:elfBuf`
 - `kernel/user/process.swift:currentProc`
+- `kernel/user/process.swift:fileDemandFaults`
+- `kernel/user/process.swift:fileDemandLogged`
 - `kernel/user/process.swift:idleTicks`
 - `kernel/user/process.swift:lastPairDispatchCountA`
 - `kernel/user/process.swift:lastPairDispatchCountB`
@@ -182,6 +184,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pDispatchCount`
 - `kernel/user/process.swift:pDispatchCpuMask`
 - `kernel/user/process.swift:pExit`
+- `kernel/user/process.swift:pFileVmas`
 - `kernel/user/process.swift:pIsThread`
 - `kernel/user/process.swift:pKilled`
 - `kernel/user/process.swift:pKstack`
@@ -228,6 +231,10 @@ manifest entries left behind after globals move or disappear.
   these milestones make those structures concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
+- The file-backed mmap VMA table and demand-fault counters added by the LLM I2
+  path are process-owned today, but still live in global arrays and must be
+  protected before a single address space can fault concurrently on multiple
+  CPUs.
 - VFS handle/open-description/pipe/endpoint tables are deliberately left as an
   audit-only item in S0c because C4 work is active elsewhere.
 - Device queues and network socket tables need an IRQ/poll locking policy before
