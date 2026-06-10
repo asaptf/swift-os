@@ -328,7 +328,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -890,6 +890,9 @@ s4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
 
 smp-cpu-utilization-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
+
+s5-scheduler-placement-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit

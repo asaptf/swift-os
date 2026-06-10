@@ -223,6 +223,16 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastPairDispatchTelemetryValid`
 - `kernel/user/process.swift:lastPairLastDispatchCpuA`
 - `kernel/user/process.swift:lastPairLastDispatchCpuB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountC`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskC`
+- `kernel/user/process.swift:lastS5bBatchDispatchTelemetryValid`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuA`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuB`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuC`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`

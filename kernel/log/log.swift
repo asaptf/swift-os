@@ -146,15 +146,18 @@ private func ringStoreContext(_ tick: UInt64, _ level: LogLevel,
 }
 
 private func logSinkWrite(_ sink: LogSink, tick: UInt64, level: LogLevel,
-                          source: StaticString, message: StaticString) {
+                          source: StaticString, message: StaticString,
+                          detail: UInt64) {
     switch sink.kind {
     case .uart:
-        uartRenderLogLine(tick: tick, level: level, source: source, message: message)
+        uartRenderLogLine(tick: tick, level: level, source: source,
+                          message: message, detail: detail)
     }
 }
 
 private func uartRenderLogLine(tick: UInt64, level: LogLevel,
-                               source: StaticString, message: StaticString) {
+                               source: StaticString, message: StaticString,
+                               detail: UInt64) {
     uartPutc(0x5B) // [
     uartPutUInt(tick)
     uartPuts("] [")
@@ -168,6 +171,10 @@ private func uartRenderLogLine(tick: UInt64, level: LogLevel,
     uartPuts(source)
     uartPuts(": ")
     uartPuts(message)
+    if detail != 0 {
+        uartPuts(" detail=")
+        uartPutUInt(detail)
+    }
     uartPuts("\n")
 }
 
@@ -405,9 +412,8 @@ func klogRing(_ level: LogLevel, _ source: StaticString, _ message: StaticString
 /// Emit a log record.
 ///
 /// The output line has the shape:
-///   [tick] [L] source: message\n
-/// (detail is not emitted on the live line in this L3 slice; it is recorded
-/// and appears when the ring is dumped via logDumpRecent.)
+///   [tick] [L] source: message detail=N\n
+/// (when the optional detail payload is non-zero).
 ///
 /// - `tick` is the monotonic value from timerGetTicks() (0 if the timer is not
 ///   yet initialised — this path is exercised and useful for very early logs).
@@ -417,7 +423,7 @@ func klogRing(_ level: LogLevel, _ source: StaticString, _ message: StaticString
 ///   (0 means "none"). Callers can use the 4-arg form without breaking any
 ///   existing 3-arg call sites: `klog(.info, "pmm", "free frames", pmmFreeCount())`.
 /// - the in-memory record also captures the current pid/principal context for
-///   later dumps; live UART lines intentionally keep the stable L0 format.
+///   later dumps.
 ///
 /// This function is safe to call:
 /// - before timerInit / schedulerInit / heap;
@@ -431,7 +437,7 @@ func klog(_ level: LogLevel, _ source: StaticString, _ message: StaticString, _ 
     let tick = timerGetTicks()
 
     logSinkWrite(currentLogSink, tick: tick, level: level,
-                 source: source, message: message)
+                 source: source, message: message, detail: detail)
 
     // L1: also record in the ring (cheap copy of StaticString).
     // L3: detail travels with the entry (0 = none).

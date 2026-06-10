@@ -244,6 +244,13 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   CPUs, `tests/top_test.sh` can run under `-smp 4`, and
   `make smp-cpu-utilization-test` is the runtime gate. This gives S5 a cheap
   utilization signal before broad secondary EL0 scheduling is enabled.
+- S5b placement batch (2026-06-10): the restricted S2h EL0 gate now has a
+  bounded three-process acceptance path. CPU0 starts one secondary scheduler
+  CPU, places a stable `coproc` pair across CPU0 and that secondary, runs a
+  third CPU0 `coproc` tail in the same batch before reaping, captures dispatch
+  telemetry, and logs the S5b marker under `-smp 4`. This proves repeatable
+  batch placement across CPUs without enabling arbitrary secondary scheduling,
+  shared-address-space concurrency, migration, or load balancing.
 - EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).

@@ -26,6 +26,7 @@ SWIFT_USER_C="$ROOT/userland/lib/swift_user.c"
 SWIFT_USER_H="$ROOT/userland/lib/swift_user.h"
 S4_STRESS_C="$ROOT/userland/s4stress.c"
 S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
+SMP_BOOT_TEST="$ROOT/tests/smp_boot_test.sh"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
@@ -319,6 +320,14 @@ pair_reap_line="$(rg -n 'reapProcess\(a\)' "$PROCESS_SWIFT" | head -1 | cut -d: 
 if [[ -z "$pair_capture_line" || -z "$pair_reap_line" ||
       "$pair_capture_line" -ge "$pair_reap_line" ]]; then
   echo "FAIL: S2g must capture coproc pair dispatch telemetry before processRunPair reaps the slots." >&2
+  exit 1
+fi
+
+s5b_capture_line="$(rg -n 'captureLastS5bBatchDispatchTelemetry\(a, b, c\)' "$PROCESS_SWIFT" | head -1 | cut -d: -f1)"
+s5b_reap_line="$(rg -n 'reapProcess\(a\)' "$PROCESS_SWIFT" | tail -1 | cut -d: -f1)"
+if [[ -z "$s5b_capture_line" || -z "$s5b_reap_line" ||
+      "$s5b_capture_line" -ge "$s5b_reap_line" ]]; then
+  echo "FAIL: S5b must capture placement-batch dispatch telemetry before reaping the slots." >&2
   exit 1
 fi
 
@@ -647,6 +656,8 @@ s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 concurrent_demo_line="$(rg -n 'runConcurrentDemo\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
 s2g_pair_line="$(rg -n 'processCoprocPairDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s5b_demo_line="$(rg -n 'runS5bPlacementDemo\(\)' "$MAIN_SWIFT" | tail -1 | cut -d: -f1)"
+s5b_guard_line="$(rg -n 'processS5bPlacementTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 fork_demo_line="$(rg -n '^[[:space:]]*runForkDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 runps_line="$(rg -n '^[[:space:]]*runPsDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2_quiesced_line="$(rg -n 'processMultiCpuSchedulerPostRunSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -745,6 +756,13 @@ if [[ -z "$concurrent_demo_line" || -z "$s2g_pair_line" || -z "$fork_demo_line" 
       "$concurrent_demo_line" -ge "$s2g_pair_line" ||
       "$s2g_pair_line" -ge "$fork_demo_line" ]]; then
   echo "FAIL: S2g coproc telemetry guard must run immediately after the concurrent EL0 demo and before later demos can reuse slots." >&2
+  exit 1
+fi
+if [[ -z "$s5b_demo_line" || -z "$s5b_guard_line" || -z "$fork_demo_line" ||
+      "$s2g_pair_line" -ge "$s5b_demo_line" ||
+      "$s5b_demo_line" -ge "$s5b_guard_line" ||
+      "$s5b_guard_line" -ge "$fork_demo_line" ]]; then
+  echo "FAIL: S5b placement guard must run after S2h pair telemetry and before later demos can reuse slots." >&2
   exit 1
 fi
 if [[ -z "$runps_line" || -z "$s2_quiesced_line" ||
@@ -1003,4 +1021,67 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export)"
+for needle in \
+  'lastS5bBatchDispatchTelemetryValid' \
+  'captureLastS5bBatchDispatchTelemetry' \
+  'func processRunS5bPlacementBatch' \
+  'smpCpuOnline(cpu)' \
+  'smpPerCpuTimerTicks(cpu) != 0' \
+  'let home = pHomeCpu[slot] == unassignedCpu ? processHomeCpuForNewReadySlot(slot) : pHomeCpu[slot]' \
+  'pDispatchCpuMask[slot] = 0' \
+  'let secondaryHome = secondary == unassignedCpu ? UInt32(0) : secondary' \
+  'let cHome: UInt32 = 0' \
+  'func processS5bPlacementTelemetrySelfTest' \
+  'lastS5bBatchDispatchCpuMaskB != secondaryMask' \
+  'lastS5bBatchDispatchCpuMaskC != primaryMask'; do
+  if ! grep -Fq -- "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5b process placement telemetry missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'logSinkWrite(currentLogSink, tick: tick, level: level,' \
+  'source: source, message: message, detail: detail)' \
+  'uartPuts(" detail=")' \
+  'uartPutUInt(detail)'; do
+  if ! grep -Fq -- "$needle" "$ROOT/kernel/log/log.swift"; then
+    echo "FAIL: S5b live klog detail rendering missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'runS5bPlacementDemo' \
+  'processRunS5bPlacementBatch' \
+  'processS5bPlacementTelemetrySelfTest' \
+  'S5b OK: three EL0 processes ran with scheduler placement' \
+  'S5b OK: EL0 scheduler placed batch across CPUs' \
+  'S5b OK: EL0 scheduler placement CPU0 fallback'; do
+  if ! grep -Fq -- "$needle" "$MAIN_SWIFT"; then
+    echo "FAIL: S5b boot placement acceptance missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '[I] smp: S5b OK: EL0 scheduler placed batch across CPUs' \
+  '[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback' \
+  'S5b OK: three EL0 processes ran with scheduler placement' \
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5b markers'; do
+  if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
+    echo "FAIL: S5b SMP boot smoke missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  's5-scheduler-placement-test: build $(QEMU_DTB_SMP4) base-image' \
+  'TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S5b make target missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5b release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch)"

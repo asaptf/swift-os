@@ -1381,6 +1381,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   placement, enable one address space on multiple CPUs, or change the restricted
   S2h secondary EL0 gate.
 
+### S5b — bounded EL0 scheduler placement batch (DONE, 2026-06-10)
+
+- **Scheduler placement acceptance.** `processRunS5bPlacementBatch` extends the
+  restricted S2h gate from a pair demo to a three-process batch: the stable
+  pair phase pins one `coproc` process to the explicitly started secondary
+  scheduler CPU and one to CPU0, then a third CPU0 `coproc` tail runs before
+  any of the batch slots are reaped. The default scheduler placement still
+  remains CPU0 outside this acceptance path.
+- **Telemetry before reap.** The batch captures per-process dispatch counts,
+  dispatch CPU masks, and last-dispatch CPUs before the slots are reaped. The
+  S5b guard requires the secondary-pinned process to dispatch on a non-primary
+  online CPU under `-smp 4`, or the explicit CPU0 fallback under single-CPU boot.
+- **Placement correctness fixes.** Requeue now preserves an existing process's
+  `pHomeCpu` instead of recalculating the default CPU0 placement, and new slots
+  explicitly clear dispatch/address-space telemetry before first enqueue. Live
+  `klog` output also renders non-zero `detail=` fields, matching the SMP boot
+  contract that already used structured details.
+- **Executable checks.** Boot prints
+  `S5b OK: three EL0 processes ran with scheduler placement` and logs either
+  `S5b OK: EL0 scheduler placed batch across CPUs` or the CPU0 fallback. The
+  SMP boot smoke checks marker ordering, the release guard checks capture-before
+  reap and boot-order contracts, and `make s5-scheduler-placement-test` runs the
+  focused `-smp 4` boot acceptance.
+- **Non-goals.** S5b does not enable arbitrary secondary EL0 scheduling,
+  migration, work stealing, cross-CPU wakeups, or concurrent execution of
+  multiple EL0 threads in the same address space.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
