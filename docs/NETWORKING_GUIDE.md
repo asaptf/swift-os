@@ -59,6 +59,35 @@ The resulting QEMU session needs three pieces:
 `make run` does not attach a NIC by default, so manual network sessions use an
 explicit QEMU command.
 
+## Choose A Network Workflow
+
+Start from the traffic direction and service shape. Inbound services need
+`hostfwd`; guest-initiated clients only need a slirp NIC. All socket commands
+need a login context with `capNet`, so the examples below assume `root`.
+
+| Goal | QEMU profile | Guest command | Host action | Proof |
+| --- | --- | --- | --- | --- |
+| Serve static files | HTTP-or-LLM profile | `/bin/httpd` | `curl -fsS http://127.0.0.1:8080/` | `./tests/httpd_test.sh` |
+| Serve local AI completions | HTTP-or-LLM profile | `/bin/llmd` | `curl -fsS -X POST --data "Once upon a time" http://127.0.0.1:8080/completion` | `./tests/llm_serve_test.sh` |
+| Test one TCP request | Echo profile | `/bin/tcpecho` | `printf 'swos tcp\n' | nc -w8 127.0.0.1 5555` | `./tests/tcp_echo_test.sh` |
+| Test one UDP datagram | Echo profile | `/bin/udpecho` | `printf 'swos udp' | nc -u -w2 127.0.0.1 5555` | `./tests/udp_echo_test.sh` |
+| Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
+| Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
+| Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
+| Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
+
+Operator flow:
+
+1. Build `build/kernel.elf`, `build/base.img`, and `build/virt.dtb`.
+2. Boot the smallest QEMU profile that matches the workflow.
+3. Log in as `root`.
+4. Wait for the readiness marker before sending host traffic.
+5. Save the serial log and host command output when debugging.
+6. Run the focused proof before broadening to `make test`.
+
+Do not run `/bin/httpd` and `/bin/llmd` together in the same guest; both bind
+TCP 8080. The echo programs are one-shot and exit after a single request.
+
 ## QEMU Network Profiles
 
 ### All-In-One Validation Profile
