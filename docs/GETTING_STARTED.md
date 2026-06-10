@@ -16,7 +16,7 @@ A default SwiftOS boot gives you:
 - Native Embedded Swift userland tools such as `ls`, `cat`, `ps`, `top`, `id`,
   `calc`, `kv`, `httpd`, `udpecho`, and `tcpecho`.
 - Package fixtures for local `.swpkg` install, signed repository install, and
-  the eight-package ports seed repository fixture.
+  the nine-package ports seed repository fixture.
 - A POSIX-like syscall ABI that is intentionally not the Linux ABI.
 
 ## First Ten Minutes Checklist

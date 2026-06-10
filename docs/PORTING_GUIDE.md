@@ -272,6 +272,8 @@ build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-bzip2-repo-fixture
+make ports-zstd-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -285,17 +287,15 @@ make ports-hosted-url-verify-test
 make package-static-host-dns-repo-install-test
 ```
 
-`ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
-`ports/archivers/bzip2/Port.json`, `ports/devel/pcre2/Port.json`,
-`ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` are the
-checked source-build recipe shapes today. Together with the ca-certificates and
-tzdata data recipes, they prove static AArch64 builds, signed local repository
-fixtures, guest package installs by name, Lua runtime checks, `minigzip` and
-bzip2 compression/decompression smokes, data-package marker reads, pcre2/nginx
-smokes, SQLite SQL execution, and static-host publication from
-`build/ports-static-host-root`. The hosted URL smoke also proves the target
-package manager can use a DNS-resolved HTTP repository hostname for the same
-eight-package seed.
+The checked Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and
+sqlite recipes are the reference shapes today. Together they prove static
+AArch64 builds or data-only staging, signed local repository fixtures, guest
+`pkg install` by package name, Lua runtime checks, `minigzip`, bzip2, and zstd
+compression/decompression smokes, CA and zoneinfo marker reads, a `pcre2grep`
+regex match, nginx version/marker checks, a SQLite in-memory query, and
+static-host publication from `build/ports-static-host-root`. The hosted URL
+smoke also proves the target package manager can use a DNS-resolved HTTP
+repository hostname for the same nine-package seed.
 
 Before publishing a package recipe, record:
 

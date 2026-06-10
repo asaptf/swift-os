@@ -67,6 +67,7 @@ let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let bzip2Recipe = repo.appendingPathComponent("ports/archivers/bzip2/Port.json")
+let zstdRecipe = repo.appendingPathComponent("ports/archivers/zstd/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
@@ -77,6 +78,9 @@ guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: bzip2Recipe.path) else {
     fail("missing ports/archivers/bzip2/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: zstdRecipe.path) else {
+    fail("missing ports/archivers/zstd/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -368,6 +372,101 @@ let bzip2RepoInspect = run(pkgrepo, ["inspect", bzip2Catalog.path])
 requireSuccess(bzip2RepoInspect, "inspect bzip2 repository fixture")
 guard output(bzip2RepoInspect).contains("bzip2-1.0.8_1") else {
     fail("repo fixture catalog did not include bzip2 package: \(output(bzip2RepoInspect))")
+}
+
+let zstdValidate = run(swport, ["recipe", "validate", "archivers/zstd"])
+requireSuccess(zstdValidate, "validate zstd recipe")
+guard output(zstdValidate).contains("recipe: OK zstd-1.5.7_1") else {
+    fail("validate output did not confirm zstd recipe: \(output(zstdValidate))")
+}
+
+let zstdManifestURL = temp.appendingPathComponent("zstd-manifest.json")
+let zstdManifest = run(swport, ["recipe", "manifest", "archivers/zstd", "--output", zstdManifestURL.path])
+requireSuccess(zstdManifest, "generate zstd manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: zstdManifestURL)) as? [String: Any] else {
+        fail("generated zstd manifest is not a JSON object")
+    }
+    requireString(object, "name", "zstd")
+    requireString(object, "version", "1.5.7")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["zstd", "unzstd", "zstdcat", "libzstd"] else {
+        fail("zstd manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/zstd",
+        "/usr/bin/unzstd",
+        "/usr/bin/zstdcat",
+        "/usr/include/zstd.h",
+        "/usr/include/zstd_errors.h",
+        "/usr/include/zdict.h",
+        "/usr/lib/libzstd.a",
+        "/usr/lib/pkgconfig/libzstd.pc",
+        "/usr/share/zstd/swiftos-zstd.version",
+    ] else {
+        fail("unexpected zstd manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated zstd manifest: \(error)")
+}
+
+let zstdRoot = temp.appendingPathComponent("zstd-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/zstd", Data("#!/bin/sh\necho zstd\n".utf8), 0o755),
+        ("usr/bin/unzstd", Data("#!/bin/sh\necho unzstd\n".utf8), 0o755),
+        ("usr/bin/zstdcat", Data("#!/bin/sh\necho zstdcat\n".utf8), 0o755),
+        ("usr/include/zstd.h", Data("/* zstd */\n".utf8), 0o644),
+        ("usr/include/zstd_errors.h", Data("/* zstd errors */\n".utf8), 0o644),
+        ("usr/include/zdict.h", Data("/* zdict */\n".utf8), 0o644),
+        ("usr/lib/libzstd.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/libzstd.pc", Data("Name: zstd\nVersion: 1.5.7\n".utf8), 0o644),
+        ("usr/share/zstd/swiftos-zstd.version", Data("zstd 1.5.7 swift-os static-single-thread\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = zstdRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy zstd package root: \(error)")
+}
+
+let zstdPackageURL = temp.appendingPathComponent("zstd.swpkg")
+let zstdPackageResult = run(swport, [
+    "recipe", "package", "archivers/zstd",
+    "--root", zstdRoot.path,
+    "--output", zstdPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(zstdPackageResult, "package dummy zstd root")
+let zstdVerify = run(swpkg, ["verify", zstdPackageURL.path])
+requireSuccess(zstdVerify, "verify dummy zstd package")
+guard output(zstdVerify).contains("OK: zstd-1.5.7_1") else {
+    fail("swpkg verify did not identify zstd package: \(output(zstdVerify))")
+}
+
+let zstdRepoRoot = temp.appendingPathComponent("zstd-repo-root", isDirectory: true)
+let zstdPubkey = temp.appendingPathComponent("zstd-repo-root.pub")
+let zstdRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "archivers/zstd",
+    "--root", zstdRoot.path,
+    "--output", zstdRepoRoot.path,
+    "--pubkey", zstdPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(zstdRepoFixture, "create zstd repository fixture")
+let zstdCatalog = zstdRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let zstdRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", zstdCatalog.path, "--pubkey", zstdPubkey.path])
+requireSuccess(zstdRepoVerify, "verify zstd repository fixture")
+let zstdRepoInspect = run(pkgrepo, ["inspect", zstdCatalog.path])
+requireSuccess(zstdRepoInspect, "inspect zstd repository fixture")
+guard output(zstdRepoInspect).contains("zstd-1.5.7_1") else {
+    fail("repo fixture catalog did not include zstd package: \(output(zstdRepoInspect))")
 }
 
 let caValidate = run(swport, ["recipe", "validate", "security/ca-certificates"])
@@ -692,4 +791,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
