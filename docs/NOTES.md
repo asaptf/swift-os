@@ -3,6 +3,21 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## P16 zstd seed package (2026-06-10)
+
+- Added `ports/archivers/zstd/Port.json` for upstream zstd 1.5.7 as the next
+  checked archive-format package. It packages single-threaded static
+  `zstd`/`unzstd`/`zstdcat`, `libzstd.a`, public headers, pkgconf metadata, and
+  a marker file.
+- Added `scripts/build-zstd.sh`. The script cross-builds against the local
+  newlib sysroot with threading, gzip, lzma, lz4, assembly, and backtrace
+  integrations disabled, then verifies the AArch64 ELF and publishes both the
+  `.swpkg` and signed local repository fixture.
+- The ports seed repository now publishes Lua, zlib, bzip2, zstd,
+  ca-certificates, pcre2, tzdata, nginx, and sqlite. Package seed, static-host,
+  hosted URL, catalog, recipe, and documentation tests were extended to install
+  zstd and run a compression round trip.
+
 ## P15 bzip2 seed package (2026-06-10)
 
 - Added `ports/archivers/bzip2/Port.json` for Sourceware bzip2 1.0.8 as the

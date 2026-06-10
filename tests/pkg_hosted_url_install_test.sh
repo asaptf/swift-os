@@ -120,6 +120,8 @@ send_line "pkg search zlib"
 await "zlib-1.3.1_1" 60 || drive_fail "pkg search did not find zlib"
 send_line "pkg search bzip2"
 await "bzip2-1.0.8_1" 60 || drive_fail "pkg search did not find bzip2"
+send_line "pkg search zstd"
+await "zstd-1.5.7_1" 60 || drive_fail "pkg search did not find zstd"
 send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
@@ -138,6 +140,12 @@ send_line "echo bzip2-hosted-url-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc"
 await "bzip2-hosted-url-ok" 60 || drive_fail "bzip2 round-trip output mismatch"
 send_line "cat /usr/share/bzip2/swiftos-bzip2.version"
 await "bzip2 1.0.8 swift-os static-tools" 60 || drive_fail "bzip2 marker output mismatch"
+send_line "pkg install zstd"
+await "pkg: installed zstd-1.5.7_1" 120 || drive_fail "zstd package was not installed"
+send_line "echo zstd-hosted-url-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c"
+await "zstd-hosted-url-ok" 60 || drive_fail "zstd round-trip output mismatch"
+send_line "cat /usr/share/zstd/swiftos-zstd.version"
+await "zstd 1.5.7 swift-os static-single-thread" 60 || drive_fail "zstd marker output mismatch"
 send_line "pkg install ca-certificates"
 await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
 send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
@@ -178,6 +186,7 @@ grep -qF "pkg: catalog updated $REPO_URL" <<<"$clean" || { echo "FAIL: pkg updat
 grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
 grep -qF "pkg: installed bzip2-1.0.8_1" <<<"$clean" || { echo "FAIL: bzip2 install output missing" >&2; ok=0; }
+grep -qF "pkg: installed zstd-1.5.7_1" <<<"$clean" || { echo "FAIL: zstd install output missing" >&2; ok=0; }
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
@@ -186,6 +195,8 @@ grep -qF "pkg: installed sqlite-3.53.2_1" <<<"$clean" || { echo "FAIL: sqlite in
 grep -qF "hosted-url-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
 grep -qF "bzip2-hosted-url-ok" <<<"$clean" || { echo "FAIL: bzip2 round-trip output missing" >&2; ok=0; }
 grep -qF "bzip2 1.0.8 swift-os static-tools" <<<"$clean" || { echo "FAIL: bzip2 marker output missing" >&2; ok=0; }
+grep -qF "zstd-hosted-url-ok" <<<"$clean" || { echo "FAIL: zstd round-trip output missing" >&2; ok=0; }
+grep -qF "zstd 1.5.7 swift-os static-single-thread" <<<"$clean" || { echo "FAIL: zstd marker output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
 grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
@@ -197,7 +208,7 @@ grep -qF "sqlite 3.53.2 swift-os static-shell" <<<"$clean" || { echo "FAIL: sqli
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during hosted repo install" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite from hosted repository URL $REPO_URL"
+  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite from hosted repository URL $REPO_URL"
   exit 0
 fi
 

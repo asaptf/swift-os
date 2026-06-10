@@ -69,14 +69,14 @@
       "portPath": "archivers/zstd",
       "tier": 0,
       "category": "compression",
-      "status": "candidate",
+      "status": "packages",
       "difficulty": "S",
       "upstream": "facebook/zstd",
       "summary": "Modern compression library and CLI for packages, archives, and backups.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix"],
-      "smokeTest": "zstd input && zstd -d input.zst and compare hashes",
-      "notes": "Build with threading disabled until the pthread surface is ready."
+      "smokeTest": "install from the seed repository and pipe a known string through zstd -q -c | zstd -q -dc in QEMU",
+      "notes": "Packaged as a single-threaded static zstd/unzstd/zstdcat CLI, libzstd.a, headers, pkgconf metadata, and a version marker. gzip/lzma/lz4 support remains disabled until those dependencies are packaged."
     },
     {
       "name": "bzip2",

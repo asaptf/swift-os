@@ -89,19 +89,19 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, ca-certificates,
+  - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, ca-certificates,
     pcre2, tzdata, nginx, and sqlite into one signed local seed repository, and
-    `make package-ports-seed-repo-install-test` proves installing all eight
+    `make package-ports-seed-repo-install-test` proves installing all nine
     packages plus the `minigzip` and bzip2 round trips, CA bundle marker,
     `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and
     SQLite SQL smoke inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install all eight packages from that published layout;
+    proves SwiftOS can install all nine packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite
+    install Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite
     from a DNS-resolved HTTP repository URL.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
@@ -131,7 +131,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog and eight checked recipes live in this repository under
+The current seed catalog and nine checked recipes live in this repository under
 `ports/`; the full ports tree should move to `swift-os-ports` once
 cross-building, testing, publishing, and broader package maintenance are ready.
 

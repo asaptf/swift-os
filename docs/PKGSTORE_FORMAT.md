@@ -246,10 +246,10 @@ P3b: package installed and activated
 ## Current Limits
 
 - One package-store block device is used.
-- The kernel scans at most 32 records.
-- The kernel tracks at most 8 payload records and 8 activation records.
+- The kernel scans at most 128 records.
+- The kernel tracks at most 32 payload records and 32 activation records.
 - Activation data is limited to 4096 bytes.
-- An active generation can reference at most 8 payloads.
+- An active generation can reference at most 32 payloads.
 - Target-side mutation is serialized; concurrent install attempts fail rather
   than interleave.
 - Target-side install is root-only in the current principal model.

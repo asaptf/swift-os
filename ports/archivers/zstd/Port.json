@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "name": "zstd",
+  "version": "1.5.7",
+  "revision": 1,
+  "category": "archivers",
+  "summary": "Modern Zstandard compressor, decompressor, and libzstd static library",
+  "homepage": "https://facebook.github.io/zstd/",
+  "license": ["BSD-3-Clause", "GPL-2.0-or-later"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz",
+    "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "make",
+    "args": ["libzstd.a", "zstd"],
+    "env": {
+      "CC": "aarch64-elf-gcc",
+      "AR": "aarch64-elf-ar",
+      "RANLIB": "aarch64-elf-ranlib",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CPPFLAGS": "-include ${RUNTIME}/swiftos_zstd_compat.h -DPLATFORM_POSIX_VERSION=1 -DZSTD_NO_ASM=1",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o ${RUNTIME}/swiftos_zstd_compat.o -L${SYSROOT}/lib",
+      "LDLIBS": "-Wl,--start-group -lc -lgcc -Wl,--end-group",
+      "ZSTD_LEGACY_SUPPORT": "0",
+      "HAVE_THREAD": "0",
+      "HAVE_ZLIB": "0",
+      "HAVE_LZMA": "0",
+      "HAVE_LZ4": "0",
+      "BACKTRACE": "0"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "zstd", "unzstd", "zstdcat", "libzstd.a", "zstd.h", "zstd_errors.h", "zdict.h", "pkgconfig", "version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["zstd", "unzstd", "zstdcat", "libzstd"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/zstd", "to": "/usr/bin/zstd", "mode": "0755" },
+      { "from": "destdir/usr/bin/unzstd", "to": "/usr/bin/unzstd", "mode": "0755" },
+      { "from": "destdir/usr/bin/zstdcat", "to": "/usr/bin/zstdcat", "mode": "0755" },
+      { "from": "destdir/usr/include/zstd.h", "to": "/usr/include/zstd.h", "mode": "0644" },
+      { "from": "destdir/usr/include/zstd_errors.h", "to": "/usr/include/zstd_errors.h", "mode": "0644" },
+      { "from": "destdir/usr/include/zdict.h", "to": "/usr/include/zdict.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libzstd.a", "to": "/usr/lib/libzstd.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/libzstd.pc", "to": "/usr/lib/pkgconfig/libzstd.pc", "mode": "0644" },
+      { "from": "destdir/usr/share/zstd/swiftos-zstd.version", "to": "/usr/share/zstd/swiftos-zstd.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "echo zstd-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -dc",
+      "cat /usr/share/zstd/swiftos-zstd.version"
+    ]
+  },
+  "notes": "Tier 0 archive package. scripts/build-zstd.sh cross-builds a single-threaded static zstd CLI, libzstd.a, headers, pkgconf metadata, and a version marker with gzip/lzma/lz4 integration disabled until those dependencies are packaged."
+}

@@ -79,7 +79,7 @@ service-oriented.
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
 - Provides maintainer-side ports scaffolding: `ports/catalog.json`, checked
-  Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes,
+  Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes,
   `swport catalog validate/list/inspect`, and `swport recipe` commands for
   `validate`, `manifest`, `fetch`, `package`, and `repo-fixture`.
 - Cross-builds real static AArch64 `lua` and `luac` binaries against the local
@@ -88,7 +88,7 @@ service-oriented.
 - Installs real Lua from the signed local repository fixture inside QEMU and
   runs `lua -v` plus a small expression smoke with
   `make package-lua-repo-install-test`.
-- Publishes Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite
+- Publishes Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite
   into one signed local seed
   repository and verifies `pkg install lua`, `pkg install zlib`,
   `pkg install bzip2`, `pkg install ca-certificates`, `pkg install pcre2`,
@@ -199,7 +199,7 @@ llmd: served
   the current product surface.
 - Package payloads are read-only once active. Local target-side package install
   and signed repository fixture install with name-based dependencies exist. The
-  checked seed repository can install Lua, zlib, bzip2, ca-certificates, pcre2,
+  checked seed repository can install Lua, zlib, bzip2, zstd, ca-certificates, pcre2,
   tzdata, nginx, and sqlite in QEMU, publish the same seed into a
   static-hostable web root, verify hosted static-root URLs, and install from
   target-side DNS-resolved HTTP repository URLs. Public production channels,

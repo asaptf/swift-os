@@ -8,7 +8,7 @@ hashes, not from the transport.
 
 The current repository format is produced by `build/pkgrepo`, consumed by
 `/bin/pkg update` and `/bin/pkg install NAME`, and used by the ports seed
-repository fixtures for Lua, zlib, bzip2, ca-certificates, pcre2, tzdata,
+repository fixtures for Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata,
 nginx, and sqlite.
 
 Use this document with:

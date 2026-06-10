@@ -76,6 +76,9 @@ guard listText.contains("tier0 ca-certificates packages S security/ca-certificat
 guard listText.contains("tier0 bzip2 packages S archivers/bzip2") else {
     fail("list output did not include packaged bzip2")
 }
+guard listText.contains("tier0 zstd packages S archivers/zstd") else {
+    fail("list output did not include packaged zstd")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
 }
@@ -101,6 +104,11 @@ let bzip2Inspect = run(tool, ["catalog", "inspect", "bzip2", catalog.path])
 requireSuccess(bzip2Inspect, "inspect bzip2")
 guard output(bzip2Inspect).contains("runtimeDependencies: none") else {
     fail("bzip2 inspect output did not show its runtime dependency state")
+}
+let zstdInspect = run(tool, ["catalog", "inspect", "zstd", catalog.path])
+requireSuccess(zstdInspect, "inspect zstd")
+guard output(zstdInspect).contains("runtimeDependencies: none") else {
+    fail("zstd inspect output did not show its runtime dependency state")
 }
 
 let temp = FileManager.default.temporaryDirectory
