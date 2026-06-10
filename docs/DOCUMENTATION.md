@@ -169,7 +169,8 @@ When adding public docs:
    verification, API verification map references, command-reference, host tool
    reference and quick-map references, command acceptance coverage references,
    configuration build-target and verification references, and port recipe
-   reference plus package/deployment/operations/support verification integrity.
+   reference plus package/deployment/operations/update/support verification
+   integrity.
 6. Run at least the relevant build or test target before committing.
 7. For operational docs, name the acceptance test that proves each workflow when
    such a test exists.

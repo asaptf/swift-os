@@ -271,4 +271,3 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   channel) + per-slot attempt-count/rollback for the kernel (the signed-selection
   split: per-image signatures + a CRC'd writable boot-state).
 - Key rotation / revocation.
-- Key rotation / revocation.

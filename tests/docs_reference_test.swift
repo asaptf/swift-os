@@ -1032,6 +1032,13 @@ private func checkOperationsVerificationMatrixReferences() {
                                           verificationHeader: "Command")
 }
 
+private func checkUpdateValidationMatrixReferences() {
+    checkGuideVerificationTableReferences(path: "docs/UPDATE_GUIDE.md",
+                                          heading: "## Validation Matrix",
+                                          labelHeader: "Updated area",
+                                          verificationHeader: "Minimum proof")
+}
+
 private func checkSupportScopeReferences() {
     checkGuideVerificationTableReferences(path: "docs/SUPPORT_GUIDE.md",
                                           heading: "## Support Scope",
@@ -1329,6 +1336,7 @@ checkConfigurationVerificationMatrixReferences()
 checkPackageGuideVerificationMatrixReferences()
 checkDeploymentValidationMatrixReferences()
 checkOperationsVerificationMatrixReferences()
+checkUpdateValidationMatrixReferences()
 checkSupportScopeReferences()
 checkSupportFirstResponseReferences()
 checkHostToolReferenceCoverage()
@@ -1340,4 +1348,4 @@ if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map coverage, command coverage, host tool coverage, and port recipe coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, example/API verification coverage, command coverage, guide verification matrices, host tool coverage, and port recipe coverage are valid")
