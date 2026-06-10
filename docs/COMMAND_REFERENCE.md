@@ -795,6 +795,8 @@ diagnostic fixtures than stable application interfaces.
 | `swos-confirm` | `swos-confirm` | Mark the booted A/B update-store slot confirmed healthy. | `tests/ab_confirm_test.sh` |
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
+| `swos-kstage` | `swos-kstage` | Copy the active ESP kernel slot image into the inactive kernel slot and verify it. | `tests/uefi_kstage_test.sh` |
+| `swos-kactivate` | `swos-kactivate` | Install the pre-signed alternate ESP kernel manifest for the next boot. | `tests/uefi_kactivate_test.sh` |
 
 Examples:
 
@@ -806,6 +808,8 @@ Examples:
 /bin/drvsvcdemo
 pkg list
 swos-confirm
+swos-kstage
+swos-kactivate
 ```
 
 `drvsvcdemo` starts `/bin/drvinputd` twice, exchanges endpoint IPC messages,

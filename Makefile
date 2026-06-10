@@ -269,6 +269,8 @@ USER_ID_ELF := $(BUILD)/id.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
 USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
 USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
+USER_SWOSKSTAGE_ELF := $(BUILD)/swos-kstage.elf
+USER_SWOSKACTIVATE_ELF := $(BUILD)/swos-kactivate.elf
 USER_LS_ELF := $(BUILD)/ls.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
@@ -327,6 +329,8 @@ BASE_EXEC_ELFS := \
 	$(USER_SWOSCONFIRM_ELF) \
 	$(USER_SWOSACTIVATE_ELF) \
 	$(USER_SWOSUPDATE_ELF) \
+	$(USER_SWOSKSTAGE_ELF) \
+	$(USER_SWOSKACTIVATE_ELF) \
 	$(USER_LS_ELF) \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
@@ -489,6 +493,12 @@ $(BUILD)/user_swosactivate.o: userland/swos-activate.swift userland/lib/swift_us
 
 $(BUILD)/user_swosupdate.o: userland/swos-update.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-update.swift -o $@
+
+$(BUILD)/user_swoskstage.o: userland/swos-kstage.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kstage.swift -o $@
+
+$(BUILD)/user_swoskactivate.o: userland/swos-kactivate.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kactivate.swift -o $@
 
 $(BUILD)/user_ls.o: userland/ls.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ls.swift -o $@
@@ -655,6 +665,12 @@ $(USER_SWOSACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUIL
 
 $(USER_SWOSUPDATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosupdate.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosupdate.o -o $@
+
+$(USER_SWOSKSTAGE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskstage.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskstage.o -o $@
+
+$(USER_SWOSKACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskactivate.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskactivate.o -o $@
 
 $(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
@@ -955,6 +971,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 	./tests/uefi_kernel_ab_test.sh
+	./tests/uefi_kstage_test.sh
+	./tests/uefi_kactivate_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -1059,11 +1077,17 @@ $(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
 $(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+# U1g-4d: the pre-signed alternate manifest selecting slot B. /bin/swos-kactivate
+# courier-copies it over kernel-boot to flip the active slot (the OS never signs).
+$(ESP_DIR)/EFI/swift-os/kernel-boot-alt: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	$(KERNELBOOT) $@ B $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
       $(ESP_DIR)/EFI/swift-os/kernelA.bin \
       $(ESP_DIR)/EFI/swift-os/kernelB.bin \
-      $(ESP_DIR)/EFI/swift-os/kernel-boot
+      $(ESP_DIR)/EFI/swift-os/kernel-boot \
+      $(ESP_DIR)/EFI/swift-os/kernel-boot-alt
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
 uefi-run: uefi base-image
@@ -1302,6 +1326,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm
 	cp $(USER_SWOSACTIVATE_ELF) $(BASE_ROOT)/bin/swos-activate
 	cp $(USER_SWOSUPDATE_ELF) $(BASE_ROOT)/bin/swos-update
+	cp $(USER_SWOSKSTAGE_ELF) $(BASE_ROOT)/bin/swos-kstage
+	cp $(USER_SWOSKACTIVATE_ELF) $(BASE_ROOT)/bin/swos-kactivate
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo

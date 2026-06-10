@@ -126,7 +126,7 @@ boots the same store 3× and asserts the counter persists 1→2→3 across reboo
 
 An operator confirms a freshly-activated slot healthy by running
 `/bin/swos-confirm` (capConsole-gated; root yes, guest EPERM). It calls
-`SYS_UPDATE_CONFIRM` (60) → `updateStoreConfirm()`, which marks the slot booted
+`SYS_UPDATE_CONFIRM` (65) -> `updateStoreConfirm()`, which marks the slot booted
 this session (tracked in `updateStoreActiveSlot`) `CONFIRMED` and resets its
 attempt counter, persisted via the same double-buffered write-back. A CONFIRMED
 slot is trusted: `updateStoreInit` stops recording boot attempts for it and
@@ -151,7 +151,7 @@ The read + write + confirm + rollback halves of A/B are now complete.
 ## Promote the inactive slot (U1e)
 
 `/bin/swos-activate` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_ACTIVATE` (61) → `updateStoreActivateOther()`, which makes the
+`SYS_UPDATE_ACTIVATE` (66) -> `updateStoreActivateOther()`, which makes the
 inactive slot the active slot for the next boot (the current slot becomes the
 fallback) and marks it UNTRIED with its attempt counter reset, so it boots "on
 trial" under U1d's rollback. The full operator promotion workflow, for slots that
@@ -188,7 +188,7 @@ payload file, and a ~1.1 MB busybox ELF.
 ## Stage the payload into the inactive slot (U1f-2b)
 
 `/bin/swos-update` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_STAGE` (62) → `updateStoreStagePayload()`, which copies the attached
+`SYS_UPDATE_STAGE` (67) -> `updateStoreStagePayload()`, which copies the attached
 read-only payload disk (a signed SWOSBASE image, U1f-1) into the **inactive**
 slot. It reads the payload's header, requires a signed v3 image, and rejects one
 that is truncated on disk (EINVAL) or larger than the slot's `length_sectors`
@@ -249,11 +249,26 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   recognizes it by the "EFI PART" GPT magic, and `kernel/fs/esp.swift` parses the
   GPT to locate the ESP partition at boot. Trust model decided: runtime staging
   follows U1f's courier model (the OS writes pre-signed artifacts; it never signs).
+- **U1g-4b (done):** a minimal read-only FAT32 in `kernel/fs/esp.swift` (BPB,
+  cluster chains, LFN/8.3 directory walk) reads the signed `kernel-boot` manifest
+  off the ESP and reports the active slot — the read half of runtime staging.
+- **U1g-4c (done):** the FAT32 *write* half. `/bin/swos-kstage` (syscall 68,
+  capConsole) has the kernel copy the active kernel image over the inactive slot
+  in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
+  a bad write only spoils the inactive slot, which the loader's hash check rejects.
+- **U1g-4d (done):** the activate flow. `/bin/swos-kactivate` (syscall 69,
+  capConsole) installs the pre-signed alternate manifest (`kernel-boot-alt`,
+  active = other slot, signed offline at build) over `kernel-boot` on the ESP. On
+  reboot the loader verifies it and boots the new slot. The OS never signs — it
+  courier-copies an already-signed manifest. **Kernel-image A/B is now complete
+  end-to-end** (operator flow: `swos-kstage` → `swos-kactivate` → reboot),
+  mirroring the system-image U1f flow.
 
 ## Not implemented yet
 
-- Runtime kernel staging continued (U1g-4b/c/d): FAT32 read/write from the kernel;
-  stage a kernel image + a pre-signed manifest into the inactive slot; activate +
-  reboot. Plus the signed-selection split (per-image signatures + CRC'd writable
-  boot-state) for attempt-count/rollback without re-signing.
+- A real new-kernel *payload* source (today both kernel slots are the same build;
+  staging a genuinely different signed kernel needs a payload disk / update
+  channel) + per-slot attempt-count/rollback for the kernel (the signed-selection
+  split: per-image signatures + a CRC'd writable boot-state).
+- Key rotation / revocation.
 - Key rotation / revocation.

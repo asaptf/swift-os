@@ -3460,7 +3460,7 @@ freshly-activated slot healthy so it stops accruing boot attempts (and, once U1d
 lands, is never rolled back). Attempt-based rollback that consumes the counter is
 U1d.
 
-- New syscall `SYS_UPDATE_CONFIRM` (60), **capConsole-gated**, dispatched to
+- New syscall `SYS_UPDATE_CONFIRM` (65), **capConsole-gated**, dispatched to
   `updateStoreConfirm()` (`kernel/fs/updatestore.swift`): re-reads the manifest,
   marks the slot booted this session (tracked in the new `updateStoreActiveSlot`
   global) CONFIRMED + resets its attempt_count, persists via the U1b
@@ -3523,7 +3523,7 @@ running system. This is the activation/atomic-flip half of staging; writing a NE
 image into the inactive slot (the data half) is a separate piece with a genuine
 fork (image source + multi-device virtio-blk), surfaced before it is built.
 
-- New syscall `SYS_UPDATE_ACTIVATE` (61), capConsole-gated → `updateStoreActivateOther()`
+- New syscall `SYS_UPDATE_ACTIVATE` (66), capConsole-gated -> `updateStoreActivateOther()`
   (`kernel/fs/updatestore.swift`): makes the inactive slot (1 − booted slot) the
   active slot, the current slot the fallback, marks the new active UNTRIED +
   attempts=0 (boots "on trial"), and persists via the U1b double-buffered
@@ -3912,3 +3912,104 @@ FAT32 write to stage a kernel image + a pre-signed manifest into the inactive
 slot; a `/bin/` activate flow + reboot. Plus the signed-selection split (per-image
 signatures + CRC'd writable boot-state) so attempt-count/rollback can be written
 without re-signing.
+
+### U1g-4b — kernel FAT32 reader: read the kernel A/B manifest from the ESP (DONE, 2026-06-10)
+
+**Scope.** With the ESP reachable (U1g-4a), the kernel now reads the loader's
+kernel A/B manifest off the FAT32 ESP — the read half of runtime staging, and the
+groundwork for the FAT32 writer (U1g-4c).
+
+- `kernel/fs/esp.swift`: a minimal read-only FAT32 in `Fat32Vol` + helpers —
+  `fatReadBPB` (BPB at the partition's first sector: bytes/sec must be 512,
+  sec/clus, reserved, #FATs, FATSz32, rootClus → firstDataSector), `fatClusterLBA`,
+  `fatNext` (FAT32 chain lookup), and `fatFindChild` (directory walk matching a
+  path component against the assembled **LFN** long name OR the reconstructed 8.3
+  short name, case-insensitively — so it finds "EFI" (8.3), "swift-os" (lowercase
+  8.3), and "kernel-boot" (LFN, short name "KERNEL~1") robustly).
+  `fatReadKernelManifest` walks `\EFI\swift-os\kernel-boot`, reads the manifest's
+  first sector, validates "SWOSKERN", and returns the active slot + generation.
+  `espProbe` now logs "kernel-store: ESP kernel A/B active slot A gen N (read from
+  FAT32)". All InlineArray/stack scratch — no heap on the boot path.
+
+**Acceptance.** `tests/uefi_boot_test.sh` (disk + SMP-4) now also asserts the
+kernel reads the manifest from FAT32 and reports active slot A — so the BPB,
+cluster chain, LFN directory walk, and manifest parse are all exercised end-to-end
+(the value must match what the loader independently read and booted). The 4-case
+`uefi_kernel_ab_test` is unaffected (the kernel read is log-only).
+
+**Still future (U1g-4c/d).** FAT32 *write* (overwrite the inactive slot's image in
+its cluster chain + write a pre-signed manifest), then a `/bin/` activate flow +
+reboot. The courier trust model (OS writes pre-signed artifacts) and the
+signed-selection split still apply.
+
+### U1g-4c — kernel FAT32 writer: stage the inactive slot image (DONE, 2026-06-10)
+
+**Scope.** The write half of runtime kernel staging: the kernel writes the
+inactive kernel slot on the FAT32 ESP. Kept deliberately safe — an **in-place**
+copy of the active slot's image into the inactive slot (the two files are the same
+size, so only data sectors are overwritten; no cluster allocation, FAT, or
+directory changes). A buggy write can only spoil the *inactive* slot, which the
+loader's SHA-256 check (U1g-3a) then rejects, falling back to the still-good
+active slot — so the bootable slot is never at risk.
+
+- `kernel/fs/esp.swift`: `fatCopyChain` walks the src (active) and dst (inactive)
+  cluster chains in lockstep, copying sector-by-sector
+  (`virtioBlkRead`→`virtioBlkWriteSector`), then `virtioBlkFlush`; `fatVerifyChain`
+  re-reads both chains and confirms every sector matches (so a no-op write fails
+  the verify). `espStageActiveToInactive()` (capConsole) finds kernelA/B.bin +
+  reads the manifest's active slot, requires equal sizes, copies active→inactive,
+  flushes, verifies. Logs "kernel-store: staged active slot image into inactive
+  slot, verified (FAT32)".
+- Syscall 68 `SYS_KERNEL_STAGE`; `/bin/swos-kstage` (`userland/swos-kstage.swift`,
+  bridge `swiftos_kernel_stage`/`kernel_stage`); registered in execResolve + the
+  Makefile ELF/staging rules.
+
+**Acceptance.** `tests/uefi_kstage_test.sh` (in `make test`): a disk copy whose
+inactive slot B is a byte-flipped (same-size) copy of the kernel; boot under AAVMF
+(ESP on mmio), reach a root shell, run `/bin/swos-kstage`. The kernel copies
+slot A over slot B and verifies — which only passes if the write landed (a no-op
+would leave B corrupt and fail the in-kernel verify). Proves the FAT32 write path
+end-to-end without touching the bootable slot or the manifest.
+
+**Still future (U1g-4d).** Write a pre-signed "active = inactive" manifest (courier
+model) to actually flip the boot slot, then activate + reboot; plus the
+signed-selection split (per-image signatures + CRC'd writable boot-state) so
+attempt-count/rollback can be persisted without re-signing.
+
+### U1g-4d — runtime kernel-slot activate: /bin/swos-kactivate (DONE, 2026-06-10)
+
+**Scope.** The capstone of runtime kernel staging: flip the active kernel slot
+from a running system, persisted, so the loader boots the newly-activated slot.
+Because the OS cannot sign, it follows the **courier** model — it installs an
+offline-signed alternate manifest rather than producing one.
+
+- A second manifest `\EFI\swift-os\kernel-boot-alt` (active = slot B) is generated
+  by `kernelboot` at image build, signed with the image-signing key (Makefile +
+  make-disk stage it alongside `kernel-boot`).
+- `kernel/fs/esp.swift`: `espActivateOtherKernel()` (capConsole) reads the live
+  `kernel-boot` and `kernel-boot-alt` active slots, requires the alternate to
+  select the *other* slot, then copies the alternate's manifest sector over
+  `kernel-boot` in place (`virtioBlkWriteSector` + `virtioBlkFlush`) and re-reads
+  to confirm. Logs "kernel-store: activated kernel slot B for next boot (signed
+  manifest)". No new globals.
+- Syscall 69 `SYS_KERNEL_ACTIVATE`; `/bin/swos-kactivate`
+  (`userland/swos-kactivate.swift`, bridge `swiftos_kernel_activate`/
+  `kernel_activate`); execResolve + Makefile rules.
+
+**Acceptance.** `tests/uefi_kactivate_test.sh` (in `make test`): boot the disk copy
+(active A), reach a root shell, run `/bin/swos-kactivate`; reboot the SAME disk
+(`cache=writethrough`) → the loader logs "kernel A/B manifest active slot B
+(signature OK)" and "booted kernel slot B", with no "signature INVALID" — proving
+the flip persisted and the offline signature held.
+
+**Kernel-image A/B is now complete end-to-end:** ESP file (U1g-1) → A/B manifest
+selection (U1g-2) → SHA-256 integrity (U1g-3a) → Ed25519 authenticity (U1g-3b) →
+kernel reaches the ESP (U1g-4a) → reads it (U1g-4b) → stages the inactive slot
+(U1g-4c) → activates it (U1g-4d). Operator flow: `swos-kstage` → `swos-kactivate`
+→ reboot, mirroring U1f for the system image.
+
+**Still future.** A real new-kernel *payload* source (today both slots are the
+same build; staging a genuinely different signed kernel needs a payload disk or
+an update channel) + per-slot attempt-count/rollback for the kernel (the
+signed-selection split: per-image signatures + a CRC'd writable boot-state, so
+boot-state can be written without re-signing). Key rotation / revocation.

@@ -62,6 +62,12 @@ int  swiftos_update_activate(void);
 // U1f-2b: copy the attached payload disk into the inactive A/B slot. Needs
 // CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_update_stage(void);
+// U1g-4c: copy the active kernel slot's image into the inactive ESP slot. Needs
+// CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_kernel_stage(void);
+// U1g-4d: flip the active kernel slot via the pre-signed alternate manifest.
+// Needs CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_kernel_activate(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
