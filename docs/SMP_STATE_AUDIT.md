@@ -183,6 +183,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pCpuTicks`
 - `kernel/user/process.swift:pDispatchCount`
 - `kernel/user/process.swift:pDispatchCpuMask`
+- `kernel/user/process.swift:pAddressSpaceCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pFileVmas`
 - `kernel/user/process.swift:pIsThread`
@@ -203,6 +204,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pTtbr0`
 - `kernel/user/process.swift:pWait`
 - `kernel/user/process.swift:pWakeTick`
+- `kernel/user/process.swift:processAddressSpaceActivationCount`
 - `kernel/user/process.swift:processDispatchTelemetryCount`
 - `kernel/user/process.swift:processRunQueueCpuCount`
 - `kernel/user/process.swift:processRunQueueDispatchCount`
@@ -224,11 +226,13 @@ manifest entries left behind after globals move or disappear.
 ## Immediate S1/S2 Risks
 
 - `currentProc`, `currentThread`, the S2d/S2e process run queue/context
-  scaffold, the S2f/S2g dispatch telemetry counters, and timer accounting must
-  become per-CPU or protected before any secondary CPU can run scheduler code.
+  scaffold, the S2f/S2g dispatch telemetry counters, the S3a address-space CPU
+  mask scaffold, and timer accounting must become per-CPU or protected before
+  any secondary CPU can run scheduler code.
   S2e publishes dormant secondary scheduler resources, S2f records CPU0
-  dispatch evidence, and S2g snapshots the `coproc` pair before reap; none of
-  these milestones make those structures concurrency-safe.
+  dispatch evidence, S2g snapshots the `coproc` pair before reap, and S3a
+  records CPU0-only address-space activation evidence; none of these milestones
+  make those structures concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2

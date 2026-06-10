@@ -150,12 +150,14 @@ private var pRunQueued = [Bool](repeating: false, count: maxProc)
 private var pLastDispatchCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
 private var pDispatchCount = [UInt64](repeating: 0, count: maxProc)
 private var pDispatchCpuMask = [UInt64](repeating: 0, count: maxProc)
+private var pAddressSpaceCpuMask = [UInt64](repeating: 0, count: maxProc)
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueEnqueueCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processDispatchTelemetryCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processAddressSpaceActivationCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueCpuCount: UInt32 = 0
 
 private var lastPairDispatchTelemetryValid = false
@@ -189,6 +191,7 @@ func processInit() {
         processRunQueueEnqueueCount[Int(cpu)] = 0
         processRunQueueDispatchCount[Int(cpu)] = 0
         processDispatchTelemetryCount[Int(cpu)] = 0
+        processAddressSpaceActivationCount[Int(cpu)] = 0
         let context = UInt(bitPattern: schedCtx.advanced(by: Int(cpu)))
         if !smpSetProcessSchedulerContextForCpu(cpu, context) ||
            !smpSetProcessRunQueueForCpu(cpu, head: noProcessSlot, tail: noProcessSlot) {
@@ -205,6 +208,7 @@ func processInit() {
         pLastDispatchCpu[i] = unassignedCpu
         pDispatchCount[i] = 0
         pDispatchCpuMask[i] = 0
+        pAddressSpaceCpuMask[i] = 0
     }
     lastPairDispatchTelemetryValid = false
     lastPairDispatchCountA = 0
@@ -297,6 +301,7 @@ private func clearProcessSchedulerSlot(_ slot: Int) {
     pLastDispatchCpu[slot] = unassignedCpu
     pDispatchCount[slot] = 0
     pDispatchCpuMask[slot] = 0
+    pAddressSpaceCpuMask[slot] = 0
 }
 
 private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
@@ -316,6 +321,23 @@ private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
     pDispatchCount[slot] &+= 1
     pDispatchCpuMask[slot] |= UInt64(1) << Int(cpu)
     processDispatchTelemetryCount[Int(cpu)] &+= 1
+}
+
+private func recordProcessAddressSpaceActivation(_ slot: Int, on cpu: UInt32) {
+    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) || pTtbr0[slot] == 0 {
+        uartPuts("panic: invalid address-space CPU mask target\n")
+        while true {}
+    }
+    if !processSecondaryEl0GateAllowsCpu(cpu) {
+        uartPuts("panic: address space activated on secondary before S3\n")
+        while true {}
+    }
+    if pHomeCpu[slot] != cpu || pLastDispatchCpu[slot] != cpu {
+        uartPuts("panic: address-space CPU mask dispatch mismatch\n")
+        while true {}
+    }
+    pAddressSpaceCpuMask[slot] |= UInt64(1) << Int(cpu)
+    processAddressSpaceActivationCount[Int(cpu)] &+= 1
 }
 
 private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
@@ -486,6 +508,44 @@ func processSecondaryEl0GateHeldSelfTest() -> Bool {
         if processDispatchTelemetryCount[idx] != 0 { return false }
         if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+        cpu += 1
+    }
+    return true
+}
+
+func processAddressSpaceCpuMaskSelfTest() -> Bool {
+    if processRunQueueCpuCount != smpMaxCpuCount() { return false }
+    if processSchedulerCpuSlots != Int(smpMaxCpuCount()) { return false }
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        if processAddressSpaceActivationCount[Int(cpu)] != 0 { return false }
+        cpu += 1
+    }
+    for slot in 0..<maxProc {
+        if pAddressSpaceCpuMask[slot] != 0 { return false }
+    }
+    return true
+}
+
+func processAddressSpaceCpuMaskNoSecondarySelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    let primaryIdx = Int(primary)
+    if processAddressSpaceActivationCount[primaryIdx] == 0 { return false }
+    if processAddressSpaceActivationCount[primaryIdx] != processDispatchTelemetryCount[primaryIdx] {
+        return false
+    }
+    let primaryMask = UInt64(1) << Int(primary)
+    for slot in 0..<maxProc {
+        if (pAddressSpaceCpuMask[slot] & ~primaryMask) != 0 { return false }
+    }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if cpu != primary && processAddressSpaceActivationCount[idx] != 0 {
+            return false
+        }
         cpu += 1
     }
     return true
@@ -842,6 +902,7 @@ private func schedule(until done: () -> Bool) {
         // cpu_switch_context swaps registers only — install the process's
         // address space so its EL0 user VAs resolve when it eret's.
         address_space_switch(pTtbr0[s])
+        recordProcessAddressSpaceActivation(s, on: cpu)
         smpRecordEl0SwitchForCurrentCpu()
         let schedulerContext = schedulerContextForCurrentCpu()
         cpu_switch_context(schedulerContext,

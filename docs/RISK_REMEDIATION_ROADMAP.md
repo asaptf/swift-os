@@ -160,6 +160,11 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 - Acceptance: on `-smp 4` we can run the existing `coproc` demo (two EL0 processes) and observe them actually running on different CPUs (add a cheap "last CPU" field to the process record and assert it changes). Stress test: N busy-loop processes + timer preemption; no lost wakeups, no scheduler corruption. Full test suite green on both 1-CPU and 4-CPU QEMU invocations.
 
 ### S3 — IPI, TLB shootdown, and cross-CPU address-space / page-table safety
+- S3a preflight (2026-06-10): the process scheduler now records a per-process
+  address-space CPU mask and per-CPU activation counters on the real
+  `address_space_switch(pTtbr0[slot])` path. The gate remains CPU0-only, so the
+  marker proves no secondary address-space activation happened yet while giving
+  S3 a concrete mask source for future shootdown targeting.
 - Implement a minimal IPI / SGI mechanism (or use GIC SGI) for "reschedule this CPU", "TLB invalidate range on these CPUs", etc.
 - When a page table change (munmap, mprotect, process exec/exit) happens on CPU A for an address space that may be active on CPU B, we must shoot down the TLB on B (or the relevant set of CPUs). Single-CPU `tlbi vmalle1` / `tlbi vae1` is no longer sufficient.
 - `address_space_switch` and the TTBR0 install path must be safe when the same AS can be on multiple CPUs (or when we migrate a process).

@@ -801,6 +801,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S2h OK: secondary EL0 gate ready", UInt64(smpMaxCpuCount()))
+    if !processAddressSpaceCpuMaskSelfTest() {
+        uartPuts("panic: S3a address-space CPU mask self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3a OK: address-space CPU mask scaffold ready", UInt64(smpMaxCpuCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
@@ -868,6 +873,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S2h OK: secondary EL0 gate held CPU0-owned", UInt64(platform.cpuCount))
+        if !processAddressSpaceCpuMaskNoSecondarySelfTest() {
+            uartPuts("panic: S3a address-space CPU mask guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3a OK: address-space CPU masks stayed CPU0-owned", UInt64(platform.cpuCount))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

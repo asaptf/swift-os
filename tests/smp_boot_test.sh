@@ -59,6 +59,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2e OK: dormant process scheduler CPUs published"
   EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry ready"
   EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate ready"
+  EXPECTS+=$'\n'"[I] smp: S3a OK: address-space CPU mask scaffold ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
   EXPECTS+=$'\n'"[I] smp: S2g OK: coproc pair dispatch telemetry CPU0-owned"
@@ -66,6 +67,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2e OK: secondary process scheduler contexts stayed dormant"
   EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry stayed CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate held CPU0-owned"
+  EXPECTS+=$'\n'"[I] smp: S3a OK: address-space CPU masks stayed CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2b OK: no secondary EL0 execution"
 fi
 
@@ -214,7 +216,7 @@ if [[ "$found" -eq 1 ]]; then
     exit 1
   fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"
