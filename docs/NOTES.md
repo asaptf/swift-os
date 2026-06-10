@@ -2946,3 +2946,38 @@ login) intermittently drops a typed line on the emulated PL011 (~10-15%), seen
 across all to_shell tests (ab_update_test, ab_confirm_test, signed_image_test).
 ab_activate_test (U1e) fixed it with a settle + byte-by-byte `send`; the other
 A/B tests still use whole-line `printf` and should be migrated to that pattern.
+
+### U1f-2a — multi-sector virtio-blk transfers (DONE, 2026-06-10)
+
+**Scope.** The driver moved one 512-byte sector per virtio request, which makes
+the U1f-2 stage copy of a multi-MB image untenably slow under TCG (thousands of
+round trips). U1f-2a adds a variable-length data descriptor: one request now
+transfers up to `BLK_MULTI_SECTORS` (128 = 64 KiB) consecutive sectors.
+
+- `kernel/drivers/virtio_blk.swift`: a contiguous `BLK_MULTI_PAGES`-page DMA
+  region (`blkMultiBase`, `pmm_alloc_pages`, allocated once like the ring/data
+  pages — one new global in `docs/SMP_STATE_AUDIT.md`). `blkDoMulti(sector,
+  count, write:)` drives a header→data→status chain where the single data
+  descriptor is `count*512` bytes (device-writable for T_IN, device-readable for
+  T_OUT). Public API: `virtioBlkReadSectors` / `virtioBlkWriteSectors` (copy in/
+  out of a caller buffer) and the no-copy `virtioBlkFillMulti` /
+  `virtioBlkFlushMulti` / `virtioBlkMultiMax` for U1f-2b's disk-to-disk stage copy
+  (blkMultiBase survives a bring-up, so read-from-payload then write-to-store
+  needs no intermediate kernel buffer). `virtioBlkReadRange` — which backs EVERY
+  base-image read (mount, signature/content verify, ELF load, file-backed mmap) —
+  now pulls whole sector runs per request, capped to the DMA region and capacity.
+  The single-sector `blkDoRead`/`blkDoWrite` (sector-0 classification, manifest
+  LBA 0/1 write-back) are unchanged.
+
+**Acceptance.** `tests/multisector_test.sh` (in `make test`): the multi-sector
+read path is verified end-to-end by the base image's own cryptography — a single
+misread byte fails one of three checks across chunk sizes: the signed Ed25519
+metadata region, a small payload file (/etc/motd), and busybox.elf (~1.1 MB ≈ 18
+of the 64 KiB chunks, loaded by execResolve in one `virtioBlkReadRange` — the ash
+shell only launches if that large multi-chunk read is byte-exact). boot_test +
+signed_image + the U1a–U1f-1 A/B suite unaffected (all base reads now flow
+through the multi-sector path).
+
+**Still future (U1f-2b).** `/bin/swos-update` (syscall 62, capConsole) copies the
+payload disk into the inactive slot using the no-copy fill/flush primitives, then
+the operator runs swos-activate + reboots.

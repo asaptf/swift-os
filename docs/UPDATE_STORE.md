@@ -172,11 +172,24 @@ because I/O is serial on the one CPU. At boot `updateStorePayloadProbe()` reads
 the payload header and confirms it is a signed v3 base image.
 `tests/ab_payload_test.sh` covers discovery + read.
 
+## Multi-sector transfers (U1f-2a)
+
+The virtio-blk driver moved one 512-byte sector per request — too slow to copy a
+multi-MB image under TCG. U1f-2a adds a variable-length data descriptor so one
+request transfers up to 128 consecutive sectors (64 KiB) through a contiguous DMA
+region (`blkMultiBase`). `virtioBlkReadRange` (which backs every base-image read)
+now pulls whole sector runs per request; the base image's own Ed25519 signature
+and per-file content hashes end-to-end verify the path. New no-copy primitives
+(`virtioBlkFillMulti` / `virtioBlkFlushMulti`) let U1f-2b copy disk-to-disk
+through the driver's own buffer without an intermediate kernel copy.
+`tests/multisector_test.sh` proves byte-exact reads across the signed metadata, a
+payload file, and a ~1.1 MB busybox ELF.
+
 ## Not implemented yet
 
-- The stage copy (U1f-2): `/bin/swos-update` copies the payload disk into the
-  inactive slot; then `swos-activate` + reboot. Likely needs multi-sector virtio
-  requests for acceptable speed on a multi-MB image (one sector/request today).
+- The stage copy (U1f-2b): `/bin/swos-update` copies the payload disk into the
+  inactive slot (using U1f-2a's multi-sector primitives); then `swos-activate` +
+  reboot.
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.

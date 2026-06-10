@@ -56,6 +56,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/virtio_blk.swift:blkFallbackByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkMmio`
+- `kernel/drivers/virtio_blk.swift:blkMultiBase`
 - `kernel/drivers/virtio_blk.swift:blkPayloadMmio`
 - `kernel/drivers/virtio_blk.swift:blkQn`
 - `kernel/drivers/virtio_blk.swift:blkRingBase`

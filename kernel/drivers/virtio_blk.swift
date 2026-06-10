@@ -55,6 +55,14 @@ private let VIRTIO_BLK_T_IN: UInt32 = 0  // read from disk into memory
 private let VIRTIO_BLK_T_OUT: UInt32 = 1 // write from memory to disk (U1b)
 private let SECTOR_SIZE = 512
 
+// U1f-2a: multi-sector transfers. One request can move up to BLK_MULTI_SECTORS
+// consecutive sectors via a single variable-length data descriptor, instead of
+// one sector per request. This is the prerequisite for staging a multi-MB image
+// (U1f-2b): copying it one sector at a time is far too slow under TCG. The DMA
+// region (blkMultiBase) is BLK_MULTI_PAGES contiguous PMM pages, allocated once.
+private let BLK_MULTI_SECTORS = 128   // 64 KiB per request
+private let BLK_MULTI_PAGES = (BLK_MULTI_SECTORS * SECTOR_SIZE + 4095) / 4096
+
 // Ring page layout: descriptor table, available ring, and used ring carved out
 // of one 4 KiB page at fixed, naturally-aligned offsets (as in virtio_net.swift).
 private let OFF_DESC: UInt  = 0x000
@@ -71,6 +79,7 @@ private let OFF_STATUS: UInt = 0x240  // 1 byte (line 9), device-write
 private var blkMmio: UInt = 0
 private var blkRingBase: UInt = 0   // PA of the page holding desc/avail/used
 private var blkDataBase: UInt = 0   // PA of the page holding bounce/hdr/status
+private var blkMultiBase: UInt = 0  // PA of the BLK_MULTI_PAGES-page multi-sector DMA region (U1f-2a)
 private var blkQn: UInt32 = 0
 private var blkAvailIdx: UInt16 = 0
 private var blkLastUsed: UInt16 = 0
@@ -313,6 +322,59 @@ private func blkDoWrite(_ sector: UInt64) -> Int32 {
     return 0
 }
 
+// U1f-2a: transfer `count` (1...BLK_MULTI_SECTORS) consecutive sectors between
+// the disk and the multi-sector DMA region (blkMultiBase) in a single virtio
+// request, using one variable-length data descriptor (count*512 bytes). `write`
+// selects T_OUT — the data descriptor is device-READABLE, the device stores our
+// bytes — vs T_IN, device-writable. The caller fills blkMultiBase before a write
+// and reads it after a read. Returns 0 on success, negative on error.
+private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
+    if blkMmio == 0 { return -1 }
+    if count < 1 || count > BLK_MULTI_SECTORS { return -4 }
+    if blkCapacity != 0 && sector &+ UInt64(count) > blkCapacity { return -2 }
+
+    let hdr = blkDataBase + OFF_HDR
+    let status = blkDataBase + OFF_STATUS
+    let data = blkMultiBase
+    let nbytes = count * SECTOR_SIZE
+
+    let hp = UnsafeMutableRawPointer(bitPattern: hdr)!
+    hp.storeBytes(of: write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN, toByteOffset: 0, as: UInt32.self)
+    hp.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
+    hp.storeBytes(of: sector, toByteOffset: 8, as: UInt64.self)
+    UnsafeMutableRawPointer(bitPattern: status)!.storeBytes(of: UInt8(0xFF), toByteOffset: 0, as: UInt8.self)
+    blkClean(hdr, 16)
+    blkClean(status, 1)
+    blkClean(data, nbytes) // flush our bytes (write) / evict dirty lines (read)
+
+    // Three-descriptor chain: header (device-read), data, status (device-write).
+    let dataFlags: UInt16 = write ? VIRTQ_DESC_F_NEXT : (VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE)
+    blkDescSet(0, addr: UInt64(hdr), len: 16, flags: VIRTQ_DESC_F_NEXT, next: 1)
+    blkDescSet(1, addr: UInt64(data), len: UInt32(nbytes), flags: dataFlags, next: 2)
+    blkDescSet(2, addr: UInt64(status), len: 1, flags: VIRTQ_DESC_F_WRITE, next: 0)
+    blkClean(blkRingBase + OFF_DESC, BLK_QSZ * 16)
+
+    blkAvailAdd(descIdx: 0)
+    blkClean(blkRingBase + OFF_AVAIL, 32)
+
+    mmio_write32(blkMmio + R_QNOTIFY, 0)
+
+    let target = blkLastUsed &+ 1
+    while true {
+        blkInvalidate(blkRingBase + OFF_USED, 72)
+        if blkUsedIdx() == target { break }
+    }
+    blkLastUsed = target
+
+    let ist = mmio_read32(blkMmio + R_ISTATUS)
+    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+
+    blkInvalidate(status, 1)
+    if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
+    if !write { blkInvalidate(data, nbytes) }
+    return 0
+}
+
 // Scan the virtio-mmio window (base/stride/count from the HAL) for block
 // devices and select the disk to serve the read-only base from. A boot medium
 // may carry several disks (e.g. a GPT boot disk plus the base storage), so we
@@ -337,6 +399,11 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         let d = pmm_alloc_page()
         if d == 0 { return 0 }
         blkDataBase = d
+    }
+    if blkMultiBase == 0 {
+        let mb = pmm_alloc_pages(BLK_MULTI_PAGES)
+        if mb == 0 { return 0 }
+        blkMultiBase = mb
     }
 
     // Scan all block devices, classifying each by its sector-0 magic. A store
@@ -445,13 +512,51 @@ func virtioBlkWriteSector(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
     return blkDoWrite(sector)
 }
 
+// U1f-2a: read `count` (1...BLK_MULTI_SECTORS) consecutive 512-byte sectors from
+// absolute `sector` into `buf` in a single virtio request — far fewer round
+// trips than looping virtioBlkRead, which is what makes staging a multi-MB image
+// (U1f-2b) tractable under TCG. Absolute, like virtioBlkRead; the A/B slot offset
+// (blkBaseByteOffset) applies only to virtioBlkReadRange.
+func virtioBlkReadSectors(_ sector: UInt64, _ buf: UnsafeMutableRawPointer?, _ count: Int) -> Int32 {
+    guard let dst = buf else { return -1 }
+    let rc = blkDoMulti(sector, count, write: false)
+    if rc != 0 { return rc }
+    dst.copyMemory(from: UnsafeRawPointer(bitPattern: blkMultiBase)!, byteCount: count * SECTOR_SIZE)
+    return 0
+}
+
+// U1f-2a: write `count` (1...BLK_MULTI_SECTORS) consecutive 512-byte sectors from
+// `buf` to absolute `sector` in a single virtio request. Absolute, like
+// virtioBlkWriteSector.
+func virtioBlkWriteSectors(_ sector: UInt64, _ buf: UnsafeRawPointer?, _ count: Int) -> Int32 {
+    guard let src = buf else { return -1 }
+    if count < 1 || count > BLK_MULTI_SECTORS { return -4 }
+    UnsafeMutableRawPointer(bitPattern: blkMultiBase)!.copyMemory(from: src, byteCount: count * SECTOR_SIZE)
+    return blkDoMulti(sector, count, write: true)
+}
+
+// U1f-2b: the stage copy moves sectors disk-to-disk through the driver's own
+// multi-sector DMA buffer with NO intermediate kernel copy. blkMultiBase
+// survives a bring-up (only the ring page is re-initialized), so the caller can
+// read into it from the payload device, re-select the store, and write it back.
+// The maximum sectors per call (so the caller chunks correctly).
+func virtioBlkMultiMax() -> Int { BLK_MULTI_SECTORS }
+// Read `count` sectors from absolute `sector` of the current device into the
+// internal DMA buffer (no copy out). Pair with virtioBlkFlushMulti.
+func virtioBlkFillMulti(_ sector: UInt64, _ count: Int) -> Int32 { blkDoMulti(sector, count, write: false) }
+// Write the internal DMA buffer's first `count` sectors to absolute `sector` of
+// the current device. Pair with virtioBlkFillMulti.
+func virtioBlkFlushMulti(_ sector: UInt64, _ count: Int) -> Int32 { blkDoMulti(sector, count, write: true) }
+
 // Read an arbitrary byte range [byteOff, byteOff+len) into `buf`, spanning
 // sectors as needed. Returns 0 on success, negative on error. Used to back the
-// read-only VFS with extents into the disk image (M11c).
+// read-only VFS with extents into the disk image (M11c). U1f-2a: pulls whole
+// runs of sectors per request (blkDoMulti) instead of one at a time — the signed
+// base image's per-file content hashes (vfsInit) end-to-end verify these reads.
 func virtioBlkReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
     if blkMmio == 0 { return -1 }
     guard let out = buf else { return -1 }
-    let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    let multi = UnsafeRawPointer(bitPattern: blkMultiBase)!
     var done: UInt32 = 0
     while done < len {
         // U1a: reads are relative to the active A/B slot's image offset (0 for
@@ -460,16 +565,20 @@ func virtioBlkReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ le
         let pos = blkBaseByteOffset + byteOff + UInt64(done)
         let sec = pos / UInt64(SECTOR_SIZE)
         let within = UInt32(pos % UInt64(SECTOR_SIZE))
-        let rc = blkDoRead(sec)
-        if rc != 0 { return rc }
-        var chunk = UInt32(SECTOR_SIZE) - within
-        if chunk > len - done { chunk = len - done }
-        var i: UInt32 = 0
-        while i < chunk {
-            out.storeBytes(of: bounce.load(fromByteOffset: Int(within + i), as: UInt8.self),
-                           toByteOffset: Int(done + i), as: UInt8.self)
-            i += 1
+        // Cover within+remaining bytes, capped to the DMA region and capacity.
+        let need = UInt64(within) + UInt64(len - done)
+        var secCount = Int((need + UInt64(SECTOR_SIZE) - 1) / UInt64(SECTOR_SIZE))
+        if secCount > BLK_MULTI_SECTORS { secCount = BLK_MULTI_SECTORS }
+        if blkCapacity != 0 && sec + UInt64(secCount) > blkCapacity {
+            secCount = Int(blkCapacity - sec)
         }
+        if secCount < 1 { return -2 }
+        let rc = blkDoMulti(sec, secCount, write: false)
+        if rc != 0 { return rc }
+        var chunk = UInt32(secCount * SECTOR_SIZE) - within
+        if chunk > len - done { chunk = len - done }
+        out.advanced(by: Int(done)).copyMemory(
+            from: multi.advanced(by: Int(within)), byteCount: Int(chunk))
         done += chunk
     }
     return 0
