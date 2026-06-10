@@ -173,9 +173,31 @@ func smpRecordTimerTickForCurrentCpu() {
     smpCpuState[Int(cpu)].timerTicks &+= 1
 }
 
+func smpRecordIdleTickForCurrentCpu() {
+    let cpu = currentCpuId()
+    if !smpValidCpu(cpu) { return }
+    smpCpuState[Int(cpu)].idleTicks &+= 1
+}
+
 func smpPerCpuTimerTicks(_ cpu: UInt32) -> UInt64 {
     if !smpValidCpu(cpu) { return 0 }
     return smpCpuState[Int(cpu)].timerTicks
+}
+
+func smpPerCpuIdleTicks(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return smpCpuState[Int(cpu)].idleTicks
+}
+
+func smpPerCpuUtilizationSelfTest(_ presentCpuCount: UInt32) -> Bool {
+    if presentCpuCount == 0 || presentCpuCount > smpMaxCpuCount() { return false }
+    var cpu: UInt32 = 0
+    while cpu < presentCpuCount {
+        if !smpCpuInitialized(cpu) { return false }
+        if smpPerCpuIdleTicks(cpu) > smpPerCpuTimerTicks(cpu) { return false }
+        cpu += 1
+    }
+    return true
 }
 
 func smpPerCpuHasCurrentThread(_ cpu: UInt32) -> Bool {
@@ -555,6 +577,7 @@ func smpPerCpuSelfTest() -> Bool {
         smpCpuState[slot].flags = 0
         smpCpuState[slot].logicalId = UInt32(slot)
         smpCpuState[slot].timerTicks = UInt64(slot)
+        smpCpuState[slot].idleTicks = UInt64(slot + 20)
         smpCpuState[slot].currentThread = Int32(slot)
         smpCpuState[slot].currentProcess = Int32(slot + 1)
         smpCpuState[slot].runQueueHead = Int32(slot + 2)
@@ -572,6 +595,7 @@ func smpPerCpuSelfTest() -> Bool {
         smpPmmStressReceivedCount[slot] = UInt64(slot + 13)
         if smpCpuState[slot].logicalId != UInt32(slot) { return false }
         if smpCpuState[slot].timerTicks != UInt64(slot) { return false }
+        if smpCpuState[slot].idleTicks != UInt64(slot + 20) { return false }
         if smpCpuState[slot].currentThread != Int32(slot) { return false }
         if smpCpuState[slot].currentProcess != Int32(slot + 1) { return false }
         if smpCpuState[slot].runQueueHead != Int32(slot + 2) { return false }
@@ -606,6 +630,7 @@ func smpPerCpuSelfTest() -> Bool {
 
     let idx = Int(cpu)
     let savedTicks = smpCpuState[idx].timerTicks
+    let savedIdleTicks = smpCpuState[idx].idleTicks
     let savedThread = smpCpuState[idx].currentThread
     let savedProcess = smpCpuState[idx].currentProcess
     let savedRunQueueHead = smpCpuState[idx].runQueueHead
@@ -641,6 +666,10 @@ func smpPerCpuSelfTest() -> Bool {
     smpCpuState[idx].timerTicks = 41
     smpRecordTimerTickForCurrentCpu()
     if smpCpuState[idx].timerTicks != 42 { return false }
+
+    smpCpuState[idx].idleTicks = 21
+    smpRecordIdleTickForCurrentCpu()
+    if smpPerCpuIdleTicks(cpu) != 22 { return false }
 
     smpSetCurrentThreadForCurrentCpu(7)
     if smpCpuState[idx].currentThread != 7 { return false }
@@ -710,6 +739,7 @@ func smpPerCpuSelfTest() -> Bool {
     if !smpPerCpuKernelSchedulerReady(cpu) { return false }
 
     smpCpuState[idx].timerTicks = savedTicks
+    smpCpuState[idx].idleTicks = savedIdleTicks
     smpCpuState[idx].currentThread = savedThread
     smpCpuState[idx].currentProcess = savedProcess
     smpCpuState[idx].runQueueHead = savedRunQueueHead

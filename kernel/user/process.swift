@@ -42,7 +42,9 @@ private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
 private let procStatRecordSize = 56 // richer per-process record for /bin/top
-private let sysInfoSize = 64        // system-wide stats blob for /bin/top
+private let sysInfoLegacySize = 64  // original system-wide stats blob for /bin/top
+private let sysInfoCpuMax = 8
+private let sysInfoSize = sysInfoLegacySize + 8 + (sysInfoCpuMax * 16)
 private let kernelLoadOffset: UInt = 0x80000 // kernel links/loads at ramBase + this
 
 private let trapFrameSPIndex = 31
@@ -1535,12 +1537,26 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
     return total
 }
 
+private func sysInfoCpuCount() -> UInt32 {
+    var count = platform.cpuCount
+    if count == 0 { count = 1 }
+    let max = smpMaxCpuCount()
+    if count > max { count = max }
+    if count > UInt32(sysInfoCpuMax) { count = UInt32(sysInfoCpuMax) }
+    return count
+}
+
 /// SYS_sysinfo: copy a system-wide stats blob for /bin/top.
-/// Layout (64 bytes, naturally aligned): uptimeTicks:u64, idleTicks:u64,
+/// Legacy layout (64 bytes, naturally aligned): uptimeTicks:u64, idleTicks:u64,
 /// memTotal:u64, memFree:u64, kernelImage:u64, kernelHeap:u64, hz:u32,
-/// procTotal:u32, procRunning:u32, reserved:u32.
-func processSysInfo(buffer: UInt) -> Int {
-    guard let dst = userWritableBuffer(buffer, UInt(sysInfoSize)) else { return -22 }
+/// procTotal:u32, procRunning:u32, reserved:u32. Passing a nonzero capacity at
+/// least sysInfoSize appends cpuCount:u32, cpuCapacity:u32, per-CPU timer ticks,
+/// and per-CPU idle ticks.
+func processSysInfo(buffer: UInt, capacity: UInt) -> Int {
+    let requested = capacity == 0 ? UInt(sysInfoLegacySize) : capacity
+    if requested < UInt(sysInfoLegacySize) { return -22 }
+    let writeSize = requested >= UInt(sysInfoSize) ? sysInfoSize : sysInfoLegacySize
+    guard let dst = userWritableBuffer(buffer, UInt(writeSize)) else { return -22 }
     let raw = UnsafeMutableRawPointer(dst)
 
     var total = 0
@@ -1557,6 +1573,7 @@ func processSysInfo(buffer: UInt) -> Int {
     // code + data + bss + boot stack + early heap reservation.
     let imageBytes = UInt64(swiftos_image_end() - (platform.ramBase + kernelLoadOffset))
     let heapBytes = UInt64(swiftos_kernel_heap_used_bytes())
+    let cpuCount = sysInfoCpuCount()
 
     raw.storeBytes(of: systemTicks, toByteOffset: 0, as: UInt64.self)
     raw.storeBytes(of: idleTicks, toByteOffset: 8, as: UInt64.self)
@@ -1568,6 +1585,20 @@ func processSysInfo(buffer: UInt) -> Int {
     raw.storeBytes(of: UInt32(total), toByteOffset: 52, as: UInt32.self)
     raw.storeBytes(of: UInt32(running), toByteOffset: 56, as: UInt32.self)
     raw.storeBytes(of: UInt32(0), toByteOffset: 60, as: UInt32.self)
+
+    if writeSize >= sysInfoSize {
+        raw.storeBytes(of: cpuCount, toByteOffset: 64, as: UInt32.self)
+        raw.storeBytes(of: UInt32(sysInfoCpuMax), toByteOffset: 68, as: UInt32.self)
+        var cpu = 0
+        while cpu < sysInfoCpuMax {
+            let cpuId = UInt32(cpu)
+            let ticks = cpuId < cpuCount ? smpPerCpuTimerTicks(cpuId) : 0
+            let idle = cpuId < cpuCount ? smpPerCpuIdleTicks(cpuId) : 0
+            raw.storeBytes(of: ticks, toByteOffset: 72 + (cpu * 8), as: UInt64.self)
+            raw.storeBytes(of: idle, toByteOffset: 72 + (sysInfoCpuMax * 8) + (cpu * 8), as: UInt64.self)
+            cpu += 1
+        }
+    }
     return 0
 }
 
@@ -1648,7 +1679,8 @@ func processOnTick(fromEL0: Bool) {
     if fromEL0 && current >= 0 {
         pCpuTicks[current] &+= 1
     } else {
-        idleTicks &+= 1
+        if cpu == 0 { idleTicks &+= 1 }
+        smpRecordIdleTickForCurrentCpu()
     }
     if current >= 0 && pState[current] == pRunning {
         markProcessReadyOnHomeCpu(current)

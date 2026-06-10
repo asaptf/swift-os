@@ -10,13 +10,37 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
-DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
+SMP_CPUS="${SMP_CPUS:-1}"
+
+if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
+  echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
+  exit 2
+fi
+SMP_CPU_COUNT=$((10#$SMP_CPUS))
+if (( SMP_CPU_COUNT > 8 )); then
+  echo "FAIL: SMP_CPUS must be <= 8 for current SMP scaffolding, got '$SMP_CPUS'." >&2
+  exit 2
+fi
+
+if [[ -n "${SMP_DTB:-}" ]]; then
+  DTB="$SMP_DTB"
+elif (( SMP_CPU_COUNT == 1 )); then
+  DTB="$ROOT/build/virt.dtb"
+else
+  DTB="$ROOT/build/virt-smp-${SMP_CPU_COUNT}.dtb"
+fi
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
+fi
+if [[ ! -f "$DTB" ]]; then
+  tmp_dtb="$DTB"
+  mkdir -p "$(dirname "$tmp_dtb")"
+  "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic >/dev/null 2>&1 ||
+    { echo "FAIL: cannot generate $DTB" >&2; exit 2; }
 fi
 
 LOG="$(mktemp -t swiftos-top.XXXXXX)"
@@ -70,13 +94,18 @@ drive_fail() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+qemu_args=("$QEMU" -M virt -cpu cortex-a72)
+if (( SMP_CPU_COUNT > 1 )); then
+  qemu_args+=(-smp "$SMP_CPU_COUNT")
+fi
+qemu_args+=(-m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
@@ -111,6 +140,13 @@ frames="$(grep -c -- 'top - up ' <<<"$clean" || true)"
 check '^top - up [0-9]+:[0-9][0-9]:[0-9][0-9],'      "missing/!malformed uptime header"
 check '^Tasks: [0-9]+ total,'                        "missing Tasks summary line"
 check '^Cpu: .*busy, .*idle$'                        "missing Cpu busy/idle line"
+check '^CPUs: [0-9]+ present, per-CPU busy:'         "missing per-CPU busy summary line"
+if (( SMP_CPU_COUNT > 1 )); then
+  check "^CPUs: $SMP_CPU_COUNT present, per-CPU busy:" "top did not report expected SMP CPU count"
+  for (( cpu = 0; cpu < SMP_CPU_COUNT; cpu++ )); do
+    check "(^| )$cpu= *[0-9]+\\.[0-9]%" "missing per-CPU busy entry for CPU$cpu"
+  done
+fi
 check '^Mem: +[0-9]+K total,'                        "missing Mem total line"
 check '^Kernel: +[0-9]+K image,'                     "missing Kernel image/heap line"
 check 'PID +PPID USER +S +%CPU +RES +TIME\+ +COMMAND' "missing process-table column header"
@@ -118,7 +154,7 @@ check '/bin/top$'                                    "top did not list its own p
 check '^TOP-SHELL-ALIVE$'                             "shell did not survive top (no trailing marker)"
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/top renders summary + process table over $frames frames"
+  echo "PASS: /bin/top renders summary + process table over $frames frames with -smp $SMP_CPU_COUNT"
   exit 0
 fi
 echo "--- serial (top region) ---" >&2

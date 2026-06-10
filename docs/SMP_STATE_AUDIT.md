@@ -289,7 +289,10 @@ manifest entries left behind after globals move or disappear.
   by the S4b lock boundary. The small-object heap cursor is protected by the
   S4c lock boundary, but it remains a bump allocator with no free/reclaim. S4f
   adds a restricted-SMP resource churn smoke over mmap/munmap, pipes, tmpfs,
-  fork/wait, and spawn/exec while secondary timers are active.
+  fork/wait, and spawn/exec while secondary timers are active. S5a exports
+  per-CPU timer/idle counters through `SYS_sysinfo` and `/bin/top` so later S5
+  scheduler work has a visible utilization signal before broad secondary EL0
+  execution is enabled.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple

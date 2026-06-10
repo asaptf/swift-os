@@ -21,6 +21,9 @@ PKG_SWIFT="$ROOT/kernel/pkg/store.swift"
 NET_SWIFT="$ROOT/kernel/net/socket.swift"
 SCHED_SWIFT="$ROOT/kernel/sched/scheduler.swift"
 RUNTIME_HEAP="$ROOT/kernel/runtime/heap.c"
+TOP_SWIFT="$ROOT/userland/top.swift"
+SWIFT_USER_C="$ROOT/userland/lib/swift_user.c"
+SWIFT_USER_H="$ROOT/userland/lib/swift_user.h"
 S4_STRESS_C="$ROOT/userland/s4stress.c"
 S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
@@ -917,4 +920,87 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress)"
+for needle in \
+  'smpRecordIdleTickForCurrentCpu' \
+  'smpPerCpuIdleTicks' \
+  'smpPerCpuUtilizationSelfTest'; do
+  if ! grep -Fq -- "$needle" "$PERCPU_SWIFT"; then
+    echo "FAIL: S5a per-CPU utilization state missing $needle." >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'private let sysInfoLegacySize = 64' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'private let sysInfoCpuMax = 8' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'private let sysInfoSize = sysInfoLegacySize + 8 + (sysInfoCpuMax * 16)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'func processSysInfo(buffer: UInt, capacity: UInt) -> Int' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'capacity == 0 ? UInt(sysInfoLegacySize) : capacity' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'raw.storeBytes(of: UInt32(0), toByteOffset: 60, as: UInt32.self)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'raw.storeBytes(of: cpuCount, toByteOffset: 64, as: UInt32.self)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'raw.storeBytes(of: UInt32(sysInfoCpuMax), toByteOffset: 68, as: UInt32.self)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'raw.storeBytes(of: ticks, toByteOffset: 72 + (cpu * 8), as: UInt64.self)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'raw.storeBytes(of: idle, toByteOffset: 72 + (sysInfoCpuMax * 8) + (cpu * 8), as: UInt64.self)' "$PROCESS_SWIFT" ||
+   ! grep -Fq 'processSysInfo(buffer: frame[0], capacity: frame[1])' "$ROOT/kernel/syscall/syscall.swift"; then
+  echo "FAIL: S5a SYS_sysinfo must export cpuCount plus per-CPU timer/idle ticks." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'if !smpPerCpuUtilizationSelfTest(platform.cpuCount)' "$MAIN_SWIFT" ||
+   ! grep -Fq 'S5a OK: per-CPU utilization counters ready' "$MAIN_SWIFT" ||
+   ! grep -Fq 'smpRecordIdleTickForCurrentCpu()' "$MAIN_SWIFT"; then
+  echo "FAIL: S5a boot/IRQ path must publish utilization readiness and parked-secondary idle ticks." >&2
+  exit 1
+fi
+
+for needle in \
+  '#define SWIFTOS_CPU_MAX 8' \
+  'unsigned int  swiftos_sys_cpu_count(void);' \
+  'unsigned int  swiftos_sys_cpu_capacity(void);' \
+  'unsigned long swiftos_sys_cpu_ticks(unsigned int cpu);' \
+  'unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu);'; do
+  if ! grep -Fq -- "$needle" "$SWIFT_USER_H"; then
+    echo "FAIL: S5a swift_user.h missing sysinfo accessor: $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'unsigned int  cpu_count;' \
+  'unsigned int  cpu_capacity;' \
+  'unsigned long cpu_ticks[SWIFTOS_CPU_MAX];' \
+  'unsigned long cpu_idle_ticks[SWIFTOS_CPU_MAX];' \
+  'return (int)__syscall3(SYS_SYSINFO, (long)&g_sys, sizeof(g_sys), 0);' \
+  'swiftos_sys_cpu_count' \
+  'swiftos_sys_cpu_capacity' \
+  'swiftos_sys_cpu_ticks' \
+  'swiftos_sys_cpu_idle_ticks'; do
+  if ! grep -Fq -- "$needle" "$SWIFT_USER_C"; then
+    echo "FAIL: S5a swift_user.c missing sysinfo ABI field/accessor: $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'private let cpuMax = 8' \
+  'swiftos_sys_cpu_count()' \
+  'swiftos_sys_cpu_ticks(UInt32(cpuIndex))' \
+  'swiftos_sys_cpu_idle_ticks(UInt32(cpuIndex))' \
+  'per-CPU busy:'; do
+  if ! grep -Fq -- "$needle" "$TOP_SWIFT"; then
+    echo "FAIL: S5a /bin/top missing per-CPU utilization rendering: $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'SMP_CPUS="${SMP_CPUS:-1}"' \
+  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh' \
+  's5-cpu-util-test: build $(QEMU_DTB_SMP4) base-image' \
+  'CPUs: [0-9]+ present, per-CPU busy'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE" "$ROOT/tests/top_test.sh"; then
+    echo "FAIL: S5a top/SMP utilization test wiring missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export)"

@@ -569,6 +569,9 @@ func irqHandler() {
 
     if interruptId == physicalTimerIrq && currentCpuId() != 0 {
         smpRecordTimerTickForCurrentCpu()
+        if !processSecondarySchedulerActiveForCurrentCpu() {
+            smpRecordIdleTickForCurrentCpu()
+        }
         timerScheduleNext()
     } else if interruptId == smpIpiInterruptId {
         smpHandleIpi(iar)
@@ -861,6 +864,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S4e OK: network lock boundary ready", UInt64(netS4eLockAcquireCount()))
+    if !smpPerCpuUtilizationSelfTest(platform.cpuCount) {
+        uartPuts("panic: S5a per-CPU utilization counter self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S5a OK: per-CPU utilization counters ready", UInt64(platform.cpuCount))
     ttyInit()
     signalReset()
     uartRxInit()

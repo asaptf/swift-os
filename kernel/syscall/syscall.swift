@@ -208,7 +208,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         frame[0] = UInt(vfsResolve(nameVA: frame[0], serverIP: frame[1], serverPort: Int(bitPattern: frame[2])))
         return  // returns an IPv4 value (0 = failure), not an errno
     } else if number == sysSysInfo {
-        result = processSysInfo(buffer: frame[0])
+        result = processSysInfo(buffer: frame[0], capacity: frame[1])
     } else if number == sysProcStat {
         result = processStatSnapshot(buffer: frame[0], capacity: frame[1])
     } else if number == sysThreadCreate {

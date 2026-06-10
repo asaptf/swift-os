@@ -68,6 +68,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S4b OK: VFS lock boundary ready"
   EXPECTS+=$'\n'"[I] smp: S4c OK: kernel heap lock boundary ready"
   EXPECTS+=$'\n'"[I] smp: S4e OK: network lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S5a OK: per-CPU utilization counters ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
   if (( SMP_CPU_COUNT > 1 )); then
@@ -291,7 +292,7 @@ if [[ "$found" -eq 1 ]]; then
     exit 1
   fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a-S4e markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

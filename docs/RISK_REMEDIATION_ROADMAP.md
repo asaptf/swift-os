@@ -238,6 +238,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 - Acceptance: the stress test runs for a long time without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
 
 ### S5 — Full multi-CPU EL0 execution + end-to-end validation
+- S5a preflight (2026-06-10): per-CPU timer and idle counters are exported
+  through `SYS_sysinfo` and rendered by `/bin/top` as aggregate busy/idle plus
+  a per-CPU busy line. The boot path validates the counter export for present
+  CPUs, `tests/top_test.sh` can run under `-smp 4`, and
+  `make s5-cpu-util-test` is the runtime gate. This gives S5 a cheap
+  utilization signal before broad secondary EL0 scheduling is enabled.
 - EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
