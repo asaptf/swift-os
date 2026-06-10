@@ -801,8 +801,9 @@ s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-s1-prefligh
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the
-# kernel load address after ExitBootServices, so it depends on the built kernel.
-$(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_ELF) Makefile | $(BUILD)/.dir
+# kernel load address after ExitBootServices, so rebuild it when kernel.bin
+# changes. kernel_blob.S uses `.incbin "build/kernel.bin"`.
+$(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_BIN) Makefile | $(BUILD)/.dir
 	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/kernel_blob.S -o $@
 
 $(EFI_APP): boot/efi/loader.c boot/efi/efi.h $(BUILD)/kernel_blob.obj Makefile | $(BUILD)/.dir
