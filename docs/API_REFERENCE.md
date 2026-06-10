@@ -515,7 +515,7 @@ Current behavior:
 Example:
 
 ```c
-int fd = open("/models/stories15M-q8.bin", O_RDONLY);
+int fd = open("/models/stories15M/1/model.bin", O_RDONLY);
 unsigned long base = swiftos_mmap_file(fd, size, PROT_READ);
 if (base == 0) {
     close(fd);

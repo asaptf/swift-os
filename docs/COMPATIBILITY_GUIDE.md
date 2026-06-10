@@ -188,9 +188,9 @@ The current AI-serving proof path is native Swift:
 ```
 
 `/bin/llm` keeps the small fp32 `stories260K` console demo. `/bin/llmd`
-defaults to the larger Q8_0 `stories15M` serving bundle and can be started with
-explicit `llmd [model.bin] [tokenizer.bin]` paths for supported checkpoint
-formats.
+defaults to the verified Q8_0 `stories15M` bundle under `/models/stories15M`
+and can be started with explicit `llmd [model.bin] [tokenizer.bin]` paths for
+supported checkpoint formats without bundle verification.
 
 Acceptance coverage: `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh`.
 

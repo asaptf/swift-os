@@ -31,7 +31,7 @@ Use this with:
 | Login shell | `/bin/busybox` `ash` |
 | Writable guest storage | `/tmp` tmpfs only |
 | Package overlay fixture | `build/pkghello-payload.img` |
-| LLM model files | `stories260K.bin`, `tok512.bin`, `stories15M-q8.bin`, and `tokenizer.bin` staged under `/models` |
+| LLM model files | `stories260K.bin` and `tok512.bin` staged directly under `/models`; verified `stories15M` serving generations staged under `/models/stories15M` |
 
 The target is static and intentionally small. There is no Linux syscall ABI, no
 dynamic loader, and no persistent writable guest filesystem in the current

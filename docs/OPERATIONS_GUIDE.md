@@ -52,7 +52,7 @@ change installed software. Use `/tmp` only for runtime scratch.
 | `build/pkghello.swpkg` | `make package-fixture` | Sample host package artifact |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
 | `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` local inference inputs |
-| `models/stories15M-q8.bin`, `models/tokenizer.bin` | `make model` or `make base-image` | `/bin/llmd` default serving inputs |
+| `models/stories15M-q8.bin`, `models/tokenizer.bin` | `make model` or `make base-image` | Source payloads for the `/bin/llmd` verified serving bundle |
 
 `make clean` removes build products but not downloaded toolchains. `make
 newlib`, `make busybox`, and `make model` are slower setup paths and are usually
@@ -319,7 +319,7 @@ SwiftOS has two native Swift TinyStories inference entry points:
 The local demo and the server intentionally use different default bundles:
 `/bin/llm` loads the small fp32 `stories260K` checkpoint and `tok512`
 tokenizer, while `/bin/llmd` serves the larger Q8_0 `stories15M` checkpoint
-with the full `tokenizer.bin` tokenizer.
+through a verified bundle rooted at `/models/stories15M`.
 
 Prepare model artifacts:
 
@@ -349,8 +349,13 @@ guest:
 /bin/llmd
 ```
 
-By default, this serves `/models/stories15M-q8.bin` with
-`/models/tokenizer.bin`. To test another supported checkpoint/tokenizer pair,
+By default, this resolves `/models/stories15M`, tries numeric generations
+newest-first, verifies each generation's `manifest.toml`, `model.bin`, and
+`tokenizer.bin`, and serves the newest generation whose size and SHA-256 checks
+pass. The checked-in image includes a deliberately corrupt generation 2 and a
+valid generation 1 to prove fallback behavior.
+
+To test another supported checkpoint/tokenizer pair without bundle verification,
 pass both paths explicitly:
 
 ```sh
@@ -365,12 +370,14 @@ curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
 curl http://127.0.0.1:8080/metrics
 ```
 
-`/bin/llmd` reports `llmd: model int8 Q8_0 GS=32` for the default quantized
-model, then `llmd: serving on 8080` when it is ready. `GET /health` reports the
-model shape, such as `ok model dim=288` for the default serving bundle. `POST
-/completion` uses the request body as the prompt and streams generated text
-until the HTTP/1.0 connection closes. `/metrics` reports request count, total
-generated tokens, last time-to-first-token in milliseconds, and last token rate.
+`/bin/llmd` reports `llmd: generation 2 rejected (model size/sha256 mismatch)`
+for the intentionally corrupt demo generation, then `llmd: bundle stories15M generation 1 verified (sha256)`,
+`llmd: model int8 Q8_0 GS=32`, and `llmd: serving on 8080` when it is ready.
+`GET /health` reports the model shape, such as `ok model dim=288` for the
+default serving bundle. `POST /completion` uses the request body as the prompt
+and streams generated text until the HTTP/1.0 connection closes. `/metrics`
+reports request count, total generated tokens, last time-to-first-token in
+milliseconds, and last token rate.
 
 `/bin/llmd` and `/bin/httpd` both bind guest TCP port 8080, so run one of them
 at a time.
@@ -392,6 +399,9 @@ Useful markers:
 | `swift-os login:` | `console-login` is running |
 | `Welcome to swift-os, root` | Authentication succeeded |
 | `httpd: listening on 8080` | HTTP server bound and entered its event loop |
+| `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt demo generation was rejected |
+| `llmd: bundle stories15M generation 1 verified (sha256)` | Verified model-bundle fallback selected generation 1 |
+| `llmd: model int8 Q8_0 GS=32` | Quantized serving engine selected |
 | `llmd: serving on 8080` | Inference server bound and entered its event loop |
 | `llmd: served` | Inference server completed a request and logged serving metrics |
 | `tcpecho: listening on 5555` | TCP echo server is waiting in accept |

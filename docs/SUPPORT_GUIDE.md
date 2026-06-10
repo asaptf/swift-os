@@ -185,6 +185,8 @@ These markers help locate the failing subsystem.
 | `Welcome to swift-os` | Authentication succeeded |
 | `httpd: listening on 8080` | Static HTTP server is ready |
 | `llmd: serving on 8080` | LLM HTTP server is ready |
+| `llmd: generation 2 rejected (model size/sha256 mismatch)` | Deliberately corrupt model generation was rejected |
+| `llmd: bundle stories15M generation 1 verified (sha256)` | Verified model fallback selected generation 1 |
 | `llmd: served` | LLM request completed and metrics were logged |
 | `pkghello: hello from package overlay` | Package overlay was visible and executable |
 | `LOG-EXPORT-BEGIN` | Kernel log serialization smoke path ran |
