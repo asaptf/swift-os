@@ -63,6 +63,8 @@ private let waitAny = -1  // any child
 private let noProcessSlot: Int32 = -1
 private let unassignedCpu: UInt32 = 0xFFFF_FFFF
 private let processSchedulerCpuSlots = 8
+private let s5cPlacementStressRounds: UInt64 = 3
+private let s5cPlacementStressCpu0TailCount: UInt64 = 2
 
 // Stable context storage for cpu_switch_context.
 private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [maxProc]
@@ -159,6 +161,9 @@ private var pSchedulerQuiesced = [Bool](repeating: true, count: maxProc)
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
+private var processRunQueueLockWord = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processRunQueueLockAcquireCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processRunQueueLockContentionCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueEnqueueCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processDispatchTelemetryCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
@@ -185,6 +190,16 @@ private var lastS5bBatchDispatchCpuMaskC: UInt64 = 0
 private var lastS5bBatchLastDispatchCpuA: UInt32 = unassignedCpu
 private var lastS5bBatchLastDispatchCpuB: UInt32 = unassignedCpu
 private var lastS5bBatchLastDispatchCpuC: UInt32 = unassignedCpu
+private var lastS5cStressTelemetryValid = false
+private var lastS5cStressRounds: UInt64 = 0
+private var lastS5cStressProcessCount: UInt64 = 0
+private var lastS5cStressPrimaryDispatchCount: UInt64 = 0
+private var lastS5cStressSecondaryDispatchCount: UInt64 = 0
+private var lastS5cStressPrimaryCpuMask: UInt64 = 0
+private var lastS5cStressSecondaryCpuMask: UInt64 = 0
+private var lastS5cStressSecondaryCpu: UInt32 = unassignedCpu
+private var lastS5cStressRunQueueLockAcquireCount: UInt64 = 0
+private var lastS5cStressRunQueueLockContentionCount: UInt64 = 0
 
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
@@ -209,6 +224,9 @@ func processInit() {
         schedCtx[Int(cpu)] = CPUContext()
         processRunQueueHead[Int(cpu)] = noProcessSlot
         processRunQueueTail[Int(cpu)] = noProcessSlot
+        processRunQueueLockWord[Int(cpu)] = 0
+        processRunQueueLockAcquireCount[Int(cpu)] = 0
+        processRunQueueLockContentionCount[Int(cpu)] = 0
         processRunQueueEnqueueCount[Int(cpu)] = 0
         processRunQueueDispatchCount[Int(cpu)] = 0
         processDispatchTelemetryCount[Int(cpu)] = 0
@@ -252,6 +270,16 @@ func processInit() {
     lastS5bBatchLastDispatchCpuA = unassignedCpu
     lastS5bBatchLastDispatchCpuB = unassignedCpu
     lastS5bBatchLastDispatchCpuC = unassignedCpu
+    lastS5cStressTelemetryValid = false
+    lastS5cStressRounds = 0
+    lastS5cStressProcessCount = 0
+    lastS5cStressPrimaryDispatchCount = 0
+    lastS5cStressSecondaryDispatchCount = 0
+    lastS5cStressPrimaryCpuMask = 0
+    lastS5cStressSecondaryCpuMask = 0
+    lastS5cStressSecondaryCpu = unassignedCpu
+    lastS5cStressRunQueueLockAcquireCount = 0
+    lastS5cStressRunQueueLockContentionCount = 0
 }
 
 private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
@@ -260,6 +288,72 @@ private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
 
 private func processAtomicStore(_ value: inout UInt64, _ newValue: UInt64) {
     withUnsafeMutablePointer(to: &value) { smpAtomicStore($0, newValue) }
+}
+
+private func processRunQueueAtomicLoad(_ value: inout UInt64) -> UInt64 {
+    withUnsafeMutablePointer(to: &value) { smpAtomicLoad($0) }
+}
+
+private func processRunQueueLock(_ cpu: UInt32) -> UInt64 {
+    if !processValidSchedulerCpu(cpu) {
+        uartPuts("panic: invalid EL0 run queue lock CPU\n")
+        while true {}
+    }
+    let daif = irq_save()
+    let idx = Int(cpu)
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &processRunQueueLockWord[idx]) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
+        }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &processRunQueueLockContentionCount[idx]) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &processRunQueueLockAcquireCount[idx]) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
+    }
+}
+
+private func processRunQueueUnlock(_ cpu: UInt32, _ daif: UInt64) {
+    if !processValidSchedulerCpu(cpu) {
+        uartPuts("panic: invalid EL0 run queue unlock CPU\n")
+        while true {}
+    }
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &processRunQueueLockWord[Int(cpu)]) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+private func processRunQueueLockAcquireTotal() -> UInt64 {
+    var total: UInt64 = 0
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        total &+= processRunQueueAtomicLoad(&processRunQueueLockAcquireCount[Int(cpu)])
+        cpu += 1
+    }
+    return total
+}
+
+private func processRunQueueLockContentionTotal() -> UInt64 {
+    var total: UInt64 = 0
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        total &+= processRunQueueAtomicLoad(&processRunQueueLockContentionCount[Int(cpu)])
+        cpu += 1
+    }
+    return total
 }
 
 private func processCpuBit(_ cpu: UInt32) -> UInt64 {
@@ -544,6 +638,24 @@ private func captureLastS5bBatchDispatchTelemetry(_ a: Int, _ b: Int, _ c: Int) 
     lastS5bBatchDispatchTelemetryValid = true
 }
 
+private func captureLastS5cPlacementStressTelemetry(rounds: UInt64, processCount: UInt64,
+                                                    primaryDispatchCount: UInt64,
+                                                    secondaryDispatchCount: UInt64,
+                                                    primaryCpuMask: UInt64,
+                                                    secondaryCpuMask: UInt64,
+                                                    secondaryCpu: UInt32) {
+    lastS5cStressRounds = rounds
+    lastS5cStressProcessCount = processCount
+    lastS5cStressPrimaryDispatchCount = primaryDispatchCount
+    lastS5cStressSecondaryDispatchCount = secondaryDispatchCount
+    lastS5cStressPrimaryCpuMask = primaryCpuMask
+    lastS5cStressSecondaryCpuMask = secondaryCpuMask
+    lastS5cStressSecondaryCpu = secondaryCpu
+    lastS5cStressRunQueueLockAcquireCount = processRunQueueLockAcquireTotal()
+    lastS5cStressRunQueueLockContentionCount = processRunQueueLockContentionTotal()
+    lastS5cStressTelemetryValid = true
+}
+
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
     if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue target\n")
@@ -555,19 +667,34 @@ private func markProcessReady(_ slot: Int, cpu: UInt32) {
     }
     pState[slot] = pReady
     pHomeCpu[slot] = cpu
-    if pRunQueued[slot] { return }
 
     let idx = Int(cpu)
+    let daif = processRunQueueLock(cpu)
+    if pRunQueued[slot] {
+        processRunQueueUnlock(cpu, daif)
+        return
+    }
+
+    let tail = processRunQueueTail[idx]
     pRunNext[slot] = noProcessSlot
-    if processRunQueueTail[idx] == noProcessSlot {
+    if tail == noProcessSlot {
         processRunQueueHead[idx] = Int32(slot)
+    } else if tail >= 0 && tail < Int32(maxProc) {
+        pRunNext[Int(tail)] = Int32(slot)
     } else {
-        pRunNext[Int(processRunQueueTail[idx])] = Int32(slot)
+        processRunQueueUnlock(cpu, daif)
+        uartPuts("panic: EL0 process run queue tail corrupted\n")
+        while true {}
     }
     processRunQueueTail[idx] = Int32(slot)
     pRunQueued[slot] = true
     processRunQueueEnqueueCount[idx] &+= 1
     processMirrorRunQueueForCpu(cpu)
+    processRunQueueUnlock(cpu, daif)
+
+    if cpu != currentCpuId() {
+        cpu_sev()
+    }
 }
 
 private func markProcessReadyOnHomeCpu(_ slot: Int) {
@@ -580,8 +707,12 @@ private func pickReady() -> Int {
     let cpu = UInt32(processSchedulerCpuIndex())
     if !processValidSchedulerCpu(cpu) { return -1 }
     let idx = Int(cpu)
+    let daif = processRunQueueLock(cpu)
     let head = processRunQueueHead[idx]
-    if head == noProcessSlot { return -1 }
+    if head == noProcessSlot {
+        processRunQueueUnlock(cpu, daif)
+        return -1
+    }
 
     let slot = Int(head)
     processRunQueueHead[idx] = pRunNext[slot]
@@ -593,7 +724,10 @@ private func pickReady() -> Int {
     processRunQueueDispatchCount[idx] &+= 1
     processMirrorRunQueueForCpu(cpu)
 
-    if pState[slot] != pReady || pHomeCpu[slot] != cpu {
+    let corrupted = pState[slot] != pReady || pHomeCpu[slot] != cpu
+    processRunQueueUnlock(cpu, daif)
+
+    if corrupted {
         uartPuts("panic: EL0 process run queue corrupted\n")
         while true {}
     }
@@ -659,6 +793,21 @@ func processDispatchTelemetrySelfTest() -> Bool {
     if lastS5bBatchLastDispatchCpuA != unassignedCpu ||
        lastS5bBatchLastDispatchCpuB != unassignedCpu ||
        lastS5bBatchLastDispatchCpuC != unassignedCpu {
+        return false
+    }
+    if lastS5cStressTelemetryValid { return false }
+    if lastS5cStressRounds != 0 || lastS5cStressProcessCount != 0 {
+        return false
+    }
+    if lastS5cStressPrimaryDispatchCount != 0 ||
+       lastS5cStressSecondaryDispatchCount != 0 {
+        return false
+    }
+    if lastS5cStressPrimaryCpuMask != 0 ||
+       lastS5cStressSecondaryCpuMask != 0 {
+        return false
+    }
+    if lastS5cStressSecondaryCpu != unassignedCpu {
         return false
     }
     var cpu: UInt32 = 0
@@ -904,6 +1053,110 @@ func processS5bPlacementTelemetrySelfTest() -> Bool {
         }
         if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
             return processS5bPlacementTelemetryFail(21)
+        }
+        cpu += 1
+    }
+    return true
+}
+
+private func processS5cPlacementStressFail(_ code: UInt64) -> Bool {
+    uartPuts("S5c placement stress fail ")
+    uartPutUInt(code)
+    uartPuts("\n")
+    return false
+}
+
+func processS5cPlacementStressSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) {
+        return processS5cPlacementStressFail(1)
+    }
+    if !lastS5cStressTelemetryValid {
+        return processS5cPlacementStressFail(2)
+    }
+    if lastS5cStressRounds != s5cPlacementStressRounds {
+        return processS5cPlacementStressFail(3)
+    }
+    let expectedProcessCount =
+        (s5cPlacementStressRounds * 2) + s5cPlacementStressCpu0TailCount
+    if lastS5cStressProcessCount != expectedProcessCount {
+        return processS5cPlacementStressFail(4)
+    }
+    if lastS5cStressPrimaryDispatchCount == 0 ||
+       lastS5cStressSecondaryDispatchCount == 0 {
+        return processS5cPlacementStressFail(5)
+    }
+
+    let primaryMask = processCpuBit(primary)
+    if lastS5cStressPrimaryCpuMask != primaryMask {
+        return processS5cPlacementStressFail(6)
+    }
+
+    let secondary = processFirstSecondarySchedulerCpu()
+    if secondary == unassignedCpu {
+        if lastS5cStressSecondaryCpu != primary {
+            return processS5cPlacementStressFail(7)
+        }
+        if lastS5cStressSecondaryCpuMask != primaryMask {
+            return processS5cPlacementStressFail(8)
+        }
+    } else {
+        if lastS5cStressSecondaryCpu == primary ||
+           lastS5cStressSecondaryCpu == unassignedCpu {
+            return processS5cPlacementStressFail(9)
+        }
+        if !processValidSchedulerCpu(lastS5cStressSecondaryCpu) ||
+           !smpCpuOnline(lastS5cStressSecondaryCpu) {
+            return processS5cPlacementStressFail(10)
+        }
+        let secondaryMask = processCpuBit(lastS5cStressSecondaryCpu)
+        if lastS5cStressSecondaryCpuMask != secondaryMask {
+            return processS5cPlacementStressFail(11)
+        }
+        let secondaryIdx = Int(lastS5cStressSecondaryCpu)
+        if processRunQueueEnqueueCount[secondaryIdx] < s5cPlacementStressRounds {
+            return processS5cPlacementStressFail(12)
+        }
+        if processRunQueueDispatchCount[secondaryIdx] <
+           lastS5cStressSecondaryDispatchCount {
+            return processS5cPlacementStressFail(13)
+        }
+        if processDispatchTelemetryCount[secondaryIdx] <
+           lastS5cStressSecondaryDispatchCount {
+            return processS5cPlacementStressFail(14)
+        }
+        if smpPerCpuEl0SwitchCount(lastS5cStressSecondaryCpu) == 0 {
+            return processS5cPlacementStressFail(15)
+        }
+        if (processSecondaryRunMask() & secondaryMask) != 0 {
+            return processS5cPlacementStressFail(16)
+        }
+        if (processSecondaryActiveMask() & secondaryMask) != 0 {
+            return processS5cPlacementStressFail(17)
+        }
+    }
+
+    if lastS5cStressRunQueueLockAcquireCount == 0 {
+        return processS5cPlacementStressFail(18)
+    }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueLockWord[idx] != 0 {
+            return processS5cPlacementStressFail(19)
+        }
+        if processRunQueueHead[idx] != noProcessSlot {
+            return processS5cPlacementStressFail(20)
+        }
+        if processRunQueueTail[idx] != noProcessSlot {
+            return processS5cPlacementStressFail(21)
+        }
+        if !smpPerCpuProcessRunQueueIdle(cpu) {
+            return processS5cPlacementStressFail(22)
+        }
+        if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
+            return processS5cPlacementStressFail(23)
         }
         cpu += 1
     }
@@ -1403,6 +1656,86 @@ func processRunS5bPlacementBatch(_ image: UInt, _ size: UInt,
     reapProcess(a)
     reapProcess(b)
     reapProcess(c)
+}
+
+/// Run repeated independent EL0 placement rounds through the restricted gate.
+func processRunS5cPlacementStress(_ image: UInt, _ size: UInt,
+                                  _ primaryPacked: UInt, _ primaryPackedLen: UInt, _ primaryArgc: Int,
+                                  _ secondaryPacked: UInt, _ secondaryPackedLen: UInt, _ secondaryArgc: Int,
+                                  _ tailPacked: UInt, _ tailPackedLen: UInt, _ tailArgc: Int) {
+    let primary = currentCpuId()
+    let secondary = processFirstSecondarySchedulerCpu()
+    let secondaryHome = secondary == unassignedCpu ? primary : secondary
+
+    if secondary != unassignedCpu {
+        processStartSecondaryScheduler(cpu: secondary)
+    }
+
+    var rounds: UInt64 = 0
+    var processCount: UInt64 = 0
+    var primaryDispatchCount: UInt64 = 0
+    var secondaryDispatchCount: UInt64 = 0
+    var primaryCpuMask: UInt64 = 0
+    var secondaryCpuMask: UInt64 = 0
+
+    while rounds < s5cPlacementStressRounds {
+        let a = createProcess(image, size, packed: primaryPacked,
+                              packedLen: primaryPackedLen, argc: primaryArgc,
+                              parent: -1, inherit: .all, inheritSpecsVA: 0,
+                              inheritSpecCount: 0, homeCpu: primary)
+        let b = createProcess(image, size, packed: secondaryPacked,
+                              packedLen: secondaryPackedLen, argc: secondaryArgc,
+                              parent: -1, inherit: .all, inheritSpecsVA: 0,
+                              inheritSpecCount: 0, homeCpu: secondaryHome)
+        if a < 0 || b < 0 {
+            uartPuts("panic: createProcess (S5c placement stress) failed\n")
+            while true {}
+        }
+
+        schedule(until: { pState[a] == pZombie && pSchedulerQuiesced[a] &&
+                          pState[b] == pZombie && pSchedulerQuiesced[b] })
+        smpLoadBarrier()
+        primaryDispatchCount &+= pDispatchCount[a]
+        secondaryDispatchCount &+= pDispatchCount[b]
+        primaryCpuMask |= pDispatchCpuMask[a]
+        secondaryCpuMask |= pDispatchCpuMask[b]
+        processCount &+= 2
+        reapProcess(a)
+        reapProcess(b)
+        rounds &+= 1
+    }
+
+    if secondary != unassignedCpu {
+        processStopSecondaryScheduler(cpu: secondary)
+    }
+
+    var tails: UInt64 = 0
+    while tails < s5cPlacementStressCpu0TailCount {
+        let c = createProcess(image, size, packed: tailPacked,
+                              packedLen: tailPackedLen, argc: tailArgc,
+                              parent: -1, inherit: .all, inheritSpecsVA: 0,
+                              inheritSpecCount: 0, homeCpu: primary)
+        if c < 0 {
+            uartPuts("panic: createProcess (S5c placement stress tail) failed\n")
+            while true {}
+        }
+        schedule(until: { pState[c] == pZombie && pSchedulerQuiesced[c] })
+        smpLoadBarrier()
+        primaryDispatchCount &+= pDispatchCount[c]
+        primaryCpuMask |= pDispatchCpuMask[c]
+        processCount &+= 1
+        reapProcess(c)
+        tails &+= 1
+    }
+
+    captureLastS5cPlacementStressTelemetry(
+        rounds: rounds,
+        processCount: processCount,
+        primaryDispatchCount: primaryDispatchCount,
+        secondaryDispatchCount: secondaryDispatchCount,
+        primaryCpuMask: primaryCpuMask,
+        secondaryCpuMask: secondaryCpuMask,
+        secondaryCpu: secondaryHome)
 }
 
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,

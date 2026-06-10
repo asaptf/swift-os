@@ -1408,6 +1408,29 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   migration, work stealing, cross-CPU wakeups, or concurrent execution of
   multiple EL0 threads in the same address space.
 
+### S5c — repeated EL0 placement stress + run queue lock (DONE, 2026-06-10)
+
+- **Run queue locking.** EL0 process run queue enqueue/dequeue now takes a
+  small per-CPU IRQ-save spinlock. This keeps the CPU0 producer path and the
+  secondary scheduler consumer path from racing on the `head`/`tail` pair when
+  CPU0 publishes work to a secondary run queue. Cross-CPU enqueue also sends
+  `sev` after the queue update so a parked secondary scheduler does not wait
+  for the next timer interrupt before noticing new work.
+- **Repeated placement workload.** `processRunS5cPlacementStress` runs three
+  independent `coproc` primary/secondary rounds through the restricted S2h
+  gate, then stops the secondary scheduler and runs two CPU0 tail processes.
+  Slots are reaped after each round, but aggregate dispatch counts and CPU masks
+  are captured before each reap and folded into S5c telemetry.
+- **Executable checks.** Boot prints `S5c OK: repeated EL0 placement stress
+  completed` and logs either `S5c OK: repeated EL0 placement stress crossed
+  CPUs` or the CPU0 fallback. The S5c guard validates the expected process
+  count, primary/secondary masks, nonzero dispatches, visible run queue lock
+  activity, cleared gate masks, and idle queues. `make s5-placement-stress-test`
+  runs the focused `-smp 4` boot acceptance.
+- **Non-goals.** S5c still does not enable arbitrary process migration, load
+  balancing, shared-address-space execution on multiple CPUs, or secondary
+  scheduler access to unrelated kernel subsystems.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

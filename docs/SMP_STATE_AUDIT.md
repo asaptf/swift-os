@@ -233,11 +233,24 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastS5bBatchLastDispatchCpuA`
 - `kernel/user/process.swift:lastS5bBatchLastDispatchCpuB`
 - `kernel/user/process.swift:lastS5bBatchLastDispatchCpuC`
+- `kernel/user/process.swift:lastS5cStressPrimaryCpuMask`
+- `kernel/user/process.swift:lastS5cStressPrimaryDispatchCount`
+- `kernel/user/process.swift:lastS5cStressProcessCount`
+- `kernel/user/process.swift:lastS5cStressRounds`
+- `kernel/user/process.swift:lastS5cStressRunQueueLockAcquireCount`
+- `kernel/user/process.swift:lastS5cStressRunQueueLockContentionCount`
+- `kernel/user/process.swift:lastS5cStressSecondaryCpu`
+- `kernel/user/process.swift:lastS5cStressSecondaryCpuMask`
+- `kernel/user/process.swift:lastS5cStressSecondaryDispatchCount`
+- `kernel/user/process.swift:lastS5cStressTelemetryValid`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
 - `kernel/user/process.swift:pDispatchCount`
 - `kernel/user/process.swift:pDispatchCpuMask`
+- `kernel/user/process.swift:processRunQueueLockAcquireCount`
+- `kernel/user/process.swift:processRunQueueLockContentionCount`
+- `kernel/user/process.swift:processRunQueueLockWord`
 - `kernel/user/process.swift:pAddressSpaceCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pFileVmas`
@@ -302,7 +315,10 @@ manifest entries left behind after globals move or disappear.
   fork/wait, and spawn/exec while secondary timers are active. S5a exports
   per-CPU timer/idle counters through `SYS_sysinfo` and `/bin/top` so later S5
   scheduler work has a visible utilization signal before broad secondary EL0
-  execution is enabled.
+  execution is enabled. S5c protects EL0 run queue enqueue/dequeue with a
+  per-CPU IRQ-save spinlock and repeatedly exercises the restricted CPU0 to
+  secondary run queue handoff, but arbitrary secondary scheduling and shared
+  address-space concurrency remain out of scope.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple

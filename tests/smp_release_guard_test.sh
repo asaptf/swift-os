@@ -1088,8 +1088,7 @@ done
 for needle in \
   '[I] smp: S5b OK: EL0 scheduler placed batch across CPUs' \
   '[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback' \
-  'S5b OK: three EL0 processes ran with scheduler placement' \
-  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5b markers'; do
+  'S5b OK: three EL0 processes ran with scheduler placement'; do
   if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
     echo "FAIL: S5b SMP boot smoke missing $needle." >&2
     exit 1
@@ -1105,4 +1104,59 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5b release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch)"
+for needle in \
+  'private var processRunQueueLockWord' \
+  'private var processRunQueueLockAcquireCount' \
+  'private func processRunQueueLock(_ cpu: UInt32) -> UInt64' \
+  'private func processRunQueueUnlock(_ cpu: UInt32, _ daif: UInt64)' \
+  'let daif = processRunQueueLock(cpu)' \
+  'processRunQueueUnlock(cpu, daif)' \
+  'if cpu != currentCpuId() {' \
+  'cpu_sev()' \
+  'lastS5cStressTelemetryValid' \
+  'captureLastS5cPlacementStressTelemetry' \
+  'func processRunS5cPlacementStress' \
+  'func processS5cPlacementStressSelfTest' \
+  's5cPlacementStressRounds' \
+  's5cPlacementStressCpu0TailCount' \
+  'lastS5cStressSecondaryCpuMask != secondaryMask'; do
+  if ! grep -Fq -- "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5c run queue locking / placement stress missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'runS5cPlacementStressDemo' \
+  'processRunS5cPlacementStress' \
+  'processS5cPlacementStressSelfTest' \
+  'S5c OK: repeated EL0 placement stress completed' \
+  'S5c OK: repeated EL0 placement stress crossed CPUs' \
+  'S5c OK: repeated EL0 placement stress CPU0 fallback'; do
+  if ! grep -Fq -- "$needle" "$MAIN_SWIFT"; then
+    echo "FAIL: S5c boot placement-stress acceptance missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '[I] smp: S5c OK: repeated EL0 placement stress crossed CPUs' \
+  '[I] smp: S5c OK: repeated EL0 placement stress CPU0 fallback' \
+  'S5c OK: repeated EL0 placement stress completed' \
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5c markers'; do
+  if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
+    echo "FAIL: S5c SMP boot smoke missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  's5-placement-stress-test: build $(QEMU_DTB_SMP4) base-image' \
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S5c make target missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5c release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress)"

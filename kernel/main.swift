@@ -256,6 +256,21 @@ private func runS5bPlacementDemo() -> Bool {
     return true
 }
 
+private func runS5cPlacementStressDemo() -> Bool {
+    uartPuts("swift-os S5c: repeated EL0 scheduler placement stress\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (primaryPacked, primaryPackedLen, primaryArgc) = packArgs(["coproc", "S5c-P"])
+    let (secondaryPacked, secondaryPackedLen, secondaryArgc) = packArgs(["coproc", "S5c-S"])
+    let (tailPacked, tailPackedLen, tailArgc) = packArgs(["coproc", "S5c-T"])
+    processRunS5cPlacementStress(img, sz,
+                                 primaryPacked, primaryPackedLen, primaryArgc,
+                                 secondaryPacked, secondaryPackedLen, secondaryArgc,
+                                 tailPacked, tailPackedLen, tailArgc)
+    uartPuts("S5c OK: repeated EL0 placement stress completed\n")
+    return true
+}
+
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
     let (img, sz) = demoImage("/bin/forkdemo")
@@ -932,6 +947,18 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 klog(.info, "smp", "S5b OK: EL0 scheduler placed batch across CPUs", UInt64(platform.cpuCount))
             } else {
                 klog(.info, "smp", "S5b OK: EL0 scheduler placement CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5cPlacementStressDemo = runS5cPlacementStressDemo()
+        if ranS5cPlacementStressDemo {
+            if !processS5cPlacementStressSelfTest() {
+                uartPuts("panic: S5c scheduler placement stress guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5c OK: repeated EL0 placement stress crossed CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5c OK: repeated EL0 placement stress CPU0 fallback", UInt64(platform.cpuCount))
             }
         }
         runForkDemo()

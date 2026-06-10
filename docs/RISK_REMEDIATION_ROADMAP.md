@@ -251,6 +251,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   telemetry, and logs the S5b marker under `-smp 4`. This proves repeatable
   batch placement across CPUs without enabling arbitrary secondary scheduling,
   shared-address-space concurrency, migration, or load balancing.
+- S5c placement stress (2026-06-10): EL0 run queue enqueue/dequeue is protected
+  by a per-CPU IRQ-save spinlock, and the restricted gate now runs repeated
+  independent `coproc` placement rounds through one secondary scheduler CPU plus
+  CPU0 tails. The guard captures aggregate dispatch masks/counts before reap,
+  checks that the secondary role stayed on a non-primary online CPU under
+  `-smp 4`, and verifies all run queues and gate masks are idle afterward.
 - EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
