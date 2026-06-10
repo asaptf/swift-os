@@ -162,6 +162,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   bits, handle rights, confinement, immutable images, and security limits.
 - [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
   programs, port C/newlib programs, and stage binaries into the base image.
+- [Porting Guide](docs/PORTING_GUIDE.md): evaluate and port source-built
+  applications to the SwiftOS ABI, filesystem, package, and test model.
 - [Application Cookbook](docs/APPLICATION_COOKBOOK.md): copy-paste recipes for
   SwiftOS commands, C utilities, package overlays, and tests.
 - [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and

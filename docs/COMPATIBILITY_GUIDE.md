@@ -353,6 +353,8 @@ For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See
 [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md) and [SWPKG_FORMAT.md](SWPKG_FORMAT.md)
 for design and format details.
 
+For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
+
 ## Porting Decision Tree
 
 Use this checklist before porting a program.

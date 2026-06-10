@@ -3,7 +3,8 @@
 This cookbook gives practical recipes for building small SwiftOS applications.
 Use it with [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for the development model
 and [API_REFERENCE.md](API_REFERENCE.md) for exact syscall, structure, and
-bridge details.
+bridge details. For evaluating upstream source ports, use
+[PORTING_GUIDE.md](PORTING_GUIDE.md).
 
 SwiftOS user programs are static EL0 binaries. The normal workflow is:
 

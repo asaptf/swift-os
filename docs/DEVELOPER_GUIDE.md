@@ -7,6 +7,7 @@ workflow for adding programs to the base image.
 For exact syscall and structure details, see [API_REFERENCE.md](API_REFERENCE.md).
 For platform, runtime, package, filesystem, and porting compatibility decisions,
 see [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md).
+For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
 For copy-paste application recipes, see
 [APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md).
 
