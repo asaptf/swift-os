@@ -124,6 +124,9 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   and attach QEMU networking.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
+- [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
+  limits, and acceptance coverage for the current base image and package
+  overlay.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
   network demos, AI demo operation, logging evidence, and verification gates.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,

@@ -14,6 +14,7 @@ format details.
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
+| Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
 | Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |

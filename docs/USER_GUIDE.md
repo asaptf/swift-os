@@ -147,6 +147,9 @@ Common native Swift tools:
 Busybox is staged as `/bin/busybox` and is used for the login shell. It is a
 legacy bring-up and compatibility tool, not the long-term application model.
 
+For exact syntax, examples, capability notes, and acceptance-test coverage for
+each shipped command, see [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md).
+
 ## Shell Basics
 
 The default shell is busybox `ash`.
