@@ -509,7 +509,7 @@ make package-overlay-test
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
 | C5 driver-service/device-authority path | `make c5-device-authority-test` |
-| Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
+| Documentation-only configuration update | `make docs-test`, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this
 repository revision.
