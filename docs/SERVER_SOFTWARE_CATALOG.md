@@ -11,14 +11,14 @@ maintainers planning `swift-os-ports` recipes.
 > package-store boot activation, local `/bin/pkg install FILE`, signed static
 > HTTP repository fixtures, repository configuration, `pkg update`, `pkg search`,
 > `pkg info`, `pkg install NAME`, and name-based dependency resolution. The
-> checked ports seed now covers Lua, zlib, ca-certificates, pcre2, tzdata, and a
-> minimal static HTTP-only nginx package. `swport` validates the catalog and
+> checked ports seed now covers Lua, zlib, ca-certificates, pcre2, tzdata, a
+> minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
-> the six-package seed from a local repository, a static-host layout, and a
+> the seven-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, remove, upgrade, version-constraint solving, package
 > transaction rollback, and large-package streaming downloads remain roadmap
@@ -50,7 +50,7 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
@@ -58,9 +58,10 @@ paths are available in the current tree:
 | pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
 | tzdata repository fixture | Compile IANA TZif zoneinfo files with host `zic`, package `/usr/share/zoneinfo`, and publish the signed local repository fixture | `make ports-tzdata-repo-fixture` |
 | nginx binary repository fixture | Cross-build minimal static HTTP-only nginx, then publish it into a signed local repository fixture | `make ports-nginx-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, ca-certificates, pcre2, tzdata, and nginx into one signed local repository and install all six from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all six packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| sqlite binary repository fixture | Cross-build static SQLite, then publish `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata into a signed local repository fixture | `make ports-sqlite-repo-fixture` |
+| Ports seed repository fixture | Publish Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all seven from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all seven packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -151,8 +152,8 @@ Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
 inspection, `build/swport recipe ...` for the checked Lua, zlib,
-ca-certificates, pcre2, tzdata, and nginx recipes, and the host package tooling
-for package construction.
+ca-certificates, pcre2, tzdata, nginx, and sqlite recipes, and the host package
+tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run

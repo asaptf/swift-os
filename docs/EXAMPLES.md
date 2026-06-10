@@ -341,10 +341,10 @@ make package-repo-install-test
 
 ## 11. Install Source-Built Packages From A Static-Host Fixture
 
-The current ports fixture cross-builds Lua, zlib, pcre2, and nginx, packages
-ca-certificates and tzdata, publishes them into one signed seed repository, copies that
-repository into a static-hostable web root, and proves that the guest can
-install from the hosted layout.
+The current ports fixture cross-builds Lua, zlib, pcre2, nginx, and sqlite,
+packages ca-certificates and tzdata, publishes them into one signed seed
+repository, copies that repository into a static-hostable web root, and proves
+that the guest can install from the hosted layout.
 
 Host:
 
@@ -367,12 +367,14 @@ pkg search ca-certificates
 pkg search pcre2
 pkg search tzdata
 pkg search nginx
+pkg search sqlite
 pkg install lua
 pkg install zlib
 pkg install ca-certificates
 pkg install pcre2
 pkg install tzdata
 pkg install nginx
+pkg install sqlite
 /usr/bin/lua -e 'print(21 * 2)'
 echo static-host-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
@@ -384,18 +386,23 @@ echo nginx-lighttpd > /tmp/pcre2.txt
 cat /usr/share/zoneinfo/swiftos-tzdata.version
 /usr/sbin/nginx -v
 cat /usr/share/nginx/swiftos-nginx.version
+/usr/bin/sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;'
+cat /usr/share/sqlite/swiftos-sqlite.version
 ```
 
 Expected signals:
 
 - `pkg update` accepts the static-hosted signed catalog.
-- `pkg search lua`, `pkg search zlib`, `pkg search ca-certificates`, and
-  `pkg search pcre2` find the current seed packages.
-- `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`, and
-  `pkg install pcre2`, `pkg install tzdata`, and `pkg install nginx` activate all six packages.- Lua evaluates the expression and prints `42`; `minigzip` round-trips
+- `pkg search lua`, `pkg search zlib`, `pkg search ca-certificates`,
+  `pkg search pcre2`, and `pkg search sqlite` find the current seed packages.
+- `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`,
+  `pkg install pcre2`, `pkg install tzdata`, `pkg install nginx`, and
+  `pkg install sqlite` activate all seven packages.
+- Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; the CA
   marker prints `curl-ca-bundle 2026-05-14 121 certificates`; `pcre2grep`
-  prints `nginx-lighttpd`; tzdata and nginx print their package markers.
+  prints `nginx-lighttpd`; tzdata, nginx, and SQLite print their package
+  markers; SQLite prints `42` in list mode.
 
 Equivalent automated check:
 
