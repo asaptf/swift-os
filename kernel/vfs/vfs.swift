@@ -322,12 +322,21 @@ private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>) -> (Bool, Int, U
     return (true, entryCount, entriesOffset, stringsOffset, stringsSize, dataOffset)
 }
 
+func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    let rawCount = virtioBlkSwosbaseImageCount()
+    if image >= 0 && image < rawCount {
+        return virtioBlkReadRangeFromImage(image, byteOff, buf, len)
+    }
+    let storeIndex = image - rawCount
+    return pkgStoreReadActivePayloadRange(storeIndex, byteOff, buf, len)
+}
+
 private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
     if !virtioBlkAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
-        virtioBlkReadRangeFromImage(image, 0, raw.baseAddress, 64) == 0
+        vfsImageReadRange(image, 0, raw.baseAddress, 64) == 0
     }
     if !hok { return false }
 
@@ -343,7 +352,7 @@ private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
                     var k = 0
                     while k < entryCount && !found {
                         let entryOffset = entriesOffset + UInt64(k * 40)
-                        if virtioBlkReadRangeFromImage(image, entryOffset, entry.baseAddress, 40) != 0 {
+                        if vfsImageReadRange(image, entryOffset, entry.baseAddress, 40) != 0 {
                             return
                         }
                         let e = entry.baseAddress!
@@ -351,7 +360,7 @@ private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
                         let pathLen = Int(le32(e, 4))
                         if pathLen == targetBuf.count && UInt64(pathOff + pathLen) <= stringsSize {
                             let pathOffset = stringsOffset + UInt64(pathOff)
-                            if virtioBlkReadRangeFromImage(image, pathOffset, path.baseAddress, UInt32(pathLen)) == 0 {
+                            if vfsImageReadRange(image, pathOffset, path.baseAddress, UInt32(pathLen)) == 0 {
                                 if bytesEqual(path.baseAddress!, pathLen, targetBuf.baseAddress!, targetBuf.count) {
                                     found = true
                                 }
@@ -374,7 +383,7 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
-        virtioBlkReadRangeFromImage(image, 0, raw.baseAddress, 64) == 0
+        vfsImageReadRange(image, 0, raw.baseAddress, 64) == 0
     }
     if !hok { return false }
 
@@ -386,7 +395,7 @@ private func buildImageFromDisk(_ image: Int, _ root: Int, allowExistingDirs: Bo
 
         guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
         let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
-        if virtioBlkReadRangeFromImage(image, entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+        if vfsImageReadRange(image, entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
 
         let stringsBase = Int(stringsOffset - entriesOffset)
         for k in 0..<entryCount {
@@ -441,7 +450,6 @@ private func buildBaseFromDisk(_ root: Int) -> Int {
 
 private func mountPackageImages(_ root: Int, baseImage: Int) {
     let count = virtioBlkSwosbaseImageCount()
-    if count <= 1 { return }
     var image = 0
     while image < count {
         if image != baseImage {
@@ -452,6 +460,17 @@ private func mountPackageImages(_ root: Int, baseImage: Int) {
             }
         }
         image += 1
+    }
+    let storeCount = pkgStoreActivePayloadCount()
+    var store = 0
+    while store < storeCount {
+        let storeImage = count + store
+        if buildImageFromDisk(storeImage, root, allowExistingDirs: true) {
+            klog(.info, "pkg", "P3: package store payload mounted", UInt64(store))
+        } else {
+            klog(.info, "pkg", "P3: package store payload rejected", UInt64(store))
+        }
+        store += 1
     }
 }
 
@@ -1053,7 +1072,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         if avail <= 0 { return 0 }
         let want = min(Int(count), avail)
         let off = UInt64(nodes[node].diskOffset + file.offset)
-        let rc = virtioBlkReadRangeFromImage(nodes[node].diskImage, off, UnsafeMutableRawPointer(dst), UInt32(want))
+        let rc = vfsImageReadRange(nodes[node].diskImage, off, UnsafeMutableRawPointer(dst), UInt32(want))
         if rc != 0 { return errInvalid }
         file.offset += want
         openDescriptions[d] = file
@@ -2099,12 +2118,12 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
 /// file-backed mmap. Returns (ok, diskByteOffset, dataLen); ok is false unless
 /// `fd` is a readable, disk-backed (read-only base image) regular file. Authority
 /// was already checked at open time, so no re-confinement check here.
-func vfsFileExtent(fd: Int) -> (Bool, Int, Int) {
+func vfsFileExtent(fd: Int) -> (Bool, Int, Int, Int) {
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return (false, 0, 0) }
+    guard validFD(proc, fd) else { return (false, 0, 0, 0) }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0) }
+    guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0, 0) }
     let node = openDescriptions[entry.object].node
-    guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0) }
-    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+    guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0, 0) }
+    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }

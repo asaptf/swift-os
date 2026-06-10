@@ -204,6 +204,14 @@ Risks:
 Goal: add a narrow persistent package store with activation generations. This
 is the storage and activation substrate for P4, not the final user-facing CLI.
 
+Current state: P3a is implemented. The kernel can discover one `SWPKGST1`
+package-store disk, scan payload/activation/active-pointer records, and mount
+payloads from the active generation at boot. `tools/pkgstore.swift` can create a
+preseeded store image from `.swpkg` artifacts, and
+`tests/pkg_store_boot_test.sh` boots that store and executes `/usr/bin/pkghello`.
+The remaining P3 work is target-side append/write support, active-generation
+updates from EL0, rollback, and garbage collection.
+
 Likely files/modules:
 
 - `kernel/drivers/virtio_blk.swift`
