@@ -42,8 +42,6 @@ Use this guide with:
   activation records.
 - [Static Package Repository](PKGREPO_FORMAT.md) for the P5c signed HTTP
   catalog layout.
-- [Ports Seed Catalog](../ports/README.md) for the P6a checked package catalog
-  and `swport catalog` inspection commands.
 - [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for package priorities
   and OS prerequisite bundles.
 - [Porting Guide](PORTING_GUIDE.md) for source-level application porting.

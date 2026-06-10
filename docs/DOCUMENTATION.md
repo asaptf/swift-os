@@ -46,7 +46,6 @@ format details.
 | Build, inspect, boot, test, and troubleshoot package artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
 | Design package recipes, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
-| Inspect the P6a package-priority catalog and `swport catalog` checks | [Ports Seed Catalog](../ports/README.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
 | Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |

@@ -40,7 +40,7 @@ Current non-support targets:
 - Persistent writable root filesystem behavior.
 - Production TLS trust decisions from `tlsget`.
 - General x86-64, Raspberry Pi, or PC hardware boot.
-- Target-side package remove, upgrade, rollback, and version-constraint solving
+- Target-side package remove, upgrade, rollback, and dependency-solving
   transactions.
 
 For the full compatibility matrix, see

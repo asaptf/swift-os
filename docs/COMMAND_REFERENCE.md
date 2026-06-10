@@ -788,7 +788,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from the signed HTTP repository fixture, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh` |
+| `pkg` | `pkg update URL`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from the signed HTTP repository fixture, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh` |
 
 Examples:
 
@@ -809,9 +809,7 @@ repository fixture, install a package by name from that fixture, or list active
 package-store records.
 
 ```text
-pkg repo set URL
-pkg repo show
-pkg update [URL]
+pkg update URL
 pkg search TEXT
 pkg info NAME
 pkg install FILE
@@ -840,9 +838,7 @@ pkghello: hello from package overlay
 Example signed repository fixture:
 
 ```sh
-pkg repo set http://10.0.2.2:<port>/good/aarch64/current
-pkg repo show
-pkg update
+pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
@@ -853,16 +849,10 @@ pkg list
 Expected output includes:
 
 ```text
-pkg: repository set http://10.0.2.2:<port>/good/aarch64/current
-http://10.0.2.2:<port>/good/aarch64/current
-pkg: catalog updated http://10.0.2.2:<port>/good/aarch64/current
+pkg: catalog updated
 pkghello-1.0.0_1
 sha256:
-depends: pkgdep
-pkg: fetching pkgdep-1.0.0_1
-pkg: installed pkgdep-1.0.0_1
 pkg: installed pkghello-1.0.0_1
-pkgdep-1.0.0_1
 pkghello-1.0.0_1
 pkghello: hello from package overlay
 ```
@@ -870,15 +860,12 @@ pkghello: hello from package overlay
 Notes:
 
 - `pkg install FILE` expects a local `.swpkg`.
-- `pkg repo set URL` stores the active repository URL in tmpfs for the current
-  boot. `pkg repo show` prints the configured URL.
-- `pkg update [URL]` expects a P5c signed static HTTP repository URL, such as
-  the QEMU fixture path under
-  `http://10.0.2.2:<port>/good/aarch64/current`. It rejects expired catalogs,
-  incompatible package entries, and invalid dependency entries.
+- `pkg update URL` expects a P5b signed static HTTP repository URL, such as the
+  QEMU fixture path under `http://10.0.2.2:<port>/good/aarch64/current`.
+  It rejects expired catalogs and incompatible package entries.
 - `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
-  cached by `pkg update`; install by name resolves package-name dependencies
-  and verifies each downloaded package SHA-256 before activation.
+  cached by `pkg update`; install by name verifies the downloaded package
+  SHA-256 before activation.
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active

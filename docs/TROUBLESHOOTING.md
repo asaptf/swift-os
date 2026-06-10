@@ -434,9 +434,7 @@ make package-repo-install-test
 The tested guest flow is:
 
 ```sh
-pkg repo set http://10.0.2.2:<port>/good/aarch64/current
-pkg repo show
-pkg update
+pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
@@ -449,16 +447,14 @@ The serial log should include:
 P3: package store active generation
 P3: package store payload mounted
 pkg: catalog updated
-depends: pkgdep
-pkg: installed pkgdep-1.0.0_1
 pkg: installed pkghello-1.0.0_1
 ```
 
 If `pkg update [URL]` fails, confirm that the base image contains
 `/etc/pkg/repo-root.pub`, the host HTTP server is serving the same fixture that
-produced the key, and the guest was booted with virtio-net. P5c also rejects
-expired catalogs, catalogs whose package entries target the wrong architecture,
-target, ABI, or linkage, and catalogs with invalid dependency entries.
+produced the key, and the guest was booted with virtio-net. P5b also rejects
+expired catalogs and catalogs whose package entries target the wrong
+architecture, target, ABI, or linkage.
 
 If `pkg install NAME` fails after a successful update, inspect
 `build/pkgrepo-root/aarch64/current`, check whether the guest printed
