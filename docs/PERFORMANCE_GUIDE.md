@@ -55,6 +55,42 @@ capacity limit.
 | Network throughput guard | `tests/net_zero_copy_throughput_test.sh` | Bounded HTTP burst regression guard |
 | Full acceptance suite | `make test` | Broad functional regression evidence |
 
+## Choose A Measurement Package
+
+Start with the claim you want to make. A useful performance note names the
+claim, the environment, the focused proof, and the boundary of what the result
+does not prove.
+
+| Claim or concern | Collect | Focused proof | Do not claim |
+| --- | --- | --- | --- |
+| Boot still reaches the product baseline | Serial log, `git log -1 --oneline`, QEMU command | `./tests/boot_test.sh` | Real hardware boot time |
+| Artifact footprint changed | `ls -lh build/kernel.elf build/kernel.bin build/base.img build/swift-os.img` | `make build base-image` or `make disk base-image` | Runtime memory pressure from size alone |
+| Memory use changed | `top -b -n 1` before and after the workload | Workload test plus `./tests/top_test.sh` | Persistent memory trend or production capacity |
+| HTTP path regressed | Host request output, serial markers, host/QEMU version | `./tests/httpd_test.sh`, `bash ./tests/net_zero_copy_throughput_test.sh` | Real NIC throughput |
+| LLM serving changed | `/health`, one `/completion`, `/metrics`, serial `llmd: served ...` line | `./tests/llm_serve_test.sh` | Hardware-independent tokens/sec |
+| Local inference changed | Model generation, serial output, optional before/after `top` | `./tests/llm_run_test.sh` | Production LLM throughput |
+| SMP-sensitive behavior changed | `SMP_CPUS`, boot profile, per-CPU `top` output, S5 markers | `make s5-run-any-placement-test` or active SMP gate | Completed load-balancing policy |
+| Package footprint changed | `.swpkg`, payload image, package-store image sizes, installed paths | Matching package fixture and install test | Persistent package upgrade/rollback behavior |
+| Documentation performance claim changed | Exact guide section and validation command | `git diff --check`, `make docs-test` | Any behavior not covered by the cited test |
+
+Example HTTP regression evidence:
+
+```sh
+git log -1 --oneline
+qemu-system-aarch64 --version
+./tests/httpd_test.sh
+bash ./tests/net_zero_copy_throughput_test.sh
+```
+
+Example LLM serving evidence:
+
+```sh
+./tests/llm_serve_test.sh
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl -fsS http://127.0.0.1:8080/metrics
+```
+
 ## What Not To Claim Yet
 
 Current SwiftOS documentation should not claim:
