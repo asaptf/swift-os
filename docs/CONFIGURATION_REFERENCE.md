@@ -134,6 +134,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make ports-zlib-repo-fixture` | Cross-build zlib/minigzip and publish its signed local repository fixture. |
 | `make ports-bzip2-repo-fixture` | Cross-build bzip2 tools/libbz2 and publish its signed local repository fixture. |
 | `make ports-zstd-repo-fixture` | Cross-build zstd tools/libzstd and publish its signed local repository fixture. |
+| `make ports-xz-repo-fixture` | Cross-build xz tools/liblzma and publish its signed local repository fixture. |
 | `make ports-ca-certificates-repo-fixture` | Build the data-only CA certificate package and signed local repository fixture. |
 | `make ports-pcre2-repo-fixture` | Cross-build PCRE2/pcre2grep and publish its signed local repository fixture. |
 | `make ports-tzdata-repo-fixture` | Build the data-only IANA time zone package and signed local repository fixture. |
@@ -141,7 +142,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make ports-sqlite-repo-fixture` | Cross-build SQLite and publish its signed local repository fixture. |
 | `make package-lua-install-fixture` | Build the writable package-store image used by Lua/ports repository install tests. |
 | `make package-lua-repo-install-test` | Run target-side Lua install from the signed Lua repository fixture. |
-| `make ports-seed-repo-fixture` | Publish Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed seed repository. |
+| `make ports-seed-repo-fixture` | Publish Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed seed repository. |
 | `make package-ports-seed-repo-install-test` | Run target-side install of the checked seed repository packages by name. |
 | `make ports-static-host-publish` | Copy the seed repository into a deployable static-host web root. |
 | `make package-static-host-repo-install-test` | Run the hosted-layout package repository install test. |

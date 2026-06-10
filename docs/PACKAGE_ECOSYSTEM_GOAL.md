@@ -66,19 +66,22 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `ports/catalog.json` records the first package priorities, prerequisite
     bundles, runtime dependency names, and blockers;
   - `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
-    `ports/archivers/bzip2/Port.json`, `ports/security/ca-certificates/Port.json`,
+    `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`,
+    `ports/archivers/xz/Port.json`, `ports/security/ca-certificates/Port.json`,
     `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`,
-    `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` are
-    the checked recipe scaffolds;
+    `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` are the
+    checked recipe scaffolds;
   - `build/swport catalog validate/list/inspect` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
   - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`,
     `scripts/build-zlib.sh` cross-builds static zlib plus `minigzip` against
-    the local newlib sysroot, `scripts/build-ca-certificates.sh` packages
-    the pinned Mozilla CA bundle as data, `scripts/build-bzip2.sh`
-    cross-builds static bzip2 tools and `libbz2.a`, and `scripts/build-pcre2.sh`
-    cross-builds static PCRE2 libraries plus `pcre2grep`;
+    the local newlib sysroot, `scripts/build-bzip2.sh` cross-builds static
+    bzip2 tools and `libbz2.a`, `scripts/build-zstd.sh` cross-builds static
+    zstd tools and `libzstd.a`, `scripts/build-xz.sh` cross-builds static xz
+    tools and `liblzma.a`, `scripts/build-ca-certificates.sh` packages the
+    pinned Mozilla CA bundle as data, and `scripts/build-pcre2.sh` cross-builds
+    static PCRE2 libraries plus `pcre2grep`;
   - `scripts/build-tzdata.sh` compiles IANA TZif zoneinfo with host `zic`,
     `scripts/build-nginx.sh` cross-builds a minimal static HTTP-only nginx
     package with the local SwiftOS crossbuild overlay, and
@@ -89,19 +92,19 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, ca-certificates,
+  - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, xz, ca-certificates,
     pcre2, tzdata, nginx, and sqlite into one signed local seed repository, and
-    `make package-ports-seed-repo-install-test` proves installing all nine
-    packages plus the `minigzip` and bzip2 round trips, CA bundle marker,
-    `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and
-    SQLite SQL smoke inside QEMU;
+    `make package-ports-seed-repo-install-test` proves installing all ten
+    packages plus the `minigzip`, bzip2, zstd, and xz round trips, CA bundle
+    marker, `pcre2grep` pattern match, zoneinfo marker, nginx version/marker,
+    and SQLite SQL smoke inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install all nine packages from that published layout;
+    proves SwiftOS can install all ten packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite
+    install Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite
     from a DNS-resolved HTTP repository URL.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
@@ -131,7 +134,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog and nine checked recipes live in this repository under
+The current seed catalog and ten checked recipes live in this repository under
 `ports/`; the full ports tree should move to `swift-os-ports` once
 cross-building, testing, publishing, and broader package maintenance are ready.
 

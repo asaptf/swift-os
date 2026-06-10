@@ -123,7 +123,7 @@ if manifest.get("kind") != "swift-os-static-host-repository":
     raise SystemExit("wrong manifest kind")
 if manifest.get("catalog") != "aarch64/current/catalog.signed":
     raise SystemExit("wrong catalog path")
-if not {"lua", "zlib", "bzip2", "zstd", "ca-certificates", "pcre2", "tzdata", "nginx", "sqlite"}.issubset(names):
+if not {"lua", "zlib", "bzip2", "zstd", "xz", "ca-certificates", "pcre2", "tzdata", "nginx", "sqlite"}.issubset(names):
     raise SystemExit(f"missing package names: {names}")
 PY
 
@@ -162,6 +162,8 @@ send_line "pkg search bzip2"
 await "bzip2-1.0.8_1" 60 || drive_fail "pkg search did not find bzip2"
 send_line "pkg search zstd"
 await "zstd-1.5.7_1" 60 || drive_fail "pkg search did not find zstd"
+send_line "pkg search xz"
+await "xz-5.8.3_1" 60 || drive_fail "pkg search did not find xz"
 send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
@@ -186,6 +188,12 @@ send_line "echo zstd-static-host-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d 
 await "zstd-static-host-ok" 60 || drive_fail "zstd round-trip output mismatch"
 send_line "cat /usr/share/zstd/swiftos-zstd.version"
 await "zstd 1.5.7 swift-os static-single-thread" 60 || drive_fail "zstd marker output mismatch"
+send_line "pkg install xz"
+await "pkg: installed xz-5.8.3_1" 120 || drive_fail "xz package was not installed"
+send_line "echo xz-static-host-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c"
+await "xz-static-host-ok" 60 || drive_fail "xz round-trip output mismatch"
+send_line "cat /usr/share/xz/swiftos-xz.version"
+await "xz 5.8.3 swift-os static-small-no-threads" 60 || drive_fail "xz marker output mismatch"
 send_line "pkg install ca-certificates"
 await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
 send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
@@ -227,6 +235,7 @@ grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install o
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
 grep -qF "pkg: installed bzip2-1.0.8_1" <<<"$clean" || { echo "FAIL: bzip2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zstd-1.5.7_1" <<<"$clean" || { echo "FAIL: zstd install output missing" >&2; ok=0; }
+grep -qF "pkg: installed xz-5.8.3_1" <<<"$clean" || { echo "FAIL: xz install output missing" >&2; ok=0; }
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
@@ -237,6 +246,8 @@ grep -qF "bzip2-static-host-ok" <<<"$clean" || { echo "FAIL: bzip2 round-trip ou
 grep -qF "bzip2 1.0.8 swift-os static-tools" <<<"$clean" || { echo "FAIL: bzip2 marker output missing" >&2; ok=0; }
 grep -qF "zstd-static-host-ok" <<<"$clean" || { echo "FAIL: zstd round-trip output missing" >&2; ok=0; }
 grep -qF "zstd 1.5.7 swift-os static-single-thread" <<<"$clean" || { echo "FAIL: zstd marker output missing" >&2; ok=0; }
+grep -qF "xz-static-host-ok" <<<"$clean" || { echo "FAIL: xz round-trip output missing" >&2; ok=0; }
+grep -qF "xz 5.8.3 swift-os static-small-no-threads" <<<"$clean" || { echo "FAIL: xz marker output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
 grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
@@ -251,7 +262,7 @@ grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catal
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, ca-certificates, pcre2, tzdata, nginx, and sqlite from the static-host published repository"
+  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite from the static-host published repository"
   exit 0
 fi
 
