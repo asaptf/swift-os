@@ -287,6 +287,11 @@ private func checkDocumentationMapCoverage() {
             ok = false
         }
     }
+    if FileManager.default.fileExists(atPath: "ports/README.md") &&
+        !mapText.contains("(../ports/README.md)") {
+        fail("\(mapPath): missing public documentation map link for ports/README.md")
+        ok = false
+    }
 }
 
 private func stagedBaseCommands() -> [String] {
