@@ -58,6 +58,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${SWIFT_CM_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${SWIFT_CM_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -69,27 +79,27 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf 'echo hi > /tmp/f\n' >&3
+send_line 'echo hi > /tmp/f'
 await "echo hi > /tmp/f" 60 || drive_fail "shell did not accept file creation command"
-printf '/bin/chmod 600 /tmp/f\n' >&3
+send_line '/bin/chmod 600 /tmp/f'
 await "M11d: exec loaded from disk /bin/chmod" 60 || drive_fail "chmod did not execute"
-printf '/bin/ls -l /tmp/f\n' >&3
+send_line '/bin/ls -l /tmp/f'
 await_regex '^-rw------- +1 +root +root +3 +' 60 || drive_fail "chmod 600 was not reflected"
-printf '/bin/chown 2 /tmp/f\n' >&3
+send_line '/bin/chown 2 /tmp/f'
 await "M11d: exec loaded from disk /bin/chown" 60 || drive_fail "chown did not execute"
-printf '/bin/ls -l /tmp/f\n' >&3
+send_line '/bin/ls -l /tmp/f'
 await_regex '^-rw------- +1 +user +user +3 +' 60 || drive_fail "chown 2 was not reflected"
-printf 'echo CHOWN-DONE\n' >&3
+send_line 'echo CHOWN-DONE'
 await "CHOWN-DONE" 180 || drive_fail "shell did not survive chmod/chown"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-
