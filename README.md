@@ -99,6 +99,12 @@ What exists today, in the order it was built:
   all user-half page tables and leaf frames on process exit/exec/reap; a boot-
   time reclaim demo asserts zero leak across fork+exec+spawn round-trips.
 
+- **Package and ports fixtures:** `.swpkg` packages, writable package-store
+  images, signed static repository catalogs, and target-side `pkg install NAME`
+  are covered by executable fixtures. The current ports path also cross-builds
+  static AArch64 `lua` and `luac` on the host and publishes them into a signed
+  local repository fixture.
+
 ## Philosophy
 
 The design is intentionally narrow:
@@ -141,7 +147,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   limits, and acceptance coverage for the current base image and package
   overlay.
 - [Host Tool Reference](docs/HOST_TOOL_REFERENCE.md): host-side package,
-  repository, ports catalog, base-image, and model-bundle tools.
+  repository, ports catalog, Lua fixture, base-image, and model-bundle tools.
 - [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
@@ -179,9 +185,10 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Application Cookbook](docs/APPLICATION_COOKBOOK.md): copy-paste recipes for
   SwiftOS commands, C utilities, package overlays, and tests.
 - [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
-  troubleshoot `.swpkg`, payload overlay, and package-store artifacts.
+  troubleshoot `.swpkg`, repository, package-store, and Lua fixture artifacts.
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
-  recipe, CI smoke-test, and repository publishing workflow for maintainers.
+  recipe, Lua cross-build fixture, CI smoke-test, and repository publishing
+  workflow for maintainers.
 - [SWPKG Format](docs/SWPKG_FORMAT.md): `.swpkg` container layout, manifest,
   payload, and verification rules.
 - [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
@@ -205,7 +212,8 @@ EL1  kernel        Embedded Swift: runtime, mm, sched, vfs, drivers, net, securi
 Key architectural decisions:
 
 - **Target:** `aarch64`, QEMU `virt` (primary), QEMU+AAVMF UEFI (primary boot path), VirtualBox ARM
-  (best-effort). Single core.
+  (best-effort). `make run` defaults to one CPU; SMP hardening has dedicated
+  `-smp N` tests and readiness gates.
 - **Boot:** UEFI (`BOOTAA64.EFI` on an ESP in a GPT disk image) is the primary path; direct `-kernel`
   is kept as a fallback.
 - **Hardware discovery:** a boot-time DTB reader populates a global `Platform`; driver and PMM

@@ -199,7 +199,8 @@ top -b -n 2 -d 1
 
 `top` shows uptime, task counts, CPU and memory summaries, kernel footprint,
 and a process table. In SMP boot profiles it also prints per-CPU busy/idle
-utilization lines. The host-side acceptance gate is `make s5-cpu-util-test`.
+utilization lines. The host-side acceptance gate is
+`make smp-cpu-utilization-test`.
 
 Interactive `top` uses raw terminal mode. Press `q` to quit.
 

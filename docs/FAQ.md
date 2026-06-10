@@ -202,8 +202,8 @@ make package-local-install-test
 ```
 
 The broader package system is still not a public repository manager. Network
-repository install is available as a P5c signed HTTP fixture with an explicit
-or configured URL:
+repository install is available as a signed HTTP fixture with an explicit or
+configured URL:
 
 ```sh
 pkg repo set http://10.0.2.2:<port>/aarch64/current
@@ -214,12 +214,28 @@ pkg info pkghello
 pkg install pkghello
 ```
 
-Public hosted repositories, version-constraint solving, remove, upgrade, and
-rollback are future work. P5c resolves catalog dependencies by package name.
+Current signed repository installs resolve catalog dependencies by package name.
 Host-built `.swpkg` artifacts, direct read-only payload overlays, and preseeded
-package-store boot activation also remain supported.
+package-store boot activation also remain supported. Public hosted
+repositories, version-constraint solving, remove, upgrade, and rollback are
+future work.
 
 See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
+
+### Can I install Lua from the guest package manager?
+
+Not yet. P6e can cross-build static AArch64 `lua` and `luac` on the host,
+package them into `build/lua.swpkg`, and publish a signed local Lua repository
+fixture:
+
+```sh
+make ports-lua-repo-fixture
+build/swpkg inspect build/lua.swpkg
+build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+```
+
+That is a maintainer-side proof today. A target-side QEMU smoke for serving
+that repository and proving `pkg install lua && lua -v` is still roadmap work.
 
 ### Can package files write into `/bin` or `/etc`?
 
@@ -229,10 +245,11 @@ boot-critical files remain part of the base image.
 ### Are packages signed?
 
 The current `.swpkg` format verifies hashes and deterministic structure, but
-package-level publisher signatures are future milestones. P5c signed static
-HTTP repositories verify `catalog.signed` with Ed25519, reject expired or
+package-level publisher signatures are future milestones. Signed static HTTP
+repositories verify `catalog.signed` with Ed25519, reject expired or
 incompatible catalogs, validate dependency entries, and verify downloaded
-package blobs with SHA-256 before install. Model serving bundles have their own
+package blobs with SHA-256 before install. The Lua repository fixture uses the
+same signed catalog path on the host. Model serving bundles have their own
 Ed25519 manifest verification path.
 
 See [SWPKG_FORMAT.md](SWPKG_FORMAT.md),

@@ -15,6 +15,8 @@ A default SwiftOS boot gives you:
 - `/bin/console-login` as init, followed by a static busybox `ash` shell.
 - Native Embedded Swift userland tools such as `ls`, `cat`, `ps`, `top`, `id`,
   `calc`, `kv`, `httpd`, `udpecho`, and `tcpecho`.
+- Package fixtures for local `.swpkg` install, signed repository install, and
+  the host-built Lua source-port repository fixture.
 - A POSIX-like syscall ABI that is intentionally not the Linux ABI.
 
 ## Host Requirements
@@ -149,6 +151,9 @@ ps
 top -b -n 2 -d 1
 ```
 
+When booted through SMP test profiles, `top` also reports per-CPU busy/idle
+utilization lines.
+
 Use native Swift tools:
 
 ```sh
@@ -270,6 +275,17 @@ Run the SMP smoke and readiness tests:
 ```sh
 make smp-test
 make s1-test
+make smp-cpu-utilization-test
+```
+
+Run focused package and ports fixture gates:
+
+```sh
+make package-local-install-test
+make package-repo-install-test
+make ports-catalog-test
+make ports-recipe-test
+make ports-lua-repo-fixture
 ```
 
 The test suite includes host-side Swift unit tests and in-QEMU boot assertions.

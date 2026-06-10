@@ -21,7 +21,7 @@ format details.
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
 | Administer accounts, capabilities, base configuration, packages, and services | [Administration Guide](ADMINISTRATION_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
-| Look up host-side package, repository, ports, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
+| Look up host-side package, repository, ports, Lua fixture, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
 | Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
@@ -44,9 +44,9 @@ format details.
 | Understand the system architecture and non-goals | [Architecture](ARCHITECTURE.md) |
 | Understand handles, capabilities, and the isolation roadmap | [Capabilities](CAPABILITIES.md) |
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
-| Build, inspect, boot, test, and troubleshoot package artifacts | [Package Guide](PACKAGE_GUIDE.md) |
+| Build, inspect, boot, test, and troubleshoot package, repository, and Lua fixture artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
-| Design package recipes, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
+| Design package recipes, Lua cross-build fixtures, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
 | Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |
@@ -95,7 +95,9 @@ that proves the same path.
 SwiftOS is past bring-up and can boot under QEMU, authenticate users, run a
 native Swift userland, serve files from a read-only base image, allocate tmpfs
 scratch space, run a small TCP/IP stack, and execute user programs through its
-own POSIX-like syscall surface.
+own POSIX-like syscall surface. Package fixtures cover local `.swpkg`
+installation, signed static repository installation, and a host-built Lua
+source-port repository fixture.
 
 Current product-shaping work is tracked in
 [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The most important
