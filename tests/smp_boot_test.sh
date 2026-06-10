@@ -57,10 +57,12 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2c OK: kernel scheduler owner ready"
   EXPECTS+=$'\n'"[I] smp: S2d OK: process run queue scaffold ready"
   EXPECTS+=$'\n'"[I] smp: S2e OK: dormant process scheduler CPUs published"
+  EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
   EXPECTS+=$'\n'"[I] smp: S2d OK: process run queue stayed CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2e OK: secondary process scheduler contexts stayed dormant"
+  EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry stayed CPU0-owned"
   EXPECTS+=$'\n'"[I] smp: S2b OK: no secondary EL0 execution"
 fi
 
@@ -155,6 +157,7 @@ if [[ "$found" -eq 1 ]]; then
   no_secondary_kernel_line="$(grep -nF "[I] smp: S2c OK: no secondary kernel scheduler execution" "$LOG" | head -1 | cut -d: -f1)"
   runqueue_line="$(grep -nF "[I] smp: S2d OK: process run queue stayed CPU0-owned" "$LOG" | head -1 | cut -d: -f1)"
   dormant_line="$(grep -nF "[I] smp: S2e OK: secondary process scheduler contexts stayed dormant" "$LOG" | head -1 | cut -d: -f1)"
+  telemetry_line="$(grep -nF "[I] smp: S2f OK: process dispatch telemetry stayed CPU0-owned" "$LOG" | head -1 | cut -d: -f1)"
   if [[ -z "$userland_line" || -z "$no_secondary_line" ||
         "$userland_line" -ge "$no_secondary_line" ]]; then
     echo "FAIL: S2b no-secondary-EL0 marker must appear after the Swift ps userland marker." >&2
@@ -188,8 +191,16 @@ if [[ "$found" -eq 1 ]]; then
     echo "---------------------------------------------" >&2
     exit 1
   fi
+  if [[ -z "$telemetry_line" || "$dormant_line" -ge "$telemetry_line" ||
+        "$telemetry_line" -ge "$no_secondary_line" ]]; then
+    echo "FAIL: S2f dispatch telemetry marker must appear after S2e and before the no-secondary-EL0 marker." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

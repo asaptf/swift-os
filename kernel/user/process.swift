@@ -7,7 +7,8 @@
 // INTO a runnable process and regains control when that process yields, blocks,
 // is preempted by the timer, or exits — classic per-CPU scheduler context. S2d
 // also routes every pReady transition through a CPU-owned run queue scaffold;
-// placement still chooses CPU0 until S2 deliberately enables secondary EL0 work.
+// S2f records the CPU that actually dispatched each EL0 slot. Placement still
+// chooses CPU0 until S2 deliberately enables secondary EL0 work.
 //
 // The kernel launches a top process and drives the scheduler until it exits
 // (processRunElf). EL0 processes can spawn children and block waiting for them;
@@ -109,11 +110,15 @@ private var pWakeTick = [UInt64](repeating: 0, count: maxProc)
 private var pHomeCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
 private var pRunNext = [Int32](repeating: noProcessSlot, count: maxProc)
 private var pRunQueued = [Bool](repeating: false, count: maxProc)
+private var pLastDispatchCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
+private var pDispatchCount = [UInt64](repeating: 0, count: maxProc)
+private var pDispatchCpuMask = [UInt64](repeating: 0, count: maxProc)
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueEnqueueCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
+private var processDispatchTelemetryCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueCpuCount: UInt32 = 0
 
 private var currentProc = -1 // running slot, or -1 while in the scheduler
@@ -138,6 +143,7 @@ func processInit() {
         processRunQueueTail[Int(cpu)] = noProcessSlot
         processRunQueueEnqueueCount[Int(cpu)] = 0
         processRunQueueDispatchCount[Int(cpu)] = 0
+        processDispatchTelemetryCount[Int(cpu)] = 0
         let context = UInt(bitPattern: schedCtx.advanced(by: Int(cpu)))
         if !smpSetProcessSchedulerContextForCpu(cpu, context) ||
            !smpSetProcessRunQueueForCpu(cpu, head: noProcessSlot, tail: noProcessSlot) {
@@ -151,6 +157,9 @@ func processInit() {
         pHomeCpu[i] = unassignedCpu
         pRunNext[i] = noProcessSlot
         pRunQueued[i] = false
+        pLastDispatchCpu[i] = unassignedCpu
+        pDispatchCount[i] = 0
+        pDispatchCpuMask[i] = 0
     }
 }
 
@@ -224,6 +233,28 @@ private func clearProcessSchedulerSlot(_ slot: Int) {
     pHomeCpu[slot] = unassignedCpu
     pRunNext[slot] = noProcessSlot
     pRunQueued[slot] = false
+    pLastDispatchCpu[slot] = unassignedCpu
+    pDispatchCount[slot] = 0
+    pDispatchCpuMask[slot] = 0
+}
+
+private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
+    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
+        uartPuts("panic: invalid EL0 process dispatch telemetry target\n")
+        while true {}
+    }
+    if cpu != 0 {
+        uartPuts("panic: EL0 process dispatched on secondary before S2\n")
+        while true {}
+    }
+    if pHomeCpu[slot] != cpu {
+        uartPuts("panic: EL0 process dispatch CPU mismatch\n")
+        while true {}
+    }
+    pLastDispatchCpu[slot] = cpu
+    pDispatchCount[slot] &+= 1
+    pDispatchCpuMask[slot] |= UInt64(1) << Int(cpu)
+    processDispatchTelemetryCount[Int(cpu)] &+= 1
 }
 
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
@@ -317,6 +348,24 @@ func processDormantSchedulerCpusSelfTest() -> Bool {
     return true
 }
 
+func processDispatchTelemetrySelfTest() -> Bool {
+    if processRunQueueCpuCount != smpMaxCpuCount() { return false }
+    if processSchedulerCpuSlots != Int(smpMaxCpuCount()) { return false }
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processDispatchTelemetryCount[idx] != 0 { return false }
+        if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        cpu += 1
+    }
+    for slot in 0..<maxProc {
+        if pLastDispatchCpu[slot] != unassignedCpu { return false }
+        if pDispatchCount[slot] != 0 { return false }
+        if pDispatchCpuMask[slot] != 0 { return false }
+    }
+    return true
+}
+
 func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
@@ -355,6 +404,43 @@ func processNoSecondarySchedulerDispatchSelfTest() -> Bool {
         if cpu != primary {
             if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
             if processRunQueueEnqueueCount[idx] != 0 { return false }
+            if processRunQueueDispatchCount[idx] != 0 { return false }
+            if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        }
+        cpu += 1
+    }
+    return true
+}
+
+func processDispatchTelemetryNoSecondarySelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+
+    let primaryIdx = Int(primary)
+    if processDispatchTelemetryCount[primaryIdx] == 0 { return false }
+    if processDispatchTelemetryCount[primaryIdx] != smpPerCpuEl0SwitchCount(primary) {
+        return false
+    }
+    if processDispatchTelemetryCount[primaryIdx] != processRunQueueDispatchCount[primaryIdx] {
+        return false
+    }
+
+    for slot in 0..<maxProc {
+        if pDispatchCount[slot] == 0 {
+            if pLastDispatchCpu[slot] != unassignedCpu { return false }
+            if pDispatchCpuMask[slot] != 0 { return false }
+            continue
+        }
+        if pLastDispatchCpu[slot] != primary { return false }
+        if pHomeCpu[slot] != primary { return false }
+        if pDispatchCpuMask[slot] != (UInt64(1) << Int(primary)) { return false }
+    }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if cpu != primary {
+            if processDispatchTelemetryCount[idx] != 0 { return false }
             if processRunQueueDispatchCount[idx] != 0 { return false }
             if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         }
@@ -604,6 +690,8 @@ private func schedule(until done: () -> Bool) {
         currentProc = s
         smpSetCurrentProcessForCurrentCpu(Int32(s))
         pState[s] = pRunning
+        let cpu = UInt32(processSchedulerCpuIndex())
+        recordProcessDispatch(s, on: cpu)
         // cpu_switch_context swaps registers only — install the process's
         // address space so its EL0 user VAs resolve when it eret's.
         address_space_switch(pTtbr0[s])

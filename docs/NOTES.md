@@ -1007,6 +1007,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** No secondary CPU dispatches EL0 work, no cross-CPU wake/IPI path
   is added, and PMM/VFS/process locking policy remains S2+ work.
 
+### S2f — EL0 process dispatch CPU telemetry (DONE, 2026-06-10)
+
+- **Actual-dispatch telemetry.** The process scheduler now records the CPU that
+  actually dispatches each EL0 process slot (`pLastDispatchCpu`), a per-slot
+  dispatch count, and a small CPU bitmask of CPUs that have dispatched the slot.
+  A per-CPU aggregate telemetry counter is incremented at the same switch-in
+  site and is cross-checked against the existing per-CPU EL0 switch counter.
+  This is the cheap "last CPU" and history evidence needed by the later S2
+  acceptance test, without changing placement policy yet.
+- **CPU0 owner guard remains strict.** `recordProcessDispatch` still panics if
+  an EL0 process is dispatched on a secondary CPU or if the process home CPU and
+  dispatch CPU diverge. S2f is observability/readiness work, not the point where
+  secondary EL0 execution starts.
+- **Runtime acceptance.** Boot runs `processDispatchTelemetrySelfTest` after the
+  S2e dormant scheduler publication check and logs
+  `S2f OK: process dispatch telemetry ready`. After the Swift `ps` userland
+  demo, boot verifies the dispatch telemetry aggregate matches CPU0's EL0
+  switch count and every secondary CPU remains at zero, then logs
+  `S2f OK: process dispatch telemetry stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the dispatch
+  telemetry fields/helper/self-tests, verifies the telemetry write is on the
+  actual EL0 switch path before `smpRecordEl0SwitchForCurrentCpu`, and enforces
+  the S2f boot-order contract.
+- **Non-goals.** No process migrates between CPUs, no secondary CPU dispatches
+  EL0 work, no cross-CPU wake/IPI path is added, and no procstat/userland ABI is
+  widened in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
