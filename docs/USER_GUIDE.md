@@ -433,11 +433,12 @@ These are current implementation boundaries, not necessarily design goals:
 - No persistent writable filesystem.
 - Package install exists for local `.swpkg` files and signed static HTTP
   repository fixtures, including name-based dependency resolution. The checked
-  ports seed publishes Lua, zlib, ca-certificates, pcre2, tzdata, and nginx into
-  one signed local repository, installs all six by package name, and runs Lua,
-  `minigzip`, the CA bundle marker, `pcre2grep`, zoneinfo, and nginx smoke
-  commands in QEMU. The static-host workflow publishes that seed into a
-  deployable web root and proves the same install path from the hosted layout.
+  ports seed publishes Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and
+  sqlite into one signed local repository, installs all seven by package name,
+  and runs Lua, `minigzip`, the CA bundle marker, `pcre2grep`, zoneinfo, nginx,
+  and SQLite smoke commands in QEMU. The static-host workflow publishes that
+  seed into a deployable web root and proves the same install path from the
+  hosted layout.
   The hosted-URL smoke proves that `/bin/pkg` can install from a DNS-resolved
   HTTP repository hostname. Remove, upgrade, rollback, public production
   channels, version-constraint solving, and large-package streaming downloads

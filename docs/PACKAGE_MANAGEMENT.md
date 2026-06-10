@@ -9,8 +9,8 @@ Design for binary package installation on swift-os.
 > `pkg install NAME` for the signed fixture catalog, including name-based
 > dependency resolution, and rejects expired catalogs, incompatible catalog
 > entries, and package SHA-256 mismatches. The ports seed fixture now
-> cross-builds Lua, zlib, pcre2, and nginx, packages ca-certificates and tzdata,
-> publishes all six into one signed local repository, and can boot SwiftOS with `/etc/pkg/repo-url` so
+> cross-builds Lua, zlib, pcre2, nginx, and sqlite, packages ca-certificates and
+> tzdata, publishes all seven into one signed local repository, and can boot SwiftOS with `/etc/pkg/repo-url` so
 > `pkg update` works without a manual `pkg repo set`. `make
 > ports-static-host-publish` turns that seed into a deployable static web root,
 > and `make package-static-host-repo-install-test` proves install from that
@@ -917,12 +917,12 @@ Remaining repository work:
 
 Current state: `swift-os` carries a checked machine-readable seed catalog,
 `ports/catalog.json`, host-side `build/swport catalog validate/list/inspect`
-commands, and checked recipes for Lua, zlib, ca-certificates, pcre2, tzdata, and
-nginx. `swport recipe validate`, `swport recipe manifest`, checksum-verified
+commands, and checked recipes for Lua, zlib, ca-certificates, pcre2, tzdata,
+nginx, and sqlite. `swport recipe validate`, `swport recipe manifest`, checksum-verified
 `swport recipe fetch`, staged-root `swport recipe package`, and signed
 `swport recipe repo-fixture` exist for those checked paths. The seed targets
 cross-build real static AArch64 packages where applicable, package data-only
-artifacts for CA certificates and time zones, publish all six packages into one
+artifacts for CA certificates and time zones, publish all seven packages into one
 signed local seed repository, and install them by package name in QEMU. The
 static-host targets publish that seed into a deployable web root and prove
 installs from the hosted layout; the DNS hosted-repository smoke proves the same
@@ -933,11 +933,12 @@ separate `swift-os-ports` repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
 - Keep the checked source recipe workflow valid with `make ports-recipe-test`.
-- Keep the real Lua, zlib, pcre2, and nginx binary package paths plus the ca-certificates/tzdata data
-  package path valid with `make ports-lua-repo-fixture`,
-  `make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`,
-  `make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`, and
-  `make ports-nginx-repo-fixture`
+- Keep the real Lua, zlib, pcre2, nginx, and sqlite binary package paths plus
+  the ca-certificates/tzdata data package path valid with
+  `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`,
+  `make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`,
+  `make ports-tzdata-repo-fixture`, `make ports-nginx-repo-fixture`, and
+  `make ports-sqlite-repo-fixture`
   when `make newlib` has populated the generated sysroot.
 - Keep the first multi-package target install/run path valid with
   `make package-ports-seed-repo-install-test`.
@@ -963,7 +964,7 @@ Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
 - `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates,
-  pcre2, tzdata, and nginx recipes and proves the generated manifest can feed
+  pcre2, tzdata, nginx, and sqlite recipes and proves the generated manifest can feed
   `swport recipe package`,
   `swpkg verify`, and a signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
@@ -978,13 +979,15 @@ Acceptance:
   packages the `/usr/share/zoneinfo` tree.
 - `make ports-nginx-repo-fixture` builds minimal static HTTP-only nginx and
   packages its default config and marker files.
+- `make ports-sqlite-repo-fixture` builds static SQLite and packages the
+  `sqlite3` shell, library, headers, pkgconf metadata, and marker files.
 - `make package-ports-seed-repo-install-test` installs Lua, zlib,
-  ca-certificates, pcre2, tzdata, and nginx from one signed local seed repository and runs
-  their package smoke paths inside QEMU.
+  ca-certificates, pcre2, tzdata, nginx, and sqlite from one signed local seed
+  repository and runs their package smoke paths inside QEMU.
 - `make ports-static-host-publish` creates a deployable static web root for the
   seed repository, and `make package-static-host-repo-install-test` installs
-  Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from that layout inside
-  QEMU.
+  Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from that layout
+  inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 
