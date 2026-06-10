@@ -1431,6 +1431,27 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   balancing, shared-address-space execution on multiple CPUs, or secondary
   scheduler access to unrelated kernel subsystems.
 
+### S5d — independent EL0 fanout across scheduler CPUs (DONE, 2026-06-10)
+
+- **Multi-secondary fanout.** `processRunS5dFanout` starts every online
+  secondary scheduler CPU with a live timer heartbeat, creates one independent
+  top-level `coproc` process for CPU0 and one for each started secondary CPU,
+  then waits for all slots to become zombie and scheduler-quiesced before
+  stopping the secondary schedulers.
+- **Exact placement telemetry.** The fanout captures the scheduler CPU mask,
+  aggregate dispatch CPU mask, secondary CPU mask, total dispatch count, and a
+  count of processes whose dispatch mask exactly matched their home CPU before
+  any fanout slot is reaped. The S5d guard requires those masks to match, all
+  participating CPUs to record EL0 switches, all gate masks to be clear after
+  stop, and every run queue to be idle.
+- **Executable checks.** Boot prints `S5d OK: EL0 fanout ran across scheduler
+  CPUs` and logs either `S5d OK: EL0 fanout crossed scheduler CPUs` or the CPU0
+  fallback. `make s5-el0-fanout-test` runs the focused `-smp 4` boot
+  acceptance.
+- **Non-goals.** S5d still does not migrate a process after creation, run a
+  single shared address space on multiple CPUs, enable arbitrary load balancing,
+  or let secondary schedulers execute unrelated kernel-thread work.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

@@ -243,6 +243,13 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastS5cStressSecondaryCpuMask`
 - `kernel/user/process.swift:lastS5cStressSecondaryDispatchCount`
 - `kernel/user/process.swift:lastS5cStressTelemetryValid`
+- `kernel/user/process.swift:lastS5dFanoutDispatchCount`
+- `kernel/user/process.swift:lastS5dFanoutDispatchCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutExactCpuMatchCount`
+- `kernel/user/process.swift:lastS5dFanoutProcessCount`
+- `kernel/user/process.swift:lastS5dFanoutSchedulerCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutSecondaryCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutTelemetryValid`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
@@ -251,6 +258,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:processRunQueueLockAcquireCount`
 - `kernel/user/process.swift:processRunQueueLockContentionCount`
 - `kernel/user/process.swift:processRunQueueLockWord`
+- `kernel/user/process.swift:s5dFanoutSlots`
 - `kernel/user/process.swift:pAddressSpaceCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pFileVmas`
@@ -318,7 +326,9 @@ manifest entries left behind after globals move or disappear.
   execution is enabled. S5c protects EL0 run queue enqueue/dequeue with a
   per-CPU IRQ-save spinlock and repeatedly exercises the restricted CPU0 to
   secondary run queue handoff, but arbitrary secondary scheduling and shared
-  address-space concurrency remain out of scope.
+  address-space concurrency remain out of scope. S5d expands that restricted
+  path to one independent EL0 process per online scheduler CPU, with exact
+  placement telemetry and idle-queue checks after all secondary schedulers stop.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple

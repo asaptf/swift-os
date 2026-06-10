@@ -200,6 +200,14 @@ private var lastS5cStressSecondaryCpuMask: UInt64 = 0
 private var lastS5cStressSecondaryCpu: UInt32 = unassignedCpu
 private var lastS5cStressRunQueueLockAcquireCount: UInt64 = 0
 private var lastS5cStressRunQueueLockContentionCount: UInt64 = 0
+private var lastS5dFanoutTelemetryValid = false
+private var lastS5dFanoutProcessCount: UInt64 = 0
+private var lastS5dFanoutSchedulerCpuMask: UInt64 = 0
+private var lastS5dFanoutDispatchCpuMask: UInt64 = 0
+private var lastS5dFanoutSecondaryCpuMask: UInt64 = 0
+private var lastS5dFanoutDispatchCount: UInt64 = 0
+private var lastS5dFanoutExactCpuMatchCount: UInt64 = 0
+private var s5dFanoutSlots = [Int](repeating: -1, count: processSchedulerCpuSlots)
 
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
@@ -280,6 +288,16 @@ func processInit() {
     lastS5cStressSecondaryCpu = unassignedCpu
     lastS5cStressRunQueueLockAcquireCount = 0
     lastS5cStressRunQueueLockContentionCount = 0
+    lastS5dFanoutTelemetryValid = false
+    lastS5dFanoutProcessCount = 0
+    lastS5dFanoutSchedulerCpuMask = 0
+    lastS5dFanoutDispatchCpuMask = 0
+    lastS5dFanoutSecondaryCpuMask = 0
+    lastS5dFanoutDispatchCount = 0
+    lastS5dFanoutExactCpuMatchCount = 0
+    for cpuSlot in 0..<processSchedulerCpuSlots {
+        s5dFanoutSlots[cpuSlot] = -1
+    }
 }
 
 private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
@@ -656,6 +674,21 @@ private func captureLastS5cPlacementStressTelemetry(rounds: UInt64, processCount
     lastS5cStressTelemetryValid = true
 }
 
+private func captureLastS5dFanoutTelemetry(processCount: UInt64,
+                                           schedulerCpuMask: UInt64,
+                                           dispatchCpuMask: UInt64,
+                                           secondaryCpuMask: UInt64,
+                                           dispatchCount: UInt64,
+                                           exactCpuMatchCount: UInt64) {
+    lastS5dFanoutProcessCount = processCount
+    lastS5dFanoutSchedulerCpuMask = schedulerCpuMask
+    lastS5dFanoutDispatchCpuMask = dispatchCpuMask
+    lastS5dFanoutSecondaryCpuMask = secondaryCpuMask
+    lastS5dFanoutDispatchCount = dispatchCount
+    lastS5dFanoutExactCpuMatchCount = exactCpuMatchCount
+    lastS5dFanoutTelemetryValid = true
+}
+
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
     if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue target\n")
@@ -809,6 +842,18 @@ func processDispatchTelemetrySelfTest() -> Bool {
     }
     if lastS5cStressSecondaryCpu != unassignedCpu {
         return false
+    }
+    if lastS5dFanoutTelemetryValid { return false }
+    if lastS5dFanoutProcessCount != 0 ||
+       lastS5dFanoutSchedulerCpuMask != 0 ||
+       lastS5dFanoutDispatchCpuMask != 0 ||
+       lastS5dFanoutSecondaryCpuMask != 0 ||
+       lastS5dFanoutDispatchCount != 0 ||
+       lastS5dFanoutExactCpuMatchCount != 0 {
+        return false
+    }
+    for slot in 0..<processSchedulerCpuSlots {
+        if s5dFanoutSlots[slot] != -1 { return false }
     }
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
@@ -1157,6 +1202,103 @@ func processS5cPlacementStressSelfTest() -> Bool {
         }
         if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
             return processS5cPlacementStressFail(23)
+        }
+        cpu += 1
+    }
+    return true
+}
+
+private func processS5dFanoutFail(_ code: UInt64) -> Bool {
+    uartPuts("S5d fanout fail ")
+    uartPutUInt(code)
+    uartPuts("\n")
+    return false
+}
+
+func processS5dFanoutSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) {
+        return processS5dFanoutFail(1)
+    }
+    if !lastS5dFanoutTelemetryValid {
+        return processS5dFanoutFail(2)
+    }
+    let primaryMask = processCpuBit(primary)
+    if (lastS5dFanoutSchedulerCpuMask & primaryMask) == 0 {
+        return processS5dFanoutFail(3)
+    }
+    if lastS5dFanoutDispatchCpuMask != lastS5dFanoutSchedulerCpuMask {
+        return processS5dFanoutFail(4)
+    }
+    if lastS5dFanoutExactCpuMatchCount != lastS5dFanoutProcessCount {
+        return processS5dFanoutFail(5)
+    }
+    if lastS5dFanoutDispatchCount < lastS5dFanoutProcessCount {
+        return processS5dFanoutFail(6)
+    }
+    if platform.cpuCount > 1 {
+        if lastS5dFanoutSecondaryCpuMask == 0 {
+            return processS5dFanoutFail(7)
+        }
+        if (lastS5dFanoutSecondaryCpuMask & primaryMask) != 0 {
+            return processS5dFanoutFail(8)
+        }
+    } else if lastS5dFanoutSecondaryCpuMask != 0 {
+        return processS5dFanoutFail(9)
+    }
+
+    var expectedCount: UInt64 = 0
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let bit = processCpuBit(cpu)
+        if (lastS5dFanoutSchedulerCpuMask & bit) != 0 {
+            expectedCount &+= 1
+            if cpu >= platform.cpuCount || !processValidSchedulerCpu(cpu) {
+                return processS5dFanoutFail(10)
+            }
+            if cpu != primary && !smpCpuOnline(cpu) {
+                return processS5dFanoutFail(11)
+            }
+            if processDispatchTelemetryCount[Int(cpu)] == 0 {
+                return processS5dFanoutFail(12)
+            }
+            if smpPerCpuEl0SwitchCount(cpu) == 0 {
+                return processS5dFanoutFail(13)
+            }
+        }
+        cpu += 1
+    }
+    if expectedCount != lastS5dFanoutProcessCount {
+        return processS5dFanoutFail(14)
+    }
+
+    if (processSecondaryRunMask() & lastS5dFanoutSecondaryCpuMask) != 0 {
+        return processS5dFanoutFail(15)
+    }
+    if (processSecondaryActiveMask() & lastS5dFanoutSecondaryCpuMask) != 0 {
+        return processS5dFanoutFail(16)
+    }
+    if (processSecondaryStopMask() & lastS5dFanoutSecondaryCpuMask) != 0 {
+        return processS5dFanoutFail(17)
+    }
+
+    cpu = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueLockWord[idx] != 0 {
+            return processS5dFanoutFail(18)
+        }
+        if processRunQueueHead[idx] != noProcessSlot {
+            return processS5dFanoutFail(19)
+        }
+        if processRunQueueTail[idx] != noProcessSlot {
+            return processS5dFanoutFail(20)
+        }
+        if !smpPerCpuProcessRunQueueIdle(cpu) {
+            return processS5dFanoutFail(21)
+        }
+        if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
+            return processS5dFanoutFail(22)
         }
         cpu += 1
     }
@@ -1736,6 +1878,116 @@ func processRunS5cPlacementStress(_ image: UInt, _ size: UInt,
         primaryCpuMask: primaryCpuMask,
         secondaryCpuMask: secondaryCpuMask,
         secondaryCpu: secondaryHome)
+}
+
+/// Run one independent EL0 process on each available scheduler CPU.
+func processRunS5dFanout(_ image: UInt, _ size: UInt,
+                         _ packed: UInt, _ packedLen: UInt, _ argc: Int) {
+    let primary = currentCpuId()
+    var idx = 0
+    while idx < processSchedulerCpuSlots {
+        s5dFanoutSlots[idx] = -1
+        idx += 1
+    }
+
+    var startedSecondaryMask: UInt64 = 0
+    var schedulerCpuMask = processCpuBit(primary)
+    var processCount = 0
+
+    let primarySlot = createProcess(image, size, packed: packed, packedLen: packedLen,
+                                    argc: argc, parent: -1, inherit: .all,
+                                    inheritSpecsVA: 0, inheritSpecCount: 0,
+                                    homeCpu: primary)
+    if primarySlot < 0 {
+        uartPuts("panic: createProcess (S5d fanout primary) failed\n")
+        while true {}
+    }
+    s5dFanoutSlots[processCount] = primarySlot
+    processCount += 1
+
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount &&
+          cpu < platform.cpuCount &&
+          processCount < processSchedulerCpuSlots {
+        if processValidSchedulerCpu(cpu) &&
+           smpCpuOnline(cpu) &&
+           smpPerCpuTimerTicks(cpu) != 0 {
+            processStartSecondaryScheduler(cpu: cpu)
+            let bit = processCpuBit(cpu)
+            startedSecondaryMask |= bit
+            schedulerCpuMask |= bit
+
+            let slot = createProcess(image, size, packed: packed, packedLen: packedLen,
+                                     argc: argc, parent: -1, inherit: .all,
+                                     inheritSpecsVA: 0, inheritSpecCount: 0,
+                                     homeCpu: cpu)
+            if slot < 0 {
+                uartPuts("panic: createProcess (S5d fanout secondary) failed\n")
+                while true {}
+            }
+            s5dFanoutSlots[processCount] = slot
+            processCount += 1
+        }
+        cpu += 1
+    }
+
+    schedule(until: {
+        var slotIndex = 0
+        while slotIndex < processCount {
+            let slot = s5dFanoutSlots[slotIndex]
+            if slot < 0 ||
+               pState[slot] != pZombie ||
+               !pSchedulerQuiesced[slot] {
+                return false
+            }
+            slotIndex += 1
+        }
+        return true
+    })
+
+    cpu = 1
+    while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+        let bit = processCpuBit(cpu)
+        if (startedSecondaryMask & bit) != 0 {
+            processStopSecondaryScheduler(cpu: cpu)
+        }
+        cpu += 1
+    }
+
+    smpLoadBarrier()
+    var dispatchCpuMask: UInt64 = 0
+    var secondaryCpuMask: UInt64 = 0
+    var dispatchCount: UInt64 = 0
+    var exactCpuMatchCount: UInt64 = 0
+    idx = 0
+    while idx < processCount {
+        let slot = s5dFanoutSlots[idx]
+        let home = pHomeCpu[slot]
+        let homeMask = processCpuBit(home)
+        if home != primary {
+            secondaryCpuMask |= homeMask
+        }
+        dispatchCpuMask |= pDispatchCpuMask[slot]
+        dispatchCount &+= pDispatchCount[slot]
+        if pDispatchCpuMask[slot] == homeMask && pDispatchCount[slot] != 0 {
+            exactCpuMatchCount &+= 1
+        }
+        idx += 1
+    }
+    captureLastS5dFanoutTelemetry(
+        processCount: UInt64(processCount),
+        schedulerCpuMask: schedulerCpuMask,
+        dispatchCpuMask: dispatchCpuMask,
+        secondaryCpuMask: secondaryCpuMask,
+        dispatchCount: dispatchCount,
+        exactCpuMatchCount: exactCpuMatchCount)
+
+    idx = 0
+    while idx < processCount {
+        reapProcess(s5dFanoutSlots[idx])
+        s5dFanoutSlots[idx] = -1
+        idx += 1
+    }
 }
 
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,

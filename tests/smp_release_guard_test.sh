@@ -1142,8 +1142,7 @@ done
 for needle in \
   '[I] smp: S5c OK: repeated EL0 placement stress crossed CPUs' \
   '[I] smp: S5c OK: repeated EL0 placement stress CPU0 fallback' \
-  'S5c OK: repeated EL0 placement stress completed' \
-  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5c markers'; do
+  'S5c OK: repeated EL0 placement stress completed'; do
   if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
     echo "FAIL: S5c SMP boot smoke missing $needle." >&2
     exit 1
@@ -1159,4 +1158,57 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5c release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress)"
+for needle in \
+  'lastS5dFanoutTelemetryValid' \
+  'lastS5dFanoutSchedulerCpuMask' \
+  'lastS5dFanoutDispatchCpuMask' \
+  'lastS5dFanoutExactCpuMatchCount' \
+  's5dFanoutSlots' \
+  'captureLastS5dFanoutTelemetry' \
+  'func processRunS5dFanout' \
+  'processStartSecondaryScheduler(cpu: cpu)' \
+  'startedSecondaryMask' \
+  'schedulerCpuMask |= bit' \
+  'func processS5dFanoutSelfTest' \
+  'lastS5dFanoutDispatchCpuMask != lastS5dFanoutSchedulerCpuMask' \
+  'lastS5dFanoutExactCpuMatchCount != lastS5dFanoutProcessCount'; do
+  if ! grep -Fq -- "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5d multi-secondary fanout missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'runS5dFanoutDemo' \
+  'processRunS5dFanout' \
+  'processS5dFanoutSelfTest' \
+  'S5d OK: EL0 fanout ran across scheduler CPUs' \
+  'S5d OK: EL0 fanout crossed scheduler CPUs' \
+  'S5d OK: EL0 fanout CPU0 fallback'; do
+  if ! grep -Fq -- "$needle" "$MAIN_SWIFT"; then
+    echo "FAIL: S5d boot fanout acceptance missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '[I] smp: S5d OK: EL0 fanout crossed scheduler CPUs' \
+  '[I] smp: S5d OK: EL0 fanout CPU0 fallback' \
+  'S5d OK: EL0 fanout ran across scheduler CPUs' \
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5d markers'; do
+  if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
+    echo "FAIL: S5d SMP boot smoke missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  's5-el0-fanout-test: build $(QEMU_DTB_SMP4) base-image' \
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S5d make target missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5d release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress + EL0 fanout)"

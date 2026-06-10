@@ -257,6 +257,11 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   CPU0 tails. The guard captures aggregate dispatch masks/counts before reap,
   checks that the secondary role stayed on a non-primary online CPU under
   `-smp 4`, and verifies all run queues and gate masks are idle afterward.
+- S5d fanout (2026-06-10): the restricted gate can start every online secondary
+  scheduler CPU and run one independent EL0 process per scheduler CPU in the
+  same acceptance window. The guard proves the dispatch CPU mask exactly matches
+  the fanout scheduler mask, each process stayed on its home CPU, all queues are
+  idle after stop, and the single-CPU fallback still works.
 - EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
