@@ -21,14 +21,16 @@ prove the package model locally:
 | Package-store boot activation | Preseeded package-store image activates package payloads | `make package-store-test` |
 | Guest local install | `/bin/pkg install FILE` appends a local `.swpkg` to a writable package store | `make package-local-install-test` |
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
-| Guest repository install | `/bin/pkg update URL`, `search`, `info`, and `install NAME` work against the signed HTTP fixture | `make package-repo-install-test` |
-| `swport` ports tool | Planned; not implemented in this repository yet | This guide defines the contract |
+| Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
+| P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
+| `swport` ports tool | P6a catalog validation/list/inspect implemented; recipe build/fetch/package commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
-implemented `.swpkg`, package-store, local guest install, and P5a signed static
-repository paths. Until `swift-os-ports`, `swport`, and public hosted channels
-exist, maintainers should use the local fixture commands in this repository.
+implemented `.swpkg`, package-store, local guest install, P5c signed static
+repository path, and P6a seed catalog. Until the separate `swift-os-ports`
+repository and public hosted channels exist, maintainers should use the local
+fixture commands in this repository.
 
 Use this guide with:
 
@@ -38,7 +40,7 @@ Use this guide with:
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container contract.
 - [Package Store Format](PKGSTORE_FORMAT.md) for package-store image and
   activation records.
-- [Static Package Repository](PKGREPO_FORMAT.md) for the P5a signed HTTP
+- [Static Package Repository](PKGREPO_FORMAT.md) for the P5c signed HTTP
   catalog layout.
 - [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for package priorities
   and OS prerequisite bundles.
@@ -62,6 +64,7 @@ make package-overlay-test
 make package-store-test
 make package-local-install-test
 make package-repo-install-test
+make ports-catalog-test
 ```
 
 Inspect the signed repository fixture:
@@ -71,7 +74,16 @@ make package-repo-fixture
 build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
 ```
 
-For a new experimental port before `swport` exists, keep the same discipline:
+Inspect the P6a ports seed catalog:
+
+```sh
+make swport
+build/swport catalog list ports/catalog.json
+build/swport catalog inspect nginx ports/catalog.json
+```
+
+For a new experimental port before full `swport` recipe commands exist, keep
+the same discipline:
 
 1. Cross-build the program statically against the current SwiftOS ABI.
 2. Stage the installed files under a clean package root.

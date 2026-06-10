@@ -9,9 +9,11 @@ maintainers planning `swift-os-ports` recipes.
 > Status: planning input for the package ecosystem. The current checked-in
 > system already has host `.swpkg` tooling, read-only package payload overlays,
 > package-store boot activation, and a narrow local `/bin/pkg install FILE`
-> path. It also has a P5a signed static HTTP repository fixture with
-> `pkg update URL`, `pkg search`, `pkg info`, and `pkg install NAME`.
-> Public hosted repositories, dependency resolution, remove, upgrade, and
+> path. It also has a P5c signed static HTTP repository fixture with
+> `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
+> `pkg install NAME`, including name-based dependency resolution. P6a adds the
+> checked `ports/catalog.json` seed catalog and `swport catalog` validator.
+> Public hosted repositories, remove, upgrade, version-constraint solving, and
 > rollback flows are still roadmap work.
 
 Use this guide with:
@@ -38,17 +40,28 @@ paths are available in the current tree:
 | Direct payload overlay | Boot with read-only `/usr/bin/pkghello` | `make package-overlay-test` |
 | Package-store boot activation | Boot a preseeded active package generation | `make package-store-test` |
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
-| Signed HTTP repository fixture | Run `pkg update URL`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
+| Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
+| Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path is the explicit test-fixture form:
 
 ```sh
-pkg update http://10.0.2.2:<port>/aarch64/current
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
 /usr/bin/pkghello
+```
+
+The package priority data in this document is mirrored into the checked
+machine-readable seed catalog:
+
+```sh
+make ports-catalog-test
+build/swport catalog list ports/catalog.json
+build/swport catalog inspect nginx ports/catalog.json
 ```
 
 The local-file form remains available:
@@ -74,9 +87,9 @@ pkg install web-basic postgresql nodejs
 ```
 
 Those commands describe the intended public repository experience. Today, use
-the explicit `pkg update URL` fixture for signed repository smoke tests,
-`pkg install FILE` for local `.swpkg` smoke tests, and the host package tooling
-for package construction.
+the signed repository fixture for repository smoke tests, `pkg install FILE`
+for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
+inspection, and the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run

@@ -45,6 +45,8 @@ BASEPACK  := $(BUILD)/basepack
 SWPKG     := $(BUILD)/swpkg
 PKGSTORE  := $(BUILD)/pkgstore
 PKGREPO   := $(BUILD)/pkgrepo
+SWPORT    := $(BUILD)/swport
+SWPORT_CATALOG_TEST := $(BUILD)/swport_catalog_test
 BASE_ROOT := $(BUILD)/base-root
 PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
@@ -322,7 +324,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-local-install-test package-repo-install-test
 
 build: $(KERNEL_ELF)
 
@@ -943,6 +945,18 @@ $(PKGREPO): tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift ke
 	$(HOST_SWIFTC) tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 pkgrepo: $(PKGREPO)
+
+$(SWPORT): tools/swport.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -parse-as-library tools/swport.swift -o $@
+
+swport: $(SWPORT)
+
+$(SWPORT_CATALOG_TEST): tests/swport_catalog_test.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/swport_catalog_test.swift -o $@
+
+ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
+	$(SWPORT) catalog validate ports/catalog.json
+	$(SWPORT_CATALOG_TEST)
 
 $(PKGREPO_PUB): $(PKGREPO) Makefile
 	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
