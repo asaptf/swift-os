@@ -36,8 +36,9 @@ service-oriented.
 - Mounts the immutable base image from virtio-blk.
 - Keeps VirtualBox ARM notes as a best-effort hardware-adjacent path.
 - Has SMP readiness work, smoke tests, S5a per-CPU utilization telemetry in
-  `/bin/top`, and restricted S5b/S5c EL0 scheduler placement gates, while broad
-  multi-core EL0 scheduling remains roadmap work.
+  `/bin/top`, restricted S5b/S5c EL0 scheduler placement gates, and S5d
+  independent EL0 fanout across online scheduler CPUs, while shared-address-space
+  multi-core EL0 execution remains roadmap work.
 
 ### User Experience
 
@@ -140,6 +141,7 @@ make ports-recipe-test
 make ports-lua-repo-fixture
 make package-lua-repo-install-test
 make smp-cpu-utilization-test
+make s5-el0-fanout-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```

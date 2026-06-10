@@ -262,7 +262,7 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   same acceptance window. The guard proves the dispatch CPU mask exactly matches
   the fanout scheduler mask, each process stayed on its home CPU, all queues are
   idle after stop, and the single-CPU fallback still works.
-- EL0 threads belonging to the same address space (or different spaces) can truly execute on different CPUs at the same time.
+- Shared-address-space EL0 threads can truly execute on different CPUs at the same time.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
 - Full `make test` (1-CPU and `-smp 4`, both -kernel and UEFI paths) is green, plus new dedicated SMP stress suites (`tests/smp_*`).

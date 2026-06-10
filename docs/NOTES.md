@@ -1447,7 +1447,8 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Executable checks.** Boot prints `S5d OK: EL0 fanout ran across scheduler
   CPUs` and logs either `S5d OK: EL0 fanout crossed scheduler CPUs` or the CPU0
   fallback. `make s5-el0-fanout-test` runs the focused `-smp 4` boot
-  acceptance.
+  acceptance, the SMP boot smoke enforces S5b -> S5c -> S5d marker ordering
+  before Swift ps, and the release guard checks the fanout wiring.
 - **Non-goals.** S5d still does not migrate a process after creation, run a
   single shared address space on multiple CPUs, enable arbitrary load balancing,
   or let secondary schedulers execute unrelated kernel-thread work.
