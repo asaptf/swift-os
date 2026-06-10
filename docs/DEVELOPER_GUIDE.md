@@ -392,7 +392,7 @@ Good starting points:
 | `userland/mmapdemo.swift` | mmap, munmap, mprotect, W^X |
 | `userland/spawndemo.c` | `spawn` and `spawn_handles` |
 | `userland/c4b_sockxfer.c` | Endpoint handle transfer |
-| `userland/drvsvcdemo.c`, `userland/drvinputd.c` | Restartable service shape and opaque device-grant transfer |
+| `userland/drvsvcdemo.c`, `userland/drvinputd.c` | Restartable service shape, device discovery, and opaque grant transfer |
 
 Package and port examples:
 
