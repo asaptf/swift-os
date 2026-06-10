@@ -1737,6 +1737,21 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   with `virtio-keyboard-device` attached and asserts
   `C5e OK: device authority withheld until explicit handoff`.
 
+### C5f — metadata-only device grant rights contract (DONE, 2026-06-10)
+
+- **Shared rights helper.** `kernel/vfs/handle.swift` now defines
+  `deviceMetadataGrantRights()` as the single metadata-only device grant shape:
+  `.getattr + .transfer`. The VFS device claim path uses that helper instead of
+  assembling device rights locally.
+- **No implicit hardware authority.** The host handle test and static C5f guard
+  reject accidental `.read`, `.write`, `.execute`, `.map`, `.duplicate`, or
+  `.setattr` rights on current device grants. Runtime C5 still proves the grant
+  can be inspected, moved over IPC, and not duplicated.
+- **Acceptance.** `make c5-device-rights-test` runs the host handle vocabulary
+  check plus `tests/device_authority_guard_test.sh`. The focused and broad C5
+  boot smokes now require
+  `C5f OK: device grant rights stayed metadata-only`.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.
@@ -4046,3 +4061,32 @@ slot unconfirmed + attempts exhausted → fail over to the other slot, persisted
 the U1d analogue); a `/bin/swos-kconfirm` to mark the booted slot CONFIRMED (U1c
 analogue) so it stops accruing attempts; and move `active` into the writable
 boot-state so activate (U1g-4d) needs no pre-signed alternate manifest.
+
+### U1g-5b — attempt-based kernel rollback in the loader (DONE, 2026-06-10)
+
+**Scope.** The U1d analogue for the kernel. The loader now uses the U1g-5a
+boot-attempt counter to fail over: an unconfirmed active slot that has exhausted
+its attempts is presumed unhealthy ("boots but never confirmed"), so the loader
+boots the other slot instead and marks the original FAILED — persisted in the
+writable boot-state.
+
+- `boot/efi/loader.c`: `loader_bump_attempt` refactored into `loader_open_kstate`
+  + `loader_read_kstate` (validates / re-inits) + `loader_write_kstate` (rehash +
+  write). `efi_main` reads the kernel-state *before* loading; if the manifest's
+  active slot is not `CONFIRMED` and `attempt >= KS_MAX_ATTEMPTS` (3) and a
+  distinct fallback exists, it tries the fallback first (logs "kernel slot A
+  unconfirmed after N attempts, rolling back to slot B"), marks the active slot
+  `FAILED`, and counts the booted slot's attempt. The existing per-slot SHA-256
+  load + hash-failure fallback is preserved (a bad active *image* still fails over
+  too). A CONFIRMED slot stops counting (the U1c hook, used in 5c).
+
+**Acceptance.** `tests/uefi_krollback_test.sh` (in `make test`): boot the same
+disk copy 4× (ESP on mmio, `cache=writethrough`); boots 1–3 record attempts
+1/2/3 for the unconfirmed slot A, and boot 4 fails over to slot B ("rolling back
+to slot B" + "booted kernel slot B" + the kernel starts). `uefi_kattempt_test`
+(3 boots, no rollback) and the signed kernel-A/B tests are unaffected.
+
+**Still future (U1g-5c).** `/bin/swos-kconfirm` marks the booted slot CONFIRMED in
+the kernel-state (the kernel writes it via its FAT writer), so a healthy slot
+stops accruing attempts and is never rolled back. Then `active` can move into the
+writable boot-state, retiring the pre-signed alternate manifest (U1g-4d).

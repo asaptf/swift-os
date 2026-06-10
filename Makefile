@@ -988,6 +988,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_kstage_test.sh
 	./tests/uefi_kactivate_test.sh
 	./tests/uefi_kattempt_test.sh
+	./tests/uefi_krollback_test.sh
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -1050,6 +1051,11 @@ c5-device-metadata-test: build $(QEMU_DTB_SMP4) base-image
 
 c5-device-authority-test: build $(QEMU_DTB_SMP4) base-image
 	C5_AUTHORITY_TEST=1 C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+
+c5-device-rights-test: $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
+	$(BUILD)/handle_test
+	./tests/device_authority_guard_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit

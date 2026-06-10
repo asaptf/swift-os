@@ -96,6 +96,7 @@ drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
 drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
+drvsvc: C5f device grant rights metadata-only
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
 drvsvc: C5b device busy while service owns grant
@@ -105,6 +106,7 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: device discovery manifest matched pseudo input
 C5e OK: device authority withheld until explicit handoff
+C5f OK: device grant rights stayed metadata-only
 C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
