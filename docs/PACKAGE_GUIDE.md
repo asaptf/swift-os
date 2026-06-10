@@ -16,7 +16,8 @@ and rollback are staged work, not current behavior. The ports workflow can
 cross-build static AArch64 Lua and zlib packages on the host, publish them into
 signed local repository fixtures, install Lua by package name in QEMU, and boot
 SwiftOS with a default repository URL to install both Lua and zlib from one
-seed repository.
+seed repository. It can also produce a static-hostable web root for that seed
+repository and prove that SwiftOS installs from that published layout.
 
 Use this guide with:
 
@@ -55,8 +56,9 @@ Use this guide with:
 | Target-side `pkg install lua` from the signed Lua repository fixture | Implemented and proven by `make package-lua-repo-install-test` |
 | zlib cross-build repository fixture | Implemented as `make ports-zlib-repo-fixture` |
 | Multi-package ports seed repository fixture | Implemented as `make ports-seed-repo-fixture`; guest install smoke is `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Implemented as `make ports-static-host-publish`; guest install smoke is `make package-static-host-repo-install-test` |
 | Target-side remove, upgrade, rollback, version-constraint solving | Not implemented yet |
-| Public hosted repositories and channel policy | Not implemented yet |
+| Public hosted domain and channel policy | Not implemented yet |
 | Streaming large-package downloads | Not implemented yet |
 
 The current user-visible package fixture is `/usr/bin/pkghello`. It is not part
@@ -97,6 +99,7 @@ The three package artifact types have different jobs:
 | `build/pkgrepo-root` | `build/pkgrepo create` | P5c signed static HTTP repository tree |
 | `build/pkgrepo-root.pub` | `build/pkgrepo pubkey` | Public key copied into the base image as `/etc/pkg/repo-root.pub` |
 | `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua and zlib packages |
+| `build/ports-static-host-root` | `make ports-static-host-publish` | Deployable static web root containing the ports seed repository, public key, sidecar manifest, and SHA-256 sums |
 
 Use the direct payload overlay when you want the simplest package-content boot.
 Use the package-store image when you want to test the current activation-record
@@ -141,6 +144,14 @@ Build and inspect the Lua port repository fixture:
 make ports-lua-repo-fixture
 build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+```
+
+Build the deployable static-host repository root:
+
+```sh
+make ports-static-host-publish
+shasum -a 256 -c build/ports-static-host-root/SHA256SUMS
+build/pkgrepo inspect build/ports-static-host-root/aarch64/current/catalog.signed
 ```
 
 Run the acceptance tests:
@@ -544,6 +555,8 @@ Run the narrowest proof for the path you changed:
 | Ports catalog and Lua recipe validation | `make ports-catalog-test`; `make ports-recipe-test` |
 | Lua cross-build repository fixture | `make ports-lua-repo-fixture` |
 | Target-side Lua repository install/run smoke | `make package-lua-repo-install-test` |
+| Static-host repository publish root | `make ports-static-host-publish` |
+| Target-side install from static-host publish root | `make package-static-host-repo-install-test` |
 | Full package tooling in the full gate | `make test` |
 
 The underlying host tests are:
@@ -561,6 +574,7 @@ The QEMU tests are:
 - [tests/pkg_local_install_test.sh](../tests/pkg_local_install_test.sh)
 - [tests/pkg_repo_install_test.sh](../tests/pkg_repo_install_test.sh)
 - [tests/pkg_lua_repo_install_test.sh](../tests/pkg_lua_repo_install_test.sh)
+- [tests/pkg_static_host_repo_install_test.sh](../tests/pkg_static_host_repo_install_test.sh)
 
 ## Troubleshooting
 
@@ -578,6 +592,7 @@ The QEMU tests are:
 | `pkg: package SHA-256 mismatch` | The downloaded package blob does not match the signed catalog entry | Rebuild the repository fixture with `make package-repo-fixture` and rerun `make package-repo-install-test` |
 | `make ports-lua-repo-fixture` cannot find newlib | The generated cross sysroot is missing | Run `make newlib`, then rerun `make ports-lua-repo-fixture` |
 | `pkg install lua` fails in the guest | The Lua repository was not served, `pkg update` did not cache its catalog, or the writable Lua package-store image is missing | Rebuild with `make ports-lua-repo-fixture package-lua-install-fixture`, then run `make package-lua-repo-install-test` |
+| `make ports-static-host-publish` fails SHA-256 checks | The seed repository was modified after signing or a copied package blob is stale | Rebuild with `make ports-seed-repo-fixture ports-static-host-publish` |
 | Package content disappears after reboot | The package image or writable package-store image was not attached to the new boot | Attach the same package payload, package-store, or writable install-store image each time |
 
 For general package diagnosis, see
