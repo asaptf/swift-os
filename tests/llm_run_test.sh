@@ -38,9 +38,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -57,13 +54,16 @@ drive_fail() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
