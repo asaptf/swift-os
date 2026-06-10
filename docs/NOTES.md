@@ -1480,6 +1480,31 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   from multiple threads. It proves the narrow thread/futex runtime path under the
   restricted S2h scheduler gate.
 
+### S5f — run-any EL0 placement policy (DONE, 2026-06-10)
+
+- **Gated run-any policy.** The ordinary default process placement still chooses
+  CPU0 outside the acceptance window. `processRunS5fRunAnyPlacement` temporarily
+  enables a run-any hook that round-robins new EL0 processes across CPU0 plus all
+  active secondary scheduler CPUs, using the normal `homeCpu: unassignedCpu`
+  creation path instead of explicit affinity.
+- **More work than CPUs.** The boot demo starts all online secondary scheduler
+  CPUs and creates more `/bin/coproc` processes than scheduler CPUs. This forces
+  the run-any selector to wrap while each process remains pinned to the selected
+  home CPU for the duration of the narrow test.
+- **Telemetry and guard.** S5f captures the scheduler CPU mask, aggregate
+  dispatch CPU mask/count, secondary CPU mask, policy selection count, process
+  count, and exact home-CPU dispatch matches before reaping. The guard requires
+  policy selections to match created processes, dispatch coverage to match the
+  scheduler mask, every process to dispatch only on its selected CPU, and all
+  run queues plus secondary gate masks to be idle after stop.
+- **Executable checks.** Boot prints `S5f OK: run-any placement policy
+  completed` and logs either `S5f OK: run-any placement covered scheduler CPUs`
+  or the CPU0 fallback. `make s5-run-any-placement-test` runs the focused
+  `-smp 4` boot acceptance.
+- **Non-goals.** S5f does not add migration, work stealing, load balancing, or a
+  production scheduler heuristic. It proves that the default placement path can
+  select any active scheduler CPU under the existing restricted SMP boundary.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

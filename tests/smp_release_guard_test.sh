@@ -1196,7 +1196,7 @@ for needle in \
   '[I] smp: S5d OK: EL0 fanout crossed scheduler CPUs' \
   '[I] smp: S5d OK: EL0 fanout CPU0 fallback' \
   'S5d OK: EL0 fanout ran across scheduler CPUs' \
-  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5e markers'; do
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5f markers'; do
   if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
     echo "FAIL: S5d SMP boot smoke missing $needle." >&2
     exit 1
@@ -1268,7 +1268,7 @@ for needle in \
   '[I] smp: S5e OK: shared-address-space threads crossed CPUs' \
   '[I] smp: S5e OK: shared-address-space thread fanout CPU0 fallback' \
   'S5e OK: shared-address-space thread fanout completed' \
-  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5e markers'; do
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5f markers'; do
   if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
     echo "FAIL: S5e SMP boot smoke missing $needle." >&2
     exit 1
@@ -1284,4 +1284,58 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5e release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress + EL0 fanout + shared-address-space thread fanout)"
+for needle in \
+  'lastS5fRunAnyTelemetryValid' \
+  'lastS5fRunAnySchedulerCpuMask' \
+  'lastS5fRunAnyDispatchCpuMask' \
+  'lastS5fRunAnyPolicySelectionCount' \
+  's5fRunAnyPlacementActive' \
+  's5fRunAnySlots' \
+  'processNextS5fRunAnyHomeCpu' \
+  'captureLastS5fRunAnyTelemetry' \
+  'func processRunS5fRunAnyPlacement' \
+  'homeCpu: unassignedCpu' \
+  'func processS5fRunAnyPlacementSelfTest' \
+  'lastS5fRunAnyPolicySelectionCount != lastS5fRunAnyProcessCount' \
+  'lastS5fRunAnyDispatchCpuMask != lastS5fRunAnySchedulerCpuMask' \
+  'lastS5fRunAnyExactCpuMatchCount != lastS5fRunAnyProcessCount'; do
+  if ! grep -Fq -- "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5f run-any placement policy missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'runS5fRunAnyPlacementDemo' \
+  'processRunS5fRunAnyPlacement' \
+  'processS5fRunAnyPlacementSelfTest' \
+  'S5f OK: run-any placement policy completed' \
+  'S5f OK: run-any placement covered scheduler CPUs' \
+  'S5f OK: run-any placement CPU0 fallback'; do
+  if ! grep -Fq -- "$needle" "$MAIN_SWIFT"; then
+    echo "FAIL: S5f boot run-any placement acceptance missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '[I] smp: S5f OK: run-any placement covered scheduler CPUs' \
+  '[I] smp: S5f OK: run-any placement CPU0 fallback' \
+  'S5f OK: run-any placement policy completed' \
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5f markers'; do
+  if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
+    echo "FAIL: S5f SMP boot smoke missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  's5-run-any-placement-test: build $(QEMU_DTB_SMP4) base-image' \
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S5f make target missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5f release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress + EL0 fanout + shared-address-space thread fanout + run-any EL0 placement policy)"

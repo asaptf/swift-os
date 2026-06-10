@@ -295,6 +295,16 @@ private func runS5eThreadFanoutDemo() -> Bool {
     return true
 }
 
+private func runS5fRunAnyPlacementDemo() -> Bool {
+    uartPuts("swift-os S5f: run-any EL0 placement policy\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["coproc", "S5f"])
+    processRunS5fRunAnyPlacement(img, sz, packed, packedLen, argc)
+    uartPuts("S5f OK: run-any placement policy completed\n")
+    return true
+}
+
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
     let (img, sz) = demoImage("/bin/forkdemo")
@@ -1007,6 +1017,18 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 klog(.info, "smp", "S5e OK: shared-address-space threads crossed CPUs", UInt64(platform.cpuCount))
             } else {
                 klog(.info, "smp", "S5e OK: shared-address-space thread fanout CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5fRunAnyPlacementDemo = runS5fRunAnyPlacementDemo()
+        if ranS5fRunAnyPlacementDemo {
+            if !processS5fRunAnyPlacementSelfTest() {
+                uartPuts("panic: S5f run-any placement guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5f OK: run-any placement covered scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5f OK: run-any placement CPU0 fallback", UInt64(platform.cpuCount))
             }
         }
         runForkDemo()
