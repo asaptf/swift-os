@@ -302,7 +302,8 @@ swos-kactivate
 Then reboot through the UEFI disk profile. The loader verifies the selected
 manifest and kernel slot before handoff. Acceptance coverage:
 `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`,
-`./tests/uefi_kactivate_test.sh`, and `./tests/uefi_kattempt_test.sh`.
+`./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, and
+`./tests/uefi_krollback_test.sh`.
 
 For the complete operator runbook and rollback boundaries, see
 [Update And Rollback Guide](UPDATE_GUIDE.md). For on-disk format and trust
@@ -622,7 +623,7 @@ Run the narrowest test that proves the path you touched:
 | Signed repository install | `make package-repo-install-test` |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` |
 | Base-image rollback/durability | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh` |
 | Console login | `./tests/console_login_test.sh` |
 | Capability enforcement | `./tests/cap_enforce_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |

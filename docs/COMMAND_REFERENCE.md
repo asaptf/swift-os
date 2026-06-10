@@ -912,7 +912,8 @@ Expected success:
 swos-kactivate: inactive kernel slot activated; reboot to use it
 ```
 
-Acceptance coverage: `tests/uefi_kactivate_test.sh`, `tests/uefi_kattempt_test.sh`
+Acceptance coverage: `tests/uefi_kactivate_test.sh`, `tests/uefi_kattempt_test.sh`,
+`tests/uefi_krollback_test.sh`
 
 Notes:
 
@@ -922,7 +923,9 @@ Notes:
   manifests.
 - Permission failures print `permission denied (need capConsole)`.
 - Kernel-slot boot-attempt persistence is tested by `tests/uefi_kattempt_test.sh`;
-  kernel-slot health confirmation and rollback are future work.
+  attempt-based kernel-slot rollback is tested by
+  `tests/uefi_krollback_test.sh`. Kernel-slot health confirmation
+  (`swos-kconfirm`) remains future work.
 
 ## Package Commands
 

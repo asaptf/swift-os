@@ -33,7 +33,7 @@ Current supported support targets:
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh`, `./tests/ab_rollback_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` |
@@ -83,7 +83,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, then `./tests/ab_rollback_test.sh` if rollback is involved |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, then `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, or `./tests/uefi_kattempt_test.sh` for runtime staging and boot-state persistence |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, then `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kattempt_test.sh`, or `./tests/uefi_krollback_test.sh` for runtime staging, boot-state persistence, and rollback |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
 | SMP readiness | `make s1-test` or the active milestone target |

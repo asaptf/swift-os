@@ -26,6 +26,7 @@ Then identify the failing layer:
 | QEMU starts but no login prompt | [Boot Problems](#boot-problems) |
 | Password accepted nowhere | [Login Problems](#login-problems) |
 | `open`, `cat`, `ls`, or writes fail | [Filesystem Problems](#filesystem-problems) |
+| `swos-*` update command or rollback behaves unexpectedly | [Update And Rollback Problems](#update-and-rollback-problems) |
 | Socket tools fail | [Networking Problems](#networking-problems) |
 | `/usr/bin/pkghello` is missing | [Package Problems](#package-problems) |
 | `/bin/llm` cannot load files | [LLM Demo Problems](#llm-demo-problems) |
@@ -282,6 +283,126 @@ ls -l /etc
 ls -l /tmp
 id
 ```
+
+## Update And Rollback Problems
+
+SwiftOS currently has checked A/B validation paths, not a production online
+updater. Base-image updates use the dedicated SWOSBOOT store; kernel-image
+updates use signed UEFI ESP slots. For the normal operator flow, see
+[UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+
+### `swos-*` Says `permission denied`
+
+All update commands require the privileged console authority. Confirm the guest
+session:
+
+```sh
+id
+```
+
+Use the seeded `root` login for update tests:
+
+```text
+root / swordfish
+```
+
+The expected failure text is:
+
+```text
+permission denied (need capConsole)
+```
+
+Run the capability gate if the wrong account is allowed to update:
+
+```sh
+./tests/cap_enforce_test.sh
+```
+
+### Base-Image Update Does Not Stage Or Activate
+
+`swos-update` requires the update-store boot profile with an attached signed
+SWOSBASE payload disk. Rebuild the known-good artifacts and run the focused
+gates:
+
+```sh
+make base-image updatestore
+./tests/ab_stage_test.sh
+./tests/ab_activate_test.sh
+```
+
+Expected guest markers:
+
+```text
+swos-update: payload staged into the inactive slot; run swos-activate then reboot
+swos-activate: inactive slot activated (on trial); reboot to use it
+```
+
+If the trial boot is healthy but later rolls back, the slot was never confirmed:
+
+```sh
+swos-confirm
+```
+
+Verify the full base-image safety path:
+
+```sh
+./tests/ab_confirm_test.sh
+./tests/ab_rollback_test.sh
+./tests/ab_flush_test.sh
+```
+
+### Kernel Slot Does Not Switch After `swos-kactivate`
+
+Kernel-slot updates require the UEFI disk profile, not direct `-kernel` boot.
+Rebuild the ESP disk and base image:
+
+```sh
+make disk base-image
+```
+
+Then run the focused gates:
+
+```sh
+./tests/uefi_kernel_ab_test.sh
+./tests/uefi_kstage_test.sh
+./tests/uefi_kactivate_test.sh
+```
+
+Expected guest markers:
+
+```text
+swos-kstage: active kernel image staged into the inactive ESP slot (verified)
+swos-kactivate: inactive kernel slot activated; reboot to use it
+```
+
+If a manual run still boots the old slot, confirm the QEMU command boots the
+same writable disk image that `swos-kactivate` modified. A fresh disk image has
+a fresh ESP and will not contain the previous activation.
+
+### UEFI Loader Rolls Back The Kernel Slot
+
+This can be expected. The loader records per-slot boot attempts in
+`\EFI\swift-os\kernel-state`. An unconfirmed active slot that reaches the
+attempt cap is treated as unhealthy, so the loader boots the fallback slot and
+marks the original slot failed.
+
+Expected rollback markers:
+
+```text
+UEFI: kernel slot A boot attempt 0x0000000000000003
+UEFI: kernel slot A unconfirmed after 0x0000000000000003 attempts, rolling back to slot B
+UEFI: booted kernel slot B
+```
+
+Verify boot-state persistence and rollback:
+
+```sh
+./tests/uefi_kattempt_test.sh
+./tests/uefi_krollback_test.sh
+```
+
+Kernel-slot health confirmation (`swos-kconfirm`) is not implemented yet. Until
+that lands, repeated unconfirmed trials are expected to exercise rollback.
 
 ## Networking Problems
 

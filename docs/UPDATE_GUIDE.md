@@ -129,8 +129,9 @@ swos-kactivate
 
 Then reboot through the UEFI disk profile. On the next boot, the loader verifies
 the alternate signed manifest and selected kernel slot before handoff. The
-loader also persists a per-slot boot-attempt counter in `kernel-state`; automatic
-kernel-slot rollback and `swos-kconfirm` remain future U1g-5 work.
+loader also persists a per-slot boot-attempt counter in `kernel-state`; an
+unconfirmed kernel slot rolls back after the checked attempt window.
+`swos-kconfirm` remains future U1g-5c work.
 
 Minimum verification:
 
@@ -139,11 +140,12 @@ Minimum verification:
 ./tests/uefi_kstage_test.sh
 ./tests/uefi_kactivate_test.sh
 ./tests/uefi_kattempt_test.sh
+./tests/uefi_krollback_test.sh
 ```
 
 Kernel-image A/B has end-to-end staging and activation for the checked ESP
-layout. A real new-kernel payload source and per-kernel-slot health rollback are
-future work.
+layout. A real new-kernel payload source and per-kernel-slot health confirmation
+are future work.
 
 ## Release Identity
 
@@ -444,7 +446,7 @@ touches shared code.
 | Package payload | `make package-overlay-test` | Package store test |
 | Package store | `make package-store-test` | Overlay test plus boot smoke |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` | `./tests/uefi_kattempt_test.sh`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh`, `make test` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` | `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh`, `make test` |
 | AI model bundle | `./tests/llm_run_test.sh` | `./tests/llm_serve_test.sh` |
 | Documentation only | `make docs-test`, `git diff --check` | `make build`, `./tests/boot_test.sh` |
 

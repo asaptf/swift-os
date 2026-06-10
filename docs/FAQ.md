@@ -103,8 +103,9 @@ package tooling, or model targets; boot the new artifacts; run the relevant
 acceptance tests; and keep the previous artifacts or commit available for
 rollback. The checked A/B validation paths also support target-side base-image
 slot staging (`swos-update`, `swos-activate`, `swos-confirm`) and UEFI ESP
-kernel-slot staging (`swos-kstage`, `swos-kactivate`). Production update
-channels and kernel-slot health rollback are still future work.
+kernel-slot staging plus attempt-based rollback (`swos-kstage`,
+`swos-kactivate`). Production update channels and kernel-slot health
+confirmation are still future work.
 
 See [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
 
