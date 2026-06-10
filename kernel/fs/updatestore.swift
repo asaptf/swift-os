@@ -6,7 +6,7 @@
 // The verified-fallback retry lives in vfsInit (virtioBlkUseFallbackBase).
 // U1b (write side): on boot, records a per-slot boot-attempt counter, persisted
 // to the manifest's other double-buffer copy (torn-write safe).
-// U1c (health-confirm): updateStoreConfirm() (syscall 60, capConsole-gated, via
+// U1c (health-confirm): updateStoreConfirm() (syscall 65, capConsole-gated, via
 // /bin/swos-confirm) marks the booted slot CONFIRMED so it stops accruing
 // attempts. Attempt-based rollback that consumes the counter is U1d.
 //
@@ -173,7 +173,7 @@ func updateStoreInit() {
 /// counter, persisted to the manifest. A health-check pass: a CONFIRMED slot is
 /// trusted and never rolled back (and stops accruing boot attempts). Gated on
 /// capConsole (the boot/admin context), like login. Returns 0 on success, or a
-/// negative errno-style code. Invoked from EL0 via syscall 60 (/bin/swos-confirm).
+/// negative errno-style code. Invoked from EL0 via syscall 65 (/bin/swos-confirm).
 func updateStoreConfirm() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
     if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
@@ -205,7 +205,7 @@ func updateStoreConfirm() -> Int {
 /// counter reset so it boots "on trial" under U1d's attempt-based rollback. The
 /// operator runs this after staging a new image into the inactive slot. Gated on
 /// capConsole. Returns 0 on success, or a negative errno-style code. Invoked
-/// from EL0 via syscall 61 (/bin/swos-activate).
+/// from EL0 via syscall 66 (/bin/swos-activate).
 func updateStoreActivateOther() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
     if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
@@ -268,7 +268,7 @@ func updateStoreActivateOther() -> Int {
 /// boot on trial and U1a/U1d return to the known-good slot.
 ///
 /// Returns 0 on success, or a negative errno-style code. Invoked from EL0 via
-/// syscall 62 (/bin/swos-update).
+/// syscall 67 (/bin/swos-update).
 func updateStoreStagePayload() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
     if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
@@ -290,7 +290,7 @@ func updateStoreStagePayload() -> Int {
     var hdr = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &hdr) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(0, p) == 0 {
+        if virtioBlkReadCurrent(0, p) == 0 {
             let magic: StaticString = "SWOSBASE"
             var m = true
             magic.withUTF8Buffer { mm in
@@ -386,7 +386,7 @@ func updateStorePayloadProbe() {
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(0, p) == 0 {
+        if virtioBlkReadCurrent(0, p) == 0 {
             let magic: StaticString = "SWOSBASE"
             var m = true
             magic.withUTF8Buffer { mm in

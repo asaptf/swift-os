@@ -13,6 +13,7 @@ private let errNoEntry = -2
 private let errBadFD = -9
 private let errAccess = -13
 private let errAgain = -11
+private let errBusy = -16
 private let errNoMem = -12
 private let errExists = -17
 private let errNotDir = -20
@@ -66,29 +67,35 @@ private struct VNode {
     var dataPtr: UInt = 0   // file contents (in RAM: static literal or tmpfs)
     var dataLen = 0
     var dataCap = 0         // tmpfs growth capacity
+    var diskImage = 0       // SWOSBASE image index for on-disk files
     var diskOffset = 0      // byte offset of contents within the disk image
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
-    // I8 (signed base image): offset of this entry's 32-byte content SHA-256
-    // within the kept signed-metadata buffer (-1 for tmpfs/literals), and a
-    // once-per-boot cache so each disk file is verified on first use only.
-    var hashOff = -1
+    // I8 (signed base image): pointer to this entry's 32-byte content SHA-256
+    // inside its kept signed-metadata buffer (0 for unsigned package payloads),
+    // plus a once-per-boot cache so each disk file is verified on first use only.
+    var hashPtr: UInt = 0
     var contentVerified = false
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
 }
 
-private let maxNodes = 96
+// Keep fixed-table tmpfs churn headroom above the packed base image. S4f runs
+// after normal boot/login demos, so it needs space for transient vnode names
+// even though unlink/rmdir only detach nodes in this simple VFS.
+private let maxNodes = 192
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
+private var mountedPackageStorePayloads = 0
 
 // ---- open files, fd table, pipes -----------------------------------------
 
 // Handle kinds live in handle.swift (HandleKind): .none/.tty/.file/.pipe/.socket,
 // 1:1 with the former fdKind* constants (fdKindVNode → .file). net-b: a .socket
-// description's `node` field indexes the socket table.
+// description's `node` field indexes the socket table; C5b .device descriptions
+// index the opaque device grant registry below.
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
@@ -131,6 +138,24 @@ private struct Endpoint {
 }
 private let endpointMsgCap = 256
 
+// C5b: a tiny opaque device registry. This deliberately does not map MMIO,
+// route IRQs, or allocate DMA windows yet; it only mints a unique transferable
+// handle that names a future driver-owned device grant.
+private struct DeviceGrant {
+    var inUse = false
+    var claimed = false
+    var namePtr: UInt = 0
+    var nameLen = 0
+    var kind: UInt32 = 0
+    var bus: UInt32 = 0
+    var mmioBase: UInt = 0
+    var mmioLen: UInt = 0
+    var irq: UInt32 = 0
+    var flags: UInt32 = 0
+    var generation: UInt32 = 0
+    var ownerProc = -1
+}
+
 private let maxFDs = 32
 private let maxOpenDescriptions = 96
 private let maxPipes = 16
@@ -144,11 +169,68 @@ private let maxEndpoints = 16
 private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
+private let maxDevices = 4
+private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
+private let deviceInfoSize: UInt = 64
+private let deviceInfoNameOffset = 40
+private let deviceInfoNameCap = 24
+private let deviceKindPseudoInput: UInt32 = 1
+private let deviceKindVirtioInput: UInt32 = 2
+private let deviceBusPseudo: UInt32 = 1
+private let deviceBusVirtioMmio: UInt32 = 2
+private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
+private let deviceFlagDiscovered: UInt32 = 1 << 1
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // C3: the subtree a process is confined to — object-scoped fs authority. 0 means
 // unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
 // is always true, so the confinement guard is a no-op for unconfined processes.
 private var confineNodes = [Int](repeating: 0, count: maxVFSProcesses)
+
+private var vfsLockWord: UInt64 = 0
+private var vfsLockAcquireCount: UInt64 = 0
+private var vfsLockContentionCount: UInt64 = 0
+
+@inline(__always)
+private func vfsLock() -> UInt64 {
+    let daif = irq_save()
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &vfsLockWord) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
+        }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &vfsLockContentionCount) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &vfsLockAcquireCount) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
+    }
+}
+
+@inline(__always)
+private func vfsUnlock(_ daif: UInt64) {
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &vfsLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+@inline(__always)
+private func vfsLockAtomicLoad(_ word: inout UInt64) -> UInt64 {
+    withUnsafeMutablePointer(to: &word) { ptr in
+        smpAtomicLoad(ptr)
+    }
+}
 
 // ---- construction ---------------------------------------------------------
 
@@ -235,6 +317,16 @@ private func le64(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt64 {
     return v
 }
 
+private func bytesEqual(_ a: UnsafePointer<UInt8>, _ aLen: Int, _ b: UnsafePointer<UInt8>, _ bLen: Int) -> Bool {
+    if aLen != bLen { return false }
+    var i = 0
+    while i < aLen {
+        if a[i] != b[i] { return false }
+        i += 1
+    }
+    return true
+}
+
 private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
                         _ owner: UInt32, _ mode: UInt32) -> Int {
     let n = allocNode()
@@ -250,19 +342,20 @@ private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
 }
 
 private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
-                         _ diskOffset: Int, _ dataLen: Int,
-                         _ owner: UInt32, _ mode: UInt32, _ hashOff: Int) {
+                         _ diskImage: Int, _ diskOffset: Int, _ dataLen: Int,
+                         _ owner: UInt32, _ mode: UInt32, _ hashPtr: UInt) {
     let n = allocNode()
     if n < 0 { return }
     nodes[n].namePtr = namePtr
     nodes[n].nameLen = nameLen
     nodes[n].readOnly = true
     nodes[n].onDisk = true
+    nodes[n].diskImage = diskImage
     nodes[n].diskOffset = diskOffset
     nodes[n].dataLen = dataLen
     nodes[n].owner = owner
     nodes[n].mode = mode
-    nodes[n].hashOff = hashOff
+    nodes[n].hashPtr = hashPtr
     linkChild(parent, n)
 }
 
@@ -292,86 +385,153 @@ private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ 
     return (cur, UInt(bitPattern: pathPtr + leafStart), pathLen - leafStart)
 }
 
-// I8: the kept signed-metadata buffer (header | entries | strings). vnode
-// names and per-entry content hashes point straight into it for the lifetime
-// of the system. SMP: boot-only write, read-only afterwards.
-private var baseMeta: UnsafeMutablePointer<UInt8>? = nil
+private let vfsActiveBaseImage = -1
+
+private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>)
+    -> (Bool, Bool, Int, Int, UInt64, UInt64, UInt64, UInt64, Int) {
+    let magic: StaticString = "SWOSBASE"
+    var magicOk = true
+    magic.withUTF8Buffer { m in
+        for i in 0..<m.count where hdr[i] != m[i] { magicOk = false }
+    }
+    if !magicOk { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let version = le32(hdr, 8)
+    let signed = version == 3
+    if version != 2 && version != 3 { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let entrySize = signed ? 72 : 40
+    if le32(hdr, 12) != 64 { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if le32(hdr, 16) != UInt32(entrySize) { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+
+    let entryCount = Int(le32(hdr, 20))
+    let entriesOffset = le64(hdr, 24)
+    let stringsOffset = le64(hdr, 32)
+    let stringsSize = le64(hdr, 40)
+    let dataOffset = le64(hdr, 48)
+
+    if entryCount <= 0 || entryCount > maxNodes { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if entriesOffset != 64 || stringsOffset < entriesOffset { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    let signedLen64 = stringsOffset + stringsSize
+    let sigSize: UInt64 = signed ? 64 : 0
+    if dataOffset != signedLen64 + sigSize { return (false, false, 0, 0, 0, 0, 0, 0, 0) }
+    if signedLen64 <= 64 || signedLen64 > UInt64(1 << 20) {
+        return (false, false, 0, 0, 0, 0, 0, 0, 0)
+    }
+    return (true, signed, entryCount, entrySize, entriesOffset, stringsOffset,
+            stringsSize, dataOffset, Int(signedLen64))
+}
+
+func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if image == vfsActiveBaseImage {
+        return virtioBlkReadRange(byteOff, buf, len)
+    }
+    let rawCount = virtioBlkSwosbaseImageCount()
+    if image >= 0 && image < rawCount {
+        return virtioBlkReadRangeFromImage(image, byteOff, buf, len)
+    }
+    let storeIndex = image - rawCount
+    return pkgStoreReadActivePayloadRange(storeIndex, byteOff, buf, len)
+}
+
 // Fixed scratch for streaming content verification off the disk (4 KiB chunk
 // per virtio read). SMP: single-CPU kernel today; serialize before S5.
 private var vfsVerifyScratch = InlineArray<4096, UInt8>(repeating: 0)
 
-/// Build the read-only base tree from a packed SWOSBASE image on the virtio-blk
-/// disk. Returns false (leaving the tree untouched) if there is no disk, the
-/// magic does not match, or the image is malformed, so the caller can fall back
-/// to the compiled-in literals.
-///
-/// I8: only the signed v3 layout is accepted, and its Ed25519 signature over
-/// header|entries|strings must verify against the trust root compiled into the
-/// kernel — a tampered or unsigned image is refused before a single vnode is
-/// built. Per-entry content hashes (verified lazily on first use) live in the
-/// kept metadata buffer.
-private func buildBaseFromDisk(_ root: Int) -> Bool {
+private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
     if !virtioBlkAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
-        virtioBlkReadRange(0, raw.baseAddress, 64) == 0
+        vfsImageReadRange(image, 0, raw.baseAddress, 64) == 0
     }
     if !hok { return false }
 
     return hdr.withUnsafeBufferPointer { hp -> Bool in
         let h = hp.baseAddress!
-        let magic: StaticString = "SWOSBASE"
-        var magicOk = true
-        magic.withUTF8Buffer { m in
-            for i in 0..<m.count where h[i] != m[i] { magicOk = false }
-        }
-        if !magicOk { return false }
-        let version = le32(h, 8)
-        if version != 3 {
-            uartPuts("vfs: unsigned base image refused — signed v3 required\n")
-            return false
-        }
-        if le32(h, 16) != 72 { return false } // v3 entry size (v2 fields + 32-byte hash)
+        let (ok, _, entryCount, entrySize, entriesOffset, stringsOffset, stringsSize, _, _) = readPackedImageHeader(h)
+        if !ok { return false }
 
-        let entryCount = Int(le32(h, 20))
-        let entriesOffset = le64(h, 24)
-        let stringsOffset = le64(h, 32)
-        let stringsSize = le64(h, 40)
-        let dataOffset = le64(h, 48)
-
-        if entryCount <= 0 || entryCount > maxNodes { return false }
-        if entriesOffset != 64 || stringsOffset < entriesOffset { return false }
-        // v3 layout: signature (64 bytes) sits between strings and payload.
-        let signedLen = Int(stringsOffset + stringsSize)
-        if dataOffset != stringsOffset + stringsSize + 64 { return false }
-        if signedLen <= 64 || signedLen > 1 << 20 { return false } // 1 MiB ceiling
-
-        // Read the whole signed range (header + entries + strings), then the
-        // detached signature, and verify before trusting any of it.
-        guard let metaRaw = swiftos_kernel_alloc(UInt(signedLen), 16) else { return false }
-        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: signedLen)
-        if virtioBlkReadRange(0, metaRaw, UInt32(signedLen)) != 0 { return false }
-        var sig = [UInt8](repeating: 0, count: 64)
-        let sok = sig.withUnsafeMutableBytes { raw -> Bool in
-            virtioBlkReadRange(UInt64(signedLen), raw.baseAddress, 64) == 0
-        }
-        if !sok { return false }
-        let sigOK = sig.withUnsafeBytes { sb -> Bool in
-            withUnsafeBytes(of: image_trust_root) { tr in
-                ed25519Verify(message: metaRaw, signedLen,
-                              signature: sb.baseAddress!, publicKey: tr.baseAddress!)
+        var found = false
+        target.withUTF8Buffer { targetBuf in
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: entrySize) { entry in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: targetBuf.count) { path in
+                    var k = 0
+                    while k < entryCount && !found {
+                        let entryOffset = entriesOffset + UInt64(k * entrySize)
+                        if vfsImageReadRange(image, entryOffset, entry.baseAddress, UInt32(entrySize)) != 0 {
+                            return
+                        }
+                        let e = entry.baseAddress!
+                        let pathOff = Int(le32(e, 0))
+                        let pathLen = Int(le32(e, 4))
+                        if pathLen == targetBuf.count && UInt64(pathOff + pathLen) <= stringsSize {
+                            let pathOffset = stringsOffset + UInt64(pathOff)
+                            if vfsImageReadRange(image, pathOffset, path.baseAddress, UInt32(pathLen)) == 0 {
+                                if bytesEqual(path.baseAddress!, pathLen, targetBuf.baseAddress!, targetBuf.count) {
+                                    found = true
+                                }
+                            }
+                        }
+                        k += 1
+                    }
+                }
             }
         }
-        if !sigOK {
-            uartPuts("vfs: base image signature INVALID — refusing disk base\n")
+        return found
+    }
+}
+
+/// Build a read-only tree from a packed SWOSBASE image. The metadata buffer
+/// (header + entries + string table) is kept permanently: vnode names and signed
+/// per-file hashes point straight into it.
+private func buildImageFromDisk(_ image: Int, _ root: Int,
+                                allowExistingDirs: Bool,
+                                requireSigned: Bool) -> Bool {
+    if !virtioBlkAvailable() { return false }
+
+    var hdr = [UInt8](repeating: 0, count: 64)
+    let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
+        vfsImageReadRange(image, 0, raw.baseAddress, 64) == 0
+    }
+    if !hok { return false }
+
+    return hdr.withUnsafeBufferPointer { hp -> Bool in
+        let h = hp.baseAddress!
+        let (ok, signed, entryCount, entrySize, entriesOffset, stringsOffset, _, dataOffset, signedLen) =
+            readPackedImageHeader(h)
+        if !ok { return false }
+        if requireSigned && !signed {
+            uartPuts("vfs: unsigned base image refused - signed v3 required\n")
             return false
         }
-        klog(.info, "vfs", "base image signature verified (ed25519)")
-        baseMeta = meta
+
+        // Read the metadata range (header + entries + strings). For v3 this is
+        // the signed message. For v2 package payloads it is kept so names remain
+        // stable for the lifetime of the mount.
+        guard let metaRaw = swiftos_kernel_alloc(UInt(signedLen), 16) else { return false }
+        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: signedLen)
+        if vfsImageReadRange(image, 0, metaRaw, UInt32(signedLen)) != 0 { return false }
+
+        if signed {
+            var sig = [UInt8](repeating: 0, count: 64)
+            let sok = sig.withUnsafeMutableBytes { raw -> Bool in
+                vfsImageReadRange(image, UInt64(signedLen), raw.baseAddress, 64) == 0
+            }
+            if !sok { return false }
+            let sigOK = sig.withUnsafeBytes { sb -> Bool in
+                withUnsafeBytes(of: image_trust_root) { tr in
+                    ed25519Verify(message: metaRaw, signedLen,
+                                  signature: sb.baseAddress!, publicKey: tr.baseAddress!)
+                }
+            }
+            if !sigOK {
+                uartPuts("vfs: base image signature INVALID - refusing disk image\n")
+                return false
+            }
+            klog(.info, "vfs", "base image signature verified (ed25519)")
+        }
 
         for k in 0..<entryCount {
-            let e = meta + Int(entriesOffset) + k * 72
+            let e = meta + Int(entriesOffset) + k * entrySize
             let pathOff = Int(le32(e, 0))
             let pathLen = Int(le32(e, 4))
             let kind = le32(e, 8)
@@ -383,27 +543,105 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             let pathPtr = meta + Int(stringsOffset) + pathOff
             let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
             if parent < 0 || leafLen <= 0 { continue }
+            let existing = findChild(parent, UnsafePointer<UInt8>(bitPattern: leafPtr)!, leafLen)
             if kind == 1 {
+                if existing != -1 {
+                    if allowExistingDirs && nodes[existing].isDir { continue }
+                    return false
+                }
                 _ = addDiskDir(parent, leafPtr, leafLen, owner, mode)
             } else if kind == 2 {
-                let hashOff = Int(entriesOffset) + k * 72 + 40
-                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen,
-                            owner, mode, hashOff)
+                if existing != -1 { return false }
+                let hashPtr = signed ? UInt(bitPattern: e + 40) : 0
+                addDiskFile(parent, leafPtr, leafLen, image, Int(dataOffset) + dOff,
+                            dLen, owner, mode, hashPtr)
             }
         }
         return true
     }
 }
 
+/// Build the read-only base tree from whichever SWOSBASE image contains the
+/// boot shell. QEMU's virtio-mmio scan order is not a package contract, so the
+/// VFS chooses by contents. Base images must be signed v3; package overlays may
+/// still be v2 because swpkg payloads deliberately keep the v2 layout.
+private func buildBaseFromDisk(_ root: Int) -> (mounted: Bool, image: Int) {
+    if virtioBlkUsingStore() {
+        if buildImageFromDisk(vfsActiveBaseImage, root,
+                              allowExistingDirs: false,
+                              requireSigned: true) {
+            return (true, vfsActiveBaseImage)
+        }
+        return (false, -1)
+    }
+
+    let count = virtioBlkSwosbaseImageCount()
+    if count <= 0 {
+        if buildImageFromDisk(vfsActiveBaseImage, root,
+                              allowExistingDirs: false,
+                              requireSigned: true) {
+            return (true, vfsActiveBaseImage)
+        }
+        return (false, -1)
+    }
+    var image = 0
+    while image < count {
+        if packedImageHasPath(image, "bin/busybox") || packedImageHasPath(image, "bin/console-login") {
+            if buildImageFromDisk(image, root, allowExistingDirs: false, requireSigned: true) {
+                return (true, image)
+            }
+        }
+        image += 1
+    }
+    if count == 1 && buildImageFromDisk(0, root, allowExistingDirs: false, requireSigned: true) {
+        return (true, 0)
+    }
+    return (false, -1)
+}
+
+private func mountPackageImages(_ root: Int, baseImage: Int) {
+    let count = virtioBlkSwosbaseImageCount()
+    if !virtioBlkUsingStore() {
+        var image = 0
+        while image < count {
+            if image != baseImage {
+                if buildImageFromDisk(image, root,
+                                      allowExistingDirs: true,
+                                      requireSigned: false) {
+                    klog(.info, "vfs", "P2: package image mounted", UInt64(image))
+                } else {
+                    klog(.info, "vfs", "P2: package image rejected", UInt64(image))
+                }
+            }
+            image += 1
+        }
+    }
+    let storeCount = pkgStoreActivePayloadCount()
+    var store = 0
+    while store < storeCount {
+        let storeImage = count + store
+        if buildImageFromDisk(storeImage, root,
+                              allowExistingDirs: true,
+                              requireSigned: false) {
+            klog(.info, "pkg", "P3: package store payload mounted", UInt64(store))
+        } else {
+            klog(.info, "pkg", "P3: package store payload rejected", UInt64(store))
+        }
+        store += 1
+    }
+}
+
 /// I8: verify a disk-backed file's content against its signed hash, once per
-/// boot (cached in the vnode). Streams the extent off virtio-blk in 4 KiB
-/// chunks through the fixed scratch — no allocation, bounded memory for any
-/// file size. Returns true for non-disk nodes (tmpfs/literals are not part of
-/// the signed image) and false on any mismatch or read error.
+/// boot (cached in the vnode). Unsigned package payloads are accepted by their
+/// package/store verification path and carry hashPtr == 0 here.
 private func vfsVerifyNodeContent(_ node: Int) -> Bool {
     if node < 0 || nodes[node].isDir || !nodes[node].onDisk { return true }
     if nodes[node].contentVerified { return true }
-    guard let meta = baseMeta, nodes[node].hashOff >= 0 else { return false }
+    if nodes[node].hashPtr == 0 {
+        nodes[node].contentVerified = true
+        return true
+    }
+    guard let expect = UnsafePointer<UInt8>(bitPattern: nodes[node].hashPtr) else { return false }
 
     var stream = Sha256Stream()
     var remaining = nodes[node].dataLen
@@ -413,7 +651,10 @@ private func vfsVerifyNodeContent(_ node: Int) -> Bool {
         let buf = raw.baseAddress!
         while remaining > 0 {
             let chunk = remaining < 4096 ? remaining : 4096
-            if virtioBlkReadRange(off, buf, UInt32(chunk)) != 0 { ok = false; return }
+            if vfsImageReadRange(nodes[node].diskImage, off, buf, UInt32(chunk)) != 0 {
+                ok = false
+                return
+            }
             stream.update(buf, chunk)
             remaining -= chunk
             off += UInt64(chunk)
@@ -423,24 +664,66 @@ private func vfsVerifyNodeContent(_ node: Int) -> Bool {
 
     var digest = [UInt8](repeating: 0, count: 32)
     digest.withUnsafeMutableBytes { stream.final($0.baseAddress!) }
-    let expect = meta + nodes[node].hashOff
     var diff: UInt8 = 0
     for i in 0..<32 { diff |= digest[i] ^ expect[i] }
     if diff != 0 {
-        uartPuts("vfs: content hash mismatch — rejecting file\n")
+        uartPuts("vfs: content hash mismatch - rejecting file\n")
         return false
     }
     nodes[node].contentVerified = true
     return true
 }
 
+private func registerDevice(_ slot: Int, _ name: StaticString,
+                            kind: UInt32, bus: UInt32,
+                            mmioBase: UInt = 0, mmioLen: UInt = 0,
+                            irq: UInt32 = 0, flags: UInt32) {
+    if slot < 0 || slot >= maxDevices { return }
+    devices[slot] = DeviceGrant(inUse: true, claimed: false,
+                                namePtr: UInt(bitPattern: name.utf8Start),
+                                nameLen: name.utf8CodeUnitCount,
+                                kind: kind, bus: bus,
+                                mmioBase: mmioBase, mmioLen: mmioLen,
+                                irq: irq, flags: flags,
+                                generation: 0, ownerProc: -1)
+}
+
+private func resetDeviceRegistry() {
+    for i in 0..<maxDevices { devices[i] = DeviceGrant() }
+    let input = virtioInputDiscoverGrant()
+    if input.found {
+        registerDevice(0, "virtio-input.0",
+                       kind: deviceKindVirtioInput,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: input.mmioBase,
+                       mmioLen: input.mmioLen,
+                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
+    } else {
+        registerDevice(0, "pseudo-input.0",
+                       kind: deviceKindPseudoInput,
+                       bus: deviceBusPseudo,
+                       flags: deviceFlagNoMmioGrant)
+    }
+}
+
 func vfsInit() {
+    withUnsafeMutablePointer(to: &vfsLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    withUnsafeMutablePointer(to: &vfsLockAcquireCount) { count in
+        smpAtomicStore(count, 0)
+    }
+    withUnsafeMutablePointer(to: &vfsLockContentionCount) { count in
+        smpAtomicStore(count, 0)
+    }
+
     guard let raw = swiftos_kernel_alloc(UInt(MemoryLayout<VNode>.stride * maxNodes), 16) else {
         uartPuts("panic: vfs node table allocation failed\n")
         while true {}
     }
     nodes = raw.bindMemory(to: VNode.self, capacity: maxNodes)
     nodeCount = 0
+    mountedPackageStorePayloads = 0
 
     let root = allocNode()
     setName(root, "/")
@@ -457,19 +740,20 @@ func vfsInit() {
     // and mount that instead (the verified-fallback half of A/B).
     updateStoreInit()
     updateStorePayloadProbe() // U1f: report an attached A/B update payload disk
-    var mounted = buildBaseFromDisk(root)
+    var baseMount = buildBaseFromDisk(root)
     var usedFallback = false
-    if !mounted && virtioBlkUseFallbackBase() {
-        uartPuts("update-store: active slot failed verification — rolling back to fallback slot\n")
-        mounted = buildBaseFromDisk(root)
-        usedFallback = mounted
+    if !baseMount.mounted && virtioBlkUseFallbackBase() {
+        uartPuts("update-store: active slot failed verification - rolling back to fallback slot\n")
+        baseMount = buildBaseFromDisk(root)
+        usedFallback = baseMount.mounted
     }
-    if mounted {
+    if baseMount.mounted {
         klog(.info, "vfs", "M11c: read-only base mounted from disk")
         if virtioBlkUsingStore() {
             if usedFallback { uartPuts("update-store: mounted fallback slot\n") }
             else { uartPuts("update-store: mounted active slot\n") }
         }
+        mountPackageImages(root, baseImage: baseMount.image)
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")
@@ -493,6 +777,30 @@ func vfsInit() {
     }
     for i in 0..<maxOpenDescriptions { openDescriptions[i] = OpenDescription() }
     for i in 0..<maxPipes { pipes[i] = Pipe() }
+    for i in 0..<maxEndpoints { resetEndpointSlotForReuse(i) }
+    resetDeviceRegistry()
+}
+
+func vfsMountActivePackageStore() -> Int {
+    if nodes == nil { return errInvalid }
+    let rawCount = virtioBlkSwosbaseImageCount()
+    let storeCount = pkgStoreActivePayloadCount()
+    if storeCount < mountedPackageStorePayloads { return errInvalid }
+    var store = mountedPackageStorePayloads
+    while store < storeCount {
+        let storeImage = rawCount + store
+        if buildImageFromDisk(storeImage, 0,
+                              allowExistingDirs: true,
+                              requireSigned: false) {
+            klog(.info, "pkg", "P3b: package store payload live-mounted", UInt64(store))
+            mountedPackageStorePayloads += 1
+        } else {
+            klog(.info, "pkg", "P3b: package store payload live-mount rejected", UInt64(store))
+            return errExists
+        }
+        store += 1
+    }
+    return 0
 }
 
 private func readHandleSpec(_ base: UnsafePointer<UInt8>, _ index: Int) -> HandleSpec {
@@ -514,6 +822,8 @@ func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
         return errInvalid
     }
 
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     var targetMask: UInt64 = 0
     for i in 0..<Int(specCount) {
         let spec = readHandleSpec(specs, i)
@@ -548,6 +858,8 @@ private func seedExplicitHandles(slot: Int, parent: Int, specsVA: UInt, specCoun
 
 func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
                     specsVA: UInt = 0, specCount: UInt = 0) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     if slot < 0 || slot >= maxVFSProcesses { return }
     if parent >= 0 && parent < maxVFSProcesses {
         // cwd is always inherited; the handle set depends on the mode. `.all` is
@@ -577,6 +889,8 @@ func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
 }
 
 func vfsProcessCloseAll(slot: Int) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     if slot < 0 || slot >= maxVFSProcesses { return }
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
@@ -593,6 +907,8 @@ func vfsProcessCloseAll(slot: Int) {
 /// FD_CLOEXEC fds across exec, so the shell's relocated/redirect-saved fds (ash
 /// duplicates them above 10 with F_DUPFD_CLOEXEC) do not leak into the new image.
 func vfsCloseCloexec(slot: Int) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     if slot < 0 || slot >= maxVFSProcesses { return }
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
@@ -775,7 +1091,48 @@ private func releaseDescription(_ d: Int) {
             resetEndpointSlotForReuse(ep)
         }
     }
+    if desc.kind == .device {
+        releaseDeviceGrant(desc.node)
+    }
     openDescriptions[d] = OpenDescription()
+}
+
+private func borrowDescriptionForFD(_ proc: Int, _ fd: Int,
+                                    required: Rights = Rights())
+    -> (err: Int, entry: HandleEntry, descIndex: Int, desc: OpenDescription) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else {
+        return (errBadFD, HandleEntry(), -1, OpenDescription())
+    }
+    let entry = fdEntry(proc, fd)
+    guard hasRights(entry.rights, required) else {
+        return (errAccess, HandleEntry(), -1, OpenDescription())
+    }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else {
+        return (errBadFD, HandleEntry(), -1, OpenDescription())
+    }
+    openDescriptions[d].refCount += 1
+    return (0, entry, d, openDescriptions[d])
+}
+
+private func releaseBorrowedDescription(_ d: Int) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    releaseDescription(d)
+}
+
+private func borrowSocketForFD(_ proc: Int, _ fd: Int,
+                               required: Rights = Rights())
+    -> (err: Int, socket: Int, descIndex: Int, flags: Int) {
+    let b = borrowDescriptionForFD(proc, fd, required: required)
+    if b.err != 0 { return (b.err, -1, -1, 0) }
+    guard b.entry.kind == .socket else {
+        releaseBorrowedDescription(b.descIndex)
+        return (errBadFD, -1, -1, 0)
+    }
+    return (0, b.desc.node, b.descIndex, b.desc.flags)
 }
 
 private func validFD(_ proc: Int, _ fd: Int) -> Bool {
@@ -812,6 +1169,13 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
     return r
 }
 
+private func deviceRights() -> Rights {
+    var r = Rights()
+    r.insert(.getattr)
+    r.insert(.transfer)
+    return r
+}
+
 private func discardUninstalledDescription(_ d: Int) {
     if d >= 0 && d < maxOpenDescriptions {
         openDescriptions[d] = OpenDescription()
@@ -839,6 +1203,49 @@ private func rollbackEndpointCreate(proc: Int, sfd: Int, rfd: Int,
     discardEndpoint(ep)
 }
 
+private func releaseDeviceGrant(_ dev: Int) {
+    if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return }
+    devices[dev].claimed = false
+    devices[dev].ownerProc = -1
+}
+
+private func deviceNameMatches(_ dev: Int, _ name: UnsafePointer<UInt8>) -> Bool {
+    if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return false }
+    let len = devices[dev].nameLen
+    guard let expected = UnsafePointer<UInt8>(bitPattern: devices[dev].namePtr) else { return false }
+    var i = 0
+    while i < len {
+        if name[i] != expected[i] { return false }
+        i += 1
+    }
+    return name[len] == 0
+}
+
+private func findDeviceByName(_ name: UnsafePointer<UInt8>) -> Int {
+    for i in 0..<maxDevices where deviceNameMatches(i, name) { return i }
+    return -1
+}
+
+private func writeDeviceInfoLocked(_ dev: Int, _ out: UnsafeMutablePointer<UInt8>) {
+    for i in 0..<Int(deviceInfoSize) { out[i] = 0 }
+    let raw = UnsafeMutableRawPointer(out)
+    raw.storeBytes(of: devices[dev].kind, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].bus, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: UInt64(devices[dev].mmioBase), toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: UInt64(devices[dev].mmioLen), toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: devices[dev].irq, toByteOffset: 24, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].flags, toByteOffset: 28, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].generation, toByteOffset: 32, as: UInt32.self)
+    raw.storeBytes(of: devices[dev].claimed ? UInt32(1) : UInt32(0),
+                   toByteOffset: 36, as: UInt32.self)
+    if let name = UnsafePointer<UInt8>(bitPattern: devices[dev].namePtr) {
+        var n = devices[dev].nameLen
+        if n >= deviceInfoNameCap { n = deviceInfoNameCap - 1 }
+        for i in 0..<n { out[deviceInfoNameOffset + i] = name[i] }
+        out[deviceInfoNameOffset + n] = 0
+    }
+}
+
 // ---- kernel-internal handle API (C1) --------------------------------------
 //
 // The handle-generic operations from docs/CAPABILITIES.md §2. These are not yet
@@ -848,7 +1255,9 @@ private func rollbackEndpointCreate(proc: Int, sfd: Int, rfd: Int,
 
 /// The rights the holder has on the handle at `(proc, fd)`, or empty if invalid.
 func handleRights(_ proc: Int, _ fd: Int) -> Rights {
-    validFD(proc, fd) ? fdEntry(proc, fd).rights : Rights()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    return validFD(proc, fd) ? fdEntry(proc, fd).rights : Rights()
 }
 
 /// Duplicate a handle into the lowest free slot, sharing the same underlying
@@ -856,6 +1265,8 @@ func handleRights(_ proc: Int, _ fd: Int) -> Rights {
 /// handle can never hold more authority than the source. Returns the new fd or
 /// a negative error.
 func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
     let newfd = allocFDInProcess(proc, from: 0)
@@ -869,6 +1280,8 @@ func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
 /// Close the handle at `(proc, fd)`, dropping its reference to the underlying
 /// object. vfsClose is the current-process view of this.
 func handleClose(_ proc: Int, _ fd: Int) -> Int {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return errBadFD }
     releaseDescription(fdEntry(proc, fd).object)
     setFDEntry(proc, fd, HandleEntry())
@@ -899,6 +1312,30 @@ private func createTmpNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nam
     }
     linkChild(parent, n)
     return n
+}
+
+private func ensureTmpFileCapacity(_ node: Int, _ needed: Int) -> Bool {
+    if needed <= nodes[node].dataCap { return true }
+    var cap = nodes[node].dataCap
+    if cap < 4096 { cap = 4096 }
+    while cap < needed {
+        let next = cap * 2
+        if next <= cap { return false }
+        cap = next
+    }
+    guard let dataBuf = swiftos_kernel_alloc(UInt(cap), 16) else { return false }
+    let dst = dataBuf.bindMemory(to: UInt8.self, capacity: cap)
+    if nodes[node].dataLen > 0 {
+        let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+        var i = 0
+        while i < nodes[node].dataLen {
+            dst[i] = src[i]
+            i += 1
+        }
+    }
+    nodes[node].dataPtr = UInt(bitPattern: dataBuf)
+    nodes[node].dataCap = cap
+    return true
 }
 
 private func pipeCount(_ p: Int) -> Int {
@@ -932,11 +1369,215 @@ private func allocPipe() -> Int {
     return -1
 }
 
+private func vfsS4bAccountingSelfTestLocked() -> Bool {
+    if nodes == nil || nodeCount <= 0 || !nodes[0].inUse || !nodes[0].isDir {
+        return false
+    }
+
+    return withUnsafeTemporaryAllocation(of: Int.self, capacity: maxOpenDescriptions) { descRefs in
+        withUnsafeTemporaryAllocation(of: Int.self, capacity: maxPipes) { pipeReadRefs in
+            withUnsafeTemporaryAllocation(of: Int.self, capacity: maxPipes) { pipeWriteRefs in
+                withUnsafeTemporaryAllocation(of: Int.self, capacity: maxEndpoints) { endpointSendRefs in
+                    withUnsafeTemporaryAllocation(of: Int.self, capacity: maxEndpoints) { endpointRecvRefs in
+                        for i in 0..<maxOpenDescriptions { descRefs[i] = 0 }
+                        for i in 0..<maxPipes {
+                            pipeReadRefs[i] = 0
+                            pipeWriteRefs[i] = 0
+                        }
+                        for i in 0..<maxEndpoints {
+                            endpointSendRefs[i] = 0
+                            endpointRecvRefs[i] = 0
+                        }
+
+                        for i in 0..<(maxFDs * maxVFSProcesses) {
+                            let entry = handles[i]
+                            if entry.inUse {
+                                let d = entry.object
+                                if d < 0 || d >= maxOpenDescriptions { return false }
+                                if !openDescriptions[d].inUse { return false }
+                                if entry.kind != openDescriptions[d].kind { return false }
+                                descRefs[d] += 1
+                            }
+                        }
+
+                        for ep in 0..<maxEndpoints where endpoints[ep].inUse {
+                            if endpoints[ep].bufPtr == 0 { return false }
+                            if endpoints[ep].msgLen < 0 || endpoints[ep].msgLen > endpointMsgCap { return false }
+                            if endpoints[ep].hasHandle {
+                                let entry = endpoints[ep].handle
+                                if !entry.inUse { return false }
+                                let d = entry.object
+                                if d < 0 || d >= maxOpenDescriptions { return false }
+                                if !openDescriptions[d].inUse { return false }
+                                descRefs[d] += 1
+                            }
+                        }
+
+                        for d in 0..<maxOpenDescriptions {
+                            let desc = openDescriptions[d]
+                            if desc.inUse {
+                                if desc.refCount != descRefs[d] { return false }
+                                if desc.refCount <= 0 { return false }
+                                if desc.kind == .pipe {
+                                    let p = desc.pipe
+                                    if p < 0 || p >= maxPipes || !pipes[p].inUse { return false }
+                                    if desc.pipeEnd == pipeReadEnd {
+                                        pipeReadRefs[p] += 1
+                                    } else {
+                                        pipeWriteRefs[p] += 1
+                                    }
+                                } else if desc.kind == .endpoint {
+                                    let ep = desc.node
+                                    if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse { return false }
+                                    if desc.pipeEnd == endpointSendEnd {
+                                        endpointSendRefs[ep] += 1
+                                    } else {
+                                        endpointRecvRefs[ep] += 1
+                                    }
+                                } else if desc.kind == .file {
+                                    if desc.node < 0 || desc.node >= nodeCount || !nodes[desc.node].inUse {
+                                        return false
+                                    }
+                                } else if desc.kind == .device {
+                                    let dev = desc.node
+                                    if dev < 0 || dev >= maxDevices || !devices[dev].inUse ||
+                                        !devices[dev].claimed {
+                                        return false
+                                    }
+                                }
+                            } else if desc.refCount != 0 {
+                                return false
+                            }
+                        }
+
+                        for p in 0..<maxPipes {
+                            if pipes[p].inUse {
+                                if pipes[p].bufPtr == 0 || pipes[p].cap != pipeCap { return false }
+                                if pipes[p].readRefs != pipeReadRefs[p] { return false }
+                                if pipes[p].writeRefs != pipeWriteRefs[p] { return false }
+                                if pipes[p].readRefs + pipes[p].writeRefs <= 0 { return false }
+                            } else if pipeReadRefs[p] != 0 || pipeWriteRefs[p] != 0 {
+                                return false
+                            }
+                        }
+
+                        for ep in 0..<maxEndpoints {
+                            if endpoints[ep].inUse {
+                                if endpoints[ep].sendRefs != endpointSendRefs[ep] { return false }
+                                if endpoints[ep].recvRefs != endpointRecvRefs[ep] { return false }
+                                if endpoints[ep].sendRefs + endpoints[ep].recvRefs <= 0 { return false }
+                            } else if endpointSendRefs[ep] != 0 || endpointRecvRefs[ep] != 0 {
+                                return false
+                            }
+                        }
+                        return true
+                    }
+                }
+            }
+        }
+    }
+}
+
+func vfsS4bLockAcquireCount() -> UInt64 {
+    vfsLockAtomicLoad(&vfsLockAcquireCount)
+}
+
+func vfsS4bLockContentionCount() -> UInt64 {
+    vfsLockAtomicLoad(&vfsLockContentionCount)
+}
+
+func vfsS4bReadinessSelfTest() -> Bool {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    return vfsS4bAccountingSelfTestLocked()
+}
+
+func vfsS4bLockBoundaryHeldSelfTest() -> Bool {
+    if vfsLockAtomicLoad(&vfsLockWord) != 0 || vfsS4bLockAcquireCount() == 0 {
+        return false
+    }
+    return vfsS4bReadinessSelfTest()
+}
+
 // ---- syscalls -------------------------------------------------------------
+
+func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
+    guard let name = userCString(nameVA, maxLen: deviceInfoNameCap) else { return errInvalid }
+    let out: UnsafeMutablePointer<UInt8>?
+    if infoVA == 0 {
+        out = nil
+    } else {
+        guard let buf = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+        out = buf
+    }
+
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let dev = findDeviceByName(name)
+    if dev < 0 { return errNoEntry }
+    if devices[dev].claimed { return errBusy }
+
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd < 0 { return errNoSpace }
+    let d = allocDescription()
+    if d < 0 { return errNoSpace }
+
+    devices[dev].claimed = true
+    devices[dev].ownerProc = proc
+    devices[dev].generation &+= 1
+    openDescriptions[d].kind = .device
+    openDescriptions[d].node = dev
+    installDescription(proc, fd, d, rights: deviceRights())
+    if let outBuf = out { writeDeviceInfoLocked(dev, outBuf) }
+    return fd
+}
+
+func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
+    if index < 0 { return errInvalid }
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    var ordinal = 0
+    for dev in 0..<maxDevices where devices[dev].inUse {
+        if ordinal == index {
+            writeDeviceInfoLocked(dev, out)
+            return 0
+        }
+        ordinal += 1
+    }
+    return errNoEntry
+}
+
+func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .device else { return errBadFD }
+    guard hasRights(entry.rights, .getattr) else { return errAccess }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return errBadFD }
+    let desc = openDescriptions[d]
+    guard desc.kind == .device else { return errBadFD }
+    let dev = desc.node
+    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return errInvalid }
+    writeDeviceInfoLocked(dev, out)
+    return 0
+}
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
 
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     var node = resolve(path)
     let f = Int(bitPattern: flags)
 
@@ -1006,10 +1647,12 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
 func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return errBadFD }
-    let entry = fdEntry(proc, fd)
-    let d = entry.object
-    var file = openDescriptions[d]
+    let borrowed = borrowDescriptionForFD(proc, fd)
+    if borrowed.err != 0 { return borrowed.err }
+    let entry = borrowed.entry
+    let d = borrowed.descIndex
+    let file = borrowed.desc
+    defer { releaseBorrowedDescription(d) }
     guard entry.rights.contains(.read) else { return errBadFD }
 
     if entry.kind == .tty {
@@ -1034,51 +1677,114 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         var copied = 0
         enable_irq()
         while copied == 0 {
+            let daif = vfsLock()
+            if p < 0 || p >= maxPipes || !pipes[p].inUse {
+                vfsUnlock(daif)
+                return errInvalid
+            }
             while copied < Int(count) && pipeCount(p) > 0 {
                 dst[copied] = pipePop(p)
                 copied += 1
             }
-            if copied > 0 || pipes[p].writeRefs == 0 { break }
+            let done = copied > 0 || pipes[p].writeRefs == 0
+            vfsUnlock(daif)
+            if done { break }
             processYieldForIO()
         }
         return copied
     }
 
     guard entry.kind == .file else { return errBadFD }
-    let node = file.node
-    if nodes[node].isDir { return errIsDir }
-
-    // Disk-backed read-only file (M11c): pull the requested span off the disk.
-    if nodes[node].onDisk {
-        let avail = nodes[node].dataLen - file.offset
-        if avail <= 0 { return 0 }
-        let want = min(Int(count), avail)
-        let off = UInt64(nodes[node].diskOffset + file.offset)
-        let rc = virtioBlkReadRange(off, UnsafeMutableRawPointer(dst), UInt32(want))
+    let daif = vfsLock()
+    var result = 0
+    var diskImage = -1
+    var diskOffset = 0
+    var diskWant = 0
+    var current = openDescriptions[d]
+    let node = current.node
+    if node < 0 || node >= nodeCount || !nodes[node].inUse {
+        result = errInvalid
+    } else if nodes[node].isDir {
+        result = errIsDir
+    } else if nodes[node].onDisk {
+        // Reserve the shared offset under the VFS lock, then do the block-device
+        // read without holding the VFS lock.
+        let avail = nodes[node].dataLen - current.offset
+        if avail > 0 {
+            let want = min(Int(count), avail)
+            diskImage = nodes[node].diskImage
+            diskOffset = nodes[node].diskOffset + current.offset
+            diskWant = want
+            current.offset += want
+            openDescriptions[d] = current
+            result = want
+        }
+    } else {
+        let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+        var copied = 0
+        while copied < Int(count) && current.offset < nodes[node].dataLen {
+            dst[copied] = src[current.offset]
+            copied += 1
+            current.offset += 1
+        }
+        openDescriptions[d] = current
+        result = copied
+    }
+    vfsUnlock(daif)
+    if diskWant > 0 {
+        let off = UInt64(diskOffset)
+        let rc = vfsImageReadRange(diskImage, off, UnsafeMutableRawPointer(dst), UInt32(diskWant))
         if rc != 0 { return errInvalid }
-        file.offset += want
-        openDescriptions[d] = file
-        return want
     }
+    return result
+}
 
-    let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
-    var copied = 0
-    while copied < Int(count) && file.offset < nodes[node].dataLen {
-        dst[copied] = src[file.offset]
-        copied += 1
-        file.offset += 1
+func vfsKernelFileSize(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    let node = openDescriptions[entry.object].node
+    if node < 0 || nodes[node].isDir { return errInvalid }
+    return nodes[node].dataLen
+}
+
+func vfsKernelReadFile(fd: Int, offset: Int, buffer: UnsafeMutableRawPointer?, count: Int) -> Int {
+    if count == 0 { return 0 }
+    if offset < 0 || count < 0 { return errInvalid }
+    let proc = currentVFSProcess()
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    let node = openDescriptions[entry.object].node
+    if node < 0 || nodes[node].isDir { return errInvalid }
+    if offset >= nodes[node].dataLen { return 0 }
+    guard let dst = buffer else { return errInvalid }
+    let want = min(count, nodes[node].dataLen - offset)
+    if nodes[node].onDisk {
+        let off = UInt64(nodes[node].diskOffset + offset)
+        let rc = vfsImageReadRange(nodes[node].diskImage, off, dst, UInt32(want))
+        return rc == 0 ? want : errInvalid
     }
-    openDescriptions[d] = file
-    return copied
+    let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+    let out = dst.bindMemory(to: UInt8.self, capacity: want)
+    var i = 0
+    while i < want {
+        out[i] = src[offset + i]
+        i += 1
+    }
+    return want
 }
 
 func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return errBadFD }
-    let entry = fdEntry(proc, fd)
-    let d = entry.object
-    var file = openDescriptions[d]
+    let borrowed = borrowDescriptionForFD(proc, fd)
+    if borrowed.err != 0 { return borrowed.err }
+    let entry = borrowed.entry
+    let d = borrowed.descIndex
+    let file = borrowed.desc
+    defer { releaseBorrowedDescription(d) }
     guard entry.rights.contains(.write) else { return errBadFD }
     guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
 
@@ -1103,32 +1809,55 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         var written = 0
         enable_irq()
         while written < Int(count) {
-            if pipes[p].readRefs == 0 { return written > 0 ? written : errPipe }
+            let daif = vfsLock()
+            if p < 0 || p >= maxPipes || !pipes[p].inUse {
+                vfsUnlock(daif)
+                return errInvalid
+            }
+            if pipes[p].readRefs == 0 {
+                vfsUnlock(daif)
+                return written > 0 ? written : errPipe
+            }
             while written < Int(count) && pipeSpace(p) > 0 {
                 pipePush(p, src[written])
                 written += 1
             }
+            let done = written >= Int(count)
+            vfsUnlock(daif)
+            if done { break }
             if written < Int(count) { processYieldForIO() }
         }
         return written
     }
 
     guard entry.kind == .file else { return errBadFD }
-    let node = file.node
-    if nodes[node].isDir { return errIsDir }
-    if nodes[node].readOnly { return errReadOnly }
-
-    let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
-    var w = 0
-    while w < Int(count) && file.offset < nodes[node].dataCap {
-        dst[file.offset] = src[w]
-        file.offset += 1
-        if file.offset > nodes[node].dataLen { nodes[node].dataLen = file.offset }
-        w += 1
+    let daif = vfsLock()
+    var result = 0
+    var current = openDescriptions[d]
+    let node = current.node
+    if node < 0 || node >= nodeCount || !nodes[node].inUse {
+        result = errInvalid
+    } else if nodes[node].isDir {
+        result = errIsDir
+    } else if nodes[node].readOnly {
+        result = errReadOnly
+    } else if !ensureTmpFileCapacity(node, current.offset + Int(count)) {
+        result = errNoSpace
+    } else {
+        let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
+        var w = 0
+        while w < Int(count) && current.offset < nodes[node].dataCap {
+            dst[current.offset] = src[w]
+            current.offset += 1
+            if current.offset > nodes[node].dataLen { nodes[node].dataLen = current.offset }
+            w += 1
+        }
+        if w > 0 { nodes[node].mtime = rtcNow() }
+        openDescriptions[d] = current
+        result = w
     }
-    if w > 0 { nodes[node].mtime = rtcNow() }
-    openDescriptions[d] = file
-    return w
+    vfsUnlock(daif)
+    return result
 }
 
 /// ftruncate(fd, length): resize a writable tmpfs file. Used by busybox vi,
@@ -1138,6 +1867,8 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
 func vfsFtruncate(fd: Int, length: Int) -> Int {
     if length < 0 { return errInvalid }
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
     let d = entry.object
@@ -1164,6 +1895,8 @@ func vfsClose(fd: Int) -> Int {
 
 func vfsDup(fd: Int) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
     let newfd = allocFDInProcess(proc, from: 0)
@@ -1178,6 +1911,8 @@ func vfsDup(fd: Int) -> Int {
 
 func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, oldfd) else { return errBadFD }
     if newfd < 0 || newfd >= maxFDs { return errBadFD }
     if oldfd == newfd { return newfd }
@@ -1209,6 +1944,8 @@ private let mutableStatusFlags = oNonblock
 
 func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     switch cmd {
     case fDupFD, fDupFDCloexec:
@@ -1248,6 +1985,8 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
 func vfsPipe(fdsVA: UInt) -> Int {
     guard let out = userWritableBuffer(fdsVA, 8) else { return errInvalid }
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let rfd = allocFDInProcess(proc, from: 0)
     if rfd == -1 { return errNoSpace }
     setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
@@ -1308,6 +2047,8 @@ private func allocEndpoint() -> Int {
 func vfsEndpointCreate(endsVA: UInt) -> Int {
     guard let out = userWritableBuffer(endsVA, 8) else { return errInvalid }
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let sfd = allocFDInProcess(proc, from: 0)
     if sfd == -1 { return errNoSpace }
     setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve
@@ -1374,6 +2115,8 @@ private func handleNamesEndpoint(_ entry: HandleEntry, endpoint ep: Int) -> Bool
 /// channel). A message may carry bytes with no handle, so the slot is gated on hasMsg.
 func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     let sender = fdEntry(proc, fd)
     guard sender.rights.contains(.write) else { return errBadFD }
@@ -1422,12 +2165,15 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
 /// (EOF-like). Returns the number of bytes copied to the user buffer.
 func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return errBadFD }
-    guard fdEntryHasRights(proc, fd, .read) else { return errBadFD }
-    let desc = openDescriptions[fdEntry(proc, fd).object]
+    let borrowed = borrowDescriptionForFD(proc, fd)
+    if borrowed.err != 0 { return borrowed.err }
+    let entry = borrowed.entry
+    let desc = borrowed.desc
+    let descIndex = borrowed.descIndex
+    defer { releaseBorrowedDescription(descIndex) }
+    guard entry.rights.contains(.read) else { return errBadFD }
     guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
     let ep = desc.node
-    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
 
     guard let m = userReadableBuffer(msgVA, ipcRecvMsgSize) else { return errInvalid }
     let buf = UInt(le64(m, 0))
@@ -1437,39 +2183,61 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
 
     enable_irq()
-    while !endpoints[ep].hasMsg {
-        if endpoints[ep].sendRefs == 0 { return errPipe }
+    while true {
+        let daif = vfsLock()
+        if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse {
+            vfsUnlock(daif)
+            return errInvalid
+        }
+        if endpoints[ep].hasMsg {
+            let n = min(endpoints[ep].msgLen, cap)
+            var newfd: Int32 = -1
+            var installed = -1
+            if endpoints[ep].hasHandle {
+                if !entry.rights.contains(.transfer) {
+                    vfsUnlock(daif)
+                    return errAccess
+                }
+                installed = allocFDInProcess(proc, from: 0)
+                if installed == -1 {
+                    vfsUnlock(daif)
+                    return errNoSpace
+                }
+            }
+            if n > 0 {
+                guard let dst = userWritableBuffer(buf, UInt(n)) else {
+                    vfsUnlock(daif)
+                    return errInvalid
+                }
+                let src = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
+                for i in 0..<n { dst[i] = src[i] }
+            }
+            if endpoints[ep].hasHandle {
+                setFDEntry(proc, installed, endpoints[ep].handle)
+                newfd = Int32(installed)
+            }
+            UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
+
+            endpoints[ep].handle = HandleEntry()
+            endpoints[ep].hasHandle = false
+            endpoints[ep].hasMsg = false
+            endpoints[ep].msgLen = 0
+            vfsUnlock(daif)
+            return n
+        }
+        if endpoints[ep].sendRefs == 0 {
+            vfsUnlock(daif)
+            return errPipe
+        }
+        vfsUnlock(daif)
         processYieldForIO()
     }
-
-    let n = min(endpoints[ep].msgLen, cap)
-    var newfd: Int32 = -1
-    var installed = -1
-    if endpoints[ep].hasHandle {
-        guard fdEntryHasRights(proc, fd, .transfer) else { return errAccess }
-        installed = allocFDInProcess(proc, from: 0)
-        if installed == -1 { return errNoSpace }
-    }
-    if n > 0 {
-        guard let dst = userWritableBuffer(buf, UInt(n)) else { return errInvalid }
-        let src = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
-        for i in 0..<n { dst[i] = src[i] }
-    }
-    if endpoints[ep].hasHandle {
-        setFDEntry(proc, installed, endpoints[ep].handle)
-        newfd = Int32(installed)
-    }
-    UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
-
-    endpoints[ep].handle = HandleEntry()
-    endpoints[ep].hasHandle = false
-    endpoints[ep].hasMsg = false
-    endpoints[ep].msgLen = 0
-    return n
 }
 
 func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
     guard hasRights(entry.rights, .read) || hasRights(entry.rights, .write) else { return errAccess }
@@ -1533,6 +2301,8 @@ private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !confinedAllows(node) { return errAccess }
@@ -1541,6 +2311,8 @@ func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
 
 func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
     guard hasRights(entry.rights, .getattr) else { return errAccess }
@@ -1557,6 +2329,8 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
 func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return errBadFD }
     let entry = fdEntry(proc, fd)
     guard hasRights(entry.rights, .read) else { return errBadFD }
@@ -1598,6 +2372,8 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
 
 func vfsChdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !confinedAllows(node) { return errAccess }
@@ -1612,6 +2388,8 @@ func vfsChdir(path pathVA: UInt) -> Int {
 // path outside the subtree. See docs/CAPABILITIES.md §6 (C3).
 func vfsConfine(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !nodes[node].isDir { return errNotDir }
@@ -1627,6 +2405,8 @@ func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
         return errInvalid
     }
 
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let cwdNode = cwdNodeForCurrentProcess()
     if cwdNode == 0 {
         if size < 2 { return errNoSpace }
@@ -1667,6 +2447,8 @@ private func mayWriteTmp() -> Bool { (processCurrentCaps() & capTmpWrite) != 0 }
 func vfsUnlink(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !confinedAllows(node) { return errAccess }
@@ -1680,6 +2462,8 @@ func vfsUnlink(path pathVA: UInt) -> Int {
 func vfsMkdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     var ls = 0, ll = 0
     let parent = resolveParent(path, &ls, &ll)
     if parent == -1 { return errNoEntry }
@@ -1692,6 +2476,8 @@ func vfsMkdir(path pathVA: UInt) -> Int {
 func vfsRmdir(path pathVA: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node <= 0 { return errInvalid }
     if !confinedAllows(node) { return errAccess }
@@ -1708,6 +2494,8 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
         return errInvalid
     }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let src = resolve(oldPath)
     if src <= 0 { return errNoEntry }
     if !confinedAllows(src) { return errAccess }
@@ -1741,6 +2529,8 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
 func vfsChmod(path pathVA: UInt, mode: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !confinedAllows(node) { return errAccess }
@@ -1752,6 +2542,8 @@ func vfsChmod(path pathVA: UInt, mode: UInt) -> Int {
 func vfsChown(path pathVA: UInt, owner: UInt) -> Int {
     guard let path = userCString(pathVA) else { return errInvalid }
     if !mayWriteTmp() { return errAccess }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
     if node == -1 { return errNoEntry }
     if !confinedAllows(node) { return errAccess }
@@ -1816,6 +2608,8 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
 
 private func pollScan(_ base: UnsafeMutableRawPointer, _ nfds: Int) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     var ready = 0
     for i in 0..<nfds {
         let rec = base.advanced(by: i * pollfdSize)
@@ -1858,6 +2652,7 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     let proc = currentVFSProcess()
     var hasPeerDriven = false
     var hasSocket = false
+    let daif = vfsLock()
     for i in 0..<count {
         let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
         if fd >= 0 && validFD(proc, fd) {
@@ -1866,6 +2661,7 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
             if kind == .socket { hasSocket = true }
         }
     }
+    vfsUnlock(daif)
 
     enable_irq()
     while true {
@@ -1914,14 +2710,24 @@ func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
 /// Bind an allocated socket index to a fresh fd backed by a socket description.
 private func installSocketFD(_ s: Int, flags: Int = 0) -> Int {
     let proc = currentVFSProcess()
+    let daif = vfsLock()
     let fd = allocFDInProcess(proc, from: 3)
-    if fd < 0 { socketClose(s); return errNoSpace }
+    if fd < 0 {
+        vfsUnlock(daif)
+        socketClose(s)
+        return errNoSpace
+    }
     let d = allocDescription()
-    if d < 0 { socketClose(s); return errNoSpace }
+    if d < 0 {
+        vfsUnlock(daif)
+        socketClose(s)
+        return errNoSpace
+    }
     openDescriptions[d].kind = .socket
     openDescriptions[d].node = s
     openDescriptions[d].flags = flags
     installDescription(proc, fd, d, rights: posixRights(read: true, write: true))
+    vfsUnlock(daif)
     return fd
 }
 
@@ -1929,20 +2735,21 @@ private func installSocketFD(_ s: Int, flags: Int = 0) -> Int {
 private let socketAcceptTimeoutMs = 15000
 
 func vfsListen(fd: Int, backlog: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
-    if s < 0 { return errBadFD }
-    return tcpListen(s, backlog: backlog)
+    let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    return tcpListen(borrowed.socket, backlog: backlog)
 }
 
 func vfsAccept(fd: Int) -> Int {
     let proc = currentVFSProcess()
-    let s = socketIndexForFD(proc, fd, required: .read)
-    if s < 0 { return errBadFD }
-    let d = fdEntry(proc, fd).object
-    let listener = openDescriptions[d]
+    let borrowed = borrowSocketForFD(proc, fd, required: .read)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    let s = borrowed.socket
     guard socketIsTCP(s) && socketIsListener(s) else { return errInvalid }
-    let childFlags = listener.flags & mutableStatusFlags
-    if (listener.flags & oNonblock) != 0 {
+    let childFlags = borrowed.flags & mutableStatusFlags
+    if (borrowed.flags & oNonblock) != 0 {
         netPump()
         if !socketPollReadable(s) { return errAgain }
     }
@@ -1952,8 +2759,10 @@ func vfsAccept(fd: Int) -> Int {
 }
 
 func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
-    if s < 0 { return errBadFD }
+    let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    let s = borrowed.socket
     if port <= 0 || port > 65535 { return errInvalid }
     // For IPv6 sockets the simple u32 'ip' path is not used (userland must use a v6-aware connect).
     // We still support the old path for AF_INET sockets.
@@ -1982,25 +2791,20 @@ func vfsResolve(nameVA: UInt, serverIP: UInt, serverPort: Int) -> Int {
     return Int(ip)
 }
 
-private func socketIndexForFD(_ proc: Int, _ fd: Int, required: Rights = []) -> Int {
-    guard validFD(proc, fd) else { return -1 }
-    let entry = fdEntry(proc, fd)
-    guard entry.kind == .socket else { return -1 }
-    guard hasRights(entry.rights, required) else { return -1 }
-    let d = entry.object
-    return openDescriptions[d].node
-}
-
 func vfsSocketBind(fd: Int, port: Int) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
-    if s < 0 { return errBadFD }
+    let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    let s = borrowed.socket
     if port < 0 || port > 65535 { return errInvalid }
     return socketBind(s, port: UInt16(port))
 }
 
 func vfsSendto(fd: Int, msgVA: UInt) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .write)
-    if s < 0 { return errBadFD }
+    let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    let s = borrowed.socket
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
     guard let m = userReadableBuffer(msgVA, need) else { return errInvalid }
@@ -2035,8 +2839,10 @@ func vfsSendto(fd: Int, msgVA: UInt) -> Int {
 }
 
 func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
-    let s = socketIndexForFD(currentVFSProcess(), fd, required: .read)
-    if s < 0 { return errBadFD }
+    let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .read)
+    if borrowed.err != 0 { return errBadFD }
+    defer { releaseBorrowedDescription(borrowed.descIndex) }
+    let s = borrowed.socket
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
     guard let m = userWritableBuffer(msgVA, need) else { return errInvalid }
@@ -2082,32 +2888,38 @@ func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
 
 // ---- executable lookup (M11d) ---------------------------------------------
 
-/// Resolve an absolute kernel path to a disk-backed file's extent. Returns
-/// (found, diskByteOffset, length); found is false for a missing path, a
-/// directory, or a RAM-backed (non-disk) node. Lets the ELF loader pull a
-/// program straight off the packed base image instead of an embedded blob.
-func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int) {
+/// Resolve an absolute kernel path to an executable disk-backed file's extent.
+/// Returns (found, image, diskByteOffset, length); found is false for a missing
+/// path, directory, RAM-backed node, or non-executable file. Lets the ELF loader
+/// pull a program straight off the packed base/package images instead of an
+/// embedded blob.
+func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node < 0 { return (false, 0, 0) }
-    if !confinedAllows(node) { return (false, 0, 0) }
-    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0) }
-    // I8: an executable must match its signed content hash before it is loaded.
-    if !vfsVerifyNodeContent(node) { return (false, 0, 0) }
-    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+    if node < 0 { return (false, 0, 0, 0) }
+    if !confinedAllows(node) { return (false, 0, 0, 0) }
+    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0, 0) }
+    if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0) }
+    // I8: an executable from a signed image must match its content hash before load.
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0) }
+    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }
 
 /// I2a: on-disk extent of a disk-backed, readable regular file open on `fd`, for
 /// file-backed mmap. Returns (ok, diskByteOffset, dataLen); ok is false unless
 /// `fd` is a readable, disk-backed (read-only base image) regular file. Authority
 /// was already checked at open time, so no re-confinement check here.
-func vfsFileExtent(fd: Int) -> (Bool, Int, Int) {
+func vfsFileExtent(fd: Int) -> (Bool, Int, Int, Int) {
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return (false, 0, 0) }
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return (false, 0, 0, 0) }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0) }
+    guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0, 0) }
     let node = openDescriptions[entry.object].node
-    guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0) }
+    guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0, 0) }
     // I8: mmap'd content must match its signed hash too (cached after open).
-    if !vfsVerifyNodeContent(node) { return (false, 0, 0) }
-    return (true, nodes[node].diskOffset, nodes[node].dataLen)
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0) }
+    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }

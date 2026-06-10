@@ -17,6 +17,9 @@ DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
@@ -33,9 +36,6 @@ stop_qemu() {
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
-
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
@@ -72,41 +72,62 @@ drive_fail() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+send_line() {
+  local line="$1" delay="${LSL_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${LSL_SEND_DELAY:-0.08}"
+}
+
+if [[ -f "$DTB" ]]; then
+  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+    -pidfile "$PIDFILE" \
+    -global virtio-mmio.force-legacy=false \
+    -device "loader,file=$DTB,addr=0x4FF00000,force-raw=on" \
+    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+    -device virtio-blk-device,drive=swosbase \
+    -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+else
+  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+    -pidfile "$PIDFILE" \
+    -global virtio-mmio.force-legacy=false \
+    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+    -device virtio-blk-device,drive=swosbase \
+    -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+fi
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await_count "swift-os login:" 1 60 || drive_fail "timed out waiting for root login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await_count "Password:" 1 60 || drive_fail "timed out waiting for root password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-printf 'ls -l /\n' >&3
+await_count "built-in shell (ash)" 1 60 || drive_fail "root shell did not start"
+send_line 'ls -l /'
 await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 || drive_fail "root ls -l / did not list /bin"
-printf 'ls -l /bin\n' >&3
+send_line 'ls -l /bin'
 await_regex '-rwxr-xr-x +[0-9]+ +root +root .* busybox' 20 || drive_fail "root ls -l /bin did not list busybox"
-printf 'ls -l /etc\n' >&3
+send_line 'ls -l /etc'
 await_regex '-rw-r--r-- +[0-9]+ +root +root .* motd' 20 || drive_fail "root ls -l /etc did not list motd"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || drive_fail "root session did not end"
 await_count "swift-os login:" 2 60 || drive_fail "timed out waiting for user login prompt"
-printf 'user\n' >&3
+send_line 'user'
 await_count "Password:" 2 60 || drive_fail "timed out waiting for user password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, user" 60 || drive_fail "user login did not complete"
-printf 'mkdir /tmp/d; ls -l /tmp\n' >&3
+await_count "built-in shell (ash)" 2 60 || drive_fail "user shell did not start"
+send_line 'mkdir /tmp/d; ls -l /tmp'
 await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 || drive_fail "user ls -l /tmp did not list /tmp/d"
-printf 'exit\n' >&3
+send_line 'exit'
 
 exec 3>&-
 stop_qemu

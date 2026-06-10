@@ -2,7 +2,7 @@
 // swos-kstage.swift — stage the active kernel image into the inactive ESP slot
 // (swift-os, U1g-4c).
 //
-// Calls the capConsole-gated kernel_stage syscall (63): the kernel copies the
+// Calls the capConsole-gated kernel_stage syscall (68): the kernel copies the
 // ACTIVE kernel slot's image (kernelA.bin / kernelB.bin) into the INACTIVE slot
 // on the EFI System Partition, in place, and verifies it. This is the write side
 // of runtime kernel staging — the on-disk groundwork before a signed manifest is

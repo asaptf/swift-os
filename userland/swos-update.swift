@@ -2,7 +2,7 @@
 // swos-update.swift — stage the attached update payload into the inactive A/B
 // slot (swift-os, U1f-2b).
 //
-// Calls the capConsole-gated update_stage syscall (62): the kernel copies the
+// Calls the capConsole-gated update_stage syscall (67): the kernel copies the
 // read-only payload disk (a signed SWOSBASE image, attached alongside the update
 // store) into the INACTIVE slot, marking it UNTRIED so it boots "on trial". The
 // operator workflow is: swos-update -> swos-activate -> reboot; if the staged

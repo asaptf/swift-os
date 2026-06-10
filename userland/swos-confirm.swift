@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // swos-confirm.swift — mark the active A/B update slot healthy (swift-os, U1c).
 //
-// Calls the capConsole-gated update_confirm syscall (60): on success the booted
+// Calls the capConsole-gated update_confirm syscall (65): on success the booted
 // slot is recorded CONFIRMED in the SWOSBOOT manifest, so it stops accruing boot
 // attempts and is never rolled back to the fallback. An operator runs this after
 // verifying a freshly activated system image is healthy. Needs CAP_CONSOLE (the

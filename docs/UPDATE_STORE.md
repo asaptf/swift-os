@@ -126,7 +126,7 @@ boots the same store 3× and asserts the counter persists 1→2→3 across reboo
 
 An operator confirms a freshly-activated slot healthy by running
 `/bin/swos-confirm` (capConsole-gated; root yes, guest EPERM). It calls
-`SYS_UPDATE_CONFIRM` (60) → `updateStoreConfirm()`, which marks the slot booted
+`SYS_UPDATE_CONFIRM` (65) -> `updateStoreConfirm()`, which marks the slot booted
 this session (tracked in `updateStoreActiveSlot`) `CONFIRMED` and resets its
 attempt counter, persisted via the same double-buffered write-back. A CONFIRMED
 slot is trusted: `updateStoreInit` stops recording boot attempts for it and
@@ -151,7 +151,7 @@ The read + write + confirm + rollback halves of A/B are now complete.
 ## Promote the inactive slot (U1e)
 
 `/bin/swos-activate` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_ACTIVATE` (61) → `updateStoreActivateOther()`, which makes the
+`SYS_UPDATE_ACTIVATE` (66) -> `updateStoreActivateOther()`, which makes the
 inactive slot the active slot for the next boot (the current slot becomes the
 fallback) and marks it UNTRIED with its attempt counter reset, so it boots "on
 trial" under U1d's rollback. The full operator promotion workflow, for slots that
@@ -165,9 +165,9 @@ and on trial after a reboot.
 The chosen image source for staging from a running system is a **read-only
 payload disk** — a second virtio-blk disk holding a signed SWOSBASE image,
 attached alongside the store. `virtioBlkInit` classifies every block device by
-its sector-0 magic and records such a disk as the payload (`blkPayloadMmio`); the
-single-device hardware path reaches it by re-bringing-up between the store and
-the payload (`virtioBlkSelectPayload` / `virtioBlkReselectStore`), which is safe
+its sector-0 magic and records such a disk as the payload (`blkPayloadDevice`);
+the shared hardware path reaches it by selecting between the store and the
+payload (`virtioBlkSelectPayload` / `virtioBlkReselectStore`), which is safe
 because I/O is serial on the one CPU. At boot `updateStorePayloadProbe()` reads
 the payload header and confirms it is a signed v3 base image.
 `tests/ab_payload_test.sh` covers discovery + read.
@@ -188,7 +188,7 @@ payload file, and a ~1.1 MB busybox ELF.
 ## Stage the payload into the inactive slot (U1f-2b)
 
 `/bin/swos-update` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_STAGE` (62) → `updateStoreStagePayload()`, which copies the attached
+`SYS_UPDATE_STAGE` (67) -> `updateStoreStagePayload()`, which copies the attached
 read-only payload disk (a signed SWOSBASE image, U1f-1) into the **inactive**
 slot. It reads the payload's header, requires a signed v3 image, and rejects one
 that is truncated on disk (EINVAL) or larger than the slot's `length_sectors`
@@ -252,11 +252,11 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
 - **U1g-4b (done):** a minimal read-only FAT32 in `kernel/fs/esp.swift` (BPB,
   cluster chains, LFN/8.3 directory walk) reads the signed `kernel-boot` manifest
   off the ESP and reports the active slot — the read half of runtime staging.
-- **U1g-4c (done):** the FAT32 *write* half. `/bin/swos-kstage` (syscall 63,
+- **U1g-4c (done):** the FAT32 *write* half. `/bin/swos-kstage` (syscall 68,
   capConsole) has the kernel copy the active kernel image over the inactive slot
   in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
   a bad write only spoils the inactive slot, which the loader's hash check rejects.
-- **U1g-4d (done):** the activate flow. `/bin/swos-kactivate` (syscall 64,
+- **U1g-4d (done):** the activate flow. `/bin/swos-kactivate` (syscall 69,
   capConsole) installs the pre-signed alternate manifest (`kernel-boot-alt`,
   active = other slot, signed offline at build) over `kernel-boot` on the ESP. On
   reboot the loader verifies it and boots the new slot. The OS never signs — it

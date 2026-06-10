@@ -93,6 +93,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${KV_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${KV_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -104,63 +114,62 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
-printf '/bin/kv\n' >&3
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+send_line '/bin/kv'
 await "swift-os kv" 60 || drive_fail "kv did not start"
 
 STEP_WAIT=180
 
-printf '%s\n' 'SET name swift os' >&3
+send_line 'SET name swift os'
 await_line_count "OK" 1 "$STEP_WAIT" || drive_fail "SET name did not acknowledge"
-printf '%s\n' 'GET name' >&3
+send_line 'GET name'
 await_line_count "swift os" 1 "$STEP_WAIT" || drive_fail "GET name returned wrong value"
-printf '%s\n' 'GET missing' >&3
+send_line 'GET missing'
 await_line_count "(nil)" 1 "$STEP_WAIT" || drive_fail "GET missing did not report nil"
-printf '%s\n' 'SET zebra 1' >&3
+send_line 'SET zebra 1'
 await_line_count "OK" 2 "$STEP_WAIT" || drive_fail "SET zebra did not acknowledge"
-printf '%s\n' 'SET apple 2' >&3
+send_line 'SET apple 2'
 await_line_count "OK" 3 "$STEP_WAIT" || drive_fail "SET apple did not acknowledge"
-printf '%s\n' 'COUNT' >&3
+send_line 'COUNT'
 await_line_count "3" 1 "$STEP_WAIT" || drive_fail "COUNT after three SETs was wrong"
-printf '%s\n' 'DEL missing' >&3
+send_line 'DEL missing'
 await_line_count "(nil)" 2 "$STEP_WAIT" || drive_fail "DEL missing did not report nil"
-printf '%s\n' 'DEL zebra' >&3
+send_line 'DEL zebra'
 await_line_count "deleted" 1 "$STEP_WAIT" || drive_fail "DEL zebra did not report deleted"
-printf '%s\n' 'COUNT' >&3
+send_line 'COUNT'
 await_line_count "2" 1 "$STEP_WAIT" || drive_fail "COUNT after delete was wrong"
-printf '%s\n' 'KEYS' >&3
+send_line 'KEYS'
 await_line_count "apple" 1 "$STEP_WAIT" || drive_fail "KEYS did not list apple"
 await_line_count "name" 1 "$STEP_WAIT" || drive_fail "KEYS did not list name"
-printf '%s\n' ':stats' >&3
+send_line ':stats'
 await "keys: 2, value bytes:" "$STEP_WAIT" || drive_fail ":stats did not report store stats"
-printf '%s\n' ':mem' >&3
+send_line ':mem'
 await_regex_count 'heap break: [0-9]+' 1 "$STEP_WAIT" || drive_fail "first :mem did not report heap break"
 ok_want=3
 deleted_want=1
 for _ in $(seq 1 12); do
-  sleep 0.25
-  printf '%s\n' 'SET churn hello world' >&3
+  send_line 'SET churn hello world'
   ok_want=$((ok_want + 1))
   await_line_count "OK" "$ok_want" "$STEP_WAIT" || drive_fail "churn SET did not acknowledge"
-  sleep 0.25
-  printf '%s\n' 'DEL churn' >&3
+  send_line 'DEL churn'
   deleted_want=$((deleted_want + 1))
   await_line_count "deleted" "$deleted_want" "$STEP_WAIT" || drive_fail "churn DEL did not delete"
 done
-printf '%s\n' ':mem' >&3
+send_line ':mem'
 await_regex_count 'heap break: [0-9]+' 2 "$STEP_WAIT" || drive_fail "second :mem did not report heap break"
-printf '%s\n' ':q' >&3
+send_line ':q'
 await_line_count "bye" 1 "$STEP_WAIT" || drive_fail "kv did not exit"
-printf 'echo BACK-IN-SHELL\n' >&3
+send_line 'echo BACK-IN-SHELL'
 await_line_count "BACK-IN-SHELL" 1 "$STEP_WAIT" || drive_fail "shell did not run after kv"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || drive_fail "shell did not exit cleanly"
 
 exec 3>&-

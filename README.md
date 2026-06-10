@@ -86,9 +86,24 @@ What exists today, in the order it was built:
   `listen`/`accept`/`connect`/`resolve`) are exposed to EL0. Userland tools:
   `/bin/udpecho`, `/bin/tcpecho`, `/bin/tcpget`, `/bin/nslookup`, `/bin/httpd`
   (a concurrent poll()-driven static-file HTTP server with MIME types and
-  directory listings). A ChaCha20-Poly1305 AEAD module (`kernel/crypto/`) is
+  directory listings), and `/bin/llmd` (TinyStories inference over HTTP). A
+  ChaCha20-Poly1305 AEAD module (`kernel/crypto/`) is
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
+
+- **Restartable driver-service and device-discovery smoke:** the C5a-C5d path
+  stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts an
+  input-driver service, exchanges endpoint IPC messages, discovers and claims
+  `virtio-input.0` when QEMU exposes a keyboard device, falls back to
+  `pseudo-input.0` in headless boots, surfaces virtio-mmio base/length as
+  discovery metadata, transfers an opaque device handle, proves the grant moves,
+  stays busy while the service owns it, is reclaimed after exit, and recovers
+  with `C5a OK: restartable driver service recovered over IPC`, `C5b OK: opaque
+  device handle transferred and released`, `C5c OK: virtio-input device grant
+  discovered and matched`, and `C5d OK: virtio input discovery metadata
+  surfaced`. The focused acceptance gate is `make c5-device-metadata-test`
+  under `-smp 4`; real MMIO, IRQ, DMA, and virtio-input queue ownership are
+  still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves
@@ -97,6 +112,14 @@ What exists today, in the order it was built:
 - **Process teardown reclaims frames:** `address_space_destroy` walks and frees
   all user-half page tables and leaf frames on process exit/exec/reap; a boot-
   time reclaim demo asserts zero leak across fork+exec+spawn round-trips.
+
+- **Package and ports fixtures:** `.swpkg` packages, writable package-store
+  images, signed static repository catalogs, and target-side `pkg install NAME`
+  are covered by executable fixtures. The current ports path also cross-builds
+  static AArch64 Lua, zlib, and pcre2 on the host, packages the pinned
+  ca-certificates bundle as data, publishes all four into one signed seed
+  repository, emits a static-hostable repository root that can be served to
+  QEMU, and proves install from a DNS-resolved hosted-style repository URL.
 
 ## Philosophy
 
@@ -116,6 +139,91 @@ The design is intentionally narrow:
 
 See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 
+## Documentation
+
+The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+
+- [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
+  and attach QEMU networking.
+- [Concepts](docs/CONCEPTS.md): core SwiftOS terms, images, filesystem,
+  identity, packages, services, testing, and roadmap boundaries.
+- [Installation Guide](docs/INSTALLATION_GUIDE.md): choose and verify direct
+  QEMU, UEFI/GPT, graphical smoke, and VirtualBox ARM boot profiles.
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md): prepare, validate, hand off,
+  and roll back application, AI, package, and appliance deployment candidates.
+- [Release Notes](docs/RELEASE_NOTES.md): shipped features, verification gates,
+  known limits, and upgrade notes for the current checked-in snapshot.
+- [Update And Rollback Guide](docs/UPDATE_GUIDE.md): rebuild immutable
+  artifacts, update boot profiles, verify candidates, and roll back safely.
+- [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
+  process tools, networking tools, and current system limits.
+- [Administration Guide](docs/ADMINISTRATION_GUIDE.md): maintain accounts,
+  capability masks, base configuration, package images, and services.
+- [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
+  limits, and acceptance coverage for the current base image and package
+  overlay.
+- [Host Tool Reference](docs/HOST_TOOL_REFERENCE.md): host-side package,
+  repository, ports catalog, static-host, hosted URL, base-image, and
+  model-bundle tools.
+- [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
+  boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
+- [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
+  suite, interpret failures, and add host or QEMU acceptance tests.
+- [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
+  network demos, AI demo operation, logging evidence, and verification gates.
+- [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
+  host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
+- [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5d
+  driver-service smoke.
+- [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
+  inference, serve completions over HTTP, and operate verified model bundles.
+- [Performance And Sizing Guide](docs/PERFORMANCE_GUIDE.md): measure resource
+  usage, throughput guards, service metrics, and current sizing limits.
+- [Observability Guide](docs/OBSERVABILITY_GUIDE.md): read boot health,
+  structured log markers, process snapshots, service metrics, and panic
+  evidence.
+- [Logging Reference](docs/LOGGING.md): understand kernel log lines, ring
+  buffers, export samples, filtering, and log authority.
+- [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
+  network, package overlay, LLM, and QEMU test failure diagnosis.
+- [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,
+  severity levels, report templates, and handoff checklists.
+- [FAQ](docs/FAQ.md): common product, install, compatibility, package,
+  networking, AI, and support questions.
+- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
+- [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
+  application paths, porting constraints, packages, and non-goals.
+- [Security Guide](docs/SECURITY_GUIDE.md): current login flow, capability
+  bits, handle rights, confinement, immutable images, and security limits.
+- [Base Image](docs/BASE_IMAGE.md): immutable packed filesystem contents,
+  build inputs, and base-image verification.
+- [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
+  programs, port C/newlib programs, and stage binaries into the base image.
+- [Porting Guide](docs/PORTING_GUIDE.md): evaluate and port source-built
+  applications to the SwiftOS ABI, filesystem, package, and test model.
+- [Application Cookbook](docs/APPLICATION_COOKBOOK.md): copy-paste recipes for
+  SwiftOS commands, C utilities, package overlays, and tests.
+- [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
+  troubleshoot `.swpkg`, repository, package-store, ports, static-host, and
+  hosted URL artifacts.
+- [Package Management](docs/PACKAGE_MANAGEMENT.md): package-system design,
+  current implementation status, and roadmap boundaries.
+- [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
+  recipe, Lua/zlib cross-build fixtures, CI smoke-test, and repository publishing
+  workflow for maintainers.
+- [SWPKG Format](docs/SWPKG_FORMAT.md): `.swpkg` container layout, manifest,
+  payload, and verification rules.
+- [Package Store Format](docs/PKGSTORE_FORMAT.md): package-store image,
+  activation record, and local install layout.
+- [Static Package Repository](docs/PKGREPO_FORMAT.md): signed static HTTP
+  catalog layout and P5c repository install flow.
+- [API Reference](docs/API_REFERENCE.md): API recipe index, syscall table,
+  structure layouts, handle rights, native Swift bridge, and compatibility API
+  notes.
+- [Server Software Catalog](docs/SERVER_SOFTWARE_CATALOG.md): prioritized
+  server packages, current package limits, and porting prerequisites.
+
 ## Architecture
 
 ```text
@@ -128,7 +236,8 @@ EL1  kernel        Embedded Swift: runtime, mm, sched, vfs, drivers, net, securi
 Key architectural decisions:
 
 - **Target:** `aarch64`, QEMU `virt` (primary), QEMU+AAVMF UEFI (primary boot path), VirtualBox ARM
-  (best-effort). Single core.
+  (best-effort). `make run` defaults to one CPU; SMP hardening has dedicated
+  `-smp N` tests and readiness gates.
 - **Boot:** UEFI (`BOOTAA64.EFI` on an ESP in a GPT disk image) is the primary path; direct `-kernel`
   is kept as a fallback.
 - **Hardware discovery:** a boot-time DTB reader populates a global `Platform`; driver and PMM
@@ -181,7 +290,7 @@ tools/
   basepack.swift  host-side packed base image packer
 scripts/          build-busybox.sh, build-newlib.sh, make-disk.sh, …
 tests/            host unit tests (Swift) + QEMU boot assertion scripts (bash)
-docs/             philosophy, architecture, package management, hardware/toolchain notes
+docs/             philosophy, architecture, package ecosystem, hardware/toolchain notes
 ```
 
 ## Build And Run
@@ -308,7 +417,10 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals.
+work, not non-goals; C5a-C5d now prove the supervisor/service IPC shape,
+virtio-input discovery metadata, fallback pseudo-device discovery, surfaced
+virtio-mmio metadata, and opaque device-handle transfer before real device
+handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 

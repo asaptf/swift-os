@@ -66,11 +66,16 @@
 #define SYS_NANOSLEEP     57
 #define SYS_MMAP_FILE     59
 #define SYS_SPAWN_HANDLES 58
-#define SYS_UPDATE_CONFIRM 60
-#define SYS_UPDATE_ACTIVATE 61
-#define SYS_UPDATE_STAGE 62
-#define SYS_KERNEL_STAGE 63
-#define SYS_KERNEL_ACTIVATE 64
+#define SYS_PKG_INSTALL   60
+#define SYS_PKG_INFO      61
+#define SYS_DEVICE_CLAIM  62
+#define SYS_DEVICE_INFO   63
+#define SYS_DEVICE_DISCOVER 64
+#define SYS_UPDATE_CONFIRM 65
+#define SYS_UPDATE_ACTIVATE 66
+#define SYS_UPDATE_STAGE 67
+#define SYS_KERNEL_STAGE 68
+#define SYS_KERNEL_ACTIVATE 69
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -100,6 +105,19 @@
                                  SWIFTOS_RIGHT_DUPLICATE | SWIFTOS_RIGHT_TRANSFER | \
                                  SWIFTOS_RIGHT_GETATTR | SWIFTOS_RIGHT_SETATTR)
 #define SWIFTOS_SPAWN_HANDLE_CLOEXEC (1u << 0)
+
+#define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_BUS_PSEUDO        1u
+#define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
+#define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
+#define SWIFTOS_DEVICE_FLAG_DISCOVERED    (1u << 1)
+#define SWIFTOS_DEVICE_FLAG_DISCOVERED_MMIO SWIFTOS_DEVICE_FLAG_DISCOVERED
+#define SWIFTOS_DEVICE_FLAG_MMIO_GRANT    (1u << 2)
+#define SWIFTOS_DEVICE_FLAG_IRQ_GRANT     (1u << 3)
+#define SWIFTOS_DEVICE_FLAG_DMA_GRANT     (1u << 4)
+#define SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY \
+    (SWIFTOS_DEVICE_FLAG_MMIO_GRANT | SWIFTOS_DEVICE_FLAG_IRQ_GRANT | SWIFTOS_DEVICE_FLAG_DMA_GRANT)
 
 #ifndef __ASSEMBLER__
 
@@ -268,6 +286,38 @@ static inline int security_info(struct security_info *info) {
 // negative on error (e.g. -1 EPERM). The new context survives execve.
 static inline int login(unsigned int principal, unsigned int session, unsigned long caps) {
     return (int)__syscall3(SYS_LOGIN, (long)principal, (long)session, (long)caps);
+}
+
+static inline int pkg_install(int fd, const char *name, const char *version_revision) {
+    return (int)__syscall3(SYS_PKG_INSTALL, fd, (long)name, (long)version_revision);
+}
+
+static inline int pkg_info(int index, char *buf, size_t cap) {
+    return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
+}
+
+struct swiftos_device_info {
+    unsigned int kind;
+    unsigned int bus;
+    unsigned long mmio_base;
+    unsigned long mmio_len;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned int generation;
+    unsigned int claimed;
+    char name[24];
+};
+
+static inline int device_claim(const char *name, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_CLAIM, (long)name, (long)info, 0);
+}
+
+static inline int device_info(int fd, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_INFO, fd, (long)info, 0);
+}
+
+static inline int device_discover(int index, struct swiftos_device_info *info) {
+    return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

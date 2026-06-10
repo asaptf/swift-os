@@ -70,6 +70,8 @@ int  swiftos_kernel_stage(void);
 int  swiftos_kernel_activate(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
+int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
 int  swiftos_exec_shell(const char *path);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
@@ -81,6 +83,7 @@ void swiftos_set_raw(int on);
 
 // ---- /bin/top: system + per-process statistics --------------------------
 #define SWIFTOS_TOP_MAX 16
+#define SWIFTOS_CPU_MAX 8
 
 // Refresh the cached system-stats blob (SYS_SYSINFO). 0 on success, else < 0.
 int swiftos_sysinfo_refresh(void);
@@ -93,6 +96,10 @@ unsigned long swiftos_sys_kernel_heap(void); // bytes used in the kernel bump he
 unsigned int  swiftos_sys_hz(void);          // scheduler ticks per second
 unsigned int  swiftos_sys_proc_total(void);
 unsigned int  swiftos_sys_proc_running(void);
+unsigned int  swiftos_sys_cpu_count(void);
+unsigned int  swiftos_sys_cpu_capacity(void);
+unsigned long swiftos_sys_cpu_ticks(unsigned int cpu);
+unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu);
 
 // Refresh the cached per-process table (SYS_PROCSTAT). Returns the process
 // count (< 0 on error); accessors below are valid for index 0..count-1.

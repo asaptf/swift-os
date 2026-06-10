@@ -230,15 +230,79 @@ private func runNewlibDemo() {
     uartPuts("\n")
 }
 
-private func runConcurrentDemo() {
+private func runConcurrentDemo() -> Bool {
     uartPuts("swift-os M8d: preemptive EL0 multitasking\n")
     let (img, sz) = demoImage("/bin/coproc")
-    if img == 0 { return }
+    if img == 0 { return false }
     let (pa, na, ca) = packArgs(["coproc", "A"])
     let (pb, nb, cb) = packArgs(["coproc", "B"])
     processRunPair(img, sz, pa, na, ca,
                    img, sz, pb, nb, cb)
     uartPuts("M8d OK: two EL0 processes ran concurrently\n")
+    return true
+}
+
+private func runS5bPlacementDemo() -> Bool {
+    uartPuts("swift-os S5b: EL0 scheduler placement batch\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (pa, na, ca) = packArgs(["coproc", "S5b-A"])
+    let (pb, nb, cb) = packArgs(["coproc", "S5b-B"])
+    let (pc, nc, cc) = packArgs(["coproc", "S5b-C"])
+    processRunS5bPlacementBatch(img, sz, pa, na, ca,
+                                pb, nb, cb,
+                                pc, nc, cc)
+    uartPuts("S5b OK: three EL0 processes ran with scheduler placement\n")
+    return true
+}
+
+private func runS5cPlacementStressDemo() -> Bool {
+    uartPuts("swift-os S5c: repeated EL0 scheduler placement stress\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (primaryPacked, primaryPackedLen, primaryArgc) = packArgs(["coproc", "S5c-P"])
+    let (secondaryPacked, secondaryPackedLen, secondaryArgc) = packArgs(["coproc", "S5c-S"])
+    let (tailPacked, tailPackedLen, tailArgc) = packArgs(["coproc", "S5c-T"])
+    processRunS5cPlacementStress(img, sz,
+                                 primaryPacked, primaryPackedLen, primaryArgc,
+                                 secondaryPacked, secondaryPackedLen, secondaryArgc,
+                                 tailPacked, tailPackedLen, tailArgc)
+    uartPuts("S5c OK: repeated EL0 placement stress completed\n")
+    return true
+}
+
+private func runS5dFanoutDemo() -> Bool {
+    uartPuts("swift-os S5d: EL0 fanout across scheduler CPUs\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["coproc", "S5d"])
+    processRunS5dFanout(img, sz, packed, packedLen, argc)
+    uartPuts("S5d OK: EL0 fanout ran across scheduler CPUs\n")
+    return true
+}
+
+private func runS5eThreadFanoutDemo() -> Bool {
+    uartPuts("swift-os S5e: shared-address-space thread fanout\n")
+    let (img, sz) = demoImage("/bin/threadsdemo")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["threadsdemo"])
+    let code = processRunS5eThreadFanout(img, sz, packed, packedLen, argc)
+    if code != 0 {
+        uartPuts("panic: S5e thread fanout exited nonzero\n")
+        while true {}
+    }
+    uartPuts("S5e OK: shared-address-space thread fanout completed\n")
+    return true
+}
+
+private func runS5fRunAnyPlacementDemo() -> Bool {
+    uartPuts("swift-os S5f: run-any EL0 placement policy\n")
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["coproc", "S5f"])
+    processRunS5fRunAnyPlacement(img, sz, packed, packedLen, argc)
+    uartPuts("S5f OK: run-any placement policy completed\n")
+    return true
 }
 
 private func runForkDemo() {
@@ -281,6 +345,17 @@ private func runFdOpsDemo() {
     if code == 0 {
         uartPuts("C1 OK: fds-as-handles preserved\n")
     }
+}
+
+private func runDriverServiceDemo() {
+    uartPuts("swift-os C5a: restartable driver-service supervisor\n")
+    let (img, sz) = demoImage("/bin/drvsvcdemo")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["drvsvcdemo"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C5a driver service demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
 }
 
 private func runFsDemo() {
@@ -454,23 +529,23 @@ private func printMac(_ m: MAC) {
 /// boot/test paths are unaffected (mirrors runVirtioBlkProbe).
 private func runVirtioNetProbe() {
     netInit()   // brings up the NIC + the shared NetStack the socket layer uses
-    if !netReady {
+    if !netIsReady() {
         return  // netInit already logged "net: no virtio-net device attached"
     }
     uartPuts("net-a: virtio-net up, MAC ")
-    printMac(gNet.mac)
+    printMac(netCurrentMac())
     uartPuts("\n")
 
     let gwIP = netGatewayIP   // 10.0.2.2 (slirp gateway)
 
     // 1) Resolve the gateway's MAC via ARP.
-    virtioNetTxSubmit(frameLen: gNet.buildArpRequest(targetIP: gwIP, out: virtioNetTxBuffer()))
+    netProbeSendArpRequest(targetIP: gwIP)
     var gwMac = MAC()
     var resolved = false
     var spins = 0
     while spins < 4_000_000 && !resolved {
-        let r = virtioNetPoll(&gNet)
-        if r.arpResolved && r.resolvedIP == gwIP { gwMac = r.resolvedMac; resolved = true }
+        let r = netProbePollArp(targetIP: gwIP)
+        if r.resolved { gwMac = r.mac; resolved = true }
         spins += 1
     }
     if !resolved {
@@ -482,13 +557,11 @@ private func runVirtioNetProbe() {
     uartPuts("\n")
 
     // 2) Ping the gateway: send an ICMP echo request and await the echo reply.
-    virtioNetTxSubmit(frameLen: gNet.buildEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234,
-                                                      seq: 1, payloadLen: 32, out: virtioNetTxBuffer()))
+    netProbeSendEchoRequest(toMac: gwMac, toIP: gwIP, id: 0x1234, seq: 1, payloadLen: 32)
     var got = false
     spins = 0
     while spins < 4_000_000 && !got {
-        let r = virtioNetPoll(&gNet)
-        if r.echoReply { got = true }
+        if netProbePollEcho() { got = true }
         spins += 1
     }
     if got {
@@ -570,7 +643,12 @@ func irqHandler() {
 
     if interruptId == physicalTimerIrq && currentCpuId() != 0 {
         smpRecordTimerTickForCurrentCpu()
+        if !processSecondarySchedulerActiveForCurrentCpu() {
+            smpRecordIdleTickForCurrentCpu()
+        }
         timerScheduleNext()
+    } else if interruptId == smpIpiInterruptId {
+        smpHandleIpi(iar)
     } else if interruptId == physicalTimerIrq {
         timerHandleTick()
     } else if interruptId == uartIrqId {
@@ -592,6 +670,8 @@ func irqHandler() {
         fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
         processOnTick(fromEL0: fromEL0)  // preempt the current EL0 process + CPU accounting
+    } else if interruptId == physicalTimerIrq && processSecondarySchedulerActiveForCurrentCpu() {
+        processOnTick(fromEL0: fromEL0)
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process
     }
@@ -628,8 +708,12 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
         let isPermissionFault = dfsc >= 0xC && dfsc <= 0xF
         if isWrite && isPermissionFault {
             let ttbr0 = processCurrentAddressSpace()
-            if ttbr0 != 0 && addressSpaceHandleCowFault(ttbr0, far) {
-                return
+            if ttbr0 != 0 {
+                if addressSpaceHandleCowFaultForActiveCpuMask(ttbr0,
+                                                              far,
+                                                              processCurrentAddressSpaceActiveCpuMask()) {
+                    return
+                }
             }
         }
     }
@@ -764,6 +848,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     }
     klogClearSourceMinLevels()
     schedulerInit()
+    if !kernelSchedulerOwnershipSelfTest() || !smpS2cKernelSchedulerReadinessSelfTest() {
+        uartPuts("panic: S2c kernel scheduler owner self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2c OK: kernel scheduler owner ready", UInt64(currentCpuId()) + 1)
     processInit()
     if !smpS2ReadinessSelfTest() {
         uartPuts("panic: S2a scheduler readiness self-test failed\n")
@@ -775,21 +864,97 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S2b OK: process scheduler context scaffold ready", UInt64(smpMaxCpuCount()))
+    if !processRunQueueScaffoldSelfTest() {
+        uartPuts("panic: S2d process run queue scaffold self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2d OK: process run queue scaffold ready", UInt64(smpMaxCpuCount()))
+    if !processDormantSchedulerCpusSelfTest() {
+        uartPuts("panic: S2e dormant process scheduler CPU self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2e OK: dormant process scheduler CPUs published", UInt64(smpMaxCpuCount()))
+    if !processDispatchTelemetrySelfTest() {
+        uartPuts("panic: S2f process dispatch telemetry self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2f OK: process dispatch telemetry ready", UInt64(smpMaxCpuCount()))
+    if !processSecondaryEl0GateSelfTest() {
+        uartPuts("panic: S2h secondary EL0 gate self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2h OK: secondary EL0 gate ready", UInt64(smpMaxCpuCount()))
+    if !processAddressSpaceCpuMaskSelfTest() {
+        uartPuts("panic: S3a address-space CPU mask self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3a OK: address-space CPU mask scaffold ready", UInt64(smpMaxCpuCount()))
+    if !smpIpiSubstrateSelfTest() {
+        uartPuts("panic: S3b IPI substrate self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3b OK: GIC SGI IPI substrate ready", UInt64(platform.cpuCount))
+    if !smpTlbShootdownSelfTest() {
+        uartPuts("panic: S3c TLB shootdown self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3c OK: TLB shootdown IPI scaffold ready", UInt64(platform.cpuCount))
+    if !processAddressSpaceTlbFlushFacadeSelfTest() {
+        uartPuts("panic: S3d address-space TLB flush facade self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S3d OK: address-space TLB flush facade ready", UInt64(smpMaxCpuCount()))
+    if !pmmS4aConcurrencySelfTest() {
+        uartPuts("panic: S4a PMM lock boundary self-test failed\n")
+        while true {}
+    }
+    if !smpPmmStressSelfTest() {
+        uartPuts("panic: S4a PMM SMP stress self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4a OK: PMM lock boundary ready", UInt64(pmmS4aLockAcquireCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    pkgStoreInit()      // P3: read active package-store generation, if present
+    if !pkgStoreS4dReadinessSelfTest() {
+        uartPuts("panic: S4d package-store lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4d OK: package-store lock boundary ready", UInt64(pkgStoreS4dLockAcquireCount()))
     vfsInit()           // M11c: serves the read-only base from disk when present
+    if !vfsS4bReadinessSelfTest() {
+        uartPuts("panic: S4b VFS lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4b OK: VFS lock boundary ready", UInt64(vfsS4bLockAcquireCount()))
+    if !swiftos_heap_s4c_self_test() {
+        uartPuts("panic: S4c kernel heap lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4c OK: kernel heap lock boundary ready", UInt64(swiftos_heap_lock_acquire_count()))
     espProbe()          // U1g-4a: locate the ESP on the GPT boot disk (if attached on mmio)
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
+    if !netS4eReadinessSelfTest() {
+        uartPuts("panic: S4e network lock boundary self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S4e OK: network lock boundary ready", UInt64(netS4eLockAcquireCount()))
+    if !smpPerCpuUtilizationSelfTest(platform.cpuCount) {
+        uartPuts("panic: S5a per-CPU utilization counter self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S5a OK: per-CPU utilization counters ready", UInt64(platform.cpuCount))
     ttyInit()
     signalReset()
     uartRxInit()
-    let windowKeyboard = virtioKbdInit() > 0  // graphical window has a keyboard
-    if windowKeyboard {
+    let inputKeyboard = virtioKbdInit() > 0
+    let interactiveConsole = inputKeyboard && fb_available() != 0
+    if inputKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }
     enable_irq()
 
-    if windowKeyboard {
+    if interactiveConsole {
         // Interactive graphical session (make run-gfx): boot straight into the
         // shell so the window is immediately usable. The milestone demos still
         // run on the serial/test path below (and the acceptance tests depend on
@@ -797,25 +962,156 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runInit()
     } else {
         runSchedulerDemo()
+        if !smpS2cNoSecondaryKernelSchedulerExecution() {
+            uartPuts("panic: S2c secondary kernel scheduler execution guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2c OK: no secondary kernel scheduler execution", UInt64(platform.cpuCount))
         runProcessDemo()
         runArgvDemo()
         runSpawnDemo()
         runBrkDemo()
         runNewlibDemo()
-        runConcurrentDemo()
+        let ranConcurrentDemo = runConcurrentDemo()
+        if ranConcurrentDemo {
+            if !processCoprocPairDispatchTelemetrySelfTest() {
+                uartPuts("panic: S2g coproc dispatch telemetry guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S2h OK: coproc pair dispatched across scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S2h OK: coproc pair dispatch CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5bPlacementDemo = runS5bPlacementDemo()
+        if ranS5bPlacementDemo {
+            if !processS5bPlacementTelemetrySelfTest() {
+                uartPuts("panic: S5b scheduler placement telemetry guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5b OK: EL0 scheduler placed batch across CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5b OK: EL0 scheduler placement CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5cPlacementStressDemo = runS5cPlacementStressDemo()
+        if ranS5cPlacementStressDemo {
+            if !processS5cPlacementStressSelfTest() {
+                uartPuts("panic: S5c scheduler placement stress guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5c OK: repeated EL0 placement stress crossed CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5c OK: repeated EL0 placement stress CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5dFanoutDemo = runS5dFanoutDemo()
+        if ranS5dFanoutDemo {
+            if !processS5dFanoutSelfTest() {
+                uartPuts("panic: S5d scheduler fanout guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5d OK: EL0 fanout crossed scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5d OK: EL0 fanout CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5eThreadFanoutDemo = runS5eThreadFanoutDemo()
+        if ranS5eThreadFanoutDemo {
+            if !processS5eThreadFanoutSelfTest() {
+                uartPuts("panic: S5e thread fanout guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5e OK: shared-address-space threads crossed CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5e OK: shared-address-space thread fanout CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5fRunAnyPlacementDemo = runS5fRunAnyPlacementDemo()
+        if ranS5fRunAnyPlacementDemo {
+            if !processS5fRunAnyPlacementSelfTest() {
+                uartPuts("panic: S5f run-any placement guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5f OK: run-any placement covered scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5f OK: run-any placement CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
         runForkDemo()
         runExecDemo()
         runFdOpsDemo()
+        runDriverServiceDemo()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
         runReclaimDemo()
         runPsDemo()
-        if !smpS2bNoSecondaryEl0Execution() {
-            uartPuts("panic: S2b secondary EL0 execution guard failed\n")
+        if !processMultiCpuSchedulerPostRunSelfTest() {
+            uartPuts("panic: S2 multi-CPU process scheduler post-run guard failed\n")
             while true {}
         }
-        klog(.info, "smp", "S2b OK: no secondary EL0 execution", UInt64(platform.cpuCount))
+        klog(.info, "smp", "S2h OK: process scheduler quiesced after multi-CPU dispatch", UInt64(platform.cpuCount))
+        if !processSecondaryEl0GateHeldSelfTest() {
+            uartPuts("panic: S2h secondary EL0 gate guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2h OK: secondary EL0 gate closed after restricted dispatch", UInt64(platform.cpuCount))
+        if !processAddressSpaceCpuMaskPostRunSelfTest() {
+            uartPuts("panic: S3a address-space CPU mask guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3a OK: address-space CPU masks matched dispatch CPUs", UInt64(platform.cpuCount))
+        if !smpS3bIpiSchedulerBoundarySelfTest() {
+            uartPuts("panic: S3b IPI scheduler boundary guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3b OK: IPI delivery stayed scheduler-safe", UInt64(platform.cpuCount))
+        if !smpS3cTlbShootdownSchedulerBoundarySelfTest() {
+            uartPuts("panic: S3c TLB shootdown scheduler boundary guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3c OK: TLB shootdown path stayed scheduler-safe", UInt64(platform.cpuCount))
+        if !processAddressSpaceTlbFlushPostRunSelfTest() {
+            uartPuts("panic: S3d address-space TLB flush facade guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S3d OK: address-space TLB flush matched dispatch CPUs", UInt64(platform.cpuCount))
+        if !pmmS4aLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4a PMM lock boundary did not stay balanced\n")
+            while true {}
+        }
+        if !smpS4aPmmStressSchedulerBoundarySelfTest() {
+            uartPuts("panic: S4a PMM stress scheduler boundary failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4a OK: PMM lock boundary stayed balanced", UInt64(pmmS4aLockContentionCount()))
+        if !vfsS4bLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4b VFS lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4b OK: VFS lock boundary stayed balanced", UInt64(vfsS4bLockContentionCount()))
+        if !swiftos_heap_lock_boundary_self_test() {
+            uartPuts("panic: S4c kernel heap lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4c OK: kernel heap lock boundary stayed balanced", UInt64(swiftos_heap_lock_contention_count()))
+        if !pkgStoreS4dLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4d package-store lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4d OK: package-store lock boundary stayed balanced", UInt64(pkgStoreS4dLockContentionCount()))
+        if !netS4eLockBoundaryHeldSelfTest() {
+            uartPuts("panic: S4e network lock boundary did not stay balanced\n")
+            while true {}
+        }
+        klog(.info, "smp", "S4e OK: network lock boundary stayed balanced", UInt64(netS4eLockContentionCount()))
         klogRing(.info, "log_export", "tail serialization ready")
         logDumpRecent(32)
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 768) { exportBuffer in

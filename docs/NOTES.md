@@ -172,7 +172,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
   The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
   the ELF image sits at `0x8000_0000` growing up (busybox ~1.1 MiB, far short of
-  `0x8800_0000`); the 4-page user stack is at the top of `[0x8FFF_C000, 0x9000_0000)`; the
+  `0x8800_0000`); the 16-page user stack is at the top of `[0x8FFF_0000, 0x9000_0000)`; the
   `sbrk` heap is at `0xA000_0000` growing up. That leaves a **256 MiB hole** between the
   stack top (`0x9000_0000`) and the heap base (`0xA000_0000`). The mmap arena is parked at
   the **midpoint** (`0x9800_0000`) and grows down, so it keeps 128 MiB of clearance above
@@ -446,7 +446,7 @@ because `fork` needs parent and child alive at once. Staged:
 - **M1 (2026-06-04) — DONE.** Runtime/memory bring-up:
   - EL1 vector table installed in `boot.S`; unexpected exceptions dump `ESR_EL1`, `ELR_EL1`,
     `FAR_EL1`, `SCTLR_EL1`, and `CPACR_EL1`.
-  - Early 256 KiB linker-reserved bump heap, Swift raw allocation hook (`swift_slowAlloc` /
+  - Early linker-reserved bump heap, Swift raw allocation hook (`swift_slowAlloc` /
     `swift_slowDealloc`), class allocation support (`posix_memalign` / `free`), and stack
     protector stubs.
   - Physical page allocator added as a Swift bitmap allocator with host unit coverage.
@@ -931,6 +931,587 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   active yet, no cross-CPU wake/IPI path is added, and scheduler/process/VFS/PMM
   locking policy remains S2+ work.
 
+### S2c — kernel-thread scheduler ownership guard (DONE, 2026-06-09)
+
+- **Kernel scheduler owner guard.** The M4.5 kernel-thread scheduler now has an
+  explicit CPU0 owner check at its public and internal scheduler boundaries.
+  `schedulerInit`, `threadCreate`, `schedule`, `schedYield`, `schedulerTick`,
+  `schedAllThreadsDone`, and `thread_exit` panic if they are reached from any
+  non-owner CPU, so the existing global `currentThread` / `states` scheduler
+  cannot silently appear per-CPU-safe before S2 proper.
+- **Per-CPU ownership evidence.** The fixed per-CPU state keeps its 64-byte
+  stride: the former reserved 32-bit slot is now
+  `kernelSchedulerActivityCount`, while the S2b EL0 switch counter remains a
+  full 64-bit counter. CPU0 marks the kernel scheduler ready in per-CPU flags,
+  and real kernel-thread context switches increment the current CPU's kernel
+  scheduler activity counter.
+- **Runtime acceptance.** Boot runs `kernelSchedulerOwnershipSelfTest` and
+  `smpS2cKernelSchedulerReadinessSelfTest` after `schedulerInit`, then logs
+  `S2c OK: kernel scheduler owner ready`. After the M4.5 scheduler demo and
+  before any EL0 demos, boot verifies CPU0 recorded kernel scheduler activity
+  and every secondary still has zero kernel scheduler activity, then logs
+  `S2c OK: no secondary kernel scheduler execution`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the kernel
+  scheduler owner helper, per-CPU kernel scheduler ready/activity state, CPU0
+  timer IRQ gating for `schedulerTick`, and the S2c boot-order contract.
+- **Non-goals.** No per-CPU run queues are active yet, no kernel thread can run
+  on a secondary CPU, no cross-CPU wake/IPI path is added, and PMM/VFS/process
+  locking policy remains S2+ work.
+
+### S2d — EL0 process run queue scaffold (DONE, 2026-06-09)
+
+- **Queue-backed EL0 scheduling.** The EL0 process scheduler no longer picks
+  runnable slots by scanning `pState` with a global round-robin cursor. Every
+  `pReady` transition now goes through `markProcessReady`, which records a
+  home CPU, links the slot into that CPU's FIFO run queue, and mirrors the
+  queue head/tail into the fixed per-CPU state. `pickReady` dequeues from the
+  current CPU's queue and verifies the slot still belongs to that CPU.
+- **CPU0 placement, deliberately.** `processHomeCpuForNewReadySlot` is the new
+  placement hook, but S2d intentionally returns CPU0 for every runnable process
+  and panics if a process is enqueued to any secondary CPU. This makes the S2
+  policy boundary explicit without enabling secondary EL0 execution early.
+- **Runtime acceptance.** Boot runs `processRunQueueScaffoldSelfTest` after the
+  S2b process scheduler context check and logs
+  `S2d OK: process run queue scaffold ready`. After the Swift `ps` userland
+  demo, boot verifies CPU0 observed run queue enqueue/dispatch activity and
+  every secondary CPU still has an empty process run queue, then logs
+  `S2d OK: process run queue stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the per-CPU
+  process run queue mirror helpers, the process scheduler run queue arrays,
+  rejects the old `rrCursor`/linear-scan scheduler path, and verifies that
+  `pReady` transitions are centralized through `markProcessReady`.
+- **Non-goals.** No EL0 work moves to secondary CPUs, no cross-CPU wake/IPI
+  path is added, and PMM/VFS/process locking policy remains S2+ work.
+
+### S2e — dormant per-CPU EL0 scheduler publication (DONE, 2026-06-10)
+
+- **Dormant scheduler contexts for every CPU.** `processInit` now publishes the
+  exact `schedCtx[cpu]` address and an empty process run queue mirror into every
+  fixed per-CPU state slot. CPU0 performs this publication during boot; it does
+  not require secondary CPUs to enter process scheduler code.
+- **Idle means no execution, not no resources.** `smpPerCpuSchedulerIdle` now
+  treats a nonzero dormant process scheduler context as allowed idle state. The
+  idle invariant remains strict about current thread/process ownership, run
+  queue emptiness, kernel scheduler activity, EL0 switch count, and the kernel
+  scheduler-ready flag.
+- **Runtime acceptance.** Boot runs `processDormantSchedulerCpusSelfTest` after
+  the S2d run queue scaffold check and logs
+  `S2e OK: dormant process scheduler CPUs published`. After the Swift `ps`
+  userland demo, boot verifies secondary scheduler contexts still point at
+  their dormant slots, secondary run queues remain empty, and secondary EL0
+  switch counts remain zero, then logs
+  `S2e OK: secondary process scheduler contexts stayed dormant`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the addressable
+  per-CPU scheduler context/runqueue publication helpers, rejects a CPU0-only
+  context publication regression, and verifies the S2e boot-order contract.
+- **Non-goals.** No secondary CPU dispatches EL0 work, no cross-CPU wake/IPI path
+  is added, and PMM/VFS/process locking policy remains S2+ work.
+
+### S2f — EL0 process dispatch CPU telemetry (DONE, 2026-06-10)
+
+- **Actual-dispatch telemetry.** The process scheduler now records the CPU that
+  actually dispatches each EL0 process slot (`pLastDispatchCpu`), a per-slot
+  dispatch count, and a small CPU bitmask of CPUs that have dispatched the slot.
+  A per-CPU aggregate telemetry counter is incremented at the same switch-in
+  site and is cross-checked against the existing per-CPU EL0 switch counter.
+  This is the cheap "last CPU" and history evidence needed by the later S2
+  acceptance test, without changing placement policy yet.
+- **CPU0 owner guard remains strict.** `recordProcessDispatch` still panics if
+  an EL0 process is dispatched on a secondary CPU or if the process home CPU and
+  dispatch CPU diverge. S2f is observability/readiness work, not the point where
+  secondary EL0 execution starts.
+- **Runtime acceptance.** Boot runs `processDispatchTelemetrySelfTest` after the
+  S2e dormant scheduler publication check and logs
+  `S2f OK: process dispatch telemetry ready`. After the Swift `ps` userland
+  demo, boot verifies the dispatch telemetry aggregate matches CPU0's EL0
+  switch count and every secondary CPU remains at zero, then logs
+  `S2f OK: process dispatch telemetry stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the dispatch
+  telemetry fields/helper/self-tests, verifies the telemetry write is on the
+  actual EL0 switch path before `smpRecordEl0SwitchForCurrentCpu`, and enforces
+  the S2f boot-order contract.
+- **Non-goals.** No process migrates between CPUs, no secondary CPU dispatches
+  EL0 work, no cross-CPU wake/IPI path is added, and no procstat/userland ABI is
+  widened in this checkpoint.
+
+### S2g — coproc pair dispatch telemetry harness (DONE, 2026-06-10)
+
+- **Coproc pair evidence before reap.** `processRunPair` now captures each
+  process slot's dispatch count, last dispatch CPU, and dispatch CPU mask after
+  the pair has exited but before either slot is reaped. This preserves the exact
+  evidence the later S2 acceptance needs from the existing `coproc` demo, where
+  the target will become "the two processes ran on different CPUs".
+- **Current invariant remains CPU0-only.** The S2g guard requires both `coproc`
+  processes to have dispatched at least once and to have CPU0-only dispatch
+  masks. It does not migrate work, change the placement hook, add cross-CPU
+  wakeups, or enable secondary EL0 execution.
+- **Runtime acceptance.** After `runConcurrentDemo` prints
+  `M8d OK: two EL0 processes ran concurrently`, boot runs
+  `processCoprocPairDispatchTelemetrySelfTest` before later demos can reuse the
+  slots. S2h now owns the runtime dispatch marker and logs either
+  `S2h OK: coproc pair dispatched across scheduler CPUs` or the explicit CPU0
+  fallback marker.
+- **Static guard.** `tests/smp_release_guard_test.sh` checks the last-pair
+  telemetry fields, verifies `processRunPair` captures telemetry before
+  `reapProcess(a)`, and enforces that the S2g guard runs immediately after the
+  concurrent EL0 demo.
+- **Non-goals.** No secondary CPU dispatches EL0 work, no scheduler placement
+  policy changes, no IPI/cross-CPU wake path is added, and no userland ABI is
+  widened in this checkpoint.
+
+### S2h — restricted coproc multi-CPU EL0 dispatch (DONE, 2026-06-10)
+
+- **Secondary EL0 scheduler gate.** The S1 secondary loop now polls a process
+  scheduler service hook before returning to IRQ-enabled `wfi`. CPU0 can set a
+  run mask for one secondary CPU, wait for that CPU to enter its per-CPU process
+  scheduler context, and later set a stop mask so the secondary returns to its
+  idle loop. The hook is only enabled by the `processRunPair` acceptance path;
+  general secondary process scheduling remains off.
+- **Per-CPU current process state.** The old singleton `currentProc` is now a
+  per-CPU slot mirror, so syscalls, user access, VFS capability checks, logging,
+  timer accounting, and signal paths read the process running on the current
+  CPU. The kernel scheduler remains CPU0-owned; only the EL0 process scheduler
+  uses the restricted secondary hook.
+- **Safe cross-CPU reap boundary.** A process is not reapable until it has
+  returned to its scheduler stack. After every process context switch back to a
+  scheduler context, the scheduler switches TTBR0 back to the kernel address
+  space and marks the slot quiesced before another CPU may free the process
+  kernel stack or page tables.
+- **Runtime acceptance.** On `-smp 4`, the existing `coproc` pair runs with one
+  process on CPU0 and one on a secondary scheduler CPU, then logs
+  `S2h OK: coproc pair dispatched across scheduler CPUs`,
+  `S2h OK: process scheduler quiesced after multi-CPU dispatch`, and
+  `S2h OK: secondary EL0 gate closed after restricted dispatch`. On `-smp 1`,
+  the same path logs an explicit CPU0 fallback marker. `tests/smp_boot_test.sh`
+  covers both forms; `tests/uefi_boot_test.sh` checks the markers on firmware
+  boots.
+- **Harness hardening.** `tests/boot_test.sh` now builds a QEMU virt DTB when a
+  clean worktree lacks `build/virt.dtb`, assembles QEMU argv through a non-empty
+  array under `set -u`, and uses the same escalating QEMU cleanup style as the
+  SMP harness. Interactive Swift/userland smoke drivers send shell input with
+  short per-character pacing and explicit completion markers to avoid FIFO
+  overrun flakes under long full-suite runs.
+- **Non-goals.** No process migration, reschedule IPI, TLB shootdown protocol,
+  shared-address-space thread execution on secondary CPUs, or broad VFS/PMM
+  concurrency is enabled here. The remaining S2 work is the general stress path:
+  N runnable EL0 processes, cross-CPU wakeups, and no scheduler corruption under
+  sustained timer preemption.
+
+### S3a — address-space active CPU mask preflight (DONE, 2026-06-10)
+
+- **Active-address-space evidence.** The EL0 scheduler now records
+  `pAddressSpaceCpuMask[slot]` and a per-CPU
+  `processAddressSpaceActivationCount` after installing a process TTBR0 with
+  `address_space_switch(pTtbr0[s])` and before accounting the EL0 switch. This
+  is the cheap active-CPU evidence S3 needs before real TLB shootdown targeting
+  can be implemented.
+- **Restricted-secondary invariant.** The recorder is still protected by the
+  S2h scheduler run mask and cross-checks against dispatch telemetry, so only
+  CPU0 and the explicitly started S2h secondary scheduler CPU may activate a
+  process address space in this checkpoint.
+- **Runtime acceptance.** Boot runs `processAddressSpaceCpuMaskSelfTest` after
+  S2h readiness and logs `S3a OK: address-space CPU mask scaffold ready`. After
+  the userland demos, boot runs `processAddressSpaceCpuMaskPostRunSelfTest`
+  after the S2h gate-closed guard and logs
+  `S3a OK: address-space CPU masks matched dispatch CPUs`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the S3a fields,
+  recorder, self-tests, marker ordering, and the exact switch-path order:
+  `address_space_switch(pTtbr0[s])` -> `recordProcessAddressSpaceActivation`
+  -> `smpRecordEl0SwitchForCurrentCpu`.
+- **Non-goals.** No TLB invalidation behavior changes, no process migration, no
+  shared-address-space cross-CPU execution, and no broad scheduler placement is
+  enabled in this checkpoint.
+
+### S3b — GIC SGI / IPI substrate preflight (DONE, 2026-06-10)
+
+- **GICv2 SGI sender.** `kernel/drivers/gic.swift` now reserves SGI ID 1 for
+  SMP IPIs, enables SGIs per CPU interface, and writes GICD_SGIR at offset
+  `0xF00` in target-list mode (`SGIINTID[3:0]`,
+  `CPUTargetList[23:16]`, `TargetListFilter[25:24] = 0b00`). The encoding was
+  checked against QEMU 11.0.1 `hw/intc/arm_gic.c`, whose `gic_dist_writel`
+  handles offset `0xf00` by setting `sgi_pending[irq][target_cpu]`.
+- **Parked secondaries can receive IPIs.** After their early timer heartbeat,
+  secondary CPUs poll the restricted S2h scheduler hook and then sleep in an
+  IRQ-enabled `wfi` loop. Their IRQ path still does no scheduler/VFS/driver
+  work: timer PPIs only rearm the local timer or drive an already-active S2h
+  process scheduler CPU, and SGI ID 1 only records atomic per-CPU IPI counters
+  and source CPU.
+- **Runtime acceptance.** Boot runs `smpIpiSubstrateSelfTest` after S3a
+  readiness. On SMP boots CPU0 sends SGI ID 1 to every discovered secondary,
+  waits for the delivered mask, verifies the source CPU, and logs
+  `S3b OK: GIC SGI IPI substrate ready`. After userland demos, boot verifies the
+  IPI delivery mask stayed complete and secondary kernel scheduler state stayed
+  idle, then logs `S3b OK: IPI delivery stayed scheduler-safe`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the SGIR offset,
+  SGI sender/source helpers, IPI counters, IRQ handler hook, restricted S2h
+  service loop, and the boot-order contract (`S3a readiness -> S3b readiness ->
+  demos`, then `S2h quiesced -> S2h gate closed -> S3a matched -> S3b
+  scheduler-safe`).
+- **Non-goals.** No TLB shootdown protocol is implemented yet, no reschedule
+  IPI is consumed by the scheduler, and no PMM/VFS/process locking policy
+  changes in this checkpoint.
+
+### S3c — TLB shootdown IPI scaffold (DONE, 2026-06-10)
+
+- **Fixed request/ack protocol.** `kernel/smp/percpu.swift` now has separate
+  fixed atomic TLB shootdown generations, ack generations, received counters,
+  and probe masks. These stay outside `SMPPerCpuState`, preserving the 64-byte
+  scheduler slot while giving S3 a concrete per-CPU protocol to wire into
+  future address-space active masks.
+- **IPI handler consumption.** SGI ID 1 still records the generic S3b IPI
+  counters, then consumes any pending TLB shootdown generation for the current
+  CPU. The S3c path performs only a local `tlbi_all()` plus atomic ack/counter
+  updates; it does not log, schedule, touch process state, allocate pages, or
+  call VFS/driver code from a parked secondary CPU.
+- **Runtime acceptance.** Boot runs `smpTlbShootdownSelfTest` after S3b
+  readiness. On SMP boots CPU0 publishes a generation to every discovered
+  secondary, sends the reserved SGI, waits for the ack mask, verifies each
+  target's ack generation and received count, and logs
+  `S3c OK: TLB shootdown IPI scaffold ready`. After userland demos, boot
+  verifies the ack mask stayed complete and secondary scheduler state stayed
+  idle, then logs `S3c OK: TLB shootdown path stayed scheduler-safe`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now checks the S3c
+  request/ack globals and helpers, boot-order placement, and the narrow TLB
+  handler contract. The generic S3b handler still cannot inline logging,
+  scheduler/process work, VFS/driver/PMM calls, or raw TLB instructions.
+- **Non-goals.** Existing VM page-table mutation sites still perform local
+  invalidation because secondary EL0/address-space activation remains gated.
+  The next S3 slice can connect this protocol to per-address-space active CPU
+  masks once multi-CPU process execution is intentionally opened.
+
+### S3d — active-mask VM TLB flush facade (DONE, 2026-06-10)
+
+- **VM facade.** `kernel/mm/vm.swift` now routes TLB invalidation through
+  `addressSpaceFlushTlbForActiveCpuMask`. The facade performs the page-table
+  write barrier, invalidates the current CPU locally (`tlbi vae1` or
+  `tlbi vmalle1`), and forwards any remote CPU bits to the S3c request/ack
+  shootdown path. The exported C ABI entry points remain as current-CPU wrappers
+  for inactive construction paths.
+- **Process-owned active masks.** `kernel/user/process.swift` exposes
+  `processCurrentAddressSpaceActiveCpuMask` and uses S3a's
+  `pAddressSpaceCpuMask` for process-owned page-table mutations: heap growth
+  rollback, anonymous mmap, demand-paged file mmap, munmap, mprotect, COW
+  prepare/fault handling, and fork's parent COW rewrite. The current gate keeps
+  the active mask CPU0-only, but the future multi-CPU path now has one explicit
+  hook instead of scattered raw `tlbi_*` calls.
+- **Runtime acceptance.** Boot runs `processAddressSpaceTlbFlushFacadeSelfTest`
+  after S3c readiness and logs
+  `S3d OK: address-space TLB flush facade ready`. After userland demos, boot
+  runs `processAddressSpaceTlbFlushNoSecondarySelfTest`, verifies active masks
+  stayed CPU0-owned, and logs
+  `S3d OK: address-space TLB flush stayed CPU0-owned`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the VM facade,
+  active-mask variants, process active-mask helpers, COW/copyout routing, and
+  the S3d boot-order contract. Generic IPI/TLB handlers remain constrained to
+  no logging, scheduler, process, VFS, virtio, or PMM work from secondary IRQ
+  context.
+- **Non-goals.** This checkpoint does not enable secondary EL0 execution, does
+  not prove stale translation eviction across user threads on different CPUs,
+  and does not change PMM/VFS/package-store concurrency policy.
+
+### S4a — PMM lock boundary and concurrent PageAllocator stress (DONE, 2026-06-10)
+
+- **Coarse PMM lock.** `kernel/mm/pmm.swift` now wraps the shared
+  `PageAllocator` owner in an IRQ-save spinlock built from the S0b atomic CAS
+  primitive. The exported PMM entry points (`pmm_alloc_page`,
+  `pmm_alloc_pages`, `pmm_free_page`, COW ref/unref/refcount, and PMM counters)
+  all enter through the same `pmmWithAllocator` boundary, so the bitmap, hint,
+  free-frame count, and refcount table are no longer raw global mutable state
+  once secondary CPUs can call allocation paths.
+- **Atomic last-ref release.** `pmm_frame_release` drops one COW reference and
+  raw-frees the frame under the same PMM lock. VM user-frame teardown now uses
+  this primitive instead of a split `pmm_frame_unref` / `pmm_free_page`
+  sequence.
+- **Executable checks.** Boot runs `pmmS4aConcurrencySelfTest()` after the S3d
+  readiness checks, then sends a bounded PMM stress request to discovered
+  secondary CPUs over the existing SGI/IPI path, and logs
+  `S4a OK: PMM lock boundary ready`. After the userland demos, boot verifies the
+  lock word is balanced, the PMM stress ack/failure masks are clean, and logs
+  `S4a OK: PMM lock boundary stayed balanced`.
+- **Host stress.** `tests/page_allocator_test.swift` keeps the existing unit and
+  adversarial cases and adds an 8-worker threaded allocation/free/ref/unref
+  stress through a synchronized wrapper over the same pure `PageAllocator`
+  logic. It asserts no duplicate live frames and full frame-count recovery.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the PMM lock
+  helpers, the atomic release primitive, the bounded SGI PMM stress path,
+  rejects direct optional PMM allocator access outside the wrapper, and checks
+  the S4a boot-marker order. `tests/smp_boot_test.sh` and the UEFI boot smoke
+  now require the S4a markers.
+- **Non-goals.** No per-CPU page magazines yet, no lock-free bitmap operations,
+  no small-object heap synchronization, and no VFS/handle/package-store pool
+  locking in this slice.
+
+### S4b — VFS lock boundary and handle accounting guard (DONE, 2026-06-10)
+
+- **Coarse VFS lock.** `kernel/vfs/vfs.swift` now protects the shared VFS
+  mutable pools (node table, per-process handle slots, shared open descriptions,
+  pipes, endpoints, cwd nodes, and confinement roots) with an IRQ-save spinlock
+  built from the S0b atomic CAS primitive. The lock has acquire/contention
+  counters so boot can prove the boundary was exercised and left balanced.
+- **Borrowed open descriptions.** Long operations borrow the open description
+  before dropping the VFS lock. Pipe reads/writes and endpoint receives release
+  the lock before `processYieldForIO()`, sockets run the TCP/UDP work without
+  the VFS lock held, and disk-backed reads reserve the shared file offset before
+  block I/O. `close`/`dup`/`fork`/`exec` handle refcount paths are serialized by
+  the same boundary.
+- **Executable checks.** Boot runs `vfsS4bReadinessSelfTest()` immediately after
+  `vfsInit()` and logs `S4b OK: VFS lock boundary ready`. After userland demos
+  it runs `vfsS4bLockBoundaryHeldSelfTest()`, which verifies the lock word is
+  clear and fd/open-description/pipe/endpoint accounting is balanced, then logs
+  `S4b OK: VFS lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the VFS lock
+  helpers, borrowed-description helpers, socket borrow helper, accounting
+  self-test, and S4b boot-marker order. The SMP and UEFI boot smokes now require
+  both S4b markers.
+- **Non-goals.** S4b does not enable secondary EL0 execution, does not make the
+  small-object kernel heap concurrent, and does not protect package-store
+  mutation or network engine state beyond keeping VFS socket descriptors alive.
+
+### S4c — kernel bump-heap lock boundary (DONE, 2026-06-10)
+
+- **C heap lock.** `kernel/runtime/heap.c` now protects `heap_cursor`,
+  `heap_limit`, and `heap_initialized` with an IRQ-save spinlock built from the
+  S0b C atomic bridge. `swiftos_kernel_alloc`, `swift_slowAlloc`,
+  `posix_memalign`, and `swiftos_kernel_heap_used_bytes` all pass through that
+  boundary.
+- **Idempotent init.** `swiftos_heap_init()` no longer rewinds the bump cursor
+  after the heap is already live. The lazy allocation path initializes under
+  the same lock if an early caller reaches it first.
+- **Executable checks.** Boot runs `swiftos_heap_s4c_self_test()` after the S4b
+  VFS readiness check and logs `S4c OK: kernel heap lock boundary ready`. After
+  userland demos it runs `swiftos_heap_lock_boundary_self_test()` and logs
+  `S4c OK: kernel heap lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the C heap lock,
+  counter/self-test exports through `io.h`, and S4c boot-marker order. SMP and
+  UEFI boot smokes now require both S4c markers.
+- **Non-goals.** This keeps the minimal bump allocator design. There is still
+  no small-object free/reclaim, no per-CPU heap cache, and no secondary EL0
+  execution in this checkpoint.
+
+### S4d — package-store lock boundary (DONE, 2026-06-10)
+
+- **Package-store lock.** `kernel/pkg/store.swift` now protects package-store
+  payload/activation tables, active payload publication, record offsets, and
+  S4d counters with a short IRQ-save spinlock.
+- **Writer gate.** `pkgStoreInstall` uses a single-writer gate around the
+  target-side install transaction. Hashing and virtio-blk reads/writes happen
+  outside the spinlock; record reservation/commit and final active payload
+  publication happen through short locked helpers.
+- **Reader snapshot.** Active payload count/info/read paths copy the active
+  payload index/offset/size snapshot under the S4d lock, then perform package
+  store block I/O without holding it.
+- **Executable checks.** Boot runs `pkgStoreS4dReadinessSelfTest()` immediately
+  after `pkgStoreInit()` and before VFS consumes active package payloads, then
+  logs `S4d OK: package-store lock boundary ready`. After the userland demos it
+  runs `pkgStoreS4dLockBoundaryHeldSelfTest()` and logs
+  `S4d OK: package-store lock boundary stayed balanced`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the S4d lock,
+  writer gate, record reservation/commit helpers, unlocked payload reads, and
+  S4d boot-marker order. SMP and UEFI boot smokes now require both S4d markers.
+- **Non-goals.** S4d does not add a package-store journal, multi-writer
+  transactions, or a package-management service. Install remains a serialized
+  operation.
+
+### S4e — network/socket lock boundary (DONE, 2026-06-10)
+
+- **Network lock.** `kernel/net/socket.swift` now protects `gNet`, DNS scratch
+  state, socket tables, TCP connection state, RX datagram rings, and the
+  virtio-net poll/TX/RX boundary with a short IRQ-save spinlock and S4e
+  acquire/contention counters.
+- **Pump boundary.** `netPump()` is the public locked pump entry point;
+  `netPumpLocked()` is the internal helper that may call `virtioNetPoll(&gNet)`
+  and deliver RX frames into sockets. Blocking recv/accept/connect paths pump
+  or wait without holding the lock, then take short locked snapshots to inspect
+  socket state or copy payloads.
+- **Boot probe boundary.** The net-a boot probe no longer reads `gNet` or calls
+  virtio-net TX/poll helpers directly from `main.swift`; it uses small locked
+  probe helpers for MAC, ARP, and ICMP echo checks.
+- **Executable checks.** Boot runs `netS4eReadinessSelfTest()` immediately after
+  `runVirtioNetProbe()` and logs `S4e OK: network lock boundary ready`. After
+  the userland demos it runs `netS4eLockBoundaryHeldSelfTest()` and logs
+  `S4e OK: network lock boundary stayed balanced`.
+- **Static/runtime guard.** `tests/smp_release_guard_test.sh` requires the S4e
+  lock, counters, pump/probe helpers, and boot-marker order. SMP and UEFI boot
+  smokes require both S4e markers. Runtime network coverage was re-run across
+  virtio-net ARP/ICMP, UDP/TCP echo, TCP active open, DNS, HTTP, TLS, zero-copy
+  RX refs, socket handle transfer, IPv6 link-local/NDP smokes, and signed HTTP
+  package repo install.
+- **Non-goals.** S4e does not service-ize the network stack, add a NIC interrupt
+  thread, or enable broad secondary network work. It is a correctness boundary
+  for the current in-kernel polled engine; C5/network service work still owns
+  the architectural move out of the kernel.
+
+### S4f — restricted-SMP resource stress (DONE, 2026-06-10)
+
+- **Userland workload.** `/bin/s4stress` is a small static C binary that drives
+  the kernel resource paths hardened during S4. Each run repeats anonymous
+  `mmap`/`munmap`, pipe create/dup/read/write/close, tmpfs
+  write/rename/read cycles plus bounded create/unlink/mkdir/rmdir smoke paths,
+  `fork`/`waitpid`, and `spawn`/exec of `/bin/argvdemo`, then prints `S4F-*`
+  completion markers.
+- **Runtime harness.** `tests/s4_resource_stress_test.sh` boots QEMU with
+  `-smp 4`, logs in through the normal console path, runs `/bin/s4stress` from
+  the packed base image, and requires the S2 timer heartbeat plus the S4e
+  post-run lock-balance marker before accepting the S4f markers. `make test`
+  runs the harness after the SMP boot smoke.
+- **Post-boot SMP churn harness.** `tests/smp_resource_stress_test.sh` boots
+  with `-smp 4`, logs in after the normal boot demos, and reruns resource-heavy
+  userland paths (`forkdemo`, `fdopsdemo`, `execdemo`, `threadsdemo`, and a
+  tmpfs create/write/pipe/move/remove loop) while all discovered CPUs remain
+  online and ticking. It checks the S4a-S4e post-demo lock-boundary markers and
+  its own `S4F-*` status markers, and is available as
+  `make smp-resource-stress-test`.
+- **Static guard.** `tests/smp_release_guard_test.sh` now requires the
+  `/bin/s4stress` Makefile wiring, base-image install step, executable
+  harnesses, and workload coverage markers so the S4f stress does not silently
+  fall out of the release contract.
+- **Non-goals.** S4f is intentionally a restricted-SMP stress pass for the
+  current S2h gate. It does not enable broad secondary EL0 execution or make one
+  address space execute concurrently on multiple CPUs; that remains S5.
+
+### S5a — per-CPU utilization export (DONE, 2026-06-10)
+
+- **Kernel accounting.** The existing per-CPU timer scaffold now also exposes
+  idle ticks through the S5a `SYS_sysinfo` extension. CPU0 mirrors its legacy
+  idle accounting from `processOnTick`; parked secondary CPUs account their
+  timer interrupts as idle in the IRQ path.
+- **Userland visibility.** The first 64 bytes of the `/bin/top` sysinfo record
+  remain compatible with the previous layout. Userland that passes the extended
+  record capacity receives `cpuCount`, `cpuCapacity`, `cpuTicks[8]`, and
+  `cpuIdleTicks[8]` starting at offset 64. `/bin/top` renders aggregate
+  busy/idle from those deltas plus a per-CPU busy line.
+- **Executable checks.** Boot logs `S5a OK: per-CPU utilization counters ready`.
+  `tests/top_test.sh` is parameterized by `SMP_CPUS`; `make
+  smp-cpu-utilization-test` runs `/bin/top -b -n 2` under `-smp 4` and requires
+  the four per-CPU busy entries.
+- **Non-goals.** S5a is observability only. It does not broaden process
+  placement, enable one address space on multiple CPUs, or change the restricted
+  S2h secondary EL0 gate.
+
+### S5b — bounded EL0 scheduler placement batch (DONE, 2026-06-10)
+
+- **Scheduler placement acceptance.** `processRunS5bPlacementBatch` extends the
+  restricted S2h gate from a pair demo to a three-process batch: the stable
+  pair phase pins one `coproc` process to the explicitly started secondary
+  scheduler CPU and one to CPU0, then a third CPU0 `coproc` tail runs before
+  any of the batch slots are reaped. The default scheduler placement still
+  remains CPU0 outside this acceptance path.
+- **Telemetry before reap.** The batch captures per-process dispatch counts,
+  dispatch CPU masks, and last-dispatch CPUs before the slots are reaped. The
+  S5b guard requires the secondary-pinned process to dispatch on a non-primary
+  online CPU under `-smp 4`, or the explicit CPU0 fallback under single-CPU boot.
+- **Placement correctness fixes.** Requeue now preserves an existing process's
+  `pHomeCpu` instead of recalculating the default CPU0 placement, and new slots
+  explicitly clear dispatch/address-space telemetry before first enqueue. Live
+  `klog` output also renders non-zero `detail=` fields, matching the SMP boot
+  contract that already used structured details.
+- **Executable checks.** Boot prints
+  `S5b OK: three EL0 processes ran with scheduler placement` and logs either
+  `S5b OK: EL0 scheduler placed batch across CPUs` or the CPU0 fallback. The
+  SMP boot smoke checks marker ordering, the release guard checks capture-before
+  reap and boot-order contracts, and `make s5-scheduler-placement-test` runs the
+  focused `-smp 4` boot acceptance.
+- **Non-goals.** S5b does not enable arbitrary secondary EL0 scheduling,
+  migration, work stealing, cross-CPU wakeups, or concurrent execution of
+  multiple EL0 threads in the same address space.
+
+### S5c — repeated EL0 placement stress + run queue lock (DONE, 2026-06-10)
+
+- **Run queue locking.** EL0 process run queue enqueue/dequeue now takes a
+  small per-CPU IRQ-save spinlock. This keeps the CPU0 producer path and the
+  secondary scheduler consumer path from racing on the `head`/`tail` pair when
+  CPU0 publishes work to a secondary run queue. Cross-CPU enqueue also sends
+  `sev` after the queue update so a parked secondary scheduler does not wait
+  for the next timer interrupt before noticing new work.
+- **Repeated placement workload.** `processRunS5cPlacementStress` runs three
+  independent `coproc` primary/secondary rounds through the restricted S2h
+  gate, then stops the secondary scheduler and runs two CPU0 tail processes.
+  Slots are reaped after each round, but aggregate dispatch counts and CPU masks
+  are captured before each reap and folded into S5c telemetry.
+- **Executable checks.** Boot prints `S5c OK: repeated EL0 placement stress
+  completed` and logs either `S5c OK: repeated EL0 placement stress crossed
+  CPUs` or the CPU0 fallback. The S5c guard validates the expected process
+  count, primary/secondary masks, nonzero dispatches, visible run queue lock
+  activity, cleared gate masks, and idle queues. `make s5-placement-stress-test`
+  runs the focused `-smp 4` boot acceptance.
+- **Non-goals.** S5c still does not enable arbitrary process migration, load
+  balancing, shared-address-space execution on multiple CPUs, or secondary
+  scheduler access to unrelated kernel subsystems.
+
+### S5d — independent EL0 fanout across scheduler CPUs (DONE, 2026-06-10)
+
+- **Multi-secondary fanout.** `processRunS5dFanout` starts every online
+  secondary scheduler CPU with a live timer heartbeat, creates one independent
+  top-level `coproc` process for CPU0 and one for each started secondary CPU,
+  then waits for all slots to become zombie and scheduler-quiesced before
+  stopping the secondary schedulers.
+- **Exact placement telemetry.** The fanout captures the scheduler CPU mask,
+  aggregate dispatch CPU mask, secondary CPU mask, total dispatch count, and a
+  count of processes whose dispatch mask exactly matched their home CPU before
+  any fanout slot is reaped. The S5d guard requires those masks to match, all
+  participating CPUs to record EL0 switches, all gate masks to be clear after
+  stop, and every run queue to be idle.
+- **Executable checks.** Boot prints `S5d OK: EL0 fanout ran across scheduler
+  CPUs` and logs either `S5d OK: EL0 fanout crossed scheduler CPUs` or the CPU0
+  fallback. `make s5-el0-fanout-test` runs the focused `-smp 4` boot
+  acceptance, the SMP boot smoke enforces S5b -> S5c -> S5d marker ordering
+  before Swift ps, and the release guard checks the fanout wiring.
+- **Non-goals.** S5d still does not migrate a process after creation, run a
+  single shared address space on multiple CPUs, enable arbitrary load balancing,
+  or let secondary schedulers execute unrelated kernel-thread work.
+
+### S5e — shared-address-space thread fanout (DONE, 2026-06-10)
+
+- **Futex SMP boundary.** `kernel/sched/futex.swift` now protects the futex wait
+  table with an IRQ-save spinlock and exposes S5e lock/waiter self-tests. The
+  `FUTEX_WAIT` path records the waiter and marks the caller blocked while holding
+  the futex lock, then releases the lock before yielding so a different CPU can
+  run `FUTEX_WAKE` without deadlocking or losing the wake.
+- **Gated thread placement.** `processRunS5eThreadFanout` starts online secondary
+  scheduler CPUs, runs `/bin/threadsdemo` on CPU0, and temporarily enables an
+  S5e-only `thread_create` placement policy. Created sibling threads share the
+  creator TTBR0 and are placed round-robin on active secondary scheduler CPUs;
+  ordinary `thread_create` remains CPU0-placed outside this acceptance path.
+- **Telemetry and guard.** S5e records created/exited thread counts, shared
+  address-space count, home/dispatch CPU masks, exact home-CPU dispatch matches,
+  futex lock activity, and a protected telemetry-lock count before the top-level
+  demo process is reaped. The guard requires two sibling threads, a shared
+  address space, nonzero futex lock activity, idle futex waiters/run queues, and
+  closed secondary gate masks.
+- **Executable checks.** Boot prints `S5e OK: shared-address-space thread fanout
+  completed` and logs either `S5e OK: shared-address-space threads crossed CPUs`
+  or the CPU0 fallback. `make s5-thread-fanout-test` runs the focused `-smp 4`
+  boot acceptance.
+- **Non-goals.** S5e does not make all shared address spaces freely migratable,
+  add load balancing/work stealing, or protect concurrent `mmap`/`brk` mutations
+  from multiple threads. It proves the narrow thread/futex runtime path under the
+  restricted S2h scheduler gate.
+
+### S5f — run-any EL0 placement policy (DONE, 2026-06-10)
+
+- **Gated run-any policy.** The ordinary default process placement still chooses
+  CPU0 outside the acceptance window. `processRunS5fRunAnyPlacement` temporarily
+  enables a run-any hook that round-robins new EL0 processes across CPU0 plus all
+  active secondary scheduler CPUs, using the normal `homeCpu: unassignedCpu`
+  creation path instead of explicit affinity.
+- **More work than CPUs.** The boot demo starts all online secondary scheduler
+  CPUs and creates more `/bin/coproc` processes than scheduler CPUs. This forces
+  the run-any selector to wrap while each process remains pinned to the selected
+  home CPU for the duration of the narrow test.
+- **Telemetry and guard.** S5f captures the scheduler CPU mask, aggregate
+  dispatch CPU mask/count, secondary CPU mask, policy selection count, process
+  count, and exact home-CPU dispatch matches before reaping. The guard requires
+  policy selections to match created processes, dispatch coverage to match the
+  scheduler mask, every process to dispatch only on its selected CPU, and all
+  run queues plus secondary gate masks to be idle after stop.
+- **Executable checks.** Boot prints `S5f OK: run-any placement policy
+  completed` and logs either `S5f OK: run-any placement covered scheduler CPUs`
+  or the CPU0 fallback. `make s5-run-any-placement-test` runs the focused
+  `-smp 4` boot acceptance.
+- **Non-goals.** S5f does not add migration, work stealing, load balancing, or a
+  production scheduler heuristic. It proves that the default placement path can
+  select any active scheduler CPU under the existing restricted SMP boundary.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
@@ -1053,6 +1634,108 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Still deferred.** VMOs, async rings, batched descriptors, `ipc_call`, badges,
   service supervisor, userland drivers, Cells/resource domains, endpoint
   close-on-exec policy change, and SMP work remain later C/S milestones.
+
+### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)
+
+- **Supervisor/service shape.** Added `/bin/drvsvcdemo`, a tiny userland
+  supervisor, and `/bin/drvinputd`, a pseudo input-driver service. The supervisor
+  creates two endpoint pairs, forks/execs the service with only the service-side
+  endpoint fds left open, waits for a ready message, sends a command, receives an
+  event, stops the service, and repeats the sequence with a fresh generation.
+- **Restart evidence.** The service returns a generation-specific exit status
+  after `STOP`, so the supervisor proves both the old service stopped and a new
+  service instance recovered the endpoint protocol.
+- **Executable checks.** Boot now runs the smoke and prints
+  `C5a OK: restartable driver service recovered over IPC`; `make
+  c5-driver-service-test` runs the focused `-smp 4` direct-boot acceptance.
+- **Non-goals.** No real device handle, MMIO mapping, IRQ endpoint, DMA window, or
+  virtio-input ownership is moved to userland yet. This is the C5 supervisor/IPC
+  contract that the next device-handoff slice can attach hardware authority to.
+
+### C5b — opaque device-handle handoff scaffold (DONE, 2026-06-10)
+
+- **Device handle vocabulary.** `HandleKind.device` is now part of the typed
+  handle table. Device grants default to `getattr + transfer` only: they can be
+  inspected and moved over C4 IPC, but not duplicated, read, written, or mapped.
+- **Registry scaffold.** VFS owns a tiny device registry with `pseudo-input.0`,
+  a C5 scaffold entry marked `NO_MMIO_GRANT`. `device_claim(name, info*)`
+  creates a unique device handle for the boot authority and returns `-16` while
+  another live handle owns the grant. `device_info(fd, info*)` exposes fixed
+  metadata; the MMIO base/length and IRQ fields are zero because C5b does not
+  grant hardware access yet.
+- **Lifecycle and IPC transfer.** Open-description refcounts now release device
+  ownership on final close/process exit. `/bin/drvsvcdemo` claims the pseudo
+  device, transfers it to `/bin/drvinputd` with `ipc_send(..., handle_fd)`,
+  verifies the moved source fd becomes `-9`, observes `-16` on a concurrent
+  claim while the service owns it, stops the service, and successfully reclaims
+  the device.
+- **Executable checks.** Boot now requires
+  `C5b OK: opaque device handle transferred and released`; `make
+  c5-device-handle-test` is the focused direct-boot acceptance. The host
+  `handle_test` also covers `.device` kind stability and default rights.
+- **Non-goals.** Still no MMIO map syscall, IRQ endpoint, DMA window, real
+  virtio-input device claim, manifest matching, or driver replacement. C5b only
+  makes the ownership/transfer/release contract executable.
+
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
+
+- **Discovery ABI.** Added `device_discover(index, info*)` as syscall 64. It is
+  read-only, requires the same boot authority capability as `device_claim`, and
+  enumerates the device registry by manifest ordinal. It writes the same 64-byte
+  `swiftos_device_info` record as `device_info`; out-of-range enumeration returns
+  `-2`.
+- **Discovery-backed registry.** The VFS device registry now probes the
+  platform virtio-mmio window for device id 18 and registers `virtio-input.0`
+  when a QEMU virtio-input transport is present. The grant metadata records
+  `SWIFTOS_DEVICE_KIND_VIRTIO_INPUT`, `SWIFTOS_DEVICE_BUS_VIRTIO_MMIO`, the
+  transport MMIO base/length, and `DISCOVERED | NO_MMIO_GRANT`.
+- **Headless fallback.** Direct serial boots that do not attach a keyboard
+  device still register `pseudo-input.0`, so the C5 supervisor and lifecycle
+  smoke remains part of the broad boot path.
+- **Supervisor/service manifest check.** `/bin/drvsvcdemo` prefers
+  `virtio-input.0`, validates the manifest fields, transfers the device handle
+  to `/bin/drvinputd`, proves the grant is busy while the service owns it, and
+  reclaims it after service exit. `/bin/drvinputd` validates the same manifest
+  before acknowledging. The focused path emits
+  `C5c OK: virtio-input device grant discovered and matched`.
+- **Executable checks.** `make c5-device-discovery-test` attaches QEMU
+  `virtio-keyboard-device` and runs the C5 gate under `-smp 4`; the ordinary
+  `boot_test.sh` still covers the pseudo fallback and requires
+  `C5c OK: device discovery manifest matched pseudo input`.
+- **Non-goals.** C5c still grants only `getattr + transfer`. No userland MMIO
+  map syscall, IRQ endpoint, DMA window, or replacement of the in-kernel
+  virtio-input queue owner lands in this slice.
+
+### C5d — virtio-input discovery metadata (DONE, 2026-06-10)
+
+- **Metadata source.** The virtio-input keyboard probe now scans
+  `platform.virtioMmioBase/Stride/Count` instead of the old fixed QEMU window
+  constants. VFS device-registry setup reuses the same read-only probe: when a
+  `virtio-keyboard-device` is present, `virtio-input.0` reports
+  `VIRTIO_MMIO`, the transport MMIO base, and the slot length in
+  `swiftos_device_info`.
+- **Authority boundary.** The registry still sets `NO_MMIO_GRANT`, and IRQ is
+  still zero. These MMIO fields are discovery manifest metadata only; no userland
+  mapping, IRQ endpoint, DMA window, or driver ownership is handed out.
+- **Executable checks.** `/bin/drvsvcdemo` and `/bin/drvinputd` validate both the
+  synthetic no-device fallback and the virtio-mmio metadata case. `make
+  c5-device-metadata-test` boots with a QEMU virtio keyboard and asserts
+  `C5d OK: virtio input discovery metadata surfaced`.
+
+### C5e — device authority envelope preflight (DONE, 2026-06-10)
+
+- **Authority flags.** `userland/lib/syscall.h` now reserves
+  `SWIFTOS_DEVICE_FLAG_MMIO_GRANT`, `SWIFTOS_DEVICE_FLAG_IRQ_GRANT`, and
+  `SWIFTOS_DEVICE_FLAG_DMA_GRANT`, plus the combined
+  `SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY` mask. The current registry never sets
+  those bits.
+- **Executable boundary.** The supervisor and service both validate that device
+  grants keep the future hardware-authority mask clear, keep `NO_MMIO_GRANT`
+  set, and report `irq == 0`. This makes the current metadata-only contract a
+  testable boundary rather than a comment.
+- **Acceptance.** `make c5-device-authority-test` runs the focused C5 QEMU path
+  with `virtio-keyboard-device` attached and asserts
+  `C5e OK: device authority withheld until explicit handoff`.
 
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
@@ -1281,7 +1964,7 @@ Silicon Mac with VirtualBox installed. Prepared for that:
 - `kernel/user/user_blob.S` and the `*_elf_*` symbols in `io.h` are **gone**; the kernel no longer carries
   any userland code. The image shrank from ~1.4 MiB to ~208 KiB. The packed base image on disk is the sole
   source of busybox, `/bin/ps`, and every demo (loaded into a 2 MiB physically-contiguous PMM buffer, not
-  the 256 KiB bump heap).
+  the small bump heap).
 - `virtio_blk_init` now brings up each block device, reads sector 0, and **selects the disk whose magic is
   `SWOSBASE`** (falling back to the first block device). This lets a medium carry both a boot disk and the
   base image — needed for UEFI/gfx, where the firmware boots a GPT/ESP disk and the base image rides along
@@ -2031,13 +2714,11 @@ Recorded because `/bin/top`'s `Kernel:` line reports it live. For the QEMU `virt
 time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + the boot log):
 - Static: `.text`+`.rodata`+`.got` ≈ 140 KiB, `.data` ≈ 2.3 KiB, `.bss` ≈ 55 KiB → ELF `dec` ≈ 197 KiB;
   `kernel.bin` (flat, loadable) ≈ 142 KiB.
-- Resident at boot (`_start` 0x4008_0000 → `__image_end`, = 0x81A50 ≈ **519 KiB**): 144 KiB code/data +
-  55 KiB bss + 64 KiB boot stack + 256 KiB early bump heap (of which only ~96 B used at M1, ~50 KiB
-  after full boot).
-- Dynamic: of 256 MiB RAM the PMM reports **65276 free frames** right after init (~254.98 MiB free), so
-  the kernel + the 512 KiB sub-load-base hole + the bitmap consume ~1.02 MiB before any process runs.
-  The accounting/syscalls added by this feature grow the image by ~3 KiB (top's `Kernel:` line then
-  reads ~522 KiB).
+- Resident at boot (`_start` 0x4008_0000 → `__image_end`, roughly **2.3 MiB** with the current linker
+  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 8 MiB early bump heap.
+- Dynamic: of 256 MiB RAM the kernel, the 512 KiB sub-load-base hole, and the PMM bitmap consume about
+  1.3 MiB before any process runs.
+  The accounting/syscalls added by this feature grow the image by ~3 KiB.
 
 ### net-f — DNS resolver: sans-IO codec + resolve syscall + /bin/nslookup (DONE, 2026-06-07)
 
@@ -2431,8 +3112,8 @@ matches the llama2.c reference. Next: I3 serves tokens over TCP via `poll()`.
 **Scope.** `userland/llmd.swift` (`/bin/llmd`) is the model-serving daemon and
 the conclusion of the AI-hosting proof arc: the same Swift engine, weights
 file-backed mmap'd from `/models` (I2), served over the network through the
-existing capability-gated socket surface. Userland-only — no new kernel ABI;
-the only kernel change is the `execResolve` allow-list entry.
+existing capability-gated socket surface. Userland-only; no new kernel ABI is
+required on the current VFS-loaded exec path.
 
 **Server shape.** A poll()-driven loop (the `/bin/httpd` pattern: listener +
 queued connections, one `poll()` multiplexing all fds). Endpoints:
@@ -2779,7 +3460,7 @@ freshly-activated slot healthy so it stops accruing boot attempts (and, once U1d
 lands, is never rolled back). Attempt-based rollback that consumes the counter is
 U1d.
 
-- New syscall `SYS_UPDATE_CONFIRM` (60), **capConsole-gated**, dispatched to
+- New syscall `SYS_UPDATE_CONFIRM` (65), **capConsole-gated**, dispatched to
   `updateStoreConfirm()` (`kernel/fs/updatestore.swift`): re-reads the manifest,
   marks the slot booted this session (tracked in the new `updateStoreActiveSlot`
   global) CONFIRMED + resets its attempt_count, persists via the U1b
@@ -2842,7 +3523,7 @@ running system. This is the activation/atomic-flip half of staging; writing a NE
 image into the inactive slot (the data half) is a separate piece with a genuine
 fork (image source + multi-device virtio-blk), surfaced before it is built.
 
-- New syscall `SYS_UPDATE_ACTIVATE` (61), capConsole-gated → `updateStoreActivateOther()`
+- New syscall `SYS_UPDATE_ACTIVATE` (66), capConsole-gated -> `updateStoreActivateOther()`
   (`kernel/fs/updatestore.swift`): makes the inactive slot (1 − booted slot) the
   active slot, the current slot the fallback, marks the new active UNTRIED +
   attempts=0 (boots "on trial"), and persists via the U1b double-buffered
@@ -2917,12 +3598,12 @@ alongside the SWOSBOOT store. U1f-2 will copy that payload into the inactive slo
 - `kernel/drivers/virtio_blk.swift`: `virtioBlkInit` now scans ALL block devices
   and classifies each by sector-0 magic (store=SWOSBOOT, base/payload=SWOSBASE)
   instead of returning on the first store. When a store is selected, a separate
-  SWOSBASE disk is recorded as the payload (`blkPayloadMmio`; `blkStoreMmio` keeps
-  the store's MMIO so we can return to it). Accessors `virtioBlkHasPayload()`,
-  `virtioBlkSelectPayload()` (re-bring-up the payload, returns its capacity),
-  `virtioBlkReselectStore()`. The single hardware path is reused by re-bringing-up
-  between the two disks — fine since I/O is serial on the one CPU. Two new globals
-  in `docs/SMP_STATE_AUDIT.md` (set once at boot).
+  SWOSBASE disk is recorded as the payload (`blkPayloadDevice`; `blkStoreDevice`
+  keeps the store index so we can return to it). Accessors
+  `virtioBlkHasPayload()`, `virtioBlkSelectPayload()` (selects the payload and
+  returns its capacity), `virtioBlkReselectStore()`. The hardware path is reused
+  by selecting between the two disks — fine since I/O is serial on the one CPU.
+  Two new globals in `docs/SMP_STATE_AUDIT.md` (set once at boot).
 - `kernel/fs/updatestore.swift`: `updateStorePayloadProbe()` (called from vfsInit
   after updateStoreInit) reads the payload's sector-0 header through the secondary
   path and verifies it is a signed v3 SWOSBASE image, logging "update-store:
@@ -2984,7 +3665,7 @@ through the multi-sector path).
 (U1f-1) into the inactive A/B slot from a running system, so an operator can then
 swos-activate + reboot onto the new image.
 
-- `kernel/fs/updatestore.swift`: `updateStoreStagePayload()` (syscall 62
+- `kernel/fs/updatestore.swift`: `updateStoreStagePayload()` (syscall 67
   `SYS_UPDATE_STAGE`, capConsole-gated). Reads the chosen manifest, picks the
   inactive slot (1−booted), brings up the payload and reads its SWOSBASE header —
   requires a signed v3 image and computes its length (`dataOffset`@48 +
@@ -3212,8 +3893,8 @@ boots from. Two findings shaped this:
 
 - `kernel/drivers/virtio_blk.swift`: the device scan now also recognizes a GPT
   disk by the "EFI PART" magic at LBA 1 (`blkBounceIsEfiPart`), recording it as
-  `blkEspMmio`; `blkServedMmio` tracks the base/store device. Accessors
-  `virtioBlkHasEsp()`, `virtioBlkSelectEsp()` (re-bring-up, returns capacity),
+  `blkEspDevice`; `blkServedDevice` tracks the base/store device. Accessors
+  `virtioBlkHasEsp()`, `virtioBlkSelectEsp()` (selects ESP, returns capacity),
   `virtioBlkReselectServed()`. Two new SMP-audit globals.
 - `kernel/fs/esp.swift`: `espProbe()` (called after `vfsInit`) selects the ESP
   disk, parses the GPT header (LBA 1) + partition array, finds the ESP-type-GUID
@@ -3279,7 +3960,7 @@ active slot — so the bootable slot is never at risk.
   reads the manifest's active slot, requires equal sizes, copies active→inactive,
   flushes, verifies. Logs "kernel-store: staged active slot image into inactive
   slot, verified (FAT32)".
-- Syscall 63 `SYS_KERNEL_STAGE`; `/bin/swos-kstage` (`userland/swos-kstage.swift`,
+- Syscall 68 `SYS_KERNEL_STAGE`; `/bin/swos-kstage` (`userland/swos-kstage.swift`,
   bridge `swiftos_kernel_stage`/`kernel_stage`); registered in execResolve + the
   Makefile ELF/staging rules.
 
@@ -3311,7 +3992,7 @@ offline-signed alternate manifest rather than producing one.
   `kernel-boot` in place (`virtioBlkWriteSector` + `virtioBlkFlush`) and re-reads
   to confirm. Logs "kernel-store: activated kernel slot B for next boot (signed
   manifest)". No new globals.
-- Syscall 64 `SYS_KERNEL_ACTIVATE`; `/bin/swos-kactivate`
+- Syscall 69 `SYS_KERNEL_ACTIVATE`; `/bin/swos-kactivate`
   (`userland/swos-kactivate.swift`, bridge `swiftos_kernel_activate`/
   `kernel_activate`); execResolve + Makefile rules.
 

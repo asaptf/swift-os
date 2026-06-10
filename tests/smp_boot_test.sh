@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # smp_boot_test.sh - SMP boot smoke harness.
 #
-# S1: secondary CPUs are released into the early online/heartbeat path while
-# scheduler and EL0 work still remain on CPU0.
+# S2/S5: secondary CPUs are released, keep kernel scheduler work on CPU0, run
+# the restricted coproc EL0 pair, S5b/S5c placement stress, S5d fanout, and
+# S5e shared-address-space thread fanout, and S5f run-any placement under the
+# same gate.
 
 set -euo pipefail
 
@@ -54,7 +56,49 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler boundary held detail=$SMP_CPU_COUNT"
   EXPECTS+=$'\n'"[I] smp: S2a OK: scheduler owner ready"
   EXPECTS+=$'\n'"[I] smp: S2b OK: process scheduler context scaffold ready"
-  EXPECTS+=$'\n'"[I] smp: S2b OK: no secondary EL0 execution"
+  EXPECTS+=$'\n'"[I] smp: S2c OK: kernel scheduler owner ready"
+  EXPECTS+=$'\n'"[I] smp: S2d OK: process run queue scaffold ready"
+  EXPECTS+=$'\n'"[I] smp: S2e OK: dormant process scheduler CPUs published"
+  EXPECTS+=$'\n'"[I] smp: S2f OK: process dispatch telemetry ready"
+  EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate ready"
+  EXPECTS+=$'\n'"[I] smp: S3a OK: address-space CPU mask scaffold ready"
+  EXPECTS+=$'\n'"[I] smp: S3b OK: GIC SGI IPI substrate ready"
+  EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown IPI scaffold ready"
+  EXPECTS+=$'\n'"[I] smp: S3d OK: address-space TLB flush facade ready"
+  EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S4d OK: package-store lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S4b OK: VFS lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S4c OK: kernel heap lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S4e OK: network lock boundary ready"
+  EXPECTS+=$'\n'"[I] smp: S5a OK: per-CPU utilization counters ready"
+  EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
+  EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
+  if (( SMP_CPU_COUNT > 1 )); then
+    EXPECTS+=$'\n'"[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5b OK: EL0 scheduler placed batch across CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5c OK: repeated EL0 placement stress crossed CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5d OK: EL0 fanout crossed scheduler CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5e OK: shared-address-space threads crossed CPUs"
+    EXPECTS+=$'\n'"[I] smp: S5f OK: run-any placement covered scheduler CPUs"
+  else
+    EXPECTS+=$'\n'"[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5c OK: repeated EL0 placement stress CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5d OK: EL0 fanout CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5e OK: shared-address-space thread fanout CPU0 fallback"
+    EXPECTS+=$'\n'"[I] smp: S5f OK: run-any placement CPU0 fallback"
+  fi
+  EXPECTS+=$'\n'"[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch"
+  EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch"
+  EXPECTS+=$'\n'"[I] smp: S3a OK: address-space CPU masks matched dispatch CPUs"
+  EXPECTS+=$'\n'"[I] smp: S3b OK: IPI delivery stayed scheduler-safe"
+  EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe"
+  EXPECTS+=$'\n'"[I] smp: S3d OK: address-space TLB flush matched dispatch CPUs"
+  EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary stayed balanced"
+  EXPECTS+=$'\n'"[I] smp: S4b OK: VFS lock boundary stayed balanced"
+  EXPECTS+=$'\n'"[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
+  EXPECTS+=$'\n'"[I] smp: S4d OK: package-store lock boundary stayed balanced"
+  EXPECTS+=$'\n'"[I] smp: S4e OK: network lock boundary stayed balanced"
 fi
 
 if [[ ! -f "$KERNEL" ]]; then
@@ -143,17 +187,194 @@ stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
   userland_line="$(grep -nF "[I] boot: swift-os userland: Swift ps" "$LOG" | head -1 | cut -d: -f1)"
-  no_secondary_line="$(grep -nF "[I] smp: S2b OK: no secondary EL0 execution" "$LOG" | head -1 | cut -d: -f1)"
-  if [[ -z "$userland_line" || -z "$no_secondary_line" ||
-        "$userland_line" -ge "$no_secondary_line" ]]; then
-    echo "FAIL: S2b no-secondary-EL0 marker must appear after the Swift ps userland marker." >&2
+  coproc_line="$(grep -nF "M8d OK: two EL0 processes ran concurrently" "$LOG" | head -1 | cut -d: -f1)"
+  if (( SMP_CPU_COUNT > 1 )); then
+    pair_marker="[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
+    s5b_marker="[I] smp: S5b OK: EL0 scheduler placed batch across CPUs"
+    s5c_marker="[I] smp: S5c OK: repeated EL0 placement stress crossed CPUs"
+    s5d_marker="[I] smp: S5d OK: EL0 fanout crossed scheduler CPUs"
+    s5e_marker="[I] smp: S5e OK: shared-address-space threads crossed CPUs"
+    s5f_marker="[I] smp: S5f OK: run-any placement covered scheduler CPUs"
+  else
+    pair_marker="[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
+    s5b_marker="[I] smp: S5b OK: EL0 scheduler placement CPU0 fallback"
+    s5c_marker="[I] smp: S5c OK: repeated EL0 placement stress CPU0 fallback"
+    s5d_marker="[I] smp: S5d OK: EL0 fanout CPU0 fallback"
+    s5e_marker="[I] smp: S5e OK: shared-address-space thread fanout CPU0 fallback"
+    s5f_marker="[I] smp: S5f OK: run-any placement CPU0 fallback"
+  fi
+  pair_telemetry_line="$(grep -nF "$pair_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5b_demo_line="$(grep -nF "S5b OK: three EL0 processes ran with scheduler placement" "$LOG" | head -1 | cut -d: -f1)"
+  s5b_telemetry_line="$(grep -nF "$s5b_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5c_demo_line="$(grep -nF "S5c OK: repeated EL0 placement stress completed" "$LOG" | head -1 | cut -d: -f1)"
+  s5c_telemetry_line="$(grep -nF "$s5c_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5d_demo_line="$(grep -nF "S5d OK: EL0 fanout ran across scheduler CPUs" "$LOG" | head -1 | cut -d: -f1)"
+  s5d_telemetry_line="$(grep -nF "$s5d_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5e_demo_line="$(grep -nF "S5e OK: shared-address-space thread fanout completed" "$LOG" | head -1 | cut -d: -f1)"
+  s5e_telemetry_line="$(grep -nF "$s5e_marker" "$LOG" | head -1 | cut -d: -f1)"
+  s5f_demo_line="$(grep -nF "S5f OK: run-any placement policy completed" "$LOG" | head -1 | cut -d: -f1)"
+  s5f_telemetry_line="$(grep -nF "$s5f_marker" "$LOG" | head -1 | cut -d: -f1)"
+  kernel_demo_line="$(grep -nF "[I] sched: M4.5 sched: real context switch OK" "$LOG" | head -1 | cut -d: -f1)"
+  no_secondary_kernel_line="$(grep -nF "[I] smp: S2c OK: no secondary kernel scheduler execution" "$LOG" | head -1 | cut -d: -f1)"
+  quiesced_line="$(grep -nF "[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch" "$LOG" | head -1 | cut -d: -f1)"
+  gate_closed_line="$(grep -nF "[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch" "$LOG" | head -1 | cut -d: -f1)"
+  s3a_mask_line="$(grep -nF "[I] smp: S3a OK: address-space CPU masks matched dispatch CPUs" "$LOG" | head -1 | cut -d: -f1)"
+  s3b_ipi_line="$(grep -nF "[I] smp: S3b OK: IPI delivery stayed scheduler-safe" "$LOG" | head -1 | cut -d: -f1)"
+  s3c_tlb_line="$(grep -nF "[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe" "$LOG" | head -1 | cut -d: -f1)"
+  s3d_tlb_line="$(grep -nF "[I] smp: S3d OK: address-space TLB flush matched dispatch CPUs" "$LOG" | head -1 | cut -d: -f1)"
+  s4a_pmm_line="$(grep -nF "[I] smp: S4a OK: PMM lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  s4b_vfs_line="$(grep -nF "[I] smp: S4b OK: VFS lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  s4c_heap_line="$(grep -nF "[I] smp: S4c OK: kernel heap lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  s4d_pkg_line="$(grep -nF "[I] smp: S4d OK: package-store lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  s4e_net_line="$(grep -nF "[I] smp: S4e OK: network lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
+  if [[ -z "$userland_line" || -z "$quiesced_line" ||
+        "$userland_line" -ge "$quiesced_line" ]]; then
+    echo "FAIL: S2 scheduler-quiesced marker must appear after the Swift ps userland marker." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$kernel_demo_line" || -z "$no_secondary_kernel_line" ||
+        "$kernel_demo_line" -ge "$no_secondary_kernel_line" ||
+        "$no_secondary_kernel_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S2c no-secondary-kernel marker must appear after the kernel scheduler demo marker and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$coproc_line" || -z "$pair_telemetry_line" ||
+        "$coproc_line" -ge "$pair_telemetry_line" ||
+        "$pair_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S2 coproc multi-CPU marker must appear after the coproc pair and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5b_demo_line" || -z "$s5b_telemetry_line" ||
+        "$pair_telemetry_line" -ge "$s5b_demo_line" ||
+        "$s5b_demo_line" -ge "$s5b_telemetry_line" ||
+        "$s5b_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5b placement marker must appear after the S2h pair marker and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5c_demo_line" || -z "$s5c_telemetry_line" ||
+        "$s5b_telemetry_line" -ge "$s5c_demo_line" ||
+        "$s5c_demo_line" -ge "$s5c_telemetry_line" ||
+        "$s5c_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5c placement-stress marker must appear after S5b and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5d_demo_line" || -z "$s5d_telemetry_line" ||
+        "$s5c_telemetry_line" -ge "$s5d_demo_line" ||
+        "$s5d_demo_line" -ge "$s5d_telemetry_line" ||
+        "$s5d_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5d fanout marker must appear after S5c and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5e_demo_line" || -z "$s5e_telemetry_line" ||
+        "$s5d_telemetry_line" -ge "$s5e_demo_line" ||
+        "$s5e_demo_line" -ge "$s5e_telemetry_line" ||
+        "$s5e_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5e thread-fanout marker must appear after S5d and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s5f_demo_line" || -z "$s5f_telemetry_line" ||
+        "$s5e_telemetry_line" -ge "$s5f_demo_line" ||
+        "$s5f_demo_line" -ge "$s5f_telemetry_line" ||
+        "$s5f_telemetry_line" -ge "$userland_line" ]]; then
+    echo "FAIL: S5f run-any marker must appear after S5e and before Swift ps." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$gate_closed_line" || "$quiesced_line" -ge "$gate_closed_line" ]]; then
+    echo "FAIL: S2h gate-closed marker must appear after the scheduler-quiesced marker." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s3a_mask_line" || "$gate_closed_line" -ge "$s3a_mask_line" ]]; then
+    echo "FAIL: S3a address-space mask marker must appear after S2h gate closure." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s3b_ipi_line" || "$s3a_mask_line" -ge "$s3b_ipi_line" ]]; then
+    echo "FAIL: S3b IPI scheduler-safe marker must appear after S3a." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s3c_tlb_line" || "$s3b_ipi_line" -ge "$s3c_tlb_line" ]]; then
+    echo "FAIL: S3c TLB shootdown marker must appear after S3b." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s3d_tlb_line" || "$s3c_tlb_line" -ge "$s3d_tlb_line" ]]; then
+    echo "FAIL: S3d address-space TLB flush marker must appear after S3c." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s4a_pmm_line" || "$s3d_tlb_line" -ge "$s4a_pmm_line" ]]; then
+    echo "FAIL: S4a PMM lock boundary marker must appear after S3d." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s4b_vfs_line" || "$s4a_pmm_line" -ge "$s4b_vfs_line" ]]; then
+    echo "FAIL: S4b VFS lock boundary marker must appear after S4a." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s4c_heap_line" || "$s4b_vfs_line" -ge "$s4c_heap_line" ]]; then
+    echo "FAIL: S4c kernel heap lock boundary marker must appear after S4b." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s4d_pkg_line" || "$s4c_heap_line" -ge "$s4d_pkg_line" ]]; then
+    echo "FAIL: S4d package-store lock boundary marker must appear after S4c." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
+  if [[ -z "$s4e_net_line" || "$s4d_pkg_line" -ge "$s4e_net_line" ]]; then
+    echo "FAIL: S4e network lock boundary marker must appear after S4d." >&2
     echo "---------------------------------------------" >&2
     cat -v "$LOG" >&2
     echo "---------------------------------------------" >&2
     exit 1
   fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5f markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"

@@ -6,6 +6,7 @@
 #   make run-gfx Boot the UEFI disk in a graphical window (ramfb framebuffer).
 #   make debug   Boot under QEMU's gdbstub (paused), for `make gdb` / lldb.
 #   make test    Build, then run the boot acceptance test(s).
+#   make docs-test Check Markdown links/anchors, API refs, maps, commands, ports.
 #   make smp-test Build, then run the pre-S0 SMP boot smoke.
 #   make clean   Remove build artifacts.
 #
@@ -45,7 +46,29 @@ BASEPACK  := $(BUILD)/basepack
 UPDATESTORE := $(BUILD)/updatestore
 KERNELBOOT := $(BUILD)/kernelboot
 SWPKG     := $(BUILD)/swpkg
+PKGSTORE  := $(BUILD)/pkgstore
+PKGREPO   := $(BUILD)/pkgrepo
+SWPORT    := $(BUILD)/swport
+SWPORT_CATALOG_TEST := $(BUILD)/swport_catalog_test
+SWPORT_RECIPE_TEST := $(BUILD)/swport_recipe_test
 BASE_ROOT := $(BUILD)/base-root
+PKGHELLO_ROOT := $(BUILD)/pkghello-root
+PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
+PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
+PKGHELLO_STORE_IMG := $(BUILD)/pkgstore-pkghello.img
+PKG_EMPTY_STORE_IMG := $(BUILD)/pkgstore-empty.img
+PKG_INSTALL_STORE_IMG := $(BUILD)/pkgstore-install.img
+PKG_LUA_INSTALL_STORE_IMG := $(BUILD)/pkgstore-lua-install.img
+PKGREPO_ROOT := $(BUILD)/pkgrepo-root
+PKGREPO_PUB := $(BUILD)/pkgrepo-root.pub
+PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+PORTS_SEED_REPO_ROOT := $(BUILD)/ports-seed-repo-root
+PORTS_SEED_REPO_PUB := $(BUILD)/ports-seed-repo-root.pub
+PORTS_STATIC_HOST_ROOT := $(BUILD)/ports-static-host-root
+PORTS_STATIC_HOST_BASE_URL ?=
+PKG_HOSTED_REPO_URL ?=
+PKG_DEFAULT_DNS_SERVER ?=
+PKG_DEFAULT_REPO_URL ?=
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -106,6 +129,7 @@ SWIFT_SRCS := \
 	kernel/crypto/sha256.swift \
 	kernel/crypto/sha512.swift \
 	kernel/crypto/ed25519.swift \
+	kernel/pkg/store.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
 	kernel/smp/secondary.swift \
@@ -235,6 +259,7 @@ USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
+USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
@@ -272,8 +297,12 @@ USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
+USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
+USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
+USER_PKG_ELF := $(BUILD)/pkg.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
+USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
@@ -292,6 +321,9 @@ BASE_EXEC_ELFS := \
 	$(USER_HTTPD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
+	$(USER_DRVINPUTD_ELF) \
+	$(USER_DRVSVCDEMO_ELF) \
+	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
@@ -322,13 +354,14 @@ BASE_EXEC_ELFS := \
 	$(USER_FORKDEMO_ELF) \
 	$(USER_EXECDEMO_ELF) \
 	$(USER_FDOPSDEMO_ELF) \
+	$(USER_S4STRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 
 build: $(KERNEL_ELF)
 
@@ -419,11 +452,20 @@ $(BUILD)/user_forkdemo.o: userland/forkdemo.c userland/lib/syscall.h userland/li
 $(BUILD)/user_c4b_sockxfer.o: userland/c4b_sockxfer.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/c4b_sockxfer.c -o $@
 
+$(BUILD)/user_drvinputd.o: userland/drvinputd.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/drvinputd.c -o $@
+
+$(BUILD)/user_drvsvcdemo.o: userland/drvsvcdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/drvsvcdemo.c -o $@
+
 $(BUILD)/user_execdemo.o: userland/execdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/execdemo.c -o $@
 
 $(BUILD)/user_fdopsdemo.o: userland/fdopsdemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/fdopsdemo.c -o $@
+
+$(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/s4stress.c -o $@
 
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
@@ -536,6 +578,13 @@ $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/nslookup.swift -o $@
 
+$(BUILD)/user_pkghello.o: userland/pkghello.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkghello.swift -o $@
+
+PKG_SWIFT_SRCS := kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+$(BUILD)/user_pkg.o: userland/pkg.swift $(PKG_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/pkg.swift $(PKG_SWIFT_SRCS) -o $@
+
 $(BUILD)/user_udpecho.o: userland/udpecho.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/udpecho.swift -o $@
 
@@ -575,11 +624,20 @@ $(USER_FORKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fo
 $(USER_C4B_SOCKXFER_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o -o $@
 
+$(USER_DRVINPUTD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvinputd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvinputd.o -o $@
+
+$(USER_DRVSVCDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvsvcdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvsvcdemo.o -o $@
+
 $(USER_EXECDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_execdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_execdemo.o -o $@
 
 $(USER_FDOPSDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fdopsdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fdopsdemo.o -o $@
+
+$(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o -o $@
 
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
@@ -697,6 +755,12 @@ $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_NSLOOKUP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o -o $@
 
+$(USER_PKGHELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkghello.o -o $@
+
+$(USER_PKG_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkg.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_pkg.o $(SWIFT_UNICODE_DATA) -o $@
+
 # Newlib-linked program (built with the aarch64-elf GNU toolchain).
 $(SYSROOT)/lib/libc.a:
 	@echo "newlib not built. Run: make newlib" >&2; exit 1
@@ -796,7 +860,21 @@ $(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
 
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
+docs-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/docs_reference_test.swift -o $(BUILD)/docs_reference_test
+	$(BUILD)/docs_reference_test
+	$(MAKE) phase1-roadmap-test
+	$(MAKE) api-complete-examples-test
+
+phase1-roadmap-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
+	$(BUILD)/phase1_roadmap_test
+
+api-complete-examples-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/api_complete_examples_test.swift -o $(BUILD)/api_complete_examples_test
+	$(BUILD)/api_complete_examples_test
+
+test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
@@ -809,6 +887,10 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	$(BUILD)/loader_ed25519_test
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
+	$(HOST_SWIFTC) tests/pkgstore_tool_test.swift -o $(BUILD)/pkgstore_tool_test
+	$(BUILD)/pkgstore_tool_test
+	$(HOST_SWIFTC) tests/pkgrepo_tool_test.swift -o $(BUILD)/pkgrepo_tool_test
+	$(BUILD)/pkgrepo_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(QEMU_DTB) 1
 	$(BUILD)/fdt_test $(QEMU_DTB_SMP4) 4
@@ -839,6 +921,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
 	./tests/spawn_self_exec_test.sh
 	bash ./tests/cow_test.sh
 	./tests/tty_test.sh
@@ -860,6 +944,9 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/package_overlay_test.sh
+	./tests/pkg_store_boot_test.sh
+	./tests/pkg_local_install_test.sh
 	./tests/signed_image_test.sh
 	./tests/ab_update_test.sh
 	./tests/ab_persist_test.sh
@@ -886,7 +973,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	./tests/kv_test.sh
 	./tests/llm_run_test.sh
 	./tests/llm_serve_test.sh
-	./tests/top_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -918,11 +1005,48 @@ smp-s1-preflight: | $(BUILD)/.dir
 smp-test: build base-image
 	./tests/smp_boot_test.sh
 
+smp-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
+
 smp-headroom-test: build base-image
 	./tests/smp_headroom_test.sh
 
 smp-uefi-test: disk base-image
 	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+
+s4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
+
+smp-cpu-utilization-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
+
+s5-scheduler-placement-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+
+s5-placement-stress-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+
+s5-el0-fanout-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+
+s5-thread-fanout-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+
+s5-run-any-placement-test: build $(QEMU_DTB_SMP4) base-image
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+
+c5-driver-service-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+
+c5-device-handle-test: c5-driver-service-test
+
+c5-device-discovery-test: c5-driver-service-test
+
+c5-device-metadata-test: build $(QEMU_DTB_SMP4) base-image
+	C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+
+c5-device-authority-test: build $(QEMU_DTB_SMP4) base-image
+	C5_AUTHORITY_TEST=1 C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
@@ -930,8 +1054,9 @@ s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-s1-prefligh
 
 # ---- UEFI loader build + boot ----------------------------------------------
 # The loader embeds the flat kernel image (no FS driver) and copies it to the
-# kernel load address after ExitBootServices, so it depends on the built kernel.
-$(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_ELF) Makefile | $(BUILD)/.dir
+# kernel load address after ExitBootServices, so rebuild it when kernel.bin
+# changes. kernel_blob.S uses `.incbin "build/kernel.bin"`.
+$(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_BIN) Makefile | $(BUILD)/.dir
 	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/kernel_blob.S -o $@
 
 # U1g-3b: the image-signing public key embedded in the loader (incbins the same
@@ -1017,6 +1142,136 @@ $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefi
 
 swpkg: $(SWPKG)
 
+$(PKGSTORE): tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
+
+pkgstore: $(PKGSTORE)
+
+$(PKGREPO): tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+
+pkgrepo: $(PKGREPO)
+
+$(SWPORT): tools/swport.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -parse-as-library tools/swport.swift kernel/crypto/sha256.swift -o $@
+
+swport: $(SWPORT)
+
+$(SWPORT_CATALOG_TEST): tests/swport_catalog_test.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/swport_catalog_test.swift -o $@
+
+ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
+	$(SWPORT) catalog validate ports/catalog.json
+	$(SWPORT_CATALOG_TEST)
+
+$(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
+
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json
+	$(SWPORT_RECIPE_TEST)
+
+ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
+	./scripts/build-lua.sh
+
+ports-zlib-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/archivers/zlib/Port.json scripts/build-zlib.sh
+	./scripts/build-zlib.sh
+
+ports-ca-certificates-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/security/ca-certificates/Port.json scripts/build-ca-certificates.sh
+	./scripts/build-ca-certificates.sh
+
+ports-pcre2-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/devel/pcre2/Port.json scripts/build-pcre2.sh
+	./scripts/build-pcre2.sh
+
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-ca-certificates.sh scripts/build-pcre2.sh scripts/build-ports-seed-repo.sh
+	./scripts/build-ports-seed-repo.sh
+
+ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-host.sh
+	PORTS_STATIC_REPO_SOURCE="$(PORTS_SEED_REPO_ROOT)" \
+	PORTS_STATIC_REPO_PUB="$(PORTS_SEED_REPO_PUB)" \
+	PORTS_STATIC_HOST_ROOT="$(PORTS_STATIC_HOST_ROOT)" \
+	PORTS_STATIC_HOST_BASE_URL="$(PORTS_STATIC_HOST_BASE_URL)" \
+	./scripts/publish-ports-static-host.sh
+
+ports-hosted-url-verify: $(PKGREPO) scripts/verify-ports-hosted-url.sh
+	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host[/aarch64/current]" >&2; exit 2; fi
+	PKGREPO="$(PKGREPO)" ./scripts/verify-ports-hosted-url.sh "$(PKG_HOSTED_REPO_URL)"
+
+ports-hosted-url-verify-test: ports-static-host-publish scripts/verify-ports-hosted-url.sh
+	./tests/pkg_hosted_url_verify_test.sh
+
+$(PKGREPO_PUB): $(PKGREPO) Makefile
+	$(PKGREPO) pubkey --seed-hex $(PKGREPO_SEED_HEX) --output $@
+
+$(PKGHELLO_ROOT)/usr/bin/pkghello: $(USER_PKGHELLO_ELF) Makefile | $(BUILD)/.dir
+	rm -rf $(PKGHELLO_ROOT)
+	mkdir -p $(PKGHELLO_ROOT)/usr/bin
+	cp $(USER_PKGHELLO_ELF) $@
+	chmod 755 $@
+
+$(PKGHELLO_PKG): $(SWPKG) fixtures/pkghello/manifest.json $(PKGHELLO_ROOT)/usr/bin/pkghello Makefile
+	$(SWPKG) create --manifest fixtures/pkghello/manifest.json --root $(PKGHELLO_ROOT) --output $@
+
+$(PKGHELLO_PAYLOAD_IMG): $(SWPKG) $(PKGHELLO_PKG) Makefile
+	$(SWPKG) extract-payload $(PKGHELLO_PKG) $@
+
+$(PKGHELLO_STORE_IMG): $(PKGSTORE) $(PKGHELLO_PKG) Makefile
+	$(PKGSTORE) create --package $(PKGHELLO_PKG) --output $@ --generation 1
+
+$(PKG_EMPTY_STORE_IMG): $(PKGSTORE) Makefile
+	$(PKGSTORE) init --output $@ --size 1048576
+
+$(PKG_INSTALL_STORE_IMG): $(PKG_EMPTY_STORE_IMG) Makefile
+	cp $(PKG_EMPTY_STORE_IMG) $@
+
+package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG) $(PKGHELLO_STORE_IMG)
+	$(SWPKG) verify $(PKGHELLO_PKG)
+
+package-store-fixture: $(PKGHELLO_STORE_IMG)
+	$(PKGSTORE) inspect $(PKGHELLO_STORE_IMG)
+
+$(PKGREPO_ROOT): $(PKGREPO) $(PKGHELLO_PKG) Makefile
+	$(PKGREPO) create --package $(PKGHELLO_PKG) --output $@ --seed-hex $(PKGREPO_SEED_HEX) --generation 1
+
+package-repo-fixture: $(PKGREPO_ROOT) $(PKGREPO_PUB)
+	$(PKGREPO) verify --catalog-signed $(PKGREPO_ROOT)/aarch64/current/catalog.signed --pubkey $(PKGREPO_PUB)
+	$(PKGREPO) inspect $(PKGREPO_ROOT)/aarch64/current/catalog.signed
+
+package-overlay-test: build $(QEMU_DTB) base-image package-fixture
+	./tests/package_overlay_test.sh
+
+package-store-test: build $(QEMU_DTB) base-image package-store-fixture
+	./tests/pkg_store_boot_test.sh
+
+package-local-install-fixture: $(PKG_EMPTY_STORE_IMG)
+	cp $(PKG_EMPTY_STORE_IMG) $(PKG_INSTALL_STORE_IMG)
+	$(PKGSTORE) inspect $(PKG_INSTALL_STORE_IMG)
+
+package-lua-install-fixture: $(PKGSTORE)
+	$(PKGSTORE) init --output $(PKG_LUA_INSTALL_STORE_IMG) --size 8388608
+	$(PKGSTORE) inspect $(PKG_LUA_INSTALL_STORE_IMG)
+
+package-local-install-test: build $(QEMU_DTB) base-image package-local-install-fixture
+	./tests/pkg_local_install_test.sh
+
+package-repo-install-test: build $(QEMU_DTB) base-image package-local-install-fixture package-repo-fixture
+	./tests/pkg_repo_install_test.sh
+
+package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-fixture ports-lua-repo-fixture
+	./tests/pkg_lua_repo_install_test.sh
+
+package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-seed-repo-fixture
+	./tests/pkg_ports_seed_repo_install_test.sh
+
+package-static-host-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
+	./tests/pkg_static_host_repo_install_test.sh
+
+package-static-host-dns-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
+	./tests/pkg_static_host_dns_repo_install_test.sh
+
+package-hosted-url-install-test: build $(QEMU_DTB) package-lua-install-fixture
+	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host/aarch64/current" >&2; exit 2; fi
+	PKG_HOSTED_REPO_URL="$(PKG_HOSTED_REPO_URL)" ./tests/pkg_hosted_url_install_test.sh
+
 # U1a: host builder for the SWOSBOOT A/B update-store disk. Shares the manifest
 # format/CRC with the kernel via kernel/fs/swosboot.swift.
 $(UPDATESTORE): tools/updatestore.swift kernel/fs/swosboot.swift Makefile | $(BUILD)/.dir
@@ -1032,12 +1287,18 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	mkdir -p $(BASE_ROOT)/bin
+	mkdir -p $(BASE_ROOT)/etc/pkg
+	mkdir -p $(BASE_ROOT)/packages
 	mkdir -p $(BASE_ROOT)/models
+	cp $(PKGHELLO_PKG) $(BASE_ROOT)/packages/pkghello.swpkg
+	cp $(PKGREPO_PUB) $(BASE_ROOT)/etc/pkg/repo-root.pub
+	if [ -n "$(PKG_DEFAULT_DNS_SERVER)" ]; then printf '%s\n' "$(PKG_DEFAULT_DNS_SERVER)" > $(BASE_ROOT)/etc/pkg/dns-server; fi
+	if [ -n "$(PKG_DEFAULT_REPO_URL)" ]; then printf '%s\n' "$(PKG_DEFAULT_REPO_URL)" > $(BASE_ROOT)/etc/pkg/repo-url; fi
 	cp $(MODEL_BIN) $(MODEL_TOK) $(BASE_ROOT)/models/
 	# I5: verified model bundle /models/stories15M/<gen>/. Generation 1 is the
 	# real q8 bundle; generation 2 is DELIBERATELY corrupt (a truncated model
@@ -1067,6 +1328,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo
 	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
+	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
@@ -1106,6 +1368,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
+	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
+	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
+	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
 	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
@@ -1126,8 +1391,14 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/base_image_test \
-		$(BUILD)/swpkg_tool_test $(BASE_ROOT) $(ESP_DIR)
+		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/pkgstore $(BUILD)/pkgrepo $(BUILD)/base_image_test \
+		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BUILD)/pkgrepo_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) \
+		$(PKGREPO_ROOT) $(PKGREPO_PUB) $(PORTS_SEED_REPO_ROOT) $(PORTS_SEED_REPO_PUB) $(PORTS_STATIC_HOST_ROOT) \
+		$(BUILD)/lua-port-work $(BUILD)/lua-port-runtime $(BUILD)/lua-root $(BUILD)/lua-repo-root $(BUILD)/lua-repo-root.pub \
+		$(BUILD)/zlib-port-work $(BUILD)/zlib-port-runtime $(BUILD)/zlib-root $(BUILD)/zlib-repo-root $(BUILD)/zlib-repo-root.pub \
+		$(BUILD)/ca-certificates-root $(BUILD)/ca-certificates-repo-root $(BUILD)/ca-certificates-repo-root.pub \
+		$(BUILD)/pcre2-port-work $(BUILD)/pcre2-port-runtime $(BUILD)/pcre2-root $(BUILD)/pcre2-repo-root $(BUILD)/pcre2-repo-root.pub \
+		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(BUILD)/base-ports-static-host-dns.img $(BUILD)/base-hosted-url.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

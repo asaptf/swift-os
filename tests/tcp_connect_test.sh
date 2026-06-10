@@ -55,6 +55,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${TCP_CONNECT_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${TCP_CONNECT_SEND_DELAY:-0.08}"
+}
+
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
@@ -78,15 +88,16 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-printf '/bin/tcpget 10.0.2.2 %s\n' "$PORT" >&3
+await "built-in shell (ash)" 60 || drive_fail "root shell did not start"
+send_line "/bin/tcpget 10.0.2.2 $PORT"
 await "srv-reply" 80 || true
 stop_all
 QP=""; NCPID=""

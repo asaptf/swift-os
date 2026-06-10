@@ -2,9 +2,27 @@
 
 Design for binary package installation on swift-os.
 
-> Status: record, do not build yet. This document defines the target shape and a
-> staged implementation plan. The package work should still follow the project
-> rule: one milestone at a time, build, boot, test, commit, then stop for review.
+> Status: P1 host tooling, P2 package payload overlays, P3a boot activation from
+> a preseeded package-store image, P3b local `/bin/pkg install FILE`, and P5c
+> signed static HTTP repository install are implemented. P5c supports
+> `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
+> `pkg install NAME` for the signed fixture catalog, including name-based
+> dependency resolution, and rejects expired catalogs, incompatible catalog
+> entries, and package SHA-256 mismatches. The ports seed fixture now
+> cross-builds Lua, zlib, and pcre2, packages ca-certificates, publishes all
+> four into one signed local repository, and can boot SwiftOS with `/etc/pkg/repo-url` so
+> `pkg update` works without a manual `pkg repo set`. `make
+> ports-static-host-publish` turns that seed into a deployable static web root,
+> and `make package-static-host-repo-install-test` proves install from that
+> published layout. `/bin/pkg` now accepts DNS
+> hostnames in HTTP repository URLs, `make ports-hosted-url-verify` checks a
+> deployed static-host URL from the host, and
+> `make package-static-host-dns-repo-install-test` proves target-side install
+> through a DNS-resolved hosted-style URL. Rollback, remove, upgrade, public
+> production channels, target-side HTTPS transport, version-constraint solving,
+> and large-package streaming downloads are still staged work.
+> The package work should continue to follow the project rule: one milestone at
+> a time, build, boot, test, commit, then stop for review.
 
 ## Goals
 
@@ -31,6 +49,22 @@ The design must preserve the existing swift-os stance:
 - read-only base image plus tmpfs scratch at runtime;
 - small trusted core;
 - signed immutable updates rather than mutating the root filesystem in place.
+
+Related package ecosystem documents:
+
+- [PACKAGE_ECOSYSTEM_GOAL.md](PACKAGE_ECOSYSTEM_GOAL.md) - active end-to-end
+  goal, workstreams, and deployment inputs.
+- [SWPKG_FORMAT.md](SWPKG_FORMAT.md) - implemented P1 `.swpkg` container.
+- [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) - implemented P3a package-store
+  bootstrap image and activation records.
+- [PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md)
+  - concrete P1-P5 implementation readiness plan.
+- [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md) - `swport`, CI,
+  and repository publishing automation.
+- [SERVER_SOFTWARE_CATALOG.md](SERVER_SOFTWARE_CATALOG.md) - staged server
+  package catalog and porting prerequisites.
+- [PACKAGE_MANAGER_SESSION_PROMPTS.md](PACKAGE_MANAGER_SESSION_PROMPTS.md) -
+  ready-to-paste prompts for future milestone sessions.
 
 ## Non-Goals
 
@@ -127,12 +161,12 @@ Suggested shape:
 ports/
   shells/
     oksh/
-      Port.toml
+      Port.json
       patches/
       files/
   www/
     curl/
-      Port.toml
+      Port.json
       patches/
       files/
 Mk/
@@ -166,6 +200,15 @@ https://pkg.swift-os.org/
   aarch64/current/catalog.json
   aarch64/current/packages/<sha256>.swpkg
   aarch64/current/snapshots/<generation>/catalog.signed
+```
+
+The current bootstrap artifact uses the same `aarch64/current` contract under
+`build/ports-static-host-root`, with `hosted-repo.json`, `repo-root.pub`, and
+`SHA256SUMS` at the web-root level:
+
+```sh
+make ports-static-host-publish
+make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://pkg.swift-os.org
 ```
 
 Channels:
@@ -332,6 +375,13 @@ needs to support:
 - atomically select active activation;
 - enumerate history;
 - garbage collect blobs not reachable from recent activations.
+
+P3a implements the read side of this model for boot activation: a `SWPKGST1`
+block image contains payload records, activation records, and an active pointer.
+The kernel mounts payload images referenced by the active generation. P3b adds
+the first target-side append path for local `.swpkg` files and live activation.
+P4/P5 will broaden that into remove, rollback, history, repository catalogs,
+downloads, and garbage collection.
 
 Activation manifest:
 
@@ -533,52 +583,61 @@ approval.
 
 A port recipe describes how to build a package from source for swift-os.
 
-Example `Port.toml`:
+Example `Port.json`:
 
-```toml
-name = "curl"
-version = "8.10.1"
-revision = 1
-category = "www"
-summary = "Command line URL transfer tool"
-homepage = "https://curl.se/"
-license = ["curl"]
-
-[source]
-url = "https://curl.se/download/curl-8.10.1.tar.xz"
-sha256 = "..."
-
-[target]
-arch = "aarch64"
-os = "swift-os"
-abi = "swos-0"
-libc = "newlib-4.6-swos"
-linkage = "static"
-
-[build]
-system = "configure"
-configure = [
-  "--host=aarch64-swiftos",
-  "--disable-shared",
-  "--enable-static"
-]
-env = {
-  "CC" = "swos-cc",
-  "AR" = "llvm-ar",
-  "RANLIB" = "llvm-ranlib"
+```json
+{
+  "schemaVersion": 1,
+  "name": "curl",
+  "version": "8.10.1",
+  "revision": 1,
+  "category": "www",
+  "summary": "Command line URL transfer tool",
+  "homepage": "https://curl.se/",
+  "license": ["curl"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://curl.se/download/curl-8.10.1.tar.xz",
+    "sha256": "..."
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "configure",
+    "args": ["--host=aarch64-swiftos", "--disable-shared", "--enable-static"],
+    "env": {
+      "AR": "llvm-ar",
+      "CC": "swos-cc",
+      "RANLIB": "llvm-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["make", "install", "DESTDIR=${DESTDIR}"]
+  },
+  "package": {
+    "depends": ["ca-certificates"],
+    "provides": ["curl"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/curl", "to": "/usr/bin/curl", "mode": "0755" },
+      { "from": "destdir/usr/share/man/man1/curl.1", "to": "/usr/share/man/man1/curl.1", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": ["net.client"],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": ["/usr/bin/curl --version"]
+  },
+  "notes": "Example only; exact curl flags depend on the selected TLS backend."
 }
-
-[package]
-paths = [
-  { from = "destdir/usr/bin/curl", to = "/usr/bin/curl", mode = "0755" },
-  { from = "destdir/usr/share/man/man1/curl.1", to = "/usr/share/man/man1/curl.1", mode = "0644" }
-]
-depends = ["ca-certificates"]
-
-[test]
-qemu = [
-  "curl --version"
-]
 ```
 
 The recipe format should be boring. Most ports should not need custom code.
@@ -639,7 +698,7 @@ swport package www/curl
 
 In the common case, the maintainer edits only:
 
-- `Port.toml`;
+- `Port.json`;
 - small patches under `patches/`;
 - optional files under `files/`;
 - the QEMU smoke test command.
@@ -739,7 +798,7 @@ This means making a package should usually be:
 ```sh
 git checkout -b ports/lua-5.4
 swport new lang/lua
-$EDITOR ports/lang/lua/Port.toml
+$EDITOR ports/lang/lua/Port.json
 swport test lang/lua
 git push
 ```
@@ -756,71 +815,142 @@ Package management requires new OS features, but they can land in small slices.
 Ready-to-paste prompts for these slices live in
 [PACKAGE_MANAGER_SESSION_PROMPTS.md](PACKAGE_MANAGER_SESSION_PROMPTS.md).
 
-### P1: Host-Only Package Format
+### P1: Host-Only Package Format (DONE)
 
-- Define `.swpkg` header and manifest.
-- Reuse or extend `tools/basepack.swift` to build package payload images.
-- Add host-side package verifier tests.
-- No kernel change.
+Implemented in `tools/swpkg.swift`, `tools/packfs.swift`,
+`docs/SWPKG_FORMAT.md`, and `tests/swpkg_tool_test.swift`.
 
 Acceptance:
 
-- `make test` verifies a sample package manifest and payload hash.
+- host tests verify deterministic `.swpkg` creation, inspection, payload hash
+  validation, manifest hash validation, and corrupt-package rejection.
 
-### P2: VFS Package Image Overlay
+### P2: VFS Package Image Overlay (DONE)
 
-- Teach the VFS to mount more than one read-only packed image.
-- Add deterministic overlay priority and conflict rejection.
-- Boot with a built-in sample package image attached as an extra virtio-blk
-  disk or packed into a test disk.
-
-Acceptance:
-
-- QEMU boot assertion runs `/usr/bin/pkghello` from a package image.
-
-### P3: Package Store
-
-- Add a narrow persistent package-store block format.
-- Store package blobs and activation manifests.
-- Select active activation atomically at boot.
+Implemented in `kernel/drivers/virtio_blk.swift`, `kernel/vfs/vfs.swift`,
+`kernel/user/exec.swift`, `tools/swpkg.swift`, and
+`tests/package_overlay_test.sh`.
 
 Acceptance:
 
-- Installing/removing a local package changes the active generation.
-- Rollback restores the previous namespace.
+- QEMU boots with a base image and package payload image.
+- VFS selects the base image by contents rather than virtio-mmio scan order.
+- QEMU boot assertion runs `/usr/bin/pkghello` from the package image.
 
-### P4: Local `pkg`
+### P3: Package Store (P3a Boot Activation, P3b Local Install DONE)
 
-- Implement base-image `/bin/pkg` with local-file installs:
+P3a adds the read-only boot side of the package store:
+
+- `tools/pkgstore.swift` creates and inspects `SWPKGST1` package-store images.
+- `kernel/pkg/store.swift` reads payload records, activation records, and the
+  active-generation pointer at boot.
+- `tests/pkg_store_boot_test.sh` boots a preseeded store image and runs
+  `/usr/bin/pkghello` from the active package generation.
+
+P3b adds the first target-side write path:
+
+- `/bin/pkg install FILE` parses a local `.swpkg` staged in the base image.
+- The kernel verifies hashes, appends the payload to a writable package-store
+  disk, switches the active generation, and live-mounts the payload.
+- `/bin/pkg list` reports active package-store records.
+- `tests/pkg_local_install_test.sh` installs `/packages/pkghello.swpkg` and
+  runs `/usr/bin/pkghello` without rebooting.
+
+Remaining P4 work:
+
+- `pkg files NAME`.
+- `pkg remove NAME`.
+- `pkg rollback [generation]`.
+- Stronger user-facing diagnostics for failed local installs.
+
+### P4: Complete Local `pkg` Lifecycle
+
+Extend the base-image `/bin/pkg` local-file workflow:
 
 ```sh
 pkg install ./pkghello.swpkg
 pkg list
-pkg files pkghello
-pkg remove pkghello
-pkg rollback
 ```
 
 Acceptance:
 
-- QEMU test installs a local package, runs it, removes it, and proves it is
-  gone.
+- QEMU test installs a local package, runs it, removes it, proves it is gone,
+  then rolls back to the previous active generation.
 
-### P5: Repository Catalogs and Network Fetch
+### P5: Repository Catalogs and Network Fetch (P5c DONE)
 
-- Add `pkg update/search/info/install` against a static HTTP repository.
-- Verify signed catalog and package hashes.
-- Use HTTP first; add HTTPS after userland TLS is ready.
+Implemented in `tools/pkgrepo.swift`, `userland/pkg.swift`,
+`docs/PKGREPO_FORMAT.md`, `tests/pkgrepo_tool_test.swift`, and
+`tests/pkg_repo_install_test.sh`.
+
+```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+```
+
+The P5c repository is a static HTTP tree with `catalog.signed` plus
+content-addressed `.swpkg` blobs. `/bin/pkg` verifies the catalog signature with
+`/etc/pkg/repo-root.pub`, rejects expired and incompatible catalogs, verifies
+the downloaded package SHA-256, resolves catalog dependencies by package name,
+then reuses the local install path. The package-store activation path now keeps
+previous active payloads mounted while adding newly installed payloads, which is
+the minimum needed for dependency packages to remain visible.
 
 Acceptance:
 
-- QEMU test starts a host HTTP server, guest runs `pkg update &&
-  pkg install pkghello`, then executes `/usr/bin/pkghello`.
+- QEMU test starts a host HTTP server, rejects expired/wrong-arch/bad-hash
+  repository fixtures, guest configures a default repo with `pkg repo set`, runs
+  `pkg update && pkg install pkghello`, auto-installs `pkgdep`, then executes
+  `/usr/bin/pkghello`.
 
-### P6: Ports Tree Bootstrap
+Remaining repository work:
 
-- Create `swift-os-ports`.
-- Add `swport`.
+- add version-constraint solving and `pkg upgrade`;
+- replace tmpfs package caching with streaming store writes for large packages;
+- add HTTPS/certificate verification after the userland TLS stack is ready.
+
+### P6-P8: Ports Tree Bootstrap
+
+Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 have started inside `swift-os`
+with a checked machine-readable seed catalog, `ports/catalog.json`, the
+host-side `build/swport catalog validate/list/inspect` commands, and checked
+`ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
+`ports/security/ca-certificates/Port.json`, and `ports/devel/pcre2/Port.json`
+recipe scaffolds. `swport recipe
+validate`, `swport recipe manifest`, checksum-verified `swport recipe fetch`,
+staged-root `swport recipe package`, and signed `swport recipe repo-fixture`
+exist for those checked paths. P6e/P6f prove the Lua cross-build and target
+install path. P7 adds zlib, P10 adds ca-certificates, and P11 adds pcre2 to
+`make package-ports-seed-repo-install-test`, which installs all four packages
+from one signed local seed repository in QEMU and runs Lua, `minigzip`, the CA
+bundle marker, and `pcre2grep` smoke commands. P8 adds `make ports-static-host-publish` and
+`make package-static-host-repo-install-test`, which publish that seed into a
+static-hostable web root and prove installs from that hosted layout. This is
+deliberately not the full ports tree yet; it makes package priorities,
+dependency names, OS prerequisite bundles, blockers, and the
+recipe-to-repository contract reviewable before the separate `swift-os-ports`
+repository exists.
+
+- Keep `ports/catalog.json` valid with `make ports-catalog-test`.
+- Keep the checked source recipe workflow valid with `make ports-recipe-test`.
+- Keep the real Lua, zlib, and pcre2 binary package paths plus the ca-certificates data
+  package path valid with `make ports-lua-repo-fixture`,
+  `make ports-zlib-repo-fixture`, `make ports-ca-certificates-repo-fixture`,
+  and `make ports-pcre2-repo-fixture`
+  when `make newlib` has populated the generated sysroot.
+- Keep the first multi-package target install/run path valid with
+  `make package-ports-seed-repo-install-test`.
+- Keep the static-host publish/install path valid with
+  `make ports-static-host-publish` and
+  `make package-static-host-repo-install-test`.
+- Move the seed catalog and recipes into `swift-os-ports` once real package
+  builds land.
+- Add full `swport` recipe commands: `new`, `build`, `test`, `package`, and
+  `publish`.
 - Port 3 to 5 small packages.
 - Publish a bootstrap/current repository.
 
@@ -834,6 +964,24 @@ Good early candidates:
 
 Acceptance:
 
+- `make ports-catalog-test` validates the seed catalog.
+- `make ports-recipe-test` validates the checked Lua, zlib, ca-certificates, and pcre2
+  recipes and proves the generated manifest can feed `swport recipe package`,
+  `swpkg verify`, and a signed local `pkgrepo` repository fixture.
+- `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
+  the runtime interpreter into a signed local repository fixture.
+- `make ports-zlib-repo-fixture` builds real static AArch64 zlib, headers,
+  pkgconf metadata, and `minigzip`.
+- `make ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA
+  bundle as a data-only `.swpkg`.
+- `make ports-pcre2-repo-fixture` builds real static AArch64 PCRE2 libraries,
+  headers, pkgconf metadata, and `pcre2grep`.
+- `make package-ports-seed-repo-install-test` installs Lua, zlib,
+  ca-certificates, and pcre2 from one signed local seed repository and runs
+  their package smoke paths inside QEMU.
+- `make ports-static-host-publish` creates a deployable static web root for the
+  seed repository, and `make package-static-host-repo-install-test` installs
+  Lua, zlib, ca-certificates, and pcre2 from that layout inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

@@ -69,10 +69,16 @@ drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (COW driver) ---" >&2
   sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:\|cow-parent\|cow-child\|forkdemo/,$p' >&2 || true
+  echo "--- tail ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -120 >&2 || true
   exit 1
 }
 
-send_line() { printf '%s\n' "$1" >&3; }
+send_line() {
+  sleep 0.1
+  printf '%s\n' "$1" >&3
+  sleep 0.05
+}
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
@@ -82,6 +88,7 @@ exec 3<>"$INFIFO"
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
 send_line "tty-line"
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
+sleep 0.2
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line "root"

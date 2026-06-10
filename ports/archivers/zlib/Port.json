@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "name": "zlib",
+  "version": "1.3.1",
+  "revision": 1,
+  "category": "archivers",
+  "summary": "Compression library used by TLS stacks, web servers, databases, and archives",
+  "homepage": "https://zlib.net/",
+  "license": ["Zlib"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+    "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "configure-make",
+    "args": ["--static", "--prefix=/usr", "libz.a", "minigzip"],
+    "env": {
+      "CHOST": "aarch64-elf",
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o -L${SYSROOT}/lib",
+      "TEST_LIBS": "-L. libz.a -Wl,--start-group -lc -lgcc -Wl,--end-group"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "libz.a", "zlib.h", "zconf.h", "zlib.pc", "minigzip"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["zlib", "libz"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/minigzip", "to": "/usr/bin/minigzip", "mode": "0755" },
+      { "from": "destdir/usr/include/zconf.h", "to": "/usr/include/zconf.h", "mode": "0644" },
+      { "from": "destdir/usr/include/zlib.h", "to": "/usr/include/zlib.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libz.a", "to": "/usr/lib/libz.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/zlib.pc", "to": "/usr/lib/pkgconfig/zlib.pc", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/minigzip -h",
+      "/usr/bin/minigzip /tmp/zlib.txt",
+      "/usr/bin/minigzip -d /tmp/zlib.txt.gz"
+    ]
+  },
+  "notes": "First non-Lua source port. scripts/build-zlib.sh cross-builds static libz plus the small minigzip smoke-test helper and can publish a signed repository fixture."
+}

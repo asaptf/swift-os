@@ -25,6 +25,7 @@ private let stateBlocked: UInt32 = 3
 private let stateZombie: UInt32 = 4
 
 private let pidMax = 16 // SWIFTOS_TOP_MAX; pid = slot+1, so 1..16
+private let cpuMax = 8  // SWIFTOS_CPU_MAX
 
 // POLLIN, for the stdin readiness poll that doubles as the refresh delay.
 private let pollIn: UInt8 = 0x01
@@ -73,6 +74,9 @@ private final class Top {
     private let prevSeen: UnsafeMutablePointer<UInt8>   // [pidMax+1]
     private let order: UnsafeMutablePointer<Int32>      // [pidMax] sort permutation
     private let pct10: UnsafeMutablePointer<UInt>     // [pidMax] %CPU * 10, per record
+    private let prevCoreTicks: UnsafeMutablePointer<UInt> // [cpuMax]
+    private let prevCoreIdle: UnsafeMutablePointer<UInt>  // [cpuMax]
+    private let coreBusy10: UnsafeMutablePointer<UInt>    // [cpuMax] %CPU * 10
     private var prevUptime: UInt = 0
     private var prevIdle: UInt = 0
     private var havePrev = false
@@ -84,7 +88,11 @@ private final class Top {
         prevSeen = UnsafeMutablePointer<UInt8>.allocate(capacity: pidMax + 1)
         order = UnsafeMutablePointer<Int32>.allocate(capacity: pidMax)
         pct10 = UnsafeMutablePointer<UInt>.allocate(capacity: pidMax)
+        prevCoreTicks = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
+        prevCoreIdle = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
+        coreBusy10 = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
         for i in 0...pidMax { prevCpu[i] = 0; prevSeen[i] = 0 }
+        for i in 0..<cpuMax { prevCoreTicks[i] = 0; prevCoreIdle[i] = 0; coreBusy10[i] = 0 }
         loadStore()
     }
 
@@ -223,8 +231,31 @@ private final class Top {
         let hz = UInt(swiftos_sys_hz())
         let uptimeTicks = swiftos_sys_uptime_ticks()
         let idle = swiftos_sys_idle_ticks()
-        let interval = havePrev ? (uptimeTicks >= prevUptime ? uptimeTicks - prevUptime : 0) : uptimeTicks
-        let idleDelta = havePrev ? (idle >= prevIdle ? idle - prevIdle : 0) : idle
+        let procInterval = havePrev ? (uptimeTicks >= prevUptime ? uptimeTicks - prevUptime : 0) : uptimeTicks
+        var cpuCount = Int(swiftos_sys_cpu_count())
+        if cpuCount < 1 { cpuCount = 1 }
+        if cpuCount > cpuMax { cpuCount = cpuMax }
+
+        var totalTickDelta: UInt = 0
+        var totalIdleDelta: UInt = 0
+        var cpuIndex = 0
+        while cpuIndex < cpuCount {
+            let ticks = swiftos_sys_cpu_ticks(UInt32(cpuIndex))
+            let idleTicks = swiftos_sys_cpu_idle_ticks(UInt32(cpuIndex))
+            let tickDelta = havePrev ? (ticks >= prevCoreTicks[cpuIndex] ? ticks - prevCoreTicks[cpuIndex] : 0) : ticks
+            var idleDelta = havePrev ? (idleTicks >= prevCoreIdle[cpuIndex] ? idleTicks - prevCoreIdle[cpuIndex] : 0) : idleTicks
+            if idleDelta > tickDelta { idleDelta = tickDelta }
+            let busyDelta = tickDelta >= idleDelta ? tickDelta - idleDelta : 0
+            coreBusy10[cpuIndex] = tickDelta > 0 ? busyDelta * 1000 / tickDelta : 0
+            if coreBusy10[cpuIndex] > 1000 { coreBusy10[cpuIndex] = 1000 }
+            totalTickDelta &+= tickDelta
+            totalIdleDelta &+= idleDelta
+            cpuIndex += 1
+        }
+
+        let fallbackIdleDelta = havePrev ? (idle >= prevIdle ? idle - prevIdle : 0) : idle
+        let interval = totalTickDelta > 0 ? totalTickDelta : procInterval
+        let idleDelta = totalTickDelta > 0 ? totalIdleDelta : fallbackIdleDelta
         let busyDelta = interval >= idleDelta ? interval - idleDelta : 0
         let busy10 = interval > 0 ? busyDelta * 1000 / interval : 0
         let idle10 = interval > 0 ? idleDelta * 1000 / interval : 0
@@ -239,7 +270,7 @@ private final class Top {
             let den: UInt
             if havePrev && pid <= UInt32(pidMax) && prevSeen[Int(pid)] != 0 {
                 num = cpu >= prevCpu[Int(pid)] ? cpu - prevCpu[Int(pid)] : 0
-                den = interval
+                den = procInterval
             } else {
                 num = cpu // average since this process started
                 den = uptimeTicks > start ? uptimeTicks - start : 1
@@ -284,6 +315,14 @@ private final class Top {
 
         str("Cpu:  "); percent(busy10, 5); str("% busy, ")
         percent(idle10, 5); str("% idle"); nl()
+        str("CPUs: "); decimal(UInt(cpuCount)); str(" present, per-CPU busy:")
+        cpuIndex = 0
+        while cpuIndex < cpuCount {
+            byte(0x20); decimal(UInt(cpuIndex)); byte(0x3D) // '='
+            percent(coreBusy10[cpuIndex], 5); str("%")
+            cpuIndex += 1
+        }
+        nl()
 
         let total = swiftos_sys_mem_total()
         let free = swiftos_sys_mem_free()
@@ -332,6 +371,10 @@ private final class Top {
         }
         prevUptime = uptimeTicks
         prevIdle = idle
+        for cpu in 0..<cpuMax {
+            prevCoreTicks[cpu] = swiftos_sys_cpu_ticks(UInt32(cpu))
+            prevCoreIdle[cpu] = swiftos_sys_cpu_idle_ticks(UInt32(cpu))
+        }
         havePrev = true
         return true
     }

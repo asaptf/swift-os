@@ -21,6 +21,9 @@ DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
@@ -39,13 +42,39 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
     grep -qF "$marker" "$LOG" 2>/dev/null && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line() {  # await_line LINE [MAXSEC]
+  local line="$1" max="${2:-60}" n=0
+  while (( n < max * 10 )); do
+    sed 's/\r//' "$LOG" 2>/dev/null | grep -qxF -- "$line" && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_line_count() {  # await_line_count LINE COUNT [MAXSEC]
+  local line="$1" want="$2" max="${3:-60}" n=0 seen=0
+  while (( n < max * 10 )); do
+    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -cxF -- "$line" || true)"
+    [[ "$seen" -ge "$want" ]] && return 0
+    sleep 0.1; n=$((n + 1))
+  done
+  return 1
+}
+
+await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
+  local regex="$1" want="$2" max="${3:-60}" n=0 seen=0
+  while (( n < max * 10 )); do
+    seen="$(sed 's/\r//' "$LOG" 2>/dev/null | grep -Ec -- "$regex" || true)"
+    [[ "$seen" -ge "$want" ]] && return 0
     sleep 0.1; n=$((n + 1))
   done
   return 1
@@ -58,15 +87,34 @@ drive_fail() {
   exit 1
 }
 
-# `printf '%s\n'` for every calc line so shell metacharacters (notably `%`) pass
-# through verbatim.
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+send_line() {
+  local line="$1" delay="${CALC_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${CALC_SEND_DELAY:-0.08}"
+}
+
+# Pace calc input through the emulated serial line; burst writes can overflow
+# the guest-side path and silently drop bytes.
+if [[ -f "$DTB" ]]; then
+  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+    -pidfile "$PIDFILE" \
+    -global virtio-mmio.force-legacy=false \
+    -device "loader,file=$DTB,addr=0x4FF00000,force-raw=on" \
+    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+    -device virtio-blk-device,drive=swosbase \
+    -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+else
+  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
+    -pidfile "$PIDFILE" \
+    -global virtio-mmio.force-legacy=false \
+    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
+    -device virtio-blk-device,drive=swosbase \
+    -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+fi
 QP=$!
 exec 3<>"$INFIFO"
 
@@ -81,27 +129,38 @@ printf 'swordfish\n' >&3
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 printf '/bin/calc\n' >&3
 await "swift-os calc" 120 || drive_fail "calc did not start"
+await "for commands" 30 || drive_fail "calc prompt did not become ready"
 
-{
-  printf '%s\n' '2+3*4'                 # precedence -> 14
-  printf '%s\n' '(2+3)*4'               # parens -> 20
-  printf '%s\n' 'x = 10'                # assignment -> 10
-  printf '%s\n' 'x*x'                   # variable lookup -> 100
-  printf '%s\n' '17 % 5'                # modulo -> 2
-  printf '%s\n' '-(3+4)*2'              # unary minus + precedence -> -14
-  printf '%s\n' '10 / 0'                # division by zero -> error
-  printf '%s\n' ':sum'                  # generic fold over history
-  printf '%s\n' ':mem'                  # heap break A (after warmup)
-  for _ in $(seq 1 24); do              # churn: build + drop an AST per line
-    printf '%s\n' '(1+2)*(3+4)-x'
-  done
-  printf '%s\n' ':mem'                  # heap break B (must equal A)
-  printf '%s\n' ':q'
-  printf 'echo BACK-IN-SHELL\n'
-  printf 'exit\n'
-} >&3
+send_line '2+3*4'                 # precedence -> 14
+await_line '= 14' 90 || drive_fail "precedence result did not arrive"
+send_line '(2+3)*4'               # parens -> 20
+await_line '= 20' 90 || drive_fail "parentheses result did not arrive"
+send_line 'x = 10'                # assignment -> 10
+await_line '= 10' 90 || drive_fail "assignment result did not arrive"
+send_line 'x*x'                   # variable lookup -> 100
+await_line '= 100' 90 || drive_fail "variable lookup result did not arrive"
+send_line '17 % 5'                # modulo -> 2
+await_line '= 2' 90 || drive_fail "modulo result did not arrive"
+send_line '-(3+4)*2'              # unary minus + precedence -> -14
+await_line '= -14' 90 || drive_fail "unary minus result did not arrive"
+send_line '10 / 0'                # division by zero -> error
+await 'error: division by zero' 90 || drive_fail "division-by-zero result did not arrive"
+send_line ':sum'                  # generic fold over history
+await 'sum of 6 results:' 90 || drive_fail ":sum result did not arrive"
+send_line ':mem'                  # heap break A (after warmup)
+await_regex_count 'heap break: [0-9]+' 1 90 || drive_fail "first :mem result did not arrive"
+for i in $(seq 1 24); do          # churn: build + drop an AST per line
+  send_line '(1+2)*(3+4)-x'
+  await_line_count '= 11' "$i" 90 || drive_fail "churn result $i did not arrive"
+done
+send_line ':mem'                  # heap break B (must equal A)
+await_regex_count 'heap break: [0-9]+' 2 90 || drive_fail "second :mem result did not arrive"
+send_line ':q'
+await_line 'bye' 90 || drive_fail "calc did not quit cleanly"
+printf 'echo BACK-IN-SHELL\n' >&3
+printf 'exit\n' >&3
 
-await "BACK-IN-SHELL" 360 || drive_fail "did not return to a working shell"
+await "BACK-IN-SHELL" 180 || drive_fail "did not return to a working shell"
 await "M12c: session ended" 60 || true
 exec 3>&-
 stop_qemu

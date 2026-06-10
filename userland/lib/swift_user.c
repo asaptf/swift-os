@@ -195,6 +195,14 @@ int swiftos_context(unsigned int *principal, unsigned int *session, unsigned lon
     return 0;
 }
 
+int swiftos_pkg_install(int fd, const char *name, const char *version_revision) {
+    return pkg_install(fd, name, version_revision);
+}
+
+int swiftos_pkg_info(int index, char *buf, unsigned long cap) {
+    return pkg_info(index, buf, cap);
+}
+
 int swiftos_exec_shell(const char *path) {
     char arg0[] = "sh";
     char *argv[] = { arg0, 0 };
@@ -243,6 +251,10 @@ struct top_sysinfo {
     unsigned int  proc_total;     // off 52
     unsigned int  proc_running;   // off 56
     unsigned int  reserved;       // off 60
+    unsigned int  cpu_count;      // off 64
+    unsigned int  cpu_capacity;   // off 68
+    unsigned long cpu_ticks[SWIFTOS_CPU_MAX];      // off 72
+    unsigned long cpu_idle_ticks[SWIFTOS_CPU_MAX]; // off 136
 };
 
 struct top_procstat {
@@ -261,7 +273,7 @@ static struct top_procstat g_top[SWIFTOS_TOP_MAX];
 static int g_top_count;
 
 int swiftos_sysinfo_refresh(void) {
-    return (int)__syscall3(SYS_SYSINFO, (long)&g_sys, 0, 0);
+    return (int)__syscall3(SYS_SYSINFO, (long)&g_sys, sizeof(g_sys), 0);
 }
 unsigned long swiftos_sys_uptime_ticks(void) { return g_sys.uptime_ticks; }
 unsigned long swiftos_sys_idle_ticks(void)   { return g_sys.idle_ticks; }
@@ -272,6 +284,20 @@ unsigned long swiftos_sys_kernel_heap(void)  { return g_sys.kernel_heap; }
 unsigned int  swiftos_sys_hz(void)           { return g_sys.hz; }
 unsigned int  swiftos_sys_proc_total(void)   { return g_sys.proc_total; }
 unsigned int  swiftos_sys_proc_running(void) { return g_sys.proc_running; }
+unsigned int  swiftos_sys_cpu_count(void)    { return g_sys.cpu_count != 0 ? g_sys.cpu_count : 1; }
+unsigned int  swiftos_sys_cpu_capacity(void) { return g_sys.cpu_capacity; }
+unsigned long swiftos_sys_cpu_ticks(unsigned int cpu) {
+    if (cpu < SWIFTOS_CPU_MAX && cpu < g_sys.cpu_count && cpu < g_sys.cpu_capacity) {
+        return g_sys.cpu_ticks[cpu];
+    }
+    return cpu == 0 ? g_sys.uptime_ticks : 0;
+}
+unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu) {
+    if (cpu < SWIFTOS_CPU_MAX && cpu < g_sys.cpu_count && cpu < g_sys.cpu_capacity) {
+        return g_sys.cpu_idle_ticks[cpu];
+    }
+    return cpu == 0 ? g_sys.idle_ticks : 0;
+}
 
 int swiftos_top_refresh(void) {
     g_top_count = (int)__syscall3(SYS_PROCSTAT, (long)g_top, SWIFTOS_TOP_MAX, 0);

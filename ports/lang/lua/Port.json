@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "name": "lua",
+  "version": "5.4.8",
+  "revision": 1,
+  "category": "lang",
+  "summary": "Small embeddable scripting language",
+  "homepage": "https://www.lua.org/",
+  "license": ["MIT"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+    "sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "make",
+    "args": ["generic"],
+    "env": {
+      "AR": "aarch64-elf-ar rcu",
+      "CC": "aarch64-elf-gcc -std=gnu99",
+      "MYCFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include -DLUA_USE_C89",
+      "MYLDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o -L${SYSROOT}/lib",
+      "MYLIBS": "-Wl,--start-group -lc -lm -lgcc -Wl,--end-group",
+      "RANLIB": "aarch64-elf-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["make", "install", "INSTALL_TOP=${DESTDIR}/usr"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["lua"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/lua", "to": "/usr/bin/lua", "mode": "0755" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/lua -v",
+      "/usr/bin/lua -e 'print(21 * 2)'"
+    ]
+  },
+  "notes": "First real source-port recipe. scripts/build-lua.sh cross-builds AArch64 static Lua against newlib, packages the runtime interpreter, and emits a signed repository fixture. QEMU smoke tests install and run it from the repository."
+}

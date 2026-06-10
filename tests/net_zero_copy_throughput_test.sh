@@ -52,6 +52,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${NET_ZC_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${NET_ZC_SEND_DELAY:-0.08}"
+}
+
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
@@ -70,15 +80,16 @@ set -u
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 40 || drive_fail "timed out waiting for tty line prompt"
-sleep 0.2; printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 sleep 0.2; printf '\003' >&3
 await "swift-os login:" 60 || drive_fail "timed out waiting for login prompt"
-sleep 0.2; printf 'root\n' >&3
+send_line 'root'
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
-sleep 0.2; printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-sleep 0.2; printf '/bin/httpd\n' >&3
+await "built-in shell (ash)" 60 || drive_fail "root shell did not start"
+send_line '/bin/httpd'
 
 listening=0
 for _ in $(seq 1 60); do
@@ -151,5 +162,5 @@ if [[ "$ok" -eq 1 ]]; then
 fi
 
 echo "--- serial (net/http region) ---" >&2
-grep -E "net-zc|httpd:|panic" <<<"$clean" | tail -40 >&2
+grep -E "net-zc|httpd:|panic|ESR_EL1|ELR_EL1|FAR_EL1|SCTLR_EL1" <<<"$clean" | tail -60 >&2
 exit 1

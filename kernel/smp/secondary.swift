@@ -75,6 +75,266 @@ private func smpSecondariesRemainSchedulerIdle() -> Bool {
     return true
 }
 
+private func smpDiscoveredCpuMaskSkippingPrimary() -> UInt64 {
+    let primary = currentCpuId()
+    var mask: UInt64 = 0
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return 0 }
+        if cpu != primary {
+            mask |= UInt64(1) << UInt64(cpu)
+        }
+        i += 1
+    }
+    return mask
+}
+
+func smpHandleIpi(_ interruptAck: UInt32) {
+    let interruptId = interruptAck & 0x3FF
+    if interruptId != smpIpiInterruptId { return }
+    let cpu = currentCpuId()
+    smpRecordIpiForCurrentCpu(source: gicSoftwareGeneratedInterruptSource(interruptAck))
+    smpMarkIpiProbeDelivered(cpu: cpu)
+    _ = smpHandleTlbShootdownForCurrentCpu()
+    _ = smpHandlePmmStressForCurrentCpu()
+}
+
+func smpIpiSubstrateSelfTest() -> Bool {
+    if !gicSoftwareGeneratedInterruptSelfTest() { return false }
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
+    smpResetIpiProbe(targetMask: targetMask)
+    if targetMask == 0 { return true }
+
+    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        before[Int(cpu)] = smpPerCpuIpiReceivedCount(cpu)
+        i += 1
+    }
+
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu != primary {
+            if !gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu) {
+                return false
+            }
+        }
+        i += 1
+    }
+
+    let start = read_cntpct_el0()
+    var timeout = read_cntfrq_el0()
+    if timeout == 0 { timeout = 50_000_000 }
+    while read_cntpct_el0() &- start < timeout {
+        if smpIpiProbeDeliveredMask() == targetMask {
+            i = 0
+            while i < platform.cpuCount {
+                let cpu = platformCpuAff0(i)
+                if cpu != primary {
+                    if smpPerCpuIpiReceivedCount(cpu) <= before[Int(cpu)] { return false }
+                    if smpPerCpuIpiLastSource(cpu) != UInt64(primary) { return false }
+                }
+                i += 1
+            }
+            return smpSecondariesRemainSchedulerIdle()
+        }
+    }
+    return false
+}
+
+func smpTlbShootdownSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
+    return smpRequestTlbShootdownForCpuMask(targetMask)
+}
+
+func smpPmmStressSelfTest() -> Bool {
+    let before = pmmFreeCount()
+    let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
+    if !smpRequestPmmStressForCpuMask(targetMask) { return false }
+    return pmmFreeCount() == before
+}
+
+func smpRequestTlbShootdownForCpuMask(_ requestedMask: UInt64) -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    var targetMask: UInt64 = 0
+    var discoveredMask: UInt64 = 0
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        let bit = UInt64(1) << UInt64(cpu)
+        discoveredMask |= bit
+        if cpu != primary && (requestedMask & bit) != 0 {
+            targetMask |= bit
+        }
+        i += 1
+    }
+    if (requestedMask & ~discoveredMask) != 0 { return false }
+    if targetMask == 0 { return smpSecondariesRemainSchedulerIdle() }
+
+    let generation = smpBeginTlbShootdownProbe(targetMask: targetMask)
+    if generation == 0 { return false }
+
+    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
+            before[Int(cpu)] = smpPerCpuTlbShootdownReceivedCount(cpu)
+            if !smpPublishTlbShootdownRequest(cpu: cpu, generation: generation) {
+                return false
+            }
+        }
+        i += 1
+    }
+    smpStoreBarrier()
+
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
+            if !gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu) {
+                return false
+            }
+        }
+        i += 1
+    }
+
+    let start = read_cntpct_el0()
+    var timeout = read_cntfrq_el0()
+    if timeout == 0 { timeout = 50_000_000 }
+    while read_cntpct_el0() &- start < timeout {
+        if smpTlbShootdownProbeAckMask() == targetMask {
+            i = 0
+            while i < platform.cpuCount {
+                let cpu = platformCpuAff0(i)
+                let bit = UInt64(1) << UInt64(cpu)
+                if (targetMask & bit) != 0 {
+                    if smpPerCpuTlbShootdownAckGeneration(cpu) != generation { return false }
+                    if smpPerCpuTlbShootdownReceivedCount(cpu) <= before[Int(cpu)] { return false }
+                }
+                i += 1
+            }
+            return smpSecondariesRemainSchedulerIdle()
+        }
+    }
+    return false
+}
+
+func smpRequestPmmStressForCpuMask(_ requestedMask: UInt64) -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    var targetMask: UInt64 = 0
+    var discoveredMask: UInt64 = 0
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        let bit = UInt64(1) << UInt64(cpu)
+        discoveredMask |= bit
+        if cpu != primary && (requestedMask & bit) != 0 {
+            targetMask |= bit
+        }
+        i += 1
+    }
+    if (requestedMask & ~discoveredMask) != 0 { return false }
+
+    let beforeFree = pmmFreeCount()
+    if !pmmS4aBoundedStressForCurrentCpu() { return false }
+    if targetMask == 0 {
+        return pmmFreeCount() == beforeFree && smpSecondariesRemainSchedulerIdle()
+    }
+
+    let generation = smpBeginPmmStressProbe(targetMask: targetMask)
+    if generation == 0 { return false }
+
+    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
+            before[Int(cpu)] = smpPerCpuPmmStressReceivedCount(cpu)
+            if !smpPublishPmmStressRequest(cpu: cpu, generation: generation) {
+                return false
+            }
+        }
+        i += 1
+    }
+    smpStoreBarrier()
+
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        let bit = UInt64(1) << UInt64(cpu)
+        if (targetMask & bit) != 0 {
+            if !gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu) {
+                return false
+            }
+        }
+        i += 1
+    }
+
+    let start = read_cntpct_el0()
+    var timeout = read_cntfrq_el0()
+    if timeout == 0 { timeout = 50_000_000 }
+    var primaryStressDone = false
+    while read_cntpct_el0() &- start < timeout {
+        if !primaryStressDone {
+            if !pmmS4aBoundedStressForCurrentCpu() { return false }
+            primaryStressDone = true
+        }
+        if smpPmmStressProbeAckMask() == targetMask {
+            if smpPmmStressProbeFailureMask() != 0 { return false }
+            i = 0
+            while i < platform.cpuCount {
+                let cpu = platformCpuAff0(i)
+                let bit = UInt64(1) << UInt64(cpu)
+                if (targetMask & bit) != 0 {
+                    if smpPerCpuPmmStressAckGeneration(cpu) != generation { return false }
+                    if smpPerCpuPmmStressReceivedCount(cpu) <= before[Int(cpu)] { return false }
+                }
+                i += 1
+            }
+            return pmmFreeCount() == beforeFree && smpSecondariesRemainSchedulerIdle()
+        }
+    }
+    return false
+}
+
+func smpS3bIpiSchedulerBoundarySelfTest() -> Bool {
+    if smpIpiProbeDeliveredMask() != smpIpiProbeTargetMask() { return false }
+    return smpS2cNoSecondaryKernelSchedulerExecution()
+}
+
+func smpS3cTlbShootdownSchedulerBoundarySelfTest() -> Bool {
+    if smpTlbShootdownProbeAckMask() != smpTlbShootdownProbeTargetMask() { return false }
+    return smpS2cNoSecondaryKernelSchedulerExecution()
+}
+
+func smpS4aPmmStressSchedulerBoundarySelfTest() -> Bool {
+    if smpPmmStressProbeAckMask() != smpPmmStressProbeTargetMask() { return false }
+    if smpPmmStressProbeFailureMask() != 0 { return false }
+    return smpS2cNoSecondaryKernelSchedulerExecution()
+}
+
 private func smpLogS2ReadinessMarkers() {
     var i: UInt32 = 0
     while i < platform.cpuCount {
@@ -114,6 +374,40 @@ func smpS2bNoSecondaryEl0Execution() -> Bool {
         let cpu = platformCpuAff0(i)
         if cpu >= smpMaxCpuCount() { return false }
         if cpu != primary && smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        i += 1
+    }
+    return true
+}
+
+func smpS2cKernelSchedulerReadinessSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || primary >= smpMaxCpuCount() { return false }
+    if !smpPerCpuKernelSchedulerReady(primary) { return false }
+    if !smpPerCpuCurrentThreadIs(primary, 0) { return false }
+    if smpPerCpuKernelSchedulerActivityCount(primary) != 0 { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && !smpPerCpuSchedulerIdle(cpu) { return false }
+        i += 1
+    }
+    return true
+}
+
+func smpS2cNoSecondaryKernelSchedulerExecution() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+    if !smpPerCpuKernelSchedulerReady(primary) { return false }
+    if smpPerCpuKernelSchedulerActivityCount(primary) == 0 { return false }
+
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary && smpPerCpuKernelSchedulerReady(cpu) { return false }
+        if cpu != primary && smpPerCpuKernelSchedulerActivityCount(cpu) != 0 { return false }
         i += 1
     }
     return true
@@ -188,5 +482,10 @@ func smpSecondaryMain(_ _: UInt) {
         wfi()
     }
     disable_irq()
-    while true { wfi() }
+    while true {
+        processSecondarySchedulerService()
+        enable_irq()
+        wfi()
+        disable_irq()
+    }
 }

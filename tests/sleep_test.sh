@@ -63,6 +63,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${SLEEP_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${SLEEP_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -74,20 +84,20 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf '/bin/sleepprobe\n' >&3
+send_line '/bin/sleepprobe'
 await_regex 'SLEEP_DELTA=[0-9]+' 120 || drive_fail "/bin/sleepprobe printed no SLEEP_DELTA line"
-printf 'busybox sleep 1\n' >&3
-printf 'echo BUSYBOX-SLEEP-DONE\n' >&3
+send_line 'busybox sleep 1'
+send_line 'echo BUSYBOX-SLEEP-DONE'
 await "BUSYBOX-SLEEP-DONE" 120 || true
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

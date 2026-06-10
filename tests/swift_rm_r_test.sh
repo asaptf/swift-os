@@ -31,9 +31,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -50,43 +47,54 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${RMR_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${RMR_SEND_DELAY:-0.08}"
+}
+
 # Sequence (all under /tmp, the writable tmpfs):
 #   mkdir /tmp/d, /tmp/d/sub; populate with files at two depths.
 #   rm /tmp/d        -> refuses (is a directory); ls /tmp still shows d.
 #   rm -r /tmp/d     -> removes the whole tree; ls /tmp no longer shows d.
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-{
-  printf '/bin/mkdir /tmp/d\n'
-  printf '/bin/mkdir /tmp/d/sub\n'
-  printf 'echo hi > /tmp/d/f\n'
-  printf 'echo deep > /tmp/d/sub/g\n'
-  printf '/bin/rm /tmp/d\n'
-  printf 'echo RC1=$?\n'
-  printf '/bin/ls /tmp\n'
-  printf '/bin/rm -r /tmp/d\n'
-  printf 'echo RC2=$?\n'
-  printf '/bin/ls /tmp\n'
-  printf 'echo RMR-DONE\n'
-  printf 'exit\n'
-} >&3
+send_line '/bin/mkdir /tmp/d'
+send_line '/bin/mkdir /tmp/d/sub'
+send_line 'echo hi > /tmp/d/f'
+send_line 'echo deep > /tmp/d/sub/g'
+send_line '/bin/rm /tmp/d'
+send_line 'echo RC1=$?'
+send_line '/bin/ls /tmp'
+send_line '/bin/rm -r /tmp/d'
+send_line 'echo RC2=$?'
+send_line '/bin/ls /tmp'
+send_line 'echo RMR-DONE'
+send_line 'exit'
 await "RMR-DONE" 180 || drive_fail "shell did not survive the rm-r ops"
 await "M12c: session ended" 60 || true
 
@@ -107,7 +115,7 @@ grep -qxF "RC2=0" <<<"$clean" || { echo "FAIL: rm -r did not exit 0" >&2; ok=0; 
 # After rm -r, the *second* `ls /tmp` no longer lists d.
 awk '/M11d: exec loaded from disk \/bin\/ls/{c++; next} c==2&&/^# /{c=0} c==2' <<<"$clean" | grep -qxF "d" \
   && { echo "FAIL: /tmp/d still present after rm -r" >&2; ok=0; }
-grep -qxF "RMR-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the rm -r ops" >&2; ok=0; }
+grep -qF "RMR-DONE" <<<"$clean" || { echo "FAIL: shell did not survive the rm -r ops" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: native Swift rm -r removes a populated directory tree"

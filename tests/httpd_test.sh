@@ -63,6 +63,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${HTTPD_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${HTTPD_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -76,15 +86,15 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "login prompt did not appear"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf '/bin/httpd\n' >&3
+send_line '/bin/httpd'
 
 listening=0
 await "httpd: listening on 8080" 120 && listening=1

@@ -2,7 +2,7 @@
 // swos-kactivate.swift — flip the active kernel slot for the next boot
 // (swift-os, U1g-4d).
 //
-// Calls the capConsole-gated kernel_activate syscall (64): the kernel installs
+// Calls the capConsole-gated kernel_activate syscall (69): the kernel installs
 // the pre-signed alternate manifest (\EFI\swift-os\kernel-boot-alt, which selects
 // the OTHER kernel slot and was signed offline at image build) over the live
 // kernel-boot on the ESP. On the next boot the loader verifies that manifest's

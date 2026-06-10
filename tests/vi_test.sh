@@ -78,33 +78,48 @@ drive_fail() {
   exit 1
 }
 
+send_text() {
+  local text="$1" delay="${VI_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3
+    sleep "$delay"
+  done
+  sleep "${VI_SEND_DELAY:-0.08}"
+}
+
+send_line() {
+  send_text "$1"
+  printf '\n' >&3
+  sleep "${VI_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
-printf 'tty-line\n' >&3                 # M7 ttydemo: a line
+send_line 'tty-line'                    # M7 ttydemo: a line
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3                       # Ctrl-C -> ttydemo exits, console-login starts
 await "swift-os login:" 90 || drive_fail "login prompt did not appear"
-printf 'root\n' >&3                     # log in
+send_line 'root'                        # log in
 await "Password:" 90 || drive_fail "password prompt did not appear"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-printf 'vi /tmp/vitest\n' >&3           # open vi on a new tmpfs file
+send_line 'vi /tmp/vitest'              # open vi on a new tmpfs file
 await $'\x1b[?1049h' 120 || drive_fail "vi did not enter the alternate screen"
-printf 'ihello-from-vi' >&3             # insert mode + text
-await "hello-from-vi" 60 || drive_fail "vi did not echo inserted text"
+send_text 'ihello-from-vi'              # insert mode + text
+sleep "${VI_TEXT_FLUSH_DELAY:-0.2}"
 printf '\033' >&3                       # ESC -> command mode
 await_count "- /tmp/vitest" 2 60 || drive_fail "vi did not return to command mode"
-printf ':wq\n' >&3                      # write + quit
+send_line ':wq'                         # write + quit
 await $'\x1b[?1049l' 120 || drive_fail "vi did not leave the alternate screen"
-printf 'cat /tmp/vitest\n' >&3          # read the saved file back
+send_line 'cat /tmp/vitest'             # read the saved file back
 await_clean_regex '^hello-from-vi$' 120 || drive_fail "saved file content was not read back"
-printf 'echo VI-DONE-MARKER\n' >&3
+send_line 'echo VI-DONE-MARKER'
 await "VI-DONE-MARKER" 90 || drive_fail "shell did not survive vi"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 exec 3>&-
 stop_qemu

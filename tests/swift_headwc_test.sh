@@ -33,9 +33,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -52,36 +49,47 @@ drive_fail() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+send_line() {
+  local line="$1" delay="${HEADWC_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${HEADWC_SEND_DELAY:-0.08}"
+}
+
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'root\n' >&3
+send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-{
-  printf 'echo one > /tmp/t\n'
-  printf 'echo two >> /tmp/t\n'
-  printf 'echo three >> /tmp/t\n'
-  printf '/bin/wc /tmp/t\n'
-  printf '/bin/head -n 2 /tmp/t | /bin/wc\n'
-  printf '/bin/touch /tmp/empty\n'
-  printf '/bin/wc /tmp/empty\n'
-  printf 'echo HEADWC-DONE\n'
-  printf 'exit\n'
-} >&3
+send_line 'echo one > /tmp/t'
+send_line 'echo two >> /tmp/t'
+send_line 'echo three >> /tmp/t'
+send_line '/bin/wc /tmp/t'
+send_line '/bin/head -n 2 /tmp/t | /bin/wc'
+send_line '/bin/touch /tmp/empty'
+send_line '/bin/wc /tmp/empty'
+send_line 'echo HEADWC-DONE'
+send_line 'exit'
 await "HEADWC-DONE" 180 || drive_fail "shell did not survive head/wc/touch"
 await "M12c: session ended" 60 || true
 

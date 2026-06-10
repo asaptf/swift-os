@@ -57,18 +57,18 @@ trap cleanup EXIT
 # Seed tree with a marker motd and an extra file absent from the static tree.
 # busybox must be on this disk too: it is the shell, and since M11d the kernel
 # loads /bin/busybox only from the packed image (no embedded blob). /bin/ps is
-# also required: this sparse disk has no console-login, so the boot runs the
-# milestone EL0 demos straight through, and the S2b post-userland guard panics
-# unless CPU0 actually dispatched an EL0 process before init — runPsDemo, the
-# last demo before the guard, supplies that EL0 switch.
+# also needed by the S2b/S2d boot guards, and /bin/coproc feeds the S2g
+# coproc-dispatch telemetry guard before init.
 mkdir -p "$WORK/seed/etc" "$WORK/seed/bin"
 printf '%s\n' "$MARKER" > "$WORK/seed/etc/motd"
 printf 'only-on-disk\n'  > "$WORK/seed/diskonly.txt"
 [[ -f "$ROOT/build/busybox.elf" ]] || { echo "FAIL: build/busybox.elf missing (make busybox)" >&2; exit 2; }
 [[ -f "$ROOT/build/ps.elf" ]] || { echo "FAIL: build/ps.elf missing (make base-image)" >&2; exit 2; }
+[[ -f "$ROOT/build/coproc.elf" ]] || { echo "FAIL: build/coproc.elf missing (make build)" >&2; exit 2; }
 [[ -f "$SEED" ]] || { echo "FAIL: $SEED missing (make base-image)" >&2; exit 2; }
 cp "$ROOT/build/busybox.elf" "$WORK/seed/bin/busybox"
 cp "$ROOT/build/ps.elf" "$WORK/seed/bin/ps"
+cp "$ROOT/build/coproc.elf" "$WORK/seed/bin/coproc"
 IMG="$WORK/disk.img"
 "$PACKER" "$WORK/seed" "$IMG" "$SEED" >/dev/null || { echo "FAIL: basepack failed" >&2; exit 2; }
 
@@ -91,6 +91,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${VFS_DISK_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${VFS_DISK_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -101,16 +111,17 @@ drive_fail() {
 QP=$!
 exec 3<>"$INFIFO"
 
-# This throwaway disk intentionally carries only busybox plus test files. With
-# no /bin/ttydemo or /bin/console-login, init falls back directly to raw ash.
+# This throwaway disk intentionally carries only busybox, guard fixtures, and
+# test files. With no /bin/ttydemo or /bin/console-login, init falls back
+# directly to raw ash.
 await "built-in shell (ash)" 90 || drive_fail "busybox shell did not start"
-printf 'cat /etc/motd\n' >&3
+send_line 'cat /etc/motd'
 await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
-printf 'ls /\n' >&3
+send_line 'ls /'
 await "diskonly.txt" 60 || drive_fail "disk-only file missing from ls /"
-printf 'cat /diskonly.txt\n' >&3
+send_line 'cat /diskonly.txt'
 await "only-on-disk" 60 || drive_fail "disk-only file contents not read"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

@@ -50,7 +50,7 @@ private func espFindPartition() -> (UInt64, UInt64)? {
     var headerOK = false
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(1, p) != 0 { return }
+        if virtioBlkReadCurrent(1, p) != 0 { return }
         let magic: StaticString = "EFI PART"
         var ok = true
         magic.withUTF8Buffer { m in
@@ -75,7 +75,7 @@ private func espFindPartition() -> (UInt64, UInt64)? {
     while scanned < numEntries && result == nil {
         withUnsafeMutableBytes(of: &buf) { raw in
             let p = raw.baseAddress!
-            if virtioBlkRead(sector, p) != 0 { scanned = numEntries; return }
+            if virtioBlkReadCurrent(sector, p) != 0 { scanned = numEntries; return }
             var e = 0
             while e < perSector && scanned < numEntries {
                 let off = e * Int(entrySize)
@@ -124,7 +124,7 @@ private func fatReadBPB(_ partLBA: UInt64) -> Fat32Vol? {
     var vol: Fat32Vol? = nil
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(partLBA, p) != 0 { return }
+        if virtioBlkReadCurrent(partLBA, p) != 0 { return }
         let bytesPerSec = espLd16(UnsafeRawPointer(p), 11)
         let secPerClus = espLd8(UnsafeRawPointer(p), 13)
         let rsvd = espLd16(UnsafeRawPointer(p), 14)
@@ -152,7 +152,7 @@ private func fatNext(_ v: Fat32Vol, _ clus: UInt32) -> UInt32 {
     var next: UInt32 = 0x0FFFFFFF
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(sec, p) != 0 { return }
+        if virtioBlkReadCurrent(sec, p) != 0 { return }
         next = espLd32(UnsafeRawPointer(p), within) & 0x0FFFFFFF
     }
     return next
@@ -188,7 +188,7 @@ private func fatFindChild(_ v: Fat32Vol, _ startClus: UInt32,
             var buf = InlineArray<512, UInt8>(repeating: 0)
             withUnsafeMutableBytes(of: &buf) { raw in
                 let p = raw.baseAddress!
-                if virtioBlkRead(fatClusterLBA(v, clus) + UInt64(s), p) != 0 { done = true; return }
+                if virtioBlkReadCurrent(fatClusterLBA(v, clus) + UInt64(s), p) != 0 { done = true; return }
                 var e = 0
                 while e < 16 {
                     let off = e * 32
@@ -292,7 +292,7 @@ private func fatReadKernelManifest(_ partLBA: UInt64) -> (Int, UInt32)? {
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(fatClusterLBA(vol, mf.0), p) != 0 { return }
+        if virtioBlkReadCurrent(fatClusterLBA(vol, mf.0), p) != 0 { return }
         let magic: StaticString = "SWOSKERN"
         var ok = true
         magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
@@ -320,7 +320,7 @@ private func fatCopyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UInt3
             var buf = InlineArray<512, UInt8>(repeating: 0)
             withUnsafeMutableBytes(of: &buf) { raw in
                 let p = raw.baseAddress!
-                if virtioBlkRead(fatClusterLBA(vol, sc) + UInt64(s), p) != 0 { ok = false; return }
+                if virtioBlkReadCurrent(fatClusterLBA(vol, sc) + UInt64(s), p) != 0 { ok = false; return }
                 if virtioBlkWriteSector(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
             }
             s += 1; done += 1
@@ -345,8 +345,8 @@ private func fatVerifyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UIn
             withUnsafeMutableBytes(of: &a) { ra in
                 withUnsafeMutableBytes(of: &b) { rb in
                     let pa = ra.baseAddress!, pb = rb.baseAddress!
-                    if virtioBlkRead(fatClusterLBA(vol, sc) + UInt64(s), pa) != 0 { ok = false; return }
-                    if virtioBlkRead(fatClusterLBA(vol, dc) + UInt64(s), pb) != 0 { ok = false; return }
+                    if virtioBlkReadCurrent(fatClusterLBA(vol, sc) + UInt64(s), pa) != 0 { ok = false; return }
+                    if virtioBlkReadCurrent(fatClusterLBA(vol, dc) + UInt64(s), pb) != 0 { ok = false; return }
                     var i = 0
                     while i < 512 {
                         if pa.load(fromByteOffset: i, as: UInt8.self) != pb.load(fromByteOffset: i, as: UInt8.self) { ok = false; break }
@@ -377,7 +377,7 @@ private func espStageInner() -> Int {
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(fatClusterLBA(vol, mf.0), p) != 0 { return }
+        if virtioBlkReadCurrent(fatClusterLBA(vol, mf.0), p) != 0 { return }
         let magic: StaticString = "SWOSKERN"
         var ok = true
         magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
@@ -402,7 +402,7 @@ private func fatReadManifestActive(_ vol: Fat32Vol, _ firstClus: UInt32) -> Int?
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(fatClusterLBA(vol, firstClus), p) != 0 { return }
+        if virtioBlkReadCurrent(fatClusterLBA(vol, firstClus), p) != 0 { return }
         let magic: StaticString = "SWOSKERN"
         var ok = true
         magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
@@ -433,7 +433,7 @@ private func espActivateInner() -> Int {
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
-        if virtioBlkRead(fatClusterLBA(vol, alt.0), p) != 0 { return }
+        if virtioBlkReadCurrent(fatClusterLBA(vol, alt.0), p) != 0 { return }
         if virtioBlkWriteSector(fatClusterLBA(vol, cur.0), UnsafeRawPointer(p)) != 0 { return }
         ok = true
     }
@@ -446,7 +446,7 @@ private func espActivateInner() -> Int {
 
 /// U1g-4d: activate the inactive kernel slot for the next boot by installing the
 /// pre-signed alternate manifest. capConsole-gated. Returns 0 on success, or a
-/// negative errno-style code. Invoked from EL0 via syscall 64 (/bin/swos-kactivate).
+/// negative errno-style code. Invoked from EL0 via syscall 69 (/bin/swos-kactivate).
 func espActivateOtherKernel() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
     if !virtioBlkHasEsp() { return -19 }
@@ -470,7 +470,7 @@ func espActivateOtherKernel() -> Int {
 /// of runtime kernel staging — proves the kernel can rewrite the inactive slot
 /// without touching the bootable one (a buggy write only spoils the inactive slot,
 /// which the loader's hash check then rejects). capConsole-gated. Returns 0 or a
-/// negative errno-style code. Invoked from EL0 via syscall 63 (/bin/swos-kstage).
+/// negative errno-style code. Invoked from EL0 via syscall 68 (/bin/swos-kstage).
 func espStageActiveToInactive() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
     if !virtioBlkHasEsp() { return -19 }                      // ENODEV: no ESP/GPT disk

@@ -4,11 +4,19 @@ Copy-paste prompts for future Codex sessions that implement package management.
 Each prompt intentionally covers one milestone. Do not combine them unless the
 maintainer explicitly asks for a larger unstable branch.
 
-## Prompt 1: P1 Host-Only `.swpkg` Format
+P1, P2, P3a boot activation, and the narrow P3b/P4-local install path are
+already implemented in the current tree. `/bin/pkg install FILE` and `pkg list`
+work for the local `pkghello.swpkg` smoke test. The next implementation prompt
+is Prompt 4b if you want to finish local remove/rollback/history, or Prompt 5 if
+you intentionally want to start repository download work first.
+
+## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, docs/BASE_IMAGE.md, and the current
 tools/basepack.swift implementation.
+
+This prompt is historical. Use it only if P1 needs to be recreated from scratch.
 
 Implement package-management milestone P1 only: a host-only `.swpkg` artifact
 format and verifier. Do not change the kernel or VFS yet.
@@ -32,11 +40,13 @@ Acceptance:
 - commit the milestone and stop for review.
 ```
 
-## Prompt 2: P2 VFS Package Image Overlay
+## Prompt 2: P2 VFS Package Image Overlay (Historical)
 
 ```text
 Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, docs/BASE_IMAGE.md, and the P1
 package tooling commit.
+
+This prompt is historical. Use it only if P2 needs to be recreated from scratch.
 
 Implement package-management milestone P2 only: mount one or more verified
 package payload images as read-only VFS overlays. Do not implement downloads,
@@ -59,44 +69,48 @@ Acceptance:
 - commit the milestone and stop for review.
 ```
 
-## Prompt 3: P3 Persistent Package Store
+## Prompt 3: P3b Target-Writable Package Store (Historical)
 
 ```text
-Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P2 VFS package
-overlay state.
+Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGSTORE_FORMAT.md. Start
+from the P3a package-store boot-activation state.
 
-Implement package-management milestone P3 only: a narrow persistent package
-store with activation generations. Do not implement network repositories yet.
+This prompt is historical. Use it only if P3b needs to be recreated from
+scratch.
+
+Implement package-management milestone P3b only: make the existing package store
+target-writable and support active-generation updates from EL0. Do not implement
+network repositories yet.
 
 Requirements:
-- design and document a minimal append-only package-store block format;
-- store package blobs and extracted verified payload images by SHA-256;
-- store activation manifests with generation numbers;
-- atomically select the active generation;
-- load active package payloads at boot;
+- add minimal virtio-blk write support for the selected package-store device;
+- keep base and package payload disks read-only by policy;
+- expose coarse package-store syscalls for appending a verified payload,
+  appending an activation, switching the active generation, listing history, and
+  selecting an older generation;
+- preserve the P3a boot path that loads active payloads from `SWPKGST1`;
 - implement rollback to the previous generation;
-- add QEMU tests for install generation, remove generation, boot persistence,
-  and rollback.
+- add QEMU tests for store write persistence, remove generation, boot
+  persistence, and rollback.
 
 Acceptance:
 - `make test` passes;
-- installing/removing a local package changes active generations;
-- rollback restores the previous namespace;
+- a target-side helper or `/bin/pkg install FILE` can add `pkghello` by changing
+  active generations;
 - commit the milestone and stop for review.
 ```
 
-## Prompt 4: P4 Local `/bin/pkg`
+## Prompt 4b: Finish Local `/bin/pkg`
 
 ```text
 Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P3 package-store
-state.
+state where `/bin/pkg install FILE` and `pkg list` already work for
+`pkghello.swpkg`.
 
-Implement package-management milestone P4 only: the target-side local package
-manager `/bin/pkg`. Do not implement remote repository catalogs yet.
+Implement the remaining local package-manager milestone only. Do not implement
+remote repository catalogs yet.
 
 Required commands:
-- `pkg install ./name.swpkg`
-- `pkg list`
 - `pkg info <name>`
 - `pkg files <name>`
 - `pkg remove <name>`
@@ -105,8 +119,11 @@ Required commands:
 
 Requirements:
 - keep output concise and scriptable;
-- verify package hashes/signatures before activation;
-- reject ABI, architecture, or static-linkage mismatches;
+- preserve the existing local install/list flow;
+- add installed package metadata enough for info/files/history;
+- make remove a new activation generation without the package;
+- make rollback select an older activation generation;
+- reject ABI, architecture, or static-linkage mismatches with focused tests;
 - produce clear exit codes for usage, not found, ABI mismatch, verification
   failure, and store failure;
 - add QEMU tests that install `pkghello`, run it, list it, remove it, prove it is
@@ -114,40 +131,44 @@ Requirements:
 
 Acceptance:
 - `make test` passes;
-- a user can install and remove a local `.swpkg` inside QEMU;
+- a user can install, inspect, remove, and roll back a local `.swpkg` inside
+  QEMU;
 - commit the milestone and stop for review.
 ```
 
 ## Prompt 5: P5 Static HTTP Repository
 
 ```text
-Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P4 local `/bin/pkg`
-state.
+Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGREPO_FORMAT.md.
+Start from the current P5c state: `tools/pkgrepo.swift` builds a signed static
+HTTP repository fixture, `/bin/pkg repo set`, `pkg update [URL]`,
+`search/info/install NAME` work for `pkghello`, and
+`make package-repo-install-test` covers expired catalogs, wrong-arch catalogs,
+package SHA-256 mismatch, default repo config, dependency resolution
+(`pkgdep -> pkghello`), and the positive install path.
 
-Implement package-management milestone P5 only: signed static repository
-catalogs and network fetch. Use HTTP first; do not require HTTPS for integrity.
+Harden package-management milestone P5 without jumping to the ports tree yet.
+Keep HTTP acceptable for transport integrity because catalogs are signed and
+packages are content-addressed.
 
-Required commands:
-- `pkg update`
-- `pkg search <text>`
-- `pkg info <name>`
-- `pkg install <name>`
-- `pkg upgrade` if dependency/version metadata is ready; otherwise document why
-  it is deferred.
+Focus:
+- add version-constraint validation for dependency metadata;
+- design and start the streaming package download/store path;
+- prepare the transaction shape needed for `pkg upgrade`;
+- keep `pkg update URL`, `pkg search <text>`, `pkg info <name>`, and
+  `pkg install <name>` working;
+- leave `pkg upgrade` deferred unless dependency/version metadata is ready.
 
 Requirements:
-- ship a pinned repository root key in the base image;
-- verify signed catalog metadata;
-- verify content-addressed `.swpkg` hashes;
-- reject expired catalogs and wrong ABI/arch packages;
-- add a host-side static repository fixture;
-- add a QEMU test that starts a host HTTP server, runs `pkg update &&
-  pkg install pkghello`, then executes `/usr/bin/pkghello`.
+- do not break local `pkg install FILE`;
+- do not add a large JSON/TLS dependency to `/bin/pkg`;
+- keep parsers bounded and canonical;
+- update docs/PKGREPO_FORMAT.md if the catalog shape changes.
 
 Acceptance:
 - `make test` passes;
-- installing from a static HTTP repository works end to end;
-- verification failures are tested;
+- `make package-repo-install-test` passes;
+- version-constraint/streaming changes are covered by focused tests;
 - commit the milestone and stop for review.
 ```
 

@@ -18,6 +18,10 @@ extern uint8_t __image_end[];
 void swiftos_heap_init(void);
 uintptr_t swiftos_kernel_heap_used_bytes(void);
 void *swiftos_kernel_alloc(uintptr_t byte_count, uintptr_t alignment);
+uint64_t swiftos_heap_lock_acquire_count(void);
+uint64_t swiftos_heap_lock_contention_count(void);
+bool swiftos_heap_lock_boundary_self_test(void);
+bool swiftos_heap_s4c_self_test(void);
 
 // Physical memory manager (implemented in Swift, kernel/mm/pmm.swift).
 // Frames are 4 KiB. Allocation returns a physical address, or 0 on failure
@@ -28,6 +32,7 @@ uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
 void pmm_frame_ref(uintptr_t addr);
 bool pmm_frame_unref(uintptr_t addr);
+void pmm_frame_release(uintptr_t addr);
 long pmm_frame_refcount(uintptr_t addr);
 long pmm_free_count(void);
 long pmm_total_count(void); // total managed frames (for /bin/top memory stats)

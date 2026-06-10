@@ -56,6 +56,16 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+send_line() {
+  local line="$1" delay="${IPV6_SMOKE_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${IPV6_SMOKE_SEND_DELAY:-0.08}"
+}
+
 # Boot QEMU with console driven via FIFO (fd 3). This makes input reactive
 # instead of fixed sleeps, which is the main source of flakes on cold/slow
 # `make test` boots.
@@ -75,7 +85,7 @@ exec 3<>"$INFIFO"
 # initialises very early, but the M7 demo can delay visible progress).
 # We don't need full login for this smoke — we just need the kernel to have
 # run netInit and printed the IPv6 line.
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: type a line then Enter" 40 && send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 
 # Now wait specifically for the IPv6 link-local configuration log.
@@ -87,7 +97,11 @@ if ! await "net: IPv6 link-local configured" 30; then
   exit 1
 fi
 
-# Final sanity: no crash during the IPv6-enabled boot.
+exec 3>&-
+stop_qemu
+QP=""
+
+# Final sanity: no crash through the IPv6 link-local acceptance point.
 if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
   echo "FAIL: crash seen while IPv6 was active" >&2
   echo "--- relevant log ---" >&2

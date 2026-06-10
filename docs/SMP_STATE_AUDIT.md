@@ -18,11 +18,11 @@ manifest entries left behind after globals move or disappear.
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
-| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
-| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. |
+| Runtime heap/PMM | S4c protects the small-object bump heap cursor/limit/init state with an IRQ-save C spinlock and boot-time boundary checks. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | The allocator strategy is still a minimal non-freeing bump heap; this only makes the shared cursor safe. Add a real small-object allocator later if profiles need reclaim or lower fragmentation. |
+| SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
-| VFS/handles/pipes/endpoints | Shared fixed tables; C4 work may change them. | Do not change in S0c. Later protect table mutation and handle refcount paths after C4 settles. |
-| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. | Protect interrupt/poll paths before real concurrent drivers; longer term move at least one driver toward a service boundary. |
+| VFS/handles/pipes/endpoints/devices/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. C5b keeps the opaque device registry under the same VFS lock and ties each claimed device to an open-description lifetime; C5c-C5e store discovered virtio-input metadata in that registry while keeping MMIO/IRQ/DMA authority bits clear. S4d protects package-store activation/append tables, active payload publication, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. |
+| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. S4e protects the in-kernel network/socket engine (`gNet`, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
 ## Machine-Checked Manifest
@@ -49,21 +49,36 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/fb.swift:g_state`
 - `kernel/drivers/fb.swift:g_stride`
 - `kernel/drivers/fb.swift:g_w`
+- `kernel/drivers/virtio_blk.swift:blkActiveDevice`
 - `kernel/drivers/virtio_blk.swift:blkAvailIdx`
 - `kernel/drivers/virtio_blk.swift:blkBaseByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkCapacity`
 - `kernel/drivers/virtio_blk.swift:blkDataBase`
-- `kernel/drivers/virtio_blk.swift:blkEspMmio`
+- `kernel/drivers/virtio_blk.swift:blkDeviceAvailIdx`
+- `kernel/drivers/virtio_blk.swift:blkDeviceCapacity`
+- `kernel/drivers/virtio_blk.swift:blkDeviceCount`
+- `kernel/drivers/virtio_blk.swift:blkDeviceDataBase`
+- `kernel/drivers/virtio_blk.swift:blkDeviceFlushOK`
+- `kernel/drivers/virtio_blk.swift:blkDeviceLastUsed`
+- `kernel/drivers/virtio_blk.swift:blkDeviceMmio`
+- `kernel/drivers/virtio_blk.swift:blkDeviceQn`
+- `kernel/drivers/virtio_blk.swift:blkDeviceReady`
+- `kernel/drivers/virtio_blk.swift:blkDeviceRingBase`
+- `kernel/drivers/virtio_blk.swift:blkEspDevice`
 - `kernel/drivers/virtio_blk.swift:blkFallbackByteOffset`
 - `kernel/drivers/virtio_blk.swift:blkFlushOK`
 - `kernel/drivers/virtio_blk.swift:blkLastUsed`
 - `kernel/drivers/virtio_blk.swift:blkMmio`
 - `kernel/drivers/virtio_blk.swift:blkMultiBase`
-- `kernel/drivers/virtio_blk.swift:blkPayloadMmio`
+- `kernel/drivers/virtio_blk.swift:blkPayloadDevice`
 - `kernel/drivers/virtio_blk.swift:blkQn`
 - `kernel/drivers/virtio_blk.swift:blkRingBase`
-- `kernel/drivers/virtio_blk.swift:blkServedMmio`
-- `kernel/drivers/virtio_blk.swift:blkStoreMmio`
+- `kernel/drivers/virtio_blk.swift:pkgStoreCapacity`
+- `kernel/drivers/virtio_blk.swift:pkgStoreDevice`
+- `kernel/drivers/virtio_blk.swift:swosbaseCount`
+- `kernel/drivers/virtio_blk.swift:swosbaseDevice`
+- `kernel/drivers/virtio_blk.swift:blkServedDevice`
+- `kernel/drivers/virtio_blk.swift:blkStoreDevice`
 - `kernel/drivers/virtio_input.swift:kbdAvailIdx`
 - `kernel/drivers/virtio_input.swift:kbdDbgVersion`
 - `kernel/drivers/virtio_input.swift:kbdKm`
@@ -105,6 +120,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/main.swift:c4aEndpointRightsPassed`
 - `kernel/main.swift:retainedProbe`
 - `kernel/mm/pmm.swift:pmm`
+- `kernel/mm/pmm.swift:pmmLockAcquireCount`
+- `kernel/mm/pmm.swift:pmmLockContentionCount`
+- `kernel/mm/pmm.swift:pmmLockWord`
 - `kernel/mm/vm_early.c:l0_table`
 - `kernel/mm/vm_early.c:l1_table`
 - `kernel/mm/vm_early.c:probe_l2_table`
@@ -118,6 +136,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/net/socket.swift:ephemeralCursor`
 - `kernel/net/socket.swift:gDnsScratch`
 - `kernel/net/socket.swift:gNet`
+- `kernel/net/socket.swift:netLockAcquireCount`
+- `kernel/net/socket.swift:netLockContentionCount`
+- `kernel/net/socket.swift:netLockWord`
 - `kernel/net/socket.swift:netGatewayIPv6`
 - `kernel/net/socket.swift:netLocalIPv6`
 - `kernel/net/socket.swift:netReady`
@@ -139,11 +160,28 @@ manifest entries left behind after globals move or disappear.
 - `kernel/net/socket.swift:sockRemoteMacv6`
 - `kernel/net/socket.swift:sockRemotePort`
 - `kernel/net/socket.swift:tcpConns`
+- `kernel/pkg/store.swift:pkgActivations`
+- `kernel/pkg/store.swift:pkgActiveGeneration`
+- `kernel/pkg/store.swift:pkgActivePayloadCountValue`
+- `kernel/pkg/store.swift:pkgActivePayloadIndex`
+- `kernel/pkg/store.swift:pkgMaxGeneration`
+- `kernel/pkg/store.swift:pkgNextRecordOffset`
+- `kernel/pkg/store.swift:pkgPayloads`
+- `kernel/pkg/store.swift:pkgStoreLockAcquireCount`
+- `kernel/pkg/store.swift:pkgStoreLockContentionCount`
+- `kernel/pkg/store.swift:pkgStoreLockWord`
+- `kernel/pkg/store.swift:pkgStoreMutationInProgress`
 - `kernel/runtime/heap.c:__stack_chk_guard`
 - `kernel/runtime/heap.c:heap_cursor`
 - `kernel/runtime/heap.c:heap_initialized`
 - `kernel/runtime/heap.c:heap_limit`
+- `kernel/runtime/heap.c:heap_lock_acquire_count`
+- `kernel/runtime/heap.c:heap_lock_contention_count`
+- `kernel/runtime/heap.c:heap_lock_word`
 - `kernel/sched/futex.swift:futexAddr`
+- `kernel/sched/futex.swift:futexLockAcquireCount`
+- `kernel/sched/futex.swift:futexLockContentionCount`
+- `kernel/sched/futex.swift:futexLockWord`
 - `kernel/sched/futex.swift:futexSlot`
 - `kernel/sched/scheduler.swift:contexts`
 - `kernel/sched/scheduler.swift:currentThread`
@@ -154,6 +192,23 @@ manifest entries left behind after globals move or disappear.
 - `kernel/signal/signal.swift:dispositions`
 - `kernel/signal/signal.swift:pendingMask`
 - `kernel/smp/percpu.swift:smpCpuState`
+- `kernel/smp/percpu.swift:smpIpiLastSourceCpu`
+- `kernel/smp/percpu.swift:smpIpiProbeDeliveredMaskStorage`
+- `kernel/smp/percpu.swift:smpIpiProbeTargetMaskStorage`
+- `kernel/smp/percpu.swift:smpIpiReceivedCount`
+- `kernel/smp/percpu.swift:smpPmmStressAckGeneration`
+- `kernel/smp/percpu.swift:smpPmmStressProbeAckMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeFailureMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeGenerationStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeTargetMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressReceivedCount`
+- `kernel/smp/percpu.swift:smpPmmStressRequestGeneration`
+- `kernel/smp/percpu.swift:smpTlbShootdownAckGeneration`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeAckMaskStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeGenerationStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownProbeTargetMaskStorage`
+- `kernel/smp/percpu.swift:smpTlbShootdownReceivedCount`
+- `kernel/smp/percpu.swift:smpTlbShootdownRequestGeneration`
 - `kernel/smp/secondary.c:smp_secondary_mailboxes`
 - `kernel/smp/secondary.c:smp_secondary_stacks`
 - `kernel/timer/generic_timer.swift:systemTicks`
@@ -170,22 +225,97 @@ manifest entries left behind after globals move or disappear.
 - `kernel/tty/tty.swift:lflag`
 - `kernel/user/elf.swift:elfLoadPages`
 - `kernel/user/exec.swift:elfBuf`
-- `kernel/user/process.swift:currentProc`
+- `kernel/user/process.swift:currentProcByCpu`
 - `kernel/user/process.swift:fileDemandFaults`
 - `kernel/user/process.swift:fileDemandLogged`
 - `kernel/user/process.swift:idleTicks`
+- `kernel/user/process.swift:lastPairDispatchCountA`
+- `kernel/user/process.swift:lastPairDispatchCountB`
+- `kernel/user/process.swift:lastPairDispatchCpuMaskA`
+- `kernel/user/process.swift:lastPairDispatchCpuMaskB`
+- `kernel/user/process.swift:lastPairDispatchTelemetryValid`
+- `kernel/user/process.swift:lastPairLastDispatchCpuA`
+- `kernel/user/process.swift:lastPairLastDispatchCpuB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCountC`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskA`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskB`
+- `kernel/user/process.swift:lastS5bBatchDispatchCpuMaskC`
+- `kernel/user/process.swift:lastS5bBatchDispatchTelemetryValid`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuA`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuB`
+- `kernel/user/process.swift:lastS5bBatchLastDispatchCpuC`
+- `kernel/user/process.swift:lastS5cStressPrimaryCpuMask`
+- `kernel/user/process.swift:lastS5cStressPrimaryDispatchCount`
+- `kernel/user/process.swift:lastS5cStressProcessCount`
+- `kernel/user/process.swift:lastS5cStressRounds`
+- `kernel/user/process.swift:lastS5cStressRunQueueLockAcquireCount`
+- `kernel/user/process.swift:lastS5cStressRunQueueLockContentionCount`
+- `kernel/user/process.swift:lastS5cStressSecondaryCpu`
+- `kernel/user/process.swift:lastS5cStressSecondaryCpuMask`
+- `kernel/user/process.swift:lastS5cStressSecondaryDispatchCount`
+- `kernel/user/process.swift:lastS5cStressTelemetryValid`
+- `kernel/user/process.swift:lastS5dFanoutDispatchCount`
+- `kernel/user/process.swift:lastS5dFanoutDispatchCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutExactCpuMatchCount`
+- `kernel/user/process.swift:lastS5dFanoutProcessCount`
+- `kernel/user/process.swift:lastS5dFanoutSchedulerCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutSecondaryCpuMask`
+- `kernel/user/process.swift:lastS5dFanoutTelemetryValid`
+- `kernel/user/process.swift:lastS5eThreadCreateCount`
+- `kernel/user/process.swift:lastS5eThreadDispatchCount`
+- `kernel/user/process.swift:lastS5eThreadDispatchCpuMask`
+- `kernel/user/process.swift:lastS5eThreadExactCpuMatchCount`
+- `kernel/user/process.swift:lastS5eThreadExitCount`
+- `kernel/user/process.swift:lastS5eThreadFanoutTelemetryValid`
+- `kernel/user/process.swift:lastS5eThreadFutexLockAcquireCount`
+- `kernel/user/process.swift:lastS5eThreadFutexLockContentionCount`
+- `kernel/user/process.swift:lastS5eThreadHomeCpuMask`
+- `kernel/user/process.swift:lastS5eThreadSecondaryCpuMask`
+- `kernel/user/process.swift:lastS5eThreadSharedAddressSpaceCount`
+- `kernel/user/process.swift:lastS5eThreadTelemetryLockAcquireCount`
+- `kernel/user/process.swift:lastS5eThreadTelemetryLockContentionCount`
+- `kernel/user/process.swift:lastS5fRunAnyDispatchCount`
+- `kernel/user/process.swift:lastS5fRunAnyDispatchCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnyExactCpuMatchCount`
+- `kernel/user/process.swift:lastS5fRunAnyPolicySelectionCount`
+- `kernel/user/process.swift:lastS5fRunAnyProcessCount`
+- `kernel/user/process.swift:lastS5fRunAnySchedulerCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnySecondaryCpuMask`
+- `kernel/user/process.swift:lastS5fRunAnyTelemetryValid`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
+- `kernel/user/process.swift:pDispatchCount`
+- `kernel/user/process.swift:pDispatchCpuMask`
+- `kernel/user/process.swift:processRunQueueLockAcquireCount`
+- `kernel/user/process.swift:processRunQueueLockContentionCount`
+- `kernel/user/process.swift:processRunQueueLockWord`
+- `kernel/user/process.swift:s5dFanoutSlots`
+- `kernel/user/process.swift:s5eNextThreadCpu`
+- `kernel/user/process.swift:s5eThreadPlacementActive`
+- `kernel/user/process.swift:s5eThreadTelemetryLockAcquireCount`
+- `kernel/user/process.swift:s5eThreadTelemetryLockContentionCount`
+- `kernel/user/process.swift:s5eThreadTelemetryLockWord`
+- `kernel/user/process.swift:s5fNextPlacementCpu`
+- `kernel/user/process.swift:s5fRunAnyPlacementActive`
+- `kernel/user/process.swift:s5fRunAnySlots`
+- `kernel/user/process.swift:pAddressSpaceCpuMask`
 - `kernel/user/process.swift:pExit`
 - `kernel/user/process.swift:pFileVmas`
 - `kernel/user/process.swift:pIsThread`
 - `kernel/user/process.swift:pKilled`
 - `kernel/user/process.swift:pKstack`
+- `kernel/user/process.swift:pLastDispatchCpu`
 - `kernel/user/process.swift:pMmapTop`
 - `kernel/user/process.swift:pName`
 - `kernel/user/process.swift:pNameLen`
 - `kernel/user/process.swift:pParent`
+- `kernel/user/process.swift:pHomeCpu`
+- `kernel/user/process.swift:pRunNext`
+- `kernel/user/process.swift:pRunQueued`
+- `kernel/user/process.swift:pSchedulerQuiesced`
 - `kernel/user/process.swift:pResPages`
 - `kernel/user/process.swift:pSecurity`
 - `kernel/user/process.swift:pStartTick`
@@ -193,28 +323,71 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pTtbr0`
 - `kernel/user/process.swift:pWait`
 - `kernel/user/process.swift:pWakeTick`
+- `kernel/user/process.swift:processAddressSpaceActivationCount`
+- `kernel/user/process.swift:processDispatchTelemetryCount`
+- `kernel/user/process.swift:processRunQueueCpuCount`
+- `kernel/user/process.swift:processRunQueueDispatchCount`
+- `kernel/user/process.swift:processRunQueueEnqueueCount`
+- `kernel/user/process.swift:processRunQueueHead`
+- `kernel/user/process.swift:processRunQueueTail`
+- `kernel/user/process.swift:processSecondarySchedulerActiveMask`
+- `kernel/user/process.swift:processSecondarySchedulerRunMask`
+- `kernel/user/process.swift:processSecondarySchedulerStopMask`
 - `kernel/user/process.swift:procCtx`
-- `kernel/user/process.swift:rrCursor`
 - `kernel/user/process.swift:schedCtx`
 - `kernel/user/process.swift:schedCtxCpuCount`
-- `kernel/vfs/vfs.swift:baseMeta`
 - `kernel/vfs/vfs.swift:confineNodes`
 - `kernel/vfs/vfs.swift:cwdNodes`
+- `kernel/vfs/vfs.swift:devices`
 - `kernel/vfs/vfs.swift:endpoints`
 - `kernel/vfs/vfs.swift:handles`
+- `kernel/vfs/vfs.swift:mountedPackageStorePayloads`
 - `kernel/vfs/vfs.swift:nodeCount`
 - `kernel/vfs/vfs.swift:nodes`
 - `kernel/vfs/vfs.swift:openDescriptions`
 - `kernel/vfs/vfs.swift:pipes`
+- `kernel/vfs/vfs.swift:vfsLockAcquireCount`
+- `kernel/vfs/vfs.swift:vfsLockContentionCount`
+- `kernel/vfs/vfs.swift:vfsLockWord`
 - `kernel/vfs/vfs.swift:vfsVerifyScratch`
 
 ## Immediate S1/S2 Risks
 
-- `currentProc`, `currentThread`, `rrCursor`, and timer accounting must become
-  per-CPU or protected before any secondary CPU can run scheduler code.
-- PMM and heap allocation must be protected before secondary EL1 code can call
-  Swift allocation hooks, process creation, VFS allocation, or network buffers.
-- VFS handle/open-description/pipe/endpoint tables are deliberately left as an
-  audit-only item in S0c because C4 work is active elsewhere.
-- Device queues and network socket tables need an IRQ/poll locking policy before
-  interrupts or service work are allowed away from CPU 0.
+- `currentThread`, the general process run queue, timer accounting, and shared
+  process/VFS/PMM tables still need protection before broad secondary scheduler
+  execution. S2h makes `currentProc` per-CPU and permits a restricted `coproc`
+  pair on CPU0 plus one secondary scheduler CPU. S3a/S3d now feed that restricted
+  active-CPU evidence into the TLB-flush facade, but only for independent
+  top-level address spaces and with scheduler-stack quiescence before reap.
+- PMM allocation/free/refcount entry points are now protected by the S4a lock
+  boundary. VFS shared pools and handle/open-description lifetimes are protected
+  by the S4b lock boundary. The small-object heap cursor is protected by the
+  S4c lock boundary, but it remains a bump allocator with no free/reclaim. S4f
+  adds a restricted-SMP resource churn smoke over mmap/munmap, pipes, tmpfs,
+  fork/wait, and spawn/exec while secondary timers are active. S5a exports
+  per-CPU timer/idle counters through `SYS_sysinfo` and `/bin/top` so later S5
+  scheduler work has a visible utilization signal before broad secondary EL0
+  execution is enabled. S5c protects EL0 run queue enqueue/dequeue with a
+  per-CPU IRQ-save spinlock and repeatedly exercises the restricted CPU0 to
+  secondary run queue handoff. S5d expands that restricted path to one
+  independent EL0 process per online scheduler CPU, with exact placement
+  telemetry and idle-queue checks after all secondary schedulers stop. S5e adds
+  a futex wait-table lock and a gated `/bin/threadsdemo` path where sibling EL0
+  threads sharing one TTBR0 run on secondary scheduler CPUs. S5f adds a gated
+  run-any placement policy for independent EL0 processes that round-robins over
+  CPU0 plus active secondary scheduler CPUs while keeping migration, work
+  stealing, and concurrent mmap/brk mutation in one shared address space out of
+  scope.
+- The file-backed mmap VMA table and demand-fault counters added by the LLM I2
+  path are process-owned today, but still live in global arrays and must be
+  protected before a single address space can fault concurrently on multiple
+  CPUs.
+- Package-store activation/append state is now protected by the S4d lock
+  boundary. Target-side installs are still serialized through one writer gate;
+  package-management service work should keep that single-writer contract unless
+  a later milestone adds a transactional store journal.
+- The in-kernel network/socket engine is now protected by the S4e lock boundary,
+  and S4f keeps a dedicated `-smp 4` resource-stress test in `make test`.
+  Device/service migration is still future work: before interrupts or network
+  service work move away from CPU 0, the virtio driver/service boundary needs a
+  reviewed ownership model rather than only a coarse in-kernel lock.

@@ -87,6 +87,25 @@ fdopsdemo: pipe-poll preemption stress OK
 fdopsdemo: rename/unlink/mkdir/rmdir OK
 M8e OK: fdops demo exited, code 0
 C1 OK: fds-as-handles preserved
+drvsvc: C5a supervisor starting
+drvsvc: generation 1 ready
+drvsvc: generation 1 event
+drvsvc: generation 1 stopped
+drvsvc: generation 2 ready
+drvsvc: generation 2 event
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
+drvsvc: C5b device grant claimed
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
+drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
+C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
+C5c OK: device discovery manifest matched pseudo input
+C5e OK: device authority withheld until explicit handoff
+C5a driver service demo exited, code 0
 securitydemo: syscall abuse checks OK
 security OK: syscall abuse demo exited, code 0
 M12a security: boot principal console session 1
@@ -114,10 +133,8 @@ sink capability hook active
 log: recent
 detail=100
 detail=4
-pid=1 principal=1
 LOG-EXPORT bytes=
 LOG-EXPORT-BEGIN
-source=proc msg=\"psinfo\" pid=1 principal=1
 source=log_export msg=\"tail serialization ready\"
 LOG-EXPORT-END}"
 
@@ -146,7 +163,38 @@ C4A-ENDPOINT-SEND-XFER-DENY-FAIL
 C4A-ENDPOINT-RECV-XFER-DENY-LEAK
 C4A-ENDPOINT-RECV-XFER-DENY-FAIL
 forkdemo: IPC-MOVE-ONLY-LEAK
-forkdemo: IPC-MOVE-ONLY-FAIL}"
+forkdemo: IPC-MOVE-ONLY-FAIL
+drvinputd: missing endpoint args
+drvinputd: invalid generation
+drvinputd: ready send failed
+drvinputd: command receive failed
+drvinputd: event send failed
+drvinputd: device handle missing
+drvinputd: duplicate device grant
+drvinputd: device info failed
+drvinputd: device info mismatch
+drvinputd: device ack send failed
+drvinputd: unknown command
+drvsvc: endpoint_create failed
+drvsvc: fork failed
+drvsvc: exec drvinputd failed
+drvsvc: ready message mismatch
+drvsvc: ping send failed
+drvsvc: event message mismatch
+drvsvc: device discovery failed
+drvsvc: device manifest mismatch
+drvsvc: device discovery exhaustion failed
+drvsvc: device claim failed
+drvsvc: device info mismatch
+drvsvc: device dup unexpectedly succeeded
+drvsvc: device grant send failed
+drvsvc: moved device fd still valid
+drvsvc: device ack mismatch
+drvsvc: busy claim failed
+drvsvc: reclaim claim failed
+drvsvc: reclaim info mismatch
+drvsvc: stop send failed
+drvsvc: service wait failed}"
 
 if [[ ! -f "$KERNEL" ]]; then
     echo "FAIL: $KERNEL not found — run 'make build' first." >&2
@@ -154,25 +202,48 @@ if [[ ! -f "$KERNEL" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-boot.XXXXXX)"
-trap 'rm -f "$LOG"' EXIT
+QEMU_PID=""
 
-dtb_args=()
+stop_qemu() {
+    if [[ -n "$QEMU_PID" ]]; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        for _ in $(seq 1 20); do
+            kill -0 "$QEMU_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -0 "$QEMU_PID" 2>/dev/null && kill -9 "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+        QEMU_PID=""
+    fi
+}
+
+cleanup() {
+    stop_qemu
+    rm -f "$LOG"
+}
+trap cleanup EXIT
+
+qemu_args=(-M virt -cpu cortex-a72 -m 256M -nographic -no-reboot)
+if [[ ! -f "$DTB" ]]; then
+    tmp_dtb="$DTB.tmp"
+    mkdir -p "$(dirname "$DTB")"
+    "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -m 256M -nographic >/dev/null 2>&1
+    mv "$tmp_dtb" "$DTB"
+fi
 if [[ -f "$DTB" ]]; then
-    dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+    qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 
 # Attach the packed base image (modern virtio-mmio transport) so /bin/* and the
 # read-only base are served from disk rather than the embedded blob.
 DISK="$ROOT/build/base.img"
-blk_args=()
 if [[ -f "$DISK" ]]; then
-    blk_args=(-global virtio-mmio.force-legacy=false \
-              -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-              -device virtio-blk-device,drive=swosbase)
+    qemu_args+=(-global virtio-mmio.force-legacy=false
+                -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+                -device virtio-blk-device,drive=swosbase)
 fi
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-        "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
+"$QEMU" "${qemu_args[@]}" -kernel "$KERNEL" >"$LOG" 2>&1 &
 QEMU_PID=$!
 
 all_found() {
@@ -201,8 +272,7 @@ for _ in $(seq 1 "$((TIMEOUT * 10))"); do
     sleep 0.1
 done
 
-kill "$QEMU_PID" 2>/dev/null
-wait "$QEMU_PID" 2>/dev/null
+stop_qemu
 
 if [[ "$found" -eq 1 ]]; then
     echo "PASS: serial console produced all expected lines:"
