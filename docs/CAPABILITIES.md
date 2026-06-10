@@ -4,14 +4,15 @@ The forward design for swift-os authority: the object-capability **handle** mode
 handle-passing **IPC**, and the decision to make **Cells** a userland composition over small kernel
 primitives rather than a fat in-kernel object.
 
-> **Status: living design and implementation map.** C1-C5b now have checked-in
+> **Status: living design and implementation map.** C1-C5c now have checked-in
 > slices: typed handle entries and rights, `spawn_handles`, object-scoped
 > filesystem confinement, endpoint IPC with handle move semantics, a
-> restartable pseudo driver-service smoke, and an opaque pseudo-device handle
-> grant. The later parts of this note remain the target design for richer IPC
-> rings/VMOs, real userland drivers, and Cells. Future C-series work still lands
-> one milestone at a time, each building, booting, passing a test, and stopping
-> for review (per [CLAUDE.md](../CLAUDE.md)).
+> restartable pseudo driver-service smoke, pseudo-device discovery, and an
+> opaque pseudo-device handle grant. The later parts of this note remain the
+> target design for richer IPC rings/VMOs, real userland drivers, and Cells.
+> Future C-series work still lands one milestone at a time, each building,
+> booting, passing a test, and stopping for review (per
+> [CLAUDE.md](../CLAUDE.md)).
 
 The maintainer should read this against the **current** model, not an idealized one. Where the current
 model already does the right thing, this note says so; where it is a placeholder, this note says that too.
@@ -70,15 +71,16 @@ Implemented C-series pieces:
   while the flat `caps` word remains a coarse class gate.
 - C4a: `endpoint_create`, `ipc_send`, and `ipc_recv` with byte messages and
   one moved handle per message.
-- C5a/C5b/C5c: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it,
+- C5a-C5c: `/bin/drvsvcdemo` supervises `/bin/drvinputd`, restarts it,
   discovers a `virtio-input.0` grant when QEMU exposes one or the
   `pseudo-input.0` fallback on headless boots, moves the opaque device grant
   over IPC, proves the grant is busy while owned by the service, and reclaims it
   after exit.
 
-This is still short of the full architecture. C5c's device grant deliberately
-does not expose MMIO ranges, IRQ endpoints, DMA windows, or real virtio-input
-queue ownership, and C4a is not the future zero-copy ring/VMO data path.
+This is still short of the full architecture. C5c's device discovery and grant
+deliberately do not expose MMIO ranges, IRQ endpoints, DMA windows, or real
+virtio-input queue ownership, and C4a is not the future zero-copy ring/VMO data
+path.
 
 ---
 
@@ -126,7 +128,7 @@ The deeper problems with the bitmask are structural, not cosmetic:
 
 This is not an argument that the bitmask was wrong to ship. It is an argument
 that it is a **floor**, and the ceiling is a handle table. The migration started
-with C1-C5b and continues through the remaining target design below.
+with C1-C5c and continues through the remaining target design below.
 
 ---
 
@@ -540,7 +542,7 @@ Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
 explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
 kinds on C1's table and transfers them with C2's move mechanism; C5 is the
 first thing that needs C1-C4 at once; C6 needs C5's supervisor pattern and C4's
-IPC to assemble a cell. The implemented C1-C5b slices do not remove those
+IPC to assemble a cell. The implemented C1-C5c slices do not remove those
 dependencies for the remaining richer work.
 
 ---
@@ -558,7 +560,7 @@ dependencies for the remaining richer work.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** fully implemented. C1-C5b slices exist; C5 proper, richer IPC, and
+- **Not** fully implemented. C1-C5c slices exist; C5 proper, richer IPC, and
   Cells remain planned work.
 
 ---

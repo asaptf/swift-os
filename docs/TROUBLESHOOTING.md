@@ -627,6 +627,8 @@ drvsvc: generation 1 event
 drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
 drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
@@ -639,6 +641,10 @@ C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 ```
+
+The broad headless boot path exercises the same lifecycle through
+`pseudo-input.0` and should instead print
+`C5c OK: device discovery manifest matched pseudo input`.
 
 If the test fails, keep the serial tail printed by
 `tests/driver_service_test.sh`. A marker such as `drvinputd: missing endpoint

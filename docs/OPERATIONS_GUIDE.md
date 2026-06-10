@@ -4,7 +4,8 @@ This guide is for people who boot, test, demo, or operate a SwiftOS image. It
 describes the current checked-in system: QEMU `virt` on AArch64, serial console
 first, immutable base image, RAM scratch space, capability-scoped user sessions,
 native Swift tools, networking demos, package payload overlays, and the AI
-inference demo, plus the C5 restartable driver-service/device-grant smoke.
+inference demo, plus the C5a-C5c restartable driver-service/device-discovery
+smoke.
 
 Use this guide with:
 
@@ -549,7 +550,7 @@ Run the narrowest test that proves the path you touched:
 | Restricted S5 EL0 fanout | `make s5-el0-fanout-test` |
 | S5 shared-address-space thread fanout | `make s5-thread-fanout-test` |
 | S5 run-any EL0 placement | `make s5-run-any-placement-test` |
-| C5 driver-service/device-discovery smoke (`-smp 4`) | `make c5-device-discovery-test` |
+| C5a-C5c driver-service/device-discovery smoke (`-smp 4`) | `make c5-device-discovery-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |

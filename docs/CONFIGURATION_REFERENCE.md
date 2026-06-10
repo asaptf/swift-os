@@ -132,8 +132,8 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
 | `make c5-driver-service-test` | Run the C5 driver-service/device-discovery smoke under `-smp 4`. |
-| `make c5-device-handle-test` | Run the C5b opaque device-handle handoff gate under `-smp 4`. |
-| `make c5-device-discovery-test` | Alias for the focused C5c virtio-input discovery and grant handoff gate. |
+| `make c5-device-handle-test` | Compatibility alias for the C5 driver-service/device-discovery gate under `-smp 4`. |
+| `make c5-device-discovery-test` | Run the focused C5c virtio-input discovery and grant handoff gate under `-smp 4`. |
 | `make s0c-test` | Run only the SMP state-audit target. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |

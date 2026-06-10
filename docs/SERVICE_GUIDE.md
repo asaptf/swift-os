@@ -17,11 +17,12 @@ Use it with:
 
 ## Current Service Model
 
-SwiftOS can run network-facing EL0 programs today, and C5 now adds a narrow
-restartable driver-service/device-grant smoke. It does not yet have a general service
-manager. Most services are static user programs started from the serial shell
-after login. Long-running services run in the foreground and report readiness
-through deterministic serial log markers.
+SwiftOS can run network-facing EL0 programs today, and C5a-C5c adds a narrow
+restartable driver-service plus device-discovery and opaque device-handle
+smoke. It does not yet have a general service manager. Most services are static
+user programs started from the serial shell after login. Long-running services
+run in the foreground and report readiness through deterministic serial log
+markers.
 
 | Property | Current behavior |
 | --- | --- |
@@ -89,12 +90,18 @@ Expected serial output includes:
 
 ```text
 drvsvc: C5a supervisor starting
+drvsvc: C5c device manifest matched
+drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
 ```
+
+The ordinary headless boot path has no QEMU keyboard device, so it exercises
+the same lifecycle with the `pseudo-input.0` fallback and emits
+`C5c OK: device discovery manifest matched pseudo input`.
 
 This is not a production device manager yet. C5c exposes discovery metadata for
 manifest matching, but it still does not grant MMIO ranges, IRQ endpoints, DMA
@@ -454,8 +461,8 @@ make test
 ## Known Limits
 
 - There is no general service manager, restart policy, dependency graph, or
-  background service registry yet. C5 only proves a focused
-  driver-service supervisor/restart/device-grant path.
+  background service registry yet. C5a-C5c only prove a focused
+  driver-service supervisor/restart/discovery/device-grant path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.
 - `/tmp` is the only writable runtime area and is lost on reboot.

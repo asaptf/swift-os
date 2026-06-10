@@ -79,11 +79,14 @@ These markers tell you how far the system got.
 | `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim demo passed |
 | `swift-os M12c: starting console-login (init)` | Login init was launched |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
-| `drvsvc: C5b device grant moved` | Opaque pseudo-device grant was moved out of the supervisor fd table |
-| `drvinputd: C5b device grant accepted` | Pseudo driver service validated the transferred device grant |
-| `C5a OK: restartable driver service recovered over IPC` | Pseudo driver service restarted and recovered over endpoint IPC |
+| `drvsvc: C5c device manifest matched` | Registry metadata matched the expected pseudo or virtio-input manifest |
+| `drvsvc: C5c discovery exhausted` | Device discovery reported end-of-registry after the current input grant |
+| `drvsvc: C5b device grant moved` | Opaque device grant was moved out of the supervisor fd table |
+| `drvinputd: C5b device grant accepted` | Driver service validated the transferred device grant |
+| `C5a OK: restartable driver service recovered over IPC` | Driver service restarted and recovered over endpoint IPC |
 | `C5b OK: opaque device handle transferred and released` | Device grant was transferred and reclaimed |
-| `C5c OK: virtio-input device grant discovered and matched` | C5c matched a discovered virtio-input grant and completed handoff/reclaim |
+| `C5c OK: device discovery manifest matched pseudo input` | Headless fallback discovery, claim, transfer, and release completed |
+| `C5c OK: virtio-input device grant discovered and matched` | Focused C5c gate matched a discovered virtio-input grant and completed handoff/reclaim |
 | `swift-os login:` | Console login prompt reached |
 | `Welcome to swift-os, root` | Root login succeeded |
 | `M12c: session ended` | Login session exited and init recovered |

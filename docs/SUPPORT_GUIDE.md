@@ -209,7 +209,8 @@ These markers help locate the failing subsystem.
 | `llmd: served` | LLM request completed and metrics were logged |
 | `C5a OK: restartable driver service recovered over IPC` | C5a pseudo driver service restarted and recovered |
 | `C5b OK: opaque device handle transferred and released` | C5b device grant moved to the service and reclaimed |
-| `C5c OK: virtio-input device grant discovered and matched` | C5c discovered and matched the virtio-input device grant |
+| `C5c OK: device discovery manifest matched pseudo input` | Headless fallback registry metadata was discovered and matched before claiming |
+| `C5c OK: virtio-input device grant discovered and matched` | Focused C5c gate discovered and matched the virtio-input device grant |
 | `pkghello: hello from package overlay` | Package overlay was visible and executable |
 | `LOG-EXPORT-BEGIN` | Kernel log serialization smoke path ran |
 | `panic` | Fatal kernel path; include surrounding register/log lines |

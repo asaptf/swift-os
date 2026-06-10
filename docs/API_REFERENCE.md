@@ -56,7 +56,7 @@ source, then follow its Makefile rule and acceptance test.
 | Process launch and explicit handles | `userland/argvdemo.c`, `userland/spawndemo.c` | `spawn`, `spawn_handles`, `swiftos_spawn_handle`, handle rights | `./tests/boot_test.sh`, `./tests/spawn_self_exec_test.sh` |
 | Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
-| Opaque device grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-handle-test` |
+| Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-discovery-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
@@ -474,14 +474,43 @@ Supervisor-side handoff pattern:
 
 ```c
 struct swiftos_device_info info;
-if (device_discover(0, &info) != 0) {
+int found = 0;
+for (int i = 0; i < 4; i += 1) {
+    int r = device_discover(i, &info);
+    if (r == -2) {
+        break;
+    }
+    if (r < 0) {
+        return r;
+    }
+    int real = info.kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+        info.bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
+        info.mmio_base != 0 &&
+        info.mmio_len != 0 &&
+        (info.flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0;
+    int pseudo = info.kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
+        info.bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
+        info.mmio_base == 0 &&
+        info.mmio_len == 0;
+    if ((real || pseudo) &&
+        (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
+        info.claimed == 0) {
+        found = 1;
+        break;
+    }
+}
+if (!found) {
     return -2;
 }
+
 int dev_fd = device_claim(info.name, &info);
 if (dev_fd < 0) {
     return dev_fd;
 }
-if ((info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) {
+if ((info.kind != SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+     info.kind != SWIFTOS_DEVICE_KIND_PSEUDO_INPUT) ||
+    (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0 ||
+    info.claimed != 1) {
     close(dev_fd);
     return -22;
 }
@@ -507,15 +536,16 @@ long n = ipc_recv(command_endpoint, cmd, sizeof(cmd), &received_fd);
 if (n == 4 && received_fd >= 0) {
     struct swiftos_device_info info;
     if (device_info(received_fd, &info) == 0) {
-        // In C5c this is metadata-only authority, not MMIO/IRQ/DMA access.
+        // Current grants are metadata-only authority, not MMIO/IRQ/DMA access.
         close(received_fd);
     }
 }
 ```
 
 The complete checked-in example is `userland/drvsvcdemo.c` supervising
-`userland/drvinputd.c`; `make c5-device-handle-test` validates the serial
-markers under `-smp 4`.
+`userland/drvinputd.c`; `make c5-device-discovery-test` validates the discovery,
+handoff, busy-claim, and release markers under `-smp 4`.
+`make c5-device-handle-test` remains a compatible alias for the same harness.
 
 ## Terminal API
 
@@ -1173,7 +1203,7 @@ one booting acceptance path:
 | Filesystem and native Swift file tools | `kernel/vfs/vfs.swift`, `userland/lib/fs.h`, `userland/lib/swift_user.h` | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/boot_test.sh` |
 | Terminal and signals | `userland/lib/termios.h`, `kernel/tty/tty.swift`, `kernel/signal/signal.swift` | `./tests/boot_test.sh`, focused interactive smoke where needed |
 | IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
-| Device grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-handle-test` |
+| Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-discovery-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |

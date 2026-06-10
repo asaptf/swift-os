@@ -33,7 +33,7 @@ The current system enforces security through several layers:
 | User/kernel boundary | EL0 enters the kernel only through the SwiftOS syscall ABI |
 | Identity | `console-login` authenticates a principal from `/etc/swos/passwd` |
 | Coarse capabilities | Filesystem read, tmpfs write, console login, and networking are gated |
-| Handle rights | File, pipe, tty, socket, IPC endpoint, and device-grant handles carry read/write/transfer-style rights |
+| Handle rights | File, pipe, tty, socket, IPC endpoint, and opaque device-grant handles carry per-handle rights |
 | Immutable base | `/bin`, `/etc`, `/www`, and model files come from a read-only base image |
 | Writable scratch | Runtime writes go to tmpfs and are lost on reboot |
 | Memory permissions | `mmap`/`mprotect` reject writable-executable mappings |
@@ -62,11 +62,16 @@ The checked-in system currently provides these practical guarantees:
    exactly the handles requested by the parent, with attenuated rights.
 8. IPC handle passing moves one handle to the receiver and clears the sender's
    source fd on success.
-9. `confine(path)` can narrow a process to a filesystem subtree and cannot widen
+9. C5b/C5c device discovery and opaque grants are metadata-only handles: the
+   supervisor can discover `virtio-input.0` when QEMU exposes it or the
+   `pseudo-input.0` fallback on headless boots, inspect the grant, and prove
+   ownership movement, but cannot use it for MMIO, IRQ, DMA, or real
+   virtio-input queue access.
+10. Device discovery and claiming are gated to the boot authority; claimed
+    device grants are inspectable and transferable but not duplicable.
+11. `confine(path)` can narrow a process to a filesystem subtree and cannot widen
    an existing confinement.
-10. Device discovery and claiming are gated to the boot authority; claimed device
-    grants are inspectable and transferable but not duplicable.
-11. `mmap`/`mprotect` reject `PROT_WRITE | PROT_EXEC`.
+12. `mmap`/`mprotect` reject `PROT_WRITE | PROT_EXEC`.
 
 ## Current Limits
 
@@ -81,7 +86,7 @@ architecture.
 | No persistent user data store | `/tmp` is scratch; reboot clears it |
 | `capSpawn` and `capProcessInspect` are scaffold bits | They are part of the identity model, but not the main enforcement boundary yet |
 | `capLogExport` is reserved | No seeded account receives it by default |
-| Drivers and networking are still in kernel | The roadmap moves more services to restartable userland components |
+| Drivers and networking are still in kernel | C5c proves discovery metadata and an opaque pseudo-device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
 | Single global cell today | `CellId` exists as a field; real Cells are future work |
 
 Do not describe the current system as a finished object-capability OS. It is a
@@ -281,8 +286,9 @@ Acceptance evidence:
 
 ## Handle Rights
 
-Every open file, pipe, tty, socket, or IPC endpoint is represented as a
-per-process descriptor with a handle kind and rights. Rights are defined in
+Every open file, pipe, tty, socket, IPC endpoint, or opaque device grant is
+represented as a per-process descriptor with a handle kind and rights. Rights
+are defined in
 `userland/lib/syscall.h` and `kernel/vfs/handle.swift`.
 
 Common rights:
@@ -336,6 +342,42 @@ Acceptance evidence:
 ./tests/spawn_self_exec_test.sh
 ./tests/ipc_socket_transfer_test.sh
 ```
+
+### Opaque Device Grants
+
+C5b adds the first device-shaped handle, and C5c adds discovery
+metadata/manifest matching for the checked-in driver-service smoke. The
+supervisor discovers the current input grant with `device_discover`, claims the
+discovered name with `device_claim`, checks its metadata with `device_info`,
+moves it to `/bin/drvinputd` over an IPC endpoint, and then proves the registry
+reports the device as busy until the service exits and closes its final fd.
+
+Security properties:
+
+- The grant is a handle, not a global permission bit.
+- Discovery returns metadata for the current input grant and then reports
+  exhaustion. In the focused gate that grant is `virtio-input.0`; in headless
+  boots it is `pseudo-input.0`.
+- The sender loses the fd when `ipc_send` moves the handle.
+- A second `device_claim` of the discovered name returns `-16` while the
+  service owns the live grant.
+- The C5c metadata always carries `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT`.
+  `virtio-input.0` includes MMIO base/length as manifest metadata only; there is
+  still no userland mapping, IRQ endpoint, DMA window, or queue ownership.
+- Closing the final device fd releases the claim.
+
+This is a security boundary smoke, not a production driver sandbox. Real device
+handoff still needs MMIO-range handles, IRQ endpoints, DMA windows, and a real
+userland driver.
+
+Acceptance evidence:
+
+```sh
+make c5-device-discovery-test
+```
+
+`make c5-device-handle-test` remains a compatible alias through the same
+driver-service harness.
 
 ## Filesystem Confinement
 
@@ -470,6 +512,7 @@ make build
 ./tests/swift_chmodown_test.sh
 ./tests/spawn_self_exec_test.sh
 ./tests/ipc_socket_transfer_test.sh
+make c5-device-discovery-test
 ./tests/mmap_test.sh
 make package-overlay-test
 ```
