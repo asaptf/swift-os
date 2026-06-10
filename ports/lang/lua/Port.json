@@ -7,7 +7,7 @@
   "summary": "Small embeddable scripting language",
   "homepage": "https://www.lua.org/",
   "license": ["MIT"],
-  "maturity": "scaffolded",
+  "maturity": "packages",
   "source": {
     "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
     "sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
@@ -24,7 +24,10 @@
     "args": ["generic"],
     "env": {
       "AR": "aarch64-elf-ar rcu",
-      "CC": "aarch64-elf-gcc",
+      "CC": "aarch64-elf-gcc -std=gnu99",
+      "MYCFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include -DLUA_USE_C89",
+      "MYLDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o -L${SYSROOT}/lib",
+      "MYLIBS": "-Wl,--start-group -lc -lm -lgcc -Wl,--end-group",
       "RANLIB": "aarch64-elf-ranlib"
     }
   },
@@ -51,5 +54,5 @@
       "/usr/bin/lua -e 'print(21 * 2)'"
     ]
   },
-  "notes": "First real source-port recipe scaffold. Fetch, manifest generation, package creation from a staged root, and signed repository fixture generation are implemented; cross-build and QEMU smoke tests are the next P6 slices."
+  "notes": "First real source-port recipe. scripts/build-lua.sh cross-builds AArch64 static lua/luac against newlib, packages them, and emits a signed repository fixture. QEMU smoke tests are the next P6 slice."
 }

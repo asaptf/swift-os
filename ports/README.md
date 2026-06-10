@@ -8,17 +8,19 @@ state, and the first smoke test each package must eventually pass.
 This is not a full ports tree yet. The first `Port.json` recipe is checked in
 for `lang/lua`, with validation, manifest generation, checksum-verified
 distfile fetching, `.swpkg` creation from a clean staged root, and signed static
-repository fixture generation. Patches, cross-builds, QEMU smoke tests, and
-trusted public publishing workflows still belong to the planned
-`swift-os-ports` repository. The seed catalog keeps that work ordered and
-reviewable while the target-side package manager is still being hardened inside
-`swift-os`.
+repository fixture generation. `make ports-lua-repo-fixture` also cross-builds
+real AArch64 static `lua` and `luac` binaries against the local newlib sysroot.
+Patches, QEMU smoke tests, and trusted public publishing workflows still belong
+to the planned `swift-os-ports` repository. The seed catalog keeps that work
+ordered and reviewable while the target-side package manager is still being
+hardened inside `swift-os`.
 
 Validate the catalog:
 
 ```sh
 make ports-catalog-test
 make ports-recipe-test
+make ports-lua-repo-fixture
 ```
 
 Useful inspection commands:
@@ -34,6 +36,9 @@ build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
+
+The Lua cross-build target requires `sysroot/aarch64-elf/lib/libc.a`; create it
+with `make newlib` if the generated sysroot is not present.
 
 Catalog rules enforced by `swport catalog validate`:
 
