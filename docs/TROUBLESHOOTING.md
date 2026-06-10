@@ -538,7 +538,7 @@ Remember: `.swpkg` creation and payload extraction are host-side today. Guest
 install works through the local-file form, `pkg install FILE`, through the P5c
 signed static HTTP repository fixture, `pkg repo set URL && pkg update` or
 `pkg update URL` followed by `pkg install NAME`, and through the P8 static-host
-ports fixture for Lua, zlib, ca-certificates, and pcre2. Name-based dependency
+ports fixture for Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite. Name-based dependency
 resolution is implemented for signed catalogs. Remove, upgrade, rollback,
 version-constraint solving, public hosted channels, and large-package streaming
 downloads are future work.
@@ -597,7 +597,7 @@ If `pkg install NAME` fails after a successful update, inspect
 `build/pkgrepo-root/aarch64/current`, check whether the guest printed
 `pkg: package SHA-256 mismatch`, and rerun `make package-repo-install-test`.
 
-For the Lua/zlib/ca-certificates/pcre2 static-host path, use:
+For the ports seed static-host path, use:
 
 ```sh
 make ports-static-host-publish

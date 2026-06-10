@@ -73,6 +73,9 @@ guard listText.contains("tier2 nginx packages L www/nginx") else {
 guard listText.contains("tier0 ca-certificates packages S security/ca-certificates") else {
     fail("list output did not include packaged ca-certificates")
 }
+guard listText.contains("tier0 bzip2 packages S archivers/bzip2") else {
+    fail("list output did not include packaged bzip2")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
 }
@@ -93,6 +96,11 @@ let sqliteInspect = run(tool, ["catalog", "inspect", "sqlite", catalog.path])
 requireSuccess(sqliteInspect, "inspect sqlite")
 guard output(sqliteInspect).contains("runtimeDependencies: none") else {
     fail("sqlite inspect output did not show its runtime dependency state")
+}
+let bzip2Inspect = run(tool, ["catalog", "inspect", "bzip2", catalog.path])
+requireSuccess(bzip2Inspect, "inspect bzip2")
+guard output(bzip2Inspect).contains("runtimeDependencies: none") else {
+    fail("bzip2 inspect output did not show its runtime dependency state")
 }
 
 let temp = FileManager.default.temporaryDirectory

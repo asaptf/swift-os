@@ -135,6 +135,8 @@ send_line "pkg update"
 await "pkg: catalog updated $REPO_URL" 120 || drive_fail "pkg update did not complete from default repo"
 send_line "pkg search zlib"
 await "zlib-1.3.1_1" 60 || drive_fail "pkg search did not find zlib"
+send_line "pkg search bzip2"
+await "bzip2-1.0.8_1" 60 || drive_fail "pkg search did not find bzip2"
 send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
@@ -145,8 +147,14 @@ send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
-send_line "printf 'zlib-ok\n' | /usr/bin/minigzip | /usr/bin/minigzip -d"
+send_line "echo zlib-ok | /usr/bin/minigzip | /usr/bin/minigzip -d"
 await "zlib-ok" 60 || drive_fail "minigzip round-trip output mismatch"
+send_line "pkg install bzip2"
+await "pkg: installed bzip2-1.0.8_1" 120 || drive_fail "bzip2 package was not installed"
+send_line "echo bzip2-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc"
+await "bzip2-ok" 60 || drive_fail "bzip2 round-trip output mismatch"
+send_line "cat /usr/share/bzip2/swiftos-bzip2.version"
+await "bzip2 1.0.8 swift-os static-tools" 60 || drive_fail "bzip2 marker output mismatch"
 send_line "pkg install ca-certificates"
 await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
 send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
@@ -164,6 +172,7 @@ await "pkg: installed sqlite-3.53.2_1" 120 || drive_fail "sqlite package was not
 send_line "pkg list"
 await "lua-5.4.8_1" 60 || drive_fail "installed lua package not listed"
 await "zlib-1.3.1_1" 60 || drive_fail "installed zlib package not listed"
+await "bzip2-1.0.8_1" 60 || drive_fail "installed bzip2 package not listed"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "installed ca-certificates package not listed"
 await "pcre2-10.47_1" 60 || drive_fail "installed pcre2 package not listed"
 await "sqlite-3.53.2_1" 60 || drive_fail "installed sqlite package not listed"
@@ -192,12 +201,15 @@ ok=1
 grep -qF "pkg: catalog updated" <<<"$clean" || { echo "FAIL: pkg update output missing" >&2; ok=0; }
 grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
+grep -qF "pkg: installed bzip2-1.0.8_1" <<<"$clean" || { echo "FAIL: bzip2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
 grep -qF "pkg: installed nginx-1.30.2_1" <<<"$clean" || { echo "FAIL: nginx install output missing" >&2; ok=0; }
 grep -qF "pkg: installed sqlite-3.53.2_1" <<<"$clean" || { echo "FAIL: sqlite install output missing" >&2; ok=0; }
 grep -qF "zlib-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
+grep -qF "bzip2-ok" <<<"$clean" || { echo "FAIL: bzip2 round-trip output missing" >&2; ok=0; }
+grep -qF "bzip2 1.0.8 swift-os static-tools" <<<"$clean" || { echo "FAIL: bzip2 marker output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
 grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
@@ -211,7 +223,7 @@ grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catal
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from one signed ports seed repo"
+  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite from one signed ports seed repo"
   exit 0
 fi
 
