@@ -13,7 +13,9 @@ AArch64 static Lua against the local newlib sysroot and packages the runtime
 interpreter. `make ports-zlib-repo-fixture` cross-builds static zlib, headers,
 pkgconf metadata, and the small `minigzip` smoke-test helper. `make
 ports-seed-repo-fixture` publishes both packages into one signed seed
-repository.
+repository. `make ports-static-host-publish` copies that seed repository into a
+deployable static-host web root with `hosted-repo.json`, `repo-root.pub`, and
+`SHA256SUMS`.
 Patches, QEMU smoke tests, and trusted public publishing workflows still belong
 to the planned `swift-os-ports` repository. The seed catalog keeps that work
 ordered and reviewable while the target-side package manager is still being
@@ -27,7 +29,9 @@ make ports-recipe-test
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
+make ports-static-host-publish
 make package-ports-seed-repo-install-test
+make package-static-host-repo-install-test
 ```
 
 Useful inspection commands:

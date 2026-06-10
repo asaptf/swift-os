@@ -11,9 +11,11 @@ Design for binary package installation on swift-os.
 > entries, and package SHA-256 mismatches. The ports seed fixture now
 > cross-builds Lua and zlib, publishes both into one signed local repository,
 > and can boot SwiftOS with `/etc/pkg/repo-url` so `pkg update` works without a
-> manual `pkg repo set`. Rollback, remove, upgrade, public hosted channels,
-> version-constraint solving, and large-package streaming downloads are still
-> staged work.
+> manual `pkg repo set`. `make ports-static-host-publish` turns that seed into a
+> deployable static web root, and `make package-static-host-repo-install-test`
+> proves install from that published layout. Rollback, remove, upgrade, public
+> hosted channels, version-constraint solving, and large-package streaming
+> downloads are still staged work.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 
@@ -193,6 +195,14 @@ https://pkg.swift-os.org/
   aarch64/current/catalog.json
   aarch64/current/packages/<sha256>.swpkg
   aarch64/current/snapshots/<generation>/catalog.signed
+```
+
+The current bootstrap artifact uses the same `aarch64/current` contract under
+`build/ports-static-host-root`, with `hosted-repo.json`, `repo-root.pub`, and
+`SHA256SUMS` at the web-root level:
+
+```sh
+make ports-static-host-publish
 ```
 
 Channels:

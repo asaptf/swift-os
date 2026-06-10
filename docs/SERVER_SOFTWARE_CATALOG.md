@@ -20,9 +20,11 @@ maintainers planning `swift-os-ports` recipes.
 > `package-lua-repo-install-test` installs and runs Lua from its signed
 > repository inside QEMU. The `package-ports-seed-repo-install-test` boots
 > SwiftOS with a default repository URL, runs `pkg update`, installs `lua` and
-> `zlib`, and runs both package smoke commands. Public hosted repositories,
-> remove, upgrade, version-constraint solving, and rollback flows are still
-> roadmap work.
+> `zlib`, and runs both package smoke commands. `make ports-static-host-publish`
+> now emits a static-hostable web root for that seed repository, and
+> `make package-static-host-repo-install-test` proves installs from that layout.
+> Public hosted domains/channels, remove, upgrade, version-constraint solving,
+> and rollback flows are still roadmap work.
 
 Use this guide with:
 
@@ -55,6 +57,7 @@ paths are available in the current tree:
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
 | Ports seed repository fixture | Publish Lua and zlib into one signed local repository and install both from SwiftOS using a default repo URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the Lua+zlib seed repository into a deployable web root and install both from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -87,7 +90,9 @@ make ports-recipe-test
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
+make ports-static-host-publish
 make package-ports-seed-repo-install-test
+make package-static-host-repo-install-test
 build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua

@@ -75,7 +75,10 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make ports-lua-repo-fixture` proves the Lua cross-build package and signed
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
-    and a small Lua expression inside QEMU.
+    and a small Lua expression inside QEMU;
+  - `make ports-static-host-publish` emits a deployable static-host root for
+    the Lua+zlib seed repository, and `make package-static-host-repo-install-test`
+    proves SwiftOS can install from that published layout.
 - Public hosted binary repository publishing, version-constraint solving,
   remove, upgrade, rollback, broad source-port coverage, package publication,
   and streaming large-package downloads remain future work.
@@ -162,7 +165,9 @@ credentials. Required maintainer decisions:
     PostgreSQL need heavier build resources.
 
 Until those are known, the implementation should build a local static
-repository fixture that behaves exactly like the final hosted repository.
+repository fixture and a static-host web root that behave exactly like the
+final hosted repository. The current bootstrap root is
+`build/ports-static-host-root`.
 
 ## First End-to-End Definition of Done
 

@@ -27,8 +27,9 @@ prove the package model locally:
 | Lua and zlib cross-build repository fixtures | Static AArch64 Lua and zlib cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture` |
 | P6f Lua repository install smoke | QEMU installs real Lua from the signed local repository fixture and runs `lua -v` plus a small expression | `make package-lua-repo-install-test` |
 | Ports seed repository fixture | Lua and zlib publish into one signed local repository; SwiftOS boots with a default repo URL and installs both with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | The ports seed repository is copied into a deployable web root with a sidecar manifest, public key, and SHA-256 manifest suitable for nginx, object storage, or GitHub Pages | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
-| Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
+| Public hosted repository | External deployment remains planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
@@ -77,7 +78,9 @@ make ports-lua-repo-fixture
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
+make ports-static-host-publish
 make package-ports-seed-repo-install-test
+make package-static-host-repo-install-test
 ```
 
 Inspect the signed repository fixture:
@@ -113,13 +116,14 @@ Build the current real package fixtures:
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
+make ports-static-host-publish
 build/swpkg verify build/lua.swpkg
 build/swpkg verify build/zlib.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
-make package-lua-repo-install-test
 make package-ports-seed-repo-install-test
+make package-static-host-repo-install-test
 ```
 
 For a new experimental port before full `swport` build/test commands exist,
@@ -794,6 +798,31 @@ https://pkg.swift-os.org/
 Blob path is derived from SHA-256. Upload blobs first, verify that the hosted
 hash matches, then publish the new catalog. A catalog must never reference a
 blob that is not already reachable.
+
+The current bootstrap implementation can already produce a deployable static
+web root from the checked Lua and zlib ports:
+
+```sh
+make ports-static-host-publish
+python3 -m http.server --directory build/ports-static-host-root 8000
+```
+
+That root contains the exact `pkg` repository under `aarch64/current`, the
+repository public key as `repo-root.pub`, a `hosted-repo.json` sidecar for
+publish tooling and mirrors, and a `SHA256SUMS` file for host-side byte checks.
+If the root is uploaded to `https://pkg.swift-os.org/`, the guest repository URL
+is:
+
+```text
+https://pkg.swift-os.org/aarch64/current
+```
+
+The local acceptance gate serves this publish root over HTTP and proves that
+SwiftOS can install Lua and zlib from it:
+
+```sh
+make package-static-host-repo-install-test
+```
 
 `catalog.json` should be canonical JSON:
 

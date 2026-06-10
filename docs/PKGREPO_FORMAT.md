@@ -17,6 +17,24 @@ layout that can be served by any ordinary web server.
 For tests, `make package-repo-fixture` builds this layout under
 `build/pkgrepo-root`.
 
+The ports bootstrap path can also publish a deployable static web root:
+
+```text
+build/ports-static-host-root/
+  hosted-repo.json
+  SHA256SUMS
+  repo-root.pub
+  aarch64/current/
+    catalog.json
+    catalog.signed
+    packages/
+      <sha256>.swpkg
+```
+
+Build it with `make ports-static-host-publish`. Serve that directory with
+nginx, object storage, GitHub Pages, or a local `python3 -m http.server`; the
+guest repository URL remains `<host>/aarch64/current`.
+
 ## Signed Catalog
 
 `catalog.signed` is a detached-signature envelope:
@@ -113,6 +131,9 @@ build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
   user networking, proves expired/wrong-arch/bad-hash repos are rejected,
   configures a default repo URL, proves dependency resolution with
   `pkgdep -> pkghello`, then executes `/usr/bin/pkghello`.
+- `tests/pkg_static_host_repo_install_test.sh` serves
+  `build/ports-static-host-root`, verifies the hosted sidecar manifest and
+  checksums, then boots QEMU and installs Lua and zlib from `/aarch64/current`.
 
 ## Known Limits
 
