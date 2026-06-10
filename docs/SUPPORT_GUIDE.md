@@ -24,17 +24,19 @@ Current supported support targets:
 | Direct QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `./tests/boot_test.sh` |
 | UEFI QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Serial console login | `./tests/console_login_test.sh` |
-| Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
-| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
+| Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md), starting with `./tests/swift_coreutils_test.sh` |
+| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus `./tests/tcp_echo_test.sh`, `./tests/udp_echo_test.sh`, and `./tests/httpd_test.sh` |
 | Package payload overlay | `make package-overlay-test` |
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
+| Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh`, `./tests/ab_rollback_test.sh` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
-| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
+| SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md), starting with `make s1-test` |
 
 Current non-support targets:
 
@@ -80,6 +82,8 @@ Then run the narrowest acceptance test that proves the failing path:
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
+| Base-image A/B update store | `./tests/ab_stage_test.sh`, then `./tests/ab_rollback_test.sh` if rollback is involved |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, then `./tests/uefi_kstage_test.sh` or `./tests/uefi_kactivate_test.sh` for runtime staging |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Driver-service/device-authority smoke (`-smp 4`) | `make c5-device-authority-test` |
 | SMP readiness | `make s1-test` or the active milestone target |
