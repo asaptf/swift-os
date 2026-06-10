@@ -855,6 +855,7 @@ SIGNING_PUB := $(MODEL_DIR)/dev-signing.pub
 # One recipe creates both halves; order-only on the tool so rebuilding it does
 # not mint a new key. (make 3.81-compatible — no grouped targets.)
 $(SIGNING_PUB): | $(MODELSIGN)
+	mkdir -p $(MODEL_DIR)
 	$(MODELSIGN) keygen $(SIGNING_SEED) $@
 $(SIGNING_SEED): $(SIGNING_PUB)
 
@@ -862,6 +863,7 @@ $(SIGNING_SEED): $(SIGNING_PUB)
 # lifecycle: image key = OS vendor, model key = model publisher). The public
 # half is compiled into the kernel as the trust root.
 $(IMG_SIGNING_PUB): | $(MODELSIGN)
+	mkdir -p $(MODEL_DIR)
 	$(MODELSIGN) keygen $(IMG_SIGNING_SEED) $@
 $(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
 

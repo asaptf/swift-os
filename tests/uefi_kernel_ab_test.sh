@@ -36,11 +36,15 @@ for t in "$MCOPY" "$MDEL"; do [[ -x "$t" ]] || { echo "FAIL: missing mtools $t" 
 BASE="$ROOT/build/base.img"
 LOG="$(mktemp -t swiftos-uabk.XXXXXX)"
 MANI="$(mktemp -t swiftos-uabk-mani.XXXXXX)"
+FRESH="$(mktemp -t swiftos-uabk-fresh.XXXXXX)"
 WORK="$(mktemp -t swiftos-uabk-img.XXXXXX)"
 QP=""
 stop_qemu() { [[ -n "$QP" ]] && { kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; }; QP=""; }
-trap 'stop_qemu; rm -f "$LOG" "$MANI" "$WORK"' EXIT
+trap 'stop_qemu; rm -f "$LOG" "$MANI" "$FRESH" "$WORK"' EXIT
 export MTOOLS_SKIP_CHECK=1
+
+"$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
+  || { echo "FAIL: could not create a fresh disk image (run 'make disk')" >&2; exit 2; }
 
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-40}" n=0
@@ -76,7 +80,7 @@ ok=1
 fail() { echo "FAIL: $1" >&2; ok=0; }
 
 # --- Case B: active=B, both slots present -> loader boots slot B -------------
-cp "$DISK_IMG" "$WORK"
+cp "$FRESH" "$WORK"
 "$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" "$SIGN_SEED" >/dev/null || fail "could not build active-B manifest"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest into the ESP"
@@ -88,7 +92,7 @@ await "M9 OK: hardware discovered from device tree" 60 || fail "caseB: kernel di
 stop_qemu
 
 # --- Fallback: active=B but kernelB.bin missing -> roll back to slot A -------
-cp "$DISK_IMG" "$WORK"
+cp "$FRESH" "$WORK"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest (fallback case)"
 "$MDEL" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernelB.bin \
@@ -103,7 +107,7 @@ stop_qemu
 # The default manifest is active=A with v2 hashes over the real kernel. Replace
 # kernelA.bin with a byte-flipped copy: its SHA-256 no longer matches, so the
 # loader must reject slot A and boot the (valid) slot B.
-cp "$DISK_IMG" "$WORK"
+cp "$FRESH" "$WORK"
 BADA="$(mktemp -t swiftos-uabk-bada.XXXXXX)"
 cp "$KERNEL_BIN" "$BADA"
 printf '\xFF' | dd of="$BADA" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
@@ -119,7 +123,7 @@ stop_qemu
 # --- Authenticity: tamper the manifest signature -> loader refuses the manifest
 # and boots its own embedded blob (never an attacker-chosen slot). Flip a byte in
 # the 64-byte Ed25519 signature region (offset 104) of the kernel-boot manifest.
-cp "$DISK_IMG" "$WORK"
+cp "$FRESH" "$WORK"
 MANI2="$(mktemp -t swiftos-uabk-mani2.XXXXXX)"
 "$MCOPY" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernel-boot "$MANI2" \
   || fail "could not read kernel-boot manifest"

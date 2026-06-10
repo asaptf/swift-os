@@ -27,6 +27,7 @@ PART_OFFSET=$((2048 * 512))
 [[ -f "$BASE" ]]       || { echo "FAIL: $BASE missing (run 'make base-image')" >&2; exit 2; }
 [[ -x "$MDIR" ]]       || { echo "FAIL: missing mtools $MDIR" >&2; exit 2; }
 
+FRESH="$(mktemp -t swiftos-kact-fresh.XXXXXX)"
 WORK="$(mktemp -t swiftos-kact-img.XXXXXX)"
 LOG="$(mktemp -t swiftos-kact-log.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-kact-pid.XXXXXX)"
@@ -39,9 +40,11 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$WORK" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$FRESH" "$WORK" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-cp "$DISK_IMG" "$WORK"
+"$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
+  || { echo "FAIL: could not create a fresh disk image (run 'make disk')" >&2; exit 2; }
+cp "$FRESH" "$WORK"
 if "$MDIR" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernel-boot-alt >/dev/null 2>&1; then
   echo "FAIL: disk image still stages retired kernel-boot-alt" >&2
   exit 1
