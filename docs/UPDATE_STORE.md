@@ -1,297 +1,407 @@
 # A/B Update Store (SWOSBOOT)
 
-The update store is swift-os's persistent, writable storage layer for whole-system
-A/B image updates, per ARCHITECTURE.md §"Persistent update store" and the
-"A/B image discipline" design value. It is a *narrow* storage layer — no
-filesystem, no journaling, no free-space management — carried on a dedicated
-writable virtio-blk disk, separate from the read-only base-image disk.
+The update store is SwiftOS's checked persistent update lane for whole-system
+image updates. It is intentionally narrow: no filesystem, no journal, no package
+database, and no mutable root. A dedicated writable virtio-blk disk carries two
+complete signed base-image slots, while the UEFI ESP carries the equivalent
+kernel-image slots. The design keeps update state writable but keeps executable
+code self-authenticating.
 
-U1a (this document) implements the **read side**: a boot manifest, two image
-slots, and manifest-driven, signature-verified slot selection with fallback to
-the known-good slot. Boot-state write-back (attempt counter, health confirm,
-attempt-based rollback) and kernel-image A/B are later sub-milestones.
+Use this reference when you need to build an update-store image, reason about
+rollback, inspect the on-disk format, or connect the operator commands to the
+kernel and loader implementation. Use [Update And Rollback Guide](UPDATE_GUIDE.md)
+for the day-to-day runbook.
 
-## Disk layout
+## Current Capability
 
-```text
-LBA 0      SWOSBOOT manifest, copy 0
-LBA 1      SWOSBOOT manifest, copy 1   (double-buffered; reader picks the valid
-                                        copy with the highest sequence number)
-LBA 2..7   reserved (manifest region padded to 4 KiB)
-LBA 8      slot 0 image  (a full signed SWOSBASE-v3 base image)
-LBA 8+|A|  slot 1 image
-```
+SwiftOS has two checked update planes:
 
-Each slot holds a complete base image — the same artifact `basepack` produces —
-so the kernel mounts and verifies a slot through the unchanged I8 path. The
-store tool neither signs nor hashes the slots; **slot authenticity rides on each
-image's own Ed25519 signature**.
+| Plane | Storage | Selector | Runtime commands | Current status |
+| --- | --- | --- | --- | --- |
+| Base image | Writable SWOSBOOT virtio-blk store | CRC-protected SWOSBOOT manifest, with signed SWOSBASE images in each slot | `swos-update`, `swos-activate`, `swos-confirm` | Staging, activation, health confirmation, boot-attempt rollback, and FLUSH-backed durability are implemented |
+| Kernel image | UEFI ESP under `\EFI\swift-os` | Signed `kernel-boot` metadata plus hash-protected `kernel-state` boot state | `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Signed manifest verification, in-place staging, activation, health confirmation, attempt counting, and rollback are implemented |
 
-## Manifest format (SWOSBOOT v1)
+The update store is a validation-grade product path, not a networked OTA
+service. Artifacts are built and signed on the host. The running OS can courier
+already-signed bytes into an inactive slot and update boot state, but it never
+signs new trusted code.
 
-Exactly one 512-byte sector, stored in two copies. All integers little-endian.
+## Guarantees
 
-```text
-0    u8[8]  magic = "SWOSBOOT"
-8    u32    version = 1
-12   u32    flags (reserved, 0)
-16   u32    slot_count (2)
-20   u32    active_slot   (0 or 1)
-24   u32    fallback_slot (0 or 1)
-28   u32    sequence      (monotonic; higher wins among valid copies)
-32   slot[0] (48 bytes)
-80   slot[1] (48 bytes)
-...  reserved zeros ...
-508  u32    crc32 over bytes [0, 508)
-```
+- Code integrity comes from signed artifacts: SWOSBASE v3 for base-image slots
+  and signed SWOSKERN v3 metadata plus slot hashes for kernel slots.
+- Mutable boot state is not a trust anchor. It can select among trusted slots,
+  record attempts, and mark health, but it cannot make an unsigned image valid.
+- Base-image manifest writes are double-buffered. The reader chooses the valid
+  copy with the highest sequence number, so an interrupted manifest write leaves
+  the previous copy usable.
+- Store writes are flushed with `VIRTIO_BLK_F_FLUSH` when available. The kernel
+  flushes staged slot bytes before publishing a manifest that points at them.
+- Trial slots roll back automatically after three unconfirmed boot attempts.
+- A confirmed slot stops accruing attempts and is not rolled back by the
+  attempt counter.
 
-Slot entry (48 bytes):
+## Base-Image Operator Flow
 
-```text
-+0   u32    present (1/0)
-+4   u32    state   (0 untried, 1 confirmed, 2 failed)   — boot-state, U1b
-+8   u64    base_lba         (sector offset of the slot's SWOSBASE image)
-+16  u64    length_sectors   (slot image length in sectors)
-+24  u32    generation
-+28  u32    attempt_count                                — boot-state, U1b
-+32  u8[16] reserved
-```
-
-The format core (parser + CRC32) is `kernel/fs/swosboot.swift`: I/O-free, no
-mutable global state, compiled into both the kernel (Embedded Swift) and the
-host tools/tests, so the bytes the host writes are exactly what the kernel
-parses. CRC32 is the IEEE 802.3 reflected variant (poly `0xEDB88320`); the
-canonical check value `crc32("123456789") == 0xCBF43926` is pinned by
-`tests/updatestore_test.swift`.
-
-## Trust boundary
-
-The manifest is **CRC32-protected, not signed**. The kernel holds only the
-*public* image-signing key, so it cannot sign the boot-state it will write at
-runtime (U1b). This is sound: the manifest is not a trust anchor — it only
-*selects among* self-authenticating signed images. A store-disk attacker can at
-worst point `active_slot` at the other (still-signed) slot or induce a boot
-loop, i.e. an availability/DoS concern, never a code-integrity bypass — a forged
-or tampered image still fails its Ed25519 verification at mount. This matches the
-trust posture the base-image disk already has.
-
-## Boot flow
-
-1. `virtioBlkInit` selects the disk, preferring a SWOSBOOT update-store disk over
-   a bare SWOSBASE base disk over the first block device.
-2. `updateStoreInit()` (called at the top of `vfsInit`) reads both manifest
-   copies, picks the valid one with the highest sequence, selects the active
-   slot, and points base-image reads at it (`virtioBlkSetBaseByteOffset`),
-   recording the fallback slot's offset.
-3. `vfsInit` mounts the active slot via the existing signed-image path. If the
-   active slot's image fails its Ed25519 signature or per-file content hash, the
-   kernel switches to the fallback slot (`virtioBlkUseFallbackBase`) and remounts
-   the known-good image.
-
-## Building a store image
+Build the base image and the host store builder:
 
 ```sh
-make updatestore
-build/updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image>
+make base-image updatestore
 ```
 
-For example, an active-slot-A store from the current base image:
+Create a two-slot store image. This example starts on slot A and uses the same
+signed image in both slots:
 
 ```sh
 build/updatestore build/store.img A build/base.img build/base.img
 ```
 
-Attach it to QEMU as a writable virtio-blk disk (no `readonly=on`):
+Attach the store as a writable virtio-blk disk:
 
 ```sh
 -drive file=build/store.img,format=raw,if=none,id=swosstore \
 -device virtio-blk-device,drive=swosstore
 ```
 
-`tests/ab_update_test.sh` exercises slot selection (A and B) and verified
-fallback (a tampered active slot rolls back to the known-good slot).
+For a target-side update, also attach a read-only payload disk containing a
+signed SWOSBASE v3 image. From a root shell in the guest:
 
-## Persistent boot-state (U1b)
+```sh
+swos-update
+swos-activate
+```
 
-The manifest is writable on disk. At boot, after selecting the active slot, the
-kernel increments that slot's `attempt_count`, bumps `sequence`, and writes the
-manifest to the *other* double-buffer copy (LBA 0 ↔ LBA 1). Because the reader
-always picks the valid copy with the highest sequence, a write interrupted
-mid-flight leaves the previous copy intact — torn-write safe without journaling.
-`virtioBlkWriteSector` issues a `VIRTIO_BLK_T_OUT` to the manifest's absolute LBA
-(outside the A/B slots, so it bypasses the slot offset). `tests/ab_persist_test.sh`
-boots the same store 3× and asserts the counter persists 1→2→3 across reboots.
+Reboot the same store disk. The newly activated slot boots on trial. If the
+system is healthy, confirm the slot:
 
-## Health-confirm (U1c)
+```sh
+swos-confirm
+```
 
-An operator confirms a freshly-activated slot healthy by running
-`/bin/swos-confirm` (capConsole-gated; root yes, guest EPERM). It calls
-`SYS_UPDATE_CONFIRM` (65) -> `updateStoreConfirm()`, which marks the slot booted
-this session (tracked in `updateStoreActiveSlot`) `CONFIRMED` and resets its
-attempt counter, persisted via the same double-buffered write-back. A CONFIRMED
-slot is trusted: `updateStoreInit` stops recording boot attempts for it and
-never rolls it back (see below). `tests/ab_confirm_test.sh` confirms a slot from
-a shell and verifies the state persists across a reboot with no new attempt
-recorded.
+If the trial slot fails signature or content verification, the kernel falls back
+to the known-good slot during mount. If the trial slot boots but is never
+confirmed, the boot-attempt counter reaches three and the next boot rolls back
+to the fallback slot.
 
-## Attempt-based rollback (U1d)
+## Kernel-Image Operator Flow
 
-`updateStoreInit` decides, before committing to a slot: if the active slot is not
-`CONFIRMED` and its `attempt_count` has reached `maxBootAttempts` (3) and a
-distinct present fallback exists, the slot is presumed unhealthy — it booted but
-was never confirmed. The kernel marks it `FAILED`, swaps active↔fallback in the
-manifest, and boots the fallback, persisting the swap with the same write-back.
-This is the "boots but never confirmed" failover; a bad *image* (signature or
-content verification failure) is caught earlier, at mount time in `vfsInit`
-(U1a). `tests/ab_rollback_test.sh` boots an unconfirmed slot until its attempts
-are exhausted and asserts the failover to the fallback persists across reboots.
+Kernel-image A/B is handled by the UEFI loader and the ESP. The signed
+`\EFI\swift-os\kernel-boot` file authenticates slot metadata and SHA-256 hashes
+for `kernelA.bin` and `kernelB.bin`. Mutable selection lives in
+`\EFI\swift-os\kernel-state`.
 
-The read + write + confirm + rollback halves of A/B are now complete.
+From a root shell in the guest, stage and activate the inactive kernel slot:
 
-## Promote the inactive slot (U1e)
+```sh
+swos-kstage
+swos-kactivate
+```
 
-`/bin/swos-activate` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_ACTIVATE` (66) -> `updateStoreActivateOther()`, which makes the
-inactive slot the active slot for the next boot (the current slot becomes the
-fallback) and marks it UNTRIED with its attempt counter reset, so it boots "on
-trial" under U1d's rollback. The full operator promotion workflow, for slots that
-already hold images: activate → reboot → boots on trial → `/bin/swos-confirm` if
-healthy, else attempt-based rollback returns to the fallback.
-`tests/ab_activate_test.sh` activates from a shell and verifies slot B is active
-and on trial after a reboot.
+Reboot the same writable UEFI disk. The loader reads `kernel-state`, selects the
+trial slot, verifies the selected kernel image against the signed manifest, and
+records a boot attempt. After a healthy boot, confirm the slot:
 
-## Update payload disk (U1f-1)
+```sh
+swos-kconfirm
+```
 
-The chosen image source for staging from a running system is a **read-only
-payload disk** — a second virtio-blk disk holding a signed SWOSBASE image,
-attached alongside the store. `virtioBlkInit` classifies every block device by
-its sector-0 magic and records such a disk as the payload (`blkPayloadDevice`);
-the shared hardware path reaches it by selecting between the store and the
-payload (`virtioBlkSelectPayload` / `virtioBlkReselectStore`), which is safe
-because I/O is serial on the one CPU. At boot `updateStorePayloadProbe()` reads
-the payload header and confirms it is a signed v3 base image.
-`tests/ab_payload_test.sh` covers discovery + read.
+An unconfirmed kernel slot rolls back after three attempts. `kernel-boot-alt` is
+no longer part of the current flow; activation updates `kernel-state` instead of
+rewriting the signed `kernel-boot` manifest.
 
-## Multi-sector transfers (U1f-2a)
+## Base-Image Store Layout
 
-The virtio-blk driver moved one 512-byte sector per request — too slow to copy a
-multi-MB image under TCG. U1f-2a adds a variable-length data descriptor so one
-request transfers up to 128 consecutive sectors (64 KiB) through a contiguous DMA
-region (`blkMultiBase`). `virtioBlkReadRange` (which backs every base-image read)
-now pulls whole sector runs per request; the base image's own Ed25519 signature
-and per-file content hashes end-to-end verify the path. New no-copy primitives
-(`virtioBlkFillMulti` / `virtioBlkFlushMulti`) let U1f-2b copy disk-to-disk
-through the driver's own buffer without an intermediate kernel copy.
-`tests/multisector_test.sh` proves byte-exact reads across the signed metadata, a
-payload file, and a ~1.1 MB busybox ELF.
+The SWOSBOOT disk is a raw virtio-blk image.
 
-## Stage the payload into the inactive slot (U1f-2b)
+```text
+LBA 0      SWOSBOOT manifest, copy 0
+LBA 1      SWOSBOOT manifest, copy 1
+LBA 2..7   reserved; manifest region padded to 4 KiB
+LBA 8      slot 0 image, a full signed SWOSBASE v3 base image
+LBA 8+|A|  slot 1 image, a full signed SWOSBASE v3 base image
+```
 
-`/bin/swos-update` (capConsole-gated; root yes, guest EPERM) calls
-`SYS_UPDATE_STAGE` (67) -> `updateStoreStagePayload()`, which copies the attached
-read-only payload disk (a signed SWOSBASE image, U1f-1) into the **inactive**
-slot. It reads the payload's header, requires a signed v3 image, and rejects one
-that is truncated on disk (EINVAL) or larger than the slot's `length_sectors`
-(EFBIG). The copy moves 64 KiB runs disk-to-disk through the driver's own
-multi-sector DMA buffer (U1f-2a's `virtioBlkFillMulti`/`FlushMulti`) with no
-intermediate kernel buffer, then marks the slot present + UNTRIED, attempts 0,
-generation++ via the same double-buffered write-back. It copies **bytes only** —
-the staged image's own Ed25519 signature is verified at the next boot's mount, so
-a corrupt payload simply fails on trial and rolls back (U1a/U1d) to the
-known-good slot.
+Each slot holds the same kind of artifact produced by `basepack`. The store tool
+does not sign or hash slot contents; slot authenticity comes from each image's
+own Ed25519 signature and per-file content hashes.
 
-The full operator update workflow is now: `swos-update` (stage) → `swos-activate`
-(promote) → reboot (boots on trial) → `swos-confirm` if healthy, else
-attempt-based rollback returns to the fallback. `tests/ab_stage_test.sh` stages a
-valid payload over a deliberately-corrupt inactive slot and asserts the slot
-verifies and boots after activate + reboot.
+`virtioBlkInit` prefers a SWOSBOOT store disk over a bare SWOSBASE disk when
+both are attached. If both manifest copies are invalid, `updateStoreInit()` logs
+the failure and leaves base reads at sector 0.
 
-## Durable writes via FLUSH (U1h)
+## SWOSBOOT Manifest Format
 
-The kernel negotiates `VIRTIO_BLK_F_FLUSH` at bring-up and calls
-`virtioBlkFlush()` (a `VIRTIO_BLK_T_FLUSH` request) after every commit:
-`updateStoreWriteBack` flushes the manifest sector (and fails the write-back if
-the flush is rejected), and `updateStoreStagePayload` flushes the staged slot
-data before pointing the manifest at it. Boot-state is therefore durable under a
-normal write-back cache, without depending on a `cache=writethrough` host
-backend. `updateStoreInit` logs "write durability via virtio FLUSH".
-`tests/ab_flush_test.sh` proves the path with the default write-back cache.
+The manifest is exactly one 512-byte sector, stored in two copies. All integers
+are little-endian.
 
-## Kernel-image A/B via the loader (U1g, in progress)
+```text
+0    u8[8]  magic = "SWOSBOOT"
+8    u32    version = 1
+12   u32    flags; reserved, zero
+16   u32    slot_count = 2
+20   u32    active_slot; 0 or 1
+24   u32    fallback_slot; 0 or 1
+28   u32    sequence; higher wins among valid copies
+32   slot[0]; 48 bytes
+80   slot[1]; 48 bytes
+...  reserved zeros
+508  u32    CRC32 over bytes [0, 508)
+```
 
-The base-image A/B above covers the userland/system image. The kernel image
-itself is A/B'd through the UEFI loader, which is being built in slices.
+Slot entry:
 
-- **U1g-1 (done):** the loader reads the kernel from a file on the ESP via
-  `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL` instead of an embedded blob, decoupling the
-  kernel image from the loader binary (a prerequisite for A/B). The embedded blob
-  remains as a fallback.
-- **U1g-2 (done):** the loader reads a **SWOSKERN** boot manifest
-  (`\EFI\swift-os\kernel-boot`: magic, version, default active/fallback slot,
-  generation) and loads the selected slot (`kernelA.bin` / `kernelB.bin`),
-  rolling back to the fallback slot when the active file is missing/unopenable.
-- **U1g-3a (done):** SWOSKERN **v2** carries each slot's SHA-256; the loader
-  hashes the loaded image and rolls back to the other slot on a mismatch
-  (integrity, catching a corrupt/truncated kernel). SHA-256 in the loader is
-  host-tested (`tests/loader_sha256_test.c`).
-- **U1g-3b (done):** SWOSKERN **v3** appends a 64-byte Ed25519 signature over the
-  manifest body; the loader verifies it against its compiled-in image-signing key
-  (`boot/efi/efi_pubkey.S`, the same root the kernel embeds) and honors the
-  manifest only if the signature is valid — otherwise it boots its own embedded
-  blob, never an attacker-chosen slot. Ed25519+SHA-512 verify in the loader is a
-  host-tested C port of the kernel's Swift crypto (`tests/loader_ed25519_test.c`,
-  RFC 8032 vectors). `tests/uefi_kernel_ab_test.sh` adds a tampered-signature case.
-  Signing stays host-side (`tools/kernelboot.swift`). The kernel-image A/B trust
-  chain (sign → verify → integrity → fallback) is complete.
+```text
++0   u32    present; 1 or 0
++4   u32    state; 0 untried, 1 confirmed, 2 failed
++8   u64    base_lba; sector offset of the slot's SWOSBASE image
++16  u64    length_sectors; slot capacity in sectors
++24  u32    generation
++28  u32    attempt_count
++32  u8[16] reserved
+```
 
-- **U1g-4a (done):** runtime-staging foundation. The ESP/GPT boot disk is now on
-  virtio-mmio (not PCI) so the running kernel can reach it; the virtio-blk scan
-  recognizes it by the "EFI PART" GPT magic, and `kernel/fs/esp.swift` parses the
-  GPT to locate the ESP partition at boot. Trust model decided: runtime staging
-  follows U1f's courier model (the OS writes pre-signed artifacts; it never signs).
-- **U1g-4b (done):** a minimal read-only FAT32 in `kernel/fs/esp.swift` (BPB,
-  cluster chains, LFN/8.3 directory walk) reads the signed `kernel-boot` manifest
-  off the ESP and reports the active slot — the read half of runtime staging.
-- **U1g-4c (done):** the FAT32 *write* half. `/bin/swos-kstage` (syscall 68,
-  capConsole) has the kernel copy the active kernel image over the inactive slot
-  in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
-  a bad write only spoils the inactive slot, which the loader's hash check rejects.
-- **U1g-4d (done):** the first activate flow. `/bin/swos-kactivate` (syscall 69,
-  capConsole) originally installed a pre-signed alternate manifest
-  (`kernel-boot-alt`, active = other slot, signed offline at build) over
-  `kernel-boot` on the ESP. U1g-5d retired this courier manifest; current
-  activation writes `kernel-state` instead.
+The shared parser, serializer, and CRC32 implementation live in
+`kernel/fs/swosboot.swift`. That file is I/O-free and is compiled into the
+kernel, host tool, and host tests. The CRC32 variant is IEEE 802.3 reflected
+polynomial `0xEDB88320`; `tests/updatestore_test.swift` pins the canonical
+`crc32("123456789") == 0xCBF43926` check.
 
-- **U1g-5a (done):** the writable boot-state half of the signed-selection split.
-  The loader records a per-slot boot-attempt counter in a hash-protected
-  `\EFI\swift-os\kernel-state` file (its first EFI write; self-managed, created on
-  first boot), persisted across reboots. Kernel images stay independently signed,
-  so the boot-state is only hash-guarded (torn-write protection), not signed.
-  `tests/uefi_kattempt_test.sh` asserts the counter persists 1→2→3.
+## Manifest Selection And Write-Back
 
-- **U1g-5b (done):** attempt-based kernel rollback (the U1d analogue). The loader
-  reads the boot-attempt counter; an unconfirmed active slot that has exhausted
-  its attempts (≥3) is presumed unhealthy → the loader boots the other slot and
-  marks the original FAILED, persisted. `tests/uefi_krollback_test.sh` drives slot
-  A to exhaustion and asserts the fail-over to slot B.
+At boot the kernel reads both manifest copies and chooses the valid copy with
+the highest sequence number.
 
-- **U1g-5c (done):** kernel-slot health confirmation (the U1c analogue).
-  `/bin/swos-kconfirm` (syscall 70, capConsole) has the running kernel read the
-  loader-managed `\EFI\swift-os\kernel-state`, mark the slot actually booted by
-  the loader `CONFIRMED`, reset its attempt counter, rehash the record, write it
-  in place through the FAT32 ESP writer, and flush it. `tests/uefi_kconfirm_test.sh`
-  confirms slot A and proves later boots stay on A with attempt 0 instead of
-  rolling back.
+When it must update boot state, the kernel serializes a fresh manifest and
+writes it to the other copy:
 
-- **U1g-5d (done):** mutable kernel active selection moved into
-  `kernel-state`. The signed `kernel-boot` manifest now authenticates slot hashes
-  and provides a default active slot; `/bin/swos-kactivate` updates the
-  hash-protected `kernel-state` active field, resets the target slot attempt
-  counter/state, and flushes it. `kernel-boot-alt` is no longer staged into the
-  ESP. `tests/uefi_kactivate_test.sh` proves the signed manifest remains active A
-  while the boot-state selects and boots slot B.
+```text
+chosen copy LBA 0 -> write LBA 1
+chosen copy LBA 1 -> write LBA 0
+```
 
-## Not implemented yet
+The updated manifest receives a new sequence number and CRC. A torn write leaves
+the older copy valid. After a successful write, the kernel issues a virtio-blk
+FLUSH when supported.
 
-- A real new-kernel *payload* source (today both kernel slots are the same build).
-- Key rotation / revocation.
+The manifest is CRC-protected, not signed. This is deliberate. The kernel only
+has the public image-signing key, so it cannot sign mutable boot state at
+runtime. A modified manifest can at worst choose another already-signed slot or
+cause an availability failure; it cannot make forged code pass signature
+verification.
+
+## Base-Image Boot Flow
+
+1. `virtioBlkInit` classifies attached block devices and selects the SWOSBOOT
+   store when present.
+2. `updateStoreInit()` reads both manifest copies and chooses the newest valid
+   copy.
+3. If the active slot is unconfirmed and its `attempt_count` is already three or
+   higher, the kernel marks it failed, swaps active and fallback, and persists
+   the rollback.
+4. The kernel points base-image reads at the selected slot with
+   `virtioBlkSetBaseByteOffset`.
+5. If a distinct fallback slot is present, the kernel records its byte offset.
+6. `vfsInit` mounts the selected SWOSBASE image through the normal signed-image
+   path.
+7. If the selected image fails Ed25519 or content-hash verification, `vfsInit`
+   switches to the fallback slot and retries the mount.
+8. If the selected slot is not confirmed, the kernel records one boot attempt
+   and persists it through the double-buffered manifest write-back.
+
+## Base-Image Runtime Commands
+
+The base-image commands require `capConsole` and are normally run as `root`.
+
+| Command | Syscall | Effect | Success line | Coverage |
+| --- | --- | --- | --- | --- |
+| `swos-update` | `SYS_UPDATE_STAGE` 67 | Copy the attached signed SWOSBASE payload disk into the inactive slot, mark it present and untried, and bump its generation | `swos-update: payload staged into the inactive slot; run swos-activate then reboot` | `tests/ab_stage_test.sh` |
+| `swos-activate` | `SYS_UPDATE_ACTIVATE` 66 | Promote the inactive slot for the next boot and make the current slot the fallback | `swos-activate: inactive slot activated (on trial); reboot to use it` | `tests/ab_activate_test.sh` |
+| `swos-confirm` | `SYS_UPDATE_CONFIRM` 65 | Mark the slot booted this session confirmed and reset its attempt counter | `swos-confirm: active slot confirmed healthy` | `tests/ab_confirm_test.sh` |
+
+`swos-update` copies bytes only. It validates that the payload disk contains a
+signed SWOSBASE v3 header and that the image fits the inactive slot, but the
+staged image is fully verified on the next boot. A corrupt staged payload should
+therefore fail safely during the trial boot.
+
+## Payload Disk Rules
+
+The payload disk is a separate read-only virtio-blk disk. It is attached beside
+the writable store.
+
+At boot, `updateStorePayloadProbe()` reports whether the payload disk contains a
+signed SWOSBASE v3 image. During `swos-update`, the kernel copies the payload
+into the inactive slot using the virtio-blk multi-sector path:
+
+- up to 128 sectors per request, or 64 KiB per transfer
+- no intermediate heap buffer
+- payload disk selected for reads, store disk reselected for writes
+- FLUSH after staged slot data, before the manifest points at it
+
+Expected error cases:
+
+| Condition | Result |
+| --- | --- |
+| No update-store boot | `ENODEV` |
+| No payload disk | `ENODEV` |
+| Payload is not signed SWOSBASE v3 | `EINVAL` |
+| Payload is truncated on disk | `EINVAL` |
+| Payload is larger than the inactive slot | `EFBIG` |
+| Disk read, write, verify, or flush failure | `EIO` |
+
+## Kernel-Image ESP Format
+
+Kernel-image A/B lives under the ESP directory `\EFI\swift-os`:
+
+```text
+\EFI\swift-os\kernelA.bin
+\EFI\swift-os\kernelB.bin
+\EFI\swift-os\kernel-boot
+\EFI\swift-os\kernel-state
+```
+
+`kernel-boot` is a signed SWOSKERN v3 manifest built by `tools/kernelboot.swift`:
+
+```text
+0    u8[8]  magic = "SWOSKERN"
+8    u32    version = 3
+12   u32    default active slot; 0 or 1
+16   u32    default fallback slot; 0 or 1
+20   u32    generation
+24   u64    slot A byte size
+32   u8[32] slot A SHA-256
+64   u64    slot B byte size
+72   u8[32] slot B SHA-256
+104  u8[64] Ed25519 signature over bytes [0, 104)
+```
+
+The loader ignores unsigned or badly signed manifests and boots its embedded
+fallback kernel blob instead of trusting attacker-chosen slot metadata.
+
+`kernel-state` is a self-managed 512-byte loader record:
+
+```text
+0    u8[8]  magic = "SWOSKSTA"
+8    u32    version = 1
+12   u32    sequence
+16   u32    attempt A
+20   u32    attempt B
+24   u32    state A; 0 untried, 1 confirmed, 2 failed
+28   u32    state B; 0 untried, 1 confirmed, 2 failed
+32   u32    last booted slot, or 0xFFFFFFFF
+36   u32    active slot, or 0xFFFFFFFF to use `kernel-boot` default
+40..479     reserved
+480  u8[32] SHA-256 over bytes [0, 480)
+```
+
+`kernel-state` is not signed. The SHA-256 protects against torn or garbage
+writes; the selected kernel image is still checked against the signed
+`kernel-boot` hashes before handoff.
+
+## Kernel-Image Runtime Commands
+
+The kernel-image commands require `capConsole` and a writable UEFI ESP disk.
+
+| Command | Syscall | Effect | Success line | Coverage |
+| --- | --- | --- | --- | --- |
+| `swos-kstage` | `SYS_KERNEL_STAGE` 68 | Copy the active ESP kernel image into the inactive kernel slot in place and verify the copy | `swos-kstage: active kernel image staged into the inactive ESP slot (verified)` | `tests/uefi_kstage_test.sh` |
+| `swos-kactivate` | `SYS_KERNEL_ACTIVATE` 69 | Set the inactive slot as active in `kernel-state`, reset its attempt counter, and mark it untried | `swos-kactivate: inactive kernel slot activated; reboot to use it` | `tests/uefi_kactivate_test.sh` |
+| `swos-kconfirm` | `SYS_KERNEL_CONFIRM` 70 | Mark the kernel slot booted by the loader confirmed in `kernel-state` | `swos-kconfirm: booted kernel slot confirmed healthy` | `tests/uefi_kconfirm_test.sh` |
+
+The loader owns attempt counting and rollback. On each boot it reads
+`kernel-state`, resolves the active slot, applies the three-attempt rollback
+rule, verifies the selected kernel file against the signed manifest hash, writes
+back boot state, and then hands off to the kernel.
+
+## Verification Matrix
+
+Run the narrowest relevant proof for the area you changed.
+
+| Area | Command |
+| --- | --- |
+| SWOSBOOT parser, serializer, CRC32 | Targeted host check below; `make test` also runs it |
+| Host store builder | `make updatestore` |
+| Base slot selection and bad-image fallback | `./tests/ab_update_test.sh` |
+| Persistent boot-attempt write-back | `./tests/ab_persist_test.sh` |
+| Base health confirmation | `./tests/ab_confirm_test.sh` |
+| Base attempt-based rollback | `./tests/ab_rollback_test.sh` |
+| Base slot activation | `./tests/ab_activate_test.sh` |
+| Payload disk discovery | `./tests/ab_payload_test.sh` |
+| Multi-sector disk reads | `./tests/multisector_test.sh` |
+| Payload staging into inactive base slot | `./tests/ab_stage_test.sh` |
+| FLUSH-backed durability | `./tests/ab_flush_test.sh` |
+| Signed kernel manifest, slot hashes, loader fallback | `./tests/uefi_kernel_ab_test.sh` |
+| Kernel slot staging | `./tests/uefi_kstage_test.sh` |
+| Kernel active-slot selection | `./tests/uefi_kactivate_test.sh` |
+| Kernel attempt persistence | `./tests/uefi_kattempt_test.sh` |
+| Kernel health confirmation | `./tests/uefi_kconfirm_test.sh` |
+| Kernel attempt-based rollback | `./tests/uefi_krollback_test.sh` |
+
+For documentation-only changes, always run:
+
+```sh
+make docs-test
+```
+
+For a host-only SWOSBOOT format check:
+
+```sh
+/usr/bin/swiftc tests/updatestore_test.swift kernel/fs/swosboot.swift -o build/updatestore_test
+build/updatestore_test
+```
+
+## Troubleshooting
+
+`swos-update` returns `ENODEV`.
+
+: Booted without a SWOSBOOT store, without the payload disk, or from a profile
+  that did not classify those virtio-blk devices. Rebuild `build/updatestore`,
+  attach the writable store, and attach a signed SWOSBASE payload disk.
+
+`swos-update` returns `EINVAL`.
+
+: The payload disk is not a signed SWOSBASE v3 image, or the disk is shorter
+  than the length advertised by its header.
+
+`swos-update` returns `EFBIG`.
+
+: The payload image is larger than the inactive slot. Recreate the store with
+  larger slot images so the inactive slot has enough sector capacity.
+
+The base image keeps rolling back.
+
+: The trial slot either fails signed-image verification or boots but is never
+  confirmed. Run `swos-confirm` only after the trial boot is healthy.
+
+`swos-kactivate` appears to succeed, but the next boot stays on the same kernel.
+
+: Reboot the same writable UEFI disk image. Activation is stored in
+  `\EFI\swift-os\kernel-state`; booting a fresh disk image discards that state.
+
+The loader ignores `kernel-boot`.
+
+: The manifest is absent, malformed, not version 3, or has an invalid Ed25519
+  signature. The safe behavior is to boot the loader's embedded kernel blob
+  instead of trusting unverified slot metadata.
+
+## Current Limits
+
+- There is no network OTA service or target-side downloader.
+- There is no target-side signer. Signing remains a host/release operation.
+- Kernel runtime staging currently copies the active kernel image into the
+  inactive slot; a real new-kernel payload source is still future work.
+- Key rotation and revocation are not implemented yet.
+- The package manager has its own package-store and repository formats; package
+  transaction rollback is separate from this whole-image A/B path.
+- The writable root remains RAM-backed. `/tmp` does not survive reboot.
+
+## Source Of Truth
+
+- Base-image manifest format: `kernel/fs/swosboot.swift`
+- Base-image kernel I/O glue: `kernel/fs/updatestore.swift`
+- Store builder: `tools/updatestore.swift`
+- Kernel manifest builder: `tools/kernelboot.swift`
+- UEFI loader selection and kernel-state write-back: `boot/efi/loader.c`
+- Runtime ESP staging and confirmation: `kernel/fs/esp.swift`
+- User commands: `userland/swos-update.swift`, `userland/swos-activate.swift`,
+  `userland/swos-confirm.swift`, `userland/swos-kstage.swift`,
+  `userland/swos-kactivate.swift`, `userland/swos-kconfirm.swift`
