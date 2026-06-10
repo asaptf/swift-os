@@ -17,9 +17,6 @@
 // maintenance go through the io.h C bridge; under TCG the clean/invalidate are
 // effectively no-ops, under a caching accelerator they are not.
 
-private let KBD_MMIO_BASE: UInt   = 0x0A00_0000
-private let KBD_MMIO_STRIDE: UInt = 0x200
-private let KBD_MMIO_COUNT = 32
 private let VIRTIO_ID_INPUT: UInt32 = 18
 
 // virtio-mmio register offsets.
@@ -76,6 +73,37 @@ private var kbdDbgVersion: UInt32 = 0
 private var kbdKm = [UInt8](repeating: 0, count: 128)
 private var kbdKmShift = [UInt8](repeating: 0, count: 128)
 private var kbdKmReady = false
+
+struct VirtioInputGrantDiscovery {
+    var found = false
+    var mmioBase: UInt = 0
+    var mmioLen: UInt = 0
+    var slot: UInt32 = 0
+    var version: UInt32 = 0
+}
+
+private func virtioInputFindMmio() -> VirtioInputGrantDiscovery {
+    var out = VirtioInputGrantDiscovery()
+    var i: UInt32 = 0
+    while i < platform.virtioMmioCount {
+        let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
+        if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
+           mmio_read32(m + R_DEVID) == VIRTIO_ID_INPUT {
+            out.found = true
+            out.mmioBase = m
+            out.mmioLen = platform.virtioMmioStride
+            out.slot = i
+            out.version = mmio_read32(m + R_VERSION)
+            return out
+        }
+        i += 1
+    }
+    return out
+}
+
+func virtioInputDiscoverGrant() -> VirtioInputGrantDiscovery {
+    virtioInputFindMmio()
+}
 
 private func kbdFillKeymaps() {
     if kbdKmReady { return }
@@ -168,19 +196,11 @@ private func kbdPushSeq(_ s: StaticString) {
 // version*1000 + queue_size once the queue is up.
 func virtioKbdInit() -> Int32 {
     kbdMmio = 0
-    var found: UInt = 0
-    var i = 0
-    while i < KBD_MMIO_COUNT {
-        let m = KBD_MMIO_BASE + UInt(i) * KBD_MMIO_STRIDE
-        i += 1
-        if mmio_read32(m + R_MAGIC) != VIRTIO_MAGIC { continue }
-        if mmio_read32(m + R_DEVID) != VIRTIO_ID_INPUT { continue }
-        found = m
-        break
-    }
-    if found == 0 { return 0 }
+    let grant = virtioInputFindMmio()
+    if !grant.found { return 0 }
+    let found = grant.mmioBase
     kbdMmio = found
-    kbdDbgVersion = mmio_read32(found + R_VERSION)
+    kbdDbgVersion = grant.version
 
     if kbdRingBase == 0 {
         let r = pmm_alloc_page()

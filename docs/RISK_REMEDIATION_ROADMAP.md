@@ -313,6 +313,24 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   registry entry with real device discovery/manifest matching and then begin
   moving a non-boot-critical driver out of the kernel.
 
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
+
+- The device registry now prefers a discovered `virtio-input.0` grant when the
+  QEMU virtio-mmio input transport is present. The registry records the
+  transport window, bus/kind metadata, and `DISCOVERED`/`NO_MMIO_GRANT` flags.
+- Headless direct boots without a keyboard device keep `pseudo-input.0` as a
+  fallback so the C5 supervisor/lifecycle path remains executable.
+- `/bin/drvsvcdemo` first claims `virtio-input.0`, validates the manifest
+  metadata, transfers it to `/bin/drvinputd`, proves busy/reclaim behavior, and
+  emits `C5c OK: virtio-input device grant discovered and matched`. The service
+  validates the same metadata before acknowledging the handoff.
+- `make c5-device-discovery-test` attaches QEMU `virtio-keyboard-device` and
+  runs the focused `-smp 4` acceptance gate.
+- Non-goals: C5c still does not grant userland MMIO mappings, IRQ endpoints, or
+  DMA windows, and the in-kernel virtio-input path still owns the actual input
+  queue. The next C5 slice should decide the first real hardware authority
+  grant and driver replacement boundary.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

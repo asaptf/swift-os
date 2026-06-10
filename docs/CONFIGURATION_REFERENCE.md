@@ -129,7 +129,8 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make smp-release-guard` | Run static SMP release-readiness contract checks. |
 | `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
-| `make c5-driver-service-test` | Run the C5a driver-service supervisor smoke under `-smp 4`. |
+| `make c5-driver-service-test` | Run the C5 driver-service/device-discovery smoke under `-smp 4`. |
+| `make c5-device-discovery-test` | Alias for the focused C5c virtio-input discovery and grant handoff gate. |
 | `make s0-test` | Run the S0 SMP readiness gate. |
 | `make s1-test` | Run the Phase 1 SMP readiness gate. |
 | `make newlib` | Build the local newlib sysroot. |
@@ -355,7 +356,7 @@ Most acceptance tests accept a small set of environment overrides.
 | `LLVM_OBJDUMP` | SMP object-layout tests | Select `llvm-objdump` |
 | `FDT_TEST` | SMP S1 preflight | Reuse a prebuilt FDT test binary |
 | `SMP_CPUS` | SMP and UEFI tests | Select CPU count, usually 1 to 8 |
-| `SMP_DTB` | SMP and C5a driver-service tests | Provide a prebuilt SMP DTB |
+| `SMP_DTB` | SMP and C5 driver-service/device-discovery tests | Provide a prebuilt SMP DTB |
 | `SMP_HEADROOM_CPUS` | SMP headroom test | Space-separated CPU counts to probe |
 | `SMP_S1_PREFLIGHT_CPUS` | SMP S1 preflight | Space-separated CPU counts to validate |
 | `UEFI_BOOT` | UEFI boot test | Select `disk` or `fat` boot mode |
@@ -479,7 +480,7 @@ make package-overlay-test
 | Static-host or hosted package repository | `make package-static-host-repo-install-test`, `make ports-hosted-url-verify-test`, or `make package-static-host-dns-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test` or the milestone-specific SMP target |
-| C5a driver-service supervisor path | `make c5-driver-service-test` |
+| C5 driver-service/device-discovery path | `make c5-device-discovery-test` |
 | Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this

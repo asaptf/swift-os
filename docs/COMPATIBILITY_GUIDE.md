@@ -30,7 +30,7 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
-| Driver-service model | C5a pseudo driver-service supervisor smoke over endpoint IPC |
+| Driver-service model | C5 supervisor, opaque device handle, and virtio-input discovery smoke over endpoint IPC |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
@@ -80,7 +80,7 @@ compatibility is not a goal.
 | PC BIOS boot | Not supported |
 | ACPI-first server hardware | Not supported |
 | Production SMP load balancing | Not a product contract yet; use current SMP tests for readiness only |
-| Real userland driver handoff | Not supported yet; C5a is a pseudo service/supervisor smoke only |
+| Real userland driver handoff | Not supported yet; C5c matches discovered virtio-input metadata but does not grant MMIO/IRQ/DMA ownership |
 
 Example primary boot:
 
@@ -461,9 +461,10 @@ Yes, with a virtio-net boot profile and `capNet`. Current examples are
 
 ### Can I run userland drivers?
 
-Not real hardware drivers yet. C5a proves the supervisor and endpoint IPC shape
-with `/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
-virtio-input ownership are still roadmap work.
+Not real hardware drivers yet. C5a/C5b/C5c prove the supervisor, endpoint IPC,
+opaque device handle, and discovered virtio-input manifest shape with
+`/bin/drvsvcdemo` and `/bin/drvinputd`, but real MMIO, IRQ, DMA, and
+virtio-input queue ownership are still roadmap work.
 
 ### Can I use TLS for production trust decisions?
 
@@ -493,7 +494,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
-| Driver-service supervisor smoke | `make c5-driver-service-test` |
+| Driver-service/device-discovery smoke | `make c5-device-discovery-test` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP run-any placement | `make s5-run-any-placement-test` |

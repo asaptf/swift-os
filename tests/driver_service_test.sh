@@ -41,6 +41,7 @@ if [[ -f "$DTB" ]]; then
 fi
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase
+  -device virtio-keyboard-device
   -kernel "$KERNEL")
 
 "${qemu_args[@]}" >"$LOG" 2>&1 &
@@ -53,13 +54,17 @@ drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
 drvsvc: C5b device grant claimed
+drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
+drvinputd: C5c virtio-input grant accepted
 drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
 drvsvc: C5b device grant reclaimed
+drvsvc: C5c virtio-input grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
+C5c OK: virtio-input device grant discovered and matched
 C5a driver service demo exited, code 0}"
 
 FORBIDS="${FORBIDS:-panic:
@@ -113,7 +118,7 @@ while (( SECONDS < deadline )); do
       grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
     done <<<"$FORBIDS"
     if [[ "$ok" -eq 1 ]]; then
-      echo "PASS: C5 restartable driver-service/device-handle boot smoke passed under -smp $SMP_CPU_COUNT"
+      echo "PASS: C5 restartable driver-service/device-discovery boot smoke passed under -smp $SMP_CPU_COUNT"
       exit 0
     fi
     echo "--- serial tail ---" >&2

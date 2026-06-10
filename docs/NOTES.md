@@ -1670,6 +1670,29 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   virtio-input device claim, manifest matching, or driver replacement. C5b only
   makes the ownership/transfer/release contract executable.
 
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
+
+- **Discovery-backed registry.** The VFS device registry now probes the
+  platform virtio-mmio window for device id 18 and registers `virtio-input.0`
+  when a QEMU virtio-input transport is present. The grant metadata records
+  `SWIFTOS_DEVICE_KIND_VIRTIO_INPUT`, `SWIFTOS_DEVICE_BUS_VIRTIO_MMIO`, the
+  transport MMIO base/length, and `DISCOVERED | NO_MMIO_GRANT`.
+- **Headless fallback.** Direct serial boots that do not attach a keyboard
+  device still register `pseudo-input.0`, so the C5 supervisor and lifecycle
+  smoke remains part of the broad boot path.
+- **Supervisor/service manifest check.** `/bin/drvsvcdemo` prefers
+  `virtio-input.0`, validates the manifest fields, transfers the device handle
+  to `/bin/drvinputd`, proves the grant is busy while the service owns it, and
+  reclaims it after service exit. `/bin/drvinputd` validates the same manifest
+  before acknowledging. The focused path emits
+  `C5c OK: virtio-input device grant discovered and matched`.
+- **Executable checks.** `make c5-device-discovery-test` attaches QEMU
+  `virtio-keyboard-device` and runs the C5 gate under `-smp 4`; the ordinary
+  `boot_test.sh` still covers the pseudo fallback.
+- **Non-goals.** C5c still grants only `getattr + transfer`. No userland MMIO
+  map syscall, IRQ endpoint, DMA window, or replacement of the in-kernel
+  virtio-input queue owner lands in this slice.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

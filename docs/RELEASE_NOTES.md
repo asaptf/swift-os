@@ -24,7 +24,7 @@ service-oriented.
 | Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
 | Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the P6 Lua ports recipe/cross-build/repository scaffold |
 | AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
-| Driver services | C5a supervisor/service smoke plus C5b opaque device-handle handoff over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
+| Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c virtio-input discovery/manifest matching over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
 
@@ -201,10 +201,10 @@ llmd: served
   large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
-- Many drivers and the network stack still live in the kernel. C5a/C5b prove the
-  supervisor/service IPC shape and opaque device-handle ownership transfer; real
-  restartable userland driver services with MMIO/IRQ/DMA authority are still
-  roadmap work.
+- Many drivers and the network stack still live in the kernel. C5a/C5b/C5c prove
+  the supervisor/service IPC shape, opaque device-handle ownership transfer, and
+  discovered virtio-input manifest matching; real restartable userland driver
+  services with MMIO/IRQ/DMA authority are still roadmap work.
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.

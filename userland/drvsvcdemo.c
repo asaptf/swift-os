@@ -24,6 +24,22 @@ static int cstr_eq(const char *a, const char *b) {
     return a[i] == b[i];
 }
 
+static void cstr_copy(char *dst, const char *src, int cap) {
+    int i = 0;
+    while (i + 1 < cap && src[i] != 0) {
+        dst[i] = src[i];
+        i += 1;
+    }
+    dst[i] = 0;
+}
+
+struct device_expect {
+    char name[24];
+    int real;
+};
+
+static int c5c_real_device_seen = 0;
+
 static void u32_to_str(int v, char out[12]) {
     char tmp[12];
     int n = 0;
@@ -56,29 +72,59 @@ static int expect_msg(int fd, const char *want, int len, const char *fail) {
     return 1;
 }
 
-static int valid_device_info(const struct swiftos_device_info *info) {
+static int valid_device_info(const struct swiftos_device_info *info, int real) {
+    if (info->claimed != 1) { return 0; }
+    if ((info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) { return 0; }
+    if (real) {
+        return info->kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+               info->bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
+               info->mmio_base != 0 &&
+               info->mmio_len != 0 &&
+               (info->flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0 &&
+               cstr_eq(info->name, "virtio-input.0");
+    }
     return info->kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
            info->mmio_base == 0 &&
            info->mmio_len == 0 &&
-           (info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
-           info->claimed == 1 &&
            cstr_eq(info->name, "pseudo-input.0");
 }
 
-static int run_device_handoff(int command_fd, int event_fd) {
+static int claim_input_device(struct swiftos_device_info *info, struct device_expect *expect) {
+    int dev_fd = device_claim("virtio-input.0", info);
+    if (dev_fd >= 0) {
+        cstr_copy(expect->name, "virtio-input.0", sizeof(expect->name));
+        expect->real = 1;
+        return dev_fd;
+    }
+    if (dev_fd != -2) {
+        return dev_fd;
+    }
+    dev_fd = device_claim("pseudo-input.0", info);
+    if (dev_fd >= 0) {
+        cstr_copy(expect->name, "pseudo-input.0", sizeof(expect->name));
+        expect->real = 0;
+    }
+    return dev_fd;
+}
+
+static int run_device_handoff(int command_fd, int event_fd, struct device_expect *expect) {
     struct swiftos_device_info info;
-    int dev_fd = device_claim("pseudo-input.0", &info);
+    int dev_fd = claim_input_device(&info, expect);
     if (dev_fd < 0) {
         puts_raw("drvsvc: device claim failed\n");
         return 0;
     }
-    if (!valid_device_info(&info)) {
+    if (!valid_device_info(&info, expect->real)) {
         close(dev_fd);
         puts_raw("drvsvc: device info mismatch\n");
         return 0;
     }
     puts_raw("drvsvc: C5b device grant claimed\n");
+    if (expect->real) {
+        c5c_real_device_seen = 1;
+        puts_raw("drvsvc: C5c virtio-input grant matched\n");
+    }
 
     int dup_fd = dup(dev_fd);
     if (dup_fd != -13) {
@@ -105,7 +151,7 @@ static int run_device_handoff(int command_fd, int event_fd) {
         return 0;
     }
 
-    int busy_fd = device_claim("pseudo-input.0", &info);
+    int busy_fd = device_claim(expect->name, &info);
     if (busy_fd != -16) {
         if (busy_fd >= 0) { close(busy_fd); }
         puts_raw("drvsvc: busy claim failed\n");
@@ -115,20 +161,23 @@ static int run_device_handoff(int command_fd, int event_fd) {
     return 1;
 }
 
-static int verify_device_reclaimed(void) {
+static int verify_device_reclaimed(const struct device_expect *expect) {
     struct swiftos_device_info info;
-    int fd = device_claim("pseudo-input.0", &info);
+    int fd = device_claim(expect->name, &info);
     if (fd < 0) {
         puts_raw("drvsvc: reclaim claim failed\n");
         return 0;
     }
-    if (!valid_device_info(&info)) {
+    if (!valid_device_info(&info, expect->real)) {
         close(fd);
         puts_raw("drvsvc: reclaim info mismatch\n");
         return 0;
     }
     close(fd);
     puts_raw("drvsvc: C5b device grant reclaimed\n");
+    if (expect->real) {
+        puts_raw("drvsvc: C5c virtio-input grant reclaimed\n");
+    }
     return 1;
 }
 
@@ -189,8 +238,12 @@ static int run_generation(int gen) {
     puts_raw(gen == 1 ? "drvsvc: generation 1 event\n"
                       : "drvsvc: generation 2 event\n");
 
+    struct device_expect expect;
+    expect.name[0] = 0;
+    expect.real = 0;
     if (gen == 2 && !run_device_handoff(supervisor_to_service[0],
-                                        service_to_supervisor[1])) {
+                                        service_to_supervisor[1],
+                                        &expect)) {
         return 0;
     }
 
@@ -207,7 +260,7 @@ static int run_generation(int gen) {
     puts_raw(gen == 1 ? "drvsvc: generation 1 stopped\n"
                       : "drvsvc: generation 2 stopped\n");
 
-    if (gen == 2 && !verify_device_reclaimed()) {
+    if (gen == 2 && !verify_device_reclaimed(&expect)) {
         return 0;
     }
 
@@ -222,5 +275,8 @@ int main(void) {
     if (!run_generation(2)) { return 1; }
     puts_raw("C5a OK: restartable driver service recovered over IPC\n");
     puts_raw("C5b OK: opaque device handle transferred and released\n");
+    if (c5c_real_device_seen) {
+        puts_raw("C5c OK: virtio-input device grant discovered and matched\n");
+    }
     return 0;
 }
