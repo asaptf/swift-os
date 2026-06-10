@@ -370,6 +370,117 @@ private func checkExampleVerificationCoverage() {
     finishCurrent(at: lines.count + 1)
 }
 
+private func makeTargetNames() -> Set<String> {
+    let path = "Makefile"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let targetRegex = try! NSRegularExpression(pattern: #"^([A-Za-z0-9_.-]+):"#)
+    var targets = Set<String>()
+    for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = String(rawLine)
+        if line.hasPrefix(".PHONY:") {
+            for target in line.dropFirst(".PHONY:".count).split(separator: " ") {
+                targets.insert(String(target))
+            }
+            continue
+        }
+        if let groups = firstMatchGroups(targetRegex, in: line, groupCount: 1) {
+            targets.insert(groups[0])
+        }
+    }
+    if targets.isEmpty {
+        fail("\(path): no make targets found")
+        ok = false
+    }
+    return targets
+}
+
+private func validateExampleVerificationCommand(_ line: String,
+                                                lineNumber: Int,
+                                                makeTargets: Set<String>) {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    if trimmed.isEmpty || trimmed.hasPrefix("#") {
+        return
+    }
+
+    let tokens = trimmed.split { $0 == " " || $0 == "\t" }.map(String.init)
+    var index = 0
+    while index < tokens.count &&
+          tokens[index].contains("=") &&
+          !tokens[index].hasPrefix("./") {
+        index += 1
+    }
+    guard index < tokens.count else { return }
+
+    let command = tokens[index]
+    if command == "make" {
+        for arg in tokens.dropFirst(index + 1) {
+            if arg.hasPrefix("-") || arg.contains("=") {
+                continue
+            }
+            if !makeTargets.contains(arg) {
+                fail("docs/EXAMPLES.md:\(lineNumber): unknown make target `\(arg)` in verification block")
+                ok = false
+            }
+        }
+        return
+    }
+
+    if command.hasPrefix("./tests/") {
+        if !FileManager.default.fileExists(atPath: String(command.dropFirst(2))) {
+            fail("docs/EXAMPLES.md:\(lineNumber): missing verification script `\(command)`")
+            ok = false
+        }
+        return
+    }
+
+    fail("docs/EXAMPLES.md:\(lineNumber): verification command should be `make ...` or `./tests/...`, got `\(command)`")
+    ok = false
+}
+
+private func checkExampleVerificationCommandCoverage() {
+    let path = "docs/EXAMPLES.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var pendingVerificationFence = false
+    var inVerificationFence = false
+
+    for (index, line) in lines.enumerated() {
+        if line == "Verification:" ||
+            line == "Equivalent automated check:" ||
+            line == "Automated checks:" {
+            pendingVerificationFence = true
+            continue
+        }
+
+        if line.hasPrefix("```") {
+            if inVerificationFence {
+                inVerificationFence = false
+                continue
+            }
+            if pendingVerificationFence {
+                inVerificationFence = true
+                pendingVerificationFence = false
+                continue
+            }
+        }
+
+        if inVerificationFence {
+            validateExampleVerificationCommand(line, lineNumber: index + 1, makeTargets: makeTargets)
+        }
+    }
+}
+
 private func stagedBaseCommands() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -612,6 +723,7 @@ checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkReadmeDocumentationFrontDoorCoverage()
 checkExampleVerificationCoverage()
+checkExampleVerificationCommandCoverage()
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
 checkPortRecipeDocumentationCoverage()
