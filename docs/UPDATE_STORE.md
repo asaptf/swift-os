@@ -277,10 +277,17 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   marks the original FAILED, persisted. `tests/uefi_krollback_test.sh` drives slot
   A to exhaustion and asserts the fail-over to slot B.
 
+- **U1g-5c (done):** kernel-slot health confirmation (the U1c analogue).
+  `/bin/swos-kconfirm` (syscall 70, capConsole) has the running kernel read the
+  loader-managed `\EFI\swift-os\kernel-state`, mark the slot actually booted by
+  the loader `CONFIRMED`, reset its attempt counter, rehash the record, write it
+  in place through the FAT32 ESP writer, and flush it. `tests/uefi_kconfirm_test.sh`
+  confirms slot A and proves later boots stay on A with attempt 0 instead of
+  rolling back.
+
 ## Not implemented yet
 
-- U1g-5c: `/bin/swos-kconfirm` (mark booted slot CONFIRMED so it stops accruing
-  attempts) + move `active` into the writable boot-state (so activate needs no
-  pre-signed alternate manifest).
+- Move `active` into the writable boot-state, so activate needs no pre-signed
+  alternate manifest.
 - A real new-kernel *payload* source (today both kernel slots are the same build).
 - Key rotation / revocation.

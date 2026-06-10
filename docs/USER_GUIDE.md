@@ -155,7 +155,7 @@ Common native Swift tools:
 | `llm`, `llmd` | Native Swift TinyStories inference demo and HTTP serving daemon |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
 | `swos-update`, `swos-activate`, `swos-confirm` | Checked base-image A/B update-store commands |
-| `swos-kstage`, `swos-kactivate` | Checked UEFI ESP kernel-slot commands |
+| `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Checked UEFI ESP kernel-slot commands |
 | `threadsdemo`, `mmapdemo` | Runtime and VM demos |
 
 Busybox is staged as `/bin/busybox` and is used for the login shell. It is a
@@ -389,13 +389,15 @@ UEFI ESP kernel-slot commands:
 ```sh
 swos-kstage
 swos-kactivate
+swos-kconfirm
 ```
 
 `swos-kstage` copies and verifies the active ESP kernel image into the inactive
 kernel slot. `swos-kactivate` installs the pre-signed alternate kernel manifest
-for the next boot. The loader also records a per-slot boot-attempt counter in
-`kernel-state`; unconfirmed kernel slots roll back after the checked attempt
-window. Kernel-slot health confirmation (`swos-kconfirm`) remains future work.
+for the next boot. After the trial boot is healthy, `swos-kconfirm` marks the
+booted kernel slot confirmed in `kernel-state` so its attempt counter resets and
+it is not rolled back. Unconfirmed kernel slots still roll back after the checked
+attempt window.
 
 All `swos-*` update commands require privileged update authority through the
 current `capConsole` path. The focused acceptance gates are in

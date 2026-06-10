@@ -68,6 +68,9 @@ int  swiftos_kernel_stage(void);
 // U1g-4d: flip the active kernel slot via the pre-signed alternate manifest.
 // Needs CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_kernel_activate(void);
+// U1g-5c: mark the booted ESP kernel slot healthy (CONFIRMED). Needs
+// CAP_CONSOLE. 0 on success; negative on error.
+int  swiftos_kernel_confirm(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);

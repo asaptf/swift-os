@@ -797,6 +797,7 @@ diagnostic fixtures than stable application interfaces.
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
 | `swos-kstage` | `swos-kstage` | Copy the active ESP kernel slot image into the inactive kernel slot and verify it. | `tests/uefi_kstage_test.sh` |
 | `swos-kactivate` | `swos-kactivate` | Install the pre-signed alternate ESP kernel manifest for the next boot. | `tests/uefi_kactivate_test.sh` |
+| `swos-kconfirm` | `swos-kconfirm` | Mark the booted ESP kernel slot confirmed healthy. | `tests/uefi_kconfirm_test.sh` |
 
 Examples:
 
@@ -812,6 +813,7 @@ swos-activate
 swos-confirm
 swos-kstage
 swos-kactivate
+swos-kconfirm
 ```
 
 `drvsvcdemo` starts `/bin/drvinputd` twice, exchanges endpoint IPC messages,
@@ -915,17 +917,33 @@ swos-kactivate: inactive kernel slot activated; reboot to use it
 Acceptance coverage: `tests/uefi_kactivate_test.sh`, `tests/uefi_kattempt_test.sh`,
 `tests/uefi_krollback_test.sh`
 
+### `swos-kconfirm`
+
+Mark the ESP kernel slot booted by the loader healthy.
+
+```text
+swos-kconfirm
+```
+
+Expected success:
+
+```text
+swos-kconfirm: booted kernel slot confirmed healthy
+```
+
+Acceptance coverage: `tests/uefi_kconfirm_test.sh`
+
 Notes:
 
 - `swos-update`, `swos-activate`, and `swos-confirm` operate on the SWOSBOOT
   base-image update store.
-- `swos-kstage` and `swos-kactivate` operate on UEFI ESP kernel-slot files and
-  manifests.
+- `swos-kstage`, `swos-kactivate`, and `swos-kconfirm` operate on UEFI ESP
+  kernel-slot files, manifests, and the loader-managed `kernel-state`.
 - Permission failures print `permission denied (need capConsole)`.
 - Kernel-slot boot-attempt persistence is tested by `tests/uefi_kattempt_test.sh`;
   attempt-based kernel-slot rollback is tested by
-  `tests/uefi_krollback_test.sh`. Kernel-slot health confirmation
-  (`swos-kconfirm`) remains future work.
+  `tests/uefi_krollback_test.sh`. Kernel-slot health confirmation is tested by
+  `tests/uefi_kconfirm_test.sh`.
 
 ## Package Commands
 

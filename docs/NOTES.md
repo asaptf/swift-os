@@ -4041,9 +4041,9 @@ hash-protected `kernel-state` file, persisted across reboots. This is the
 independently signed/hashed, so the boot-state need not be (its SHA-256 only
 guards against torn/garbage writes, like SWOSBOOT's CRC).
 
-- `boot/efi/loader.c`: `loader_bump_attempt()` opens `\EFI\swift-os\kernel-state`
+- `boot/efi/loader.c`: the loader boot-state helpers open `\EFI\swift-os\kernel-state`
   with READ|WRITE|CREATE (EFI File protocol), reads + validates the 512-byte record
-  ("SWOSKSTA", version, seq, attemptA/B, stateA/B, activeOverride, SHA-256 over
+  ("SWOSKSTA", version, seq, attemptA/B, stateA/B, lastBooted, SHA-256 over
   [0,480)), re-initializes it if absent/corrupt, increments the booted slot's
   attempt + seq, rehashes, and writes it back (Close flushes). Self-managed — no
   build/disk staging needed; the loader creates it on first boot. Best-effort: a
@@ -4056,11 +4056,8 @@ asserts the active slot's counter increments 1→2→3 across reboots — provin
 loader's EFI write lands and persists. The signed manifest (v3) is untouched, so
 the existing kernel-A/B tests are unaffected.
 
-**Still future (U1g-5b/c).** Use the counter for attempt-based rollback (active
-slot unconfirmed + attempts exhausted → fail over to the other slot, persisted —
-the U1d analogue); a `/bin/swos-kconfirm` to mark the booted slot CONFIRMED (U1c
-analogue) so it stops accruing attempts; and move `active` into the writable
-boot-state so activate (U1g-4d) needs no pre-signed alternate manifest.
+**Still future.** Move `active` into the writable boot-state so activate
+(U1g-4d) needs no pre-signed alternate manifest.
 
 ### U1g-5b — attempt-based kernel rollback in the loader (DONE, 2026-06-10)
 
@@ -4086,7 +4083,27 @@ disk copy 4× (ESP on mmio, `cache=writethrough`); boots 1–3 record attempts
 to slot B" + "booted kernel slot B" + the kernel starts). `uefi_kattempt_test`
 (3 boots, no rollback) and the signed kernel-A/B tests are unaffected.
 
-**Still future (U1g-5c).** `/bin/swos-kconfirm` marks the booted slot CONFIRMED in
-the kernel-state (the kernel writes it via its FAT writer), so a healthy slot
-stops accruing attempts and is never rolled back. Then `active` can move into the
-writable boot-state, retiring the pre-signed alternate manifest (U1g-4d).
+### U1g-5c — kernel-slot health confirm from userland (DONE, 2026-06-10)
+
+**Scope.** The U1c analogue for the ESP kernel A/B path. The loader records the
+slot it actually booted in the writable `kernel-state`; `/bin/swos-kconfirm`
+marks that slot `CONFIRMED`, resets its attempt counter, rehashes the record, and
+flushes the FAT32 ESP write. A confirmed slot stops accruing attempts and is not
+rolled back by U1g-5b.
+
+- `boot/efi/loader.c`: the boot-state offset 32 is now `lastBooted`; `efi_main`
+  stores `loaded_slot` there whenever an ESP slot is booted.
+- `kernel/fs/esp.swift`: adds `espConfirmBootedKernel()` and the in-place
+  kernel-state read/validate/rehash/write path.
+- Syscall 70 `SYS_KERNEL_CONFIRM`; `/bin/swos-kconfirm`
+  (`userland/swos-kconfirm.swift`, bridge `swiftos_kernel_confirm`/
+  `kernel_confirm`); Makefile stages it into the base image.
+
+**Acceptance.** `tests/uefi_kconfirm_test.sh` (in `make test`): boot the disk copy
+to a root shell, run `/bin/swos-kconfirm`, then reboot the same writable ESP copy
+three more times. The loader stays on slot A, reports boot attempt 0 each time,
+and never rolls back.
+
+**Still future.** Move `active` into the writable boot-state, retiring the
+pre-signed alternate manifest (U1g-4d). A real new-kernel payload source and key
+rotation / revocation remain separate follow-ups.

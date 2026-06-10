@@ -295,8 +295,8 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
     return 1;
 }
 
-// U1g-5a/5b: the ESP kernel-state record. Layout (512 bytes): "SWOSKSTA"(8)
-// version(4) seq(4) attemptA(4) attemptB(4) stateA(4) stateB(4) activeOverride(4)
+// U1g-5a/5b/5c: the ESP kernel-state record. Layout (512 bytes): "SWOSKSTA"(8)
+// version(4) seq(4) attemptA(4) attemptB(4) stateA(4) stateB(4) lastBooted(4)
 // ... reserved ... sha256[0,480) at offset 480. Not signed — the SHA-256 only
 // guards against torn/garbage writes (the kernel images are independently
 // signed/hashed, so the boot-state may be writable: the SWOSBOOT posture). The
@@ -304,6 +304,8 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
 #define KS_OFF_SEQ 12
 #define KS_ATTEMPT(slot) ((slot) == 0 ? 16 : 20)
 #define KS_STATE(slot)   ((slot) == 0 ? 24 : 28)
+#define KS_LAST_BOOTED 32
+#define KS_NO_SLOT 0xFFFFFFFF
 #define KS_UNTRIED   0
 #define KS_CONFIRMED 1
 #define KS_FAILED    2
@@ -362,7 +364,7 @@ static int loader_read_kstate(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, UIN
         for (int i = 0; i < 512; i++) buf[i] = 0;
         for (int i = 0; i < 8; i++) buf[i] = (UINT8)magic[i];
         st32(buf + 8, 1);           // version
-        st32(buf + 32, 0xFFFFFFFF); // activeOverride = none
+        st32(buf + KS_LAST_BOOTED, KS_NO_SLOT);
         return 0;
     }
     return 1;
@@ -575,6 +577,7 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
                 attempt += 1;
                 st32(ks + KS_ATTEMPT(loaded_slot), attempt);
             }
+            st32(ks + KS_LAST_BOOTED, (UINT32)loaded_slot);
             st32(ks + KS_OFF_SEQ, ld32(ks + KS_OFF_SEQ) + 1);
             loader_write_kstate(image_handle, st, ks);
 
