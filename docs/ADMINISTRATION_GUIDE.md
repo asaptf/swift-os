@@ -37,6 +37,39 @@ Use this guide with:
 The current product profile is serial-first. There is no SSH server, web admin
 console, target-side user database editor, or service supervisor yet.
 
+## Choose An Administrative Workflow
+
+Start from the administrative object you need to change. Durable changes are
+host-side inputs until a future target-side administration surface lands.
+
+| Task | Source of truth | Rebuild or launch path | Minimum evidence |
+| --- | --- | --- | --- |
+| Add an account or change a password | `base/etc/swos/passwd` | `make base-image` | `./tests/console_login_test.sh` and manual `id` after login |
+| Change displayed user or group names | `base/etc/passwd`, `base/etc/group` | `make base-image` | `./tests/ls_l_test.sh` or a command that prints the expected name |
+| Change the login message or static web content | `base/etc/motd`, `base/www/` | `make base-image` | `./tests/boot_test.sh`; use `./tests/httpd_test.sh` for `/www` |
+| Add a first-party command to the image | `userland/`, Makefile rules, base staging rules | `make build base-image` | Command-specific test plus `./tests/boot_test.sh` |
+| Test software outside the base image | Package payload or package-store fixture | `make package-fixture` or `make package-store-fixture` | `make package-overlay-test` or `make package-store-test` |
+| Launch a network service | Serial shell under a principal with `capNet` | Boot a networking QEMU profile and run the service command | Service readiness marker plus the focused service test |
+| Verify a process or resource issue | Running guest serial shell | `ps`, `top -b -n 2 -d 1`, `id` | Serial log and observability output |
+| Promote an update candidate | Host-built artifact set or checked A/B path | Follow [Update And Rollback Guide](UPDATE_GUIDE.md) | Candidate manifest, validation command output, and rollback artifact |
+
+Example evidence bundle for an account change:
+
+```sh
+git log -1 --oneline
+git diff -- base/etc/swos/passwd base/etc/passwd base/etc/group
+make base-image
+./tests/console_login_test.sh
+```
+
+After booting manually, log in as the changed account and capture:
+
+```sh
+id
+cat /etc/motd
+echo ok >/tmp/admin-check.txt
+```
+
 ## Admin Account Basics
 
 The authoritative identity store is:
