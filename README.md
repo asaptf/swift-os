@@ -95,7 +95,8 @@ What exists today, in the order it was built:
   and `/bin/drvinputd`. The supervisor starts a pseudo input-driver service,
   exchanges endpoint IPC messages, kills the service, restarts it, and proves
   recovery with `C5a OK: restartable driver service recovered over IPC`.
-  Real MMIO, IRQ, DMA, and virtio-input ownership are still roadmap work.
+  The focused acceptance gate runs under `-smp 4`; real MMIO, IRQ, DMA, and
+  virtio-input ownership are still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves

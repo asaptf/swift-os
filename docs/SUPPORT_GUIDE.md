@@ -33,7 +33,7 @@ Current supported support targets:
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
-| Driver-service supervisor smoke | `make c5-driver-service-test` |
+| Driver-service supervisor smoke (`-smp 4`) | `make c5-driver-service-test` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
 Current non-support targets:
@@ -81,7 +81,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
 | Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
-| Driver-service supervisor smoke | `make c5-driver-service-test` |
+| Driver-service supervisor smoke (`-smp 4`) | `make c5-driver-service-test` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
 If the narrow test passes, record that too. It narrows the problem and prevents

@@ -74,6 +74,9 @@ Focused host gate:
 make c5-driver-service-test
 ```
 
+The target boots QEMU with `SMP_CPUS=4` and uses
+`tests/driver_service_test.sh` to assert the supervisor markers.
+
 Manual guest command:
 
 ```sh

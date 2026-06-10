@@ -549,7 +549,7 @@ Run the narrowest test that proves the path you touched:
 | Restricted S5 EL0 fanout | `make s5-el0-fanout-test` |
 | S5 shared-address-space thread fanout | `make s5-thread-fanout-test` |
 | S5 run-any EL0 placement | `make s5-run-any-placement-test` |
-| C5a driver-service supervisor smoke | `make c5-driver-service-test` |
+| C5a driver-service supervisor smoke (`-smp 4`) | `make c5-driver-service-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |
