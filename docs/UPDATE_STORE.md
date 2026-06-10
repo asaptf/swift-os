@@ -111,11 +111,24 @@ Attach it to QEMU as a writable virtio-blk disk (no `readonly=on`):
 `tests/ab_update_test.sh` exercises slot selection (A and B) and verified
 fallback (a tampered active slot rolls back to the known-good slot).
 
+## Persistent boot-state (U1b)
+
+The manifest is writable on disk. At boot, after selecting the active slot, the
+kernel increments that slot's `attempt_count`, bumps `sequence`, and writes the
+manifest to the *other* double-buffer copy (LBA 0 ↔ LBA 1). Because the reader
+always picks the valid copy with the highest sequence, a write interrupted
+mid-flight leaves the previous copy intact — torn-write safe without journaling.
+`virtioBlkWriteSector` issues a `VIRTIO_BLK_T_OUT` to the manifest's absolute LBA
+(outside the A/B slots, so it bypasses the slot offset). `tests/ab_persist_test.sh`
+boots the same store 3× and asserts the counter persists 1→2→3 across reboots.
+
 ## Not implemented yet
 
-- virtio-blk **write** (the disk is writable; the kernel does not write it in U1a).
-- Boot-attempt counter, health confirm, and attempt-based rollback persisted
-  across reboots (U1b).
-- Staging a new generation into the inactive slot + atomic active-slot flip (U1b).
-- Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader) (U1c).
-- Key rotation / revocation.
+- Attempt-based rollback: switch active↔fallback when an unconfirmed slot exceeds
+  a max-attempts threshold (U1c).
+- Health confirm: a capability-gated `/bin/swos-confirm` + syscall that marks the
+  active slot CONFIRMED and resets its attempt counter (U1c).
+- Staging a new generation into the inactive slot + atomic active-slot flip (U1c).
+- Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
+- virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
+  revocation.

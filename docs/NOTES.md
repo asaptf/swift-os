@@ -2732,3 +2732,42 @@ fallback slot", so the awaited substring must not include a non-contiguous prefi
 (capability-gated /bin/swos-confirm + syscall) + attempt-based rollback persisted
 across reboots; staging a new generation into the inactive slot + atomic active
 flip; kernel-image A/B via the loader (Ed25519 + EFI Block I/O); key rotation.
+
+### U1b — persistent boot-state: manifest write-back + boot-attempt counter (DONE, 2026-06-10)
+
+**Scope.** The writable half U1a lacked: the virtio-blk *write* path + durable,
+atomic write-back of the SWOSBOOT manifest, used here to persist a per-slot
+boot-attempt counter across reboots. (The attempt-based rollback policy +
+health-confirm that *consume* this counter are U1c.)
+
+- `kernel/drivers/virtio_blk.swift`: `blkDoWrite` (VIRTIO_BLK_T_OUT; the data
+  descriptor is device-READABLE — the device reads our bytes) + a one-sector
+  `virtioBlkWriteSector(sector, buf)`. **Absolute** sectors, NOT slot-relative:
+  the manifest at LBA 0/1 lives outside the A/B image slots, so writes skip
+  `blkBaseByteOffset`.
+- `kernel/fs/swosboot.swift`: `serializeSwosbootManifest` — the exact inverse of
+  the parser; the host test pins parse(serialize(m)) == m.
+- `kernel/fs/updatestore.swift`: after selecting the active slot, `updateStoreInit`
+  increments that slot's attempt_count, bumps `sequence`, and writes the manifest
+  to the OTHER double-buffer copy (torn-write safe — the reader picks the highest
+  valid sequence, so an interrupted write leaves the prior copy intact). A
+  CONFIRMED slot is skipped (forward-compat no-op until U1c sets that state).
+  Marker: "update-store: recorded boot attempt N for active slot X".
+- No new top-level globals (the driver gained funcs + one `let`); SMP audit
+  unchanged at 173 entries.
+
+**Durability.** A virtio-blk write completes when the device acks (polled used
+ring). The acceptance test attaches the store with `cache=writethrough` so each
+completed write is durable to the backing file even across an ungraceful kill.
+(A virtio-blk FLUSH for durability without writethrough is future hardening.)
+
+**Acceptance.** `tests/ab_persist_test.sh` (in `make test`): boots the SAME
+writable store disk 3× and asserts the attempt counter increments 1→2→3 across
+reboots — proving write + atomic double-buffered write-back + reboot persistence.
+`tests/updatestore_test.swift` gains the serialize↔parse round-trip; U1a's
+`ab_update_test.sh` still passes (write-back does not disturb selection/fallback).
+
+**Still future (U1c).** Attempt-based rollback (switch active↔fallback when an
+unconfirmed slot exceeds a max-attempts threshold) + health-confirm (a
+capability-gated /bin/swos-confirm + syscall that marks the active slot CONFIRMED
+and resets attempts). Then U1d = kernel-image A/B via the loader.

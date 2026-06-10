@@ -37,12 +37,13 @@ func updateStoreInit() {
     }
 
     let chosen: SwosbootManifest
+    var chosenLBA: UInt64 = 0 // which copy we read (write the attempt back to the other)
     if let a = m0, let b = m1 {
-        chosen = b.sequence > a.sequence ? b : a
+        if b.sequence > a.sequence { chosen = b; chosenLBA = 1 } else { chosen = a; chosenLBA = 0 }
     } else if let a = m0 {
-        chosen = a
+        chosen = a; chosenLBA = 0
     } else if let b = m1 {
-        chosen = b
+        chosen = b; chosenLBA = 1
     } else {
         uartPuts("update-store: SWOSBOOT manifest invalid on both copies — using sector 0\n")
         return
@@ -66,4 +67,28 @@ func updateStoreInit() {
         uartPuts(", no fallback")
     }
     uartPuts("\n")
+
+    // U1b: record this boot attempt for the active slot, persisted to the OTHER
+    // manifest copy with a bumped sequence (double-buffered: the reader picks the
+    // highest valid sequence, so an interrupted write leaves the old copy intact).
+    // The boot-state this establishes is what U1c's attempt-based rollback +
+    // health-confirm will consume. A CONFIRMED slot stops accumulating attempts.
+    if chosen.slot(active).state == SwosbootFormat.stateConfirmed { return }
+    var updated = chosen
+    if active == 0 { updated.slot0.attemptCount &+= 1 } else { updated.slot1.attemptCount &+= 1 }
+    updated.sequence = chosen.sequence &+ 1
+    let attempts = active == 0 ? updated.slot0.attemptCount : updated.slot1.attemptCount
+    let writeLBA: UInt64 = chosenLBA == 0 ? 1 : 0
+    withUnsafeMutableBytes(of: &buf) { raw in
+        serializeSwosbootManifest(updated, into: raw.baseAddress!)
+        if virtioBlkWriteSector(writeLBA, UnsafeRawPointer(raw.baseAddress!)) == 0 {
+            uartPuts("update-store: recorded boot attempt ")
+            uartPutUInt(UInt64(attempts))
+            uartPuts(" for active slot ")
+            updateStoreLogSlot(active)
+            uartPuts("\n")
+        } else {
+            uartPuts("update-store: WARNING failed to persist boot attempt\n")
+        }
+    }
 }

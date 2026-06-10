@@ -174,3 +174,48 @@ func parseSwosbootManifest(_ buf: UnsafeRawPointer, _ len: Int) -> SwosbootManif
                             slot0: readSwosbootSlot(buf, base),
                             slot1: readSwosbootSlot(buf, base + stride))
 }
+
+// Little-endian byte writers (mirror the readers; byte-wise for +strict-align).
+@inline(__always) private func sbStore8(_ p: UnsafeMutableRawPointer, _ o: Int, _ v: UInt8) {
+    p.storeBytes(of: v, toByteOffset: o, as: UInt8.self)
+}
+@inline(__always) private func sbStore32(_ p: UnsafeMutableRawPointer, _ o: Int, _ v: UInt32) {
+    sbStore8(p, o, UInt8(v & 0xFF)); sbStore8(p, o + 1, UInt8((v >> 8) & 0xFF))
+    sbStore8(p, o + 2, UInt8((v >> 16) & 0xFF)); sbStore8(p, o + 3, UInt8((v >> 24) & 0xFF))
+}
+@inline(__always) private func sbStore64(_ p: UnsafeMutableRawPointer, _ o: Int, _ v: UInt64) {
+    sbStore32(p, o, UInt32(v & 0xFFFF_FFFF)); sbStore32(p, o + 4, UInt32((v >> 32) & 0xFFFF_FFFF))
+}
+
+private func writeSwosbootSlot(_ p: UnsafeMutableRawPointer, _ o: Int, _ s: SwosbootSlot) {
+    sbStore32(p, o + 0, s.present ? 1 : 0)
+    sbStore32(p, o + 4, s.state)
+    sbStore64(p, o + 8, s.baseLBA)
+    sbStore64(p, o + 16, s.lengthSectors)
+    sbStore32(p, o + 24, s.generation)
+    sbStore32(p, o + 28, s.attemptCount)
+}
+
+/// Serialize a manifest into a 512-byte sector buffer (with a fresh CRC32). The
+/// exact inverse of parseSwosbootManifest, so parse(serialize(m)) == m. The
+/// buffer must be at least SwosbootFormat.manifestSize bytes.
+func serializeSwosbootManifest(_ m: SwosbootManifest, into buf: UnsafeMutableRawPointer) {
+    var i = 0
+    while i < SwosbootFormat.manifestSize { sbStore8(buf, i, 0); i += 1 }
+
+    let magic: StaticString = "SWOSBOOT"
+    magic.withUTF8Buffer { mm in
+        var j = 0
+        while j < 8 { sbStore8(buf, j, mm[j]); j += 1 }
+    }
+    sbStore32(buf, 8, m.version)
+    sbStore32(buf, 16, UInt32(SwosbootFormat.slotCount))
+    sbStore32(buf, 20, UInt32(m.activeSlot))
+    sbStore32(buf, 24, UInt32(m.fallbackSlot))
+    sbStore32(buf, 28, m.sequence)
+    let base = SwosbootFormat.slotTableOffset
+    writeSwosbootSlot(buf, base, m.slot0)
+    writeSwosbootSlot(buf, base + SwosbootFormat.slotEntrySize, m.slot1)
+    let crc = swosbootCrc32(UnsafeRawPointer(buf), SwosbootFormat.crcOffset)
+    sbStore32(buf, SwosbootFormat.crcOffset, crc)
+}

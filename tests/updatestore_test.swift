@@ -93,6 +93,24 @@ struct UpdateStoreTest {
         let short = [UInt8](repeating: 0, count: 64)
         check(parse(short) == nil, "short buffer must be rejected")
 
+        // 4. Serialize -> parse round-trip is identity (U1b write-back path).
+        let s0 = SwosbootSlot(present: true, state: SwosbootFormat.stateConfirmed,
+                              baseLBA: 8, lengthSectors: 100, generation: 1, attemptCount: 2)
+        let s1 = SwosbootSlot(present: true, state: SwosbootFormat.stateUntried,
+                              baseLBA: 108, lengthSectors: 100, generation: 2, attemptCount: 0)
+        let m = SwosbootManifest(version: 1, activeSlot: 1, fallbackSlot: 0,
+                                 sequence: 7, slot0: s0, slot1: s1)
+        var sbuf = [UInt8](repeating: 0xAA, count: SwosbootFormat.manifestSize) // non-zero fill
+        sbuf.withUnsafeMutableBytes { serializeSwosbootManifest(m, into: $0.baseAddress!) }
+        if let p = parse(sbuf) {
+            check(p.activeSlot == 1 && p.fallbackSlot == 0 && p.sequence == 7, "round-trip header")
+            check(p.slot(0).state == SwosbootFormat.stateConfirmed && p.slot(0).attemptCount == 2,
+                  "round-trip slot0 state/attempts")
+            check(p.slot(1).baseLBA == 108 && p.slot(1).generation == 2, "round-trip slot1")
+        } else {
+            check(false, "serialized manifest should parse")
+        }
+
         if failures == 0 {
             print("PASS: SWOSBOOT manifest core (CRC32 check value, round-trip, corruption rejection)")
         } else {

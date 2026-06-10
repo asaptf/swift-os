@@ -52,6 +52,7 @@ private let VIRTQ_DESC_F_NEXT: UInt16  = 1
 private let VIRTQ_DESC_F_WRITE: UInt16 = 2
 
 private let VIRTIO_BLK_T_IN: UInt32 = 0  // read from disk into memory
+private let VIRTIO_BLK_T_OUT: UInt32 = 1 // write from memory to disk (U1b)
 private let SECTOR_SIZE = 512
 
 // Ring page layout: descriptor table, available ring, and used ring carved out
@@ -254,6 +255,55 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
     return 0
 }
 
+// Write the bounce buffer (already filled by the caller) to one sector. Returns
+// 0 on success. U1b: lets the kernel persist the SWOSBOOT boot manifest. The
+// data descriptor is device-READABLE here (no F_WRITE) — the device reads our
+// bytes and stores them; only the status byte is device-written.
+private func blkDoWrite(_ sector: UInt64) -> Int32 {
+    if blkMmio == 0 { return -1 }
+    if blkCapacity != 0 && sector >= blkCapacity { return -2 }
+
+    let hdr = blkDataBase + OFF_HDR
+    let status = blkDataBase + OFF_STATUS
+    let bounce = blkDataBase + OFF_BOUNCE
+
+    let hp = UnsafeMutableRawPointer(bitPattern: hdr)!
+    hp.storeBytes(of: VIRTIO_BLK_T_OUT, toByteOffset: 0, as: UInt32.self) // type
+    hp.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)        // reserved
+    hp.storeBytes(of: sector, toByteOffset: 8, as: UInt64.self)
+    UnsafeMutableRawPointer(bitPattern: status)!.storeBytes(of: UInt8(0xFF), toByteOffset: 0, as: UInt8.self)
+    blkClean(hdr, 16)
+    blkClean(status, 1)
+    blkClean(bounce, SECTOR_SIZE) // flush our data so the device reads it
+
+    // Three-descriptor chain: header (device-read), data (device-read),
+    // status (device-write).
+    blkDescSet(0, addr: UInt64(hdr), len: 16, flags: VIRTQ_DESC_F_NEXT, next: 1)
+    blkDescSet(1, addr: UInt64(bounce), len: UInt32(SECTOR_SIZE),
+               flags: VIRTQ_DESC_F_NEXT, next: 2)
+    blkDescSet(2, addr: UInt64(status), len: 1, flags: VIRTQ_DESC_F_WRITE, next: 0)
+    blkClean(blkRingBase + OFF_DESC, BLK_QSZ * 16)
+
+    blkAvailAdd(descIdx: 0)
+    blkClean(blkRingBase + OFF_AVAIL, 32)
+
+    mmio_write32(blkMmio + R_QNOTIFY, 0)
+
+    let target = blkLastUsed &+ 1
+    while true {
+        blkInvalidate(blkRingBase + OFF_USED, 72)
+        if blkUsedIdx() == target { break }
+    }
+    blkLastUsed = target
+
+    let ist = mmio_read32(blkMmio + R_ISTATUS)
+    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+
+    blkInvalidate(status, 1)
+    if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
+    return 0
+}
+
 // Scan the virtio-mmio window (base/stride/count from the HAL) for block
 // devices and select the disk to serve the read-only base from. A boot medium
 // may carry several disks (e.g. a GPT boot disk plus the base storage), so we
@@ -343,6 +393,21 @@ func virtioBlkRead(_ sector: UInt64, _ buf: UnsafeMutableRawPointer?) -> Int32 {
         i += 1
     }
     return 0
+}
+
+// Write one 512-byte sector from `buf` to absolute `sector`. Returns 0 on
+// success. Absolute (NOT slot-relative): U1b uses it to persist the SWOSBOOT
+// boot manifest at LBA 0/1, which lives outside the A/B image slots.
+func virtioBlkWriteSector(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
+    if blkMmio == 0 { return -1 }
+    guard let src = buf else { return -1 }
+    let bounce = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    var i = 0
+    while i < SECTOR_SIZE {
+        bounce.storeBytes(of: src.load(fromByteOffset: i, as: UInt8.self), toByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+    return blkDoWrite(sector)
 }
 
 // Read an arbitrary byte range [byteOff, byteOff+len) into `buf`, spanning
