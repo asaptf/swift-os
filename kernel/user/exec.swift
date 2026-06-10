@@ -11,9 +11,10 @@
 // exec resolves, loads, and elfLoad-copies into the new address space before
 // the next), so a single buffer is safe; it is allocated lazily on first use.
 // It comes from the PMM (physically contiguous, identity-mapped) rather than the
-// small bump heap, since busybox is ~1.1 MiB.
+// small bump heap. Server-package binaries are already larger than busybox:
+// the first static nginx package is ~2.7 MiB.
 private var elfBuf: UInt = 0
-private let elfBufMax = 2 * 1024 * 1024 // 2 MiB comfortably covers busybox
+private let elfBufMax = 8 * 1024 * 1024
 
 private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
     let (found, image, off, len) = vfsDiskImageExtent(path)

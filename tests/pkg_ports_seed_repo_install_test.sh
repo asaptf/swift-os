@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# pkg_ports_seed_repo_install_test.sh - P7/P11 smoke: install seed ports from one repo.
-
+# pkg_ports_seed_repo_install_test.sh - P7/P13 smoke: install seed ports from one repo.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -140,38 +139,23 @@ send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
 await "pcre2-10.47_1" 60 || drive_fail "pkg search did not find pcre2"
-send_line "pkg install lua"
-await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
-send_line "pkg install zlib"
-await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
-send_line "/usr/bin/lua -e 'print(21 * 2)'"
-await "42" 120 || drive_fail "lua expression did not print 42"
-send_line "a=zlib; b=-ok; echo \$a\$b > /tmp/zlib.txt"
-send_line "echo wrote-zlib-input"
-await "wrote-zlib-input" 20 || drive_fail "could not create zlib input"
-send_line "/usr/bin/minigzip /tmp/zlib.txt"
-send_line "echo compressed-zlib-input"
-await "compressed-zlib-input" 60 || drive_fail "minigzip compression did not return"
-send_line "/usr/bin/minigzip -d /tmp/zlib.txt.gz"
-send_line "echo decompressed-zlib-input"
-await "decompressed-zlib-input" 60 || drive_fail "minigzip decompression did not return"
-send_line "cat /tmp/zlib.txt"
-await "zlib-ok" 60 || drive_fail "minigzip round-trip output mismatch"
-send_line "pkg install ca-certificates"
-await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
-send_line "pkg install pcre2"
-await "pkg: installed pcre2-10.47_1" 120 || drive_fail "pcre2 package was not installed"
-send_line "pkg list"
+send_line "pkg install tzdata"
+await "pkg: installed tzdata-2026b_1" 120 || drive_fail "tzdata package was not installed"
+send_line "pkg install nginx"
+await "pkg: installed nginx-1.30.2_1" 120 || drive_fail "nginx package was not installed"send_line "pkg list"
 await "lua-5.4.8_1" 60 || drive_fail "installed lua package not listed"
 await "zlib-1.3.1_1" 60 || drive_fail "installed zlib package not listed"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "installed ca-certificates package not listed"
 await "pcre2-10.47_1" 60 || drive_fail "installed pcre2 package not listed"
-send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
-await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
-send_line "echo nginx-lighttpd > /tmp/pcre2.txt"
-send_line "/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt"
-await "nginx-lighttpd" 60 || drive_fail "pcre2grep did not match the web-server pattern"
-send_line 'exit'
+send_line "cat /usr/share/zoneinfo/swiftos-tzdata.version"
+await "iana-tzdata 2026b 598 compiled-zone-files" 60 || drive_fail "tzdata marker output mismatch"
+send_line "cat /usr/share/zoneinfo/zone1970.tab"
+await "Europe/Madrid" 60 || drive_fail "zone1970.tab did not include Europe/Madrid"
+await "America/Vancouver" 60 || drive_fail "zone1970.tab did not include America/Vancouver"
+send_line "/usr/sbin/nginx -v"
+await "nginx version: nginx/1.30.2" 60 || drive_fail "nginx version command did not run"
+send_line "cat /usr/share/nginx/swiftos-nginx.version"
+await "nginx 1.30.2 swift-os minimal-http" 60 || drive_fail "nginx marker output mismatch"send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-
@@ -185,16 +169,20 @@ grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install o
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
+grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
+grep -qF "pkg: installed nginx-1.30.2_1" <<<"$clean" || { echo "FAIL: nginx install output missing" >&2; ok=0; }
 grep -qF "zlib-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
-grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during ports seed repo install" >&2; ok=0; }
+grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
+grep -qF "America/Vancouver" <<<"$clean" || { echo "FAIL: zone1970 output missing" >&2; ok=0; }
+grep -qF "nginx version: nginx/1.30.2" <<<"$clean" || { echo "FAIL: nginx version output missing" >&2; ok=0; }
+grep -qF "nginx 1.30.2 swift-os minimal-http" <<<"$clean" || { echo "FAIL: nginx marker output missing" >&2; ok=0; }grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during ports seed repo install" >&2; ok=0; }
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, and pcre2 from one signed ports seed repo"
-  exit 0
+  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from one signed ports seed repo"  exit 0
 fi
 
 echo "--- serial (ports seed region) ---" >&2

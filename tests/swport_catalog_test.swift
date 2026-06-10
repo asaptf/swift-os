@@ -67,7 +67,7 @@ guard output(validate).contains("catalog: OK") else {
 let list = run(tool, ["catalog", "list", catalog.path])
 requireSuccess(list, "list catalog")
 let listText = output(list)
-guard listText.contains("tier2 nginx planned L www/nginx") else {
+guard listText.contains("tier2 nginx packages L www/nginx") else {
     fail("list output did not include nginx")
 }
 guard listText.contains("tier0 ca-certificates packages S security/ca-certificates") else {
@@ -83,8 +83,8 @@ guard listText.contains("tier4 nodejs blocked XL lang/nodejs") else {
 let inspect = run(tool, ["catalog", "inspect", "nginx", catalog.path])
 requireSuccess(inspect, "inspect nginx")
 let inspectText = output(inspect)
-guard inspectText.contains("runtimeDependencies: ca-certificates,openssl,pcre2,zlib") else {
-    fail("nginx inspect output did not show dependency names")
+guard inspectText.contains("runtimeDependencies: none") else {
+    fail("nginx inspect output did not show its minimal runtime dependency state")
 }
 
 let temp = FileManager.default.temporaryDirectory

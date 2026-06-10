@@ -82,19 +82,18 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua, zlib, ca-certificates, and pcre2
+  - `make ports-seed-repo-fixture` publishes Lua, zlib, ca-certificates, pcre2, tzdata, and nginx
     into one signed local seed repository, and
-    `make package-ports-seed-repo-install-test` proves installing all four
-    packages plus the `minigzip` round trip, CA bundle marker, and `pcre2grep`
-    pattern match inside QEMU;
+    `make package-ports-seed-repo-install-test` proves installing all six
+    packages plus the `minigzip` round trip, CA bundle marker, `pcre2grep`
+    pattern match, zoneinfo marker, and nginx version/marker smoke inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install all four packages from that published layout;
+    proves SwiftOS can install all six packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua, zlib, ca-certificates, and pcre2 from a DNS-resolved HTTP
-    repository URL.
+    install Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from a DNS-resolved HTTP    repository URL.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
   coverage, package publication, and streaming large-package downloads remain

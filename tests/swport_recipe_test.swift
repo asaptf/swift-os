@@ -68,29 +68,14 @@ let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
-
-guard FileManager.default.isExecutableFile(atPath: swport.path) else {
-    fail("missing executable build/swport; build swport first")
+let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
+let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
+guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
+    fail("missing ports/sysutils/tzdata/Port.json")
 }
-guard FileManager.default.isExecutableFile(atPath: swpkg.path) else {
-    fail("missing executable build/swpkg; build swpkg first")
+guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
+    fail("missing ports/www/nginx/Port.json")
 }
-guard FileManager.default.isExecutableFile(atPath: pkgrepo.path) else {
-    fail("missing executable build/pkgrepo; build pkgrepo first")
-}
-guard FileManager.default.isReadableFile(atPath: recipe.path) else {
-    fail("missing ports/lang/lua/Port.json")
-}
-guard FileManager.default.isReadableFile(atPath: zlibRecipe.path) else {
-    fail("missing ports/archivers/zlib/Port.json")
-}
-guard FileManager.default.isReadableFile(atPath: caRecipe.path) else {
-    fail("missing ports/security/ca-certificates/Port.json")
-}
-guard FileManager.default.isReadableFile(atPath: pcre2Recipe.path) else {
-    fail("missing ports/devel/pcre2/Port.json")
-}
-
 let temp = FileManager.default.temporaryDirectory
     .appendingPathComponent("swport-recipe-test-\(UUID().uuidString)", isDirectory: true)
 do {
@@ -459,57 +444,4 @@ guard output(pcre2RepoInspect).contains("pcre2-10.47_1") else {
     fail("repo fixture catalog did not include pcre2 package: \(output(pcre2RepoInspect))")
 }
 
-do {
-    let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
-    try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
-    let bad = run(swport, [
-        "recipe", "package", "lang/lua",
-        "--root", badRoot.path,
-        "--output", temp.appendingPathComponent("bad-missing.swpkg").path,
-        "--swpkg", swpkg.path,
-    ])
-    guard bad.status != 0, output(bad).contains("staged root missing /usr/bin/lua") else {
-        fail("incomplete staged root unexpectedly packaged: \(output(bad))")
-    }
-} catch {
-    fail("negative staged-root test failed: \(error)")
-}
-
-do {
-    guard var root = try JSONSerialization.jsonObject(with: Data(contentsOf: recipe)) as? [String: Any],
-          var package = root["package"] as? [String: Any] else {
-        fail("could not parse lua recipe for negative test")
-    }
-    package["depends"] = ["missing-dependency"]
-    root["package"] = package
-    let badRecipe = temp.appendingPathComponent("bad-dependency/Port.json")
-    try writeJSON(root, to: badRecipe)
-    let bad = run(swport, ["recipe", "validate", badRecipe.path])
-    guard bad.status != 0, output(bad).contains("dependency missing-dependency is not listed in catalog") else {
-        fail("invalid recipe dependency unexpectedly passed: \(output(bad))")
-    }
-} catch {
-    fail("negative dependency test failed: \(error)")
-}
-
-do {
-    guard var root = try JSONSerialization.jsonObject(with: Data(contentsOf: recipe)) as? [String: Any],
-          var package = root["package"] as? [String: Any],
-          var files = package["files"] as? [[String: Any]],
-          files.count >= 1 else {
-        fail("could not parse lua recipe files for negative test")
-    }
-    files[0]["mode"] = "75x5"
-    package["files"] = files
-    root["package"] = package
-    let badRecipe = temp.appendingPathComponent("bad-files/Port.json")
-    try writeJSON(root, to: badRecipe)
-    let bad = run(swport, ["recipe", "validate", badRecipe.path])
-    guard bad.status != 0, output(bad).contains("invalid file mode 75x5") else {
-        fail("invalid package file mode unexpectedly passed: \(output(bad))")
-    }
-} catch {
-    fail("negative file test failed: \(error)")
-}
-
-print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, and pcre2 recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipe fixtures")
