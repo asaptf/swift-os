@@ -4,6 +4,9 @@ This guide describes how to use the current SwiftOS system from the serial
 console. It is written for operators, testers, and application developers who
 need to understand what is available inside a running guest.
 
+For a short explanation of SwiftOS terms such as base image, tmpfs, principals,
+capabilities, handles, and package payloads, see [CONCEPTS.md](CONCEPTS.md).
+
 ## Console Model
 
 SwiftOS is currently headless by default. The primary UI is the serial console

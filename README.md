@@ -123,6 +123,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 
 - [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
   and attach QEMU networking.
+- [Concepts](docs/CONCEPTS.md): core SwiftOS terms, images, filesystem,
+  identity, packages, services, testing, and roadmap boundaries.
 - [Installation Guide](docs/INSTALLATION_GUIDE.md): choose and verify direct
   QEMU, UEFI/GPT, graphical smoke, and VirtualBox ARM boot profiles.
 - [Release Notes](docs/RELEASE_NOTES.md): shipped features, verification gates,

@@ -5,6 +5,9 @@ requires a port, and what is intentionally outside the current product contract.
 It is written for operators, application authors, and people evaluating whether
 an existing workload can run on SwiftOS.
 
+For a concise model of SwiftOS concepts and terminology before evaluating
+compatibility, see [CONCEPTS.md](CONCEPTS.md).
+
 SwiftOS is a modern, static, capability-aware operating system. Compatibility is
 source-oriented: rebuild programs for the SwiftOS ABI, link statically, package
 them into the immutable base image or a read-only package overlay, and design

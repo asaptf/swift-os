@@ -2,7 +2,8 @@
 
 This guide takes you from a fresh checkout to a running SwiftOS serial console.
 It focuses on the QEMU `virt` target, which is the primary development and test
-platform.
+platform. For a quick map of SwiftOS terms such as base image, tmpfs,
+principals, capabilities, and package payloads, see [CONCEPTS.md](CONCEPTS.md).
 
 ## What You Get
 

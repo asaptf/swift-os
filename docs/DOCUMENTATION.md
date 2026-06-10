@@ -13,6 +13,7 @@ format details.
 | Need | Document |
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
+| Learn the core SwiftOS concepts and terminology | [Concepts](CONCEPTS.md) |
 | Choose and verify a direct, UEFI, graphical, or VirtualBox boot profile | [Installation Guide](INSTALLATION_GUIDE.md) |
 | Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Rebuild, update, validate, and roll back immutable SwiftOS artifacts | [Update And Rollback Guide](UPDATE_GUIDE.md) |
