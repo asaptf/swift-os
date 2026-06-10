@@ -3294,3 +3294,41 @@ end-to-end without touching the bootable slot or the manifest.
 model) to actually flip the boot slot, then activate + reboot; plus the
 signed-selection split (per-image signatures + CRC'd writable boot-state) so
 attempt-count/rollback can be persisted without re-signing.
+
+### U1g-4d — runtime kernel-slot activate: /bin/swos-kactivate (DONE, 2026-06-10)
+
+**Scope.** The capstone of runtime kernel staging: flip the active kernel slot
+from a running system, persisted, so the loader boots the newly-activated slot.
+Because the OS cannot sign, it follows the **courier** model — it installs an
+offline-signed alternate manifest rather than producing one.
+
+- A second manifest `\EFI\swift-os\kernel-boot-alt` (active = slot B) is generated
+  by `kernelboot` at image build, signed with the image-signing key (Makefile +
+  make-disk stage it alongside `kernel-boot`).
+- `kernel/fs/esp.swift`: `espActivateOtherKernel()` (capConsole) reads the live
+  `kernel-boot` and `kernel-boot-alt` active slots, requires the alternate to
+  select the *other* slot, then copies the alternate's manifest sector over
+  `kernel-boot` in place (`virtioBlkWriteSector` + `virtioBlkFlush`) and re-reads
+  to confirm. Logs "kernel-store: activated kernel slot B for next boot (signed
+  manifest)". No new globals.
+- Syscall 64 `SYS_KERNEL_ACTIVATE`; `/bin/swos-kactivate`
+  (`userland/swos-kactivate.swift`, bridge `swiftos_kernel_activate`/
+  `kernel_activate`); execResolve + Makefile rules.
+
+**Acceptance.** `tests/uefi_kactivate_test.sh` (in `make test`): boot the disk copy
+(active A), reach a root shell, run `/bin/swos-kactivate`; reboot the SAME disk
+(`cache=writethrough`) → the loader logs "kernel A/B manifest active slot B
+(signature OK)" and "booted kernel slot B", with no "signature INVALID" — proving
+the flip persisted and the offline signature held.
+
+**Kernel-image A/B is now complete end-to-end:** ESP file (U1g-1) → A/B manifest
+selection (U1g-2) → SHA-256 integrity (U1g-3a) → Ed25519 authenticity (U1g-3b) →
+kernel reaches the ESP (U1g-4a) → reads it (U1g-4b) → stages the inactive slot
+(U1g-4c) → activates it (U1g-4d). Operator flow: `swos-kstage` → `swos-kactivate`
+→ reboot, mirroring U1f for the system image.
+
+**Still future.** A real new-kernel *payload* source (today both slots are the
+same build; staging a genuinely different signed kernel needs a payload disk or
+an update channel) + per-slot attempt-count/rollback for the kernel (the
+signed-selection split: per-image signatures + a CRC'd writable boot-state, so
+boot-state can be written without re-signing). Key rotation / revocation.

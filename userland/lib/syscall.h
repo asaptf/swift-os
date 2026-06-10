@@ -70,6 +70,7 @@
 #define SYS_UPDATE_ACTIVATE 61
 #define SYS_UPDATE_STAGE 62
 #define SYS_KERNEL_STAGE 63
+#define SYS_KERNEL_ACTIVATE 64
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -298,6 +299,13 @@ static inline int update_stage(void) {
 // mismatch/bad manifest, -5 EIO copy/verify failure).
 static inline int kernel_stage(void) {
     return (int)__syscall3(SYS_KERNEL_STAGE, 0, 0, 0);
+}
+
+// U1g-4d: flip the active kernel slot for the next boot by installing the
+// pre-signed alternate manifest on the ESP. Needs CAP_CONSOLE. 0 on success;
+// negative on error (-1 EPERM, -19 ENODEV, -2 ENOENT, -22 EINVAL, -5 EIO).
+static inline int kernel_activate(void) {
+    return (int)__syscall3(SYS_KERNEL_ACTIVATE, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

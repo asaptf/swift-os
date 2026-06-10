@@ -64,6 +64,7 @@ private let sysUpdateConfirm: UInt = 60 // update_confirm() — mark the booted 
 private let sysUpdateActivate: UInt = 61 // update_activate() — promote the inactive A/B slot (U1e); needs capConsole
 private let sysUpdateStage: UInt = 62    // update_stage() — copy the payload disk into the inactive A/B slot (U1f-2b); needs capConsole
 private let sysKernelStage: UInt = 63    // kernel_stage() — copy the active kernel slot image into the inactive ESP slot (U1g-4c); needs capConsole
+private let sysKernelActivate: UInt = 64 // kernel_activate() — flip the active kernel slot via the pre-signed alternate manifest (U1g-4d); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -249,6 +250,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = updateStoreStagePayload() // U1f-2b: capConsole-gated payload→inactive slot copy
     } else if number == sysKernelStage {
         result = espStageActiveToInactive() // U1g-4c: capConsole-gated kernel-slot stage on the ESP
+    } else if number == sysKernelActivate {
+        result = espActivateOtherKernel() // U1g-4d: capConsole-gated kernel-slot flip via signed manifest
     } else {
         result = -38 // ENOSYS
     }

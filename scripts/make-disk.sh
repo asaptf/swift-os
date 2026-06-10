@@ -26,7 +26,7 @@ MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
 
 [[ -f "$EFI_APP" ]] || { echo "make-disk: $EFI_APP missing - run 'make uefi' first" >&2; exit 2; }
 [[ -f "$KERNEL_BIN" ]] || { echo "make-disk: $KERNEL_BIN missing - run 'make build' first" >&2; exit 2; }
-for f in kernelA.bin kernelB.bin kernel-boot; do
+for f in kernelA.bin kernelB.bin kernel-boot kernel-boot-alt; do
     [[ -f "$ESP_SRC/$f" ]] || { echo "make-disk: $ESP_SRC/$f missing - run 'make uefi' first" >&2; exit 2; }
 done
 for tool in "$SGDISK" "$MFORMAT" "$MMD" "$MCOPY" "$MDIR"; do
@@ -55,6 +55,7 @@ export MTOOLS_SKIP_CHECK=1
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelA.bin"  ::/EFI/swift-os/kernelA.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelB.bin"  ::/EFI/swift-os/kernelB.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernel-boot"  ::/EFI/swift-os/kernel-boot
+"$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernel-boot-alt" ::/EFI/swift-os/kernel-boot-alt
 
 echo "make-disk: done -> $IMG"
 echo "make-disk: ESP contents:"

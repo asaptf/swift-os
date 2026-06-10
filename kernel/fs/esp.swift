@@ -395,6 +395,76 @@ private func espStageInner() -> Int {
     return 0
 }
 
+// Read a SWOSKERN manifest file's active slot from its first cluster's first
+// sector. Returns 0/1, or nil if the magic is wrong or the slot is out of range.
+private func fatReadManifestActive(_ vol: Fat32Vol, _ firstClus: UInt32) -> Int? {
+    var active = -1
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkRead(fatClusterLBA(vol, firstClus), p) != 0 { return }
+        let magic: StaticString = "SWOSKERN"
+        var ok = true
+        magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
+        if ok { active = Int(espLd32(UnsafeRawPointer(p), 12)) }
+    }
+    return (active == 0 || active == 1) ? active : nil
+}
+
+// U1g-4d: flip the active kernel slot by copying the pre-signed alternate
+// manifest (\EFI\swift-os\kernel-boot-alt, which selects the OTHER slot and was
+// signed offline at image build) over the live kernel-boot, in place. Returns the
+// new active slot (0/1) on success, or a negative errno-style code. The OS never
+// signs — it only courier-copies an already-signed manifest, so the loader's
+// signature gate is preserved.
+private func espActivateInner() -> Int {
+    guard let (partLBA, _) = espFindPartition() else { return -2 }
+    guard let vol = fatReadBPB(partLBA) else { return -5 }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
+    guard let cur = fatFind(vol, sw.0, "kernel-boot"), !cur.2 else { return -2 }
+    guard let alt = fatFind(vol, sw.0, "kernel-boot-alt"), !alt.2 else { return -2 }
+    guard let curA = fatReadManifestActive(vol, cur.0) else { return -22 }
+    guard let altA = fatReadManifestActive(vol, alt.0) else { return -22 }
+    if altA == curA { return -22 } // the alternate must select the other slot
+
+    // Copy the alternate manifest's first sector over the live manifest's.
+    var ok = false
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkRead(fatClusterLBA(vol, alt.0), p) != 0 { return }
+        if virtioBlkWriteSector(fatClusterLBA(vol, cur.0), UnsafeRawPointer(p)) != 0 { return }
+        ok = true
+    }
+    if !ok { return -5 }
+    if virtioBlkFlush() != 0 { return -5 }
+    // Verify the live manifest now selects the alternate's slot.
+    guard let newA = fatReadManifestActive(vol, cur.0), newA == altA else { return -5 }
+    return newA
+}
+
+/// U1g-4d: activate the inactive kernel slot for the next boot by installing the
+/// pre-signed alternate manifest. capConsole-gated. Returns 0 on success, or a
+/// negative errno-style code. Invoked from EL0 via syscall 64 (/bin/swos-kactivate).
+func espActivateOtherKernel() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
+    if !virtioBlkHasEsp() { return -19 }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    let r = espActivateInner()
+    virtioBlkReselectServed()
+    if r >= 0 {
+        uartPuts("kernel-store: activated kernel slot ")
+        uartPuts(r == 0 ? "A" : "B")
+        uartPuts(" for next boot (signed manifest)\n")
+        return 0
+    }
+    uartPuts("kernel-store: kernel activate failed rc ")
+    uartPutUInt(UInt64(bitPattern: Int64(r)))
+    uartPuts("\n")
+    return r
+}
+
 /// U1g-4c: copy the ACTIVE kernel slot's image into the INACTIVE slot on the ESP,
 /// in place (same-size files, no FAT/dir changes), and verify it. The write side
 /// of runtime kernel staging — proves the kernel can rewrite the inactive slot

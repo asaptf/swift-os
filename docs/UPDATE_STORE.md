@@ -256,12 +256,19 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   capConsole) has the kernel copy the active kernel image over the inactive slot
   in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
   a bad write only spoils the inactive slot, which the loader's hash check rejects.
+- **U1g-4d (done):** the activate flow. `/bin/swos-kactivate` (syscall 64,
+  capConsole) installs the pre-signed alternate manifest (`kernel-boot-alt`,
+  active = other slot, signed offline at build) over `kernel-boot` on the ESP. On
+  reboot the loader verifies it and boots the new slot. The OS never signs — it
+  courier-copies an already-signed manifest. **Kernel-image A/B is now complete
+  end-to-end** (operator flow: `swos-kstage` → `swos-kactivate` → reboot),
+  mirroring the system-image U1f flow.
 
 ## Not implemented yet
 
-- U1g-4d: write a pre-signed "active = inactive" manifest (courier) to flip the
-  boot slot, then activate + reboot. Plus the signed-selection split (per-image
-  signatures + CRC'd writable boot-state) for attempt-count/rollback without
-  re-signing.
+- A real new-kernel *payload* source (today both kernel slots are the same build;
+  staging a genuinely different signed kernel needs a payload disk / update
+  channel) + per-slot attempt-count/rollback for the kernel (the signed-selection
+  split: per-image signatures + a CRC'd writable boot-state).
 - Key rotation / revocation.
 - Key rotation / revocation.
