@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pkg_hosted_url_install_test.sh - install Lua/zlib from an already-hosted repo URL.
+# pkg_hosted_url_install_test.sh - install seed packages from an already-hosted repo URL.
 
 set -u
 
@@ -19,10 +19,8 @@ rm -f "$BASE"
 ( cd "$ROOT" && make BASE_IMG="$BASE_REL" PKG_DEFAULT_REPO_URL="$REPO_URL" PKG_DEFAULT_DNS_SERVER="$DNS_SERVER" base-image ) >/dev/null 2>&1 || {
   echo "FAIL: cannot build hosted-url default-repo base image" >&2; exit 2;
 }
-[[ -f "$STORE_DISK" ]] || {
-  ( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
-    echo "FAIL: cannot create package store image" >&2; exit 2;
-  }
+( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
+  echo "FAIL: cannot create package store image" >&2; exit 2;
 }
 
 LOG="$(mktemp -t swiftos-pkg-hosted-url.XXXXXX)"
@@ -120,19 +118,25 @@ send_line "pkg search lua"
 await "lua-5.4.8_1" 60 || drive_fail "pkg search did not find lua"
 send_line "pkg search zlib"
 await "zlib-1.3.1_1" 60 || drive_fail "pkg search did not find zlib"
+send_line "pkg search ca-certificates"
+await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
 send_line "/usr/bin/lua -e 'print(21 * 2)'"
 await "42" 120 || drive_fail "lua expression did not print 42"
-send_line "echo hosted-url-ok > /tmp/zlib.txt"
+send_line "a=hosted-url; b=-ok; echo \$a\$b > /tmp/zlib.txt"
 send_line "/usr/bin/minigzip /tmp/zlib.txt"
 send_line "echo compressed-hosted-url"
 await "compressed-hosted-url" 60 || drive_fail "minigzip compression did not return"
 send_line "/usr/bin/minigzip -d /tmp/zlib.txt.gz"
 send_line "cat /tmp/zlib.txt"
 await "hosted-url-ok" 60 || drive_fail "minigzip round-trip output mismatch"
+send_line "pkg install ca-certificates"
+await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
+send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
+await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -145,11 +149,13 @@ ok=1
 grep -qF "pkg: catalog updated $REPO_URL" <<<"$clean" || { echo "FAIL: pkg update output missing" >&2; ok=0; }
 grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
+grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "hosted-url-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
+grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during hosted repo install" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua and zlib from hosted repository URL $REPO_URL"
+  echo "PASS: /bin/pkg installed Lua, zlib, and ca-certificates from hosted repository URL $REPO_URL"
   exit 0
 fi
 

@@ -61,34 +61,38 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make package-repo-install-test` proves negative catalog rejection,
     dependency installation, package SHA-256 rejection, and execution of
     `/usr/bin/pkghello`.
-- P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 ports scaffolding is implemented in this
+- P6a/P6b/P6c/P6d/P6e/P6f/P7/P8/P10 ports scaffolding is implemented in this
   repository:
   - `ports/catalog.json` records the first package priorities, prerequisite
     bundles, runtime dependency names, and blockers;
-  - `ports/lang/lua/Port.json` and `ports/archivers/zlib/Port.json` are the
-    checked source recipe scaffolds;
+  - `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, and
+    `ports/security/ca-certificates/Port.json` are the checked recipe
+    scaffolds;
   - `build/swport catalog validate/list/inspect` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
-  - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`, and
-    `scripts/build-zlib.sh` cross-builds static zlib plus `minigzip`, against
-    the local newlib sysroot;
+  - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`,
+    `scripts/build-zlib.sh` cross-builds static zlib plus `minigzip` against
+    the local newlib sysroot, and `scripts/build-ca-certificates.sh` packages
+    the pinned Mozilla CA bundle as data;
   - `make ports-catalog-test` and `make ports-recipe-test` keep the catalog and
     checked recipe package/repository paths machine-readable;
   - `make ports-lua-repo-fixture` proves the Lua cross-build package and signed
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua and zlib into one signed local
-    seed repository, and `make package-ports-seed-repo-install-test` proves
-    installing both packages plus the `minigzip` round trip inside QEMU;
+  - `make ports-seed-repo-fixture` publishes Lua, zlib, and ca-certificates
+    into one signed local seed repository, and
+    `make package-ports-seed-repo-install-test` proves installing all three
+    packages plus the `minigzip` round trip and CA bundle marker inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
-    the Lua+zlib seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install from that published layout;
+    the seed repository, and `make package-static-host-repo-install-test`
+    proves SwiftOS can install all three packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua and zlib from a DNS-resolved HTTP repository URL.
+    install Lua, zlib, and ca-certificates from a DNS-resolved HTTP repository
+    URL.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
   coverage, package publication, and streaming large-package downloads remain
@@ -126,8 +130,8 @@ Outputs:
 - one `Port.json` per package;
 - patches and static-link build flags;
 - QEMU smoke tests;
-- first real packages: `lua`, `zlib`, `ca-certificates`, then web stack
-  packages.
+- first real packages: `lua`, `zlib`, `ca-certificates`; next packages are
+  compression/build helpers and the web stack.
 
 ### 3. Build Automation
 

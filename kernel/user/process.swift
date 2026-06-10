@@ -21,14 +21,14 @@
 // this the OS leaked ~2 MiB per command and exhausted RAM after ~100 commands.
 
 private let userStackTop: UInt = 0x9000_0000
-private let userStackPages = 4
+private let userStackPages = 16
 private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
 
 // Track B — anonymous mmap arena. The valid user window is [0x8000_0000,
 // 0xB000_0000) (user_access.swift). Within it the fixed regions are: the ELF
 // image at 0x8000_0000 growing UP (busybox ~1.1 MiB, far short of 0x8800_0000);
-// the 4-page user stack at the top of [0x8FFF_C000, 0x9000_0000); and the sbrk
+// the 16-page user stack at the top of [0x8FFF_0000, 0x9000_0000); and the sbrk
 // heap at 0xA000_0000 growing UP. That leaves a 256 MiB gap between the stack
 // top (0x9000_0000) and the heap base (0xA000_0000) with nothing in it. We park
 // the mmap arena at the MIDPOINT of that gap, 0x9800_0000, and grow it DOWN.
@@ -852,6 +852,14 @@ private func captureLastS5eThreadFanoutTelemetry() {
     lastS5eThreadTelemetryLockContentionCount = processS5eThreadTelemetryLockContentionCount()
     lastS5eThreadFanoutTelemetryValid = true
     processS5eThreadTelemetryUnlock(daif)
+}
+
+private func s5eThreadFanoutWorkersExited() -> Bool {
+    let daif = processS5eThreadTelemetryLock()
+    let created = lastS5eThreadCreateCount
+    let exited = lastS5eThreadExitCount
+    processS5eThreadTelemetryUnlock(daif)
+    return created >= 2 && exited >= created
 }
 
 private func resetLastS5fRunAnyTelemetry() {
@@ -2481,6 +2489,12 @@ func processRunS5eThreadFanout(_ image: UInt, _ size: UInt,
     }
 
     schedule(until: { pState[slot] == pZombie && pSchedulerQuiesced[slot] })
+    let code = pExit[slot]
+    if code == 0 {
+        // The parent observes worker completion through a futex before a worker
+        // necessarily reaches SYS_exit and records S5e telemetry.
+        schedule(until: { s5eThreadFanoutWorkersExited() })
+    }
 
     cpu = 1
     while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
@@ -2494,7 +2508,6 @@ func processRunS5eThreadFanout(_ image: UInt, _ size: UInt,
     smpLoadBarrier()
     s5eThreadPlacementActive = false
     captureLastS5eThreadFanoutTelemetry()
-    let code = pExit[slot]
     lastReapedKilled = pKilled[slot]
     reapProcess(slot)
     return code

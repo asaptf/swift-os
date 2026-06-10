@@ -1145,7 +1145,9 @@ private func installCatalogPackage(_ pkg: CatalogPackage, repoURL: String) -> In
         unlinkPath(packageCachePath)
         return 1
     }
-    return install(packageCachePath)
+    let rc = install(packageCachePath)
+    unlinkPath(packageCachePath)
+    return rc
 }
 
 private func installResolved(_ name: String, repoURL: String, catalog: [UInt8], stack: [String]) -> Int32 {

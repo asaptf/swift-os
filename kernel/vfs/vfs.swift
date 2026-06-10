@@ -80,7 +80,7 @@ private struct VNode {
 // Keep fixed-table tmpfs churn headroom above the packed base image. S4f runs
 // after normal boot/login demos, so it needs space for transient vnode names
 // even though unlink/rmdir only detach nodes in this simple VFS.
-private let maxNodes = 128
+private let maxNodes = 192
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
 private var mountedPackageStorePayloads = 0

@@ -321,9 +321,10 @@ make package-repo-install-test
 
 ## 11. Install Source-Built Packages From A Static-Host Fixture
 
-The current ports fixture cross-builds Lua and zlib, publishes them into one
-signed seed repository, copies that repository into a static-hostable web root,
-and proves that the guest can install from the hosted layout.
+The current ports fixture cross-builds Lua and zlib, packages ca-certificates,
+publishes them into one signed seed repository, copies that repository into a
+static-hostable web root, and proves that the guest can install from the hosted
+layout.
 
 Host:
 
@@ -342,23 +343,28 @@ drives this guest flow:
 pkg update
 pkg search lua
 pkg search zlib
+pkg search ca-certificates
 pkg install lua
 pkg install zlib
+pkg install ca-certificates
 /usr/bin/lua -e 'print(21 * 2)'
 echo static-host-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
+cat /usr/share/certs/swiftos-ca-bundle.version
 ```
 
 Expected signals:
 
 - `pkg update` accepts the static-hosted signed catalog.
-- `pkg search lua` and `pkg search zlib` find `lua-5.4.8_1` and
-  `zlib-1.3.1_1`.
-- `pkg install lua` and `pkg install zlib` activate both packages.
+- `pkg search lua`, `pkg search zlib`, and `pkg search ca-certificates` find
+  the current seed packages.
+- `pkg install lua`, `pkg install zlib`, and `pkg install ca-certificates`
+  activate all three packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
-  `/tmp/zlib.txt` and prints `static-host-ok` after decompression.
+  `/tmp/zlib.txt` and prints `static-host-ok` after decompression; the CA
+  marker prints `curl-ca-bundle 2026-05-14 121 certificates`.
 
 Equivalent automated check:
 

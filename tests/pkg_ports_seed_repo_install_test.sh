@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pkg_ports_seed_repo_install_test.sh - P7 smoke: install multiple real ports from one repo.
+# pkg_ports_seed_repo_install_test.sh - P7 smoke: install multiple seed ports from one repo.
 
 set -u
 
@@ -19,10 +19,8 @@ rm -f "$BASE"
 ( cd "$ROOT" && make BASE_IMG=build/base-ports-seed-repo.img PKG_DEFAULT_REPO_URL="$REPO_URL" base-image ) >/dev/null 2>&1 || {
   echo "FAIL: cannot build default-repo base image" >&2; exit 2;
 }
-[[ -f "$STORE_DISK" ]] || {
-  ( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
-    echo "FAIL: cannot create package store image" >&2; exit 2;
-  }
+( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
+  echo "FAIL: cannot create package store image" >&2; exit 2;
 }
 [[ -f "$REPO_DIR/aarch64/current/catalog.signed" ]] || {
   ( cd "$ROOT" && make ports-seed-repo-fixture ) >/dev/null 2>&1 || {
@@ -138,16 +136,15 @@ send_line "pkg update"
 await "pkg: catalog updated $REPO_URL" 120 || drive_fail "pkg update did not complete from default repo"
 send_line "pkg search zlib"
 await "zlib-1.3.1_1" 60 || drive_fail "pkg search did not find zlib"
+send_line "pkg search ca-certificates"
+await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
-send_line "pkg list"
-await "lua-5.4.8_1" 60 || drive_fail "installed lua package not listed"
-await "zlib-1.3.1_1" 60 || drive_fail "installed zlib package not listed"
 send_line "/usr/bin/lua -e 'print(21 * 2)'"
 await "42" 120 || drive_fail "lua expression did not print 42"
-send_line "echo zlib-ok > /tmp/zlib.txt"
+send_line "a=zlib; b=-ok; echo \$a\$b > /tmp/zlib.txt"
 send_line "echo wrote-zlib-input"
 await "wrote-zlib-input" 20 || drive_fail "could not create zlib input"
 send_line "/usr/bin/minigzip /tmp/zlib.txt"
@@ -158,6 +155,14 @@ send_line "echo decompressed-zlib-input"
 await "decompressed-zlib-input" 60 || drive_fail "minigzip decompression did not return"
 send_line "cat /tmp/zlib.txt"
 await "zlib-ok" 60 || drive_fail "minigzip round-trip output mismatch"
+send_line "pkg install ca-certificates"
+await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
+send_line "pkg list"
+await "lua-5.4.8_1" 60 || drive_fail "installed lua package not listed"
+await "zlib-1.3.1_1" 60 || drive_fail "installed zlib package not listed"
+await "ca-certificates-2026.05.14_1" 60 || drive_fail "installed ca-certificates package not listed"
+send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
+await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -170,13 +175,15 @@ ok=1
 grep -qF "pkg: catalog updated" <<<"$clean" || { echo "FAIL: pkg update output missing" >&2; ok=0; }
 grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
+grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "zlib-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
+grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during ports seed repo install" >&2; ok=0; }
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua and zlib from one signed ports seed repo"
+  echo "PASS: /bin/pkg installed Lua, zlib, and ca-certificates from one signed ports seed repo"
   exit 0
 fi
 

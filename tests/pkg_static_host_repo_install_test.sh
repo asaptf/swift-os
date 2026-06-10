@@ -19,10 +19,8 @@ rm -f "$BASE"
 ( cd "$ROOT" && make BASE_IMG=build/base-ports-static-host.img PKG_DEFAULT_REPO_URL="$REPO_URL" base-image ) >/dev/null 2>&1 || {
   echo "FAIL: cannot build static-host default-repo base image" >&2; exit 2;
 }
-[[ -f "$STORE_DISK" ]] || {
-  ( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
-    echo "FAIL: cannot create package store image" >&2; exit 2;
-  }
+( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
+  echo "FAIL: cannot create package store image" >&2; exit 2;
 }
 [[ -f "$REPO_DIR/hosted-repo.json" && -f "$REPO_DIR/SHA256SUMS" ]] || {
   ( cd "$ROOT" && make ports-static-host-publish ) >/dev/null 2>&1 || {
@@ -112,7 +110,7 @@ kill -0 "$HTTPPID" 2>/dev/null || {
   exit 2
 }
 
-"$PYTHON" - "$PORT" <<'PY' || drive_fail "hosted-repo.json was not served or did not describe lua+zlib"
+"$PYTHON" - "$PORT" <<'PY' || drive_fail "hosted-repo.json was not served or did not describe the seed packages"
 import json
 import sys
 import urllib.request
@@ -125,7 +123,7 @@ if manifest.get("kind") != "swift-os-static-host-repository":
     raise SystemExit("wrong manifest kind")
 if manifest.get("catalog") != "aarch64/current/catalog.signed":
     raise SystemExit("wrong catalog path")
-if not {"lua", "zlib"}.issubset(names):
+if not {"lua", "zlib", "ca-certificates"}.issubset(names):
     raise SystemExit(f"missing package names: {names}")
 PY
 
@@ -160,19 +158,25 @@ send_line "pkg search lua"
 await "lua-5.4.8_1" 60 || drive_fail "pkg search did not find lua"
 send_line "pkg search zlib"
 await "zlib-1.3.1_1" 60 || drive_fail "pkg search did not find zlib"
+send_line "pkg search ca-certificates"
+await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
 send_line "/usr/bin/lua -e 'print(21 * 2)'"
 await "42" 120 || drive_fail "lua expression did not print 42"
-send_line "echo static-host-ok > /tmp/zlib.txt"
+send_line "a=static-host; b=-ok; echo \$a\$b > /tmp/zlib.txt"
 send_line "/usr/bin/minigzip /tmp/zlib.txt"
 send_line "echo compressed-static-host"
 await "compressed-static-host" 60 || drive_fail "minigzip compression did not return"
 send_line "/usr/bin/minigzip -d /tmp/zlib.txt.gz"
 send_line "cat /tmp/zlib.txt"
 await "static-host-ok" 60 || drive_fail "minigzip round-trip output mismatch"
+send_line "pkg install ca-certificates"
+await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
+send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
+await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -185,14 +189,16 @@ ok=1
 grep -qF "pkg: catalog updated $REPO_URL" <<<"$clean" || { echo "FAIL: pkg update output missing" >&2; ok=0; }
 grep -qF "pkg: installed lua-5.4.8_1" <<<"$clean" || { echo "FAIL: lua install output missing" >&2; ok=0; }
 grep -qF "pkg: installed zlib-1.3.1_1" <<<"$clean" || { echo "FAIL: zlib install output missing" >&2; ok=0; }
+grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "static-host-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
+grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during static host repo install" >&2; ok=0; }
 grep -qF "GET /hosted-repo.json" "$HTTPLOG" || { echo "FAIL: hosted manifest request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua and zlib from the static-host published repository"
+  echo "PASS: /bin/pkg installed Lua, zlib, and ca-certificates from the static-host published repository"
   exit 0
 fi
 

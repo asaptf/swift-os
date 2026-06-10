@@ -70,6 +70,9 @@ let listText = output(list)
 guard listText.contains("tier2 nginx planned L www/nginx") else {
     fail("list output did not include nginx")
 }
+guard listText.contains("tier0 ca-certificates packages S security/ca-certificates") else {
+    fail("list output did not include packaged ca-certificates")
+}
 guard listText.contains("tier4 nodejs blocked XL lang/nodejs") else {
     fail("list output did not include blocked nodejs")
 }

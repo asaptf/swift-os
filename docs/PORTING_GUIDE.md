@@ -262,7 +262,7 @@ make package-repo-install-test
 Package content is read-only at runtime. Put binaries under `/usr/bin` in the
 payload namespace unless the package guide says otherwise.
 
-For source ports, use the ports tool and the current Lua/zlib seed fixtures:
+For source ports, use the ports tool and the current seed fixtures:
 
 ```sh
 make ports-catalog-test
@@ -272,6 +272,7 @@ build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-ca-certificates-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish

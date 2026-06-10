@@ -908,9 +908,9 @@ Notes:
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
-flow is covered by `tests/pkg_ports_seed_repo_install_test.sh`, and the
-DNS-resolved hosted-style URL flow is covered by
-`tests/pkg_static_host_dns_repo_install_test.sh`.
+flow for Lua, zlib, and ca-certificates is covered by
+`tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved hosted-style
+URL flow is covered by `tests/pkg_static_host_dns_repo_install_test.sh`.
 
 ### `pkghello`
 

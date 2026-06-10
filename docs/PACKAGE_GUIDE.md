@@ -13,10 +13,11 @@ P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]
 and `pkg install NAME`. Repository installs resolve dependencies by package
 name. Public production channels, version-constraint solving, remove, upgrade,
 and rollback are staged work, not current behavior. The ports workflow can
-cross-build static AArch64 Lua and zlib packages on the host, publish them into
-signed local repository fixtures, install Lua by package name in QEMU, and boot
-SwiftOS with a default repository URL to install both Lua and zlib from one
-seed repository. It can also produce a static-hostable web root for that seed
+cross-build static AArch64 Lua and zlib packages on the host, package the
+pinned CA certificate bundle, publish them into signed local repository
+fixtures, install Lua by package name in QEMU, and boot SwiftOS with a default
+repository URL to install Lua, zlib, and ca-certificates from one seed
+repository. It can also produce a static-hostable web root for that seed
 repository, verify a hosted URL from the host, and prove that SwiftOS installs
 from a DNS-resolved HTTP repository URL.
 
@@ -52,10 +53,11 @@ Use this guide with:
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
 | Target-side dependency resolution by package name | Implemented for signed repository catalogs |
-| Ports catalog and Lua/zlib recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, and `build/swport` |
+| Ports catalog and Lua/zlib/ca-certificates recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`, and `build/swport` |
 | Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture` |
 | Target-side `pkg install lua` from the signed Lua repository fixture | Implemented and proven by `make package-lua-repo-install-test` |
 | zlib cross-build repository fixture | Implemented as `make ports-zlib-repo-fixture` |
+| ca-certificates repository fixture | Implemented as `make ports-ca-certificates-repo-fixture` |
 | Multi-package ports seed repository fixture | Implemented as `make ports-seed-repo-fixture`; guest install smoke is `make package-ports-seed-repo-install-test` |
 | Static-host publish root | Implemented as `make ports-static-host-publish`; guest install smoke is `make package-static-host-repo-install-test` |
 | Hosted URL verification | Implemented as `make ports-hosted-url-verify` and proven locally by `make ports-hosted-url-verify-test` |
@@ -73,12 +75,12 @@ disk. It can also be installed by name from the P5c signed HTTP fixture after
 `pkg repo set URL && pkg update` or `pkg update URL` caches a verified repository
 catalog.
 
-The current real source-port fixtures are Lua and zlib. They are useful for
-package maintainers and release owners because they prove source fetch,
-checksum verification, static cross-build, `.swpkg` creation, signed local
-repository publication, target-side Lua install from a signed repository, and
-target-side Lua+zlib install from a default repository URL. They are still local
-fixtures, not public hosted channels.
+The current real port fixtures are Lua, zlib, and ca-certificates. They are
+useful for package maintainers and release owners because they prove source
+fetch, checksum verification, static cross-build or data-only staging,
+`.swpkg` creation, signed local repository publication, target-side Lua install
+from a signed repository, and target-side seed package install from a default
+repository URL. They are still local fixtures, not public hosted channels.
 
 ## Mental Model
 
@@ -102,7 +104,7 @@ The three package artifact types have different jobs:
 | `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for target-side local install tests |
 | `build/pkgrepo-root` | `build/pkgrepo create` | P5c signed static HTTP repository tree |
 | `build/pkgrepo-root.pub` | `build/pkgrepo pubkey` | Public key copied into the base image as `/etc/pkg/repo-root.pub` |
-| `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua and zlib packages |
+| `build/ports-seed-repo-root` | `make ports-seed-repo-fixture` | Signed local repository containing the checked Lua, zlib, and ca-certificates packages |
 | `build/ports-static-host-root` | `make ports-static-host-publish` | Deployable static web root containing the ports seed repository, public key, sidecar manifest, and SHA-256 sums |
 
 Use the direct payload overlay when you want the simplest package-content boot.
@@ -505,16 +507,18 @@ pkg install lua
 
 ## Build The Ports Seed Repository Fixture
 
-P7 adds zlib and publishes the checked Lua and zlib source-port packages into
-one signed local seed repository. This is the closest current stand-in for the
-future hosted package channel: the guest boots with a default repository URL,
-runs `pkg update`, installs both packages by name, and exercises the installed
-programs.
+P7 added zlib and P10 adds ca-certificates. The checked Lua, zlib, and
+ca-certificates recipes now publish into one signed local seed repository. This
+is the closest current stand-in for the future hosted package channel: the
+guest boots with a default repository URL, runs `pkg update`, installs all
+three packages by name, and exercises the installed payloads.
 
 ```sh
 make ports-zlib-repo-fixture
+make ports-ca-certificates-repo-fixture
 make ports-seed-repo-fixture
 build/swpkg verify build/zlib.swpkg
+build/swpkg verify build/ca-certificates.swpkg
 build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
 make package-ports-seed-repo-install-test
 ```
@@ -525,7 +529,9 @@ Expected additional artifacts:
 | --- | --- |
 | `build/zlib.swpkg` | `.swpkg` containing zlib headers, pkgconf metadata, and `/usr/bin/minigzip` |
 | `build/zlib-repo-root` | Signed local repository fixture for the standalone zlib package |
-| `build/ports-seed-repo-root` | Signed local repository fixture containing both Lua and zlib |
+| `build/ca-certificates.swpkg` | `.swpkg` containing the pinned CA bundle and SwiftOS trust-store marker |
+| `build/ca-certificates-repo-root` | Signed local repository fixture for the standalone ca-certificates package |
+| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, and ca-certificates |
 
 The seed smoke reuses `build/pkgstore-lua-install.img` as its writable
 package-store image.
@@ -536,11 +542,13 @@ The guest-side flow exercised by the seed smoke is:
 pkg update
 pkg install lua
 pkg install zlib
+pkg install ca-certificates
 /usr/bin/lua -e 'print(21 * 2)'
 echo zlib-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
+cat /usr/share/certs/swiftos-ca-bundle.version
 ```
 
 ## Package Fixture Anatomy
@@ -563,7 +571,9 @@ gate.
 | `build/pkgstore-lua-install.img` | Writable package-store image used by the Lua repository install smoke |
 | `build/zlib.swpkg` | P7 zlib package artifact from the source-port workflow |
 | `build/zlib-repo-root` | P7 signed local repository fixture for zlib |
-| `build/ports-seed-repo-root` | P7 signed local repository fixture containing Lua and zlib |
+| `build/ca-certificates.swpkg` | P10 data-only CA certificate package artifact |
+| `build/ca-certificates-repo-root` | P10 signed local repository fixture for ca-certificates |
+| `build/ports-seed-repo-root` | P10 signed local repository fixture containing Lua, zlib, and ca-certificates |
 
 Package files install under `/usr`. The current package verifier rejects package
 payload paths outside `/usr`.
@@ -612,6 +622,7 @@ Run the narrowest proof for the path you changed:
 | Lua cross-build repository fixture | `make ports-lua-repo-fixture` |
 | Target-side Lua repository install/run smoke | `make package-lua-repo-install-test` |
 | zlib cross-build repository fixture | `make ports-zlib-repo-fixture` |
+| ca-certificates repository fixture | `make ports-ca-certificates-repo-fixture` |
 | Target-side ports seed repository install/run smoke | `make package-ports-seed-repo-install-test` |
 | Static-host repository publish root | `make ports-static-host-publish` |
 | Target-side install from static-host publish root | `make package-static-host-repo-install-test` |
@@ -672,9 +683,9 @@ Current limits that matter for package use:
 - Package content is read-only in the guest.
 - The current target-side write paths are local `.swpkg` install and P5c
   repository install into a writable package-store disk.
-- The Lua/zlib port fixtures and static-host publish path prove source
-  packaging, signed repository publication, target-side repository install, and
-  guest execution through `make package-lua-repo-install-test`,
+- The Lua/zlib/ca-certificates port fixtures and static-host publish path prove
+  source/data packaging, signed repository publication, target-side repository
+  install, and guest execution through `make package-lua-repo-install-test`,
   `make package-ports-seed-repo-install-test`, and
   `make package-static-host-repo-install-test`.
 - `.swpkg` hashes prove container integrity. P5c catalog signatures prove the

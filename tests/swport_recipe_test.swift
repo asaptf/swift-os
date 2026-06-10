@@ -66,6 +66,7 @@ let swpkg = repo.appendingPathComponent("build/swpkg")
 let pkgrepo = repo.appendingPathComponent("build/pkgrepo")
 let recipe = repo.appendingPathComponent("ports/lang/lua/Port.json")
 let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
+let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 
 guard FileManager.default.isExecutableFile(atPath: swport.path) else {
     fail("missing executable build/swport; build swport first")
@@ -81,6 +82,9 @@ guard FileManager.default.isReadableFile(atPath: recipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: zlibRecipe.path) else {
     fail("missing ports/archivers/zlib/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: caRecipe.path) else {
+    fail("missing ports/security/ca-certificates/Port.json")
 }
 
 let temp = FileManager.default.temporaryDirectory
@@ -276,6 +280,90 @@ guard output(zlibRepoInspect).contains("zlib-1.3.1_1") else {
     fail("repo fixture catalog did not include zlib package: \(output(zlibRepoInspect))")
 }
 
+let caValidate = run(swport, ["recipe", "validate", "security/ca-certificates"])
+requireSuccess(caValidate, "validate ca-certificates recipe")
+guard output(caValidate).contains("recipe: OK ca-certificates-2026.05.14_1") else {
+    fail("validate output did not confirm ca-certificates recipe: \(output(caValidate))")
+}
+
+let caManifestURL = temp.appendingPathComponent("ca-certificates-manifest.json")
+let caManifest = run(swport, ["recipe", "manifest", "security/ca-certificates", "--output", caManifestURL.path])
+requireSuccess(caManifest, "generate ca-certificates manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: caManifestURL)) as? [String: Any] else {
+        fail("generated ca-certificates manifest is not a JSON object")
+    }
+    requireString(object, "name", "ca-certificates")
+    requireString(object, "version", "2026.05.14")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["ca-certificates", "ssl-cert-file"] else {
+        fail("ca-certificates manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/etc/ssl/cert.pem",
+        "/usr/share/certs/ca-certificates.crt",
+        "/usr/share/certs/swiftos-ca-bundle.version",
+    ] else {
+        fail("unexpected ca-certificates manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated ca-certificates manifest: \(error)")
+}
+
+let caRoot = temp.appendingPathComponent("ca-certificates-root", isDirectory: true)
+do {
+    let certData = Data("-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n".utf8)
+    let files: [(String, Data, Int)] = [
+        ("usr/etc/ssl/cert.pem", certData, 0o644),
+        ("usr/share/certs/ca-certificates.crt", certData, 0o644),
+        ("usr/share/certs/swiftos-ca-bundle.version", Data("curl-ca-bundle 2026-05-14 121 certificates\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = caRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy ca-certificates package root: \(error)")
+}
+
+let caPackageURL = temp.appendingPathComponent("ca-certificates.swpkg")
+let caPackageResult = run(swport, [
+    "recipe", "package", "security/ca-certificates",
+    "--root", caRoot.path,
+    "--output", caPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(caPackageResult, "package dummy ca-certificates root")
+let caVerify = run(swpkg, ["verify", caPackageURL.path])
+requireSuccess(caVerify, "verify dummy ca-certificates package")
+guard output(caVerify).contains("OK: ca-certificates-2026.05.14_1") else {
+    fail("swpkg verify did not identify ca-certificates package: \(output(caVerify))")
+}
+
+let caRepoRoot = temp.appendingPathComponent("ca-certificates-repo-root", isDirectory: true)
+let caPubkey = temp.appendingPathComponent("ca-certificates-repo-root.pub")
+let caRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "security/ca-certificates",
+    "--root", caRoot.path,
+    "--output", caRepoRoot.path,
+    "--pubkey", caPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(caRepoFixture, "create ca-certificates repository fixture")
+let caCatalog = caRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let caRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", caCatalog.path, "--pubkey", caPubkey.path])
+requireSuccess(caRepoVerify, "verify ca-certificates repository fixture")
+let caRepoInspect = run(pkgrepo, ["inspect", caCatalog.path])
+requireSuccess(caRepoInspect, "inspect ca-certificates repository fixture")
+guard output(caRepoInspect).contains("ca-certificates-2026.05.14_1") else {
+    fail("repo fixture catalog did not include ca-certificates package: \(output(caRepoInspect))")
+}
+
 do {
     let badRoot = temp.appendingPathComponent("missing-root", isDirectory: true)
     try FileManager.default.createDirectory(at: badRoot, withIntermediateDirectories: true)
@@ -329,4 +417,4 @@ do {
     fail("negative file test failed: \(error)")
 }
 
-print("PASS: swport validates, packages, and publishes lua and zlib recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, and ca-certificates recipe fixtures")

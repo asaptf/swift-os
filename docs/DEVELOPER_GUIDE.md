@@ -12,7 +12,7 @@ For copy-paste application recipes, see
 [APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md). For validation strategy,
 see [TESTING_GUIDE.md](TESTING_GUIDE.md).
 For package artifacts, signed repository fixtures, static-host publishing, and
-the current Lua/zlib source-port fixtures, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) and
+the current seed port fixtures, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) and
 [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md).
 
 ## Development Model

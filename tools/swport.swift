@@ -99,7 +99,7 @@ private struct Recipe {
     let notes: String
 }
 
-private let allowedStatuses: Set<String> = ["candidate", "planned", "blocked"]
+private let allowedStatuses: Set<String> = ["candidate", "planned", "blocked", "packages"]
 private let allowedDifficulties: Set<String> = ["S", "M", "L", "XL"]
 private let allowedRecipeMaturities: Set<String> = [
     "scaffolded", "fetches", "builds", "packages", "smoke-tested", "published",
@@ -640,12 +640,14 @@ private func printSummary(_ catalog: Catalog) {
     var candidate = 0
     var planned = 0
     var blocked = 0
+    var packaged = 0
     for entry in catalog.packages {
         if entry.status == "candidate" { candidate += 1 }
         if entry.status == "planned" { planned += 1 }
         if entry.status == "blocked" { blocked += 1 }
+        if entry.status == "packages" { packaged += 1 }
     }
-    print("catalog: OK (\(catalog.packages.count) packages, \(candidate) candidates, \(planned) planned, \(blocked) blocked)")
+    print("catalog: OK (\(catalog.packages.count) packages, \(packaged) packaged, \(candidate) candidates, \(planned) planned, \(blocked) blocked)")
 }
 
 private func list(_ catalog: Catalog) {

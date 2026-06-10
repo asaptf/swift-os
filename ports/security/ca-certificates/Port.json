@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "name": "ca-certificates",
+  "version": "2026.05.14",
+  "revision": 1,
+  "category": "security",
+  "summary": "Mozilla CA certificate bundle for TLS clients",
+  "homepage": "https://curl.se/docs/caextract.html",
+  "license": ["MPL-2.0"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://curl.se/ca/cacert-2026-05-14.pem",
+    "sha256": "86a1f3366afac7c6f8ae9f3c779ac221129328c43f0ab2b8817eb2f362a5025c"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "data",
+    "args": ["stage"],
+    "env": {}
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "cacert.pem"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["ca-certificates", "ssl-cert-file"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/etc/ssl/cert.pem", "to": "/usr/etc/ssl/cert.pem", "mode": "0644" },
+      { "from": "destdir/usr/share/certs/ca-certificates.crt", "to": "/usr/share/certs/ca-certificates.crt", "mode": "0644" },
+      { "from": "destdir/usr/share/certs/swiftos-ca-bundle.version", "to": "/usr/share/certs/swiftos-ca-bundle.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "cat /usr/share/certs/swiftos-ca-bundle.version"
+    ]
+  },
+  "notes": "Data-only trust store package based on curl's PEM conversion of Mozilla's CA bundle. The current package-manager payload policy only installs /usr paths, so /usr/etc/ssl/cert.pem is the canonical cert-file path until base-image links or non-/usr package paths are supported."
+}

@@ -21,11 +21,13 @@ fail() {
 
 "$ROOT/scripts/build-lua.sh"
 "$ROOT/scripts/build-zlib.sh"
+"$ROOT/scripts/build-ca-certificates.sh"
 
 rm -rf "$REPO_ROOT" "$REPO_PUB"
 "$ROOT/build/pkgrepo" create \
     --package "$ROOT/build/lua.swpkg" \
     --package "$ROOT/build/zlib.swpkg" \
+    --package "$ROOT/build/ca-certificates.swpkg" \
     --output "$REPO_ROOT" \
     --seed-hex "$SEED_HEX" \
     --generation 1
