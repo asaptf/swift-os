@@ -344,6 +344,23 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   queue. The next C5 slice should decide the first real hardware authority
   grant and driver replacement boundary.
 
+### C5d — virtio-input discovery metadata (DONE, 2026-06-10)
+
+- The virtio-input probe now uses the discovered `platform.virtioMmio*` window
+  instead of fixed QEMU constants. The device registry reuses that probe to
+  surface a `VIRTIO_MMIO` bus, MMIO base, and MMIO length for `virtio-input.0`
+  when a `virtio-keyboard-device` is attached.
+- The grant still carries `NO_MMIO_GRANT`; MMIO fields are discovery metadata,
+  not authority. IRQ remains zero because the current keyboard path is polled and
+  IRQ endpoints are still future work.
+- `/bin/drvsvcdemo` and `/bin/drvinputd` accept both the synthetic fallback and
+  discovered virtio-input metadata, and the focused boot gate requires
+  `C5d OK: virtio input discovery metadata surfaced`.
+- `make c5-device-metadata-test` is the focused `-smp 4` gate. It attaches a
+  QEMU virtio keyboard while preserving the headless C5b/C5c tests.
+- Non-goals: C5d still does not map MMIO into userland, deliver IRQs as
+  endpoints, create DMA windows, or replace the in-kernel virtio-input driver.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

@@ -1706,6 +1706,22 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   map syscall, IRQ endpoint, DMA window, or replacement of the in-kernel
   virtio-input queue owner lands in this slice.
 
+### C5d — virtio-input discovery metadata (DONE, 2026-06-10)
+
+- **Metadata source.** The virtio-input keyboard probe now scans
+  `platform.virtioMmioBase/Stride/Count` instead of the old fixed QEMU window
+  constants. VFS device-registry setup reuses the same read-only probe: when a
+  `virtio-keyboard-device` is present, `virtio-input.0` reports
+  `VIRTIO_MMIO`, the transport MMIO base, and the slot length in
+  `swiftos_device_info`.
+- **Authority boundary.** The registry still sets `NO_MMIO_GRANT`, and IRQ is
+  still zero. These MMIO fields are discovery manifest metadata only; no userland
+  mapping, IRQ endpoint, DMA window, or driver ownership is handed out.
+- **Executable checks.** `/bin/drvsvcdemo` and `/bin/drvinputd` validate both the
+  synthetic no-device fallback and the virtio-mmio metadata case. `make
+  c5-device-metadata-test` boots with a QEMU virtio keyboard and asserts
+  `C5d OK: virtio input discovery metadata surfaced`.
+
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 
 M8 is complete (busybox `sh` on QEMU virt). The next arc is portability + a real boot + identity.

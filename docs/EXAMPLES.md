@@ -515,7 +515,7 @@ SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 Use this path before claiming firmware, disk-image, or VirtualBox-related
 changes are healthy.
 
-## 16. Run The Driver-Service Device-Discovery Smoke
+## 16. Run The Driver-Service Device-Metadata Smoke
 
 Guest:
 
@@ -533,6 +533,7 @@ drvsvc: generation 1 stopped
 drvsvc: generation 2 ready
 drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
+drvsvc: C5d virtio-input metadata discovered
 drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
 drvsvc: C5c virtio-input grant matched
@@ -546,11 +547,12 @@ drvsvc: C5c virtio-input grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
+C5d OK: virtio input discovery metadata surfaced
 ```
 
 This proves the current restartable service shape, virtio-input discovery
 metadata, and opaque device-grant transfer. It is still metadata-only authority:
-C5c does not hand MMIO, IRQ, DMA, or real virtio-input queue ownership to
+C5d does not hand MMIO, IRQ, DMA, or real virtio-input queue ownership to
 userland. A broad headless boot without a QEMU keyboard device exercises the
 same lifecycle through the `pseudo-input.0` fallback and emits
 `C5c OK: device discovery manifest matched pseudo input`.
@@ -558,12 +560,13 @@ same lifecycle through the `pseudo-input.0` fallback and emits
 Equivalent automated check:
 
 ```sh
-make c5-device-discovery-test
+make c5-device-metadata-test
 ```
 
-The automated gate boots with `-smp 4`, attaches `virtio-keyboard-device`, and
+The automated gate boots with `-smp 4`, attaches a QEMU virtio keyboard, and
 checks the same serial markers.
-`make c5-device-handle-test` remains a compatible alias.
+`make c5-device-discovery-test` and `make c5-device-handle-test` remain
+compatible aliases.
 
 ## 17. Run The Full Gate
 

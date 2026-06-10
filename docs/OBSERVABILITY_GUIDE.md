@@ -81,12 +81,14 @@ These markers tell you how far the system got.
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
 | `drvsvc: C5c device manifest matched` | Registry metadata matched the expected pseudo or virtio-input manifest |
 | `drvsvc: C5c discovery exhausted` | Device discovery reported end-of-registry after the current input grant |
+| `drvsvc: C5d virtio-input metadata discovered` | The focused metadata gate observed a discovered virtio-input MMIO transport |
 | `drvsvc: C5b device grant moved` | Opaque device grant was moved out of the supervisor fd table |
 | `drvinputd: C5b device grant accepted` | Driver service validated the transferred device grant |
 | `C5a OK: restartable driver service recovered over IPC` | Driver service restarted and recovered over endpoint IPC |
 | `C5b OK: opaque device handle transferred and released` | Device grant was transferred and reclaimed |
 | `C5c OK: device discovery manifest matched pseudo input` | Headless fallback discovery, claim, transfer, and release completed |
 | `C5c OK: virtio-input device grant discovered and matched` | Focused C5c gate matched a discovered virtio-input grant and completed handoff/reclaim |
+| `C5d OK: virtio input discovery metadata surfaced` | Focused C5d gate surfaced virtio-input discovery metadata without MMIO authority |
 | `swift-os login:` | Console login prompt reached |
 | `Welcome to swift-os, root` | Root login succeeded |
 | `M12c: session ended` | Login session exited and init recovered |
@@ -194,7 +196,7 @@ Acceptance coverage:
 | `ps` | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | `top` | `./tests/top_test.sh`, `make smp-cpu-utilization-test` |
 | S5f placement markers | `make s5-run-any-placement-test` |
-| C5 driver-service/device-discovery markers | `make c5-device-discovery-test` |
+| C5 driver-service/device-metadata markers | `make c5-device-metadata-test` |
 
 ## Service Signals
 
@@ -207,7 +209,7 @@ socket and entered the serving path.
 | `/bin/llmd` | `llmd: serving on 8080` | `GET /health` | `GET /metrics` plus serial `llmd: served ...` |
 | `/bin/tcpecho` | `tcpecho: listening on 5555` | One host TCP echo | Serial byte count |
 | `/bin/udpecho` | `udpecho: listening on 5555` | One host UDP echo | Serial byte count and peer |
-| `/bin/drvsvcdemo` | `C5a OK: restartable driver service recovered over IPC`; C5c gate also expects `C5c OK: virtio-input device grant discovered and matched` | n/a | Serial supervisor markers |
+| `/bin/drvsvcdemo` | `C5a OK: restartable driver service recovered over IPC`; C5d gate also expects `C5d OK: virtio input discovery metadata surfaced` | n/a | Serial supervisor markers |
 
 For service operation and authoring rules, see
 [Service Guide](SERVICE_GUIDE.md).

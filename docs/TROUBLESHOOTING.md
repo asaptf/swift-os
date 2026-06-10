@@ -606,16 +606,16 @@ path, not as a throughput target.
 
 ## Driver-Service Smoke Problems
 
-### `make c5-device-discovery-test` Fails
+### `make c5-device-metadata-test` Fails
 
 The C5 gate boots QEMU with `SMP_CPUS=4` and `virtio-keyboard-device`, starts
 `/bin/drvsvcdemo`, expects `/bin/drvinputd` to recover across two generations,
-and validates the discovered `virtio-input.0` device grant. Rebuild the normal
-prerequisites and run the focused gate:
+and validates the discovered `virtio-input.0` device grant plus C5d metadata
+markers. Rebuild the normal prerequisites and run the focused gate:
 
 ```sh
 make build build/virt-smp4.dtb base-image
-make c5-device-discovery-test
+make c5-device-metadata-test
 ```
 
 Expected serial markers include:
@@ -629,6 +629,7 @@ drvsvc: generation 2 ready
 drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
 drvsvc: C5c discovery exhausted
+drvsvc: C5d virtio-input metadata discovered
 drvsvc: C5b device grant claimed
 drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
@@ -640,6 +641,7 @@ drvsvc: C5b device grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
+C5d OK: virtio input discovery metadata surfaced
 ```
 
 The broad headless boot path exercises the same lifecycle through
@@ -650,7 +652,7 @@ If the test fails, keep the serial tail printed by
 `tests/driver_service_test.sh`. A marker such as `drvinputd: missing endpoint
 args`, `drvsvc: ready message mismatch`, or `drvsvc: service wait failed`
 usually points at endpoint inheritance, IPC transfer, or process wait behavior
-rather than at real hardware. C5c exposes discovery metadata for matching, but
+rather than at real hardware. C5d exposes discovery metadata for matching, but
 it still does not hand MMIO, IRQ, DMA, or virtio-input queue ownership to
 userland yet.
 

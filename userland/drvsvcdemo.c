@@ -39,6 +39,7 @@ struct device_expect {
 };
 
 static int c5c_real_device_seen = 0;
+static int saw_virtio_input_metadata = 0;
 
 static void u32_to_str(int v, char out[12]) {
     char tmp[12];
@@ -124,6 +125,10 @@ static int discover_input_device(struct swiftos_device_info *info,
         return 0;
     }
     puts_raw("drvsvc: C5c device manifest matched\n");
+    if (expect->real) {
+        saw_virtio_input_metadata = 1;
+        puts_raw("drvsvc: C5d virtio-input metadata discovered\n");
+    }
 
     struct swiftos_device_info extra;
     if (device_discover(1, &extra) != -2) {
@@ -309,6 +314,9 @@ int main(void) {
         puts_raw("C5c OK: virtio-input device grant discovered and matched\n");
     } else {
         puts_raw("C5c OK: device discovery manifest matched pseudo input\n");
+    }
+    if (saw_virtio_input_metadata) {
+        puts_raw("C5d OK: virtio input discovery metadata surfaced\n");
     }
     return 0;
 }

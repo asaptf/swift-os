@@ -310,16 +310,17 @@ See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 ### Does SwiftOS have restartable driver services yet?
 
 C5a has the first checked-in restartable driver-service smoke, C5b adds an
-opaque transferable device handle, and C5c matches that handle against a
-discovered QEMU virtio-input transport when one is attached. `/bin/drvsvcdemo`
+opaque transferable device handle, and C5c/C5d match that handle against a
+discovered QEMU virtio-input transport and surface its metadata when one is
+attached. `/bin/drvsvcdemo`
 supervises `/bin/drvinputd`, exchanges endpoint IPC, restarts the service, and
 verifies recovery:
 
 ```sh
-make c5-device-discovery-test
+make c5-device-metadata-test
 ```
 
-This is not a real hardware handoff yet. C5c exposes manifest metadata for the
+This is not a real hardware handoff yet. C5d exposes manifest metadata for the
 discovered device, but MMIO, IRQ, DMA, and virtio-input queue ownership remain
 roadmap work.
 

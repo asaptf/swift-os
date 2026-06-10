@@ -10,6 +10,7 @@ DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
 TIMEOUT="${TIMEOUT:-120}"
+C5_INPUT_DEVICE="${C5_INPUT_DEVICE:-1}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
@@ -40,14 +41,17 @@ if [[ -f "$DTB" ]]; then
   qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 fi
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
-  -device virtio-blk-device,drive=swosbase
-  -device virtio-keyboard-device
-  -kernel "$KERNEL")
+  -device virtio-blk-device,drive=swosbase)
+if [[ "$C5_INPUT_DEVICE" == "1" ]]; then
+  qemu_args+=(-device virtio-keyboard-device)
+fi
+qemu_args+=(-kernel "$KERNEL")
 
 "${qemu_args[@]}" >"$LOG" 2>&1 &
 QP=$!
 
-EXPECTS="${EXPECTS:-drvsvc: C5a supervisor starting
+if [[ -z "${EXPECTS+x}" ]]; then
+  EXPECTS="drvsvc: C5a supervisor starting
 drvsvc: generation 1 ready
 drvsvc: generation 1 event
 drvsvc: generation 1 stopped
@@ -55,7 +59,10 @@ drvsvc: generation 2 ready
 drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
 drvsvc: C5c discovery exhausted
-drvsvc: C5b device grant claimed
+drvsvc: C5b device grant claimed"
+  if [[ "$C5_INPUT_DEVICE" == "1" ]]; then
+    EXPECTS="${EXPECTS}
+drvsvc: C5d virtio-input metadata discovered
 drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
@@ -67,7 +74,21 @@ drvsvc: C5c virtio-input grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
 C5c OK: virtio-input device grant discovered and matched
-C5a driver service demo exited, code 0}"
+C5d OK: virtio input discovery metadata surfaced
+C5a driver service demo exited, code 0"
+  else
+    EXPECTS="${EXPECTS}
+drvsvc: C5b device grant moved
+drvinputd: C5b device grant accepted
+drvsvc: C5b device busy while service owns grant
+drvsvc: generation 2 stopped
+drvsvc: C5b device grant reclaimed
+C5a OK: restartable driver service recovered over IPC
+C5b OK: opaque device handle transferred and released
+C5c OK: device discovery manifest matched pseudo input
+C5a driver service demo exited, code 0"
+  fi
+fi
 
 FORBIDS="${FORBIDS:-panic:
 drvinputd: missing endpoint args
@@ -123,7 +144,11 @@ while (( SECONDS < deadline )); do
       grep -qF "$line" <<<"$clean" && { echo "FAIL: forbidden marker present: $line" >&2; ok=0; }
     done <<<"$FORBIDS"
     if [[ "$ok" -eq 1 ]]; then
-      echo "PASS: C5 restartable driver-service/device-discovery boot smoke passed under -smp $SMP_CPU_COUNT"
+      if [[ "$C5_INPUT_DEVICE" == "1" ]]; then
+        echo "PASS: C5 restartable driver-service/device-metadata boot smoke passed under -smp $SMP_CPU_COUNT"
+      else
+        echo "PASS: C5 restartable driver-service/device-discovery boot smoke passed under -smp $SMP_CPU_COUNT"
+      fi
       exit 0
     fi
     echo "--- serial tail ---" >&2

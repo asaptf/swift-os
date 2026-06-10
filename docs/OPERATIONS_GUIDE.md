@@ -4,7 +4,7 @@ This guide is for people who boot, test, demo, or operate a SwiftOS image. It
 describes the current checked-in system: QEMU `virt` on AArch64, serial console
 first, immutable base image, RAM scratch space, capability-scoped user sessions,
 native Swift tools, networking demos, package payload overlays, and the AI
-inference demo, plus the C5a-C5c restartable driver-service/device-discovery
+inference demo, plus the C5a-C5d restartable driver-service/device-metadata
 smoke.
 
 Use this guide with:
@@ -57,7 +57,7 @@ SwiftOS is intentionally small and static.
 | Networking | virtio-net plus capability-gated socket syscalls |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
 | SMP status | Single-core is still the default profile; SMP tests cover CPU bring-up, per-CPU telemetry, restricted EL0 fanout, shared-address-space threads, and gated S5f run-any placement |
-| Driver-service status | C5a/C5b/C5c supervisor, opaque device handle, and virtio-input discovery smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
+| Driver-service status | C5a/C5b/C5c/C5d supervisor, opaque device handle, and virtio-input discovery metadata smoke exists; real MMIO/IRQ/DMA handoff remains roadmap work |
 
 The most important operational consequence is that a running guest has no
 persistent writable root. Rebuild the base image or attach a package payload to
@@ -550,7 +550,7 @@ Run the narrowest test that proves the path you touched:
 | Restricted S5 EL0 fanout | `make s5-el0-fanout-test` |
 | S5 shared-address-space thread fanout | `make s5-thread-fanout-test` |
 | S5 run-any EL0 placement | `make s5-run-any-placement-test` |
-| C5a-C5c driver-service/device-discovery smoke (`-smp 4`) | `make c5-device-discovery-test` |
+| C5a-C5d driver-service/device-metadata smoke (`-smp 4`) | `make c5-device-metadata-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |
@@ -598,8 +598,8 @@ Current limits that matter during operation:
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.
 - No general service manager; demos are started manually from the shell. C5
-  proves a focused driver-service restart/device-grant path, not a general
-  daemon manager.
+  proves a focused driver-service restart/device-grant/metadata path, not a
+  general daemon manager.
 - SMP hardening can boot and test multiple scheduler CPUs, including the S5f
   run-any placement gate, but production load balancing and CPU policy remain
   active hardening work.
