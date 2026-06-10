@@ -38,7 +38,10 @@ private func parse(_ data: Data) -> [ParsedEntry] {
     guard data.count >= 64 else { fail("image shorter than header") }
     let magic = String(decoding: data[0..<8], as: UTF8.self)
     guard magic == "SWOSBASE" else { fail("bad magic \(magic)") }
-    guard le32(data, 8) == 2 else { fail("bad version") }
+    // I8: the base image is the signed v3 layout — 72-byte entries carrying a
+    // 32-byte content SHA-256, and a 64-byte Ed25519 signature between the
+    // string table and the payload.
+    guard le32(data, 8) == 3 else { fail("bad version (signed v3 expected)") }
     let headerSize = Int(le32(data, 12))
     let entrySize = Int(le32(data, 16))
     let entryCount = Int(le32(data, 20))
@@ -47,7 +50,8 @@ private func parse(_ data: Data) -> [ParsedEntry] {
     let stringsSize = Int(le64(data, 40))
     let dataOffset = Int(le64(data, 48))
     let dataSize = Int(le64(data, 56))
-    guard headerSize == 64 && entrySize == 40 else { fail("unexpected layout") }
+    guard headerSize == 64 && entrySize == 72 else { fail("unexpected layout") }
+    guard dataOffset == stringsOffset + stringsSize + 64 else { fail("signature slot missing") }
     guard dataOffset + dataSize <= data.count else { fail("data section out of bounds") }
 
     var entries: [ParsedEntry] = []
@@ -65,54 +69,71 @@ private func parse(_ data: Data) -> [ParsedEntry] {
 
         let pathStart = stringsOffset + pathOff
         let path = String(decoding: data[pathStart..<(pathStart + pathLen)], as: UTF8.self)
-        let bytes = data[(dataOffset + fileOff)..<(dataOffset + fileOff + fileLen)]
-        entries.append(ParsedEntry(path: path, kind: kind, mode: mode, owner: owner, data: Data(bytes)))
+        let bytes = Data(data[(dataOffset + fileOff)..<(dataOffset + fileOff + fileLen)])
+        // I8: every file entry's signed content hash must match its payload.
+        if kind == kindFile {
+            var digest = [UInt8](repeating: 0, count: 32)
+            bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                digest.withUnsafeMutableBytes { out in
+                    sha256(raw.baseAddress ?? UnsafeRawPointer(bitPattern: 1)!,
+                           bytes.count, out.baseAddress!)
+                }
+            }
+            let stored = [UInt8](data[(off + 40)..<(off + 72)])
+            guard digest == stored else { fail("content hash mismatch for \(path)") }
+        }
+        entries.append(ParsedEntry(path: path, kind: kind, mode: mode, owner: owner, data: bytes))
     }
     return entries
 }
 
-let args = CommandLine.arguments
-guard args.count == 2 else { fail("usage: base_image_test <image>") }
-let image = try! Data(contentsOf: URL(fileURLWithPath: args[1]))
-let entries = parse(image)
-let byPath = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+@main
+struct BaseImageTest {
+    static func main() {
+        let args = CommandLine.arguments
+        guard args.count == 2 else { fail("usage: base_image_test <image>") }
+        let image = try! Data(contentsOf: URL(fileURLWithPath: args[1]))
+        let entries = parse(image)
+        let byPath = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
 
-func require(_ path: String, _ kind: UInt32) -> ParsedEntry {
-    guard let entry = byPath[path] else { fail("missing \(path)") }
-    guard entry.kind == kind else { fail("wrong kind for \(path)") }
-    return entry
-}
+        func require(_ path: String, _ kind: UInt32) -> ParsedEntry {
+            guard let entry = byPath[path] else { fail("missing \(path)") }
+            guard entry.kind == kind else { fail("wrong kind for \(path)") }
+            return entry
+        }
 
-_ = require("bin", kindDir)
-_ = require("etc", kindDir)
-let busybox = require("bin/busybox", kindFile)
-let identitydemo = require("bin/identitydemo", kindFile)
-let ps = require("bin/ps", kindFile)
-let motd = require("etc/motd", kindFile)
-let hostname = require("etc/hostname", kindFile)
-let readme = require("readme.txt", kindFile)
-let hello = require("hello.txt", kindFile)
+        _ = require("bin", kindDir)
+        _ = require("etc", kindDir)
+        let busybox = require("bin/busybox", kindFile)
+        let identitydemo = require("bin/identitydemo", kindFile)
+        let ps = require("bin/ps", kindFile)
+        let motd = require("etc/motd", kindFile)
+        let hostname = require("etc/hostname", kindFile)
+        let readme = require("readme.txt", kindFile)
+        let hello = require("hello.txt", kindFile)
 
-guard String(decoding: motd.data, as: UTF8.self) == "Welcome to swift-os.\n" else { fail("bad motd") }
-guard String(decoding: hostname.data, as: UTF8.self) == "swiftos\n" else { fail("bad hostname") }
-guard String(decoding: readme.data, as: UTF8.self) == "swift-os read-only base fs\n" else { fail("bad readme") }
-guard String(decoding: hello.data, as: UTF8.self) == "M5 file: hello from VFS read()\n" else { fail("bad hello") }
+        guard String(decoding: motd.data, as: UTF8.self) == "Welcome to swift-os.\n" else { fail("bad motd") }
+        guard String(decoding: hostname.data, as: UTF8.self) == "swiftos\n" else { fail("bad hostname") }
+        guard String(decoding: readme.data, as: UTF8.self) == "swift-os read-only base fs\n" else { fail("bad readme") }
+        guard String(decoding: hello.data, as: UTF8.self) == "M5 file: hello from VFS read()\n" else { fail("bad hello") }
 
-for exe in [busybox, identitydemo, ps] {
-    guard exe.data.count > 4 else { fail("\(exe.path) too short") }
-    guard exe.data[0] == 0x7f && exe.data[1] == 0x45 && exe.data[2] == 0x4c && exe.data[3] == 0x46 else {
-        fail("\(exe.path) is not an ELF")
+        for exe in [busybox, identitydemo, ps] {
+            guard exe.data.count > 4 else { fail("\(exe.path) too short") }
+            guard exe.data[0] == 0x7f && exe.data[1] == 0x45 && exe.data[2] == 0x4c && exe.data[3] == 0x46 else {
+                fail("\(exe.path) is not an ELF")
+            }
+        }
+
+        // M13c: per-entry mode + owner. Base files are root-owned; /bin/* are
+        // executable (0o755) and text files are 0o644; directories are 0o755.
+        for e in entries {
+            guard e.owner == 1 else { fail("\(e.path) owner \(e.owner), expected 1 (root)") }
+        }
+        guard busybox.mode == 0o755 else { fail("busybox mode \(String(busybox.mode, radix: 8)), expected 755") }
+        guard ps.mode == 0o755 else { fail("ps mode \(String(ps.mode, radix: 8)), expected 755") }
+        guard motd.mode == 0o644 else { fail("motd mode \(String(motd.mode, radix: 8)), expected 644") }
+        guard require("bin", kindDir).mode == 0o755 else { fail("bin dir mode, expected 755") }
+
+        print("PASS: packed base image format is readable, deterministic, and hash-consistent (signed v3)")
     }
 }
-
-// M13c: per-entry mode + owner. Base files are root-owned; /bin/* are
-// executable (0o755) and text files are 0o644; directories are 0o755.
-for e in entries {
-    guard e.owner == 1 else { fail("\(e.path) owner \(e.owner), expected 1 (root)") }
-}
-guard busybox.mode == 0o755 else { fail("busybox mode \(String(busybox.mode, radix: 8)), expected 755") }
-guard ps.mode == 0o755 else { fail("ps mode \(String(ps.mode, radix: 8)), expected 755") }
-guard motd.mode == 0o644 else { fail("motd mode \(String(motd.mode, radix: 8)), expected 644") }
-guard require("bin", kindDir).mode == 0o755 else { fail("bin dir mode, expected 755") }
-
-print("PASS: packed base image format is readable and deterministic")

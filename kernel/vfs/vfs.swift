@@ -70,6 +70,11 @@ private struct VNode {
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
+    // I8 (signed base image): offset of this entry's 32-byte content SHA-256
+    // within the kept signed-metadata buffer (-1 for tmpfs/literals), and a
+    // once-per-boot cache so each disk file is verified on first use only.
+    var hashOff = -1
+    var contentVerified = false
     var parent = -1
     var firstChild = -1
     var nextSibling = -1
@@ -246,7 +251,7 @@ private func addDiskDir(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
 
 private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
                          _ diskOffset: Int, _ dataLen: Int,
-                         _ owner: UInt32, _ mode: UInt32) {
+                         _ owner: UInt32, _ mode: UInt32, _ hashOff: Int) {
     let n = allocNode()
     if n < 0 { return }
     nodes[n].namePtr = namePtr
@@ -257,6 +262,7 @@ private func addDiskFile(_ parent: Int, _ namePtr: UInt, _ nameLen: Int,
     nodes[n].dataLen = dataLen
     nodes[n].owner = owner
     nodes[n].mode = mode
+    nodes[n].hashOff = hashOff
     linkChild(parent, n)
 }
 
@@ -286,11 +292,24 @@ private func resolveBuildParent(_ root: Int, _ pathPtr: UnsafePointer<UInt8>, _ 
     return (cur, UInt(bitPattern: pathPtr + leafStart), pathLen - leafStart)
 }
 
+// I8: the kept signed-metadata buffer (header | entries | strings). vnode
+// names and per-entry content hashes point straight into it for the lifetime
+// of the system. SMP: boot-only write, read-only afterwards.
+private var baseMeta: UnsafeMutablePointer<UInt8>? = nil
+// Fixed scratch for streaming content verification off the disk (4 KiB chunk
+// per virtio read). SMP: single-CPU kernel today; serialize before S5.
+private var vfsVerifyScratch = InlineArray<4096, UInt8>(repeating: 0)
+
 /// Build the read-only base tree from a packed SWOSBASE image on the virtio-blk
 /// disk. Returns false (leaving the tree untouched) if there is no disk, the
 /// magic does not match, or the image is malformed, so the caller can fall back
-/// to the compiled-in literals. The metadata buffer (entries + string table) is
-/// kept permanently: vnode names point straight into it.
+/// to the compiled-in literals.
+///
+/// I8: only the signed v3 layout is accepted, and its Ed25519 signature over
+/// header|entries|strings must verify against the trust root compiled into the
+/// kernel — a tampered or unsigned image is refused before a single vnode is
+/// built. Per-entry content hashes (verified lazily on first use) live in the
+/// kept metadata buffer.
 private func buildBaseFromDisk(_ root: Int) -> Bool {
     if !virtioBlkAvailable() { return false }
 
@@ -308,8 +327,12 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             for i in 0..<m.count where h[i] != m[i] { magicOk = false }
         }
         if !magicOk { return false }
-        if le32(h, 8) != 2 { return false }   // version (M13c: v2 adds mode+owner)
-        if le32(h, 16) != 40 { return false } // entry size
+        let version = le32(h, 8)
+        if version != 3 {
+            uartPuts("vfs: unsigned base image refused — signed v3 required\n")
+            return false
+        }
+        if le32(h, 16) != 72 { return false } // v3 entry size (v2 fields + 32-byte hash)
 
         let entryCount = Int(le32(h, 20))
         let entriesOffset = le64(h, 24)
@@ -318,17 +341,37 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
         let dataOffset = le64(h, 48)
 
         if entryCount <= 0 || entryCount > maxNodes { return false }
-        if stringsOffset < entriesOffset { return false }
-        let metaLen = Int((stringsOffset - entriesOffset) + stringsSize)
-        if metaLen <= 0 || metaLen > 1 << 20 { return false } // 1 MiB ceiling
+        if entriesOffset != 64 || stringsOffset < entriesOffset { return false }
+        // v3 layout: signature (64 bytes) sits between strings and payload.
+        let signedLen = Int(stringsOffset + stringsSize)
+        if dataOffset != stringsOffset + stringsSize + 64 { return false }
+        if signedLen <= 64 || signedLen > 1 << 20 { return false } // 1 MiB ceiling
 
-        guard let metaRaw = swiftos_kernel_alloc(UInt(metaLen), 16) else { return false }
-        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: metaLen)
-        if virtioBlkReadRange(entriesOffset, metaRaw, UInt32(metaLen)) != 0 { return false }
+        // Read the whole signed range (header + entries + strings), then the
+        // detached signature, and verify before trusting any of it.
+        guard let metaRaw = swiftos_kernel_alloc(UInt(signedLen), 16) else { return false }
+        let meta = metaRaw.bindMemory(to: UInt8.self, capacity: signedLen)
+        if virtioBlkReadRange(0, metaRaw, UInt32(signedLen)) != 0 { return false }
+        var sig = [UInt8](repeating: 0, count: 64)
+        let sok = sig.withUnsafeMutableBytes { raw -> Bool in
+            virtioBlkReadRange(UInt64(signedLen), raw.baseAddress, 64) == 0
+        }
+        if !sok { return false }
+        let sigOK = sig.withUnsafeBytes { sb -> Bool in
+            withUnsafeBytes(of: image_trust_root) { tr in
+                ed25519Verify(message: metaRaw, signedLen,
+                              signature: sb.baseAddress!, publicKey: tr.baseAddress!)
+            }
+        }
+        if !sigOK {
+            uartPuts("vfs: base image signature INVALID — refusing disk base\n")
+            return false
+        }
+        klog(.info, "vfs", "base image signature verified (ed25519)")
+        baseMeta = meta
 
-        let stringsBase = Int(stringsOffset - entriesOffset)
         for k in 0..<entryCount {
-            let e = meta + k * 40
+            let e = meta + Int(entriesOffset) + k * 72
             let pathOff = Int(le32(e, 0))
             let pathLen = Int(le32(e, 4))
             let kind = le32(e, 8)
@@ -336,18 +379,59 @@ private func buildBaseFromDisk(_ root: Int) -> Bool {
             let dLen = Int(le64(e, 24))
             let mode = le32(e, 32)
             let owner = le32(e, 36)
-            if pathLen <= 0 || stringsBase + pathOff + pathLen > metaLen { continue }
-            let pathPtr = meta + stringsBase + pathOff
+            if pathLen <= 0 || Int(stringsOffset) + pathOff + pathLen > signedLen { continue }
+            let pathPtr = meta + Int(stringsOffset) + pathOff
             let (parent, leafPtr, leafLen) = resolveBuildParent(root, pathPtr, pathLen)
             if parent < 0 || leafLen <= 0 { continue }
             if kind == 1 {
                 _ = addDiskDir(parent, leafPtr, leafLen, owner, mode)
             } else if kind == 2 {
-                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen, owner, mode)
+                let hashOff = Int(entriesOffset) + k * 72 + 40
+                addDiskFile(parent, leafPtr, leafLen, Int(dataOffset) + dOff, dLen,
+                            owner, mode, hashOff)
             }
         }
         return true
     }
+}
+
+/// I8: verify a disk-backed file's content against its signed hash, once per
+/// boot (cached in the vnode). Streams the extent off virtio-blk in 4 KiB
+/// chunks through the fixed scratch — no allocation, bounded memory for any
+/// file size. Returns true for non-disk nodes (tmpfs/literals are not part of
+/// the signed image) and false on any mismatch or read error.
+private func vfsVerifyNodeContent(_ node: Int) -> Bool {
+    if node < 0 || nodes[node].isDir || !nodes[node].onDisk { return true }
+    if nodes[node].contentVerified { return true }
+    guard let meta = baseMeta, nodes[node].hashOff >= 0 else { return false }
+
+    var stream = Sha256Stream()
+    var remaining = nodes[node].dataLen
+    var off = UInt64(nodes[node].diskOffset)
+    var ok = true
+    withUnsafeMutableBytes(of: &vfsVerifyScratch) { raw in
+        let buf = raw.baseAddress!
+        while remaining > 0 {
+            let chunk = remaining < 4096 ? remaining : 4096
+            if virtioBlkReadRange(off, buf, UInt32(chunk)) != 0 { ok = false; return }
+            stream.update(buf, chunk)
+            remaining -= chunk
+            off += UInt64(chunk)
+        }
+    }
+    if !ok { return false }
+
+    var digest = [UInt8](repeating: 0, count: 32)
+    digest.withUnsafeMutableBytes { stream.final($0.baseAddress!) }
+    let expect = meta + nodes[node].hashOff
+    var diff: UInt8 = 0
+    for i in 0..<32 { diff |= digest[i] ^ expect[i] }
+    if diff != 0 {
+        uartPuts("vfs: content hash mismatch — rejecting file\n")
+        return false
+    }
+    nodes[node].contentVerified = true
+    return true
 }
 
 func vfsInit() {
@@ -866,6 +950,12 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
         } else {
             return errNoEntry
         }
+    }
+
+    // I8: a disk-backed file must match its signed content hash before the
+    // first descriptor is handed out (verified once per boot, then cached).
+    if !nodes[node].isDir && nodes[node].onDisk && !vfsVerifyNodeContent(node) {
+        return errAccess
     }
 
     // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
@@ -1983,6 +2073,8 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int) {
     if node < 0 { return (false, 0, 0) }
     if !confinedAllows(node) { return (false, 0, 0) }
     if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0) }
+    // I8: an executable must match its signed content hash before it is loaded.
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0) }
     return (true, nodes[node].diskOffset, nodes[node].dataLen)
 }
 
@@ -1997,5 +2089,7 @@ func vfsFileExtent(fd: Int) -> (Bool, Int, Int) {
     guard entry.kind == .file, entry.rights.contains(.read) else { return (false, 0, 0) }
     let node = openDescriptions[entry.object].node
     guard node >= 0, !nodes[node].isDir, nodes[node].onDisk else { return (false, 0, 0) }
+    // I8: mmap'd content must match its signed hash too (cached after open).
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0) }
     return (true, nodes[node].diskOffset, nodes[node].dataLen)
 }

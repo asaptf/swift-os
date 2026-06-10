@@ -425,4 +425,9 @@ static inline void write_cntp_tval_el0(uint64_t value) {
     __asm__ volatile("msr cntp_tval_el0, %0; isb" :: "r"(value) : "memory");
 }
 
+// I8: the Ed25519 public key the packed base image must be signed with,
+// embedded at build time (kernel/security/trust_root.S). The VFS verifies the
+// image's header/entry-table signature against it at mount.
+extern const uint8_t image_trust_root[32];
+
 #endif // SWIFT_OS_IO_H

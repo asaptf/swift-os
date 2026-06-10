@@ -20,6 +20,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 TIMEOUT="${TIMEOUT:-90}"
 
 EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
+[I] vfs: base image signature verified (ed25519)
 hello from ELF userland
 M6 OK: ELF process exited, code 7
 argv[1]=alpha

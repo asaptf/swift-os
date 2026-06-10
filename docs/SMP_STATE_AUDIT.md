@@ -162,11 +162,14 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/elf.swift:elfLoadPages`
 - `kernel/user/exec.swift:elfBuf`
 - `kernel/user/process.swift:currentProc`
+- `kernel/user/process.swift:fileDemandFaults`
+- `kernel/user/process.swift:fileDemandLogged`
 - `kernel/user/process.swift:idleTicks`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
 - `kernel/user/process.swift:pExit`
+- `kernel/user/process.swift:pFileVmas`
 - `kernel/user/process.swift:pIsThread`
 - `kernel/user/process.swift:pKilled`
 - `kernel/user/process.swift:pKstack`
@@ -184,6 +187,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:procCtx`
 - `kernel/user/process.swift:rrCursor`
 - `kernel/user/process.swift:schedCtx`
+- `kernel/user/process.swift:schedCtxCpuCount`
+- `kernel/vfs/vfs.swift:baseMeta`
 - `kernel/vfs/vfs.swift:confineNodes`
 - `kernel/vfs/vfs.swift:cwdNodes`
 - `kernel/vfs/vfs.swift:endpoints`
@@ -192,6 +197,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/vfs/vfs.swift:nodes`
 - `kernel/vfs/vfs.swift:openDescriptions`
 - `kernel/vfs/vfs.swift:pipes`
+- `kernel/vfs/vfs.swift:vfsVerifyScratch`
 
 ## Immediate S1/S2 Risks
 

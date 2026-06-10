@@ -2608,3 +2608,51 @@ asserts the trust-root marker and the dual-layer verification line.
 
 **Still future.** Key rotation / multiple trust roots, signing the base image
 itself (the A/B story), and revocation.
+
+### I8 — signed base image (kernel is the root of trust) (DONE, 2026-06-09)
+
+**Scope.** The packed base image is now signed, and the kernel refuses to mount
+an unsigned or tampered one — the foundation of the A/B-image story. The kernel
+itself is the trust anchor (loaded via `-kernel` or embedded in the EFI loader),
+so a single compiled-in public key roots the whole userland.
+
+**Format (SWOSBASE v3).** `tools/packfs.swift` gained a signed layout: 72-byte
+entries (the v2 fields + a 32-byte per-file content SHA-256; directories carry
+zeros) and a 64-byte Ed25519 signature over header|entries|strings sitting
+between the string table and the payload. `tools/basepack.swift`, given the
+image-signing seed, hashes each file and signs the metadata (closures keep
+`packfs.swift` crypto-free; swpkg payloads stay v2). The Makefile mints a
+dedicated IMAGE-signing keypair (distinct lifecycle from the model key) under
+`models/` and embeds its public half via `kernel/security/trust_root.S`
+(`.incbin build/image_trust_root.bin`).
+
+**Kernel-grade crypto.** `kernel/crypto/{ed25519,sha512}.swift` were rewritten
+onto `InlineArray` (stack storage, the percpu.swift idiom) and stack temporary
+allocations, so verification does no heap allocation beyond one message buffer —
+safe on the 256 KiB bump heap at boot. Added a streaming `Sha256Stream` (also
+InlineArray) so file content is hashed in 4 KiB chunks off virtio-blk with
+bounded memory regardless of file size; the host test pins it to the one-shot
+across tail/block-spanning sizes. ed25519/sha256/sha512 are now compiled into
+the kernel image.
+
+**Two-layer verification.** At mount, `buildBaseFromDisk` reads
+header|entries|strings + the detached signature and `ed25519Verify`s against
+`image_trust_root` BEFORE building a single vnode (`base image signature
+verified (ed25519)` on success; refuses the disk base otherwise). Then content
+is verified lazily, once per file on first use: `vfsOpen`, `vfsDiskImageExtent`
+(exec), and `vfsFileExtent` (mmap) all call `vfsVerifyNodeContent`, which
+streams the extent and compares to the signed per-entry hash, caching the
+result in the vnode. Fail-closed per file (a bad file returns EACCES; the OS
+keeps running), not per boot.
+
+**Acceptance.** `tests/signed_image_test.sh` (in `make test`): Case A flips a
+byte in the signed metadata → mount refused (`signature INVALID`, no
+`mounted from disk`); Case B flips a file payload byte → image mounts (metadata
+intact) but `cat /etc/motd` trips `content hash mismatch` while the shell
+survives. `base_image_test.swift` upgraded to v3 and re-hashes every entry;
+`boot_test` asserts the mount-time signature marker. Verification cost is
+negligible at boot (signature over ~5 KiB metadata; content hashed on first use).
+
+**Still future.** Key rotation / multiple trust roots; signing the kernel image
+itself + an A/B boot manifest with rollback (loader/update-store territory);
+revocation.

@@ -136,6 +136,33 @@ struct LLMBundleTest {
               "non-hex accepted")
         check(modelSignatureDecode("abcd") == nil, "short hex accepted")
 
+        // 8. I8 streaming SHA-256 must agree with the one-shot for sizes that
+        // exercise the tail buffer (empty, sub-block, block-spanning, and a
+        // multi-chunk update pattern like the kernel's 4 KiB verify loop).
+        for size in [0, 1, 55, 56, 64, 65, 4096, 4097, 13000] {
+            var data = [UInt8](repeating: 0, count: size)
+            for i in 0..<size { data[i] = UInt8((i &* 31 &+ 7) & 0xFF) }
+            var oneShot = [UInt8](repeating: 0, count: 32)
+            data.withUnsafeBytes { raw in
+                oneShot.withUnsafeMutableBytes { out in
+                    sha256(raw.baseAddress ?? UnsafeRawPointer(bitPattern: 1)!,
+                           size, out.baseAddress!)
+                }
+            }
+            var stream = Sha256Stream()
+            var off = 0
+            while off < size {                       // 4 KiB chunks, like the kernel
+                let chunk = min(4096, size - off)
+                data.withUnsafeBytes { raw in
+                    stream.update(raw.baseAddress! + off, chunk)
+                }
+                off += chunk
+            }
+            var streamed = [UInt8](repeating: 0, count: 32)
+            streamed.withUnsafeMutableBytes { stream.final($0.baseAddress!) }
+            check(oneShot == streamed, "streaming sha256 diverged at size \(size)")
+        }
+
         report()
     }
 

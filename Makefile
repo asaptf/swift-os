@@ -101,6 +101,9 @@ SWIFT_SRCS := \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
+	kernel/crypto/sha256.swift \
+	kernel/crypto/sha512.swift \
+	kernel/crypto/ed25519.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
 	kernel/smp/secondary.swift \
@@ -206,6 +209,7 @@ VM_OBJ     := $(BUILD)/vm.o
 EL0_OBJ    := $(BUILD)/el0.o
 SMP_SECONDARY_OBJ := $(BUILD)/smp_secondary.o
 USER_ENTRY_OBJ := $(BUILD)/user_entry.o
+TRUST_ROOT_OBJ := $(BUILD)/trust_root.o
 KERNEL_OBJ := $(BUILD)/kernel.o
 KERNEL_ELF := $(BUILD)/kernel.elf
 KERNEL_BIN := $(BUILD)/kernel.bin
@@ -322,6 +326,12 @@ $(BUILD)/.dir:
 
 # Assemble the boot stub with the LLVM cross clang.
 $(BOOT_OBJ): $(ARCH_DIR)/boot.S Makefile | $(BUILD)/.dir
+	$(CLANG) $(ASM_FLAGS) $< -o $@
+
+# I8: embed the image-signing trust root (the .S incbins build/image_trust_root.bin).
+$(BUILD)/image_trust_root.bin: $(IMG_SIGNING_PUB) | $(BUILD)/.dir
+	cp $(IMG_SIGNING_PUB) $@
+$(TRUST_ROOT_OBJ): kernel/security/trust_root.S $(BUILD)/image_trust_root.bin Makefile | $(BUILD)/.dir
 	$(CLANG) $(ASM_FLAGS) $< -o $@
 
 # Compile all kernel Swift into a single object (whole-module).
@@ -663,7 +673,7 @@ $(KERNEL_OBJ): $(SWIFT_SRCS) $(BRIDGE) Makefile | $(BUILD)/.dir
 
 # Link the freestanding image.
 KERNEL_OBJS := $(BOOT_OBJ) $(EXC_OBJ) $(SWITCH_OBJ) $(USER_ENTRY_OBJ) $(HEAP_OBJ) $(STRING_OBJ) \
-	$(VM_OBJ) $(EL0_OBJ) $(SMP_SECONDARY_OBJ) $(KERNEL_OBJ)
+	$(VM_OBJ) $(EL0_OBJ) $(SMP_SECONDARY_OBJ) $(TRUST_ROOT_OBJ) $(KERNEL_OBJ)
 
 $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(LDBIN) $(LD_FLAGS) $(KERNEL_OBJS) -o $@
@@ -727,12 +737,21 @@ $(SIGNING_PUB): | $(MODELSIGN)
 	$(MODELSIGN) keygen $(SIGNING_SEED) $@
 $(SIGNING_SEED): $(SIGNING_PUB)
 
+# I8: the IMAGE-signing keypair (distinct from the model key — different
+# lifecycle: image key = OS vendor, model key = model publisher). The public
+# half is compiled into the kernel as the trust root.
+IMG_SIGNING_SEED := $(MODEL_DIR)/dev-image-signing.seed
+IMG_SIGNING_PUB := $(MODEL_DIR)/dev-image-signing.pub
+$(IMG_SIGNING_PUB): | $(MODELSIGN)
+	$(MODELSIGN) keygen $(IMG_SIGNING_SEED) $@
+$(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
+
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
 test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
-	$(HOST_SWIFTC) tests/base_image_test.swift -o $(BUILD)/base_image_test
+	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
@@ -787,6 +806,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/signed_image_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -889,15 +909,15 @@ run-gfx: disk base-image
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
-$(BASEPACK): tools/basepack.swift tools/packfs.swift Makefile | $(BUILD)/.dir
-	$(HOST_SWIFTC) tools/basepack.swift tools/packfs.swift -o $@
+$(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
 
 swpkg: $(SWPKG)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -967,7 +987,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
-	$(BASEPACK) $(BASE_ROOT) $@
+	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
 base-image: $(BASE_IMG)
 
