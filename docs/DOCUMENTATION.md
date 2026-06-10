@@ -143,6 +143,7 @@ When adding public docs:
 2. Link to the source header or implementation that defines the contract.
 3. Separate current behavior from future roadmap language.
 4. Keep all docs in English.
-5. Run at least the relevant build or test target before committing.
-6. For operational docs, name the acceptance test that proves each workflow when
+5. Run `make docs-test` for Markdown fence and local-link integrity.
+6. Run at least the relevant build or test target before committing.
+7. For operational docs, name the acceptance test that proves each workflow when
    such a test exists.

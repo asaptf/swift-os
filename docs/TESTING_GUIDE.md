@@ -107,6 +107,16 @@ The full `make test` target builds the prerequisites it owns. When running a
 single script directly, build the narrow prerequisite first if the script does
 not do it for you.
 
+For documentation-only changes, start with:
+
+```sh
+make docs-test
+```
+
+This checks the public Markdown set (`README.md`, `docs/*.md`, and
+`ports/README.md`) for balanced fenced code blocks and local links that resolve
+inside the repository.
+
 ## Full Gate
 
 Run the full gate when:
@@ -125,6 +135,7 @@ make test
 
 Current full-gate coverage includes:
 
+- Documentation fence and local-link integrity.
 - Host tests for page allocation, base image format, packages, package store,
   FDT parsing, networking stack, crypto, handles, TLS primitives, LLM engine,
   model bundles, and Ed25519.
@@ -149,6 +160,7 @@ Run the narrowest test that proves the path you changed.
 
 | Changed area | First test |
 | --- | --- |
+| Documentation links or examples | `make docs-test` |
 | Kernel build only | `make build` |
 | Base image format or contents | `make base-image`, `./tests/vfs_disk_test.sh` |
 | Direct serial boot | `./tests/boot_test.sh` |
