@@ -141,14 +141,14 @@ build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
   `pkgdep -> pkghello`, then executes `/usr/bin/pkghello`.
 - `tests/pkg_static_host_repo_install_test.sh` serves
   `build/ports-static-host-root`, verifies the hosted sidecar manifest and
-  checksums, then boots QEMU and installs Lua, zlib, ca-certificates, and pcre2
+  checksums, then boots QEMU and installs Lua, zlib, ca-certificates, pcre2, and tzdata
   from `/aarch64/current`.
 - `tests/pkg_hosted_url_verify_test.sh` serves `build/ports-static-host-root`
   and proves the host-side hosted URL verifier fetches and verifies the served
   root.
 - `tests/pkg_static_host_dns_repo_install_test.sh` serves the same root through
   a hostname URL, answers DNS inside the QEMU user-networking path, and proves
-  `/bin/pkg` installs Lua, zlib, ca-certificates, and pcre2 from that
+  `/bin/pkg` installs Lua, zlib, ca-certificates, pcre2, and tzdata from that
   DNS-resolved repository URL.
 
 ## Known Limits

@@ -17,12 +17,13 @@ end-to-end package workflow, use
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
-| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, ca-certificates, and pcre2 recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, ca-certificates, pcre2, and tzdata recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
 | `scripts/build-ca-certificates.sh` | `make ports-ca-certificates-repo-fixture` | Package the pinned Mozilla CA bundle and publish a signed local repository fixture. | `make ports-ca-certificates-repo-fixture` |
 | `scripts/build-pcre2.sh` | `make ports-pcre2-repo-fixture` | Cross-build static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep`, then publish a signed local repository fixture. | `make ports-pcre2-repo-fixture` |
-| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua, zlib, ca-certificates, and pcre2 packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
+| `scripts/build-tzdata.sh` | `make ports-tzdata-repo-fixture` | Compile IANA time zone data with host `zic`, package `/usr/share/zoneinfo`, and publish a signed local repository fixture. | `make ports-tzdata-repo-fixture` |
+| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua, zlib, ca-certificates, pcre2, and tzdata packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
@@ -134,11 +135,11 @@ inside QEMU.
 ## Ports And Recipe Tool
 
 `swport` currently implements the P6a catalog subcommands and the recipe
-subcommands for the checked Lua, zlib, ca-certificates, and pcre2 recipes. P6e/P6f
+subcommands for the checked Lua, zlib, ca-certificates, pcre2, and tzdata recipes. P6e/P6f
 prove the Lua cross-build and target install path. P7 adds zlib and a
 multi-package seed repository fixture. P10 adds a data-only CA certificate
 package to that seed: `make package-ports-seed-repo-install-test` boots SwiftOS
-with a default repository URL, installs Lua, zlib, ca-certificates, and pcre2 by
+with a default repository URL, installs Lua, zlib, ca-certificates, pcre2, and tzdata by
 package name, and runs their smoke commands. P11 adds static PCRE2 libraries
 and `pcre2grep`, making nginx/lighttpd regex support a packaged dependency. P8 adds
 `make ports-static-host-publish`, which turns the seed repository into a
@@ -170,9 +171,11 @@ build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
+build/swport recipe validate sysutils/tzdata
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
+build/swport recipe manifest sysutils/tzdata --root build/tzdata-root --output build/tzdata-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
@@ -180,6 +183,7 @@ make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
+make ports-tzdata-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-lua-repo-install-test
@@ -202,9 +206,10 @@ fixture and verifies the generated catalog.
 Use `make ports-catalog-test` before changing `ports/catalog.json`, and
 `make ports-recipe-test` before changing `ports/lang/lua/Port.json`,
 `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json`,
-`ports/devel/pcre2/Port.json`, or recipe handling. Use
+`ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, or recipe handling. Use
 `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`,
-`make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`, and
+`make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`,
+`make ports-tzdata-repo-fixture`, and
 `make package-ports-seed-repo-install-test` before changing the checked port
 packaging path. Use `make ports-static-host-publish` and
 `make package-static-host-repo-install-test` before changing the static

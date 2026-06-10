@@ -365,7 +365,7 @@ Expected signals:
 - `pkg search lua`, `pkg search zlib`, `pkg search ca-certificates`, and
   `pkg search pcre2` find the current seed packages.
 - `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`, and
-  `pkg install pcre2` activate all four packages.
+  `pkg install pcre2` activate all five packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; the CA
   marker prints `curl-ca-bundle 2026-05-14 121 certificates`; `pcre2grep`

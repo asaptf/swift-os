@@ -89,14 +89,15 @@ service-oriented.
 - Installs real Lua from the signed local repository fixture inside QEMU and
   runs `lua -v` plus a small expression smoke with
   `make package-lua-repo-install-test`.
-- Publishes Lua, zlib, ca-certificates, and pcre2 into one signed local seed
+- Publishes Lua, zlib, ca-certificates, pcre2, and tzdata into one signed local seed
   repository and verifies `pkg install lua`, `pkg install zlib`,
-  `pkg install ca-certificates`, `pkg install pcre2`, Lua smoke commands, a
-  `minigzip` round trip, the CA bundle marker, and a `pcre2grep` regex match
+  `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`, Lua
+  smoke commands, a `minigzip` round trip, the CA bundle marker, a `pcre2grep`
+  regex match, and the tzdata zoneinfo marker
   with `make package-ports-seed-repo-install-test`.
 - Publishes that seed into a static-hostable web root with `hosted-repo.json`,
   `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua, zlib,
-  ca-certificates, and pcre2 install from that hosted layout with
+  ca-certificates, pcre2, and tzdata install from that hosted layout with
   `make package-static-host-repo-install-test`.
 - Verifies hosted static-root URLs from the host and proves target-side install
   from a DNS-resolved HTTP repository hostname with

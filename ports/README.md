@@ -6,7 +6,8 @@ first package priorities, dependency names, OS prerequisite bundles, blocked
 state, and the first smoke test each package must eventually pass.
 
 This is not a full ports tree yet. The first checked-in recipes are `lang/lua`,
-`archivers/zlib`, `security/ca-certificates`, and `devel/pcre2`, with
+`archivers/zlib`, `security/ca-certificates`, `devel/pcre2`, and
+`sysutils/tzdata`, with
 validation, manifest generation, checksum-verified distfile fetching, `.swpkg`
 creation from clean staged roots, and signed static repository fixture
 generation. `make
@@ -17,7 +18,9 @@ and the small `minigzip` smoke-test helper. `make
 ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA bundle as a
 data-only trust-store package. `make ports-pcre2-repo-fixture` cross-builds
 static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep`. `make
-ports-seed-repo-fixture` publishes all four packages into one signed seed
+ports-tzdata-repo-fixture` compiles portable IANA TZif zoneinfo files and
+packages the `/usr/share/zoneinfo` tree. `make ports-seed-repo-fixture`
+publishes all five packages into one signed seed
 repository. `make ports-static-host-publish`
 copies that seed repository into a deployable static-host web root with
 `hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS`.
@@ -35,6 +38,7 @@ make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
+make ports-tzdata-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make package-ports-seed-repo-install-test
@@ -52,6 +56,7 @@ build/swport recipe validate lang/lua
 build/swport recipe validate archivers/zlib
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
+build/swport recipe validate sysutils/tzdata
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
