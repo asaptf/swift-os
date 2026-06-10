@@ -26,7 +26,7 @@ format details.
 | Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
-| Operate boot profiles, networking demos, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
+| Operate boot profiles, networking workflows, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
 | Run, observe, test, and design SwiftOS services and the C5 driver-service/device-authority smoke | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
@@ -36,7 +36,7 @@ format details.
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
 | Answer common product, install, compatibility, package, networking, AI, and support questions | [FAQ](FAQ.md) |
-| Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
+| Follow copy-paste workflows for common tasks | [Examples](EXAMPLES.md) |
 | Check hardware, application, package, runtime, and network compatibility | [Compatibility Guide](COMPATIBILITY_GUIDE.md) |
 | Understand current login, capabilities, handle rights, and security limits | [Security Guide](SECURITY_GUIDE.md) |
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |

@@ -2,7 +2,7 @@
 
 This guide explains how to prepare, validate, hand off, and roll back a
 SwiftOS deployment candidate. It is written for operators, release testers,
-demo owners, embedded/appliance integrators, and application or AI hosting
+reviewers, embedded/appliance integrators, and application or AI hosting
 teams who need repeatable deployment evidence.
 
 SwiftOS does not yet ship a downloadable installer, hosted update service,
@@ -72,9 +72,9 @@ capabilities the workload needs.
 
 | Profile | Use it for | Required artifacts | Minimum proof |
 | --- | --- | --- | --- |
-| Direct serial candidate | Development, demos, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
+| Direct serial candidate | Development, operator walkthroughs, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
 | UEFI/GPT candidate | Firmware handoff, disk layout, primary boot packaging | `swift-os.img`, `base.img` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
-| Application service hosting | `httpd`, echo services, network demos | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
+| Application service hosting | `httpd`, echo services, network tools | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
@@ -159,7 +159,7 @@ SwiftOS image customization is host-side.
 | Need | Current method | Rebuild |
 | --- | --- | --- |
 | Add or change base files | Edit files under `base/` | `make base-image` |
-| Change demo accounts or capabilities | Edit `base/etc/swos/passwd` | `make base-image` |
+| Change seeded accounts or capabilities | Edit `base/etc/swos/passwd` | `make base-image` |
 | Change default web content | Edit `base/www/` | `make base-image` |
 | Add a native SwiftOS program to `/bin` | Add the userland target and stage it into the base image | `make build base-image` |
 | Add package content under `/usr` | Build a `.swpkg`, payload image, or package-store image | Package target plus boot attachment |
@@ -225,7 +225,7 @@ artifacts:
 
 identity:
   accounts source: base/etc/swos/passwd
-  seeded demo passwords changed: yes | no
+  seeded passwords changed: yes | no
   capNet principals: <list>
 
 validation:

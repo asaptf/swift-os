@@ -175,7 +175,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
   suite, interpret failures, and add host or QEMU acceptance tests.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
-  network demos, AI demo operation, logging evidence, and verification gates.
+  network workflows, AI operation, logging evidence, and verification gates.
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
@@ -196,7 +196,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   severity levels, report templates, and handoff checklists.
 - [FAQ](docs/FAQ.md): common product, install, compatibility, package,
   networking, AI, and support questions.
-- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
+- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS tasks.
 - [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
   application paths, porting constraints, packages, and non-goals.
 - [Security Guide](docs/SECURITY_GUIDE.md): current login flow, capability

@@ -94,7 +94,7 @@ packs it into `build/base.img` with `build/basepack`.
 | Input | Staged Into | Notes |
 | --- | --- | --- |
 | `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/www`, `/readme.txt`, and `/hello.txt` |
-| `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C demos, services, update tools, package manager, and busybox |
+| `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |
 | `build/pkghello.swpkg` | `/packages/pkghello.swpkg` | Local install fixture |
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |
 | `PKG_DEFAULT_REPO_URL` | `/etc/pkg/repo-url` | Optional default repository URL baked into a custom base image |

@@ -250,7 +250,7 @@ acceptance path.
 | `user` creating sockets | Fails because `user` lacks `capNet` |
 | Linux binaries | Do not run |
 | Dynamic linking | Not supported |
-| `tlsget` trust | TLS runtime demo only; no production certificate verification |
+| `tlsget` trust | TLS runtime smoke only; no production certificate verification |
 | Package remove, upgrade, rollback, version-constraint solving | Not implemented; local file install and signed repository install with name-based dependencies are supported fixtures |
 | General x86-64 boot | Not supported |
 

@@ -650,7 +650,7 @@ Notes:
 - The default target is `10.0.2.2:443` with host `localhost`.
 - The client sends an HTTPS `GET / HTTP/1.1` request after the handshake.
 - Certificate verification is not complete in this branch. Treat `tlsget` as a
-  TLS runtime demo and interoperability test, not as a production trust
+  TLS runtime smoke path and interoperability test, not as a production trust
   decision.
 
 Acceptance coverage: `tests/tls_test.sh`.

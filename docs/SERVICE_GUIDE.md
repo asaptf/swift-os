@@ -306,11 +306,11 @@ Run:
 
 SwiftOS uses QEMU slirp's resolver by default when booted with user networking.
 
-### TLS Demo
+### TLS Runtime Smoke
 
 `/bin/tlsget` exercises the native TLS 1.3 record and handshake path. Treat it
-as a demo and test target, not a production HTTPS client: production trust-store
-and certificate policy work is still future work.
+as a runtime smoke and test target, not a production HTTPS client: production
+trust-store and certificate policy work is still future work.
 
 ## Operational Evidence
 

@@ -127,7 +127,7 @@ Use `/tmp` for runtime scratch state.
 
 ## Programs In `/bin`
 
-The base image stages native Swift programs, C demos, and busybox. The C5
+The base image stages native Swift programs, C diagnostic programs, and busybox. The C5
 service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
 driver-service worker `/bin/drvinputd` over endpoint IPC, then transfers an
 opaque input-device handle to prove device ownership can move to a restartable
@@ -154,11 +154,11 @@ Common native Swift tools:
 | `head`, `wc`, `touch`, `date` | Core utility coverage |
 | `calc` | Interactive expression REPL over Swift heap and ARC |
 | `kv` | In-memory key-value REPL |
-| `llm`, `llmd` | Native Swift TinyStories inference demo and HTTP serving daemon |
+| `llm`, `llmd` | Native Swift TinyStories inference client and HTTP serving daemon |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
 | `swos-update`, `swos-activate`, `swos-confirm` | Checked base-image A/B update-store commands |
 | `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Checked UEFI ESP kernel-slot commands |
-| `threadsdemo`, `mmapdemo` | Runtime and VM demos |
+| `threadsdemo`, `mmapdemo` | Runtime and VM smoke programs |
 
 Busybox is staged as `/bin/busybox` and is used for the login shell. It is a
 legacy bring-up and compatibility tool, not the long-term application model.
@@ -336,17 +336,17 @@ Resolve through an explicit server and port:
 /bin/nslookup test.swos 10.0.2.2 5354
 ```
 
-### TLS Demo
+### TLS Runtime Smoke
 
 `/bin/tlsget` contains the current userland TLS client groundwork. Certificate
 verification is deliberately incomplete in the current branch; use it as a TLS
-runtime demo, not as a production trust decision.
+runtime smoke path, not as a production trust decision.
 
-## Runtime Demos
+## Runtime Smoke Programs
 
 ### Threads
 
-Run the EL0 thread/futex demo:
+Run the EL0 thread/futex smoke program:
 
 ```sh
 /bin/threadsdemo
@@ -357,15 +357,15 @@ to prove correct shared counter updates.
 
 ### mmap And W^X
 
-Run the anonymous mmap, mprotect, and W^X demo:
+Run the anonymous mmap, mprotect, and W^X smoke program:
 
 ```sh
 /bin/mmapdemo
 ```
 
-The demo maps zero-filled RAM, writes and reads across a page boundary, switches
-a page from RW to RX for a small JIT-style call, and confirms RWX mappings are
-rejected.
+The program maps zero-filled RAM, writes and reads across a page boundary,
+switches a page from RW to RX for a small JIT-style call, and confirms RWX
+mappings are rejected.
 
 ## Update Commands
 

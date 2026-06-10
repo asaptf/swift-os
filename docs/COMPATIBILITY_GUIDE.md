@@ -268,7 +268,7 @@ Current user-visible network tools:
 | `/bin/udpecho` | UDP 5555 | One-shot UDP echo server |
 | `/bin/tcpget` | TCP client | Guest-to-host TCP active open |
 | `/bin/nslookup` | UDP DNS | A and AAAA lookup demo |
-| `/bin/tlsget` | TLS client | TLS 1.3 runtime demo |
+| `/bin/tlsget` | TLS client | TLS 1.3 runtime smoke |
 
 Example host forwarding for HTTP-style services:
 
