@@ -21,7 +21,7 @@ SwiftOS user programs are static EL0 binaries. The normal workflow is:
 | Native Embedded Swift | New first-party tools and modern SwiftOS apps | Preferred path. Uses `userland/lib/swift_user.h` as the bridge. |
 | Raw C syscall app | Tiny low-level utilities and ABI probes | Uses `userland/lib/syscall.h` directly. Negative errno-like returns are exposed. |
 | C/newlib port | Porting larger C software | Uses newlib, `userland/lib/newlib_syscalls.c`, and `userland/compat/*`. |
-| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua/zlib seed/static-host install smoke. |
+| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current seed/static-host install smoke. |
 
 ## Recipe: Native Swift Command
 
@@ -374,13 +374,14 @@ solving are not current behavior.
 
 ### Recipe: Build And Install Source Ports
 
-Lua and zlib are the current real source-port fixtures. They prove
-checksum-verified source fetch, static AArch64 cross-build, `.swpkg` creation,
-signed local repository publication, and target-side install from a default
-repository URL. The Lua-only smoke remains useful for the interpreter path; the
-seed repository smoke installs both Lua and zlib and runs the `minigzip` round
-trip in the guest. The static-host smoke serves the same seed repository from a
-deployable web-root layout and repeats the Lua+zlib install path.
+Lua, zlib, and ca-certificates are the current real port fixtures. They prove
+checksum-verified source fetch, static AArch64 cross-build or data-only staging,
+`.swpkg` creation, signed local repository publication, and target-side install
+from a default repository URL. The Lua-only smoke remains useful for the
+interpreter path; the seed repository smoke installs Lua, zlib, and
+ca-certificates and runs the `minigzip` round trip plus the CA bundle marker in
+the guest. The static-host smoke serves the same seed repository from a
+deployable web-root layout and repeats that install path.
 
 ```sh
 make ports-lua-repo-fixture

@@ -172,7 +172,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
   The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
   the ELF image sits at `0x8000_0000` growing up (busybox ~1.1 MiB, far short of
-  `0x8800_0000`); the 4-page user stack is at the top of `[0x8FFF_C000, 0x9000_0000)`; the
+  `0x8800_0000`); the 16-page user stack is at the top of `[0x8FFF_0000, 0x9000_0000)`; the
   `sbrk` heap is at `0xA000_0000` growing up. That leaves a **256 MiB hole** between the
   stack top (`0x9000_0000`) and the heap base (`0xA000_0000`). The mmap arena is parked at
   the **midpoint** (`0x9800_0000`) and grows down, so it keeps 128 MiB of clearance above
@@ -2606,7 +2606,7 @@ time `/bin/top` was added (`llvm-size build/kernel.elf` + the linker symbols + t
 - Static: `.text`+`.rodata`+`.got` ≈ 140 KiB, `.data` ≈ 2.3 KiB, `.bss` ≈ 55 KiB → ELF `dec` ≈ 197 KiB;
   `kernel.bin` (flat, loadable) ≈ 142 KiB.
 - Resident at boot (`_start` 0x4008_0000 → `__image_end`, roughly **2.3 MiB** with the current linker
-  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 2 MiB early bump heap.
+  reservation): 144 KiB code/data + 55 KiB bss + 64 KiB boot stack + 8 MiB early bump heap.
 - Dynamic: of 256 MiB RAM the kernel, the 512 KiB sub-load-base hole, and the PMM bitmap consume about
   1.3 MiB before any process runs.
   The accounting/syscalls added by this feature grow the image by ~3 KiB.

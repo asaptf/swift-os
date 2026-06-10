@@ -9,11 +9,12 @@ Design for binary package installation on swift-os.
 > `pkg install NAME` for the signed fixture catalog, including name-based
 > dependency resolution, and rejects expired catalogs, incompatible catalog
 > entries, and package SHA-256 mismatches. The ports seed fixture now
-> cross-builds Lua and zlib, publishes both into one signed local repository,
-> and can boot SwiftOS with `/etc/pkg/repo-url` so `pkg update` works without a
-> manual `pkg repo set`. `make ports-static-host-publish` turns that seed into a
-> deployable static web root, and `make package-static-host-repo-install-test`
-> proves install from that published layout. `/bin/pkg` now accepts DNS
+> cross-builds Lua and zlib, packages ca-certificates, publishes all three into
+> one signed local repository, and can boot SwiftOS with `/etc/pkg/repo-url` so
+> `pkg update` works without a manual `pkg repo set`. `make
+> ports-static-host-publish` turns that seed into a deployable static web root,
+> and `make package-static-host-repo-install-test` proves install from that
+> published layout. `/bin/pkg` now accepts DNS
 > hostnames in HTTP repository URLs, `make ports-hosted-url-verify` checks a
 > deployed static-host URL from the host, and
 > `make package-static-host-dns-repo-install-test` proves target-side install
@@ -917,14 +918,15 @@ Remaining repository work:
 Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 have started inside `swift-os`
 with a checked machine-readable seed catalog, `ports/catalog.json`, the
 host-side `build/swport catalog validate/list/inspect` commands, and checked
-`ports/lang/lua/Port.json` plus `ports/archivers/zlib/Port.json` recipe
-scaffolds. `swport recipe validate`, `swport recipe manifest`,
-checksum-verified `swport recipe fetch`, staged-root `swport recipe package`,
-and signed `swport recipe repo-fixture` exist for those checked paths. P6e/P6f
-prove the Lua cross-build and target install path. P7 adds zlib and
-`make package-ports-seed-repo-install-test`, which installs Lua and zlib from
-one signed local seed repository in QEMU and runs Lua plus `minigzip` smoke
-commands. P8 adds `make ports-static-host-publish` and
+`ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, and
+`ports/security/ca-certificates/Port.json` recipe scaffolds. `swport recipe
+validate`, `swport recipe manifest`, checksum-verified `swport recipe fetch`,
+staged-root `swport recipe package`, and signed `swport recipe repo-fixture`
+exist for those checked paths. P6e/P6f prove the Lua cross-build and target
+install path. P7 adds zlib and P10 adds ca-certificates to
+`make package-ports-seed-repo-install-test`, which installs all three packages
+from one signed local seed repository in QEMU and runs Lua, `minigzip`, and CA
+bundle marker smoke commands. P8 adds `make ports-static-host-publish` and
 `make package-static-host-repo-install-test`, which publish that seed into a
 static-hostable web root and prove installs from that hosted layout. This is
 deliberately not the full ports tree yet; it makes package priorities,
@@ -934,9 +936,10 @@ repository exists.
 
 - Keep `ports/catalog.json` valid with `make ports-catalog-test`.
 - Keep the checked source recipe workflow valid with `make ports-recipe-test`.
-- Keep the real Lua and zlib binary package paths valid with
-  `make ports-lua-repo-fixture` and `make ports-zlib-repo-fixture` when
-  `make newlib` has populated the generated sysroot.
+- Keep the real Lua and zlib binary package paths plus the ca-certificates data
+  package path valid with `make ports-lua-repo-fixture`,
+  `make ports-zlib-repo-fixture`, and `make ports-ca-certificates-repo-fixture`
+  when `make newlib` has populated the generated sysroot.
 - Keep the first multi-package target install/run path valid with
   `make package-ports-seed-repo-install-test`.
 - Keep the static-host publish/install path valid with
@@ -960,18 +963,21 @@ Good early candidates:
 Acceptance:
 
 - `make ports-catalog-test` validates the seed catalog.
-- `make ports-recipe-test` validates the checked Lua and zlib recipes and proves
-  the generated manifest can feed `swport recipe package`, `swpkg verify`, and
-  a signed local `pkgrepo` repository fixture.
+- `make ports-recipe-test` validates the checked Lua, zlib, and ca-certificates
+  recipes and proves the generated manifest can feed `swport recipe package`,
+  `swpkg verify`, and a signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
   the runtime interpreter into a signed local repository fixture.
 - `make ports-zlib-repo-fixture` builds real static AArch64 zlib, headers,
   pkgconf metadata, and `minigzip`.
-- `make package-ports-seed-repo-install-test` installs Lua and zlib from one
-  signed local seed repository and runs both package smoke paths inside QEMU.
+- `make ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA
+  bundle as a data-only `.swpkg`.
+- `make package-ports-seed-repo-install-test` installs Lua, zlib, and
+  ca-certificates from one signed local seed repository and runs their package
+  smoke paths inside QEMU.
 - `make ports-static-host-publish` creates a deployable static web root for the
   seed repository, and `make package-static-host-repo-install-test` installs
-  Lua and zlib from that layout inside QEMU.
+  Lua, zlib, and ca-certificates from that layout inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

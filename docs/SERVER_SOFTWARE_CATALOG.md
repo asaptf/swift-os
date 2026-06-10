@@ -13,18 +13,19 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b-P7 add checked Lua and zlib `Port.json` recipes with recipe validation,
-> manifest generation, checksum-verified source fetch, `.swpkg` creation from
-> clean staged roots, signed local repository fixture generation, real AArch64
-> static cross-builds, and a two-package signed seed repository fixture. The
+> P6b-P10 add checked Lua, zlib, and ca-certificates `Port.json` recipes with
+> recipe validation, manifest generation, checksum-verified source fetch,
+> `.swpkg` creation from clean staged roots, signed local repository fixture
+> generation, real AArch64 static cross-builds where applicable, and a
+> three-package signed seed repository fixture. The
 > `package-lua-repo-install-test` installs and runs Lua from its signed
 > repository inside QEMU. The `package-ports-seed-repo-install-test` boots
-> SwiftOS with a default repository URL, runs `pkg update`, installs `lua` and
-> `zlib`, and runs both package smoke commands. `make ports-static-host-publish`
+> SwiftOS with a default repository URL, runs `pkg update`, installs `lua`,
+> `zlib`, and `ca-certificates`, and runs the package smoke commands. `make ports-static-host-publish`
 > now emits a static-hostable web root for that seed repository, and
 > `make package-static-host-repo-install-test` proves installs from that layout.
 > P9 adds host-side hosted URL verification and a QEMU smoke where `/bin/pkg`
-> installs Lua and zlib from a DNS-resolved HTTP repository URL. Public
+> installs Lua, zlib, and ca-certificates from a DNS-resolved HTTP repository URL. Public
 > production domains/channels, target-side HTTPS, remove, upgrade,
 > version-constraint solving, and rollback flows are still roadmap work.
 
@@ -54,13 +55,14 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua and zlib source recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, and ca-certificates recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
-| Ports seed repository fixture | Publish Lua and zlib into one signed local repository and install both from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the Lua+zlib seed repository into a deployable web root and install both from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua and zlib from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
+| Ports seed repository fixture | Publish Lua, zlib, and ca-certificates into one signed local repository and install all three from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all three packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, and ca-certificates from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -80,8 +82,10 @@ and a hosted-style default repository form for the ports seed fixture:
 pkg update
 pkg install lua
 pkg install zlib
+pkg install ca-certificates
 /usr/bin/lua -e 'print(21 * 2)'
 /usr/bin/minigzip /tmp/zlib.txt
+cat /usr/share/certs/swiftos-ca-bundle.version
 ```
 
 The package priority data in this document is mirrored into the checked
@@ -92,6 +96,7 @@ make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
 make ports-zlib-repo-fixture
+make ports-ca-certificates-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make ports-hosted-url-verify-test
@@ -102,8 +107,10 @@ build/swport catalog list ports/catalog.json
 build/swport catalog inspect nginx ports/catalog.json
 build/swport recipe validate lang/lua
 build/swport recipe validate archivers/zlib
+build/swport recipe validate security/ca-certificates
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
+build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
@@ -133,8 +140,8 @@ pkg install web-basic postgresql nodejs
 Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
-inspection, `build/swport recipe ...` for the checked Lua and zlib recipes, and
-the host package tooling for package construction.
+inspection, `build/swport recipe ...` for the checked Lua, zlib, and
+ca-certificates recipes, and the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
@@ -184,7 +191,7 @@ possible. They should be the first real ports after `pkghello` and `lua`.
 
 | Package | Role and why it matters | Likely upstream/project | Difficulty | Runtime dependencies | Syscall/libc/kernel prerequisites | Static-linking concerns | First smoke test |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `ca-certificates` | Trust store for HTTPS clients, ACME, package mirrors, Git, database clients, and language runtimes. | Mozilla CA bundle, packaged as data. | S | None. | `base-posix`; package-store support for data files under `/usr/share/certs` or `/etc/ssl`. | Data-only. Must define canonical cert path so every TLS consumer agrees. | `test -s /etc/ssl/cert.pem` or equivalent path and verify a known test certificate chain with the chosen TLS tool. |
+| `ca-certificates` | Trust store for HTTPS clients, ACME, package mirrors, Git, database clients, and language runtimes. | Mozilla CA bundle, packaged as data. | S | None. | `base-posix`; package-store support for data files under `/usr/share/certs` and `/usr/etc/ssl`. | Packaged. Current canonical cert-file path is `/usr/etc/ssl/cert.pem` until base links or non-`/usr` package paths are supported. | Install from the seed repository and `cat /usr/share/certs/swiftos-ca-bundle.version` in QEMU. |
 | `tzdata` | Time zone data for logs, databases, TLS validation, and language runtimes. | IANA Time Zone Database. | S | None. | `base-posix`; realtime clock; stable data path such as `/usr/share/zoneinfo`. | Data-only. Keep UTC-only fallback in base OS, but package full zoneinfo. | Set `TZ=UTC` and `TZ=Europe/Madrid`; run a tiny date conversion test. |
 | `zlib` | Compression library used by TLS stacks, Git, nginx, PostgreSQL, PNG/tools, and many archives. | zlib-ng in zlib-compat mode, or classic zlib. | S | None. | `base-posix` for test tools. | Static library is straightforward. Decide whether package name exposes `libz.a` only or also `zlib.pc`. | Compress and decompress a known string; verify SHA-256 of output. |
 | `zstd` | Modern package/archive compression and backup compression. | facebook/zstd. | S | libc, optional pthreads disabled early. | `base-posix`; `threads` only for parallel mode. | Build static CLI and library with threading off at first. Later enable multithreaded compression. | `zstd input && zstd -d input.zst` and compare hash. |
@@ -333,11 +340,12 @@ Acceptance demo:
 
 ```sh
 pkg update
-pkg install lua zlib
+pkg install lua zlib ca-certificates
 lua -e 'print(_VERSION)'
 echo zlib-ok > /tmp/zlib.txt
 minigzip /tmp/zlib.txt
 minigzip -d /tmp/zlib.txt.gz
+cat /usr/share/certs/swiftos-ca-bundle.version
 ```
 
 ### Wave B: Usable Admin Console
@@ -487,8 +495,9 @@ published only to an experimental channel.
 
 ## Key Porting Recommendations
 
-1. Port `lua`, `zlib`, `zstd`, `patch`, and `pkgconf` first. They test the
-   package system without forcing network, threads, or VM semantics.
+1. Port `zstd`, `patch`, and `pkgconf` next after the checked `lua`, `zlib`,
+   and `ca-certificates` packages. They test the package system without
+   forcing network, threads, or VM semantics.
 2. Make `curl` the first serious network client. It will quickly expose DNS,
    sockets, timeouts, TLS, entropy, and CA-store problems.
 3. Choose either OpenSSL or LibreSSL as the first blessed TLS provider before

@@ -385,10 +385,11 @@ These are current implementation boundaries, not necessarily design goals:
 - Package install exists for local `.swpkg` files and P5c signed static HTTP
   repository fixtures, including name-based dependency resolution. The P6e/P6f
   workflow can cross-build static Lua artifacts and install `lua` in QEMU; the
-  P7 seed workflow publishes Lua and zlib into one signed local repository,
-  installs both by package name, and runs Lua plus `minigzip` smoke commands.
-  The P8 static-host workflow publishes that seed into a deployable web root and
-  proves the same install path from the hosted layout. Remove, upgrade,
+  seed workflow publishes Lua, zlib, and ca-certificates into one signed local
+  repository, installs all three by package name, and runs Lua, `minigzip`, and
+  CA bundle marker smoke commands. The P8 static-host workflow publishes that
+  seed into a deployable web root and proves the same install path from the
+  hosted layout. Remove, upgrade,
   rollback, public hosted channels, version-constraint solving, and
   large-package streaming downloads are not implemented yet.
 - No graphical desktop shell.

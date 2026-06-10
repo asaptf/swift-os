@@ -46,7 +46,7 @@ format details.
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Build, inspect, boot, test, and troubleshoot package, repository, ports, and static-host artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
-| Design package recipes, Lua/zlib cross-build fixtures, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
+| Design package recipes, seed package fixtures, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
 | Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |
@@ -96,9 +96,9 @@ SwiftOS is past bring-up and can boot under QEMU, authenticate users, run a
 native Swift userland, serve files from a read-only base image, allocate tmpfs
 scratch space, run a small TCP/IP stack, and execute user programs through its
 own POSIX-like syscall surface. Package fixtures cover local `.swpkg`
-installation, signed static repository installation, Lua/zlib source-port
-repository fixtures, and a static-hostable repository layout that can be served
-to QEMU.
+installation, signed static repository installation, Lua/zlib/ca-certificates
+port repository fixtures, and a static-hostable repository layout that can be
+served to QEMU.
 
 Current product-shaping work is tracked in
 [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The most important

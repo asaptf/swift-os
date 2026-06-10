@@ -27,14 +27,14 @@
       "portPath": "security/ca-certificates",
       "tier": 0,
       "category": "trust",
-      "status": "candidate",
+      "status": "packages",
       "difficulty": "S",
       "upstream": "Mozilla CA bundle",
       "summary": "Trust store for HTTPS clients, ACME, package mirrors, Git, database clients, and language runtimes.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix", "tls-base"],
-      "smokeTest": "verify a known local test certificate chain with the chosen TLS tool",
-      "notes": "Data-only package; define the canonical cert path before TLS consumers depend on it."
+      "smokeTest": "install from the seed repository and cat /usr/share/certs/swiftos-ca-bundle.version in QEMU",
+      "notes": "Data-only package; current canonical packaged cert path is /usr/etc/ssl/cert.pem until base links or non-/usr package paths are supported."
     },
     {
       "name": "tzdata",
