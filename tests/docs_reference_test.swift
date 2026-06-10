@@ -558,9 +558,22 @@ private func checkApiRecipeVerificationCoverage() {
             .map { String($0).trimmingCharacters(in: .whitespaces) }
         guard cells.count >= 5 else { continue }
         let task = cells[1]
+        let sources = cells[2]
         let verification = cells[cells.count - 2]
         if task == "Task" {
             continue
+        }
+
+        let sourceRefs = codeSpans(in: sources)
+        if sourceRefs.isEmpty {
+            fail("\(path):\(index + 1): API recipe `\(task)` has no source reference")
+            ok = false
+        }
+        for source in sourceRefs where source.hasPrefix("userland/") {
+            if !FileManager.default.fileExists(atPath: source) {
+                fail("\(path):\(index + 1): API recipe `\(task)` references missing source `\(source)`")
+                ok = false
+            }
         }
 
         let commands = codeSpans(in: verification)

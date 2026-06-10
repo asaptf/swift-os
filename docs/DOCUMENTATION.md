@@ -180,8 +180,9 @@ When adding public docs:
 4. Keep all docs in English.
 5. Run `make docs-test` for Markdown fence, local-link/anchor, API table, Swift
    bridge, documentation map, README front-door, example verification blocks and
-   commands, API recipe/example verification, command-reference, host tool
-   reference, and port recipe reference integrity.
+   commands, API recipe source and verification references, complete API example
+   verification, command-reference, host tool reference, and port recipe
+   reference integrity.
 6. Run at least the relevant build or test target before committing.
 7. For operational docs, name the acceptance test that proves each workflow when
    such a test exists.
