@@ -35,9 +35,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -56,28 +53,41 @@ await_line() {  # await_line LINE [MAXSEC]
   return 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+send_line() {
+  local line="$1" delay="${REDIRECT_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${REDIRECT_SEND_DELAY:-0.08}"
+}
+
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n' >&3
+await "M7 tty: type a line then Enter" 40 && send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
-await "swift-os login:" 20 && printf 'root\n' >&3
-await "Password:" 15 && printf 'swordfish\n' >&3
-await "Welcome to swift-os, root" 15 && printf 'echo hello-redir > /tmp/r\n' >&3
-await "echo hello-redir > /tmp/r" 10 && printf 'cat /tmp/r\n' >&3
-await_line "hello-redir" 15 && printf 'echo world-append >> /tmp/r\n' >&3
-await "echo world-append >> /tmp/r" 10 && printf 'cat /tmp/r\n' >&3
-await_line "world-append" 15 && printf 'echo piped-data | cat > /tmp/p\n' >&3
-await "echo piped-data | cat > /tmp/p" 10 && printf 'cat /tmp/p\n' >&3
-await_line "piped-data" 15 && printf 'echo SHELL-STILL-ALIVE\n' >&3
-await_line "SHELL-STILL-ALIVE" 15 && printf 'exit\n' >&3
+await "swift-os login:" 20 && send_line 'root'
+await "Password:" 15 && send_line 'swordfish'
+await "Welcome to swift-os, root" 15 && send_line 'echo hello-redir > /tmp/r'
+await "echo hello-redir > /tmp/r" 10 && send_line 'cat /tmp/r'
+await_line "hello-redir" 15 && send_line 'echo world-append >> /tmp/r'
+await "echo world-append >> /tmp/r" 10 && send_line 'cat /tmp/r'
+await_line "world-append" 15 && send_line 'echo piped-data | cat > /tmp/p'
+await "echo piped-data | cat > /tmp/p" 10 && send_line 'cat /tmp/p'
+await_line "piped-data" 15 && send_line 'echo SHELL-STILL-ALIVE'
+await_line "SHELL-STILL-ALIVE" 15 && send_line 'exit'
 
 exec 3>&-
 stop_qemu

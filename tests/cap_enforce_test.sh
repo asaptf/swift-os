@@ -33,9 +33,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -52,34 +49,47 @@ drive_fail() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+send_line() {
+  local line="$1" delay="${CAP_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${CAP_SEND_DELAY:-0.08}"
+}
+
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'guest\n' >&3
+send_line 'guest'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'guest\n' >&3
+send_line 'guest'
 await "session: principal=3 session=3 caps=2" 120 || drive_fail "guest did not log in with the restricted context"
-printf 'echo GUEST-ECHO-OK\n' >&3
+send_line 'echo GUEST-ECHO-OK'
 await "GUEST-ECHO-OK" 60 || drive_fail "echo builtin should still work"
-printf 'cat /etc/motd\n' >&3
+send_line 'cat /etc/motd'
 await "can't open '/etc/motd'" 60 || drive_fail "reading /etc/motd was not denied"
-printf 'ls /\n' >&3
+send_line 'ls /'
 await "can't open '/'" 60 || drive_fail "listing / was not denied"
-printf '/bin/id\n' >&3
+send_line '/bin/id'
 await "principal=3 session=3 caps=0x2" 60 || drive_fail "/bin/id did not report the guest context"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

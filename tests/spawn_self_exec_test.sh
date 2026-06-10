@@ -26,9 +26,6 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -47,8 +44,22 @@ send_after() {  # send_after MARKER MAXSEC TEXT
     exit 1
   fi
   sleep 0.2
-  printf '%b' "$text" >&3
-  sleep 0.05
+  local rendered delay="${SELFEXEC_CHAR_DELAY:-0.01}" i
+  printf -v rendered '%b' "$text"
+  for (( i = 0; i < ${#rendered}; i++ )); do
+    printf '%s' "${rendered:i:1}" >&3
+    sleep "$delay"
+  done
+  sleep "${SELFEXEC_SEND_DELAY:-0.08}"
+}
+
+send_text() {
+  local text="$1" delay="${SELFEXEC_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#text}; i++ )); do
+    printf '%s' "${text:i:1}" >&3
+    sleep "$delay"
+  done
+  sleep "${SELFEXEC_SEND_DELAY:-0.08}"
 }
 
 abort() {
@@ -58,13 +69,16 @@ abort() {
   exit 1
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+if [[ -f "$DTB" ]]; then
+  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+fi
+qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -kernel "$KERNEL")
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
@@ -78,9 +92,9 @@ await "selfexec: open+exec same file OK" 60 || abort "open+exec same file scenar
 await "selfexec: garbage-argv-pointer survived" 60 || abort "garbage argv pointer was not handled"
 await "selfexec: unterminated-argv survived" 60 || abort "unterminated argv was not handled"
 await "selfexec OK: open+exec same file and malformed argv handled" 60 || abort "selfexecdemo did not complete"
-printf 'echo SELFEXEC-SHELL-ALIVE\n' >&3
+send_text $'echo SELFEXEC-SHELL-ALIVE\n'
 await "SELFEXEC-SHELL-ALIVE" 30 || abort "shell did not survive selfexecdemo"
-printf 'exit\n' >&3
+send_text $'exit\n'
 
 sleep 1
 stop_qemu

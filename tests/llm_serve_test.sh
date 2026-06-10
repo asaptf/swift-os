@@ -62,13 +62,13 @@ drive_fail() {
 }
 
 send_line() {
-  local line="$1" delay="${LLMD_CHAR_DELAY:-0.02}" i
+  local line="$1" delay="${LLMD_CHAR_DELAY:-0.01}" i
   for (( i = 0; i < ${#line}; i++ )); do
     printf '%s' "${line:i:1}" >&3
     sleep "$delay"
   done
   printf '\n' >&3
-  sleep "${LLMD_SEND_DELAY:-0.12}"
+  sleep "${LLMD_SEND_DELAY:-0.08}"
 }
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
