@@ -201,9 +201,10 @@ manifest entries left behind after globals move or disappear.
 
 ## Immediate S1/S2 Risks
 
-- `currentProc`, `currentThread`, the S2d process run queue scaffold, and timer
-  accounting must become per-CPU or protected before any secondary CPU can run
-  scheduler code.
+- `currentProc`, `currentThread`, the S2d/S2e process run queue/context
+  scaffold, and timer accounting must become per-CPU or protected before any
+  secondary CPU can run scheduler code. S2e publishes dormant secondary
+  scheduler resources; it does not make those structures concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - VFS handle/open-description/pipe/endpoint tables are deliberately left as an

@@ -114,18 +114,28 @@ func smpSetCurrentProcessForCurrentCpu(_ process: Int32) {
     smpCpuState[Int(cpu)].currentProcess = process
 }
 
-func smpSetProcessSchedulerContextForCurrentCpu(_ context: UInt) {
-    let cpu = currentCpuId()
-    if !smpValidCpu(cpu) { return }
+@discardableResult
+func smpSetProcessSchedulerContextForCpu(_ cpu: UInt32, _ context: UInt) -> Bool {
+    if !smpValidCpu(cpu) { return false }
     smpCpuState[Int(cpu)].schedulerContext = context
+    return true
 }
 
-func smpSetProcessRunQueueForCurrentCpu(head: Int32, tail: Int32) {
-    let cpu = currentCpuId()
-    if !smpValidCpu(cpu) { return }
+func smpSetProcessSchedulerContextForCurrentCpu(_ context: UInt) {
+    _ = smpSetProcessSchedulerContextForCpu(currentCpuId(), context)
+}
+
+@discardableResult
+func smpSetProcessRunQueueForCpu(_ cpu: UInt32, head: Int32, tail: Int32) -> Bool {
+    if !smpValidCpu(cpu) { return false }
     let idx = Int(cpu)
     smpCpuState[idx].runQueueHead = head
     smpCpuState[idx].runQueueTail = tail
+    return true
+}
+
+func smpSetProcessRunQueueForCurrentCpu(head: Int32, tail: Int32) {
+    _ = smpSetProcessRunQueueForCpu(currentCpuId(), head: head, tail: tail)
 }
 
 func smpRecordEl0SwitchForCurrentCpu() {
@@ -169,6 +179,11 @@ func smpPerCpuProcessIdle(_ cpu: UInt32) -> Bool {
 func smpPerCpuProcessSchedulerContextReady(_ cpu: UInt32) -> Bool {
     if !smpValidCpu(cpu) { return false }
     return smpCpuState[Int(cpu)].schedulerContext != 0
+}
+
+func smpPerCpuProcessSchedulerContext(_ cpu: UInt32) -> UInt {
+    if !smpValidCpu(cpu) { return 0 }
+    return smpCpuState[Int(cpu)].schedulerContext
 }
 
 func smpPerCpuProcessRunQueueIdle(_ cpu: UInt32) -> Bool {
@@ -220,7 +235,6 @@ func smpPerCpuSchedulerIdle(_ cpu: UInt32) -> Bool {
            state.currentProcess == smpNoProcess &&
            state.runQueueHead == smpNoThread &&
            state.runQueueTail == smpNoThread &&
-           state.schedulerContext == 0 &&
            state.kernelSchedulerActivityCount == 0 &&
            state.el0SwitchCount == 0 &&
            (flags & smpCpuFlagKernelSchedulerReady) == 0
@@ -289,13 +303,14 @@ func smpPerCpuSelfTest() -> Bool {
     smpSetCurrentProcessForCurrentCpu(3)
     if smpCpuState[idx].currentProcess != 3 { return false }
 
-    smpSetProcessRunQueueForCurrentCpu(head: 5, tail: 9)
+    if !smpSetProcessRunQueueForCpu(cpu, head: 5, tail: 9) { return false }
     if smpPerCpuProcessRunQueueIdle(cpu) { return false }
     if smpPerCpuProcessRunQueueHead(cpu) != 5 { return false }
     if smpPerCpuProcessRunQueueTail(cpu) != 9 { return false }
 
-    smpSetProcessSchedulerContextForCurrentCpu(0x1000)
+    if !smpSetProcessSchedulerContextForCpu(cpu, 0x1000) { return false }
     if !smpPerCpuProcessSchedulerContextReady(cpu) { return false }
+    if smpPerCpuProcessSchedulerContext(cpu) != 0x1000 { return false }
     if smpCpuState[idx].schedulerContext != 0x1000 { return false }
 
     smpCpuState[idx].el0SwitchCount = 9

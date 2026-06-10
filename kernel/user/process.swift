@@ -138,10 +138,14 @@ func processInit() {
         processRunQueueTail[Int(cpu)] = noProcessSlot
         processRunQueueEnqueueCount[Int(cpu)] = 0
         processRunQueueDispatchCount[Int(cpu)] = 0
+        let context = UInt(bitPattern: schedCtx.advanced(by: Int(cpu)))
+        if !smpSetProcessSchedulerContextForCpu(cpu, context) ||
+           !smpSetProcessRunQueueForCpu(cpu, head: noProcessSlot, tail: noProcessSlot) {
+            uartPuts("panic: process scheduler per-CPU publication failed\n")
+            while true {}
+        }
         cpu += 1
     }
-    smpSetProcessSchedulerContextForCurrentCpu(UInt(bitPattern: schedCtx))
-    smpSetProcessRunQueueForCurrentCpu(head: noProcessSlot, tail: noProcessSlot)
     for i in 0..<maxProc {
         pState[i] = pUnused
         pHomeCpu[i] = unassignedCpu
@@ -161,6 +165,11 @@ private func processSchedulerCpuIndex() -> Int {
 
 private func schedulerContextForCurrentCpu() -> UnsafeMutableRawPointer {
     UnsafeMutableRawPointer(schedCtx.advanced(by: processSchedulerCpuIndex()))
+}
+
+private func schedulerContextAddressForCpu(_ cpu: UInt32) -> UInt {
+    if cpu >= schedCtxCpuCount { return 0 }
+    return UInt(bitPattern: schedCtx.advanced(by: Int(cpu)))
 }
 
 func processSchedulerContextSelfTest() -> Bool {
@@ -183,6 +192,10 @@ func processSchedulerContextSelfTest() -> Bool {
            ctx.sp != 0 {
             return false
         }
+        if smpPerCpuProcessSchedulerContext(cpu) != schedulerContextAddressForCpu(cpu) {
+            return false
+        }
+        if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
         cpu += 1
     }
     return true
@@ -288,6 +301,22 @@ func processRunQueueScaffoldSelfTest() -> Bool {
     return true
 }
 
+func processDormantSchedulerCpusSelfTest() -> Bool {
+    if processRunQueueCpuCount != smpMaxCpuCount() { return false }
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if smpPerCpuProcessSchedulerContext(cpu) != schedulerContextAddressForCpu(cpu) {
+            return false
+        }
+        if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+        if processRunQueueEnqueueCount[idx] != 0 { return false }
+        if processRunQueueDispatchCount[idx] != 0 { return false }
+        cpu += 1
+    }
+    return true
+}
+
 func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
@@ -305,6 +334,29 @@ func processRunQueueNoSecondaryExecutionSelfTest() -> Bool {
             if processRunQueueEnqueueCount[idx] != 0 { return false }
             if processRunQueueDispatchCount[idx] != 0 { return false }
             if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+        }
+        cpu += 1
+    }
+    return true
+}
+
+func processNoSecondarySchedulerDispatchSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    if processRunQueueEnqueueCount[Int(primary)] == 0 { return false }
+    if processRunQueueDispatchCount[Int(primary)] == 0 { return false }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if smpPerCpuProcessSchedulerContext(cpu) != schedulerContextAddressForCpu(cpu) {
+            return false
+        }
+        if cpu != primary {
+            if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+            if processRunQueueEnqueueCount[idx] != 0 { return false }
+            if processRunQueueDispatchCount[idx] != 0 { return false }
+            if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         }
         cpu += 1
     }
