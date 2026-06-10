@@ -67,6 +67,7 @@ discoverable.
 | Track the package ecosystem end state and current package roadmap | [Package Ecosystem Goal](PACKAGE_ECOSYSTEM_GOAL.md) |
 | Read the historical package-manager implementation plan | [Package Manager Implementation Plan](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md) |
 | Reuse package-manager session prompts and milestone prompts | [Package Manager Session Prompts](PACKAGE_MANAGER_SESSION_PROMPTS.md) |
+| Review the current seed ports catalog and recipe validation rules | [Ports Seed Catalog](../ports/README.md) |
 | Review the machine-checked SMP mutable-state inventory | [SMP Mutable State Audit](SMP_STATE_AUDIT.md) |
 | Pick up the latest handoff notes for the next engineering session | [Next Session](NEXT_SESSION.md) |
 
