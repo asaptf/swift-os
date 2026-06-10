@@ -228,7 +228,8 @@ Yes, through checked-in signed local repository fixtures. The Lua path
 cross-builds static AArch64 `lua` and `luac`; the P7 seed repository also
 cross-builds zlib, publishes Lua and zlib into one signed local repository,
 boots SwiftOS with that default repo URL, installs both packages by name, and
-runs their smoke commands:
+runs their smoke commands. P8 then publishes the same seed repository into a
+static-hostable web root and proves installs from that hosted layout:
 
 ```sh
 make ports-lua-repo-fixture
@@ -238,11 +239,15 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
+make ports-static-host-publish
+make package-static-host-repo-install-test
 ```
 
 The seed test exercises `pkg install lua`, `pkg install zlib`, Lua version and
-expression checks, and a `minigzip` compression/decompression round trip. This
-is still a local fixture, not a public hosted package channel.
+expression checks, and a `minigzip` compression/decompression round trip. The
+static-host test serves `build/ports-static-host-root` and repeats the Lua+zlib
+install path. This is still a local fixture, not a public hosted package
+channel.
 
 ### Can package files write into `/bin` or `/etc`?
 

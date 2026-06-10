@@ -21,7 +21,7 @@ SwiftOS user programs are static EL0 binaries. The normal workflow is:
 | Native Embedded Swift | New first-party tools and modern SwiftOS apps | Preferred path. Uses `userland/lib/swift_user.h` as the bridge. |
 | Raw C syscall app | Tiny low-level utilities and ABI probes | Uses `userland/lib/syscall.h` directly. Negative errno-like returns are exposed. |
 | C/newlib port | Porting larger C software | Uses newlib, `userland/lib/newlib_syscalls.c`, and `userland/compat/*`. |
-| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua/zlib seed repository install smoke. |
+| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua/zlib seed/static-host install smoke. |
 
 ## Recipe: Native Swift Command
 
@@ -379,7 +379,8 @@ checksum-verified source fetch, static AArch64 cross-build, `.swpkg` creation,
 signed local repository publication, and target-side install from a default
 repository URL. The Lua-only smoke remains useful for the interpreter path; the
 seed repository smoke installs both Lua and zlib and runs the `minigzip` round
-trip in the guest.
+trip in the guest. The static-host smoke serves the same seed repository from a
+deployable web-root layout and repeats the Lua+zlib install path.
 
 ```sh
 make ports-lua-repo-fixture
@@ -389,6 +390,8 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
+make ports-static-host-publish
+make package-static-host-repo-install-test
 ```
 
 The guest-side flow exercised by the test is:
@@ -421,7 +424,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, and `make package-ports-seed-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make package-ports-seed-repo-install-test`, and `make package-static-host-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.

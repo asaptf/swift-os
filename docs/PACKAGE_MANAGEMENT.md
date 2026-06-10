@@ -907,11 +907,11 @@ Remaining repository work:
 - replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.
 
-### P6/P7: Ports Tree Bootstrap
+### P6-P8: Ports Tree Bootstrap
 
-Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7 have started inside `swift-os` with
-a checked machine-readable seed catalog, `ports/catalog.json`, the host-side
-`build/swport catalog validate/list/inspect` commands, and checked
+Current state: P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 have started inside `swift-os`
+with a checked machine-readable seed catalog, `ports/catalog.json`, the
+host-side `build/swport catalog validate/list/inspect` commands, and checked
 `ports/lang/lua/Port.json` plus `ports/archivers/zlib/Port.json` recipe
 scaffolds. `swport recipe validate`, `swport recipe manifest`,
 checksum-verified `swport recipe fetch`, staged-root `swport recipe package`,
@@ -919,8 +919,11 @@ and signed `swport recipe repo-fixture` exist for those checked paths. P6e/P6f
 prove the Lua cross-build and target install path. P7 adds zlib and
 `make package-ports-seed-repo-install-test`, which installs Lua and zlib from
 one signed local seed repository in QEMU and runs Lua plus `minigzip` smoke
-commands. This is deliberately not the full ports tree yet; it makes package
-priorities, dependency names, OS prerequisite bundles, blockers, and the
+commands. P8 adds `make ports-static-host-publish` and
+`make package-static-host-repo-install-test`, which publish that seed into a
+static-hostable web root and prove installs from that hosted layout. This is
+deliberately not the full ports tree yet; it makes package priorities,
+dependency names, OS prerequisite bundles, blockers, and the
 recipe-to-repository contract reviewable before the separate `swift-os-ports`
 repository exists.
 
@@ -931,6 +934,9 @@ repository exists.
   `make newlib` has populated the generated sysroot.
 - Keep the first multi-package target install/run path valid with
   `make package-ports-seed-repo-install-test`.
+- Keep the static-host publish/install path valid with
+  `make ports-static-host-publish` and
+  `make package-static-host-repo-install-test`.
 - Move the seed catalog and recipes into `swift-os-ports` once real package
   builds land.
 - Add full `swport` recipe commands: `new`, `build`, `test`, `package`, and
@@ -958,6 +964,9 @@ Acceptance:
   pkgconf metadata, and `minigzip`.
 - `make package-ports-seed-repo-install-test` installs Lua and zlib from one
   signed local seed repository and runs both package smoke paths inside QEMU.
+- `make ports-static-host-publish` creates a deployable static web root for the
+  seed repository, and `make package-static-host-repo-install-test` installs
+  Lua and zlib from that layout inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

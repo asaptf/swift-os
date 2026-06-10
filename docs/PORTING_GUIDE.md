@@ -274,12 +274,15 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
+make ports-static-host-publish
+make package-static-host-repo-install-test
 ```
 
 `ports/lang/lua/Port.json` and `ports/archivers/zlib/Port.json` are the checked
 recipe shapes today. Together they prove static AArch64 builds, signed local
 repository fixtures, guest `pkg install lua`, guest `pkg install zlib`, Lua
-runtime checks, and a `minigzip` compression/decompression smoke.
+runtime checks, a `minigzip` compression/decompression smoke, and static-host
+publication from `build/ports-static-host-root`.
 
 Before publishing a package recipe, record:
 

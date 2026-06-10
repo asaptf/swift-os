@@ -76,7 +76,7 @@ service-oriented.
   `pkg update [URL]`, `pkg search`, `pkg info`, dependency resolution by package
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
-- Provides P6a/P6b/P6c/P6d/P6e/P6f/P7 maintainer-side ports scaffolding:
+- Provides P6a/P6b/P6c/P6d/P6e/P6f/P7/P8 maintainer-side ports scaffolding:
   `ports/catalog.json`, checked `ports/lang/lua/Port.json` and
   `ports/archivers/zlib/Port.json` recipes, `swport catalog
   validate/list/inspect`, and `swport recipe` commands for `validate`,
@@ -90,6 +90,9 @@ service-oriented.
 - Publishes Lua and zlib into one signed local seed repository and verifies
   `pkg install lua`, `pkg install zlib`, Lua smoke commands, and a `minigzip`
   round trip with `make package-ports-seed-repo-install-test`.
+- Publishes that seed into a static-hostable web root with `hosted-repo.json`,
+  `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua+zlib install
+  from that hosted layout with `make package-static-host-repo-install-test`.
 - Does not yet provide public hosted package channels, version-constraint
   solving, broad source-port coverage, remove, upgrade, rollback, or streaming
   large-package downloads.
@@ -147,6 +150,8 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
+make ports-static-host-publish
+make package-static-host-repo-install-test
 make smp-cpu-utilization-test
 make s5-el0-fanout-test
 ./tests/llm_run_test.sh
@@ -181,10 +186,11 @@ llmd: served
 - Package payloads are read-only once active. Local target-side package install
   and P5c signed repository fixture install with name-based dependencies exist,
   P6e/P6f can cross-build and install Lua in QEMU, and P7 can publish Lua plus
-  zlib into one signed local seed repository and install both in QEMU. Public
-  hosted channels, broad source-port coverage, version-constraint solving,
-  removal, upgrade, rollback, and streaming large-package downloads remain
-  roadmap work.
+  zlib into one signed local seed repository and install both in QEMU. P8 can
+  publish that seed into a static-hostable web root and install from that hosted
+  layout. Public hosted channels, broad source-port coverage,
+  version-constraint solving, removal, upgrade, rollback, and streaming
+  large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable

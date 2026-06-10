@@ -33,10 +33,10 @@ prove the package model locally:
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
-repository path, P6a seed catalog, and checked Lua/zlib recipe repository
-scaffold. Until the separate `swift-os-ports` repository and public hosted
-channels exist, maintainers should use the local fixture commands in this
-repository.
+repository path, P6a seed catalog, checked Lua/zlib recipe repository scaffold,
+and P8 static-host publish root. Until the separate `swift-os-ports` repository
+and public hosted channels exist, maintainers should use the local fixture
+commands in this repository.
 
 Use this guide with:
 
