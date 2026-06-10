@@ -202,10 +202,19 @@ make package-local-install-test
 ```
 
 The broader package system is still not a public repository manager. Network
-`pkg update`, repository `pkg install <name>`, dependency solving, remove,
-upgrade, and rollback are future work. Host-built `.swpkg` artifacts, direct
-read-only payload overlays, and preseeded package-store boot activation also
-remain supported.
+repository install is available as a P5a signed HTTP fixture with an explicit
+URL:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+```
+
+Public hosted repositories, dependency solving, remove, upgrade, and rollback
+are future work. Host-built `.swpkg` artifacts, direct read-only payload
+overlays, and preseeded package-store boot activation also remain supported.
 
 See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
@@ -217,11 +226,14 @@ boot-critical files remain part of the base image.
 ### Are packages signed?
 
 The current `.swpkg` format verifies hashes and deterministic structure, but
-package signatures and signed online repositories are future milestones. Model
-serving bundles have their own Ed25519 manifest verification path.
+package-level publisher signatures are future milestones. P5a signed static
+HTTP repositories verify `catalog.signed` with Ed25519 and verify downloaded
+package blobs with SHA-256 before install. Model serving bundles have their own
+Ed25519 manifest verification path.
 
 See [SWPKG_FORMAT.md](SWPKG_FORMAT.md),
-[PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md), and
+[PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md),
+[PKGREPO_FORMAT.md](PKGREPO_FORMAT.md), and
 [AI_HOSTING_GUIDE.md](AI_HOSTING_GUIDE.md).
 
 ## Networking And Services

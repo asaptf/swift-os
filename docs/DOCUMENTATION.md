@@ -45,8 +45,10 @@ format details.
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Build, inspect, boot, test, and troubleshoot package artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
+| Design package recipes, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
+| Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |
 | Plan server package priorities and porting prerequisites | [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) |
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |
@@ -80,10 +82,12 @@ rollback runbooks live in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking
 runbooks live in [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle
 rules live in [SERVICE_GUIDE.md](SERVICE_GUIDE.md), observability procedures
 live in [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md), and the logging
-reference lives in [LOGGING.md](LOGGING.md). Keep them aligned with the
-acceptance tests under `tests/`; a command in the installation, deployment,
-operations, networking, service, observability, or logging guide should either
-be a normal manual workflow or have a nearby test that proves the same path.
+reference lives in [LOGGING.md](LOGGING.md). Package authoring procedures live
+in [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md). Keep them aligned
+with the acceptance tests under `tests/`; a command in the installation,
+deployment, operations, networking, service, observability, logging, or package
+automation guide should either be a normal manual workflow or have a nearby test
+that proves the same path.
 
 ## Product State
 

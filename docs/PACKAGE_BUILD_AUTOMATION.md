@@ -1,13 +1,87 @@
-# Package Build Automation
+# SwiftOS Package Build Automation Guide
 
-Design for the automated swift-os package build, test, and publish pipeline.
+This guide describes the package maintainer workflow for SwiftOS: how source
+ports should become verified `.swpkg` artifacts, how QEMU smoke tests prove
+those artifacts, and how trusted automation should publish a binary repository.
 
-> Status: record, do not build yet. This document refines
-> `PACKAGE_MANAGEMENT.md` for the ports/build side and the public binary
-> repository. It assumes the target package artifact is `.swpkg` as described in
-> `SWPKG_FORMAT.md`.
+It is written for package maintainers, release owners, and infrastructure
+engineers. User-facing package installation is covered in
+[Package Guide](PACKAGE_GUIDE.md) and [Package Management](PACKAGE_MANAGEMENT.md).
 
-## Goal
+## Current State
+
+SwiftOS already has the package artifact and guest install primitives needed to
+prove the package model locally:
+
+| Area | Current status | Verification |
+| --- | --- | --- |
+| Host `.swpkg` tool | Implemented as `build/swpkg` | `make package-fixture` |
+| Sample package | `build/pkghello.swpkg` with a deterministic payload | `build/swpkg verify build/pkghello.swpkg` |
+| Direct payload overlay | Read-only package content mounted under `/usr` | `make package-overlay-test` |
+| Package-store boot activation | Preseeded package-store image activates package payloads | `make package-store-test` |
+| Guest local install | `/bin/pkg install FILE` appends a local `.swpkg` to a writable package store | `make package-local-install-test` |
+| Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
+| Guest repository install | `/bin/pkg update URL`, `search`, `info`, and `install NAME` work against the signed HTTP fixture | `make package-repo-install-test` |
+| `swport` ports tool | Planned; not implemented in this repository yet | This guide defines the contract |
+| Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
+
+The automation below is the intended maintainer and CI layer around the
+implemented `.swpkg`, package-store, local guest install, and P5a signed static
+repository paths. Until `swift-os-ports`, `swport`, and public hosted channels
+exist, maintainers should use the local fixture commands in this repository.
+
+Use this guide with:
+
+- [Package Guide](PACKAGE_GUIDE.md) for package commands that work today.
+- [Package Management](PACKAGE_MANAGEMENT.md) for target-side package-manager
+  design and roadmap boundaries.
+- [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container contract.
+- [Package Store Format](PKGSTORE_FORMAT.md) for package-store image and
+  activation records.
+- [Static Package Repository](PKGREPO_FORMAT.md) for the P5a signed HTTP
+  catalog layout.
+- [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for package priorities
+  and OS prerequisite bundles.
+- [Porting Guide](PORTING_GUIDE.md) for source-level application porting.
+
+## Maintainer Quick Start Today
+
+Build and verify the current sample package:
+
+```sh
+make build base-image build/virt.dtb
+make package-fixture
+build/swpkg inspect build/pkghello.swpkg
+build/swpkg verify build/pkghello.swpkg
+```
+
+Prove every implemented package path:
+
+```sh
+make package-overlay-test
+make package-store-test
+make package-local-install-test
+make package-repo-install-test
+```
+
+Inspect the signed repository fixture:
+
+```sh
+make package-repo-fixture
+build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
+```
+
+For a new experimental port before `swport` exists, keep the same discipline:
+
+1. Cross-build the program statically against the current SwiftOS ABI.
+2. Stage the installed files under a clean package root.
+3. Generate a `.swpkg` with `build/swpkg create`.
+4. Verify it with `build/swpkg verify`.
+5. Boot QEMU and run a command that proves the installed binary works.
+6. Record any missing syscall, libc, service, or filesystem requirement in the
+   port notes before treating the package as publishable.
+
+## Planned Maintainer Experience
 
 The package ecosystem should make the maintainer path almost as simple as the
 user path:
@@ -33,7 +107,8 @@ out of scope for the normal path.
 
 ## Repository Roles
 
-Use three repositories at first:
+Use three repositories once the package ecosystem leaves the single-repository
+fixture stage:
 
 - `swift-os`: OS, target-side `/bin/pkg`, `.swpkg` host tools while they are
   tightly coupled to the image format, default root keys, and in-QEMU package

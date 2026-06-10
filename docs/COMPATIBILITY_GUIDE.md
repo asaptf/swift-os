@@ -327,7 +327,7 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 ## Package And Distribution Compatibility
 
 SwiftOS package compatibility is currently image-based, with a narrow local
-target-side install path.
+target-side install path and a signed static HTTP repository fixture.
 
 Supported now:
 
@@ -338,13 +338,16 @@ Supported now:
 - Preseeded package-store image attachment at boot.
 - Local target-side `pkg install FILE` into a writable package-store image.
 - Target-side `pkg list` for active package-store records.
+- Static signed HTTP repository fixture.
+- Target-side `pkg update URL`, `pkg search`, `pkg info`, and
+  `pkg install NAME` for packages present in a verified fixture catalog.
 - Guest execution from attached package namespace, proven by `/usr/bin/pkghello`.
 
 Not supported now:
 
 - Target-side remove/upgrade transactions.
-- Network package repositories.
-- Repository `pkg update`, `pkg search`, or `pkg install <name>`.
+- Public hosted package repositories and channel policy.
+- Dependency solving.
 - RPM, DEB, APK, Homebrew, Nix, or OCI image compatibility.
 
 Example:
@@ -354,12 +357,13 @@ make package-fixture
 make package-overlay-test
 make package-store-test
 make package-local-install-test
+make package-repo-install-test
 ```
 
 For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See
 [PACKAGE_MANAGEMENT.md](PACKAGE_MANAGEMENT.md),
-[SWPKG_FORMAT.md](SWPKG_FORMAT.md), and [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md)
-for design and format details.
+[SWPKG_FORMAT.md](SWPKG_FORMAT.md), [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md),
+and [PKGREPO_FORMAT.md](PKGREPO_FORMAT.md) for design and format details.
 
 For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
 

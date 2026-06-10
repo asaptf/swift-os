@@ -2,14 +2,14 @@
 
 Design for binary package installation on swift-os.
 
-> Status: P1 host tooling, P2 package payload overlays, and P3a boot activation
-> from a preseeded package-store image are implemented. P3b now has a minimal
-> target-side `/bin/pkg install FILE` and `pkg list` path for local `.swpkg`
-> files: the kernel verifies hashes, appends records to a writable package-store
-> disk, switches the active generation, and live-mounts the payload. Rollback,
-> remove, repository catalogs, and downloads are still staged work. The package
-> work should continue to follow the project rule: one milestone at a time,
-> build, boot, test, commit, then stop for review.
+> Status: P1 host tooling, P2 package payload overlays, P3a boot activation from
+> a preseeded package-store image, P3b local `/bin/pkg install FILE`, and P5a
+> signed static HTTP repository install are implemented. P5a supports
+> `pkg update URL`, `pkg search`, `pkg info`, and `pkg install NAME` for the
+> signed fixture catalog. Rollback, remove, dependency solving, upgrade, public
+> hosted channels, and large-package streaming downloads are still staged work.
+> The package work should continue to follow the project rule: one milestone at
+> a time, build, boot, test, commit, then stop for review.
 
 ## Goals
 

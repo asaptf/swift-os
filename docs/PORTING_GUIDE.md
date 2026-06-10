@@ -20,6 +20,8 @@ Use this guide with:
   calls, and handle rights.
 - [Package Guide](PACKAGE_GUIDE.md) for package payload and package-store
   workflows.
+- [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) for the planned
+  `swport` recipe, CI, and repository publishing workflow.
 - [Administration Guide](ADMINISTRATION_GUIDE.md) for accounts, capabilities,
   and image configuration.
 

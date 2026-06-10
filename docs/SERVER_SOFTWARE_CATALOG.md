@@ -9,16 +9,18 @@ maintainers planning `swift-os-ports` recipes.
 > Status: planning input for the package ecosystem. The current checked-in
 > system already has host `.swpkg` tooling, read-only package payload overlays,
 > package-store boot activation, and a narrow local `/bin/pkg install FILE`
-> path. The repository catalog, signed online install, dependency resolution,
-> remove, upgrade, and rollback flows are still roadmap work.
+> path. It also has a P5a signed static HTTP repository fixture with
+> `pkg update URL`, `pkg search`, `pkg info`, and `pkg install NAME`.
+> Public hosted repositories, dependency resolution, remove, upgrade, and
+> rollback flows are still roadmap work.
 
 Use this guide with:
 
 - [Package Guide](PACKAGE_GUIDE.md) for the package workflows that work today.
 - [Package Management](PACKAGE_MANAGEMENT.md) for the full package-manager
   design.
-- [Package Build Automation](PACKAGE_BUILD_AUTOMATION.md) for `swport`, CI, and
-  repository publishing plans.
+- [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) for `swport`,
+  CI, and repository publishing plans.
 - [Compatibility Guide](COMPATIBILITY_GUIDE.md) for platform and runtime
   compatibility boundaries.
 - [Porting Guide](PORTING_GUIDE.md) for the source-port workflow.
@@ -27,8 +29,8 @@ Use this guide with:
 
 ## Current User-Visible Package State
 
-SwiftOS does not yet have a public package repository. These package paths are
-available in the current tree:
+SwiftOS does not yet have a public hosted package repository. These package
+paths are available in the current tree:
 
 | Path | User-visible result | Proof |
 | --- | --- | --- |
@@ -36,10 +38,20 @@ available in the current tree:
 | Direct payload overlay | Boot with read-only `/usr/bin/pkghello` | `make package-overlay-test` |
 | Package-store boot activation | Boot a preseeded active package generation | `make package-store-test` |
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
+| Signed HTTP repository fixture | Run `pkg update URL`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
-UX. Until repository catalogs land, the implemented target-side command is the
-local-file form:
+UX. Today, the implemented repository path is the explicit test-fixture form:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+/usr/bin/pkghello
+```
+
+The local-file form remains available:
 
 ```sh
 pkg list
@@ -61,9 +73,10 @@ pkg update
 pkg install web-basic postgresql nodejs
 ```
 
-Those commands describe the intended repository experience, not the current
-checked-in target CLI. Today, use `pkg install FILE` for local `.swpkg` smoke
-tests and the host package tooling for package construction.
+Those commands describe the intended public repository experience. Today, use
+the explicit `pkg update URL` fixture for signed repository smoke tests,
+`pkg install FILE` for local `.swpkg` smoke tests, and the host package tooling
+for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
