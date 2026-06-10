@@ -439,11 +439,11 @@ The same test later points the guest at a bad-hash repository and expects
 
 ## Build The Lua Port Repository Fixture
 
-This is the Lua-specific P6e/P6f source-port path. It cross-builds real static
-AArch64 `lua` and `luac` binaries against the local newlib sysroot, packages
-them into `build/lua.swpkg`, and publishes a signed local repository fixture
-under `build/lua-repo-root`. The P6f QEMU smoke then installs `lua` from that
-repository and runs it inside SwiftOS.
+This is the single-package source-port path. It cross-builds real static AArch64
+`lua` and `luac` binaries against the local newlib sysroot, packages them into
+`build/lua.swpkg`, and publishes a signed local repository fixture under
+`build/lua-repo-root`. The QEMU smoke then installs `lua` from that repository
+and runs it inside SwiftOS.
 
 If the generated sysroot is missing, build it first:
 
@@ -496,12 +496,11 @@ pkg install lua
 
 ## Build The Ports Seed Repository Fixture
 
-P7 added zlib, P10 added ca-certificates, P11 added pcre2, P12 added
-tzdata, and P13 adds nginx. The checked Lua, zlib, ca-certificates, pcre2,
-tzdata, and nginx recipes now publish into one signed local seed
-repository. This is the closest current stand-in for the future hosted package
-channel: the guest boots with a default repository URL, runs `pkg update`,
-installs all six packages by name, and exercises the installed payloads.
+The checked Lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipes publish
+into one signed local seed repository. This is the closest current stand-in for
+the future hosted package channel: the guest boots with a default repository
+URL, runs `pkg update`, installs all six packages by name, and exercises the
+installed payloads.
 
 ```sh
 make ports-lua-repo-fixture
@@ -534,6 +533,16 @@ pkg install lua
 pkg install zlib
 pkg install ca-certificates
 pkg install pcre2
+pkg install tzdata
+pkg install nginx
+/usr/bin/lua -e 'print(21 * 2)'
+echo zlib-ok >/tmp/zlib.txt
+/usr/bin/minigzip /tmp/zlib.txt
+/usr/bin/minigzip -d /tmp/zlib.txt.gz
+cat /tmp/zlib.txt
+cat /usr/share/certs/swiftos-ca-bundle.version
+echo nginx-lighttpd > /tmp/pcre2.txt
+/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
 cat /usr/share/zoneinfo/swiftos-tzdata.version
 cat /usr/share/zoneinfo/zone1970.tab
 /usr/sbin/nginx -v
@@ -555,20 +564,20 @@ gate.
 | `build/pkgstore-pkghello.img` | Package-store bootstrap image |
 | `build/pkgrepo-root` | Signed static HTTP repository fixture |
 | `build/pkgrepo-root.pub` | Public key for repository catalog verification |
-| `build/lua.swpkg` | P6e/P6f Lua package artifact from the source-port workflow |
-| `build/lua-repo-root` | P6e/P6f signed local repository fixture for Lua |
+| `build/lua.swpkg` | Lua package artifact from the source-port workflow |
+| `build/lua-repo-root` | Signed local repository fixture for Lua |
 | `build/pkgstore-lua-install.img` | Writable package-store image used by the Lua repository install smoke |
-| `build/zlib.swpkg` | P7 zlib package artifact from the source-port workflow |
-| `build/zlib-repo-root` | P7 signed local repository fixture for zlib |
-| `build/ca-certificates.swpkg` | P10 data-only CA certificate package artifact |
-| `build/ca-certificates-repo-root` | P10 signed local repository fixture for ca-certificates |
-| `build/pcre2.swpkg` | P11 pcre2 package artifact from the source-port workflow |
-| `build/pcre2-repo-root` | P11 signed local repository fixture for pcre2 |
-| `build/tzdata.swpkg` | P12 data-only IANA time zone package artifact |
-| `build/tzdata-repo-root` | P12 signed local repository fixture for tzdata |
-| `build/nginx.swpkg` | P13 minimal static nginx package artifact |
-| `build/nginx-repo-root` | P13 signed local repository fixture for nginx |
-| `build/ports-seed-repo-root` | P13 signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, and nginx |
+| `build/zlib.swpkg` | zlib package artifact from the source-port workflow |
+| `build/zlib-repo-root` | Signed local repository fixture for zlib |
+| `build/ca-certificates.swpkg` | Data-only CA certificate package artifact |
+| `build/ca-certificates-repo-root` | Signed local repository fixture for ca-certificates |
+| `build/pcre2.swpkg` | pcre2 package artifact from the source-port workflow |
+| `build/pcre2-repo-root` | Signed local repository fixture for pcre2 |
+| `build/tzdata.swpkg` | Data-only IANA time zone package artifact |
+| `build/tzdata-repo-root` | Signed local repository fixture for tzdata |
+| `build/nginx.swpkg` | Minimal static nginx package artifact |
+| `build/nginx-repo-root` | Signed local repository fixture for nginx |
+| `build/ports-seed-repo-root` | Signed local repository fixture containing Lua, zlib, ca-certificates, pcre2, tzdata, and nginx |
 Package files install under `/usr`. The current package verifier rejects package
 payload paths outside `/usr`.
 
