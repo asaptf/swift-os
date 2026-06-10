@@ -70,11 +70,15 @@ let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
 let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
+let sqliteRecipe = repo.appendingPathComponent("ports/databases/sqlite/Port.json")
 guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
     fail("missing ports/sysutils/tzdata/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: sqliteRecipe.path) else {
+    fail("missing ports/databases/sqlite/Port.json")
 }
 let temp = FileManager.default.temporaryDirectory
     .appendingPathComponent("swport-recipe-test-\(UUID().uuidString)", isDirectory: true)
@@ -444,4 +448,151 @@ guard output(pcre2RepoInspect).contains("pcre2-10.47_1") else {
     fail("repo fixture catalog did not include pcre2 package: \(output(pcre2RepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, tzdata, and nginx recipe fixtures")
+let tzdataValidate = run(swport, ["recipe", "validate", "sysutils/tzdata"])
+requireSuccess(tzdataValidate, "validate tzdata recipe")
+guard output(tzdataValidate).contains("recipe: OK tzdata-2026b_1") else {
+    fail("validate output did not confirm tzdata recipe: \(output(tzdataValidate))")
+}
+
+let tzdataRoot = temp.appendingPathComponent("tzdata-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/share/zoneinfo/UTC", Data("TZif fixture UTC\n".utf8), 0o644),
+        ("usr/share/zoneinfo/Europe/Madrid", Data("TZif fixture Madrid\n".utf8), 0o644),
+        ("usr/share/zoneinfo/swiftos-tzdata.version", Data("iana-tzdata 2026b fixture\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = tzdataRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy tzdata package root: \(error)")
+}
+
+let tzdataPackageURL = temp.appendingPathComponent("tzdata.swpkg")
+let tzdataPackageResult = run(swport, [
+    "recipe", "package", "sysutils/tzdata",
+    "--root", tzdataRoot.path,
+    "--output", tzdataPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(tzdataPackageResult, "package dummy tzdata root")
+let tzdataVerify = run(swpkg, ["verify", tzdataPackageURL.path])
+requireSuccess(tzdataVerify, "verify dummy tzdata package")
+guard output(tzdataVerify).contains("OK: tzdata-2026b_1") else {
+    fail("swpkg verify did not identify tzdata package: \(output(tzdataVerify))")
+}
+
+let tzdataRepoRoot = temp.appendingPathComponent("tzdata-repo-root", isDirectory: true)
+let tzdataPubkey = temp.appendingPathComponent("tzdata-repo-root.pub")
+let tzdataRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "sysutils/tzdata",
+    "--root", tzdataRoot.path,
+    "--output", tzdataRepoRoot.path,
+    "--pubkey", tzdataPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(tzdataRepoFixture, "create tzdata repository fixture")
+let tzdataCatalog = tzdataRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let tzdataRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", tzdataCatalog.path, "--pubkey", tzdataPubkey.path])
+requireSuccess(tzdataRepoVerify, "verify tzdata repository fixture")
+let tzdataRepoInspect = run(pkgrepo, ["inspect", tzdataCatalog.path])
+requireSuccess(tzdataRepoInspect, "inspect tzdata repository fixture")
+guard output(tzdataRepoInspect).contains("tzdata-2026b_1") else {
+    fail("repo fixture catalog did not include tzdata package: \(output(tzdataRepoInspect))")
+}
+
+let sqliteValidate = run(swport, ["recipe", "validate", "databases/sqlite"])
+requireSuccess(sqliteValidate, "validate sqlite recipe")
+guard output(sqliteValidate).contains("recipe: OK sqlite-3.53.2_1") else {
+    fail("validate output did not confirm sqlite recipe: \(output(sqliteValidate))")
+}
+
+let sqliteManifestURL = temp.appendingPathComponent("sqlite-manifest.json")
+let sqliteManifest = run(swport, ["recipe", "manifest", "databases/sqlite", "--output", sqliteManifestURL.path])
+requireSuccess(sqliteManifest, "generate sqlite manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: sqliteManifestURL)) as? [String: Any] else {
+        fail("generated sqlite manifest is not a JSON object")
+    }
+    requireString(object, "name", "sqlite")
+    requireString(object, "version", "3.53.2")
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["sqlite", "sqlite3", "libsqlite3"] else {
+        fail("sqlite manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/sqlite3",
+        "/usr/include/sqlite3.h",
+        "/usr/include/sqlite3ext.h",
+        "/usr/lib/libsqlite3.a",
+        "/usr/lib/pkgconfig/sqlite3.pc",
+        "/usr/share/sqlite/swiftos-sqlite.version",
+    ] else {
+        fail("unexpected sqlite manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated sqlite manifest: \(error)")
+}
+
+let sqliteRoot = temp.appendingPathComponent("sqlite-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/sqlite3", Data("#!/bin/sh\necho sqlite3\n".utf8), 0o755),
+        ("usr/include/sqlite3.h", Data("/* sqlite3 */\n".utf8), 0o644),
+        ("usr/include/sqlite3ext.h", Data("/* sqlite3ext */\n".utf8), 0o644),
+        ("usr/lib/libsqlite3.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/sqlite3.pc", Data("Name: SQLite\nVersion: 3.53.2\n".utf8), 0o644),
+        ("usr/share/sqlite/swiftos-sqlite.version", Data("sqlite 3.53.2 swift-os static-shell\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = sqliteRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy sqlite package root: \(error)")
+}
+
+let sqlitePackageURL = temp.appendingPathComponent("sqlite.swpkg")
+let sqlitePackageResult = run(swport, [
+    "recipe", "package", "databases/sqlite",
+    "--root", sqliteRoot.path,
+    "--output", sqlitePackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(sqlitePackageResult, "package dummy sqlite root")
+let sqliteVerify = run(swpkg, ["verify", sqlitePackageURL.path])
+requireSuccess(sqliteVerify, "verify dummy sqlite package")
+guard output(sqliteVerify).contains("OK: sqlite-3.53.2_1") else {
+    fail("swpkg verify did not identify sqlite package: \(output(sqliteVerify))")
+}
+
+let sqliteRepoRoot = temp.appendingPathComponent("sqlite-repo-root", isDirectory: true)
+let sqlitePubkey = temp.appendingPathComponent("sqlite-repo-root.pub")
+let sqliteRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "databases/sqlite",
+    "--root", sqliteRoot.path,
+    "--output", sqliteRepoRoot.path,
+    "--pubkey", sqlitePubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(sqliteRepoFixture, "create sqlite repository fixture")
+let sqliteCatalog = sqliteRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let sqliteRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", sqliteCatalog.path, "--pubkey", sqlitePubkey.path])
+requireSuccess(sqliteRepoVerify, "verify sqlite repository fixture")
+let sqliteRepoInspect = run(pkgrepo, ["inspect", sqliteCatalog.path])
+requireSuccess(sqliteRepoInspect, "inspect sqlite repository fixture")
+guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
+    fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
+}
+
+print("PASS: swport validates, packages, and publishes lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")

@@ -279,14 +279,14 @@
       "portPath": "databases/sqlite",
       "tier": 3,
       "category": "database",
-      "status": "candidate",
+      "status": "packages",
       "difficulty": "S",
       "upstream": "SQLite",
-      "summary": "Embedded database for tools, package metadata experiments, small apps, and smoke tests.",
+      "summary": "Static SQLite library and sqlite3 command-line shell for tools, package metadata experiments, small apps, and smoke tests.",
       "runtimeDependencies": [],
       "prerequisiteBundles": ["base-posix", "db-fs"],
-      "smokeTest": "sqlite3 /tmp/t.db 'create table t(x); insert into t values(1); select x from t;'",
-      "notes": "Amalgamation static build is ideal; durable mode waits on persistent storage maturity."
+      "smokeTest": "install from the seed repository and run sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;' in QEMU",
+      "notes": "Packaged as a static sqlite3 shell, libsqlite3.a, headers, pkgconf metadata, and version marker. The first smoke test uses :memory: because durable database files wait on persistent storage and locking policy."
     },
     {
       "name": "postgresql-client",

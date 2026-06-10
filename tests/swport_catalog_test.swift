@@ -76,6 +76,9 @@ guard listText.contains("tier0 ca-certificates packages S security/ca-certificat
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
 }
+guard listText.contains("tier3 sqlite packages S databases/sqlite") else {
+    fail("list output did not include packaged sqlite")
+}
 guard listText.contains("tier4 nodejs blocked XL lang/nodejs") else {
     fail("list output did not include blocked nodejs")
 }
@@ -85,6 +88,11 @@ requireSuccess(inspect, "inspect nginx")
 let inspectText = output(inspect)
 guard inspectText.contains("runtimeDependencies: none") else {
     fail("nginx inspect output did not show its minimal runtime dependency state")
+}
+let sqliteInspect = run(tool, ["catalog", "inspect", "sqlite", catalog.path])
+requireSuccess(sqliteInspect, "inspect sqlite")
+guard output(sqliteInspect).contains("runtimeDependencies: none") else {
+    fail("sqlite inspect output did not show its runtime dependency state")
 }
 
 let temp = FileManager.default.temporaryDirectory
