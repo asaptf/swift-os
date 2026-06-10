@@ -80,7 +80,7 @@ Lives in `swift-os-ports` once that repository exists.
 Outputs:
 
 - prioritized server software catalog;
-- one `Port.toml` per package;
+- one `Port.json` per package;
 - patches and static-link build flags;
 - QEMU smoke tests;
 - first real packages: `lua`, `zlib`, `ca-certificates`, then web stack

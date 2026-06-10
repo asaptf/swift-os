@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "name": "lua",
+  "version": "5.4.8",
+  "revision": 1,
+  "category": "lang",
+  "summary": "Small embeddable scripting language",
+  "homepage": "https://www.lua.org/",
+  "license": ["MIT"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+    "sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "make",
+    "args": ["generic"],
+    "env": {
+      "AR": "aarch64-elf-ar rcu",
+      "CC": "aarch64-elf-gcc",
+      "RANLIB": "aarch64-elf-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["make", "install", "INSTALL_TOP=${DESTDIR}/usr"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["lua"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/lua", "to": "/usr/bin/lua", "mode": "0755" },
+      { "from": "destdir/usr/bin/luac", "to": "/usr/bin/luac", "mode": "0755" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/lua -v",
+      "/usr/bin/lua -e 'print(21 * 2)'"
+    ]
+  },
+  "notes": "First real source-port recipe scaffold. Fetch and manifest generation are implemented; cross-build/package/test are the next P6 slices."
+}
