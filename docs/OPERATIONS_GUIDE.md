@@ -223,10 +223,10 @@ pkg list
 
 ### Signed Repository Install
 
-Signed static HTTP repository install is current P5b functionality. It verifies
-`catalog.signed`, rejects expired or incompatible catalogs, downloads a
-content-addressed `.swpkg`, verifies SHA-256, then reuses the local
-package-store install path.
+Signed static HTTP repository install is current P5c functionality. It verifies
+`catalog.signed`, resolves dependency names, downloads content-addressed
+`.swpkg` files, verifies SHA-256, then reuses the local package-store install
+path.
 
 Build and test the fixture:
 
@@ -512,7 +512,7 @@ Useful markers:
 | `tcpecho: listening on 5555` | TCP echo server is waiting in accept |
 | `udpecho: listening on 5555` | UDP echo server bound |
 | `pkghello: hello from package overlay` | Package payload overlay was visible and executable |
-| `pkg: catalog updated` | `pkg update URL` accepted a signed repository catalog |
+| `pkg: catalog updated` | `pkg update [URL]` accepted a signed repository catalog |
 | `pkg: catalog expired` | Repository metadata was signed but past its expiry |
 | `pkg: catalog incompatible` | Repository metadata did not match the current target contract |
 | `pkg: package SHA-256 mismatch` | Downloaded package blob did not match the signed catalog |
@@ -573,10 +573,11 @@ Ctrl-A then X when using `-nographic`.
 Current limits that matter during operation:
 
 - No persistent writable filesystem.
-- No dependency-solving, remove, upgrade, rollback, public hosted package
-  channel, or streaming large-package install path yet.
-  Local `pkg install FILE` and P5b `pkg update URL`/`pkg install NAME` exist for
-  `.swpkg` fixtures.
+- No remove, upgrade, rollback, public hosted package channel, version-constraint
+  solver, or streaming large-package install path yet.
+  Local `pkg install FILE` and P5c `pkg repo set`/`pkg update [URL]`/
+  `pkg install NAME` exist for `.swpkg` fixtures, including name-based
+  dependency resolution.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.

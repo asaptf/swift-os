@@ -9,9 +9,10 @@ SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
 content under `/usr`. The current target-side package manager supports local
 file install, `pkg install FILE`, into a writable package-store disk, plus a
-P5b hardened signed static HTTP repository fixture with `pkg update URL` and
-`pkg install NAME`. Public hosted repositories, dependency resolution, remove,
-upgrade, and rollback are staged work, not current behavior.
+P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
+and `pkg install NAME`. Repository installs resolve dependencies by package
+name. Public hosted repositories, version-constraint solving, remove, upgrade,
+and rollback are staged work, not current behavior.
 
 Use this guide with:
 
@@ -21,7 +22,7 @@ Use this guide with:
   recipe, CI smoke-test, and repository publishing plans.
 - [SWPKG Format](SWPKG_FORMAT.md) for the `.swpkg` container format.
 - [Package Store Format](PKGSTORE_FORMAT.md) for the P3a package-store image.
-- [Static Package Repository](PKGREPO_FORMAT.md) for the P5b signed HTTP
+- [Static Package Repository](PKGREPO_FORMAT.md) for the P5c signed HTTP
   repository layout.
 - [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) for prioritized server
   packages and porting prerequisites.
@@ -42,9 +43,10 @@ Use this guide with:
 | Target-side `/bin/pkg install FILE` | Implemented for local `.swpkg` files and proven by `make package-local-install-test` |
 | Target-side `/bin/pkg list` | Implemented for the active package-store records |
 | Host static repository tool | Implemented as `build/pkgrepo` |
-| Hardened signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
-| Target-side `pkg update URL`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
-| Target-side remove, upgrade, rollback, dependency solving | Not implemented yet |
+| Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
+| Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
+| Target-side dependency resolution by package name | Implemented for signed repository catalogs |
+| Target-side remove, upgrade, rollback, version-constraint solving | Not implemented yet |
 | Public hosted repositories and channel policy | Not implemented yet |
 | Streaming large-package downloads | Not implemented yet |
 
@@ -52,8 +54,9 @@ The current user-visible package fixture is `/usr/bin/pkghello`. It is not part
 of the base image. It appears when a package payload image is attached at boot,
 when a preseeded package-store image is attached at boot, or after
 `pkg install /packages/pkghello.swpkg` succeeds against a writable package-store
-disk. It can also be installed by name from the P5b signed HTTP fixture after
-`pkg update URL` caches a verified repository catalog.
+disk. It can also be installed by name from the P5c signed HTTP fixture after
+`pkg repo set URL && pkg update` or `pkg update URL` caches a verified repository
+catalog.
 
 ## Mental Model
 
@@ -75,7 +78,7 @@ The three package artifact types have different jobs:
 | `build/pkghello-payload.img` | `build/swpkg extract-payload` | Sector-aligned read-only payload image attached as a virtio-blk disk |
 | `build/pkgstore-pkghello.img` | `build/pkgstore create` | P3a package-store image with payload records and an active generation |
 | `build/pkgstore-install.img` | `make package-local-install-fixture` | Empty writable package-store image for target-side local install tests |
-| `build/pkgrepo-root` | `build/pkgrepo create` | P5b signed static HTTP repository tree |
+| `build/pkgrepo-root` | `build/pkgrepo create` | P5c signed static HTTP repository tree |
 | `build/pkgrepo-root.pub` | `build/pkgrepo pubkey` | Public key copied into the base image as `/etc/pkg/repo-root.pub` |
 
 Use the direct payload overlay when you want the simplest package-content boot.
@@ -169,7 +172,7 @@ make package-local-install-fixture
 
 ### `build/pkgrepo`
 
-`build/pkgrepo` is the host-side P5b static repository tool.
+`build/pkgrepo` is the host-side P5c static repository tool.
 
 ```sh
 make pkgrepo
@@ -339,10 +342,11 @@ make package-local-install-test
 
 ## Install From A Signed HTTP Repository Fixture
 
-This is the current P5b repository path. It uses an explicit repository URL,
-verifies `catalog.signed` with `/etc/pkg/repo-root.pub`, rejects expired or
-incompatible catalogs, downloads the content-addressed `.swpkg`, verifies its
-SHA-256, then reuses the local install path to activate the payload.
+This is the current P5c repository path. It uses an explicit or configured
+repository URL, verifies `catalog.signed` with `/etc/pkg/repo-root.pub`,
+rejects expired or incompatible catalogs, resolves dependencies by package
+name, downloads content-addressed `.swpkg` files, verifies SHA-256, then reuses
+the local install path to activate the payloads.
 
 Build the repository fixture and writable package-store image:
 
@@ -421,15 +425,16 @@ For a local experiment, follow the fixture shape:
 6. Extract a payload image or create a package-store image.
 7. Boot QEMU with the resulting image and run the program from `/usr/bin`.
 8. For repository testing, publish it into a local `build/pkgrepo-root` fixture
-   and prove `pkg update URL && pkg install NAME` in QEMU.
+   and prove `pkg repo set URL && pkg update && pkg install NAME` in QEMU.
 
 Keep current package experiments simple:
 
 - Install real executable paths such as `/usr/bin/tool`.
 - Do not rely on symlinks, maintainer scripts, or dynamic libraries.
-- Do not expect dependencies to be solved.
+- Keep dependency metadata simple: P5c resolves package names, but does not
+  interpret version constraints yet.
 - Do not expect files to persist in `/tmp` after reboot.
-- Treat P5b repository signatures as catalog signatures. `.swpkg` reserved
+- Treat P5c repository signatures as catalog signatures. `.swpkg` reserved
   signature fields are still not package-level publisher signatures.
 
 For reusable application recipes, see
@@ -486,11 +491,11 @@ For general package diagnosis, see
 Current limits that matter for package use:
 
 - Package content is read-only in the guest.
-- The current target-side write paths are local `.swpkg` install and P5b
+- The current target-side write paths are local `.swpkg` install and P5c
   repository install into a writable package-store disk.
-- `.swpkg` hashes prove container integrity. P5b catalog signatures prove the
-  repository metadata used to find package blobs; package SHA-256 checks prove
-  the downloaded blob matches the catalog.
+- `.swpkg` hashes prove container integrity. P5c catalog signatures prove the
+  repository metadata used to find and hash package blobs; package SHA-256
+  checks prove the downloaded blob matches the catalog.
 - Public hosted channels, package-level publisher signatures, dependency
   solving, remove, upgrade, and rollback commands are future milestones.
 - Packages cannot grant themselves process capabilities. Authority remains a

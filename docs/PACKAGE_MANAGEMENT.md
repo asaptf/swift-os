@@ -3,13 +3,14 @@
 Design for binary package installation on swift-os.
 
 > Status: P1 host tooling, P2 package payload overlays, P3a boot activation from
-> a preseeded package-store image, P3b local `/bin/pkg install FILE`, and P5b
-> hardened signed static HTTP repository install are implemented. P5b supports
-> `pkg update URL`, `pkg search`, `pkg info`, and `pkg install NAME` for the
-> signed fixture catalog and rejects expired catalogs, incompatible catalog
-> entries, and package SHA-256 mismatches. Rollback, remove, dependency solving,
-> upgrade, public hosted channels, and large-package streaming downloads are
-> still staged work.
+> a preseeded package-store image, P3b local `/bin/pkg install FILE`, and P5c
+> signed static HTTP repository install are implemented. P5c supports
+> `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
+> `pkg install NAME` for the signed fixture catalog, including name-based
+> dependency resolution, and rejects expired catalogs, incompatible catalog
+> entries, and package SHA-256 mismatches. Rollback, remove, upgrade, public
+> hosted channels, version-constraint solving, and large-package streaming
+> downloads are still staged work.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 
@@ -848,33 +849,39 @@ Acceptance:
 - QEMU test installs a local package, runs it, removes it, proves it is gone,
   then rolls back to the previous active generation.
 
-### P5: Repository Catalogs and Network Fetch (P5b DONE)
+### P5: Repository Catalogs and Network Fetch (P5c DONE)
 
 Implemented in `tools/pkgrepo.swift`, `userland/pkg.swift`,
 `docs/PKGREPO_FORMAT.md`, `tests/pkgrepo_tool_test.swift`, and
 `tests/pkg_repo_install_test.sh`.
 
 ```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
 pkg update http://10.0.2.2:<port>/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
 ```
 
-The P5b repository is a static HTTP tree with `catalog.signed` plus
+The P5c repository is a static HTTP tree with `catalog.signed` plus
 content-addressed `.swpkg` blobs. `/bin/pkg` verifies the catalog signature with
 `/etc/pkg/repo-root.pub`, rejects expired and incompatible catalogs, verifies
-the downloaded package SHA-256, then reuses the local install path.
+the downloaded package SHA-256, resolves catalog dependencies by package name,
+then reuses the local install path. The package-store activation path now keeps
+previous active payloads mounted while adding newly installed payloads, which is
+the minimum needed for dependency packages to remain visible.
 
 Acceptance:
 
 - QEMU test starts a host HTTP server, rejects expired/wrong-arch/bad-hash
-  repository fixtures, guest runs `pkg update && pkg install pkghello`, then
-  executes `/usr/bin/pkghello`.
+  repository fixtures, guest configures a default repo with `pkg repo set`, runs
+  `pkg update && pkg install pkghello`, auto-installs `pkgdep`, then executes
+  `/usr/bin/pkghello`.
 
 Remaining repository work:
 
-- add dependency solving and `pkg upgrade`;
+- add version-constraint solving and `pkg upgrade`;
 - replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.
 

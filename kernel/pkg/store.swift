@@ -268,6 +268,15 @@ private func pkgCopyPadded(_ dst: UnsafeMutablePointer<UInt8>, _ off: Int, _ cap
     return true
 }
 
+private func pkgCopyStaticPadded(_ dst: UnsafeMutablePointer<UInt8>, _ off: Int, _ cap: Int,
+                                 _ src: StaticString) -> Bool {
+    var ok = true
+    src.withUTF8Buffer { bp in
+        ok = pkgCopyPadded(dst, off, cap, bp.baseAddress!, bp.count)
+    }
+    return ok
+}
+
 private func pkgHashFileRange(fd: Int, offset: UInt64, size: UInt64,
                               out: UnsafeMutablePointer<UInt8>) -> Int {
     guard let raw = swiftos_kernel_alloc(UInt(pkgStoreInstallChunkSize), 16) else { return -12 }
@@ -551,25 +560,38 @@ private func pkgLoadActivation(_ activation: PackageStoreActivation) -> Bool {
     return ok
 }
 
-private func pkgPublishInstalledPayload(generation: UInt64,
-                                        payloadOffset: UInt64,
-                                        payloadSize: UInt64,
-                                        payloadHash: UnsafePointer<UInt8>,
-                                        activationOffset: UInt64,
-                                        activationSize: UInt64) -> Bool {
+private func pkgPublishInstalledPayloads(generation: UInt64,
+                                         payloadOffset: UInt64,
+                                         payloadSize: UInt64,
+                                         payloadHash: UnsafePointer<UInt8>,
+                                         activationOffset: UInt64,
+                                         activationSize: UInt64,
+                                         h0s: [UInt64], h1s: [UInt64],
+                                         h2s: [UInt64], h3s: [UInt64],
+                                         count: Int) -> Bool {
     let (h0, h1, h2, h3) = pkgRecordHashParts(payloadHash, 0)
     let daif = pkgStoreLock()
     defer { pkgStoreUnlock(daif) }
 
+    if count <= 0 || count > pkgStoreMaxPayloads { return false }
     let payload = pkgEnsurePayload(payloadOffset, payloadSize, h0, h1, h2, h3)
     if payload < 0 { return false }
     if !pkgEnsureActivation(generation, activationOffset, activationSize) {
         return false
     }
     pkgClearActivePayloads()
-    pkgPayloads[payload].active = true
-    pkgActivePayloadIndex[0] = payload
-    pkgActivePayloadCountValue = 1
+    var i = 0
+    while i < count {
+        let p = pkgFindPayload(h0s[i], h1s[i], h2s[i], h3s[i])
+        if p < 0 {
+            pkgClearActivePayloads()
+            return false
+        }
+        pkgPayloads[p].active = true
+        pkgActivePayloadIndex[pkgActivePayloadCountValue] = p
+        pkgActivePayloadCountValue += 1
+        i += 1
+    }
     pkgActiveGeneration = generation
     if generation > pkgMaxGeneration { pkgMaxGeneration = generation }
     return pkgStoreS4dInvariantsLocked()
@@ -807,7 +829,46 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
     }
     if install.rc != 0 { return install.rc }
 
-    var activation = [UInt8](repeating: 0, count: pkgStoreActivationHeaderSize + pkgStoreActivationEntrySize)
+    var h0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h2s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h3s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    let newParts = payloadHash.withUnsafeBufferPointer { hp in
+        pkgRecordHashParts(hp.baseAddress!, 0)
+    }
+    var activationCount = 0
+    var alreadyActive = false
+    let activeDaif = pkgStoreLock()
+    var activeIndex = 0
+    while activeIndex < pkgActivePayloadCountValue && activationCount < pkgStoreMaxPayloads {
+        let pidx = pkgActivePayloadIndex[activeIndex]
+        if pidx >= 0 && pidx < pkgStoreMaxPayloads {
+            let p = pkgPayloads[pidx]
+            if p.inUse && p.active {
+                if p.h0 == newParts.0 && p.h1 == newParts.1 && p.h2 == newParts.2 && p.h3 == newParts.3 {
+                    alreadyActive = true
+                }
+                h0s[activationCount] = p.h0
+                h1s[activationCount] = p.h1
+                h2s[activationCount] = p.h2
+                h3s[activationCount] = p.h3
+                activationCount += 1
+            }
+        }
+        activeIndex += 1
+    }
+    pkgStoreUnlock(activeDaif)
+    if !alreadyActive {
+        if activationCount >= pkgStoreMaxPayloads { return -28 }
+        h0s[activationCount] = newParts.0
+        h1s[activationCount] = newParts.1
+        h2s[activationCount] = newParts.2
+        h3s[activationCount] = newParts.3
+        activationCount += 1
+    }
+
+    var activation = [UInt8](repeating: 0,
+                             count: pkgStoreActivationHeaderSize + activationCount * pkgStoreActivationEntrySize)
     let actOk = activation.withUnsafeMutableBufferPointer { bp -> Bool in
         let a = bp.baseAddress!
         pkgActivationMagicString.withUTF8Buffer { m in
@@ -815,18 +876,30 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
             while i < 8 { a[i] = m[i]; i += 1 }
         }
         pkgPutLe32(a, 8, 1)
-        pkgPutLe32(a, 12, 1)
-        var i = 0
-        while i < 32 {
-            a[pkgStoreActivationHeaderSize + i] = payloadHash[i]
-            i += 1
-        }
-        return name.withUnsafeBufferPointer { nbp in
-            version.withUnsafeBufferPointer { vbp in
-                pkgCopyPadded(a, pkgStoreActivationHeaderSize + 32, 32, nbp.baseAddress!, nameLen) &&
-                pkgCopyPadded(a, pkgStoreActivationHeaderSize + 64, 16, vbp.baseAddress!, versionLen)
+        pkgPutLe32(a, 12, UInt32(activationCount))
+        var entry = 0
+        while entry < activationCount {
+            let off = pkgStoreActivationHeaderSize + entry * pkgStoreActivationEntrySize
+            pkgPutLe64(a, off, h0s[entry])
+            pkgPutLe64(a, off + 8, h1s[entry])
+            pkgPutLe64(a, off + 16, h2s[entry])
+            pkgPutLe64(a, off + 24, h3s[entry])
+            let namesOk: Bool
+            if entry == activationCount - 1 && !alreadyActive {
+                namesOk = name.withUnsafeBufferPointer { nbp in
+                    version.withUnsafeBufferPointer { vbp in
+                        pkgCopyPadded(a, off + 32, 32, nbp.baseAddress!, nameLen) &&
+                        pkgCopyPadded(a, off + 64, 16, vbp.baseAddress!, versionLen)
+                    }
+                }
+            } else {
+                namesOk = pkgCopyStaticPadded(a, off + 32, 32, "active") &&
+                          pkgCopyStaticPadded(a, off + 64, 16, "0")
             }
+            if !namesOk { return false }
+            entry += 1
         }
+        return true
     }
     if !actOk { return -22 }
     var activationHash = [UInt8](repeating: 0, count: 32)
@@ -869,12 +942,15 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
     if activeRecord.rc != 0 { return activeRecord.rc }
 
     let published = payloadHash.withUnsafeBufferPointer { hp in
-        pkgPublishInstalledPayload(generation: generation,
-                                   payloadOffset: install.dataOffset,
-                                   payloadSize: payloadSize,
-                                   payloadHash: hp.baseAddress!,
-                                   activationOffset: activationRecord.dataOffset,
-                                   activationSize: UInt64(activation.count))
+        pkgPublishInstalledPayloads(generation: generation,
+                                    payloadOffset: install.dataOffset,
+                                    payloadSize: payloadSize,
+                                    payloadHash: hp.baseAddress!,
+                                    activationOffset: activationRecord.dataOffset,
+                                    activationSize: UInt64(activation.count),
+                                    h0s: h0s, h1s: h1s,
+                                    h2s: h2s, h3s: h3s,
+                                    count: activationCount)
     }
     if !published { return -28 }
     let mountRc = vfsMountActivePackageStore()

@@ -79,6 +79,7 @@ private struct VNode {
 private let maxNodes = 96
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
+private var mountedPackageStorePayloads = 0
 
 // ---- open files, fd table, pipes -----------------------------------------
 
@@ -537,6 +538,7 @@ func vfsInit() {
     }
     nodes = raw.bindMemory(to: VNode.self, capacity: maxNodes)
     nodeCount = 0
+    mountedPackageStorePayloads = 0
 
     let root = allocNode()
     setName(root, "/")
@@ -579,11 +581,13 @@ func vfsMountActivePackageStore() -> Int {
     if nodes == nil { return errInvalid }
     let rawCount = virtioBlkSwosbaseImageCount()
     let storeCount = pkgStoreActivePayloadCount()
-    var store = 0
+    if storeCount < mountedPackageStorePayloads { return errInvalid }
+    var store = mountedPackageStorePayloads
     while store < storeCount {
         let storeImage = rawCount + store
         if buildImageFromDisk(storeImage, 0, allowExistingDirs: true) {
             klog(.info, "pkg", "P3b: package store payload live-mounted", UInt64(store))
+            mountedPackageStorePayloads += 1
         } else {
             klog(.info, "pkg", "P3b: package store payload live-mount rejected", UInt64(store))
             return errExists
