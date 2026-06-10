@@ -14,6 +14,7 @@ GIC_SWIFT="$ROOT/kernel/drivers/gic.swift"
 PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
 SECONDARY_SWIFT="$ROOT/kernel/smp/secondary.swift"
 PROCESS_SWIFT="$ROOT/kernel/user/process.swift"
+FUTEX_SWIFT="$ROOT/kernel/sched/futex.swift"
 VM_SWIFT="$ROOT/kernel/mm/vm.swift"
 PMM_SWIFT="$ROOT/kernel/mm/pmm.swift"
 VFS_SWIFT="$ROOT/kernel/vfs/vfs.swift"
@@ -1195,7 +1196,7 @@ for needle in \
   '[I] smp: S5d OK: EL0 fanout crossed scheduler CPUs' \
   '[I] smp: S5d OK: EL0 fanout CPU0 fallback' \
   'S5d OK: EL0 fanout ran across scheduler CPUs' \
-  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5d markers'; do
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5e markers'; do
   if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
     echo "FAIL: S5d SMP boot smoke missing $needle." >&2
     exit 1
@@ -1211,4 +1212,76 @@ for needle in \
   fi
 done
 
-echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5d release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress + EL0 fanout)"
+for needle in \
+  'futexLockWord' \
+  'futexLockAcquireCount' \
+  'futexLockContentionCount' \
+  'private func futexLock()' \
+  'private func futexUnlock' \
+  'func futexS5eLockBoundaryHeldSelfTest' \
+  'func futexS5eWaitTableIdleSelfTest' \
+  'processPrepareBlockOnFutex' \
+  'processYieldAfterPreparedFutexBlock'; do
+  if ! grep -Fq -- "$needle" "$FUTEX_SWIFT" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5e futex SMP boundary missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'lastS5eThreadFanoutTelemetryValid' \
+  'lastS5eThreadSharedAddressSpaceCount' \
+  'lastS5eThreadSecondaryCpuMask' \
+  'lastS5eThreadFutexLockAcquireCount' \
+  's5eThreadPlacementActive' \
+  's5eThreadTelemetryLockWord' \
+  'processNextS5eThreadHomeCpu' \
+  'recordS5eThreadCreate' \
+  'recordS5eThreadExit' \
+  'func processRunS5eThreadFanout' \
+  'processRunS5eThreadFanout' \
+  'func processS5eThreadFanoutSelfTest' \
+  'lastS5eThreadSharedAddressSpaceCount != 2' \
+  'lastS5eThreadDispatchCpuMask != lastS5eThreadHomeCpuMask' \
+  'futexS5eLockBoundaryHeldSelfTest' \
+  'futexS5eWaitTableIdleSelfTest'; do
+  if ! grep -Fq -- "$needle" "$PROCESS_SWIFT"; then
+    echo "FAIL: S5e shared-address-space thread fanout missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  'runS5eThreadFanoutDemo' \
+  'processRunS5eThreadFanout' \
+  'processS5eThreadFanoutSelfTest' \
+  'S5e OK: shared-address-space thread fanout completed' \
+  'S5e OK: shared-address-space threads crossed CPUs' \
+  'S5e OK: shared-address-space thread fanout CPU0 fallback'; do
+  if ! grep -Fq -- "$needle" "$MAIN_SWIFT"; then
+    echo "FAIL: S5e boot thread-fanout acceptance missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  '[I] smp: S5e OK: shared-address-space threads crossed CPUs' \
+  '[I] smp: S5e OK: shared-address-space thread fanout CPU0 fallback' \
+  'S5e OK: shared-address-space thread fanout completed' \
+  'S1/S2a-S2h/S3a-S3d/S4a-S4e/S5a-S5e markers'; do
+  if ! grep -Fq -- "$needle" "$SMP_BOOT_TEST"; then
+    echo "FAIL: S5e SMP boot smoke missing $needle." >&2
+    exit 1
+  fi
+done
+
+for needle in \
+  's5-thread-fanout-test: build $(QEMU_DTB_SMP4) base-image' \
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  if ! grep -Fq -- "$needle" "$MAKEFILE"; then
+    echo "FAIL: S5e make target missing $needle." >&2
+    exit 1
+  fi
+done
+
+echo "PASS: S1/S2a-S2h/S3a-S3d/S4a-S4f/S5a-S5e release-readiness contract holds (PSCI CPU_ON + restricted multi-CPU EL0 dispatch + scheduler/IPI/TLB/PMM/VFS/heap/package-store/network boundary + resource stress + per-CPU utilization export + placement batch + repeated placement stress + EL0 fanout + shared-address-space thread fanout)"

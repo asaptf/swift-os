@@ -208,6 +208,24 @@ private var lastS5dFanoutSecondaryCpuMask: UInt64 = 0
 private var lastS5dFanoutDispatchCount: UInt64 = 0
 private var lastS5dFanoutExactCpuMatchCount: UInt64 = 0
 private var s5dFanoutSlots = [Int](repeating: -1, count: processSchedulerCpuSlots)
+private var lastS5eThreadFanoutTelemetryValid = false
+private var lastS5eThreadCreateCount: UInt64 = 0
+private var lastS5eThreadExitCount: UInt64 = 0
+private var lastS5eThreadSharedAddressSpaceCount: UInt64 = 0
+private var lastS5eThreadHomeCpuMask: UInt64 = 0
+private var lastS5eThreadDispatchCpuMask: UInt64 = 0
+private var lastS5eThreadSecondaryCpuMask: UInt64 = 0
+private var lastS5eThreadDispatchCount: UInt64 = 0
+private var lastS5eThreadExactCpuMatchCount: UInt64 = 0
+private var lastS5eThreadFutexLockAcquireCount: UInt64 = 0
+private var lastS5eThreadFutexLockContentionCount: UInt64 = 0
+private var lastS5eThreadTelemetryLockAcquireCount: UInt64 = 0
+private var lastS5eThreadTelemetryLockContentionCount: UInt64 = 0
+private var s5eThreadPlacementActive = false
+private var s5eNextThreadCpu: UInt32 = 1
+private var s5eThreadTelemetryLockWord: UInt64 = 0
+private var s5eThreadTelemetryLockAcquireCount: UInt64 = 0
+private var s5eThreadTelemetryLockContentionCount: UInt64 = 0
 
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
@@ -298,6 +316,10 @@ func processInit() {
     for cpuSlot in 0..<processSchedulerCpuSlots {
         s5dFanoutSlots[cpuSlot] = -1
     }
+    resetLastS5eThreadFanoutTelemetry()
+    s5eThreadTelemetryLockWord = 0
+    s5eThreadTelemetryLockAcquireCount = 0
+    s5eThreadTelemetryLockContentionCount = 0
 }
 
 private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
@@ -372,6 +394,47 @@ private func processRunQueueLockContentionTotal() -> UInt64 {
         cpu += 1
     }
     return total
+}
+
+private func processS5eThreadTelemetryLock() -> UInt64 {
+    let daif = irq_save()
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &s5eThreadTelemetryLockWord) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
+        }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &s5eThreadTelemetryLockContentionCount) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &s5eThreadTelemetryLockAcquireCount) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
+    }
+}
+
+private func processS5eThreadTelemetryUnlock(_ daif: UInt64) {
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &s5eThreadTelemetryLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+private func processS5eThreadTelemetryLockAcquireCount() -> UInt64 {
+    processRunQueueAtomicLoad(&s5eThreadTelemetryLockAcquireCount)
+}
+
+private func processS5eThreadTelemetryLockContentionCount() -> UInt64 {
+    processRunQueueAtomicLoad(&s5eThreadTelemetryLockContentionCount)
 }
 
 private func processCpuBit(_ cpu: UInt32) -> UInt64 {
@@ -689,6 +752,92 @@ private func captureLastS5dFanoutTelemetry(processCount: UInt64,
     lastS5dFanoutTelemetryValid = true
 }
 
+private func resetLastS5eThreadFanoutTelemetry() {
+    lastS5eThreadFanoutTelemetryValid = false
+    lastS5eThreadCreateCount = 0
+    lastS5eThreadExitCount = 0
+    lastS5eThreadSharedAddressSpaceCount = 0
+    lastS5eThreadHomeCpuMask = 0
+    lastS5eThreadDispatchCpuMask = 0
+    lastS5eThreadSecondaryCpuMask = 0
+    lastS5eThreadDispatchCount = 0
+    lastS5eThreadExactCpuMatchCount = 0
+    lastS5eThreadFutexLockAcquireCount = 0
+    lastS5eThreadFutexLockContentionCount = 0
+    lastS5eThreadTelemetryLockAcquireCount = 0
+    lastS5eThreadTelemetryLockContentionCount = 0
+    s5eThreadPlacementActive = false
+    s5eNextThreadCpu = 1
+}
+
+private func processNextS5eThreadHomeCpu() -> UInt32 {
+    let primary = currentCpuId()
+    let runMask = processSecondaryRunMask()
+    if runMask == 0 { return primary }
+
+    var start = s5eNextThreadCpu
+    if start == 0 || start >= processRunQueueCpuCount { start = 1 }
+    var offset: UInt32 = 0
+    while offset < processRunQueueCpuCount {
+        var cpu = start + offset
+        if cpu >= processRunQueueCpuCount { cpu = 1 + (cpu - processRunQueueCpuCount) }
+        if cpu != primary &&
+           processValidSchedulerCpu(cpu) &&
+           (runMask & processCpuBit(cpu)) != 0 &&
+           smpCpuOnline(cpu) &&
+           smpPerCpuTimerTicks(cpu) != 0 {
+            s5eNextThreadCpu = cpu + 1
+            if s5eNextThreadCpu >= processRunQueueCpuCount { s5eNextThreadCpu = 1 }
+            return cpu
+        }
+        offset += 1
+    }
+    return primary
+}
+
+private func recordS5eThreadCreate(creator: Int, slot: Int, homeCpu: UInt32) {
+    if !s5eThreadPlacementActive { return }
+    let daif = processS5eThreadTelemetryLock()
+    lastS5eThreadCreateCount &+= 1
+    if creator >= 0 && creator < maxProc &&
+       slot >= 0 && slot < maxProc &&
+       pTtbr0[slot] == pTtbr0[creator] {
+        lastS5eThreadSharedAddressSpaceCount &+= 1
+    }
+    lastS5eThreadHomeCpuMask |= processCpuBit(homeCpu)
+    if homeCpu != 0 && homeCpu != unassignedCpu {
+        lastS5eThreadSecondaryCpuMask |= processCpuBit(homeCpu)
+    }
+    processS5eThreadTelemetryUnlock(daif)
+}
+
+private func recordS5eThreadExit(_ slot: Int) {
+    if !s5eThreadPlacementActive || slot < 0 || slot >= maxProc { return }
+    let daif = processS5eThreadTelemetryLock()
+    let home = pHomeCpu[slot]
+    let homeMask = processCpuBit(home)
+    lastS5eThreadExitCount &+= 1
+    lastS5eThreadDispatchCpuMask |= pDispatchCpuMask[slot]
+    lastS5eThreadDispatchCount &+= pDispatchCount[slot]
+    if home != 0 && home != unassignedCpu {
+        lastS5eThreadSecondaryCpuMask |= homeMask
+    }
+    if pDispatchCpuMask[slot] == homeMask && pDispatchCount[slot] != 0 {
+        lastS5eThreadExactCpuMatchCount &+= 1
+    }
+    processS5eThreadTelemetryUnlock(daif)
+}
+
+private func captureLastS5eThreadFanoutTelemetry() {
+    let daif = processS5eThreadTelemetryLock()
+    lastS5eThreadFutexLockAcquireCount = futexS5eLockAcquireCount()
+    lastS5eThreadFutexLockContentionCount = futexS5eLockContentionCount()
+    lastS5eThreadTelemetryLockAcquireCount = processS5eThreadTelemetryLockAcquireCount()
+    lastS5eThreadTelemetryLockContentionCount = processS5eThreadTelemetryLockContentionCount()
+    lastS5eThreadFanoutTelemetryValid = true
+    processS5eThreadTelemetryUnlock(daif)
+}
+
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
     if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue target\n")
@@ -854,6 +1003,29 @@ func processDispatchTelemetrySelfTest() -> Bool {
     }
     for slot in 0..<processSchedulerCpuSlots {
         if s5dFanoutSlots[slot] != -1 { return false }
+    }
+    if lastS5eThreadFanoutTelemetryValid { return false }
+    if lastS5eThreadCreateCount != 0 ||
+       lastS5eThreadExitCount != 0 ||
+       lastS5eThreadSharedAddressSpaceCount != 0 ||
+       lastS5eThreadHomeCpuMask != 0 ||
+       lastS5eThreadDispatchCpuMask != 0 ||
+       lastS5eThreadSecondaryCpuMask != 0 ||
+       lastS5eThreadDispatchCount != 0 ||
+       lastS5eThreadExactCpuMatchCount != 0 ||
+       lastS5eThreadFutexLockAcquireCount != 0 ||
+       lastS5eThreadFutexLockContentionCount != 0 ||
+       lastS5eThreadTelemetryLockAcquireCount != 0 ||
+       lastS5eThreadTelemetryLockContentionCount != 0 {
+        return false
+    }
+    if s5eThreadPlacementActive || s5eNextThreadCpu != 1 {
+        return false
+    }
+    if s5eThreadTelemetryLockWord != 0 ||
+       s5eThreadTelemetryLockAcquireCount != 0 ||
+       s5eThreadTelemetryLockContentionCount != 0 {
+        return false
     }
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
@@ -1299,6 +1471,108 @@ func processS5dFanoutSelfTest() -> Bool {
         }
         if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
             return processS5dFanoutFail(22)
+        }
+        cpu += 1
+    }
+    return true
+}
+
+private func processS5eThreadFanoutFail(_ code: UInt64) -> Bool {
+    uartPuts("S5e thread fanout fail ")
+    uartPutUInt(code)
+    uartPuts("\n")
+    return false
+}
+
+func processS5eThreadFanoutSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) {
+        return processS5eThreadFanoutFail(1)
+    }
+    if !lastS5eThreadFanoutTelemetryValid {
+        return processS5eThreadFanoutFail(2)
+    }
+    if s5eThreadPlacementActive {
+        return processS5eThreadFanoutFail(3)
+    }
+    if lastS5eThreadCreateCount != 2 ||
+       lastS5eThreadExitCount != 2 ||
+       lastS5eThreadSharedAddressSpaceCount != 2 {
+        return processS5eThreadFanoutFail(4)
+    }
+    if lastS5eThreadDispatchCount < lastS5eThreadExitCount {
+        return processS5eThreadFanoutFail(5)
+    }
+    if lastS5eThreadDispatchCpuMask == 0 ||
+       lastS5eThreadHomeCpuMask == 0 ||
+       lastS5eThreadDispatchCpuMask != lastS5eThreadHomeCpuMask {
+        return processS5eThreadFanoutFail(6)
+    }
+    if lastS5eThreadExactCpuMatchCount != lastS5eThreadExitCount {
+        return processS5eThreadFanoutFail(7)
+    }
+    if lastS5eThreadFutexLockAcquireCount == 0 ||
+       !futexS5eLockBoundaryHeldSelfTest() ||
+       !futexS5eWaitTableIdleSelfTest() {
+        return processS5eThreadFanoutFail(8)
+    }
+    if lastS5eThreadTelemetryLockAcquireCount == 0 ||
+       s5eThreadTelemetryLockWord != 0 {
+        return processS5eThreadFanoutFail(9)
+    }
+
+    let primaryMask = processCpuBit(primary)
+    if platform.cpuCount > 1 {
+        if lastS5eThreadSecondaryCpuMask == 0 {
+            return processS5eThreadFanoutFail(10)
+        }
+        if (lastS5eThreadSecondaryCpuMask & primaryMask) != 0 {
+            return processS5eThreadFanoutFail(11)
+        }
+        if (lastS5eThreadDispatchCpuMask & lastS5eThreadSecondaryCpuMask) !=
+           lastS5eThreadSecondaryCpuMask {
+            return processS5eThreadFanoutFail(12)
+        }
+    } else if lastS5eThreadSecondaryCpuMask != 0 ||
+              lastS5eThreadDispatchCpuMask != primaryMask {
+        return processS5eThreadFanoutFail(13)
+    }
+
+    if (processSecondaryRunMask() & lastS5eThreadSecondaryCpuMask) != 0 {
+        return processS5eThreadFanoutFail(14)
+    }
+    if (processSecondaryActiveMask() & lastS5eThreadSecondaryCpuMask) != 0 {
+        return processS5eThreadFanoutFail(15)
+    }
+    if (processSecondaryStopMask() & lastS5eThreadSecondaryCpuMask) != 0 {
+        return processS5eThreadFanoutFail(16)
+    }
+
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        let bit = processCpuBit(cpu)
+        if processRunQueueLockWord[idx] != 0 {
+            return processS5eThreadFanoutFail(17)
+        }
+        if processRunQueueHead[idx] != noProcessSlot ||
+           processRunQueueTail[idx] != noProcessSlot ||
+           !smpPerCpuProcessRunQueueIdle(cpu) {
+            return processS5eThreadFanoutFail(18)
+        }
+        if (lastS5eThreadDispatchCpuMask & bit) != 0 {
+            if cpu >= platform.cpuCount || !processValidSchedulerCpu(cpu) {
+                return processS5eThreadFanoutFail(19)
+            }
+            if cpu != primary && !smpCpuOnline(cpu) {
+                return processS5eThreadFanoutFail(20)
+            }
+            if processDispatchTelemetryCount[idx] == 0 ||
+               smpPerCpuEl0SwitchCount(cpu) == 0 {
+                return processS5eThreadFanoutFail(21)
+            }
+        } else if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
+            return processS5eThreadFanoutFail(22)
         }
         cpu += 1
     }
@@ -1990,6 +2264,55 @@ func processRunS5dFanout(_ image: UInt, _ size: UInt,
     }
 }
 
+/// Run the native thread/futex demo while S5e places created threads on
+/// secondary scheduler CPUs that share the same TTBR0 as the creator.
+func processRunS5eThreadFanout(_ image: UInt, _ size: UInt,
+                               _ packed: UInt, _ packedLen: UInt, _ argc: Int) -> Int {
+    let primary = currentCpuId()
+    var startedSecondaryMask: UInt64 = 0
+    resetLastS5eThreadFanoutTelemetry()
+
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+        if processValidSchedulerCpu(cpu) &&
+           smpCpuOnline(cpu) &&
+           smpPerCpuTimerTicks(cpu) != 0 {
+            processStartSecondaryScheduler(cpu: cpu)
+            startedSecondaryMask |= processCpuBit(cpu)
+        }
+        cpu += 1
+    }
+
+    s5eThreadPlacementActive = true
+    let slot = createProcess(image, size, packed: packed, packedLen: packedLen,
+                             argc: argc, parent: -1, inherit: .all,
+                             inheritSpecsVA: 0, inheritSpecCount: 0,
+                             homeCpu: primary)
+    if slot < 0 {
+        uartPuts("panic: createProcess (S5e thread fanout) failed\n")
+        while true {}
+    }
+
+    schedule(until: { pState[slot] == pZombie && pSchedulerQuiesced[slot] })
+
+    cpu = 1
+    while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+        let bit = processCpuBit(cpu)
+        if (startedSecondaryMask & bit) != 0 {
+            processStopSecondaryScheduler(cpu: cpu)
+        }
+        cpu += 1
+    }
+
+    smpLoadBarrier()
+    s5eThreadPlacementActive = false
+    captureLastS5eThreadFanoutTelemetry()
+    let code = pExit[slot]
+    lastReapedKilled = pKilled[slot]
+    reapProcess(slot)
+    return code
+}
+
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,
                                               packedLen: UInt, argc: Int,
                                               inherit: HandleInheritance,
@@ -2148,22 +2471,39 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     pIsThread[slot] = true
     pWakeTick[slot] = 0
     pSchedulerQuiesced[slot] = false
+    pHomeCpu[slot] = unassignedCpu
+    pRunNext[slot] = noProcessSlot
+    pRunQueued[slot] = false
+    pLastDispatchCpu[slot] = unassignedCpu
+    pDispatchCount[slot] = 0
+    pDispatchCpuMask[slot] = 0
+    pAddressSpaceCpuMask[slot] = 0
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
     // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
     // needs shared stdout; full fd-table aliasing is a follow-up — see NOTES).
     vfsProcessInit(slot: slot, parent: creator)
-    markProcessReadyOnHomeCpu(slot)
+    if s5eThreadPlacementActive {
+        let home = processNextS5eThreadHomeCpu()
+        recordS5eThreadCreate(creator: creator, slot: slot, homeCpu: home)
+        markProcessReady(slot, cpu: home)
+    } else {
+        markProcessReadyOnHomeCpu(slot)
+    }
     return slot + 1 // thread id (a pid in the shared table)
 }
 
 /// FUTEX_WAIT backend: block the current thread until a FUTEX_WAKE marks it
 /// ready again. Mirrors processYieldForIO but parks in pBlocked (it must not be
 /// rescheduled until explicitly woken). Returns once rescheduled.
-func processBlockOnFutex() {
+func processPrepareBlockOnFutex() -> Bool {
     let me = currentProcessSlot()
-    if me < 0 { return }
+    if me < 0 { return false }
     pState[me] = pBlocked
+    return true
+}
+
+func processYieldAfterPreparedFutexBlock() {
     yieldToScheduler()
 }
 
@@ -2499,6 +2839,7 @@ func processExit(_ code: Int) {
     // address space stays mapped for the surviving threads. Drop any stale futex
     // wait record first so a later wake cannot resurrect a reused slot.
     if pIsThread[me] {
+        recordS5eThreadExit(me)
         futexForgetSlot(me)
         pState[me] = pUnused
         clearProcessSchedulerSlot(me)

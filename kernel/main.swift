@@ -281,6 +281,20 @@ private func runS5dFanoutDemo() -> Bool {
     return true
 }
 
+private func runS5eThreadFanoutDemo() -> Bool {
+    uartPuts("swift-os S5e: shared-address-space thread fanout\n")
+    let (img, sz) = demoImage("/bin/threadsdemo")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["threadsdemo"])
+    let code = processRunS5eThreadFanout(img, sz, packed, packedLen, argc)
+    if code != 0 {
+        uartPuts("panic: S5e thread fanout exited nonzero\n")
+        while true {}
+    }
+    uartPuts("S5e OK: shared-address-space thread fanout completed\n")
+    return true
+}
+
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
     let (img, sz) = demoImage("/bin/forkdemo")
@@ -981,6 +995,18 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 klog(.info, "smp", "S5d OK: EL0 fanout crossed scheduler CPUs", UInt64(platform.cpuCount))
             } else {
                 klog(.info, "smp", "S5d OK: EL0 fanout CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranS5eThreadFanoutDemo = runS5eThreadFanoutDemo()
+        if ranS5eThreadFanoutDemo {
+            if !processS5eThreadFanoutSelfTest() {
+                uartPuts("panic: S5e thread fanout guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5e OK: shared-address-space threads crossed CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5e OK: shared-address-space thread fanout CPU0 fallback", UInt64(platform.cpuCount))
             }
         }
         runForkDemo()

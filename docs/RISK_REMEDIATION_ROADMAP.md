@@ -262,7 +262,13 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   same acceptance window. The guard proves the dispatch CPU mask exactly matches
   the fanout scheduler mask, each process stayed on its home CPU, all queues are
   idle after stop, and the single-CPU fallback still works.
-- Shared-address-space EL0 threads can truly execute on different CPUs at the same time.
+- S5e thread fanout (2026-06-10): `/bin/threadsdemo` now has a gated
+  shared-address-space SMP acceptance path. The futex wait table is protected by
+  an IRQ-save spinlock, `FUTEX_WAIT` releases that lock before yielding, and the
+  S5e gate places created EL0 threads round-robin on active secondary scheduler
+  CPUs while their creator stays on CPU0. The guard proves two sibling threads
+  shared the creator TTBR0, exited from their home CPUs, used the futex lock, and
+  left futex waiters, run queues, and secondary gate masks idle afterward.
 - Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
 - Full `make test` (1-CPU and `-smp 4`, both -kernel and UEFI paths) is green, plus new dedicated SMP stress suites (`tests/smp_*`).

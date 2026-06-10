@@ -1453,6 +1453,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   single shared address space on multiple CPUs, enable arbitrary load balancing,
   or let secondary schedulers execute unrelated kernel-thread work.
 
+### S5e — shared-address-space thread fanout (DONE, 2026-06-10)
+
+- **Futex SMP boundary.** `kernel/sched/futex.swift` now protects the futex wait
+  table with an IRQ-save spinlock and exposes S5e lock/waiter self-tests. The
+  `FUTEX_WAIT` path records the waiter and marks the caller blocked while holding
+  the futex lock, then releases the lock before yielding so a different CPU can
+  run `FUTEX_WAKE` without deadlocking or losing the wake.
+- **Gated thread placement.** `processRunS5eThreadFanout` starts online secondary
+  scheduler CPUs, runs `/bin/threadsdemo` on CPU0, and temporarily enables an
+  S5e-only `thread_create` placement policy. Created sibling threads share the
+  creator TTBR0 and are placed round-robin on active secondary scheduler CPUs;
+  ordinary `thread_create` remains CPU0-placed outside this acceptance path.
+- **Telemetry and guard.** S5e records created/exited thread counts, shared
+  address-space count, home/dispatch CPU masks, exact home-CPU dispatch matches,
+  futex lock activity, and a protected telemetry-lock count before the top-level
+  demo process is reaped. The guard requires two sibling threads, a shared
+  address space, nonzero futex lock activity, idle futex waiters/run queues, and
+  closed secondary gate masks.
+- **Executable checks.** Boot prints `S5e OK: shared-address-space thread fanout
+  completed` and logs either `S5e OK: shared-address-space threads crossed CPUs`
+  or the CPU0 fallback. `make s5-thread-fanout-test` runs the focused `-smp 4`
+  boot acceptance.
+- **Non-goals.** S5e does not make all shared address spaces freely migratable,
+  add load balancing/work stealing, or protect concurrent `mmap`/`brk` mutations
+  from multiple threads. It proves the narrow thread/futex runtime path under the
+  restricted S2h scheduler gate.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

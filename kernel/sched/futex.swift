@@ -13,10 +13,9 @@
 //
 // The wait queue is keyed by the user VA. Because every thread of a process
 // shares one address space (thread_create), a VA is a stable, process-local key
-// — which is all a single-process threading runtime needs. The compare-and-block
-// is done with IRQs masked so the load of *uaddr and the state transition to
-// "blocked, waiting on this addr" cannot race a concurrent FUTEX_WAKE on another
-// (here: preempted) thread.
+// — which is all a single-process threading runtime needs. S5e protects the
+// table with a real spinlock so FUTEX_WAIT compare-and-block and FUTEX_WAKE can
+// run from different scheduler CPUs without a lost wakeup.
 
 let futexWait = 0
 let futexWake = 1
@@ -26,6 +25,66 @@ private let maxFutexWaiters = 16
 // Parallel arrays: a waiter entry is (process slot, watched user VA).
 private var futexSlot = [Int](repeating: -1, count: maxFutexWaiters)
 private var futexAddr = [UInt](repeating: 0, count: maxFutexWaiters)
+private var futexLockWord: UInt64 = 0
+private var futexLockAcquireCount: UInt64 = 0
+private var futexLockContentionCount: UInt64 = 0
+
+private func futexAtomicLoad(_ value: inout UInt64) -> UInt64 {
+    withUnsafeMutablePointer(to: &value) { smpAtomicLoad($0) }
+}
+
+private func futexLock() -> UInt64 {
+    let daif = irq_save()
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &futexLockWord) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
+        }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &futexLockContentionCount) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &futexLockAcquireCount) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
+    }
+}
+
+private func futexUnlock(_ daif: UInt64) {
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &futexLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+func futexS5eLockAcquireCount() -> UInt64 {
+    futexAtomicLoad(&futexLockAcquireCount)
+}
+
+func futexS5eLockContentionCount() -> UInt64 {
+    futexAtomicLoad(&futexLockContentionCount)
+}
+
+func futexS5eLockBoundaryHeldSelfTest() -> Bool {
+    futexAtomicLoad(&futexLockWord) == 0 && futexS5eLockAcquireCount() != 0
+}
+
+func futexS5eWaitTableIdleSelfTest() -> Bool {
+    if futexAtomicLoad(&futexLockWord) != 0 { return false }
+    for i in 0..<maxFutexWaiters {
+        if futexSlot[i] != -1 || futexAddr[i] != 0 { return false }
+    }
+    return true
+}
 
 /// futex(uaddr, op, val). Returns 0 (WAIT woke / value mismatch) or the number
 /// of threads woken (WAKE); negative on error.
@@ -44,34 +103,43 @@ private func futexWaitOn(_ uaddrVA: UInt, expected: UInt32) -> Int {
     guard let p = userReadableBuffer(uaddrVA, 4) else { return -22 }
     let word = UnsafeRawPointer(p)
 
-    let daif = irq_save()
-    // Compare under the IRQ mask: if it already differs, do not block (the wake
-    // we would have waited for has effectively already happened).
+    let daif = futexLock()
+    // Compare under the futex lock: if it already differs, do not block (the
+    // wake we would have waited for has effectively already happened).
     if word.load(as: UInt32.self) != expected {
-        irq_restore(daif)
+        futexUnlock(daif)
         return 0
     }
-    // Record this thread as a waiter AND mark it blocked, all under the IRQ
-    // mask. The mask is essential: it closes the lost-wakeup window between the
-    // *uaddr compare and parking ourselves — a concurrent FUTEX_WAKE on a
-    // preempted sibling can't run here, so it cannot mark us ready before we are
-    // actually parked. processBlockOnFutex then switches away (the scheduler
-    // runs masked) and returns once a later WAKE has marked us ready again.
+    // Record this thread as a waiter AND mark it blocked under the same lock.
+    // Yield happens after unlock so wakeups on other CPUs can take the lock and
+    // make this slot runnable.
     let slot = processCurrentSlot()
-    if slot < 0 { irq_restore(daif); return -22 }
+    if slot < 0 {
+        futexUnlock(daif)
+        return -22
+    }
     var idx = -1
     for i in 0..<maxFutexWaiters where futexSlot[i] < 0 { idx = i; break }
-    if idx < 0 { irq_restore(daif); return -11 } // EAGAIN: queue full
+    if idx < 0 {
+        futexUnlock(daif)
+        return -11 // EAGAIN: queue full
+    }
     futexSlot[idx] = slot
     futexAddr[idx] = uaddrVA
-    processBlockOnFutex() // marks us blocked + yields; resumes when woken
-    irq_restore(daif)
+    if !processPrepareBlockOnFutex() {
+        futexSlot[idx] = -1
+        futexAddr[idx] = 0
+        futexUnlock(daif)
+        return -22
+    }
+    futexUnlock(daif)
+    processYieldAfterPreparedFutexBlock()
     return 0
 }
 
 private func futexWakeOn(_ uaddrVA: UInt, count: Int) -> Int {
     if count <= 0 { return 0 }
-    let daif = irq_save()
+    let daif = futexLock()
     var woken = 0
     var i = 0
     while i < maxFutexWaiters && woken < count {
@@ -84,15 +152,17 @@ private func futexWakeOn(_ uaddrVA: UInt, count: Int) -> Int {
         }
         i += 1
     }
-    irq_restore(daif)
+    futexUnlock(daif)
     return woken
 }
 
 /// Drop any futex wait records for a slot that is exiting, so a stale entry can
 /// never wake (or be counted against) a reused slot.
 func futexForgetSlot(_ slot: Int) {
+    let daif = futexLock()
     for i in 0..<maxFutexWaiters where futexSlot[i] == slot {
         futexSlot[i] = -1
         futexAddr[i] = 0
     }
+    futexUnlock(daif)
 }
