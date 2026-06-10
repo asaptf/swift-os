@@ -252,11 +252,16 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
 - **U1g-4b (done):** a minimal read-only FAT32 in `kernel/fs/esp.swift` (BPB,
   cluster chains, LFN/8.3 directory walk) reads the signed `kernel-boot` manifest
   off the ESP and reports the active slot — the read half of runtime staging.
+- **U1g-4c (done):** the FAT32 *write* half. `/bin/swos-kstage` (syscall 63,
+  capConsole) has the kernel copy the active kernel image over the inactive slot
+  in place (same-size, no FAT/dir changes) and verify it sector-by-sector. Safe:
+  a bad write only spoils the inactive slot, which the loader's hash check rejects.
 
 ## Not implemented yet
 
-- Runtime kernel staging continued (U1g-4c/d): FAT32 *write* from the kernel —
-  stage a kernel image + a pre-signed manifest into the inactive slot; activate +
-  reboot. Plus the signed-selection split (per-image signatures + CRC'd writable
-  boot-state) for attempt-count/rollback without re-signing.
+- U1g-4d: write a pre-signed "active = inactive" manifest (courier) to flip the
+  boot slot, then activate + reboot. Plus the signed-selection split (per-image
+  signatures + CRC'd writable boot-state) for attempt-count/rollback without
+  re-signing.
+- Key rotation / revocation.
 - Key rotation / revocation.

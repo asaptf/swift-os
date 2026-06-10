@@ -69,6 +69,7 @@
 #define SYS_UPDATE_CONFIRM 60
 #define SYS_UPDATE_ACTIVATE 61
 #define SYS_UPDATE_STAGE 62
+#define SYS_KERNEL_STAGE 63
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -289,6 +290,14 @@ static inline int update_activate(void) {
 // payload too big for the slot, -5 EIO copy/write-back failure).
 static inline int update_stage(void) {
     return (int)__syscall3(SYS_UPDATE_STAGE, 0, 0, 0);
+}
+
+// U1g-4c: copy the active kernel slot's image into the inactive ESP slot, in
+// place, and verify it. Needs CAP_CONSOLE. 0 on success; negative on error
+// (-1 EPERM, -19 ENODEV no ESP disk, -2 ENOENT missing file, -22 EINVAL size
+// mismatch/bad manifest, -5 EIO copy/verify failure).
+static inline int kernel_stage(void) {
+    return (int)__syscall3(SYS_KERNEL_STAGE, 0, 0, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

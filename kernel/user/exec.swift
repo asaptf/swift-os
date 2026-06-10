@@ -96,6 +96,7 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
     if userPathEquals(pathVA, "/bin/swos-confirm") { return loadProgramImage("/bin/swos-confirm") }
     if userPathEquals(pathVA, "/bin/swos-activate") { return loadProgramImage("/bin/swos-activate") }
     if userPathEquals(pathVA, "/bin/swos-update") { return loadProgramImage("/bin/swos-update") }
+    if userPathEquals(pathVA, "/bin/swos-kstage") { return loadProgramImage("/bin/swos-kstage") }
     if userPathEquals(pathVA, "/bin/ls") { return loadProgramImage("/bin/ls") }
     if userPathEquals(pathVA, "/bin/cat") { return loadProgramImage("/bin/cat") }
     if userPathEquals(pathVA, "/bin/echo") { return loadProgramImage("/bin/echo") }

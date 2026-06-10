@@ -3260,3 +3260,37 @@ cluster chain, LFN directory walk, and manifest parse are all exercised end-to-e
 its cluster chain + write a pre-signed manifest), then a `/bin/` activate flow +
 reboot. The courier trust model (OS writes pre-signed artifacts) and the
 signed-selection split still apply.
+
+### U1g-4c — kernel FAT32 writer: stage the inactive slot image (DONE, 2026-06-10)
+
+**Scope.** The write half of runtime kernel staging: the kernel writes the
+inactive kernel slot on the FAT32 ESP. Kept deliberately safe — an **in-place**
+copy of the active slot's image into the inactive slot (the two files are the same
+size, so only data sectors are overwritten; no cluster allocation, FAT, or
+directory changes). A buggy write can only spoil the *inactive* slot, which the
+loader's SHA-256 check (U1g-3a) then rejects, falling back to the still-good
+active slot — so the bootable slot is never at risk.
+
+- `kernel/fs/esp.swift`: `fatCopyChain` walks the src (active) and dst (inactive)
+  cluster chains in lockstep, copying sector-by-sector
+  (`virtioBlkRead`→`virtioBlkWriteSector`), then `virtioBlkFlush`; `fatVerifyChain`
+  re-reads both chains and confirms every sector matches (so a no-op write fails
+  the verify). `espStageActiveToInactive()` (capConsole) finds kernelA/B.bin +
+  reads the manifest's active slot, requires equal sizes, copies active→inactive,
+  flushes, verifies. Logs "kernel-store: staged active slot image into inactive
+  slot, verified (FAT32)".
+- Syscall 63 `SYS_KERNEL_STAGE`; `/bin/swos-kstage` (`userland/swos-kstage.swift`,
+  bridge `swiftos_kernel_stage`/`kernel_stage`); registered in execResolve + the
+  Makefile ELF/staging rules.
+
+**Acceptance.** `tests/uefi_kstage_test.sh` (in `make test`): a disk copy whose
+inactive slot B is a byte-flipped (same-size) copy of the kernel; boot under AAVMF
+(ESP on mmio), reach a root shell, run `/bin/swos-kstage`. The kernel copies
+slot A over slot B and verifies — which only passes if the write landed (a no-op
+would leave B corrupt and fail the in-kernel verify). Proves the FAT32 write path
+end-to-end without touching the bootable slot or the manifest.
+
+**Still future (U1g-4d).** Write a pre-signed "active = inactive" manifest (courier
+model) to actually flip the boot slot, then activate + reboot; plus the
+signed-selection split (per-image signatures + CRC'd writable boot-state) so
+attempt-count/rollback can be persisted without re-signing.

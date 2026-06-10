@@ -275,17 +275,18 @@ private func fatFindChild(_ v: Fat32Vol, _ startClus: UInt32,
 // Read the SWOSKERN kernel manifest from \EFI\swift-os\kernel-boot on the ESP
 // partition. Returns (active slot, generation) or nil. The manifest is small
 // (168 bytes), so its first cluster's first sector holds it.
+// Find a child by a StaticString name under a directory cluster.
+private func fatFind(_ vol: Fat32Vol, _ dirClus: UInt32, _ s: StaticString) -> (UInt32, UInt32, Bool)? {
+    var r: (UInt32, UInt32, Bool)? = nil
+    s.withUTF8Buffer { b in r = fatFindChild(vol, dirClus, b.baseAddress!, b.count) }
+    return r
+}
+
 private func fatReadKernelManifest(_ partLBA: UInt64) -> (Int, UInt32)? {
     guard let vol = fatReadBPB(partLBA) else { return nil }
-
-    func find(_ dirClus: UInt32, _ s: StaticString) -> (UInt32, UInt32, Bool)? {
-        var r: (UInt32, UInt32, Bool)? = nil
-        s.withUTF8Buffer { b in r = fatFindChild(vol, dirClus, b.baseAddress!, b.count) }
-        return r
-    }
-    guard let efi = find(vol.rootClus, "EFI"), efi.2 else { return nil }
-    guard let sw = find(efi.0, "swift-os"), sw.2 else { return nil }
-    guard let mf = find(sw.0, "kernel-boot"), !mf.2, mf.1 >= 24 else { return nil }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return nil }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return nil }
+    guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2, mf.1 >= 24 else { return nil }
 
     var out: (Int, UInt32)? = nil
     var buf = InlineArray<512, UInt8>(repeating: 0)
@@ -301,6 +302,119 @@ private func fatReadKernelManifest(_ partLBA: UInt64) -> (Int, UInt32)? {
         if active <= 1 { out = (Int(active), gen) }
     }
     return out
+}
+
+// --- FAT32 in-place copy (write) on the ESP (U1g-4c) ------------------------
+// Copy `totalSectors` from the src file's cluster chain to the dst file's chain,
+// sector by sector (both walked in lockstep). In-place: the files are the same
+// size, so no cluster allocation / FAT / directory changes — only data sectors
+// are overwritten. Returns false on any read/write error or a short chain.
+private func fatCopyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UInt32, _ totalSectors: Int) -> Bool {
+    var sc = srcStart, dc = dstStart
+    var done = 0
+    while done < totalSectors {
+        if sc < 2 || sc >= 0x0FFFFFF8 || dc < 2 || dc >= 0x0FFFFFF8 { return false }
+        var s: UInt32 = 0
+        var ok = true
+        while s < vol.secPerClus && done < totalSectors && ok {
+            var buf = InlineArray<512, UInt8>(repeating: 0)
+            withUnsafeMutableBytes(of: &buf) { raw in
+                let p = raw.baseAddress!
+                if virtioBlkRead(fatClusterLBA(vol, sc) + UInt64(s), p) != 0 { ok = false; return }
+                if virtioBlkWriteSector(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
+            }
+            s += 1; done += 1
+        }
+        if !ok { return false }
+        sc = fatNext(vol, sc); dc = fatNext(vol, dc)
+    }
+    return true
+}
+
+// Re-read both chains and confirm every sector matches (write-back verify).
+private func fatVerifyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UInt32, _ totalSectors: Int) -> Bool {
+    var sc = srcStart, dc = dstStart
+    var done = 0
+    while done < totalSectors {
+        if sc < 2 || sc >= 0x0FFFFFF8 || dc < 2 || dc >= 0x0FFFFFF8 { return false }
+        var s: UInt32 = 0
+        var ok = true
+        while s < vol.secPerClus && done < totalSectors && ok {
+            var a = InlineArray<512, UInt8>(repeating: 0)
+            var b = InlineArray<512, UInt8>(repeating: 0)
+            withUnsafeMutableBytes(of: &a) { ra in
+                withUnsafeMutableBytes(of: &b) { rb in
+                    let pa = ra.baseAddress!, pb = rb.baseAddress!
+                    if virtioBlkRead(fatClusterLBA(vol, sc) + UInt64(s), pa) != 0 { ok = false; return }
+                    if virtioBlkRead(fatClusterLBA(vol, dc) + UInt64(s), pb) != 0 { ok = false; return }
+                    var i = 0
+                    while i < 512 {
+                        if pa.load(fromByteOffset: i, as: UInt8.self) != pb.load(fromByteOffset: i, as: UInt8.self) { ok = false; break }
+                        i += 1
+                    }
+                }
+            }
+            if !ok { return false }
+            s += 1; done += 1
+        }
+        sc = fatNext(vol, sc); dc = fatNext(vol, dc)
+    }
+    return true
+}
+
+private func espStageInner() -> Int {
+    guard let (partLBA, _) = espFindPartition() else { return -2 }
+    guard let vol = fatReadBPB(partLBA) else { return -5 }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
+    guard let ka = fatFind(vol, sw.0, "kernelA.bin"), !ka.2 else { return -2 }
+    guard let kb = fatFind(vol, sw.0, "kernelB.bin"), !kb.2 else { return -2 }
+    guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 else { return -2 }
+    if ka.1 == 0 || ka.1 != kb.1 { return -22 } // in-place copy needs equal sizes
+
+    // Active slot from the (signed) manifest decides src (active) and dst (inactive).
+    var active = -1
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkRead(fatClusterLBA(vol, mf.0), p) != 0 { return }
+        let magic: StaticString = "SWOSKERN"
+        var ok = true
+        magic.withUTF8Buffer { m in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }; i += 1 } }
+        if ok { active = Int(espLd32(UnsafeRawPointer(p), 12)) }
+    }
+    if active != 0 && active != 1 { return -22 }
+
+    let srcClus = active == 0 ? ka.0 : kb.0
+    let dstClus = active == 0 ? kb.0 : ka.0
+    let totalSectors = Int((ka.1 + 511) / 512)
+
+    if !fatCopyChain(vol, srcClus, dstClus, totalSectors) { return -5 }
+    if virtioBlkFlush() != 0 { return -5 }
+    if !fatVerifyChain(vol, srcClus, dstClus, totalSectors) { return -5 }
+    return 0
+}
+
+/// U1g-4c: copy the ACTIVE kernel slot's image into the INACTIVE slot on the ESP,
+/// in place (same-size files, no FAT/dir changes), and verify it. The write side
+/// of runtime kernel staging — proves the kernel can rewrite the inactive slot
+/// without touching the bootable one (a buggy write only spoils the inactive slot,
+/// which the loader's hash check then rejects). capConsole-gated. Returns 0 or a
+/// negative errno-style code. Invoked from EL0 via syscall 63 (/bin/swos-kstage).
+func espStageActiveToInactive() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
+    if !virtioBlkHasEsp() { return -19 }                      // ENODEV: no ESP/GPT disk
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    let rc = espStageInner()
+    virtioBlkReselectServed()
+    if rc == 0 {
+        uartPuts("kernel-store: staged active slot image into inactive slot, verified (FAT32)\n")
+    } else {
+        uartPuts("kernel-store: stage to inactive slot failed rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rc)))
+        uartPuts("\n")
+    }
+    return rc
 }
 
 /// U1g-4a/4b: at boot, if a GPT/ESP boot disk is attached on virtio-mmio, locate
