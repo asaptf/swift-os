@@ -278,7 +278,7 @@ private func socketAlloc(owner: UInt32, proto: UInt8, family: Int = AF_INET) -> 
         sockRemoteIP[s] = 0; sockRemotePort[s] = 0; sockRemoteMac[s] = .zero
         sockFamily[s] = family
         sockRemoteIPv6[s] = .zero; sockRemoteMacv6[s] = .zero
-        if proto == sockProtoTCP { tcpConns[s] = TCPConnection() }
+        if proto == sockProtoTCP { tcpConns[s].reset() }
         return s
     }
     return netErrMany
@@ -561,7 +561,7 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
     sockConnReady[s] = false
     let now = systemTicks
     let iss = UInt32(truncatingIfNeeded: now) &* 1664525 &+ 1013904223
-    tcpConns[s] = TCPConnection()
+    tcpConns[s].reset()
     tcpConns[s].activeOpen(localPort: localPort, remoteIP: dstIP, remotePort: dstPort, now: now, iss: iss)
     tcpDrain(s, now)                         // emit the SYN
 

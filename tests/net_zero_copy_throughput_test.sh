@@ -151,5 +151,5 @@ if [[ "$ok" -eq 1 ]]; then
 fi
 
 echo "--- serial (net/http region) ---" >&2
-grep -E "net-zc|httpd:|panic" <<<"$clean" | tail -40 >&2
+grep -E "net-zc|httpd:|panic|ESR_EL1|ELR_EL1|FAR_EL1|SCTLR_EL1" <<<"$clean" | tail -60 >&2
 exit 1

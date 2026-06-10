@@ -168,6 +168,30 @@ struct TCPConnection {
     private var out = [TCPSegmentOut](repeating: TCPSegmentOut(), count: tcpOutCap)
     private(set) var outCount = 0
 
+    mutating func reset() {
+        state = .closed
+        localPort = 0
+        remotePort = 0
+        remoteIP = 0
+        sndUna = 0
+        sndNxt = 0
+        sndWnd = 0xFFFF
+        iss = 0
+        openISS = tcpISS
+        finQueued = false
+        finSeq = 0
+        finAckedNow = false
+        rcvNxt = 0
+        irs = 0
+        sndCount = 0
+        rcvCount = 0
+        rtoActive = false
+        rtoDeadline = 0
+        retries = 0
+        timeWaitDeadline = 0
+        outCount = 0
+    }
+
     // ---- output queue accessors (drained by the caller) ----
     func outSegment(_ i: Int) -> TCPSegmentOut { out[i] }
     func availableBytes() -> Int { rcvCount }
