@@ -399,9 +399,10 @@ private func makeTargetNames() -> Set<String> {
     return targets
 }
 
-private func validateExampleVerificationCommand(_ line: String,
-                                                lineNumber: Int,
-                                                makeTargets: Set<String>) {
+private func validateVerificationCommand(_ line: String,
+                                         in path: String,
+                                         lineNumber: Int,
+                                         makeTargets: Set<String>) {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     if trimmed.isEmpty || trimmed.hasPrefix("#") {
         return
@@ -423,7 +424,7 @@ private func validateExampleVerificationCommand(_ line: String,
                 continue
             }
             if !makeTargets.contains(arg) {
-                fail("docs/EXAMPLES.md:\(lineNumber): unknown make target `\(arg)` in verification block")
+                fail("\(path):\(lineNumber): unknown make target `\(arg)` in verification block")
                 ok = false
             }
         }
@@ -432,18 +433,17 @@ private func validateExampleVerificationCommand(_ line: String,
 
     if command.hasPrefix("./tests/") {
         if !FileManager.default.fileExists(atPath: String(command.dropFirst(2))) {
-            fail("docs/EXAMPLES.md:\(lineNumber): missing verification script `\(command)`")
+            fail("\(path):\(lineNumber): missing verification script `\(command)`")
             ok = false
         }
         return
     }
 
-    fail("docs/EXAMPLES.md:\(lineNumber): verification command should be `make ...` or `./tests/...`, got `\(command)`")
+    fail("\(path):\(lineNumber): verification command should be `make ...` or `./tests/...`, got `\(command)`")
     ok = false
 }
 
-private func checkExampleVerificationCommandCoverage() {
-    let path = "docs/EXAMPLES.md"
+private func checkVerificationCommandCoverage(in path: String) {
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
         fail("\(path): could not read")
         ok = false
@@ -476,9 +476,48 @@ private func checkExampleVerificationCommandCoverage() {
         }
 
         if inVerificationFence {
-            validateExampleVerificationCommand(line, lineNumber: index + 1, makeTargets: makeTargets)
+            validateVerificationCommand(line,
+                                        in: path,
+                                        lineNumber: index + 1,
+                                        makeTargets: makeTargets)
         }
     }
+}
+
+private func checkApiCompleteExampleVerificationCoverage() {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var currentHeading: String?
+    var currentStart = 0
+    var currentHasVerification = false
+
+    func finishCurrent(at line: Int) {
+        guard let heading = currentHeading else { return }
+        if !currentHasVerification {
+            fail("\(path):\(currentStart): complete API example `\(heading)` is missing a verification block before line \(line)")
+            ok = false
+        }
+    }
+
+    for (index, line) in lines.enumerated() {
+        if line.hasPrefix("## Complete Example: ") {
+            finishCurrent(at: index + 1)
+            currentHeading = line
+            currentStart = index + 1
+            currentHasVerification = false
+            continue
+        }
+        if currentHeading != nil && line == "Verification:" {
+            currentHasVerification = true
+        }
+    }
+    finishCurrent(at: lines.count + 1)
 }
 
 private func stagedBaseCommands() -> [String] {
@@ -723,7 +762,9 @@ checkSyscallTableSync()
 checkDocumentationMapCoverage()
 checkReadmeDocumentationFrontDoorCoverage()
 checkExampleVerificationCoverage()
-checkExampleVerificationCommandCoverage()
+checkApiCompleteExampleVerificationCoverage()
+checkVerificationCommandCoverage(in: "docs/EXAMPLES.md")
+checkVerificationCommandCoverage(in: "docs/API_REFERENCE.md")
 checkCommandReferenceCoverage()
 checkHostToolReferenceCoverage()
 checkPortRecipeDocumentationCoverage()
@@ -733,4 +774,4 @@ if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, example verification coverage, command coverage, host tool coverage, and port recipe coverage are valid")
+print("PASS: documentation markdown fences, local links/anchors, API table, Swift bridge, map/front-door coverage, example/API verification coverage, command coverage, host tool coverage, and port recipe coverage are valid")
