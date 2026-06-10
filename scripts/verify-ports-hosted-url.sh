@@ -59,7 +59,9 @@ if manifest.get("kind") != "swift-os-static-host-repository":
 if manifest.get("catalog") != "aarch64/current/catalog.signed":
     raise SystemExit("hosted-repo.json points at an unexpected catalog path")
 names = {package.get("name") for package in manifest.get("packages", [])}
-if not {"lua", "zlib", "ca-certificates", "pcre2", "tzdata", "nginx"}.issubset(names):    raise SystemExit(f"hosted-repo.json missing seed packages: {sorted(names)}")
+seed_packages = {"lua", "zlib", "ca-certificates", "pcre2", "tzdata", "nginx", "sqlite"}
+if not seed_packages.issubset(names):
+    raise SystemExit(f"hosted-repo.json missing seed packages: {sorted(names)}")
 
 sum_bytes = fetch(f"{root_url}/SHA256SUMS")
 (tmp / "SHA256SUMS").write_bytes(sum_bytes)

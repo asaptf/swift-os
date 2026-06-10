@@ -64,6 +64,7 @@ private struct InstallSpec {
 }
 
 private struct PackageFileSpec {
+    let type: String
     let from: String
     let to: String
     let mode: String
@@ -232,6 +233,7 @@ private func parseCatalog(_ path: String) throws -> Catalog {
 
 private func parsePackageFile(_ object: [String: Any], context: String) throws -> PackageFileSpec {
     PackageFileSpec(
+        type: object["type"] as? String ?? "file",
         from: try str(object, "from", context: context),
         to: try str(object, "to", context: context),
         mode: try str(object, "mode", context: context)
@@ -434,6 +436,9 @@ private func validate(_ recipe: Recipe, catalog: Catalog? = nil) throws {
 
     var paths = Set<String>()
     for file in recipe.package.files {
+        if file.type != "file" && file.type != "tree" {
+            throw ToolError.message("recipe \(recipe.name): unsupported package file type \(file.type)")
+        }
         if file.from.isEmpty {
             throw ToolError.message("recipe \(recipe.name): package file source is empty")
         }
@@ -610,28 +615,57 @@ private func collectStagedFiles(root: URL) throws -> Set<String> {
 private func validateStagedRoot(_ root: URL, for recipe: Recipe) throws {
     let expected = Dictionary(uniqueKeysWithValues: recipe.package.files.map { ($0.to, $0) })
     let actual = try collectStagedFiles(root: root)
-    let expectedPaths = Set(expected.keys)
-    let missing = expectedPaths.subtracting(actual).sorted()
-    let extra = actual.subtracting(expectedPaths).sorted()
+    var covered = Set<String>()
+    var missing: [String] = []
+
+    for (path, file) in expected {
+        if file.type == "tree" {
+            let prefix = path.hasSuffix("/") ? path : "\(path)/"
+            let matches = actual.filter { $0.hasPrefix(prefix) }
+            var isDir: ObjCBool = false
+            let dirURL = root.appendingPathComponent(String(path.dropFirst()), isDirectory: true)
+            if matches.isEmpty ||
+                !FileManager.default.fileExists(atPath: dirURL.path, isDirectory: &isDir) ||
+                !isDir.boolValue {
+                missing.append(path)
+            }
+            covered.formUnion(matches)
+        } else if actual.contains(path) {
+            covered.insert(path)
+        } else {
+            missing.append(path)
+        }
+    }
+
+    let extra = actual.subtracting(covered).sorted()
     if !missing.isEmpty {
-        throw ToolError.message("recipe \(recipe.name): staged root missing \(missing.joined(separator: ","))")
+        throw ToolError.message("recipe \(recipe.name): staged root missing \(missing.sorted().joined(separator: ","))")
     }
     if !extra.isEmpty {
         throw ToolError.message("recipe \(recipe.name): staged root has undeclared files \(extra.joined(separator: ","))")
     }
 
     for (path, file) in expected {
-        let relativePath = String(path.dropFirst())
-        let url = root.appendingPathComponent(relativePath)
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        let actualMode = ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o7777
         guard let expectedMode = Int(file.mode, radix: 8) else {
             throw ToolError.message("recipe \(recipe.name): invalid file mode \(file.mode)")
         }
-        if actualMode != expectedMode {
-            throw ToolError.message(
-                "recipe \(recipe.name): staged file \(path) mode \(String(format: "%04o", actualMode)) != \(file.mode)"
-            )
+        let pathsToCheck: [String]
+        if file.type == "tree" {
+            let prefix = path.hasSuffix("/") ? path : "\(path)/"
+            pathsToCheck = actual.filter { $0.hasPrefix(prefix) }.sorted()
+        } else {
+            pathsToCheck = [path]
+        }
+        for stagedPath in pathsToCheck {
+            let relativePath = String(stagedPath.dropFirst())
+            let url = root.appendingPathComponent(relativePath)
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            let actualMode = ((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o7777
+            if actualMode != expectedMode {
+                throw ToolError.message(
+                    "recipe \(recipe.name): staged file \(stagedPath) mode \(String(format: "%04o", actualMode)) != \(file.mode)"
+                )
+            }
         }
     }
 }

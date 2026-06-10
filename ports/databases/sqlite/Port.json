@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "name": "sqlite",
+  "version": "3.53.2",
+  "revision": 1,
+  "category": "databases",
+  "summary": "Static SQLite library and sqlite3 command-line shell for swift-os",
+  "homepage": "https://www.sqlite.org/",
+  "license": ["Public-Domain"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://www.sqlite.org/2026/sqlite-autoconf-3530200.tar.gz",
+    "sha256": "588ad51949419a56ebe81fe56193d510c559eb94c9a57748387860b5d3069316"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "sqlite-amalgamation",
+    "args": [
+      "-D__minux",
+      "-DSQLITE_THREADSAFE=0",
+      "-DSQLITE_OMIT_LOAD_EXTENSION",
+      "-DSQLITE_OMIT_SHARED_CACHE",
+      "-DSQLITE_OMIT_WAL",
+      "-DSQLITE_DEFAULT_MEMSTATUS=0",
+      "-DSQLITE_TEMP_STORE=3",
+      "-DSQLITE_DQS=0",
+      "-DSQLITE_ENABLE_EXPLAIN_COMMENTS=0"
+    ],
+    "env": {
+      "CC": "aarch64-elf-gcc",
+      "AR": "aarch64-elf-ar",
+      "RANLIB": "aarch64-elf-ranlib",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib",
+      "LIBS": "-Wl,--start-group -lc -lm -lgcc -Wl,--end-group"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "sqlite3", "libsqlite3.a", "headers", "pkgconfig", "version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["sqlite", "sqlite3", "libsqlite3"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/sqlite3", "to": "/usr/bin/sqlite3", "mode": "0755" },
+      { "from": "destdir/usr/include/sqlite3.h", "to": "/usr/include/sqlite3.h", "mode": "0644" },
+      { "from": "destdir/usr/include/sqlite3ext.h", "to": "/usr/include/sqlite3ext.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libsqlite3.a", "to": "/usr/lib/libsqlite3.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/sqlite3.pc", "to": "/usr/lib/pkgconfig/sqlite3.pc", "mode": "0644" },
+      { "from": "destdir/usr/share/sqlite/swiftos-sqlite.version", "to": "/usr/share/sqlite/swiftos-sqlite.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;'",
+      "cat /usr/share/sqlite/swiftos-sqlite.version"
+    ]
+  },
+  "notes": "First database package. scripts/build-sqlite.sh compiles the official SQLite amalgamation into a static AArch64 libsqlite3.a and sqlite3 shell. The initial smoke test uses :memory: because durable database files wait on persistent storage and locking policy."
+}

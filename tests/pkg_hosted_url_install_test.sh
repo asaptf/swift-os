@@ -122,6 +122,22 @@ send_line "pkg search ca-certificates"
 await "ca-certificates-2026.05.14_1" 60 || drive_fail "pkg search did not find ca-certificates"
 send_line "pkg search pcre2"
 await "pcre2-10.47_1" 60 || drive_fail "pkg search did not find pcre2"
+send_line "pkg search sqlite"
+await "sqlite-3.53.2_1" 60 || drive_fail "pkg search did not find sqlite"
+send_line "pkg install lua"
+await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
+send_line "pkg install zlib"
+await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
+send_line "printf 'hosted-url-ok\n' | /usr/bin/minigzip | /usr/bin/minigzip -d"
+await "hosted-url-ok" 60 || drive_fail "minigzip round-trip output mismatch"
+send_line "pkg install ca-certificates"
+await "pkg: installed ca-certificates-2026.05.14_1" 120 || drive_fail "ca-certificates package was not installed"
+send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
+await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
+send_line "pkg install pcre2"
+await "pkg: installed pcre2-10.47_1" 120 || drive_fail "pcre2 package was not installed"
+send_line "printf 'nginx-lighttpd\nother\n' | /usr/bin/pcre2grep 'nginx|lighttpd'"
+await "nginx-lighttpd" 60 || drive_fail "pcre2grep output mismatch"
 send_line "pkg install tzdata"
 await "pkg: installed tzdata-2026b_1" 120 || drive_fail "tzdata package was not installed"
 send_line "cat /usr/share/zoneinfo/swiftos-tzdata.version"
@@ -134,7 +150,14 @@ await "pkg: installed nginx-1.30.2_1" 120 || drive_fail "nginx package was not i
 send_line "/usr/sbin/nginx -v"
 await "nginx version: nginx/1.30.2" 60 || drive_fail "nginx version command did not run"
 send_line "cat /usr/share/nginx/swiftos-nginx.version"
-await "nginx 1.30.2 swift-os minimal-http" 60 || drive_fail "nginx marker output mismatch"send_line 'exit'
+await "nginx 1.30.2 swift-os minimal-http" 60 || drive_fail "nginx marker output mismatch"
+send_line "pkg install sqlite"
+await "pkg: installed sqlite-3.53.2_1" 120 || drive_fail "sqlite package was not installed"
+send_line "/usr/bin/sqlite3 -batch -noheader -cmd '.mode list' :memory: 'select 6*7;'"
+await "42" 60 || drive_fail "sqlite SQL smoke output mismatch"
+send_line "cat /usr/share/sqlite/swiftos-sqlite.version"
+await "sqlite 3.53.2 swift-os static-shell" 60 || drive_fail "sqlite marker output mismatch"
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-
@@ -150,6 +173,7 @@ grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FA
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
 grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
 grep -qF "pkg: installed nginx-1.30.2_1" <<<"$clean" || { echo "FAIL: nginx install output missing" >&2; ok=0; }
+grep -qF "pkg: installed sqlite-3.53.2_1" <<<"$clean" || { echo "FAIL: sqlite install output missing" >&2; ok=0; }
 grep -qF "hosted-url-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
 grep -qF "curl-ca-bundle 2026-05-14 121 certificates" <<<"$clean" || { echo "FAIL: ca-certificates marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
@@ -157,10 +181,13 @@ grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL
 grep -qF "America/Vancouver" <<<"$clean" || { echo "FAIL: zone1970 output missing" >&2; ok=0; }
 grep -qF "nginx version: nginx/1.30.2" <<<"$clean" || { echo "FAIL: nginx version output missing" >&2; ok=0; }
 grep -qF "nginx 1.30.2 swift-os minimal-http" <<<"$clean" || { echo "FAIL: nginx marker output missing" >&2; ok=0; }
+grep -qxF "42" <<<"$clean" || { echo "FAIL: sqlite SQL output missing" >&2; ok=0; }
+grep -qF "sqlite 3.53.2 swift-os static-shell" <<<"$clean" || { echo "FAIL: sqlite marker output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during hosted repo install" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, pcre2, tzdata, and nginx from hosted repository URL $REPO_URL"  exit 0
+  echo "PASS: /bin/pkg installed Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite from hosted repository URL $REPO_URL"
+  exit 0
 fi
 
 echo "--- serial (hosted URL region) ---" >&2

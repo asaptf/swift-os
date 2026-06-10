@@ -6,7 +6,7 @@ private let oWrOnly: Int32 = 1
 private let oCreat: Int32 = 0x40
 private let oTrunc: Int32 = 0x80
 private let swpkgHeaderSize = 128
-private let manifestMax = 16384
+private let manifestMax = 262144
 private let signedHeaderSize = 64
 private let ioChunk = 4096
 private let httpHeaderMax = 8192
@@ -1146,7 +1146,12 @@ private func installCatalogPackage(_ pkg: CatalogPackage, repoURL: String) -> In
         return 1
     }
     let rc = install(packageCachePath)
-    unlinkPath(packageCachePath)
+    // Keep the successful download cache in place. The kernel heap is bump-only
+    // during bring-up, so reusing this tmpfs file avoids package-install churn
+    // when a seed install pulls several large packages in one boot.
+    if rc != 0 {
+        unlinkPath(packageCachePath)
+    }
     return rc
 }
 

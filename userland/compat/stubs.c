@@ -1176,8 +1176,17 @@ W int chown(const char *p, uid_t owner, gid_t group) {
     (void)group;
     return sysret(sys3(SYS_CHOWN, (long)p, (long)owner, 0));
 }
+W int fchown(int fd, uid_t owner, gid_t group) { (void)fd; (void)owner; (void)group; return 0; }
+W int fsync(int fd) { (void)fd; return 0; }
+W int symlink(const char *target, const char *linkpath) {
+    (void)target; (void)linkpath; errno = ENOSYS; return -1;
+}
 W int utimes(const char *p, const struct timeval tv[2]) { (void)p; (void)tv; return 0; }
 W mode_t umask(mode_t m) { (void)m; return 0; }
+W FILE *popen(const char *cmd, const char *mode) {
+    (void)cmd; (void)mode; errno = ENOSYS; return 0;
+}
+W int pclose(FILE *fp) { (void)fp; errno = ENOSYS; return -1; }
 W int settimeofday(const struct timeval *tv, const struct timezone *tz) {
     (void)tv; (void)tz; errno = ENOSYS; return -1;
 }
