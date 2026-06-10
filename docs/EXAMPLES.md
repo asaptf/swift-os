@@ -300,8 +300,8 @@ Equivalent automated check:
 make package-overlay-test
 ```
 
-This is package overlay P2. Local install and repository install use a writable
-package-store image instead.
+This is the direct read-only package overlay path. Local install and repository
+install use a writable package-store image instead.
 
 ## 10. Install A Package From A Signed Repository Fixture
 

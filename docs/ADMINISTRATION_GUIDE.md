@@ -306,8 +306,8 @@ make package-repo-install-test
 
 Package payloads are read-only once active. The current system also has a narrow
 local target-side install path: `pkg install FILE` can append a local `.swpkg`
-to a writable package-store image and live-mount it. P5c signed repository
-install can run `pkg repo set URL`, `pkg update [URL]`, `pkg search`,
+to a writable package-store image and live-mount it. Signed repository install
+can run `pkg repo set URL`, `pkg update [URL]`, `pkg search`,
 `pkg info`, and `pkg install NAME` against the static HTTP fixture while
 rejecting expired or incompatible catalogs, invalid dependency entries, and
 package hash mismatches. Name-based dependency resolution is implemented;
