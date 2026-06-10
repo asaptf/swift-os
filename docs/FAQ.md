@@ -118,7 +118,8 @@ Use `make test` for the full gate.
 | `user` | `swordfish` | Filesystem read and tmpfs write without networking |
 | `guest` | `guest` | Spawn-only confinement checks |
 
-See [USER_GUIDE.md](USER_GUIDE.md) and [SECURITY_GUIDE.md](SECURITY_GUIDE.md).
+See [USER_GUIDE.md](USER_GUIDE.md), [SECURITY_GUIDE.md](SECURITY_GUIDE.md), and
+[ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md).
 
 ### Is `root` the same as Unix root?
 

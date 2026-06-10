@@ -13,6 +13,8 @@ Use this guide with:
   UEFI, graphical, and VirtualBox boot profiles.
 - [Update And Rollback Guide](UPDATE_GUIDE.md) for rebuilding immutable
   artifacts, validating candidates, and returning to a known-good image.
+- [Administration Guide](ADMINISTRATION_GUIDE.md) for account, capability,
+  base configuration, package, and service administration.
 - [User Guide](USER_GUIDE.md) for shell and userland behavior.
 - [Configuration Reference](CONFIGURATION_REFERENCE.md) for build variables,
   boot defaults, QEMU profiles, and test knobs.

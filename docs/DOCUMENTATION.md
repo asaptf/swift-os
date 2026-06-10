@@ -17,6 +17,7 @@ format details.
 | Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Rebuild, update, validate, and roll back immutable SwiftOS artifacts | [Update And Rollback Guide](UPDATE_GUIDE.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
+| Administer accounts, capabilities, base configuration, packages, and services | [Administration Guide](ADMINISTRATION_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
@@ -62,9 +63,10 @@ The API reference mirrors those sources so application authors can work from one
 document, but the headers remain the build-time contract.
 
 Installation and boot profile procedures live in
-[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), operational procedures live in
-[OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), update and rollback runbooks live
-in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking runbooks live in
+[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), administrative procedures live
+in [ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md), operational procedures
+live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), update and rollback
+runbooks live in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking runbooks live in
 [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle rules live in
 [SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability procedures live in
 [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them aligned with the

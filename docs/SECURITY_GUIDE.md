@@ -7,6 +7,8 @@ inspect it from the guest, and which parts remain roadmap work.
 Use this guide with:
 
 - [User Guide](USER_GUIDE.md) for shell behavior and available tools.
+- [Administration Guide](ADMINISTRATION_GUIDE.md) for account and capability
+  administration procedures.
 - [API Reference](API_REFERENCE.md) for exact syscall and structure layouts.
 - [Capabilities](CAPABILITIES.md) for the longer object-capability roadmap.
 - [Troubleshooting](TROUBLESHOOTING.md) for failure diagnosis.

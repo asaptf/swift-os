@@ -60,7 +60,8 @@ The capability bits are:
 Capabilities are not Unix uid 0. They are explicit process authority bits. File
 handles also carry per-handle rights; see [API_REFERENCE.md](API_REFERENCE.md)
 for handle rights and [SECURITY_GUIDE.md](SECURITY_GUIDE.md) for the complete
-current security model.
+current security model. To change accounts, capability masks, or base-image
+configuration, see [ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md).
 
 ## Filesystem
 

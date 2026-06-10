@@ -131,6 +131,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   artifacts, update boot profiles, verify candidates, and roll back safely.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
+- [Administration Guide](docs/ADMINISTRATION_GUIDE.md): maintain accounts,
+  capability masks, base configuration, package images, and services.
 - [Command Reference](docs/COMMAND_REFERENCE.md): command syntax, examples,
   limits, and acceptance coverage for the current base image and package
   overlay.
