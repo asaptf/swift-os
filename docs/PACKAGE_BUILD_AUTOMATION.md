@@ -23,8 +23,8 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | P6a ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| P6c Lua recipe package path | `ports/lang/lua/Port.json` validates against the catalog, emits a package manifest, and packages a clean staged root through `swpkg create`/`verify` | `make ports-recipe-test` |
-| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, and staged-root `recipe package`; cross-build/QEMU smoke commands remain planned | `make swport` |
+| P6d Lua recipe repository fixture | `ports/lang/lua/Port.json` validates against the catalog, emits a package manifest, packages a clean staged root, and publishes it into a signed local static repository fixture | `make ports-recipe-test` |
+| `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; cross-build/QEMU smoke commands remain planned | `make swport` |
 | Public hosted repository | Planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
@@ -91,6 +91,7 @@ build/swport recipe validate lang/lua
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
+build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
 For a new experimental port before full `swport` build/test commands exist,
@@ -355,6 +356,7 @@ swport recipe validate <port|Port.json> [--catalog catalog.json]
 swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
 swport recipe fetch <port|Port.json> [--cache dir]
 swport recipe package <port|Port.json> --root root-dir --output out.swpkg [--swpkg build/swpkg] [--catalog catalog.json]
+swport recipe repo-fixture <port|Port.json> --root root-dir --output repo-root [--swpkg build/swpkg] [--pkgrepo build/pkgrepo] [--seed-hex hex] [--generation N]
 swport fetch <port> [--update-checksum]
 swport extract <port>
 swport patch <port>
@@ -910,8 +912,9 @@ Common failure modes should have boring outcomes:
 
 Acceptance: `make ports-recipe-test` validates `lang/lua`, emits a manifest,
 packages a staged root through `swport recipe package`, and verifies the
-resulting `.swpkg`; `swport recipe fetch lang/lua` verifies the distfile
-checksum.
+resulting `.swpkg`; it also creates and verifies a signed local repository
+fixture through `swport recipe repo-fixture`. `swport recipe fetch lang/lua`
+verifies the distfile checksum.
 
 ### A2: Local Package Build
 
