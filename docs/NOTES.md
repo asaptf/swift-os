@@ -1057,6 +1057,31 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   policy changes, no IPI/cross-CPU wake path is added, and no userland ABI is
   widened in this checkpoint.
 
+### S2h — secondary EL0 gate contract (DONE, 2026-06-10)
+
+- **Explicit gate.** The EL0 process scheduler now routes placement, scheduler
+  entry, ready-queue admission, and dispatch telemetry through
+  `processSecondaryEl0GateAllowsCpu`. The gate is closed in this checkpoint, so
+  CPU0 remains the only legal EL0 scheduler/dispatch CPU, but the policy point
+  is now named and tested rather than spread across ad hoc `cpu != 0` checks.
+- **Readiness acceptance.** Boot runs `processSecondaryEl0GateSelfTest` after the
+  S2f dispatch telemetry readiness check and logs
+  `S2h OK: secondary EL0 gate ready`. The self-test proves the gate is closed,
+  CPU0 is accepted, secondary CPUs are rejected, and the current placement hook
+  still maps every valid process slot to CPU0.
+- **Runtime held guard.** After the userland demos and S2f telemetry guard, boot
+  runs `processSecondaryEl0GateHeldSelfTest` and logs
+  `S2h OK: secondary EL0 gate held CPU0-owned`. The guard checks that no
+  secondary has queued, dispatched, or switched an EL0 process and that process
+  dispatch masks/home CPUs stayed CPU0-only.
+- **Static guard.** `tests/smp_release_guard_test.sh` now requires the S2h gate
+  helpers, both runtime markers, and the boot-order contract (`S2f readiness ->
+  S2h readiness -> demos`, then `S2f no-secondary -> S2h held -> S2b
+  no-secondary`).
+- **Non-goals.** No secondary CPU dispatches EL0 work, no scheduler policy is
+  changed, no IPI/cross-CPU wake path is added, and no process migration is
+  enabled in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

@@ -145,6 +145,10 @@ for needle in \
   'processHomeCpuForNewReadySlot' \
   'recordProcessDispatch' \
   'captureLastPairDispatchTelemetry' \
+  'processSecondaryEl0GateEnabled' \
+  'processSecondaryEl0GateAllowsCpu' \
+  'processSecondaryEl0GateSelfTest' \
+  'processSecondaryEl0GateHeldSelfTest' \
   'processRunQueueScaffoldSelfTest' \
   'processDormantSchedulerCpusSelfTest' \
   'processDispatchTelemetrySelfTest' \
@@ -179,10 +183,11 @@ if [[ -z "$dispatch_record_line" || -z "$el0_switch_line" ||
   exit 1
 fi
 
-if ! grep -q 'EL0 process dispatched on secondary before S2' "$PROCESS_SWIFT" ||
+if ! grep -q 'processSecondaryEl0GateAllowsCpu(cpu)' "$PROCESS_SWIFT" ||
+   ! grep -q 'EL0 process dispatched on secondary before S2' "$PROCESS_SWIFT" ||
    ! grep -q 'EL0 process dispatch CPU mismatch' "$PROCESS_SWIFT" ||
    ! grep -q 'pDispatchCpuMask\[slot\]' "$PROCESS_SWIFT"; then
-  echo "FAIL: S2f dispatch telemetry must keep the CPU0 owner/mismatch guard until secondary EL0 is enabled." >&2
+  echo "FAIL: S2f/S2h dispatch telemetry must keep the secondary-EL0 gate and mismatch guard." >&2
   exit 1
 fi
 
@@ -203,9 +208,9 @@ if [[ "$ready_assignment_count" != "1" ]]; then
   exit 1
 fi
 
-if ! grep -q 'cpu != 0 || cpu >= schedCtxCpuCount' "$PROCESS_SWIFT" ||
+if ! grep -q 'cpu >= schedCtxCpuCount || !processSecondaryEl0GateAllowsCpu(cpu)' "$PROCESS_SWIFT" ||
    ! grep -q 'processOnTick entered on non-owner CPU' "$PROCESS_SWIFT"; then
-  echo "FAIL: S2b process scheduler paths must panic if entered from a non-owner CPU." >&2
+  echo "FAIL: S2b/S2h process scheduler paths must panic when the secondary-EL0 gate is closed." >&2
   exit 1
 fi
 
@@ -291,6 +296,11 @@ if ! grep -q 'S2f OK: process dispatch telemetry ready' "$MAIN_SWIFT" ||
   echo "FAIL: S2f must log process dispatch telemetry readiness and CPU0-owned markers." >&2
   exit 1
 fi
+if ! grep -q 'S2h OK: secondary EL0 gate ready' "$MAIN_SWIFT" ||
+   ! grep -q 'S2h OK: secondary EL0 gate held CPU0-owned' "$MAIN_SWIFT"; then
+  echo "FAIL: S2h must log secondary EL0 gate readiness and held markers." >&2
+  exit 1
+fi
 if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
   echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
   exit 1
@@ -304,6 +314,7 @@ s2b_line="$(rg -n 'processSchedulerContextSelfTest\(\)' "$MAIN_SWIFT" | head -1 
 s2d_line="$(rg -n 'processRunQueueScaffoldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2e_line="$(rg -n 'processDormantSchedulerCpusSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2f_line="$(rg -n 'processDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2h_line="$(rg -n 'processSecondaryEl0GateSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -314,6 +325,7 @@ runps_line="$(rg -n '^[[:space:]]*runPsDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -
 s2d_no_secondary_line="$(rg -n 'processRunQueueNoSecondaryExecutionSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2e_no_secondary_line="$(rg -n 'processNoSecondarySchedulerDispatchSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2f_no_secondary_line="$(rg -n 'processDispatchTelemetryNoSecondarySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2h_no_secondary_line="$(rg -n 'processSecondaryEl0GateHeldSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2b_no_secondary_line="$(rg -n 'smpS2bNoSecondaryEl0Execution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 if [[ -z "$sched_line" || -z "$s2c_owner_line" || -z "$proc_line" || -z "$s2a_line" ||
       "$sched_line" -ge "$s2c_owner_line" || "$s2c_owner_line" -ge "$proc_line" ||
@@ -335,6 +347,10 @@ if [[ -z "$s2e_line" || "$s2d_line" -ge "$s2e_line" ]]; then
 fi
 if [[ -z "$s2f_line" || "$s2e_line" -ge "$s2f_line" ]]; then
   echo "FAIL: S2f dispatch telemetry self-test must run after the S2e dormant scheduler scaffold." >&2
+  exit 1
+fi
+if [[ -z "$s2h_line" || "$s2f_line" -ge "$s2h_line" || "$s2h_line" -ge "$demo_line" ]]; then
+  echo "FAIL: S2h secondary EL0 gate self-test must run after S2f readiness and before scheduler/userland demos." >&2
   exit 1
 fi
 if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" ||
@@ -367,5 +383,11 @@ if [[ -z "$s2f_no_secondary_line" ||
   echo "FAIL: S2f dispatch telemetry guard must run after S2e and before S2b no-secondary-EL0." >&2
   exit 1
 fi
+if [[ -z "$s2h_no_secondary_line" ||
+      "$s2f_no_secondary_line" -ge "$s2h_no_secondary_line" ||
+      "$s2h_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
+  echo "FAIL: S2h secondary EL0 gate guard must run after S2f and before S2b no-secondary-EL0." >&2
+  exit 1
+fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"

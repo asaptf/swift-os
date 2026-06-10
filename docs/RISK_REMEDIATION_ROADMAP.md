@@ -147,6 +147,12 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   slots are reaped. The guard requires both processes to have run and to have
   CPU0-only masks today, turning the future "two EL0 processes ran on different
   CPUs" acceptance into a ready executable check rather than a new harness.
+- Pre-S2 readiness checkpoint (S2h, 2026-06-10): secondary EL0 execution is now
+  controlled by an explicit closed gate in the process scheduler. Placement,
+  dispatch telemetry, and scheduler-entry checks all go through that gate; boot
+  logs readiness and "gate held" markers while preserving CPU0-only behavior.
+  This makes the next S2 policy change a deliberate contract change instead of
+  a search-and-replace of scattered `cpu != 0` guards.
 - Give each CPU its own scheduler context / runqueue (or a carefully designed global structure with per-CPU current-thread). The old global `currentThread` / round-robin array must be replaced or indexed by CPU.
 - Timer tick on every CPU drives local preemption (`schedulerTick` / `processOnTick` equivalents become per-CPU).
 - Cross-CPU wake (a thread blocked on one CPU must be made runnable on another) requires an IPI or a shared ready queue + reschedule IPI. Start with the simplest thing that works.
