@@ -229,14 +229,19 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
 - **U1g-2 (done):** the loader reads a **SWOSKERN** boot manifest
   (`\EFI\swift-os\kernel-boot`: magic, version, active/fallback slot, generation)
   and loads the active slot (`kernelA.bin` / `kernelB.bin`), rolling back to the
-  fallback slot when the active file is missing/unopenable. Host-authored at image
-  build via `tools/kernelboot.swift` (no CRC yet — added when the OS writes it at
-  runtime). `tests/uefi_kernel_ab_test.sh` covers active-B selection + fallback.
-- **Next:** Ed25519 verification of the selected kernel against the compiled-in
+  fallback slot when the active file is missing/unopenable.
+- **U1g-3a (done):** SWOSKERN **v2** carries each slot's SHA-256; the loader
+  hashes the loaded image and rolls back to the other slot on a mismatch
+  (integrity, catching a corrupt/truncated kernel — not yet authenticity, since
+  the manifest is unsigned). SHA-256 in the loader is host-tested
+  (`tests/loader_sha256_test.c`); `tests/uefi_kernel_ab_test.sh` covers active-B
+  selection, missing-slot fallback, and SHA-256-mismatch fallback.
+- **Next:** Ed25519 signature for authenticity (U1g-3b), against the compiled-in
   trust root.
 
 ## Not implemented yet
 
-- Kernel A/B Ed25519 verification (U1g-3); runtime manifest writes (CRC +
-  double-buffering) so the OS can flip the active kernel slot.
+- Kernel A/B Ed25519 verification (U1g-3b, needs Ed25519+SHA-512 in the loader);
+  runtime manifest writes (CRC + double-buffering) so the OS can flip the active
+  kernel slot.
 - Key rotation / revocation.

@@ -18,6 +18,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DISK_IMG="$ROOT/build/swift-os.img"
 KERNELBOOT="$ROOT/build/kernelboot"
+KERNEL_BIN="$ROOT/build/kernel.bin"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
 MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
@@ -27,6 +28,7 @@ PART_OFFSET=$((2048 * 512))
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }
 [[ -f "$DISK_IMG" ]]   || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
 [[ -x "$KERNELBOOT" ]] || { echo "FAIL: $KERNELBOOT missing (run 'make kernelboot')" >&2; exit 2; }
+[[ -f "$KERNEL_BIN" ]] || { echo "FAIL: $KERNEL_BIN missing (run 'make build')" >&2; exit 2; }
 for t in "$MCOPY" "$MDEL"; do [[ -x "$t" ]] || { echo "FAIL: missing mtools $t" >&2; exit 2; }; done
 
 BASE="$ROOT/build/base.img"
@@ -71,7 +73,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 
 # --- Case B: active=B, both slots present -> loader boots slot B -------------
 cp "$DISK_IMG" "$WORK"
-"$KERNELBOOT" "$MANI" B >/dev/null || fail "could not build active-B manifest"
+"$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" >/dev/null || fail "could not build active-B manifest"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest into the ESP"
 boot_work
@@ -93,8 +95,25 @@ await "UEFI: booted kernel slot A" 30   || fail "fallback: loader did not boot s
 await "Hello from Swift kernel" 60      || fail "fallback: kernel did not start from slot A"
 stop_qemu
 
+# --- Integrity: active slot A corrupt -> SHA-256 mismatch -> roll back to B --
+# The default manifest is active=A with v2 hashes over the real kernel. Replace
+# kernelA.bin with a byte-flipped copy: its SHA-256 no longer matches, so the
+# loader must reject slot A and boot the (valid) slot B.
+cp "$DISK_IMG" "$WORK"
+BADA="$(mktemp -t swiftos-uabk-bada.XXXXXX)"
+cp "$KERNEL_BIN" "$BADA"
+printf '\xFF' | dd of="$BADA" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
+"$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$BADA" ::/EFI/swift-os/kernelA.bin \
+  || fail "could not write corrupt kernelA.bin"
+rm -f "$BADA"
+boot_work
+await "kernel slot A FAILED integrity check (sha256)" 60 || fail "integrity: loader did not detect the corrupt slot A"
+await "UEFI: booted kernel slot B" 30 || fail "integrity: loader did not roll back to slot B"
+await "Hello from Swift kernel" 60    || fail "integrity: kernel did not start from slot B"
+stop_qemu
+
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: UEFI kernel A/B — manifest selects the active slot; missing active slot rolls back to the other"
+  echo "PASS: UEFI kernel A/B — manifest selects the active slot; missing or SHA-256-mismatched active slot rolls back to the other"
   exit 0
 fi
 echo "--- serial (last boot) ---" >&2

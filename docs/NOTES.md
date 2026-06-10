@@ -3115,3 +3115,44 @@ uefi_boot_test (default active-A manifest) still boots to busybox, single-core a
 compiled-in trust root (`kernel/security/trust_root.S`), so a tampered/garbage
 slot is rejected at load and triggers fallback — the kernel-image analogue of the
 base-image signature check.
+
+### U1g-3a — kernel slot SHA-256 integrity verification (DONE, 2026-06-10)
+
+**Scope.** The loader could select an A/B slot but not tell a corrupt/truncated
+kernel from a good one (a bad image just crashed after the jump). U1g-3a adds a
+SHA-256 **integrity** check: the manifest carries each slot's hash, the loader
+hashes the loaded image and rejects a mismatch, rolling back to the other slot —
+the same verify-then-fallback shape as the base-image content check. This is
+integrity (catches corruption), NOT yet authenticity; the manifest is still
+unsigned, so a tamperer who rewrites the slot can rewrite its hash too. Authenticity
+is U1g-3b (Ed25519 over the manifest/kernel).
+
+- `boot/efi/loader_sha256.h`: header-only FIPS 180-4 SHA-256 (the loader has no
+  libc/crypto). Host-tested so the exact code is trusted.
+- **SWOSKERN manifest v2**: appends `slotA_size`+`slotA_sha256` (off 24/32) and
+  `slotB_size`+`slotB_sha256` (off 64/72); 104 bytes. v1 (no hashes) still parses.
+- `boot/efi/loader.c`: `load_slot(slot, expect_hash)` opens→allocates→reads→(if a
+  hash is given) SHA-256-verifies into `KERNEL_LOAD_ADDR`, freeing its pages and
+  returning 0 on any failure (missing file, alloc fail, OR hash mismatch — logs
+  "kernel slot X FAILED integrity check (sha256)"). `efi_main` tries the active
+  slot, rolls back to the other on failure, then the embedded blob. `FreePages`
+  typed in efi.h so a rejected slot's pages are reclaimed before the retry.
+- `tools/kernelboot.swift` v2: reads both kernel files, embeds their SHA-256
+  (host `kernel/crypto/sha256.swift`); now `@main` (multi-file build disallows
+  top-level code). Makefile/make-disk stage the v2 manifest computed over
+  `kernel.bin`.
+
+**Acceptance.** `tests/loader_sha256_test.c` (host, in `make test`) checks the C
+SHA-256 against FIPS 180-4 vectors. `tests/uefi_kernel_ab_test.sh` gains a third
+case: corrupt `kernelA.bin` (byte-flipped, so its hash ≠ the manifest's) with
+active=A → loader logs the slot-A integrity failure and boots the valid slot B.
+Plus the existing active-B and missing-slot cases. `uefi_boot_test` (default
+active-A, now SHA-256-verified) still boots to busybox, single-core and `-smp 4`.
+
+**Gotcha.** `kernelboot.swift` compiled fine standalone but broke once
+`sha256.swift` was added to the build ("expressions are not allowed at the top
+level") — a multi-file Swift module needs `@main`, not top-level statements.
+
+**Still future (U1g-3b).** Ed25519 signature over the manifest (or the kernel
+images) verified against the compiled-in trust root, for authenticity — needs
+Ed25519+SHA-512 in the loader (C port of `kernel/crypto/{ed25519,sha512}.swift`).

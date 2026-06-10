@@ -783,6 +783,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(UPDATESTORE)
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/updatestore_test.swift kernel/fs/swosboot.swift -o $(BUILD)/updatestore_test
 	$(BUILD)/updatestore_test
+	$(CLANG) -O2 -Wall -Wextra tests/loader_sha256_test.c -o $(BUILD)/loader_sha256_test
+	$(BUILD)/loader_sha256_test
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
@@ -906,7 +908,7 @@ s1-test: smp-state-audit smp-mailbox-layout smp-release-contract smp-s1-prefligh
 $(BUILD)/kernel_blob.obj: boot/efi/kernel_blob.S $(KERNEL_ELF) Makefile | $(BUILD)/.dir
 	$(CLANG) --target=aarch64-unknown-windows -c boot/efi/kernel_blob.S -o $@
 
-$(EFI_APP): boot/efi/loader.c boot/efi/efi.h $(BUILD)/kernel_blob.obj Makefile | $(BUILD)/.dir
+$(EFI_APP): boot/efi/loader.c boot/efi/efi.h boot/efi/loader_sha256.h $(BUILD)/kernel_blob.obj Makefile | $(BUILD)/.dir
 	$(CLANG) $(EFI_CFLAGS) boot/efi/loader.c -o $(BUILD)/loader.obj
 	$(LLDLINK) -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ \
 		$(BUILD)/loader.obj $(BUILD)/kernel_blob.obj
@@ -928,9 +930,9 @@ $(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
 $(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT)
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	$(KERNELBOOT) $@ A
+	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN)
 
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
       $(ESP_DIR)/EFI/swift-os/kernelA.bin \
@@ -982,11 +984,11 @@ $(UPDATESTORE): tools/updatestore.swift kernel/fs/swosboot.swift Makefile | $(BU
 
 updatestore: $(UPDATESTORE)
 
-# U1g-2: host builder for the SWOSKERN kernel A/B boot manifest (read by the UEFI
-# loader from the ESP). Self-contained (no shared module — the loader parses it
-# directly in C).
-$(KERNELBOOT): tools/kernelboot.swift Makefile | $(BUILD)/.dir
-	$(HOST_SWIFTC) -O tools/kernelboot.swift -o $@
+# U1g-2/3a: host builder for the SWOSKERN kernel A/B boot manifest (read by the
+# UEFI loader from the ESP). U1g-3a embeds per-slot SHA-256 (kernel/crypto's host
+# sha256); the loader parses the format directly in C.
+$(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/kernelboot.swift kernel/crypto/sha256.swift -o $@
 
 kernelboot: $(KERNELBOOT)
 

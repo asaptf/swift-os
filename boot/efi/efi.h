@@ -92,7 +92,7 @@ typedef struct {
     void                  *RaiseTPL;
     void                  *RestoreTPL;
     EFI_ALLOCATE_PAGES     AllocatePages;
-    void                  *FreePages;
+    EFI_STATUS (*FreePages)(EFI_PHYSICAL_ADDRESS Memory, UINTN Pages);
     EFI_GET_MEMORY_MAP     GetMemoryMap;
     void                  *AllocatePool;
     void                  *FreePool;
