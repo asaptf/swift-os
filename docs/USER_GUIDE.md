@@ -59,7 +59,8 @@ The capability bits are:
 
 Capabilities are not Unix uid 0. They are explicit process authority bits. File
 handles also carry per-handle rights; see [API_REFERENCE.md](API_REFERENCE.md)
-for handle rights.
+for handle rights and [SECURITY_GUIDE.md](SECURITY_GUIDE.md) for the complete
+current security model.
 
 ## Filesystem
 
@@ -325,6 +326,10 @@ rejected.
 Security is capability-centered rather than Unix-root-centered. Some compatibility
 layers still expose POSIX-like names for ported software, but the kernel checks
 its own capability and handle model.
+
+For the full current security model, including login, password storage, handle
+rights, confinement, W^X memory mappings, package overlays, and current limits,
+see [SECURITY_GUIDE.md](SECURITY_GUIDE.md).
 
 ## Known Current Limits
 
