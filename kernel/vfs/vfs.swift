@@ -1170,10 +1170,7 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
 }
 
 private func deviceRights() -> Rights {
-    var r = Rights()
-    r.insert(.getattr)
-    r.insert(.transfer)
-    return r
+    deviceMetadataGrantRights()
 }
 
 private func discardUninstalledDescription(_ d: Int) {
