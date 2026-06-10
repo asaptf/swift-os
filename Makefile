@@ -256,9 +256,11 @@ USER_HTTPD_ELF := $(BUILD)/httpd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
+USER_LLMD_ELF := $(BUILD)/llmd.elf
 BASE_EXEC_ELFS := \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
+	$(USER_LLMD_ELF) \
 	$(USER_KV_ELF) \
 	$(USER_HEAD_ELF) \
 	$(USER_TOUCH_ELF) \
@@ -456,6 +458,10 @@ $(BUILD)/user_kv.o: userland/kv.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llm.swift userland/lib/llama2.swift -o $@
 
+# /bin/llmd: the TCP model-serving daemon + the shared engine (WMO).
+$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift -o $@
+
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
 
@@ -592,6 +598,9 @@ $(USER_KV_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_kv
 # /bin/llm links the Unicode data tables (the BPE tokenizer hashes String keys).
 $(USER_LLM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llm.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llm.o $(SWIFT_UNICODE_DATA) -o $@
+
+$(USER_LLMD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llmd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_llmd.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_HEAD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_head.o -o $@
@@ -751,6 +760,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image $(SWPKG) $(MODEL_BIN) $
 	./tests/calc_test.sh
 	./tests/kv_test.sh
 	./tests/llm_run_test.sh
+	./tests/llm_serve_test.sh
 	./tests/top_test.sh
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
@@ -883,6 +893,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MOD
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
 	cp $(USER_LLM_ELF) $(BASE_ROOT)/bin/llm
+	cp $(USER_LLMD_ELF) $(BASE_ROOT)/bin/llmd
 	cp $(USER_KV_ELF) $(BASE_ROOT)/bin/kv
 	cp $(USER_HEAD_ELF) $(BASE_ROOT)/bin/head
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch

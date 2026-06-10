@@ -2425,3 +2425,36 @@ deactivate its VMA (the model-serving path maps once and exits, which is covered
 **Acceptance.** `tests/llm_run_test.sh` asserts the `file-backed` and
 `demand-paged file mmap active` markers and that the generated story still
 matches the llama2.c reference. Next: I3 serves tokens over TCP via `poll()`.
+
+### I3 — /bin/llmd serves inference over TCP (DONE, 2026-06-09)
+
+**Scope.** `userland/llmd.swift` (`/bin/llmd`) is the model-serving daemon and
+the conclusion of the AI-hosting proof arc: the same Swift engine, weights
+file-backed mmap'd from `/models` (I2), served over the network through the
+existing capability-gated socket surface. Userland-only — no new kernel ABI;
+the only kernel change is the `execResolve` allow-list entry.
+
+**Server shape.** A poll()-driven loop (the `/bin/httpd` pattern: listener +
+queued connections, one `poll()` multiplexing all fds). Endpoints:
+`POST /completion` (body = prompt) streams the generated pieces to the socket
+as they are produced (HTTP/1.0, `Connection: close` delimits the body);
+`GET /health` reports liveness + model config; `GET /metrics` reports
+`requests`, `tokens_total`, `last_ttft_ms`, `last_tok_s` — the first slice of
+the AI-serving metrics list in ARCHITECTURE.md. Each request also logs
+`llmd: served N tokens ttft=X ms rate=Y tok/s` on serial. Request parsing
+handles multi-segment TCP delivery (bounded read loop until the blank line +
+Content-Length bytes arrive). Generation runs inline on the single core; the
+KV cache is safely reused across requests because every position is rewritten
+before it is attended to.
+
+**Measured (QEMU TCG, scalar FP, stories260K).** ttft=70 ms on the cold first
+request — that includes demand-paging the whole model off virtio-blk (I2b) —
+and ~376 tok/s streaming rate.
+
+**Acceptance.** `tests/llm_serve_test.sh` (in `make test`): boots with a slirp
+hostfwd, starts `/bin/llmd`, then from the host asserts the POSTed completion
+matches the llama2.c reference story, `/health` and `/metrics` respond with
+real counters, and the serial metrics line appeared. With I0–I3 complete, the
+flagship claim is demonstrated end to end: swift-os loads an immutable model
+bundle, mmaps the weights, and serves deterministic inference over TCP from an
+isolated, capability-confined EL0 process.
