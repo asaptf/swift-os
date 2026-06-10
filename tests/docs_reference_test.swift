@@ -44,6 +44,156 @@ private func localPathTarget(_ target: String) -> String? {
     return pathPart.removingPercentEncoding ?? pathPart
 }
 
+private struct SyscallDocEntry {
+    let number: Int
+    let name: String
+}
+
+private func firstMatchGroups(_ regex: NSRegularExpression,
+                              in line: String,
+                              groupCount: Int) -> [String]? {
+    let nsLine = line as NSString
+    let range = NSRange(location: 0, length: nsLine.length)
+    guard let match = regex.firstMatch(in: line, range: range) else {
+        return nil
+    }
+    var groups: [String] = []
+    for index in 1...groupCount {
+        let groupRange = match.range(at: index)
+        guard groupRange.location != NSNotFound else {
+            return nil
+        }
+        groups.append(nsLine.substring(with: groupRange))
+    }
+    return groups
+}
+
+private func syscallName(from macro: String) -> String {
+    macro.lowercased()
+}
+
+private func parseHeaderSyscalls() -> [SyscallDocEntry] {
+    let path = "userland/lib/syscall.h"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let defineRegex = try! NSRegularExpression(
+        pattern: #"^\s*#define\s+SYS_([A-Z0-9_]+)\s+([0-9]+)\b"#
+    )
+    var entries: [SyscallDocEntry] = []
+    var seenNumbers: [Int: String] = [:]
+
+    for (index, rawLine) in text.split(separator: "\n",
+                                       omittingEmptySubsequences: false).enumerated() {
+        let line = String(rawLine)
+        guard let groups = firstMatchGroups(defineRegex, in: line, groupCount: 2),
+              let number = Int(groups[1]) else {
+            continue
+        }
+
+        let name = syscallName(from: groups[0])
+        if let previous = seenNumbers[number] {
+            fail("\(path):\(index + 1): SYS_\(groups[0]) reuses number \(number) from \(previous)")
+            ok = false
+        }
+        seenNumbers[number] = "SYS_\(groups[0])"
+        entries.append(SyscallDocEntry(number: number, name: name))
+    }
+
+    if entries.isEmpty {
+        fail("\(path): no SYS_* definitions found")
+        ok = false
+    }
+    return entries.sorted { $0.number < $1.number }
+}
+
+private func parseDocumentedSyscalls() -> [SyscallDocEntry] {
+    let path = "docs/API_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let rowRegex = try! NSRegularExpression(
+        pattern: #"^\|\s*([0-9]+)\s*\|\s*`([^`]+)`\s*\|"#
+    )
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+    var inTable = false
+    var entries: [SyscallDocEntry] = []
+    var seenNumbers: [Int: String] = [:]
+    var previousNumber: Int?
+
+    for (index, rawLine) in lines.enumerated() {
+        let line = String(rawLine)
+        if line == "## Syscall Table" {
+            inTable = true
+            continue
+        }
+        if inTable && line.hasPrefix("Notes:") {
+            break
+        }
+        guard inTable,
+              let groups = firstMatchGroups(rowRegex, in: line, groupCount: 2),
+              let number = Int(groups[0]) else {
+            continue
+        }
+
+        let name = groups[1]
+        if let previous = previousNumber, number <= previous {
+            fail("\(path):\(index + 1): syscall table is not sorted by number")
+            ok = false
+        }
+        previousNumber = number
+        if let previous = seenNumbers[number] {
+            fail("\(path):\(index + 1): \(name) reuses number \(number) from \(previous)")
+            ok = false
+        }
+        seenNumbers[number] = name
+        entries.append(SyscallDocEntry(number: number, name: name))
+    }
+
+    if entries.isEmpty {
+        fail("\(path): syscall table has no rows")
+        ok = false
+    }
+    return entries
+}
+
+private func checkSyscallTableSync() {
+    let headerEntries = parseHeaderSyscalls()
+    let documentedEntries = parseDocumentedSyscalls()
+    var headerByNumber: [Int: String] = [:]
+    var documentedByNumber: [Int: String] = [:]
+
+    for entry in headerEntries {
+        headerByNumber[entry.number] = entry.name
+    }
+    for entry in documentedEntries {
+        documentedByNumber[entry.number] = entry.name
+    }
+
+    for entry in headerEntries {
+        guard let documented = documentedByNumber[entry.number] else {
+            fail("docs/API_REFERENCE.md: missing syscall \(entry.number) `\(entry.name)` from userland/lib/syscall.h")
+            ok = false
+            continue
+        }
+        if documented != entry.name {
+            fail("docs/API_REFERENCE.md: syscall \(entry.number) is documented as `\(documented)`, expected `\(entry.name)`")
+            ok = false
+        }
+    }
+
+    for entry in documentedEntries where headerByNumber[entry.number] == nil {
+        fail("docs/API_REFERENCE.md: syscall \(entry.number) `\(entry.name)` is not defined in userland/lib/syscall.h")
+        ok = false
+    }
+}
+
 let linkPattern = #"!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#
 let linkRegex = try! NSRegularExpression(pattern: linkPattern)
 
@@ -91,8 +241,10 @@ for file in markdownFiles() {
     }
 }
 
+checkSyscallTableSync()
+
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences and local links are valid")
+print("PASS: documentation markdown fences, local links, and API syscall table are valid")

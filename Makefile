@@ -6,7 +6,7 @@
 #   make run-gfx Boot the UEFI disk in a graphical window (ramfb framebuffer).
 #   make debug   Boot under QEMU's gdbstub (paused), for `make gdb` / lldb.
 #   make test    Build, then run the boot acceptance test(s).
-#   make docs-test Check public Markdown fences and local links.
+#   make docs-test Check public Markdown, local links, and API table sync.
 #   make smp-test Build, then run the pre-S0 SMP boot smoke.
 #   make clean   Remove build artifacts.
 #

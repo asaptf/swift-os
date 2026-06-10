@@ -1070,7 +1070,7 @@ one booting acceptance path:
 
 | API area | Primary files | Focused verification |
 | --- | --- | --- |
-| Syscall numbers and dispatch | `userland/lib/syscall.h`, `kernel/syscall/syscall.swift` | `make test`, plus a header/reference table sync check |
+| Syscall numbers and dispatch | `userland/lib/syscall.h`, `kernel/syscall/syscall.swift` | `make docs-test`, then `make test` for booting dispatch coverage |
 | Handle rights and explicit inheritance | `kernel/vfs/handle.swift`, `userland/lib/syscall.h` | `tests/handle_test.swift`, `./tests/boot_test.sh` |
 | Filesystem and native Swift file tools | `kernel/vfs/vfs.swift`, `userland/lib/fs.h`, `userland/lib/swift_user.h` | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/boot_test.sh` |
 | Terminal and signals | `userland/lib/termios.h`, `kernel/tty/tty.swift`, `kernel/signal/signal.swift` | `./tests/boot_test.sh`, focused interactive smoke where needed |

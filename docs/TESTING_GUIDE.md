@@ -114,8 +114,9 @@ make docs-test
 ```
 
 This checks the public Markdown set (`README.md`, `docs/*.md`, and
-`ports/README.md`) for balanced fenced code blocks and local links that resolve
-inside the repository.
+`ports/README.md`) for balanced fenced code blocks, local links that resolve
+inside the repository, and syscall table sync between `docs/API_REFERENCE.md`
+and `userland/lib/syscall.h`.
 
 ## Full Gate
 
@@ -160,7 +161,7 @@ Run the narrowest test that proves the path you changed.
 
 | Changed area | First test |
 | --- | --- |
-| Documentation links or examples | `make docs-test` |
+| Documentation links, examples, or API tables | `make docs-test` |
 | Kernel build only | `make build` |
 | Base image format or contents | `make base-image`, `./tests/vfs_disk_test.sh` |
 | Direct serial boot | `./tests/boot_test.sh` |
