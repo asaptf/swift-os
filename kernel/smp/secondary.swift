@@ -96,6 +96,7 @@ func smpHandleIpi(_ interruptAck: UInt32) {
     let cpu = currentCpuId()
     smpRecordIpiForCurrentCpu(source: gicSoftwareGeneratedInterruptSource(interruptAck))
     smpMarkIpiProbeDelivered(cpu: cpu)
+    _ = smpHandleTlbShootdownForCurrentCpu()
 }
 
 func smpIpiSubstrateSelfTest() -> Bool {
@@ -147,8 +148,68 @@ func smpIpiSubstrateSelfTest() -> Bool {
     return false
 }
 
+func smpTlbShootdownSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary >= smpMaxCpuCount() { return false }
+
+    let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
+    let generation = smpBeginTlbShootdownProbe(targetMask: targetMask)
+    if generation == 0 { return false }
+    if targetMask == 0 { return smpSecondariesRemainSchedulerIdle() }
+
+    var before: InlineArray<8, UInt64> = .init(repeating: 0)
+    var i: UInt32 = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu >= smpMaxCpuCount() { return false }
+        if cpu != primary {
+            before[Int(cpu)] = smpPerCpuTlbShootdownReceivedCount(cpu)
+            if !smpPublishTlbShootdownRequest(cpu: cpu, generation: generation) {
+                return false
+            }
+        }
+        i += 1
+    }
+    smpStoreBarrier()
+
+    i = 0
+    while i < platform.cpuCount {
+        let cpu = platformCpuAff0(i)
+        if cpu != primary {
+            if !gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu) {
+                return false
+            }
+        }
+        i += 1
+    }
+
+    let start = read_cntpct_el0()
+    var timeout = read_cntfrq_el0()
+    if timeout == 0 { timeout = 50_000_000 }
+    while read_cntpct_el0() &- start < timeout {
+        if smpTlbShootdownProbeAckMask() == targetMask {
+            i = 0
+            while i < platform.cpuCount {
+                let cpu = platformCpuAff0(i)
+                if cpu != primary {
+                    if smpPerCpuTlbShootdownAckGeneration(cpu) != generation { return false }
+                    if smpPerCpuTlbShootdownReceivedCount(cpu) <= before[Int(cpu)] { return false }
+                }
+                i += 1
+            }
+            return smpSecondariesRemainSchedulerIdle()
+        }
+    }
+    return false
+}
+
 func smpS3bIpiSchedulerBoundarySelfTest() -> Bool {
     if smpIpiProbeDeliveredMask() != smpIpiProbeTargetMask() { return false }
+    return smpSecondariesRemainSchedulerIdle()
+}
+
+func smpS3cTlbShootdownSchedulerBoundarySelfTest() -> Bool {
+    if smpTlbShootdownProbeAckMask() != smpTlbShootdownProbeTargetMask() { return false }
     return smpSecondariesRemainSchedulerIdle()
 }
 
