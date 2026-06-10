@@ -235,7 +235,7 @@ DNS repository handling.
 
 ## Model Bundle Tools
 
-The model tools support the AI hosting demo and verified model bundle path.
+The model tools support the AI hosting workflow and verified model bundle path.
 Normal users should prefer the Makefile targets, but the tools are useful when
 debugging bundle generation.
 

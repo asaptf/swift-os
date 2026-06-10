@@ -158,7 +158,7 @@ Use the wrapper's convention rather than guessing from the syscall table:
 
 When writing examples or tests, print the raw negative value near the failing
 operation. It makes QEMU serial logs much easier to diagnose and matches the
-style used by the shipped demo programs.
+style used by the shipped diagnostic programs.
 
 ## Syscall Table
 

@@ -35,7 +35,7 @@ SwiftOS is currently:
 | Capability-aware | Processes carry explicit authority bits and handles carry rights |
 | Test-driven | Milestones ship executable host or QEMU checks |
 
-The current system is useful for development, demos, compatibility work, and
+The current system is useful for development, validation, compatibility work, and
 early product hardening. It is not yet a general desktop or production hosting
 environment.
 
@@ -229,7 +229,7 @@ Networking requires both:
 2. A process with `capNet`.
 
 Current networking includes UDP, TCP, DNS, IPv6 smoke paths, a static HTTP
-server, echo tools, a TCP client, and a TLS demo client path.
+server, echo tools, a TCP client, and a TLS smoke client path.
 
 Common service examples:
 
@@ -252,7 +252,7 @@ hosting primitives:
 
 | Command | Purpose |
 | --- | --- |
-| `/bin/llm` | Local completion demo |
+| `/bin/llm` | Local completion command |
 | `/bin/llmd` | HTTP inference service on guest TCP 8080 |
 
 The serving path loads verified model bundle generations from `/models`. The

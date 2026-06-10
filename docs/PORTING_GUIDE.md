@@ -214,7 +214,7 @@ Use these reference programs:
 | `userland/udpecho.swift` | UDP socket and peer handling |
 | `userland/tcpget.swift` | Simple TCP client |
 | `userland/nslookup.swift` | DNS resolver use |
-| `userland/tlsget.swift` | TLS 1.3 demo client path |
+| `userland/tlsget.swift` | TLS 1.3 smoke client path |
 
 Current limits:
 

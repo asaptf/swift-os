@@ -1,7 +1,7 @@
 # SwiftOS Update And Rollback Guide
 
 This guide explains how to update and roll back the current SwiftOS image. It is
-written for operators, release testers, demo owners, and support engineers who
+written for operators, release testers, validation owners, and support engineers who
 need a predictable way to move from one checked-in revision or artifact set to
 another.
 

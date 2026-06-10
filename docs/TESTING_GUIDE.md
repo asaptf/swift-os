@@ -308,7 +308,7 @@ Notes:
   time.
 - Darwin/QEMU host-forwarding behavior can limit some IPv6 end-to-end tests.
   The host `net_test` covers protocol logic more aggressively.
-- TLS support is a demo path; certificate trust policy is not production-ready.
+- TLS support is a smoke path; certificate trust policy is not production-ready.
 
 Use [Networking Guide](NETWORKING_GUIDE.md) for the complete runbook.
 
