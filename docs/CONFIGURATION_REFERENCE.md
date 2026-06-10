@@ -148,8 +148,13 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make smp-test` | Run the default SMP boot smoke. |
 | `make smp-release-guard` | Run static SMP release-readiness contract checks. |
 | `make smp-release-contract` | Alias for the SMP release-readiness guard. |
+| `make phase1-roadmap-test` | Check Phase 1 roadmap, notes, Makefile target, docs, and executable-marker alignment. |
 | `make s4-resource-stress-test` | Run the SMP resource-boundary stress gate under `-smp 4`. |
 | `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
+| `make s5-scheduler-placement-test` | Run the S5b bounded EL0 scheduler placement gate under `-smp 4`. |
+| `make s5-placement-stress-test` | Run the S5c repeated EL0 placement stress gate under `-smp 4`. |
+| `make s5-el0-fanout-test` | Run the S5d independent EL0 fanout gate under `-smp 4`. |
+| `make s5-thread-fanout-test` | Run the S5e shared-address-space thread fanout gate under `-smp 4`. |
 | `make s5-run-any-placement-test` | Run the S5f run-any EL0 placement gate under `-smp 4`. |
 | `make c5-driver-service-test` | Run the C5 driver-service/device-discovery smoke under `-smp 4`. |
 | `make c5-device-handle-test` | Compatibility alias for the C5 driver-service/device-metadata gate under `-smp 4`. |
@@ -508,7 +513,7 @@ make package-overlay-test
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
 | C5 driver-service/device-authority path | `make c5-device-authority-test` |
-| Documentation-only configuration update | `make docs-test`, `git diff --check`, and a build or relevant acceptance test |
+| Documentation-only configuration update | Markdown link check, `git diff --check`, and a build or relevant acceptance test |
 
 When in doubt, run `make test`. It is the broad acceptance gate for this
 repository revision.

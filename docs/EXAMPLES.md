@@ -32,13 +32,6 @@ Expected signals:
 - `/bin`, `/etc`, `/tmp`, and `/www` are visible.
 - `top` renders two frames and returns to the shell.
 
-Verification:
-
-```sh
-./tests/boot_test.sh
-./tests/top_test.sh
-```
-
 ## 2. Use `/tmp` As Scratch Space
 
 Guest:
@@ -58,12 +51,6 @@ rmdir /tmp/demo
 
 This exercises tmpfs creation, append redirection, readback, metadata changes,
 and cleanup. The data is gone after reboot.
-
-Verification:
-
-```sh
-./tests/swift_fileops_test.sh
-```
 
 ## 3. Compare Account Capabilities
 
@@ -95,13 +82,6 @@ cat /etc/motd
 
 The read should fail because `guest` has only spawn authority in the seeded
 image.
-
-Verification:
-
-```sh
-./tests/console_login_test.sh
-./tests/cap_enforce_test.sh
-```
 
 ## 4. Serve Static Files Over HTTP
 
@@ -606,9 +586,3 @@ make test
 The full gate builds the kernel, base image, package fixture, model artifacts,
 host-side unit tests, and many QEMU acceptance tests. For day-to-day work, run a
 targeted test first, then `make test` before merging a milestone.
-
-Verification:
-
-```sh
-make test
-```
