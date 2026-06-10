@@ -43,10 +43,12 @@ QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 BASEPACK  := $(BUILD)/basepack
 SWPKG     := $(BUILD)/swpkg
+PKGSTORE  := $(BUILD)/pkgstore
 BASE_ROOT := $(BUILD)/base-root
 PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
 PKGHELLO_PAYLOAD_IMG := $(BUILD)/pkghello-payload.img
+PKGHELLO_STORE_IMG := $(BUILD)/pkgstore-pkghello.img
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -104,6 +106,7 @@ SWIFT_SRCS := \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
+	kernel/pkg/store.swift \
 	kernel/smp/atomic.swift \
 	kernel/smp/percpu.swift \
 	kernel/smp/secondary.swift \
@@ -310,7 +313,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg package-fixture package-overlay-test
+.PHONY: build run debug gdb test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-headroom-test smp-uefi-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore package-fixture package-store-fixture package-overlay-test package-store-test
 
 build: $(KERNEL_ELF)
 
@@ -746,6 +749,8 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/swpkg_tool_test.swift -o $(BUILD)/swpkg_tool_test
 	$(BUILD)/swpkg_tool_test
+	$(HOST_SWIFTC) tests/pkgstore_tool_test.swift -o $(BUILD)/pkgstore_tool_test
+	$(BUILD)/pkgstore_tool_test
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	$(BUILD)/fdt_test $(QEMU_DTB) 1
 	$(BUILD)/fdt_test $(QEMU_DTB_SMP4) 4
@@ -798,6 +803,7 @@ test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture $(MODEL
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
 	./tests/package_overlay_test.sh
+	./tests/pkg_store_boot_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
 	./tests/ls_l_test.sh
@@ -909,6 +915,11 @@ $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefi
 
 swpkg: $(SWPKG)
 
+$(PKGSTORE): tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
+
+pkgstore: $(PKGSTORE)
+
 $(PKGHELLO_ROOT)/usr/bin/pkghello: $(USER_PKGHELLO_ELF) Makefile | $(BUILD)/.dir
 	rm -rf $(PKGHELLO_ROOT)
 	mkdir -p $(PKGHELLO_ROOT)/usr/bin
@@ -921,11 +932,20 @@ $(PKGHELLO_PKG): $(SWPKG) fixtures/pkghello/manifest.json $(PKGHELLO_ROOT)/usr/b
 $(PKGHELLO_PAYLOAD_IMG): $(SWPKG) $(PKGHELLO_PKG) Makefile
 	$(SWPKG) extract-payload $(PKGHELLO_PKG) $@
 
-package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG)
+$(PKGHELLO_STORE_IMG): $(PKGSTORE) $(PKGHELLO_PKG) Makefile
+	$(PKGSTORE) create --package $(PKGHELLO_PKG) --output $@ --generation 1
+
+package-fixture: $(PKGHELLO_PKG) $(PKGHELLO_PAYLOAD_IMG) $(PKGHELLO_STORE_IMG)
 	$(SWPKG) verify $(PKGHELLO_PKG)
+
+package-store-fixture: $(PKGHELLO_STORE_IMG)
+	$(PKGSTORE) inspect $(PKGHELLO_STORE_IMG)
 
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
 	./tests/package_overlay_test.sh
+
+package-store-test: build $(QEMU_DTB) base-image package-store-fixture
+	./tests/pkg_store_boot_test.sh
 
 $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) Makefile
 	rm -rf $(BASE_ROOT)
@@ -1016,8 +1036,8 @@ busybox-check:
 
 clean:
 	rm -rf $(BUILD)/*.o $(BUILD)/*.obj $(BUILD)/*.elf $(BUILD)/*.bin $(BUILD)/*.EFI $(BUILD)/*.img \
-		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/base_image_test \
-		$(BUILD)/swpkg_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(ESP_DIR)
+		$(BUILD)/*.swpkg $(BUILD)/*.dtb $(BUILD)/basepack $(BUILD)/swpkg $(BUILD)/pkgstore $(BUILD)/base_image_test \
+		$(BUILD)/swpkg_tool_test $(BUILD)/pkgstore_tool_test $(BASE_ROOT) $(PKGHELLO_ROOT) $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.
 tools-check:

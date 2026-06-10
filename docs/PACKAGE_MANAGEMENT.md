@@ -2,10 +2,11 @@
 
 Design for binary package installation on swift-os.
 
-> Status: P1 host tooling and P2 package payload overlays are implemented. P3
-> and later are still staged design work. The package work should continue to
-> follow the project rule: one milestone at a time, build, boot, test, commit,
-> then stop for review.
+> Status: P1 host tooling and P2 package payload overlays are implemented. P3a
+> boot activation from a preseeded package-store image is implemented. Target-side
+> store writes, rollback, `/bin/pkg`, and repositories are still staged work. The
+> package work should continue to follow the project rule: one milestone at a
+> time, build, boot, test, commit, then stop for review.
 
 ## Goals
 
@@ -38,6 +39,8 @@ Related package ecosystem documents:
 - [PACKAGE_ECOSYSTEM_GOAL.md](PACKAGE_ECOSYSTEM_GOAL.md) - active end-to-end
   goal, workstreams, and deployment inputs.
 - [SWPKG_FORMAT.md](SWPKG_FORMAT.md) - implemented P1 `.swpkg` container.
+- [PKGSTORE_FORMAT.md](PKGSTORE_FORMAT.md) - implemented P3a package-store
+  bootstrap image and activation records.
 - [PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md)
   - concrete P1-P5 implementation readiness plan.
 - [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md) - `swport`, CI,
@@ -347,6 +350,12 @@ needs to support:
 - atomically select active activation;
 - enumerate history;
 - garbage collect blobs not reachable from recent activations.
+
+P3a implements the read side of this model for boot activation: a `SWPKGST1`
+block image contains payload records, activation records, and an active pointer.
+The kernel mounts payload images referenced by the active generation. P3b/P4
+will add target-side append, active generation switching, rollback commands, and
+garbage collection.
 
 Activation manifest:
 

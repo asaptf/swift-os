@@ -815,6 +815,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klog(.info, "smp", "S3b OK: GIC SGI IPI substrate ready", UInt64(platform.cpuCount))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    pkgStoreInit()      // P3: read active package-store generation, if present
     vfsInit()           // M11c: serves the read-only base from disk when present
     runVirtioNetProbe() // net-a: virtio-net + sans-IO ARP/ICMP against slirp
     ttyInit()

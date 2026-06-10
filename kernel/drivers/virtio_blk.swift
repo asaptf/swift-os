@@ -83,6 +83,8 @@ private var blkDeviceCapacity = [UInt64](repeating: 0, count: maxBlkDevices)
 private var blkDeviceCount = 0
 private var swosbaseDevice = [Int](repeating: -1, count: maxSwosbaseImages)
 private var swosbaseCount = 0
+private var pkgStoreDevice = -1
+private var pkgStoreCapacity: UInt64 = 0
 
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
@@ -196,6 +198,20 @@ private func blkBounceIsSwosbase() -> Bool {
     return ok
 }
 
+private func blkBounceIsPackageStore() -> Bool {
+    let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    let magic: StaticString = "SWPKGST1"
+    var ok = true
+    magic.withUTF8Buffer { m in
+        var i = 0
+        while i < 8 {
+            if bounce.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }
+            i += 1
+        }
+    }
+    return ok
+}
+
 // Read one sector into the internal bounce buffer. Returns 0 on success.
 private func blkDoRead(_ sector: UInt64) -> Int32 {
     if blkMmio == 0 { return -1 }
@@ -256,6 +272,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkActiveDevice = -1
     blkDeviceCount = 0
     swosbaseCount = 0
+    pkgStoreDevice = -1
+    pkgStoreCapacity = 0
     for j in 0..<maxBlkDevices {
         blkDeviceMmio[j] = 0
         blkDeviceCapacity[j] = 0
@@ -295,10 +313,15 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         if blkBringUp(m) == 0 { continue }
         blkDeviceCapacity[devIndex] = blkCapacity
         blkActiveDevice = devIndex
-        if blkDoRead(0) == 0 && blkBounceIsSwosbase() {
-            if swosbaseCount < maxSwosbaseImages {
-                swosbaseDevice[swosbaseCount] = devIndex
-                swosbaseCount += 1
+        if blkDoRead(0) == 0 {
+            if blkBounceIsSwosbase() {
+                if swosbaseCount < maxSwosbaseImages {
+                    swosbaseDevice[swosbaseCount] = devIndex
+                    swosbaseCount += 1
+                }
+            } else if blkBounceIsPackageStore() && pkgStoreDevice < 0 {
+                pkgStoreDevice = devIndex
+                pkgStoreCapacity = blkCapacity
             }
         }
     }
@@ -318,6 +341,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
 func virtioBlkAvailable() -> Bool { swosbaseCount > 0 || blkMmio != 0 }
 func virtioBlkCapacity() -> UInt64 { swosbaseCount > 0 ? blkDeviceCapacity[swosbaseDevice[0]] : blkCapacity }
 func virtioBlkSwosbaseImageCount() -> Int { swosbaseCount }
+func virtioBlkPackageStoreAvailable() -> Bool { pkgStoreDevice >= 0 }
+func virtioBlkPackageStoreCapacityBytes() -> UInt64 { pkgStoreCapacity * UInt64(SECTOR_SIZE) }
 
 // Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.
 // Blocking: issues the request and spins on the used ring until it completes.
@@ -342,9 +367,9 @@ func virtioBlkReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ le
     virtioBlkReadRangeFromImage(0, byteOff, buf, len)
 }
 
-func virtioBlkReadRangeFromImage(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
-    if image < 0 || image >= swosbaseCount { return -1 }
-    if !blkSelectDevice(swosbaseDevice[image]) { return -1 }
+private func virtioBlkReadRangeFromDevice(_ device: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if device < 0 || device >= blkDeviceCount { return -1 }
+    if !blkSelectDevice(device) { return -1 }
     guard let out = buf else { return -1 }
     let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     var done: UInt32 = 0
@@ -365,4 +390,14 @@ func virtioBlkReadRangeFromImage(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeM
         done += chunk
     }
     return 0
+}
+
+func virtioBlkReadRangeFromImage(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if image < 0 || image >= swosbaseCount { return -1 }
+    return virtioBlkReadRangeFromDevice(swosbaseDevice[image], byteOff, buf, len)
+}
+
+func virtioBlkReadPackageStoreRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if pkgStoreDevice < 0 { return -1 }
+    return virtioBlkReadRangeFromDevice(pkgStoreDevice, byteOff, buf, len)
 }

@@ -87,6 +87,7 @@ private struct FileVma {
     var active = false
     var base: UInt = 0       // region start VA (page-aligned)
     var pages: UInt = 0      // region length in pages
+    var diskImage: Int = 0    // VFS image id that owns the file data
     var diskOffset: UInt = 0 // byte offset of the file's data on the virtio-blk device
     var fileLen: UInt = 0    // content bytes (tail of the last page is zero-filled)
     var prot: Int32 = 0
@@ -104,13 +105,14 @@ private func fileVmasClear(_ slot: Int) {
 private func fileVmasCopy(_ dst: Int, _ src: Int) {
     for i in 0..<maxFileVmas { pFileVmas[dst * maxFileVmas + i] = pFileVmas[src * maxFileVmas + i] }
 }
-private func fileVmaAdd(_ slot: Int, _ base: UInt, _ pages: UInt,
+private func fileVmaAdd(_ slot: Int, _ base: UInt, _ pages: UInt, _ diskImage: Int,
                         _ diskOffset: UInt, _ fileLen: UInt, _ prot: Int32) -> Bool {
     for i in 0..<maxFileVmas {
         let idx = slot * maxFileVmas + i
         if !pFileVmas[idx].active {
             pFileVmas[idx] = FileVma(active: true, base: base, pages: pages,
-                                     diskOffset: diskOffset, fileLen: fileLen, prot: prot)
+                                     diskImage: diskImage, diskOffset: diskOffset,
+                                     fileLen: fileLen, prot: prot)
             return true
         }
     }
@@ -1519,7 +1521,7 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     if len == 0 { return err(-22) }
     // Read-only file views only for now (model weights); write/exec is future work.
     if prot != PROT_READ { return err(-22) }
-    let (ok, diskOff, dataLen) = vfsFileExtent(fd: fd)
+    let (ok, diskImage, diskOff, dataLen) = vfsFileExtent(fd: fd)
     if !ok { return err(-13) } // EACCES: not a readable disk-backed file
     let mapLen = len > UInt(dataLen) ? UInt(dataLen) : len
     if mapLen == 0 { return err(-22) }
@@ -1527,7 +1529,7 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     let bytes = pages * PageAllocator.pageSize
     if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
     let base = pMmapTop[me] - bytes
-    if !fileVmaAdd(me, base, pages, UInt(diskOff), mapLen, prot) { return err(-12) }
+    if !fileVmaAdd(me, base, pages, diskImage, UInt(diskOff), mapLen, prot) { return err(-12) }
     pMmapTop[me] = base
     return base
 }
@@ -1548,7 +1550,7 @@ func processHandleFileFault(_ faultVA: UInt) -> Bool {
         let contentStart = ((pageVA - v.base) / pageSize) * pageSize
         let remaining = v.fileLen > contentStart ? v.fileLen - contentStart : 0
         let contentLen = remaining < pageSize ? remaining : pageSize
-        if addressSpaceMapFilePage(pTtbr0[me], pageVA, v.diskOffset + contentStart, contentLen, v.prot) {
+        if addressSpaceMapFilePage(pTtbr0[me], pageVA, v.diskImage, v.diskOffset + contentStart, contentLen, v.prot) {
             pResPages[me] += 1
             fileDemandFaults += 1
             if !fileDemandLogged {

@@ -4,8 +4,10 @@ Copy-paste prompts for future Codex sessions that implement package management.
 Each prompt intentionally covers one milestone. Do not combine them unless the
 maintainer explicitly asks for a larger unstable branch.
 
-P1 and P2 are already implemented in the current tree. The next implementation
-prompt is Prompt 3.
+P1, P2, and P3a boot activation from a preseeded package-store image are already
+implemented in the current tree. The next implementation prompt is Prompt 3b or
+Prompt 4, depending on whether you want to finish target-side store mutation
+before exposing `/bin/pkg`.
 
 ## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
 
@@ -66,28 +68,31 @@ Acceptance:
 - commit the milestone and stop for review.
 ```
 
-## Prompt 3: P3 Persistent Package Store
+## Prompt 3: P3b Target-Writable Package Store
 
 ```text
-Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P2 VFS package
-overlay state.
+Read AGENTS.md, docs/PACKAGE_MANAGEMENT.md, and docs/PKGSTORE_FORMAT.md. Start
+from the P3a package-store boot-activation state.
 
-Implement package-management milestone P3 only: a narrow persistent package
-store with activation generations. Do not implement network repositories yet.
+Implement package-management milestone P3b only: make the existing package store
+target-writable and support active-generation updates from EL0. Do not implement
+network repositories yet.
 
 Requirements:
-- design and document a minimal append-only package-store block format;
-- store package blobs and extracted verified payload images by SHA-256;
-- store activation manifests with generation numbers;
-- atomically select the active generation;
-- load active package payloads at boot;
+- add minimal virtio-blk write support for the selected package-store device;
+- keep base and package payload disks read-only by policy;
+- expose coarse package-store syscalls for appending a verified payload,
+  appending an activation, switching the active generation, listing history, and
+  selecting an older generation;
+- preserve the P3a boot path that loads active payloads from `SWPKGST1`;
 - implement rollback to the previous generation;
-- add QEMU tests for install generation, remove generation, boot persistence,
-  and rollback.
+- add QEMU tests for store write persistence, remove generation, boot
+  persistence, and rollback.
 
 Acceptance:
 - `make test` passes;
-- installing/removing a local package changes active generations;
+- a small target-side helper can add/remove `pkghello` by changing active
+  generations;
 - rollback restores the previous namespace;
 - commit the milestone and stop for review.
 ```

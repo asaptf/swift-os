@@ -24,7 +24,7 @@ private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
         if pa == 0 { return (0, 0) }
         elfBuf = pa
     }
-    let rc = virtioBlkReadRangeFromImage(image, UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
+    let rc = vfsImageReadRange(image, UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
     if rc != 0 { return (0, 0) }
     return (elfBuf, UInt(len))
 }

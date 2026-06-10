@@ -335,7 +335,7 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
 // false, so the caller treats it as a real fault). Otherwise allocate a frame,
 // fill it with `contentLen` bytes from the disk extent (the rest left zero), map
 // it read-only with `prot`, and flush just this page. Returns true on success.
-func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskByteOffset: UInt,
+func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskImage: Int, _ diskByteOffset: UInt,
                              _ contentLen: UInt, _ prot: Int32) -> Bool {
     if (pageVA & (PAGE_SIZE - 1)) != 0 { return false }
     if protPageDesc(0, prot) == 0 { return false } // W^X / PROT_NONE guard
@@ -348,9 +348,9 @@ func addressSpaceMapFilePage(_ ttbr0: UInt, _ pageVA: UInt, _ diskByteOffset: UI
     if frame == 0 { return false } // ENOMEM
     zeroFrame(frame)
     if contentLen > 0 {
-        let rc = virtioBlkReadRange(UInt64(diskByteOffset),
-                                    UnsafeMutableRawPointer(bitPattern: frame),
-                                    UInt32(contentLen))
+        let rc = vfsImageReadRange(diskImage, UInt64(diskByteOffset),
+                                   UnsafeMutableRawPointer(bitPattern: frame),
+                                   UInt32(contentLen))
         if rc != 0 { pmm_free_page(frame); return false }
     }
     if !linkPage(ttbr0, pageVA, protPageDesc(frame, prot)) {
