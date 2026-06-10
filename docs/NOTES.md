@@ -2906,3 +2906,43 @@ both green (the latter logs "S2b OK: no secondary EL0 execution" at -smp 4).
 lives. The local `main` line had diverged (~100 commits of SMP S2c–S2h + package
 work) and never received I8 signing, so the test already passed there — the fix
 belongs on the I8 line.
+
+### U1f-1 — secondary read-only virtio-blk device (the A/B update payload) (DONE, 2026-06-10)
+
+**Scope.** The multi-device foundation for staging a new image from a running
+system. The virtio-blk driver was single-device; U1f-1 lets it also see and read
+a second disk — the update *payload* (a signed SWOSBASE image) attached
+alongside the SWOSBOOT store. U1f-2 will copy that payload into the inactive slot.
+
+- `kernel/drivers/virtio_blk.swift`: `virtioBlkInit` now scans ALL block devices
+  and classifies each by sector-0 magic (store=SWOSBOOT, base/payload=SWOSBASE)
+  instead of returning on the first store. When a store is selected, a separate
+  SWOSBASE disk is recorded as the payload (`blkPayloadMmio`; `blkStoreMmio` keeps
+  the store's MMIO so we can return to it). Accessors `virtioBlkHasPayload()`,
+  `virtioBlkSelectPayload()` (re-bring-up the payload, returns its capacity),
+  `virtioBlkReselectStore()`. The single hardware path is reused by re-bringing-up
+  between the two disks — fine since I/O is serial on the one CPU. Two new globals
+  in `docs/SMP_STATE_AUDIT.md` (set once at boot).
+- `kernel/fs/updatestore.swift`: `updateStorePayloadProbe()` (called from vfsInit
+  after updateStoreInit) reads the payload's sector-0 header through the secondary
+  path and verifies it is a signed v3 SWOSBASE image, logging "update-store:
+  update payload disk present, N sectors, signed v3 base image", then re-selects
+  the store so the base mounts from it.
+
+**Acceptance.** `tests/ab_payload_test.sh` (in `make test`): boot with the store
+disk + base.img attached as a read-only payload; assert the payload is discovered
+and read, AND the active slot still mounts from the store (the probe's device
+re-selection does not disturb the base mount). U1a–U1e A/B tests + the legacy
+disk path unaffected.
+
+**Still future (U1f-2).** The stage copy: `/bin/swos-update` reads the payload
+disk and writes it into the inactive slot, then the operator runs swos-activate
++ reboots. Needs a chunked copy loop (read payload → write store slot) and, for
+acceptable speed on a multi-MB image under TCG, likely multi-sector virtio
+requests (the driver does one sector per request today).
+
+**Test-harness follow-up.** The interactive `to_shell` serial drive (M7 tty +
+login) intermittently drops a typed line on the emulated PL011 (~10-15%), seen
+across all to_shell tests (ab_update_test, ab_confirm_test, signed_image_test).
+ab_activate_test (U1e) fixed it with a settle + byte-by-byte `send`; the other
+A/B tests still use whole-line `printf` and should be migrated to that pattern.

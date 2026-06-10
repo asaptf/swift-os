@@ -160,11 +160,23 @@ healthy, else attempt-based rollback returns to the fallback.
 `tests/ab_activate_test.sh` activates from a shell and verifies slot B is active
 and on trial after a reboot.
 
+## Update payload disk (U1f-1)
+
+The chosen image source for staging from a running system is a **read-only
+payload disk** — a second virtio-blk disk holding a signed SWOSBASE image,
+attached alongside the store. `virtioBlkInit` classifies every block device by
+its sector-0 magic and records such a disk as the payload (`blkPayloadMmio`); the
+single-device hardware path reaches it by re-bringing-up between the store and
+the payload (`virtioBlkSelectPayload` / `virtioBlkReselectStore`), which is safe
+because I/O is serial on the one CPU. At boot `updateStorePayloadProbe()` reads
+the payload header and confirms it is a signed v3 base image.
+`tests/ab_payload_test.sh` covers discovery + read.
+
 ## Not implemented yet
 
-- Writing a new generation into the inactive slot from a running system (a
-  target-side `swos-update`) — needs an image-source decision (read-only payload
-  disk vs network vs tmpfs) plus multi-device virtio-blk support.
+- The stage copy (U1f-2): `/bin/swos-update` copies the payload disk into the
+  inactive slot; then `swos-activate` + reboot. Likely needs multi-sector virtio
+  requests for acceptable speed on a multi-MB image (one sector/request today).
 - Kernel-image A/B via the loader (Ed25519 + EFI Block I/O in the loader).
 - virtio-blk FLUSH (durability without `cache=writethrough`); key rotation /
   revocation.

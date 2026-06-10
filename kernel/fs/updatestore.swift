@@ -231,3 +231,45 @@ func updateStoreActivateOther() -> Int {
     uartPuts("\n")
     return 0
 }
+
+/// U1f: report an A/B update payload disk attached alongside the store, by
+/// reading its sector-0 header through the secondary virtio-blk path and
+/// checking it is a signed v3 SWOSBASE base image. This proves the multi-device
+/// read path before U1f-2 stages the payload into the inactive slot. A no-op
+/// when no payload disk is present. Leaves the store disk re-selected so the
+/// subsequent base mount reads the store.
+func updateStorePayloadProbe() {
+    if !virtioBlkHasPayload() { return }
+    let cap = virtioBlkSelectPayload()
+    var ok = false
+    var version: UInt32 = 0
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkRead(0, p) == 0 {
+            let magic: StaticString = "SWOSBASE"
+            var m = true
+            magic.withUTF8Buffer { mm in
+                var i = 0
+                while i < 8 {
+                    if p.load(fromByteOffset: i, as: UInt8.self) != mm[i] { m = false }
+                    i += 1
+                }
+            }
+            version = UInt32(p.load(fromByteOffset: 8, as: UInt8.self))
+                | (UInt32(p.load(fromByteOffset: 9, as: UInt8.self)) << 8)
+                | (UInt32(p.load(fromByteOffset: 10, as: UInt8.self)) << 16)
+                | (UInt32(p.load(fromByteOffset: 11, as: UInt8.self)) << 24)
+            ok = m
+        }
+    }
+    virtioBlkReselectStore()
+
+    if ok && version == 3 {
+        uartPuts("update-store: update payload disk present, ")
+        uartPutUInt(cap)
+        uartPuts(" sectors, signed v3 base image\n")
+    } else {
+        uartPuts("update-store: payload disk present but not a signed v3 base image\n")
+    }
+}

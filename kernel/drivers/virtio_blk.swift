@@ -87,6 +87,15 @@ private let blkNoFallback: UInt64 = .max
 private var blkBaseByteOffset: UInt64 = 0
 private var blkFallbackByteOffset: UInt64 = blkNoFallback
 
+// U1f: when an A/B update-store disk is the selected device, blkStoreMmio is its
+// MMIO base (so we can re-select it) and blkPayloadMmio is a separate SWOSBASE
+// disk attached as the update payload (0 if none). The single-device driver
+// reaches the payload by re-bringing-up between the two (operations are serial
+// on the single CPU); reads are slot/offset-relative only on the store path.
+// SMP: set once at boot before EL0 runs.
+private var blkStoreMmio: UInt = 0
+private var blkPayloadMmio: UInt = 0
+
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
     var a = pa & ~UInt(63)
@@ -315,6 +324,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkMmio = 0
     blkBaseByteOffset = 0
     blkFallbackByteOffset = blkNoFallback
+    blkStoreMmio = 0
+    blkPayloadMmio = 0
     // The ring and data pages are allocated once and reused across bring-up
     // attempts, mirroring the C version's static buffers (no per-scan leak).
     if blkRingBase == 0 {
@@ -328,8 +339,12 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         blkDataBase = d
     }
 
+    // Scan all block devices, classifying each by its sector-0 magic. A store
+    // disk wins selection; a separate SWOSBASE disk is the base image, or — when
+    // a store is present — the A/B update payload (U1f).
     var first: UInt = 0
     var baseDev: UInt = 0
+    var storeDev: UInt = 0
     var i: UInt32 = 0
     while i < count {
         let m = base + UInt(i) * stride
@@ -340,12 +355,16 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         if first == 0 { first = m }
         if blkBringUp(m) == 0 { continue }
         if blkDoRead(0) != 0 { continue }
-        if blkBounceIsSwosboot() {
-            return blkCapacity // A/B update-store disk — highest preference
-        }
-        if baseDev == 0 && blkBounceIsSwosbase() {
-            baseDev = m       // remember, but keep scanning for a store disk
-        }
+        if storeDev == 0 && blkBounceIsSwosboot() { storeDev = m }
+        else if baseDev == 0 && blkBounceIsSwosbase() { baseDev = m }
+    }
+
+    if storeDev != 0 {
+        // A/B update-store disk: serve the base from it; a SWOSBASE disk attached
+        // alongside is the update payload (U1f).
+        blkStoreMmio = storeDev
+        blkPayloadMmio = baseDev
+        return blkBringUp(storeDev)
     }
     // No update-store disk: prefer a SWOSBASE base image, else the first device.
     if baseDev != 0 { return blkBringUp(baseDev) }
@@ -378,6 +397,22 @@ func virtioBlkUseFallbackBase() -> Bool {
     blkBaseByteOffset = blkFallbackByteOffset
     blkFallbackByteOffset = blkNoFallback
     return true
+}
+
+// --- A/B update payload disk (U1f) ------------------------------------------
+// True if a separate SWOSBASE disk is attached as the update payload.
+func virtioBlkHasPayload() -> Bool { blkPayloadMmio != 0 }
+// Re-bring-up and select the payload device for reading; returns its capacity in
+// sectors (0 if none/failed). Operations are serial on the single CPU, so the
+// caller reads what it needs, then calls virtioBlkReselectStore(). Reads on the
+// payload are absolute (blkBaseByteOffset applies only to the store base path).
+func virtioBlkSelectPayload() -> UInt64 {
+    if blkPayloadMmio == 0 { return 0 }
+    return blkBringUp(blkPayloadMmio)
+}
+// Re-select the update-store disk after using the payload.
+func virtioBlkReselectStore() {
+    if blkStoreMmio != 0 { _ = blkBringUp(blkStoreMmio) }
 }
 
 // Read one 512-byte sector into `buf`. Returns 0 on success, negative on error.

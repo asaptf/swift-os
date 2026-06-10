@@ -456,6 +456,7 @@ func vfsInit() {
     // Ed25519/SHA-256 verification, roll back to the known-good fallback slot
     // and mount that instead (the verified-fallback half of A/B).
     updateStoreInit()
+    updateStorePayloadProbe() // U1f: report an attached A/B update payload disk
     var mounted = buildBaseFromDisk(root)
     var usedFallback = false
     if !mounted && virtioBlkUseFallbackBase() {
