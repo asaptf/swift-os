@@ -402,10 +402,11 @@ Run:
 make package-overlay-test
 ```
 
-Remember: `.swpkg` creation and payload extraction are host-side today. The
-current guest install path is only the local-file form, `pkg install FILE`,
-against a writable package-store image. Repository install by package name,
-remove, upgrade, and rollback are future work.
+Remember: `.swpkg` creation and payload extraction are host-side today. Guest
+install works through the local-file form, `pkg install FILE`, and through the
+P5a signed static HTTP repository fixture, `pkg update URL` followed by
+`pkg install NAME`. Remove, upgrade, rollback, dependency solving, public hosted
+channels, and large-package streaming downloads are future work.
 
 For the P3a package-store boot path, use:
 
@@ -421,12 +422,37 @@ make package-local-install-fixture
 make package-local-install-test
 ```
 
+For the signed repository install path, use:
+
+```sh
+make package-repo-fixture
+make package-repo-install-test
+```
+
+The tested guest flow is:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+/usr/bin/pkghello
+```
+
 The serial log should include:
 
 ```text
 P3: package store active generation
 P3: package store payload mounted
+pkg: catalog updated
+pkg: installed pkghello-1.0.0_1
 ```
+
+If `pkg update URL` fails, confirm that the base image contains
+`/etc/pkg/repo-root.pub`, the host HTTP server is serving the same fixture that
+produced the key, and the guest was booted with virtio-net. If `pkg install NAME`
+fails after a successful update, inspect `build/pkgrepo-root/aarch64/current`
+and rerun `make package-repo-install-test`.
 
 ### `swpkg verify` Fails
 

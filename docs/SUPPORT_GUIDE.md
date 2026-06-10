@@ -26,7 +26,10 @@ Current supported support targets:
 | Serial console login | `./tests/console_login_test.sh` |
 | Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) |
 | Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus the socket tests |
-| Package overlay/store | `make package-overlay-test`; `make package-store-test` |
+| Package payload overlay | `make package-overlay-test` |
+| Package-store activation | `make package-store-test` |
+| Local package install | `make package-local-install-test` |
+| Signed repository install | `make package-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
@@ -37,7 +40,8 @@ Current non-support targets:
 - Persistent writable root filesystem behavior.
 - Production TLS trust decisions from `tlsget`.
 - General x86-64, Raspberry Pi, or PC hardware boot.
-- Target-side package install/remove transactions.
+- Target-side package remove, upgrade, rollback, and dependency-solving
+  transactions.
 
 For the full compatibility matrix, see
 [COMPATIBILITY_GUIDE.md](COMPATIBILITY_GUIDE.md).
@@ -66,7 +70,10 @@ Then run the narrowest acceptance test that proves the failing path:
 | tmpfs mutation | `./tests/swift_fileops_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |
-| Package overlay/store | `make package-overlay-test`; `make package-store-test` |
+| Package payload overlay | `make package-overlay-test` |
+| Package-store activation | `make package-store-test` |
+| Local package install | `make package-local-install-test` |
+| Signed repository install | `make package-repo-install-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
@@ -227,7 +234,7 @@ acceptance path.
 | Linux binaries | Do not run |
 | Dynamic linking | Not supported |
 | `tlsget` trust | TLS runtime demo only; no production certificate verification |
-| Package install inside guest | Not implemented; package payloads/stores are attached at boot |
+| Package remove, upgrade, rollback, dependency solving | Not implemented; local file install and P5a signed repository install are supported fixtures |
 | General x86-64 boot | Not supported |
 
 ## Area-Specific Evidence
@@ -337,9 +344,13 @@ Attach:
 make package-fixture
 make package-overlay-test
 make package-store-test
+make package-local-install-test
+make package-repo-install-test
 ```
 
-Mention whether the guest saw `/usr/bin/pkghello`.
+Mention whether the guest saw `/usr/bin/pkghello`, whether `pkg list` reported
+`pkghello-1.0.0_1`, and whether the repository flow printed
+`pkg: catalog updated`.
 
 ### SMP Readiness
 

@@ -145,8 +145,8 @@ Inside the guest, log in as `root` before running socket programs. The seeded
 
 Package payload overlays are current P2 functionality. They are read-only VFS
 overlays attached at boot. For the complete package runbook, including
-package-store activation and local `pkg install FILE`, see
-[PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
+package-store activation, local `pkg install FILE`, and signed repository
+install, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 Build the sample package and boot with the payload image:
 
@@ -221,8 +221,32 @@ pkg list
 /usr/bin/pkghello
 ```
 
-Repository install by package name, dependency solving, remove, upgrade, and
-rollback are not implemented yet.
+### Signed Repository Install
+
+Signed static HTTP repository install is current P5a functionality. It verifies
+`catalog.signed`, downloads a content-addressed `.swpkg`, verifies SHA-256, then
+reuses the local package-store install path.
+
+Build and test the fixture:
+
+```sh
+make package-repo-fixture
+make package-local-install-fixture
+make package-repo-install-test
+```
+
+Inside the tested guest flow:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+/usr/bin/pkghello
+```
+
+Dependency solving, remove, upgrade, rollback, public hosted channels, and
+large-package streaming downloads are not implemented yet.
 
 ## Access And Accounts
 
@@ -487,6 +511,8 @@ Useful markers:
 | `tcpecho: listening on 5555` | TCP echo server is waiting in accept |
 | `udpecho: listening on 5555` | UDP echo server bound |
 | `pkghello: hello from package overlay` | Package payload overlay was visible and executable |
+| `pkg: catalog updated` | `pkg update URL` accepted a signed repository catalog |
+| `pkg: installed pkghello-1.0.0_1` | Package install activated `pkghello` from local file or repository |
 | `llm: done` | Inference demo completed and returned to userland |
 
 The kernel has a structured in-memory log ring and sink indirection groundwork;
@@ -507,6 +533,9 @@ Run the narrowest test that proves the path you touched:
 | SMP smoke | `SMP_CPUS=4 ./tests/smp_boot_test.sh` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
+| Package store activation | `make package-store-test` |
+| Local package install | `make package-local-install-test` |
+| Signed repository install | `make package-repo-install-test` |
 | Console login | `./tests/console_login_test.sh` |
 | Capability enforcement | `./tests/cap_enforce_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
@@ -540,8 +569,10 @@ Ctrl-A then X when using `-nographic`.
 Current limits that matter during operation:
 
 - No persistent writable filesystem.
-- No repository package install, remove, upgrade, or rollback command yet.
-  Local `pkg install FILE` exists for `.swpkg` fixtures.
+- No dependency-solving, remove, upgrade, rollback, public hosted package
+  channel, or streaming large-package install path yet.
+  Local `pkg install FILE` and P5a `pkg update URL`/`pkg install NAME` exist for
+  `.swpkg` fixtures.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.

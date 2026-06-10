@@ -280,10 +280,46 @@ Equivalent automated check:
 make package-overlay-test
 ```
 
-Note: this is package overlay P2. Target-side install/remove commands are future
-work.
+This is package overlay P2. Local install and repository install use a writable
+package-store image instead.
 
-## 10. Run The Native Swift LLM Demo
+## 10. Install A Package From A Signed Repository Fixture
+
+Host:
+
+```sh
+make build base-image build/virt.dtb
+make package-repo-fixture
+make package-local-install-fixture
+make package-repo-install-test
+```
+
+The automated test starts a host HTTP server, boots QEMU with virtio-net and a
+writable package-store image, then drives this guest flow:
+
+```sh
+pkg update http://10.0.2.2:<port>/aarch64/current
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+/usr/bin/pkghello
+```
+
+Expected signals:
+
+- `pkg update` accepts the signed `catalog.signed`.
+- `pkg search pkghello` and `pkg info pkghello` show `pkghello-1.0.0_1`.
+- `pkg install pkghello` downloads the content-addressed `.swpkg`, verifies its
+  SHA-256, and activates the package-store generation.
+- `/usr/bin/pkghello` prints `pkghello: hello from package overlay`.
+
+Equivalent automated check:
+
+```sh
+make package-repo-install-test
+```
+
+## 11. Run The Native Swift LLM Demo
 
 Host:
 
@@ -321,7 +357,7 @@ Equivalent automated check:
 ./tests/llm_run_test.sh
 ```
 
-## 11. Serve LLM Completions Over TCP
+## 12. Serve LLM Completions Over TCP
 
 Host:
 
@@ -370,7 +406,7 @@ Equivalent automated check:
 ./tests/llm_serve_test.sh
 ```
 
-## 12. Exercise The Swift REPL Demos
+## 13. Exercise The Swift REPL Demos
 
 Guest:
 
@@ -406,7 +442,7 @@ Automated checks:
 ./tests/kv_test.sh
 ```
 
-## 13. Validate UEFI Boot
+## 14. Validate UEFI Boot
 
 Host:
 
@@ -425,7 +461,7 @@ SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 Use this path before claiming firmware, disk-image, or VirtualBox-related
 changes are healthy.
 
-## 14. Run The Full Gate
+## 15. Run The Full Gate
 
 Host:
 
