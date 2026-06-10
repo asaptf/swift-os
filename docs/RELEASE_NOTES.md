@@ -37,9 +37,8 @@ service-oriented.
 - Keeps VirtualBox ARM notes as a best-effort hardware-adjacent path.
 - Has SMP readiness work, smoke tests, S5a per-CPU utilization telemetry in
   `/bin/top`, restricted S5b/S5c EL0 scheduler placement gates, and S5d
-  independent EL0 fanout across online scheduler CPUs, S5e shared-address-space
-  thread fanout, and an S5f run-any placement gate for default EL0 process
-  placement.
+  independent EL0 fanout across online scheduler CPUs, while shared-address-space
+  multi-core EL0 execution remains roadmap work.
 
 ### User Experience
 

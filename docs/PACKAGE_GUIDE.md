@@ -11,13 +11,14 @@ content under `/usr`. The current target-side package manager supports local
 file install, `pkg install FILE`, into a writable package-store disk, plus a
 P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
 and `pkg install NAME`. Repository installs resolve dependencies by package
-name. Public hosted repositories, version-constraint solving, remove, upgrade,
+name. Public production channels, version-constraint solving, remove, upgrade,
 and rollback are staged work, not current behavior. The ports workflow can
 cross-build static AArch64 Lua and zlib packages on the host, publish them into
 signed local repository fixtures, install Lua by package name in QEMU, and boot
 SwiftOS with a default repository URL to install both Lua and zlib from one
 seed repository. It can also produce a static-hostable web root for that seed
-repository and prove that SwiftOS installs from that published layout.
+repository, verify a hosted URL from the host, and prove that SwiftOS installs
+from a DNS-resolved HTTP repository URL.
 
 Use this guide with:
 
@@ -57,6 +58,9 @@ Use this guide with:
 | zlib cross-build repository fixture | Implemented as `make ports-zlib-repo-fixture` |
 | Multi-package ports seed repository fixture | Implemented as `make ports-seed-repo-fixture`; guest install smoke is `make package-ports-seed-repo-install-test` |
 | Static-host publish root | Implemented as `make ports-static-host-publish`; guest install smoke is `make package-static-host-repo-install-test` |
+| Hosted URL verification | Implemented as `make ports-hosted-url-verify` and proven locally by `make ports-hosted-url-verify-test` |
+| Target-side HTTP hostname repositories | Implemented for DNS-resolved `http://host/aarch64/current` URLs and proven by `make package-static-host-dns-repo-install-test` |
+| Target-side HTTPS repository transport | Not implemented yet |
 | Target-side remove, upgrade, rollback, version-constraint solving | Not implemented yet |
 | Public hosted domain and channel policy | Not implemented yet |
 | Streaming large-package downloads | Not implemented yet |
@@ -152,6 +156,14 @@ Build the deployable static-host repository root:
 make ports-static-host-publish
 shasum -a 256 -c build/ports-static-host-root/SHA256SUMS
 build/pkgrepo inspect build/ports-static-host-root/aarch64/current/catalog.signed
+```
+
+Verify a hosted copy and prove DNS-resolved repository install locally:
+
+```sh
+make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://repo-host.example
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 Run the acceptance tests:
@@ -602,6 +614,9 @@ Run the narrowest proof for the path you changed:
 | Target-side ports seed repository install/run smoke | `make package-ports-seed-repo-install-test` |
 | Static-host repository publish root | `make ports-static-host-publish` |
 | Target-side install from static-host publish root | `make package-static-host-repo-install-test` |
+| Hosted static-root URL verification | `make ports-hosted-url-verify-test` |
+| Target-side install from DNS-resolved static-host URL | `make package-static-host-dns-repo-install-test` |
+| Target-side install from an external hosted URL | `make package-hosted-url-install-test PKG_HOSTED_REPO_URL=http://host/aarch64/current` |
 | Full package tooling in the full gate | `make test` |
 
 The underlying host tests are:
@@ -621,6 +636,8 @@ The QEMU tests are:
 - [tests/pkg_lua_repo_install_test.sh](../tests/pkg_lua_repo_install_test.sh)
 - [tests/pkg_ports_seed_repo_install_test.sh](../tests/pkg_ports_seed_repo_install_test.sh)
 - [tests/pkg_static_host_repo_install_test.sh](../tests/pkg_static_host_repo_install_test.sh)
+- [tests/pkg_hosted_url_verify_test.sh](../tests/pkg_hosted_url_verify_test.sh)
+- [tests/pkg_static_host_dns_repo_install_test.sh](../tests/pkg_static_host_dns_repo_install_test.sh)
 
 ## Troubleshooting
 
@@ -636,6 +653,8 @@ The QEMU tests are:
 | `pkg update URL` fails signature verification | The base image key and repository fixture key do not match, or the catalog was modified | Rebuild with `make package-repo-fixture base-image` |
 | `pkg install NAME` says the package is not found | The catalog has not been updated in this boot, the URL is wrong, or the fixture lacks that package | Run `pkg update http://10.0.2.2:<port>/good/aarch64/current` in the acceptance fixture, or the matching `/aarch64/current` URL when serving `build/pkgrepo-root` directly |
 | `pkg: package SHA-256 mismatch` | The downloaded package blob does not match the signed catalog entry | Rebuild the repository fixture with `make package-repo-fixture` and rerun `make package-repo-install-test` |
+| `pkg: bad URL` for a hosted repository | The target-side URL is not `http://...`, the hostname is malformed, or DNS resolution failed | Use `http://host/aarch64/current`; for QEMU DNS tests set `/etc/pkg/dns-server` through `PKG_DEFAULT_DNS_SERVER=10.0.2.2:<port>` |
+| `make ports-hosted-url-verify` cannot fetch files | The hosted root is incomplete, the URL points at the wrong level, or hashes changed after publishing | Upload the whole `build/ports-static-host-root` directory and verify either the web root URL or its `/aarch64/current` URL |
 | `make ports-lua-repo-fixture` cannot find newlib | The generated cross sysroot is missing | Run `make newlib`, then rerun `make ports-lua-repo-fixture` |
 | `pkg install lua` fails in the guest | The Lua repository was not served, `pkg update` did not cache its catalog, or the writable Lua package-store image is missing | Rebuild with `make ports-lua-repo-fixture package-lua-install-fixture`, then run `make package-lua-repo-install-test` |
 | `pkg install zlib` fails in the seed smoke | The seed repository was not rebuilt, the default repository URL was not injected, or the writable seed package-store image is missing | Rebuild with `make ports-seed-repo-fixture package-lua-install-fixture`, then run `make package-ports-seed-repo-install-test` |
@@ -662,6 +681,9 @@ Current limits that matter for package use:
   checks prove the downloaded blob matches the catalog.
 - Public hosted channels, package-level publisher signatures, version-constraint
   solving, remove, upgrade, and rollback commands are future milestones.
+- Target-side repository transport is HTTP-only for now. Host-side publishing
+  checks can verify HTTP or HTTPS URLs, but `/bin/pkg` currently relies on
+  signed catalogs and package hashes for authenticity rather than TLS.
 - Packages cannot grant themselves process capabilities. Authority remains a
   property of the process identity and launch path.
 - The base image remains immutable and wins over package content unless future

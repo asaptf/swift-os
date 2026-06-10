@@ -227,7 +227,7 @@ Notes:
 - Interactive mode accepts `q` to quit.
 
 Acceptance coverage: `tests/top_test.sh`, `make smp-cpu-utilization-test`,
-`make s5-el0-fanout-test`, `make s5-run-any-placement-test`.
+`make s5-el0-fanout-test`.
 
 ## File And Tmpfs Commands
 
@@ -790,7 +790,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 
 Examples:
 
@@ -843,6 +843,7 @@ Example signed repository fixture:
 
 ```sh
 pkg repo set http://10.0.2.2:<port>/good/aarch64/current
+pkg repo set http://pkg.test.swos:<port>/aarch64/current
 pkg repo show
 pkg update
 pkg search pkghello
@@ -880,6 +881,10 @@ Notes:
   the QEMU fixture path under
   `http://10.0.2.2:<port>/good/aarch64/current`. It rejects expired catalogs,
   incompatible package entries, and invalid dependency entries.
+- Repository URLs are currently HTTP-only. The host can be numeric IPv4 or a
+  DNS hostname. If a test or deployment needs an explicit DNS resolver, provide
+  `/etc/pkg/dns-server` in the base image; the makefile accepts
+  `PKG_DEFAULT_DNS_SERVER=IP[:port]`.
 - `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
   cached by `pkg update`; install by name resolves package-name dependencies
   and verifies each downloaded package SHA-256 before activation.
@@ -891,7 +896,9 @@ Notes:
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
-flow is covered by `tests/pkg_ports_seed_repo_install_test.sh`.
+flow is covered by `tests/pkg_ports_seed_repo_install_test.sh`, and the
+DNS-resolved hosted-style URL flow is covered by
+`tests/pkg_static_host_dns_repo_install_test.sh`.
 
 ### `pkghello`
 

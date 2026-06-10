@@ -13,9 +13,13 @@ Design for binary package installation on swift-os.
 > and can boot SwiftOS with `/etc/pkg/repo-url` so `pkg update` works without a
 > manual `pkg repo set`. `make ports-static-host-publish` turns that seed into a
 > deployable static web root, and `make package-static-host-repo-install-test`
-> proves install from that published layout. Rollback, remove, upgrade, public
-> hosted channels, version-constraint solving, and large-package streaming
-> downloads are still staged work.
+> proves install from that published layout. `/bin/pkg` now accepts DNS
+> hostnames in HTTP repository URLs, `make ports-hosted-url-verify` checks a
+> deployed static-host URL from the host, and
+> `make package-static-host-dns-repo-install-test` proves target-side install
+> through a DNS-resolved hosted-style URL. Rollback, remove, upgrade, public
+> production channels, target-side HTTPS transport, version-constraint solving,
+> and large-package streaming downloads are still staged work.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 
@@ -203,6 +207,7 @@ The current bootstrap artifact uses the same `aarch64/current` contract under
 
 ```sh
 make ports-static-host-publish
+make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://pkg.swift-os.org
 ```
 
 Channels:

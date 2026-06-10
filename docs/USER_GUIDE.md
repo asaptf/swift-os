@@ -200,8 +200,7 @@ top -b -n 2 -d 1
 `top` shows uptime, task counts, aggregate CPU busy/idle, discovered CPU count,
 per-CPU busy percentages, memory summaries, kernel footprint, and a process
 table. The host-side SMP utilization gate is `make smp-cpu-utilization-test`;
-the restricted independent EL0 fanout gate is `make s5-el0-fanout-test`, and
-the default run-any process placement gate is `make s5-run-any-placement-test`.
+the restricted independent EL0 fanout gate is `make s5-el0-fanout-test`.
 
 Interactive `top` uses raw terminal mode. Press `q` to quit.
 

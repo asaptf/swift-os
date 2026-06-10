@@ -269,13 +269,7 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   CPUs while their creator stays on CPU0. The guard proves two sibling threads
   shared the creator TTBR0, exited from their home CPUs, used the futex lock, and
   left futex waiters, run queues, and secondary gate masks idle afterward.
-- S5f run-any placement (2026-06-10): the default process placement hook now has
-  a gated run-any acceptance policy that round-robins across CPU0 plus active
-  secondary scheduler CPUs. The boot demo creates more `/bin/coproc` processes
-  than scheduler CPUs without explicit home CPU affinity, then proves the policy
-  selection count matched process creation, the dispatch CPU mask exactly matched
-  the scheduler CPU mask, every process stayed on its selected home CPU, and all
-  queues/gates were idle after stop.
+- Scheduler can (even with a simple policy) place work on multiple CPUs; basic affinity or "run on any" is enough.
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
 - Full `make test` (1-CPU and `-smp 4`, both -kernel and UEFI paths) is green, plus new dedicated SMP stress suites (`tests/smp_*`).
 - The system is now "SMP complete" for the current workload class. Higher-level policy (load balancing, CPU hotplug awareness, cgroups-like limits) can come later.
