@@ -271,11 +271,17 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   so the boot-state is only hash-guarded (torn-write protection), not signed.
   `tests/uefi_kattempt_test.sh` asserts the counter persists 1→2→3.
 
+- **U1g-5b (done):** attempt-based kernel rollback (the U1d analogue). The loader
+  reads the boot-attempt counter; an unconfirmed active slot that has exhausted
+  its attempts (≥3) is presumed unhealthy → the loader boots the other slot and
+  marks the original FAILED, persisted. `tests/uefi_krollback_test.sh` drives slot
+  A to exhaustion and asserts the fail-over to slot B.
+
 ## Not implemented yet
 
-- U1g-5b/c: attempt-based kernel rollback (unconfirmed + attempts exhausted → fail
-  over, persisted) + `/bin/swos-kconfirm` (mark booted slot CONFIRMED) + move
-  `active` into the writable boot-state (so activate needs no pre-signed alternate).
+- U1g-5c: `/bin/swos-kconfirm` (mark booted slot CONFIRMED so it stops accruing
+  attempts) + move `active` into the writable boot-state (so activate needs no
+  pre-signed alternate manifest).
 - A real new-kernel *payload* source (today both kernel slots are the same build).
 - Key rotation / revocation.
 - Key rotation / revocation.
