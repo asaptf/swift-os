@@ -661,6 +661,7 @@ Current handle kinds are:
 | `pipe` | Pipe endpoint |
 | `socket` | Network socket |
 | `endpoint` | IPC endpoint |
+| `device` | Opaque device-ownership grant |
 
 Rights constants from `userland/lib/syscall.h`:
 
@@ -1115,6 +1116,12 @@ long swiftos_getpid(void);
 #define SWIFTOS_TOP_MAX 16
 #define SWIFTOS_CPU_MAX 8
 
+int swiftos_ps_refresh(void);
+unsigned int swiftos_ps_pid(int index);
+unsigned int swiftos_ps_ppid(int index);
+unsigned int swiftos_ps_state(int index);
+const char *swiftos_ps_name(int index);
+
 int swiftos_sysinfo_refresh(void);
 unsigned long swiftos_sys_uptime_ticks(void);
 unsigned long swiftos_sys_idle_ticks(void);
@@ -1160,6 +1167,10 @@ void swiftos_set_raw(int on);
 
 ```c
 unsigned long swiftos_heap_break(void);
+#define SWIFTOS_PROT_READ  0x1
+#define SWIFTOS_PROT_WRITE 0x2
+#define SWIFTOS_PROT_EXEC  0x4
+
 unsigned long swiftos_mmap(unsigned long len, int prot);
 unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot);
 int swiftos_munmap(unsigned long addr, unsigned long len);
@@ -1169,9 +1180,53 @@ int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 `swiftos_mmap` and `swiftos_mmap_file` return 0 on failure because valid
 mappings are never placed at VA 0.
 
-### Networking, Threads, Atomics
+### Networking
 
-See the networking and threads sections above for the full list.
+```c
+int swiftos_socket(void);
+int swiftos_socket_ipv6(void);
+int swiftos_socket_stream(void);
+int swiftos_socket_stream_ipv6(void);
+int swiftos_bind(int fd, unsigned short port);
+
+long swiftos_sendto(int fd, const void *buf, unsigned long len,
+                    unsigned int ip, unsigned short port);
+long swiftos_recvfrom(int fd, void *buf, unsigned long cap,
+                      unsigned int *ip, unsigned short *port);
+long swiftos_sendto_ipv6(int fd, const void *buf, unsigned long len,
+                         const unsigned char ip6[16], unsigned short port);
+long swiftos_recvfrom_ipv6(int fd, void *buf, unsigned long cap,
+                           unsigned char ip6[16], unsigned short *port);
+
+int swiftos_listen(int fd, int backlog);
+int swiftos_accept(int fd);
+int swiftos_connect(int fd, unsigned int ip, unsigned short port);
+long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
+unsigned int swiftos_resolve(const char *name, unsigned int server_ip,
+                             unsigned short server_port);
+```
+
+IPv4 addresses are host order. IPv6 addresses are 16 bytes in network order.
+
+### Threads And Atomics
+
+```c
+#define SWIFTOS_FUTEX_WAIT 0
+#define SWIFTOS_FUTEX_WAKE 1
+
+int swiftos_thread_create(unsigned long entry,
+                          unsigned long arg,
+                          unsigned long stack_top);
+int swiftos_futex(unsigned int *uaddr, int op, unsigned int val);
+void swiftos_thread_exit(void) __attribute__((noreturn));
+
+unsigned int swiftos_atomic_cas(unsigned int *p,
+                                unsigned int expected,
+                                unsigned int desired);
+unsigned int swiftos_atomic_swap(unsigned int *p, unsigned int desired);
+unsigned int swiftos_atomic_load(unsigned int *p);
+unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta);
+```
 
 ## Compatibility Layer
 

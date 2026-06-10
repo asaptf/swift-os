@@ -161,6 +161,7 @@ make ports-hosted-url-verify-test
 make package-static-host-dns-repo-install-test
 make smp-cpu-utilization-test
 make s5-el0-fanout-test
+make c5-device-discovery-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
 ```

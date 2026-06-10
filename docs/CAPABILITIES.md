@@ -359,9 +359,9 @@ ARCHITECTURE.md commits to a set of things that **cannot exist without local IPC
 There is a standing contradiction worth stating plainly: **the current virtio
 drivers (virtio-blk, virtio-net, virtio-input) live in the kernel**, which
 contradicts the documented "restartable userland driver services" vision. That
-is a reasonable bring-up choice. C4a/C5b now prove the IPC and opaque-grant
-shape, but the documented architecture remains incomplete until real
-IRQ/DMA/MMIO grants and a restartable userland driver land.
+is a reasonable bring-up choice. C4a/C5c now prove the IPC, discovery metadata,
+and opaque-grant shape, but the documented architecture remains incomplete
+until real IRQ/DMA/MMIO grants and a restartable userland driver land.
 
 ### 4.2 Minimal shape
 
