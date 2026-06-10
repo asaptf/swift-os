@@ -355,11 +355,12 @@ curl http://127.0.0.1:8080/metrics
 
 Expected signals:
 
-- `/health` starts with `ok stories260K`.
-- `/completion` returns generated story text.
+- `/health` includes `ok model dim=288` for the default Q8_0 `stories15M`
+  serving bundle.
+- `/completion` returns generated story text from the quantized model.
 - `/metrics` includes `requests`, `tokens_total`, `last_ttft_ms`, and
   `last_tok_s`.
-- The serial log includes `llmd: served`.
+- The serial log includes `llmd: model int8 Q8_0 GS=32` and `llmd: served`.
 
 Equivalent automated check:
 

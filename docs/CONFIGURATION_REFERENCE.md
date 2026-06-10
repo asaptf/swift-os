@@ -31,7 +31,7 @@ Use this with:
 | Login shell | `/bin/busybox` `ash` |
 | Writable guest storage | `/tmp` tmpfs only |
 | Package overlay fixture | `build/pkghello-payload.img` |
-| LLM model files | `models/stories260K.bin`, `models/tok512.bin` staged under `/models` |
+| LLM model files | `stories260K.bin`, `tok512.bin`, `stories15M-q8.bin`, and `tokenizer.bin` staged under `/models` |
 
 The target is static and intentionally small. There is no Linux syscall ABI, no
 dynamic loader, and no persistent writable guest filesystem in the current
@@ -109,7 +109,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make disk` | Build the bootable GPT image `build/swift-os.img`. |
 | `make disk-run` | Boot the GPT disk image through AAVMF. |
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
-| `make model` | Fetch or confirm the LLM demo model and tokenizer files. |
+| `make model` | Fetch LLM demo checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
 | `make package-overlay-test` | Run the package overlay acceptance test. |

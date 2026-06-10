@@ -88,6 +88,8 @@ Evidence:
 ```sh
 test -f models/stories260K.bin
 test -f models/tok512.bin
+test -f models/stories15M-q8.bin
+test -f models/tokenizer.bin
 ```
 
 ### Embedded Swift Flags Fail
@@ -448,6 +450,49 @@ Run the acceptance test:
 
 This is expected under QEMU TCG. The demo proves isolated EL0 inference and
 reference output, not production throughput.
+
+### `/bin/llmd` Cannot Load The Model Or Tokenizer
+
+Prepare and repack the serving bundle:
+
+```sh
+make model
+make base-image
+```
+
+The default server expects these paths inside the guest:
+
+```text
+/models/stories15M-q8.bin
+/models/tokenizer.bin
+```
+
+Inside the guest:
+
+```sh
+ls -l /models
+/bin/llmd
+```
+
+Expected serial markers:
+
+```text
+llmd: model int8 Q8_0 GS=32
+llmd: serving on 8080
+```
+
+Run the acceptance test:
+
+```sh
+./tests/llm_serve_test.sh
+```
+
+### `/bin/llmd` Starts Or Completes Slowly
+
+This is expected under QEMU TCG. The default serving path parses the full
+32000-entry tokenizer and demand-pages the quantized `stories15M` checkpoint
+before or during the first request. Treat the current serving demo as a
+correctness and integration path, not as a throughput target.
 
 ## Test Driver Problems
 

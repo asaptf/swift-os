@@ -51,7 +51,8 @@ change installed software. Use `/tmp` only for runtime scratch.
 | `build/BOOTAA64.EFI` | `make uefi` | AArch64 UEFI loader |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample host package artifact |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
-| `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` and `/bin/llmd` model inputs |
+| `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` local inference inputs |
+| `models/stories15M-q8.bin`, `models/tokenizer.bin` | `make model` or `make base-image` | `/bin/llmd` default serving inputs |
 
 `make clean` removes build products but not downloaded toolchains. `make
 newlib`, `make busybox`, and `make model` are slower setup paths and are usually
@@ -313,10 +314,12 @@ SwiftOS has two native Swift TinyStories inference entry points:
 | Command | Use |
 | --- | --- |
 | `/bin/llm` | Run one local completion and print tokens plus timing on the serial console |
-| `/bin/llmd` | Serve completions over TCP with health and metrics endpoints |
+| `/bin/llmd` | Serve Q8_0 TinyStories completions over TCP with health and metrics endpoints |
 
-Both load the `stories260K` checkpoint and tokenizer from `/models` inside the
-read-only base image.
+The local demo and the server intentionally use different default bundles:
+`/bin/llm` loads the small fp32 `stories260K` checkpoint and `tok512`
+tokenizer, while `/bin/llmd` serves the larger Q8_0 `stories15M` checkpoint
+with the full `tokenizer.bin` tokenizer.
 
 Prepare model artifacts:
 
@@ -346,6 +349,14 @@ guest:
 /bin/llmd
 ```
 
+By default, this serves `/models/stories15M-q8.bin` with
+`/models/tokenizer.bin`. To test another supported checkpoint/tokenizer pair,
+pass both paths explicitly:
+
+```sh
+/bin/llmd /models/stories260K.bin /models/tok512.bin
+```
+
 From the host:
 
 ```sh
@@ -354,7 +365,9 @@ curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
 curl http://127.0.0.1:8080/metrics
 ```
 
-`/bin/llmd` reports `llmd: serving on 8080` when it is ready. `POST
+`/bin/llmd` reports `llmd: model int8 Q8_0 GS=32` for the default quantized
+model, then `llmd: serving on 8080` when it is ready. `GET /health` reports the
+model shape, such as `ok model dim=288` for the default serving bundle. `POST
 /completion` uses the request body as the prompt and streams generated text
 until the HTTP/1.0 connection closes. `/metrics` reports request count, total
 generated tokens, last time-to-first-token in milliseconds, and last token rate.
