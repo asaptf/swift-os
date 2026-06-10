@@ -58,6 +58,44 @@ This keeps the trusted core small and makes compatibility testable. It also
 means many Unix-like source programs can be ported, while Linux binary
 compatibility is not a goal.
 
+## Workload Compatibility Intake
+
+Before starting a port, record the workload shape and the first proof you expect
+to run. This keeps compatibility discussions grounded in current SwiftOS
+behavior instead of assumptions from Linux, containers, or desktop operating
+systems.
+
+| Question | Compatible answer today | Evidence to collect |
+| --- | --- | --- |
+| Is the source available? | Yes, or the program is already written for SwiftOS | Upstream URL or local source path |
+| What language/runtime is required? | Embedded Swift, small C/newlib port, or source-built static runtime | Build command and toolchain requirement |
+| Can it link statically for AArch64? | Yes | Link command or current static-port blocker |
+| Does it need dynamic loading or plugins? | No, or the design can remove them | List of disabled dynamic features |
+| What files are installed? | Read-only base image files or `/usr` package payload files | Install manifest or package path list |
+| What runtime state is written? | `/tmp` scratch only in the current product contract | State directory plan and reboot expectation |
+| Does it need networking? | Works with `capNet` and QEMU virtio-net profiles | Guest command, host forwarding, and focused network test |
+| Does it need durable databases or queues? | Not as a current guest storage guarantee | Design note for future storage work |
+| Does it need Linux `/proc`, `/sys`, ioctls, signals, or process groups? | No, or the dependency is removed or shimmed | Missing ABI list and proposed shim/test |
+| Does it need device or driver access? | Only current metadata-only C5 device-grant smoke | C5 evidence or roadmap gap |
+| How will it be delivered? | Base image, package overlay, package store, signed repository, or ports recipe | Matching package/build test |
+| What proves success? | A focused QEMU test or host unit test plus user-facing docs | Test command and expected marker |
+
+Minimal intake record:
+
+```text
+Workload:
+  name:
+  source:
+  language/runtime:
+  delivery path: base-image | package-overlay | package-store | signed-repository | ports recipe
+  required capabilities: capFsRead | capTmpWrite | capNet | none
+  installed files:
+  runtime state:
+  unsupported assumptions:
+  first proof:
+  current status: compatible | porting candidate | blocked by current limit
+```
+
 ## Hardware And Platform Compatibility
 
 ### Supported Now
