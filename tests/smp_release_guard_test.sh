@@ -133,13 +133,22 @@ for needle in \
   'private var processRunQueueEnqueueCount = \[UInt64\]' \
   'private var processRunQueueDispatchCount = \[UInt64\]' \
   'private var processDispatchTelemetryCount = \[UInt64\]' \
+  'private var lastPairDispatchTelemetryValid = false' \
+  'private var lastPairDispatchCountA: UInt64 = 0' \
+  'private var lastPairDispatchCountB: UInt64 = 0' \
+  'private var lastPairDispatchCpuMaskA: UInt64 = 0' \
+  'private var lastPairDispatchCpuMaskB: UInt64 = 0' \
+  'private var lastPairLastDispatchCpuA: UInt32 = unassignedCpu' \
+  'private var lastPairLastDispatchCpuB: UInt32 = unassignedCpu' \
   'schedulerContextAddressForCpu' \
   'markProcessReady' \
   'processHomeCpuForNewReadySlot' \
   'recordProcessDispatch' \
+  'captureLastPairDispatchTelemetry' \
   'processRunQueueScaffoldSelfTest' \
   'processDormantSchedulerCpusSelfTest' \
   'processDispatchTelemetrySelfTest' \
+  'processCoprocPairDispatchTelemetrySelfTest' \
   'processRunQueueNoSecondaryExecutionSelfTest' \
   'processNoSecondarySchedulerDispatchSelfTest' \
   'processDispatchTelemetryNoSecondarySelfTest'; do
@@ -174,6 +183,14 @@ if ! grep -q 'EL0 process dispatched on secondary before S2' "$PROCESS_SWIFT" ||
    ! grep -q 'EL0 process dispatch CPU mismatch' "$PROCESS_SWIFT" ||
    ! grep -q 'pDispatchCpuMask\[slot\]' "$PROCESS_SWIFT"; then
   echo "FAIL: S2f dispatch telemetry must keep the CPU0 owner/mismatch guard until secondary EL0 is enabled." >&2
+  exit 1
+fi
+
+pair_capture_line="$(rg -n 'captureLastPairDispatchTelemetry\(a, b\)' "$PROCESS_SWIFT" | head -1 | cut -d: -f1)"
+pair_reap_line="$(rg -n 'reapProcess\(a\)' "$PROCESS_SWIFT" | head -1 | cut -d: -f1)"
+if [[ -z "$pair_capture_line" || -z "$pair_reap_line" ||
+      "$pair_capture_line" -ge "$pair_reap_line" ]]; then
+  echo "FAIL: S2g must capture coproc pair dispatch telemetry before processRunPair reaps the slots." >&2
   exit 1
 fi
 
@@ -274,6 +291,10 @@ if ! grep -q 'S2f OK: process dispatch telemetry ready' "$MAIN_SWIFT" ||
   echo "FAIL: S2f must log process dispatch telemetry readiness and CPU0-owned markers." >&2
   exit 1
 fi
+if ! grep -q 'S2g OK: coproc pair dispatch telemetry CPU0-owned' "$MAIN_SWIFT"; then
+  echo "FAIL: S2g must log coproc pair dispatch telemetry capture." >&2
+  exit 1
+fi
 
 sched_line="$(rg -n '^[[:space:]]*schedulerInit\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_owner_line="$(rg -n 'kernelSchedulerOwnershipSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -286,6 +307,9 @@ s2f_line="$(rg -n 'processDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1
 demo_line="$(rg -n '^[[:space:]]*runSchedulerDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2c_no_secondary_line="$(rg -n 'smpS2cNoSecondaryKernelSchedulerExecution\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 process_demo_line="$(rg -n '^[[:space:]]*runProcessDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+concurrent_demo_line="$(rg -n '^[[:space:]]*runConcurrentDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+s2g_pair_line="$(rg -n 'processCoprocPairDispatchTelemetrySelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
+fork_demo_line="$(rg -n '^[[:space:]]*runForkDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 runps_line="$(rg -n '^[[:space:]]*runPsDemo\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2d_no_secondary_line="$(rg -n 'processRunQueueNoSecondaryExecutionSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
 s2e_no_secondary_line="$(rg -n 'processNoSecondarySchedulerDispatchSelfTest\(\)' "$MAIN_SWIFT" | head -1 | cut -d: -f1)"
@@ -319,6 +343,12 @@ if [[ -z "$demo_line" || -z "$s2c_no_secondary_line" || -z "$process_demo_line" 
   echo "FAIL: S2c no-secondary-kernel guard must run after the kernel scheduler demo and before EL0 demos." >&2
   exit 1
 fi
+if [[ -z "$concurrent_demo_line" || -z "$s2g_pair_line" || -z "$fork_demo_line" ||
+      "$concurrent_demo_line" -ge "$s2g_pair_line" ||
+      "$s2g_pair_line" -ge "$fork_demo_line" ]]; then
+  echo "FAIL: S2g coproc telemetry guard must run immediately after the concurrent EL0 demo and before later demos can reuse slots." >&2
+  exit 1
+fi
 if [[ -z "$runps_line" || -z "$s2d_no_secondary_line" || -z "$s2b_no_secondary_line" ||
       "$runps_line" -ge "$s2d_no_secondary_line" ||
       "$s2d_no_secondary_line" -ge "$s2b_no_secondary_line" ]]; then
@@ -338,4 +368,4 @@ if [[ -z "$s2f_no_secondary_line" ||
   exit 1
 fi
 
-echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"
+echo "PASS: S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g release-readiness contract holds (PSCI CPU_ON + early timer + scheduler boundary)"

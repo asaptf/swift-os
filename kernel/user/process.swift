@@ -121,6 +121,14 @@ private var processRunQueueDispatchCount = [UInt64](repeating: 0, count: process
 private var processDispatchTelemetryCount = [UInt64](repeating: 0, count: processSchedulerCpuSlots)
 private var processRunQueueCpuCount: UInt32 = 0
 
+private var lastPairDispatchTelemetryValid = false
+private var lastPairDispatchCountA: UInt64 = 0
+private var lastPairDispatchCountB: UInt64 = 0
+private var lastPairDispatchCpuMaskA: UInt64 = 0
+private var lastPairDispatchCpuMaskB: UInt64 = 0
+private var lastPairLastDispatchCpuA: UInt32 = unassignedCpu
+private var lastPairLastDispatchCpuB: UInt32 = unassignedCpu
+
 private var currentProc = -1 // running slot, or -1 while in the scheduler
 private var lastReapedKilled = false
 
@@ -161,6 +169,13 @@ func processInit() {
         pDispatchCount[i] = 0
         pDispatchCpuMask[i] = 0
     }
+    lastPairDispatchTelemetryValid = false
+    lastPairDispatchCountA = 0
+    lastPairDispatchCountB = 0
+    lastPairDispatchCpuMaskA = 0
+    lastPairDispatchCpuMaskB = 0
+    lastPairLastDispatchCpuA = unassignedCpu
+    lastPairLastDispatchCpuB = unassignedCpu
 }
 
 private func processSchedulerCpuIndex() -> Int {
@@ -257,6 +272,20 @@ private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
     processDispatchTelemetryCount[Int(cpu)] &+= 1
 }
 
+private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
+    if a < 0 || a >= maxProc || b < 0 || b >= maxProc {
+        lastPairDispatchTelemetryValid = false
+        return
+    }
+    lastPairDispatchCountA = pDispatchCount[a]
+    lastPairDispatchCountB = pDispatchCount[b]
+    lastPairDispatchCpuMaskA = pDispatchCpuMask[a]
+    lastPairDispatchCpuMaskB = pDispatchCpuMask[b]
+    lastPairLastDispatchCpuA = pLastDispatchCpu[a]
+    lastPairLastDispatchCpuB = pLastDispatchCpu[b]
+    lastPairDispatchTelemetryValid = true
+}
+
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
     if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue target\n")
@@ -351,6 +380,11 @@ func processDormantSchedulerCpusSelfTest() -> Bool {
 func processDispatchTelemetrySelfTest() -> Bool {
     if processRunQueueCpuCount != smpMaxCpuCount() { return false }
     if processSchedulerCpuSlots != Int(smpMaxCpuCount()) { return false }
+    if lastPairDispatchTelemetryValid { return false }
+    if lastPairDispatchCountA != 0 || lastPairDispatchCountB != 0 { return false }
+    if lastPairDispatchCpuMaskA != 0 || lastPairDispatchCpuMaskB != 0 { return false }
+    if lastPairLastDispatchCpuA != unassignedCpu { return false }
+    if lastPairLastDispatchCpuB != unassignedCpu { return false }
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
         let idx = Int(cpu)
@@ -362,6 +396,27 @@ func processDispatchTelemetrySelfTest() -> Bool {
         if pLastDispatchCpu[slot] != unassignedCpu { return false }
         if pDispatchCount[slot] != 0 { return false }
         if pDispatchCpuMask[slot] != 0 { return false }
+    }
+    return true
+}
+
+func processCoprocPairDispatchTelemetrySelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    if !lastPairDispatchTelemetryValid { return false }
+    if lastPairDispatchCountA == 0 || lastPairDispatchCountB == 0 { return false }
+    if lastPairLastDispatchCpuA != primary { return false }
+    if lastPairLastDispatchCpuB != primary { return false }
+    let primaryMask = UInt64(1) << Int(primary)
+    if lastPairDispatchCpuMaskA != primaryMask { return false }
+    if lastPairDispatchCpuMaskB != primaryMask { return false }
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        if cpu != primary {
+            if processDispatchTelemetryCount[Int(cpu)] != 0 { return false }
+            if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        }
+        cpu += 1
     }
     return true
 }
@@ -730,6 +785,7 @@ func processRunPair(_ imageA: UInt, _ sizeA: UInt, _ pa: UInt, _ na: UInt, _ ca:
         while true {}
     }
     schedule(until: { pState[a] == pZombie && pState[b] == pZombie })
+    captureLastPairDispatchTelemetry(a, b)
     reapProcess(a)
     reapProcess(b)
 }

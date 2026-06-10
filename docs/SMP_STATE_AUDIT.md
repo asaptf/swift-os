@@ -169,6 +169,13 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/exec.swift:elfBuf`
 - `kernel/user/process.swift:currentProc`
 - `kernel/user/process.swift:idleTicks`
+- `kernel/user/process.swift:lastPairDispatchCountA`
+- `kernel/user/process.swift:lastPairDispatchCountB`
+- `kernel/user/process.swift:lastPairDispatchCpuMaskA`
+- `kernel/user/process.swift:lastPairDispatchCpuMaskB`
+- `kernel/user/process.swift:lastPairDispatchTelemetryValid`
+- `kernel/user/process.swift:lastPairLastDispatchCpuA`
+- `kernel/user/process.swift:lastPairLastDispatchCpuB`
 - `kernel/user/process.swift:lastReapedKilled`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
@@ -214,10 +221,11 @@ manifest entries left behind after globals move or disappear.
 ## Immediate S1/S2 Risks
 
 - `currentProc`, `currentThread`, the S2d/S2e process run queue/context
-  scaffold, the S2f dispatch telemetry counters, and timer accounting must
+  scaffold, the S2f/S2g dispatch telemetry counters, and timer accounting must
   become per-CPU or protected before any secondary CPU can run scheduler code.
-  S2e publishes dormant secondary scheduler resources and S2f records CPU0
-  dispatch evidence; neither milestone makes those structures concurrency-safe.
+  S2e publishes dormant secondary scheduler resources, S2f records CPU0
+  dispatch evidence, and S2g snapshots the `coproc` pair before reap; none of
+  these milestones make those structures concurrency-safe.
 - PMM and heap allocation must be protected before secondary EL1 code can call
   Swift allocation hooks, process creation, VFS allocation, or network buffers.
 - VFS handle/open-description/pipe/endpoint tables are deliberately left as an
