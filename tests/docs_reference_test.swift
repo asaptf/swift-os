@@ -917,6 +917,46 @@ private func checkConfigurationVerificationMatrixReferences() {
     }
 }
 
+private func checkPackageGuideVerificationMatrixReferences() {
+    let path = "docs/PACKAGE_GUIDE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    let makeTargets = makeTargetNames()
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var inVerificationMatrix = false
+    for (index, line) in lines.enumerated() {
+        if line == "## Verification Matrix" {
+            inVerificationMatrix = true
+            continue
+        }
+        if inVerificationMatrix && line.hasPrefix("## ") {
+            break
+        }
+        guard inVerificationMatrix,
+              line.hasPrefix("|"),
+              !line.contains("---") else {
+            continue
+        }
+
+        let cells = markdownTableCells(line)
+        guard cells.count >= 3 else { continue }
+        let pathName = cells[1]
+        let verification = cells[2]
+        if pathName == "Area" {
+            continue
+        }
+        validateCoverageReferences(verification,
+                                   in: path,
+                                   lineNumber: index + 1,
+                                   makeTargets: makeTargets,
+                                   subject: "`\(pathName)` verification row")
+    }
+}
+
 private func hostToolExecutables() -> [String] {
     let path = "Makefile"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -1197,6 +1237,7 @@ checkCommandReferenceCoverage()
 checkCommandReferenceAcceptanceCoverageRefs()
 checkConfigurationBuildTargetReferences()
 checkConfigurationVerificationMatrixReferences()
+checkPackageGuideVerificationMatrixReferences()
 checkHostToolReferenceCoverage()
 checkHostToolQuickMapReferences()
 checkPortRecipeDocumentationCoverage()
