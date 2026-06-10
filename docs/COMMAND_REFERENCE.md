@@ -514,13 +514,21 @@ Notes:
 
 - `llmd` listens on TCP port 8080, the same guest port used by `httpd`; run one
   server at a time.
-- By default, the daemon serves `/models/stories15M-q8.bin` with
-  `/models/tokenizer.bin`.
+- By default, the daemon resolves the verified bundle rooted at
+  `/models/stories15M`.
+- Bundle generations live under
+  `/models/stories15M/<generation>/{manifest.toml,model.bin,tokenizer.bin}`.
+  The loader tries numeric generations newest-first, rejects malformed or
+  hash/size-mismatched payloads, and serves the newest verified generation.
+- The checked-in base image deliberately includes a corrupt generation 2 and a
+  valid generation 1, so a healthy default boot logs the generation 2 rejection
+  and then verifies generation 1.
 - The default serving checkpoint is Q8_0 int8 with group size 32; startup logs
   `llmd: model int8 Q8_0 GS=32`.
 - Optional positional arguments select another checkpoint and tokenizer pair:
-  `llmd [model.bin] [tokenizer.bin]`. The loader detects the supported fp32 and
-  Q8 checkpoint formats at runtime.
+  `llmd [model.bin] [tokenizer.bin]`. Raw path overrides bypass bundle manifest
+  verification; the loader still detects supported fp32 and Q8 checkpoint
+  formats at runtime.
 - Model weights are mapped from the read-only base image with file-backed mmap.
 - The default generation length is 64 tokens.
 - Generation runs inline on the current single-core system. Other connections
@@ -852,7 +860,7 @@ Common failure causes:
 - Package command not found: boot with the package overlay fixture or run the
   package overlay acceptance workflow.
 - LLM model load failure: run the repository model target so the base image can
-  include `/models/stories260K.bin`, `/models/tok512.bin`,
-  `/models/stories15M-q8.bin`, and `/models/tokenizer.bin`.
+  include `/models/stories260K.bin`, `/models/tok512.bin`, and the verified
+  serving bundle under `/models/stories15M`.
 
 For end-to-end recovery steps, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

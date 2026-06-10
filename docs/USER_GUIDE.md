@@ -239,9 +239,10 @@ Start the model-serving daemon:
 ```
 
 It binds TCP port 8080 and serves the TinyStories model from `/models`.
-The default serving bundle is `/models/stories15M-q8.bin` with
-`/models/tokenizer.bin`; pass `llmd [model.bin] [tokenizer.bin]` to test another
-supported checkpoint/tokenizer pair.
+By default, it verifies the bundle rooted at `/models/stories15M`, rejects any
+bad newest generation, and falls back to the newest generation whose manifest,
+model, and tokenizer hashes match. Pass `llmd [model.bin] [tokenizer.bin]` to
+test another supported checkpoint/tokenizer pair without bundle verification.
 
 Host commands with TCP host forwarding:
 
