@@ -480,8 +480,9 @@ UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 
 For packages and models, keep the previous payload image, package-store image,
 or verified base image available. The checked base-image and kernel-image A/B
-paths have attempt-based rollback for unconfirmed boot slots; service-level
-health rollback and package/model rollback commands are not implemented yet.
+paths have health confirmation and attempt-based rollback for unconfirmed boot
+slots; service-level health rollback and package/model rollback commands are not
+implemented yet.
 
 ## Release Checklist
 

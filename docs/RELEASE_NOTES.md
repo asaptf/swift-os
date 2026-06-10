@@ -250,9 +250,9 @@ make base-image
 
 - The checked A/B validation model now covers base-image slot staging,
   activation, confirmation, rollback, and durable writes, plus UEFI ESP kernel
-  slot staging/activation, boot-attempt counting, and attempt-based rollback.
-  Production update channels, key rotation, and kernel-slot health confirmation
-  remain roadmap work.
+  slot staging, boot-state activation, health confirmation, boot-attempt
+  counting, and attempt-based rollback. Production update channels and key
+  rotation remain roadmap work.
 - For the current update and rollback procedures, use [UPDATE_GUIDE.md](UPDATE_GUIDE.md);
   for the store and manifest formats, use [UPDATE_STORE.md](UPDATE_STORE.md).
 

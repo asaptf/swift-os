@@ -439,8 +439,8 @@ application-hosting profile. Future work includes:
 - Service manifests and a supervisor.
 - Remote administration through an SSH or equivalent package.
 - Persistent package install, upgrade, rollback, and repository metadata.
-- Production update channels, key rotation, and kernel-slot health confirmation
-  beyond the checked A/B validation paths.
+- Production update channels and key rotation beyond the checked A/B validation
+  paths.
 - Per-cell resource accounting and administrative policy.
 
 Until those land, administer SwiftOS by treating signed images as the source of

@@ -1081,14 +1081,22 @@ private func checkKernelSlotGuideCoverage() {
         }
     }
 
-    if let trouble = try? String(contentsOfFile: "docs/TROUBLESHOOTING.md", encoding: .utf8) {
-        if trouble.contains("Kernel-slot health confirmation (`swos-kconfirm`) is not implemented yet") {
-            fail("docs/TROUBLESHOOTING.md: stale claim that swos-kconfirm is not implemented")
+    let staleNeedles = [
+        "Kernel-slot health confirmation (`swos-kconfirm`) is not implemented yet",
+        "Production update channels, key rotation, and kernel-slot health confirmation",
+        "kernel-slot health confirmation remain roadmap work",
+        "kernel-slot health confirmation is still future",
+    ]
+    for path in markdownFiles() {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            fail("\(path): could not read")
+            ok = false
+            continue
+        }
+        for needle in staleNeedles where text.contains(needle) {
+            fail("\(path): stale kernel-slot health-confirmation claim `\(needle)`")
             ok = false
         }
-    } else {
-        fail("docs/TROUBLESHOOTING.md: could not read")
-        ok = false
     }
 }
 
