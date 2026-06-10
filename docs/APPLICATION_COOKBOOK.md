@@ -21,7 +21,7 @@ SwiftOS user programs are static EL0 binaries. The normal workflow is:
 | Native Embedded Swift | New first-party tools and modern SwiftOS apps | Preferred path. Uses `userland/lib/swift_user.h` as the bridge. |
 | Raw C syscall app | Tiny low-level utilities and ABI probes | Uses `userland/lib/syscall.h` directly. Negative errno-like returns are exposed. |
 | C/newlib port | Porting larger C software | Uses newlib, `userland/lib/newlib_syscalls.c`, and `userland/compat/*`. |
-| Package payload overlay | Trying a program without baking it into `/bin` | Current overlays are read-only and attached at boot. |
+| Package artifact | Optional software outside the default `/bin` set | Use `.swpkg`, package-store, signed repository, or the current Lua repository install smoke. |
 
 ## Recipe: Native Swift Command
 
@@ -315,16 +315,28 @@ POSIX-shaped socket declarations.
 Do not expect Linux syscall numbers, dynamic linking, `/proc`, `/sys`, or a
 persistent writable root.
 
-## Recipe: Ship A Program As A Package Overlay
+## Recipe: Ship A Program As A Package
 
-Package overlays let you test an extra read-only payload without baking it into
-the base `/bin` set.
+Use packages when the program should not be part of the default base `/bin` set.
+The current checked-in fixtures cover five levels:
+
+| Level | What it proves | Command |
+| --- | --- | --- |
+| Read-only payload overlay | A package payload can be mounted at boot | `make package-overlay-test` |
+| Package-store activation | A package-store image can activate a payload at boot | `make package-store-test` |
+| Guest local install | `/bin/pkg install FILE` installs into a writable package-store disk | `make package-local-install-test` |
+| Signed repository install | `/bin/pkg install NAME` resolves dependencies and verifies a signed catalog | `make package-repo-install-test` |
+| Real source-port repository install | `/bin/pkg install lua` installs and runs a real upstream package | `make package-lua-repo-install-test` |
 
 The sample fixture builds `/usr/bin/pkghello`:
 
 ```sh
 make package-fixture
+build/swpkg inspect build/pkghello.swpkg
 make package-overlay-test
+make package-store-test
+make package-local-install-test
+make package-repo-install-test
 ```
 
 The important pieces are:
@@ -334,9 +346,58 @@ The important pieces are:
 | `fixtures/pkghello/manifest.json` | Package metadata and file manifest |
 | `build/pkghello.swpkg` | Host package artifact |
 | `build/pkghello-payload.img` | Read-only payload image attached at boot |
+| `build/pkgstore-install.img` | Writable package-store image used by target-side install tests |
+| `build/pkgrepo-root/aarch64/current/catalog.signed` | Signed repository catalog fixture |
 
-Package overlays are current P2 functionality. Target-side install/remove and
-persistent activation generations are future work.
+Inside the guest, the local install path looks like:
+
+```sh
+pkg list
+pkg install /packages/pkghello.swpkg
+pkg list
+/usr/bin/pkghello
+```
+
+The signed repository path looks like:
+
+```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
+pkg search pkghello
+pkg info pkghello
+pkg install pkghello
+/usr/bin/pkghello
+```
+
+Public hosted repositories, remove, upgrade, rollback, and version-constraint
+solving are not current behavior.
+
+### Recipe: Build And Install The Lua Source Port
+
+Lua is the current real source-port fixture. It proves checksum-verified source
+fetch, static AArch64 cross-build, `.swpkg` creation, and signed local
+repository publication for `lua` and `luac`. The QEMU smoke installs Lua from
+that repository and runs it in the guest.
+
+```sh
+make ports-lua-repo-fixture
+build/swpkg inspect build/lua.swpkg
+build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+make package-lua-repo-install-test
+```
+
+The guest-side flow exercised by the test is:
+
+```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
+pkg install lua
+/usr/bin/lua -v
+/usr/bin/lua -e 'print(21 * 2)'
+```
+
+Use this recipe as the maintainer-side and guest-smoke reference for new source
+ports.
 
 ## Testing Recipes
 
@@ -348,7 +409,9 @@ Use the smallest test that proves the behavior:
 | Console command output | QEMU serial test that logs in and runs the command |
 | TCP/UDP behavior | QEMU slirp test plus host `curl` or `nc` |
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
-| Package overlay visibility | `make package-overlay-test` style fixture |
+| Package overlay visibility | `make package-overlay-test` |
+| Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, and `make package-lua-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.
@@ -364,6 +427,9 @@ Before merging a new application:
 - Networking tools document the required QEMU host forwarding and `capNet`.
 - Long-running services expose a clear ready marker on serial; see
   [SERVICE_GUIDE.md](SERVICE_GUIDE.md) for the current service contract.
+- Optional software uses `/usr` package paths and records whether it is proven
+  by a local install, signed repository install, or source-port repository
+  install smoke.
 - The Makefile rule includes all source dependencies that should trigger a
   rebuild.
 - `make build base-image` passes.

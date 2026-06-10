@@ -96,8 +96,8 @@ SwiftOS is past bring-up and can boot under QEMU, authenticate users, run a
 native Swift userland, serve files from a read-only base image, allocate tmpfs
 scratch space, run a small TCP/IP stack, and execute user programs through its
 own POSIX-like syscall surface. Package fixtures cover local `.swpkg`
-installation, signed static repository installation, and a host-built Lua
-source-port repository fixture.
+installation, signed static repository installation, and a Lua source-port
+repository fixture that can be installed and run in QEMU.
 
 Current product-shaping work is tracked in
 [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The most important

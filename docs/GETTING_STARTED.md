@@ -286,6 +286,7 @@ make package-repo-install-test
 make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
+make package-lua-repo-install-test
 ```
 
 The test suite includes host-side Swift unit tests and in-QEMU boot assertions.

@@ -20,8 +20,9 @@ Use this guide with:
   calls, and handle rights.
 - [Package Guide](PACKAGE_GUIDE.md) for package payload and package-store
   workflows.
-- [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) for the planned
-  `swport` recipe, CI, and repository publishing workflow.
+- [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) for the current
+  `swport` catalog/recipe checks, Lua cross-build fixture, CI, and repository
+  publishing workflow.
 - [Administration Guide](ADMINISTRATION_GUIDE.md) for accounts, capabilities,
   and image configuration.
 
@@ -158,7 +159,7 @@ payload.
 | `fork` as a server concurrency primitive | Prefer `poll`, threads/futex where suitable, or a native service design |
 | `epoll`, `kqueue`, netlink | Use current `poll` and socket syscalls or defer feature |
 | Unix users/groups as security policy | Map to SwiftOS principals and capability masks |
-| Runtime package downloads | Use host-built package payloads today |
+| Runtime package downloads | Use host-built package payloads or signed repository fixtures today |
 | Shell scripts relying on many external tools | Keep scripts small or port the required tools first |
 
 When adding a shim, keep it narrow. A stub that fails clearly is better than a
@@ -175,7 +176,7 @@ SwiftOS has an immutable base image and RAM-backed `/tmp`.
 | Read model or data blobs | Stage them under `models/` and pack into `/models` |
 | Write runtime scratch | Use `/tmp` |
 | Persist runtime data across reboot | Not a current guest contract |
-| Install optional software | Use a read-only package payload or package-store image |
+| Install optional software | Use a read-only package payload, package-store image, local `.swpkg`, or signed repository fixture |
 
 Example guest check:
 
@@ -254,10 +255,27 @@ Current package flow:
 make package-fixture
 make package-overlay-test
 make package-store-test
+make package-local-install-test
+make package-repo-install-test
 ```
 
 Package content is read-only at runtime. Put binaries under `/usr/bin` in the
 payload namespace unless the package guide says otherwise.
+
+For source ports, use the ports tool and the current Lua fixture:
+
+```sh
+make ports-catalog-test
+make ports-recipe-test
+make ports-lua-repo-fixture
+build/swpkg inspect build/lua.swpkg
+build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+make package-lua-repo-install-test
+```
+
+`ports/lang/lua/Port.json` is the reference recipe shape today. It proves a
+static AArch64 build, signed local repository fixture, guest `pkg install lua`,
+`lua -v`, and a small Lua expression smoke.
 
 Before publishing a package recipe, record:
 
@@ -282,6 +300,8 @@ Every shipped port needs an executable proof.
 | Command output | QEMU serial login test |
 | File read/write behavior | QEMU test plus `/tmp` and base-image checks |
 | Package visibility | Package overlay or package-store test |
+| Guest package install | Local `.swpkg` or signed repository install test |
+| Source-port recipe | `ports-catalog-test`, `ports-recipe-test`, the relevant port fixture, and a QEMU package install smoke when runnable |
 | TCP service | QEMU network test plus host `curl` or `nc` |
 | UDP service | QEMU network test plus host UDP client |
 | DNS client | Resolver test |
@@ -307,6 +327,7 @@ When a port becomes a supported SwiftOS workflow, update the relevant docs:
 | New command in the default image | `COMMAND_REFERENCE.md`, `USER_GUIDE.md`, tests |
 | New network service | `SERVICE_GUIDE.md`, `NETWORKING_GUIDE.md`, tests |
 | New package payload | `PACKAGE_GUIDE.md`, package format notes, tests |
+| New source-port recipe | `PACKAGE_BUILD_AUTOMATION.md`, `PORTING_GUIDE.md`, package catalog, tests |
 | New public ABI shim | `API_REFERENCE.md`, `DEVELOPER_GUIDE.md`, headers |
 | New admin workflow | `ADMINISTRATION_GUIDE.md`, `TROUBLESHOOTING.md` |
 | New known limit | `RELEASE_NOTES.md`, `COMPATIBILITY_GUIDE.md` |

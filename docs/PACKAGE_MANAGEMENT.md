@@ -896,7 +896,7 @@ Remaining repository work:
 
 ### P6: Ports Tree Bootstrap
 
-Current state: P6a/P6b/P6c/P6d/P6e have started inside `swift-os` with a
+Current state: P6a/P6b/P6c/P6d/P6e/P6f have started inside `swift-os` with a
 checked machine-readable seed catalog, `ports/catalog.json`, the host-side
 `build/swport catalog validate/list/inspect` commands, and the first
 `ports/lang/lua/Port.json` recipe scaffold. `swport recipe validate`,
@@ -905,7 +905,9 @@ staged-root `swport recipe package` exist for the Lua path. P6d also adds
 `swport recipe repo-fixture`, which creates and verifies a signed local static
 repository from the staged recipe package. P6e adds `make
 ports-lua-repo-fixture`, which cross-builds real AArch64 static Lua, packages
-the runtime interpreter, and publishes a signed local repository fixture. This is
+the runtime interpreter, and publishes a signed local repository fixture. P6f
+adds `make package-lua-repo-install-test`, which installs Lua from that
+repository in QEMU and runs `lua -v` plus an expression smoke. This is
 deliberately not the full ports tree yet; it makes package priorities,
 dependency names, OS prerequisite bundles, blockers, and the
 recipe-to-repository contract reviewable before the separate `swift-os-ports`
@@ -916,6 +918,8 @@ repository exists.
 - Keep the first real Lua binary package path valid with `make
   ports-lua-repo-fixture` when `make newlib` has populated the generated
   sysroot.
+- Keep the first real Lua target install/run path valid with
+  `make package-lua-repo-install-test`.
 - Move the seed catalog and recipes into `swift-os-ports` once real package
   builds land.
 - Add full `swport` recipe commands: `new`, `build`, `test`, `package`, and
@@ -939,6 +943,8 @@ Acceptance:
   signed local `pkgrepo` repository fixture.
 - `make ports-lua-repo-fixture` builds real static AArch64 Lua and publishes
   the runtime interpreter into a signed local repository fixture.
+- `make package-lua-repo-install-test` installs Lua from that repository and
+  runs it inside QEMU.
 - CI builds and publishes packages.
 - A fresh swift-os image installs one package from the public repository.
 

@@ -74,16 +74,19 @@ service-oriented.
   `pkg update [URL]`, `pkg search`, `pkg info`, dependency resolution by package
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
-- Provides P6a/P6b/P6c/P6d/P6e maintainer-side ports scaffolding:
+- Provides P6a/P6b/P6c/P6d/P6e/P6f maintainer-side ports scaffolding:
   `ports/catalog.json`, the first `ports/lang/lua/Port.json` recipe,
   `swport catalog validate/list/inspect`, and `swport recipe` commands for
   `validate`, `manifest`, `fetch`, `package`, and `repo-fixture`.
 - Cross-builds real static AArch64 `lua` and `luac` binaries against the local
   newlib sysroot and publishes them into a signed local repository fixture with
   `make ports-lua-repo-fixture`.
+- Installs real Lua from the signed local repository fixture inside QEMU and
+  runs `lua -v` plus a small expression smoke with
+  `make package-lua-repo-install-test`.
 - Does not yet provide public hosted package channels, version-constraint
-  solving, broad source-port coverage, target-side Lua repository smoke tests,
-  remove, upgrade, rollback, or streaming large-package downloads.
+  solving, broad source-port coverage, remove, upgrade, rollback, or streaming
+  large-package downloads.
 
 ### Networking And Services
 
@@ -134,6 +137,7 @@ make package-repo-install-test
 make ports-catalog-test
 make ports-recipe-test
 make ports-lua-repo-fixture
+make package-lua-repo-install-test
 make smp-cpu-utilization-test
 ./tests/llm_run_test.sh
 ./tests/llm_serve_test.sh
@@ -166,10 +170,10 @@ llmd: served
   the current product surface.
 - Package payloads are read-only once active. Local target-side package install
   and P5c signed repository fixture install with name-based dependencies exist,
-  and P6e can cross-build static Lua artifacts into a signed local repository
-  fixture. Public hosted channels, broad source-port coverage, target-side Lua
-  repository smoke tests, version-constraint solving, removal, upgrade,
-  rollback, and streaming large-package downloads remain roadmap work.
+  and P6e/P6f can cross-build static Lua artifacts, publish them into a signed
+  local repository fixture, install Lua in QEMU, and run it. Public hosted
+  channels, broad source-port coverage, version-constraint solving, removal,
+  upgrade, rollback, and streaming large-package downloads remain roadmap work.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable

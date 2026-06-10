@@ -61,7 +61,7 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make package-repo-install-test` proves negative catalog rejection,
     dependency installation, package SHA-256 rejection, and execution of
     `/usr/bin/pkghello`.
-- P6a/P6b/P6c/P6d/P6e ports scaffolding is implemented in this repository:
+- P6a/P6b/P6c/P6d/P6e/P6f ports scaffolding is implemented in this repository:
   - `ports/catalog.json` records the first package priorities, prerequisite
     bundles, runtime dependency names, and blockers;
   - `ports/lang/lua/Port.json` is the first source recipe scaffold;
@@ -73,11 +73,12 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make ports-catalog-test` and `make ports-recipe-test` keep the catalog and
     Lua recipe package/repository path machine-readable;
   - `make ports-lua-repo-fixture` proves the Lua cross-build package and signed
-    local repository fixture.
+    local repository fixture;
+  - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
+    and a small Lua expression inside QEMU.
 - Public hosted binary repository publishing, version-constraint solving,
-  remove, upgrade, rollback, broad source-port coverage, target-side Lua
-  repository smoke tests, package publication, and streaming large-package
-  downloads remain future work.
+  remove, upgrade, rollback, broad source-port coverage, package publication,
+  and streaming large-package downloads remain future work.
 
 ## Workstreams
 
@@ -101,7 +102,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The P6a/P6b/P6c/P6d/P6e seed lives in this repository under `ports/`; the full
+The P6a/P6b/P6c/P6d/P6e/P6f seed lives in this repository under `ports/`; the full
 ports tree should move to `swift-os-ports` once cross-building, testing,
 publishing, and broader package maintenance are ready.
 

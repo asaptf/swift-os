@@ -11,6 +11,9 @@ For a practical source-port workflow, see [PORTING_GUIDE.md](PORTING_GUIDE.md).
 For copy-paste application recipes, see
 [APPLICATION_COOKBOOK.md](APPLICATION_COOKBOOK.md). For validation strategy,
 see [TESTING_GUIDE.md](TESTING_GUIDE.md).
+For package artifacts, signed repository fixtures, and the current Lua source
+port, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) and
+[PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md).
 
 ## Development Model
 
@@ -32,6 +35,19 @@ There are two supported application paths:
 | C/newlib compat | Porting C programs and compatibility tools | `crt0_newlib.o`, `newlib_syscalls.o`, compat stubs, newlib, libm, libgcc |
 
 Prefer native Embedded Swift for new SwiftOS programs.
+
+Choose the delivery path before wiring the build:
+
+| Delivery path | Use it when | Proof |
+| --- | --- | --- |
+| Base image `/bin` | The command is part of the default OS image | `make build base-image` plus a QEMU command test |
+| Local `.swpkg` install | The command is optional but should install inside the guest from a package file | `make package-local-install-test` |
+| Signed repository fixture | The command should be resolved by package name through `/bin/pkg` | `make package-repo-install-test` |
+| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make package-lua-repo-install-test` for the current Lua example |
+
+Packages install under `/usr` today. Keep boot-critical tools in the immutable
+base image, and use package workflows for optional commands and maintainer-side
+porting proof.
 
 ## Native Swift User Programs
 
@@ -311,6 +327,8 @@ When evaluating a C or Swift runtime port, check:
 - Does it require Linux syscall numbers? SwiftOS does not provide them.
 - Does it assume a persistent writable root filesystem? Use `/tmp` or package
   image design instead.
+- Is it optional software rather than a default OS command? Prefer a `.swpkg`
+  package or ports recipe and prove the install path with package tests.
 - Does it require `fork` semantics? `fork` exists for compatibility, but the
   preferred process model is explicit spawn with selected handles.
 - Does it require mmap executable pages? The supported pattern is RW mapping,
@@ -374,3 +392,12 @@ Good starting points:
 | `userland/mmapdemo.swift` | mmap, munmap, mprotect, W^X |
 | `userland/spawndemo.c` | `spawn` and `spawn_handles` |
 | `userland/c4b_sockxfer.c` | Endpoint handle transfer |
+
+Package and port examples:
+
+| Path | Shows |
+| --- | --- |
+| `fixtures/pkghello/manifest.json` | Minimal `.swpkg` manifest |
+| `ports/lang/lua/Port.json` | Current source-port recipe shape |
+| `scripts/build-lua.sh` | Static AArch64 Lua cross-build and signed local repository fixture |
+| `tests/pkg_lua_repo_install_test.sh` | Guest `pkg install lua`, `lua -v`, and Lua expression smoke |

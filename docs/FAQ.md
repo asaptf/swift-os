@@ -224,18 +224,20 @@ See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md).
 
 ### Can I install Lua from the guest package manager?
 
-Not yet. P6e can cross-build static AArch64 `lua` and `luac` on the host,
-package them into `build/lua.swpkg`, and publish a signed local Lua repository
-fixture:
+Yes, through the checked-in signed local repository fixture. P6e cross-builds
+static AArch64 `lua` and `luac`; P6f serves that repository to QEMU, installs
+`lua` by package name, and runs it:
 
 ```sh
 make ports-lua-repo-fixture
 build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
+make package-lua-repo-install-test
 ```
 
-That is a maintainer-side proof today. A target-side QEMU smoke for serving
-that repository and proving `pkg install lua && lua -v` is still roadmap work.
+The test exercises `pkg install lua`, `/usr/bin/lua -v`, and
+`/usr/bin/lua -e 'print(21 * 2)'`. This is still a local fixture, not a public
+hosted package channel.
 
 ### Can package files write into `/bin` or `/etc`?
 

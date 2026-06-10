@@ -13,12 +13,14 @@ maintainers planning `swift-os-ports` recipes.
 > `pkg repo set`, `pkg update [URL]`, `pkg search`, `pkg info`, and
 > `pkg install NAME`, including name-based dependency resolution. P6a adds the
 > checked `ports/catalog.json` seed catalog and `swport catalog` validator.
-> P6b/P6c/P6d/P6e add the first Lua `Port.json` recipe with recipe validation,
+> P6b/P6c/P6d/P6e/P6f add the first Lua `Port.json` recipe with recipe validation,
 > manifest generation, checksum-verified source fetch, `.swpkg` creation from a
 > clean staged root, signed local repository fixture generation, and real
 > AArch64 static Lua cross-builds through `make ports-lua-repo-fixture`, with
-> the runtime interpreter packaged first. Public hosted repositories, remove, upgrade,
-> version-constraint solving, and rollback flows are still roadmap work.
+> the runtime interpreter packaged first. `make package-lua-repo-install-test`
+> installs and runs Lua from that repository inside QEMU. Public hosted
+> repositories, remove, upgrade, version-constraint solving, and rollback flows
+> are still roadmap work.
 
 Use this guide with:
 
@@ -48,6 +50,7 @@ paths are available in the current tree:
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
 | Lua recipe repository path | Validate the first source recipe and prove its staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
+| Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path is the explicit test-fixture form:

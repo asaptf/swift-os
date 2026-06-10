@@ -12,10 +12,10 @@ file install, `pkg install FILE`, into a writable package-store disk, plus a
 P5c signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
 and `pkg install NAME`. Repository installs resolve dependencies by package
 name. Public hosted repositories, version-constraint solving, remove, upgrade,
-and rollback are staged work, not current behavior. The P6e ports workflow can
-also cross-build static AArch64 `lua` and `luac` binaries on the host and
-publish them into a signed local repository fixture; target-side `pkg install
-lua` smoke coverage is the next package slice, not current guest behavior.
+and rollback are staged work, not current behavior. The P6e/P6f ports workflow
+can also cross-build static AArch64 `lua` and `luac` binaries on the host,
+publish them into a signed local repository fixture, install `lua` by package
+name in QEMU, and run `lua -v` plus a small expression smoke.
 
 Use this guide with:
 
@@ -50,7 +50,8 @@ Use this guide with:
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
 | Target-side dependency resolution by package name | Implemented for signed repository catalogs |
 | Ports catalog and Lua recipe checks | Implemented with `ports/catalog.json`, `ports/lang/lua/Port.json`, and `build/swport` |
-| Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture`; host-side only today |
+| Lua cross-build repository fixture | Implemented as `make ports-lua-repo-fixture` |
+| Target-side `pkg install lua` from the signed Lua repository fixture | Implemented and proven by `make package-lua-repo-install-test` |
 | Target-side remove, upgrade, rollback, version-constraint solving | Not implemented yet |
 | Public hosted repositories and channel policy | Not implemented yet |
 | Streaming large-package downloads | Not implemented yet |
@@ -66,8 +67,9 @@ catalog.
 The current real source-port fixture is Lua. It is useful for package
 maintainers and release owners because it proves source fetch, checksum
 verification, static cross-build, `.swpkg` creation, and signed local repository
-publication for `lua` and `luac`. It is not yet a public user repository or a
-target-side `pkg install lua` acceptance path.
+publication for `lua` and `luac`. It is also the first real upstream package
+installed and executed from a signed repository fixture in QEMU. It is still a
+local fixture, not a public hosted user repository.
 
 ## Mental Model
 
@@ -417,10 +419,11 @@ The same test later points the guest at a bad-hash repository and expects
 
 ## Build The Lua Port Repository Fixture
 
-This is the current P6e maintainer-side source-port path. It cross-builds real
+This is the current P6e/P6f source-port path. It cross-builds real
 static AArch64 `lua` and `luac` binaries against the local newlib sysroot,
 packages them into `build/lua.swpkg`, and publishes a signed local repository
-fixture under `build/lua-repo-root`.
+fixture under `build/lua-repo-root`. The P6f QEMU smoke then installs `lua`
+from that repository and runs it inside SwiftOS.
 
 If the generated sysroot is missing, build it first:
 
@@ -453,10 +456,23 @@ build/pkgrepo verify \
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 ```
 
-This target is intentionally host-side today. The package manager can install
-by name from the `pkghello` signed repository fixture; a QEMU smoke that serves
-the Lua repository fixture and proves `pkg install lua && lua -v` is still
-roadmap work.
+Run the target-side Lua repository smoke:
+
+```sh
+make package-lua-repo-install-test
+```
+
+The guest-side flow exercised by the test is:
+
+```sh
+pkg repo set http://10.0.2.2:<port>/aarch64/current
+pkg update
+pkg search lua
+pkg info lua
+pkg install lua
+/usr/bin/lua -v
+/usr/bin/lua -e 'print(21 * 2)'
+```
 
 ## Package Fixture Anatomy
 
@@ -473,8 +489,9 @@ gate.
 | `build/pkgstore-pkghello.img` | Package-store bootstrap image |
 | `build/pkgrepo-root` | Signed static HTTP repository fixture |
 | `build/pkgrepo-root.pub` | Public key for repository catalog verification |
-| `build/lua.swpkg` | P6e Lua package artifact from the source-port workflow |
-| `build/lua-repo-root` | P6e signed local repository fixture for Lua |
+| `build/lua.swpkg` | P6e/P6f Lua package artifact from the source-port workflow |
+| `build/lua-repo-root` | P6e/P6f signed local repository fixture for Lua |
+| `build/pkgstore-lua-install.img` | Writable package-store image used by the Lua repository install smoke |
 
 Package files install under `/usr`. The current package verifier rejects package
 payload paths outside `/usr`.
@@ -520,6 +537,7 @@ Run the narrowest proof for the path you changed:
 | Signed static HTTP repository install | `make package-repo-install-test` |
 | Ports catalog and Lua recipe validation | `make ports-catalog-test`; `make ports-recipe-test` |
 | Lua cross-build repository fixture | `make ports-lua-repo-fixture` |
+| Target-side Lua repository install/run smoke | `make package-lua-repo-install-test` |
 | Full package tooling in the full gate | `make test` |
 
 The underlying host tests are:
@@ -536,6 +554,7 @@ The QEMU tests are:
 - [tests/pkg_store_boot_test.sh](../tests/pkg_store_boot_test.sh)
 - [tests/pkg_local_install_test.sh](../tests/pkg_local_install_test.sh)
 - [tests/pkg_repo_install_test.sh](../tests/pkg_repo_install_test.sh)
+- [tests/pkg_lua_repo_install_test.sh](../tests/pkg_lua_repo_install_test.sh)
 
 ## Troubleshooting
 
@@ -552,7 +571,7 @@ The QEMU tests are:
 | `pkg install NAME` says the package is not found | The catalog has not been updated in this boot, the URL is wrong, or the fixture lacks that package | Run `pkg update http://10.0.2.2:<port>/good/aarch64/current` in the acceptance fixture, or the matching `/aarch64/current` URL when serving `build/pkgrepo-root` directly |
 | `pkg: package SHA-256 mismatch` | The downloaded package blob does not match the signed catalog entry | Rebuild the repository fixture with `make package-repo-fixture` and rerun `make package-repo-install-test` |
 | `make ports-lua-repo-fixture` cannot find newlib | The generated cross sysroot is missing | Run `make newlib`, then rerun `make ports-lua-repo-fixture` |
-| `pkg install lua` fails in the guest | Lua is not yet part of the target-side signed repository acceptance path | Treat `make ports-lua-repo-fixture` as host-side proof until the Lua QEMU smoke lands |
+| `pkg install lua` fails in the guest | The Lua repository was not served, `pkg update` did not cache its catalog, or the writable Lua package-store image is missing | Rebuild with `make ports-lua-repo-fixture package-lua-install-fixture`, then run `make package-lua-repo-install-test` |
 | Package content disappears after reboot | The package image or writable package-store image was not attached to the new boot | Attach the same package payload, package-store, or writable install-store image each time |
 
 For general package diagnosis, see
@@ -565,14 +584,14 @@ Current limits that matter for package use:
 - Package content is read-only in the guest.
 - The current target-side write paths are local `.swpkg` install and P5c
   repository install into a writable package-store disk.
-- The Lua port fixture proves host-side source packaging and signed repository
-  publication; target-side Lua install/run coverage is not implemented yet.
+- The Lua port fixture proves source packaging, signed repository publication,
+  target-side repository install, and guest execution through
+  `make package-lua-repo-install-test`.
 - `.swpkg` hashes prove container integrity. P5c catalog signatures prove the
   repository metadata used to find and hash package blobs; package SHA-256
   checks prove the downloaded blob matches the catalog.
-- Public hosted channels, package-level publisher signatures, dependency
-  solving, target-side Lua repository smoke tests, remove, upgrade, and rollback
-  commands are future milestones.
+- Public hosted channels, package-level publisher signatures, version-constraint
+  solving, remove, upgrade, and rollback commands are future milestones.
 - Packages cannot grant themselves process capabilities. Authority remains a
   property of the process identity and launch path.
 - The base image remains immutable and wins over package content unless future
