@@ -313,21 +313,29 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   manifest matching executable and then begin moving a non-boot-critical driver
   out of the kernel.
 
-### C5c — device discovery manifest matching (DONE, 2026-06-10)
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
 
 - New `device_discover(index, info*)` syscall exposes read-only device registry
   metadata to the boot authority. It returns the same fixed `device_info` record
   used by device handles and reports `-2` when enumeration is exhausted.
-- `/bin/drvsvcdemo` now discovers `pseudo-input.0` by matching kind, bus, flags,
-  claim state, and manifest name before calling `device_claim`; it also proves
-  the current registry exhausts after the single pseudo device.
-- The boot path requires `C5c OK: device discovery manifest matched pseudo input`;
-  `make c5-device-discovery-test` is the focused direct-boot gate, with
-  `make c5-device-handle-test` kept as a compatible alias.
-- Non-goals: C5c still does not expose MMIO mapping, IRQ endpoints, DMA windows,
-  or real virtio-input ownership. The next C5 slice should attach real
-  device-tree/virtio discovery metadata and start replacing an in-kernel driver
-  path with a userland service.
+- The device registry now prefers a discovered `virtio-input.0` grant when the
+  QEMU virtio-mmio input transport is present. The registry records the
+  transport window, bus/kind metadata, and `DISCOVERED`/`NO_MMIO_GRANT` flags.
+  Headless direct boots without a keyboard device keep `pseudo-input.0` as a
+  fallback so the C5 supervisor/lifecycle path remains executable.
+- `/bin/drvsvcdemo` discovers the registry manifest first, claims the discovered
+  device name, validates the metadata, transfers the grant to `/bin/drvinputd`,
+  proves busy/reclaim behavior, and emits
+  `C5c OK: virtio-input device grant discovered and matched` when the focused
+  QEMU keyboard path is present. The broad headless boot still emits
+  `C5c OK: device discovery manifest matched pseudo input`.
+- `make c5-device-discovery-test` attaches QEMU `virtio-keyboard-device` and
+  runs the focused `-smp 4` acceptance gate; `make c5-device-handle-test`
+  remains a compatibility alias for the same C5 driver-service gate.
+- Non-goals: C5c still does not grant userland MMIO mappings, IRQ endpoints, or
+  DMA windows, and the in-kernel virtio-input path still owns the actual input
+  queue. The next C5 slice should decide the first real hardware authority
+  grant and driver replacement boundary.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

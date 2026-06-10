@@ -143,6 +143,9 @@ private struct DeviceGrant {
     var nameLen = 0
     var kind: UInt32 = 0
     var bus: UInt32 = 0
+    var mmioBase: UInt = 0
+    var mmioLen: UInt = 0
+    var irq: UInt32 = 0
     var flags: UInt32 = 0
     var generation: UInt32 = 0
     var ownerProc = -1
@@ -167,8 +170,11 @@ private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
 private let deviceInfoNameCap = 24
 private let deviceKindPseudoInput: UInt32 = 1
+private let deviceKindVirtioInput: UInt32 = 2
 private let deviceBusPseudo: UInt32 = 1
+private let deviceBusVirtioMmio: UInt32 = 2
 private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
+private let deviceFlagDiscovered: UInt32 = 1 << 1
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // C3: the subtree a process is confined to — object-scoped fs authority. 0 means
 // unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
@@ -550,21 +556,35 @@ private func mountPackageImages(_ root: Int, baseImage: Int) {
 }
 
 private func registerDevice(_ slot: Int, _ name: StaticString,
-                            kind: UInt32, bus: UInt32, flags: UInt32) {
+                            kind: UInt32, bus: UInt32,
+                            mmioBase: UInt = 0, mmioLen: UInt = 0,
+                            irq: UInt32 = 0, flags: UInt32) {
     if slot < 0 || slot >= maxDevices { return }
     devices[slot] = DeviceGrant(inUse: true, claimed: false,
                                 namePtr: UInt(bitPattern: name.utf8Start),
                                 nameLen: name.utf8CodeUnitCount,
-                                kind: kind, bus: bus, flags: flags,
+                                kind: kind, bus: bus,
+                                mmioBase: mmioBase, mmioLen: mmioLen,
+                                irq: irq, flags: flags,
                                 generation: 0, ownerProc: -1)
 }
 
 private func resetDeviceRegistry() {
     for i in 0..<maxDevices { devices[i] = DeviceGrant() }
-    registerDevice(0, "pseudo-input.0",
-                   kind: deviceKindPseudoInput,
-                   bus: deviceBusPseudo,
-                   flags: deviceFlagNoMmioGrant)
+    let input = virtioInputDiscoverGrant()
+    if input.found {
+        registerDevice(0, "virtio-input.0",
+                       kind: deviceKindVirtioInput,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: input.mmioBase,
+                       mmioLen: input.mmioLen,
+                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
+    } else {
+        registerDevice(0, "pseudo-input.0",
+                       kind: deviceKindPseudoInput,
+                       bus: deviceBusPseudo,
+                       flags: deviceFlagNoMmioGrant)
+    }
 }
 
 func vfsInit() {
@@ -1073,9 +1093,9 @@ private func writeDeviceInfoLocked(_ dev: Int, _ out: UnsafeMutablePointer<UInt8
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: devices[dev].kind, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: devices[dev].bus, toByteOffset: 4, as: UInt32.self)
-    raw.storeBytes(of: UInt64(0), toByteOffset: 8, as: UInt64.self)   // MMIO base: not granted in C5b
-    raw.storeBytes(of: UInt64(0), toByteOffset: 16, as: UInt64.self)  // MMIO length: not granted in C5b
-    raw.storeBytes(of: UInt32(0), toByteOffset: 24, as: UInt32.self)  // IRQ: not granted in C5b
+    raw.storeBytes(of: UInt64(devices[dev].mmioBase), toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: UInt64(devices[dev].mmioLen), toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: devices[dev].irq, toByteOffset: 24, as: UInt32.self)
     raw.storeBytes(of: devices[dev].flags, toByteOffset: 28, as: UInt32.self)
     raw.storeBytes(of: devices[dev].generation, toByteOffset: 32, as: UInt32.self)
     raw.storeBytes(of: devices[dev].claimed ? UInt32(1) : UInt32(0),

@@ -41,6 +41,7 @@ if [[ -f "$DTB" ]]; then
 fi
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase
+  -device virtio-keyboard-device
   -kernel "$KERNEL")
 
 "${qemu_args[@]}" >"$LOG" 2>&1 &
@@ -55,14 +56,17 @@ drvsvc: generation 2 event
 drvsvc: C5c device manifest matched
 drvsvc: C5c discovery exhausted
 drvsvc: C5b device grant claimed
+drvsvc: C5c virtio-input grant matched
 drvsvc: C5b device grant moved
 drvinputd: C5b device grant accepted
+drvinputd: C5c virtio-input grant accepted
 drvsvc: C5b device busy while service owns grant
 drvsvc: generation 2 stopped
 drvsvc: C5b device grant reclaimed
+drvsvc: C5c virtio-input grant reclaimed
 C5a OK: restartable driver service recovered over IPC
 C5b OK: opaque device handle transferred and released
-C5c OK: device discovery manifest matched pseudo input
+C5c OK: virtio-input device grant discovered and matched
 C5a driver service demo exited, code 0}"
 
 FORBIDS="${FORBIDS:-panic:

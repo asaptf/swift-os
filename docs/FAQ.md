@@ -307,17 +307,19 @@ See [SERVICE_GUIDE.md](SERVICE_GUIDE.md) and
 
 ### Does SwiftOS have restartable driver services yet?
 
-The C5a/C5b path provides the first checked-in restartable driver-service and
-opaque device-handle smoke. `/bin/drvsvcdemo` supervises the pseudo driver
-service `/bin/drvinputd`, exchanges endpoint IPC, transfers a pseudo-input
-device grant, restarts the service, and verifies recovery:
+C5a has the first checked-in restartable driver-service smoke, C5b adds an
+opaque transferable device handle, and C5c matches that handle against a
+discovered QEMU virtio-input transport when one is attached. `/bin/drvsvcdemo`
+supervises `/bin/drvinputd`, exchanges endpoint IPC, restarts the service, and
+verifies recovery:
 
 ```sh
-make c5-device-handle-test
+make c5-device-discovery-test
 ```
 
-This is not a real device handoff yet. MMIO, IRQ, DMA, and virtio-input
-ownership remain roadmap work.
+This is not a real hardware handoff yet. C5c exposes manifest metadata for the
+discovered device, but MMIO, IRQ, DMA, and virtio-input queue ownership remain
+roadmap work.
 
 ### Why can only one of `httpd` and `llmd` run?
 

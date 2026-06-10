@@ -425,11 +425,12 @@ if rc >= 0 {
 
 ## Device Grants
 
-C5b adds an opaque device-handle scaffold for restartable driver services. C5c
-adds read-only discovery so a supervisor can match a device manifest before
-claiming it. The current registry has one pseudo device, `pseudo-input.0`, used
-by `/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over
-IPC. It is not a real MMIO, IRQ, or DMA grant yet.
+C5b added an opaque device-handle scaffold for restartable driver services, and
+C5c connects that scaffold to real virtio-input discovery when QEMU exposes a
+`virtio-keyboard-device`. The focused C5c gate claims `virtio-input.0`, checks
+its fixed manifest metadata, transfers the handle to `/bin/drvinputd`, and
+reclaims it after service exit. Headless boots without an input device keep the
+`pseudo-input.0` fallback so the supervisor path remains testable.
 
 ```c
 struct swiftos_device_info {
@@ -454,26 +455,33 @@ Contract:
 - `device_discover(index, &info)` enumerates the registry by stable manifest
   ordinal. It writes the same 64-byte record as `device_info`; `claimed` reports
   whether a live grant owns the device. An out-of-range ordinal returns `-2`.
-- `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
-  `getattr`/`transfer` authority, or a negative error.
+- `device_claim("virtio-input.0", &info)` returns a discovered virtio-mmio input
+  device fd when the platform exposes one. `kind` is
+  `SWIFTOS_DEVICE_KIND_VIRTIO_INPUT`, `bus` is
+  `SWIFTOS_DEVICE_BUS_VIRTIO_MMIO`, `mmio_base`/`mmio_len` identify the transport
+  window, and `SWIFTOS_DEVICE_FLAG_DISCOVERED` is set.
+- `device_claim("pseudo-input.0", &info)` remains the headless fallback when no
+  real input device is discovered.
 - A second claim while a live handle owns the grant returns `-16`.
 - Moving the handle through `ipc_send` invalidates the sender's source fd.
 - Closing the final fd for the device releases the registry claim.
-- `device_info` fills the fixed 64-byte metadata record. `mmio_base`,
-  `mmio_len`, and `irq` are zero in C5b because hardware access is deliberately
-  not granted.
+- `device_info` fills the fixed 64-byte metadata record. C5c exposes discovery
+  metadata only: device handles still have `getattr + transfer` rights and
+  `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT`, so there is no userland MMIO map, IRQ
+  endpoint, or DMA window yet.
 
 Supervisor-side handoff pattern:
 
 ```c
 struct swiftos_device_info info;
-int dev_fd = device_claim("pseudo-input.0", &info);
+if (device_discover(0, &info) != 0) {
+    return -2;
+}
+int dev_fd = device_claim(info.name, &info);
 if (dev_fd < 0) {
     return dev_fd;
 }
-if (info.kind != SWIFTOS_DEVICE_KIND_PSEUDO_INPUT ||
-    info.bus != SWIFTOS_DEVICE_BUS_PSEUDO ||
-    (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) {
+if ((info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) {
     close(dev_fd);
     return -22;
 }
@@ -499,7 +507,7 @@ long n = ipc_recv(command_endpoint, cmd, sizeof(cmd), &received_fd);
 if (n == 4 && received_fd >= 0) {
     struct swiftos_device_info info;
     if (device_info(received_fd, &info) == 0) {
-        // In C5b this is metadata-only authority, not MMIO/IRQ/DMA access.
+        // In C5c this is metadata-only authority, not MMIO/IRQ/DMA access.
         close(received_fd);
     }
 }
