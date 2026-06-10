@@ -22,6 +22,37 @@ The boot flow is:
 
 There is no graphical desktop shell in the current product profile.
 
+## Choose A Console Task
+
+After login, start from the task you need to perform. The seeded `root` account
+can exercise every current workflow; `user` and `guest` are useful for
+capability checks.
+
+| Task | Run first | Then use |
+| --- | --- | --- |
+| Confirm the boot is healthy | `id`, `cat /etc/motd`, `ps`, `top -b -n 2 -d 1` | [Process Inspection](#process-inspection), [Observability Guide](OBSERVABILITY_GUIDE.md) |
+| Inspect the immutable base image | `ls -l /`, `ls -l /bin`, `cat /readme.txt` | [Filesystem](#filesystem), [Base Image](BASE_IMAGE.md) |
+| Use writable scratch space | `mkdir /tmp/work`, `echo ok >/tmp/work/check.txt`, `cat /tmp/work/check.txt` | [Filesystem](#filesystem) |
+| Compare account authority | `id`, then retry a file or network command under another login | [Accounts And Capabilities](#accounts-and-capabilities), [Security Guide](SECURITY_GUIDE.md) |
+| Serve static files | `/bin/httpd` after booting with TCP 8080 forwarding | [HTTP Server](#http-server), [Service Guide](SERVICE_GUIDE.md) |
+| Serve local AI completions | `/bin/llmd` after booting with TCP 8080 forwarding | [AI Inference Server](#ai-inference-server), [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
+| Test TCP or UDP networking | `/bin/tcpecho`, `/bin/udpecho`, `/bin/tcpget`, or `/bin/nslookup` | [Networking](#networking), [Networking Guide](NETWORKING_GUIDE.md) |
+| Run runtime smoke programs | `/bin/threadsdemo` or `/bin/mmapdemo` | [Runtime Smoke Programs](#runtime-smoke-programs) |
+| Validate update commands | `swos-update`, `swos-activate`, `swos-confirm`, or the `swos-k*` commands only in the matching profile | [Update Commands](#update-commands), [Update And Rollback Guide](UPDATE_GUIDE.md) |
+
+First five guest commands for a new session:
+
+```sh
+id
+cat /etc/motd
+ls -l /
+echo hello >/tmp/hello.txt
+cat /tmp/hello.txt
+```
+
+Those commands prove the login context, base-image read path, directory
+metadata, tmpfs write path, and tmpfs readback without requiring networking.
+
 ## Accounts And Capabilities
 
 SwiftOS uses principals, sessions, and capability masks. The seeded identity
