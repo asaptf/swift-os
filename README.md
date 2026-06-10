@@ -103,8 +103,8 @@ What exists today, in the order it was built:
   images, signed static repository catalogs, and target-side `pkg install NAME`
   are covered by executable fixtures. The current ports path also cross-builds
   static AArch64 Lua and zlib on the host, publishes them into one signed seed
-  repository, and emits a static-hostable repository root that can be served to
-  QEMU.
+  repository, emits a static-hostable repository root that can be served to
+  QEMU, and proves install from a DNS-resolved hosted-style repository URL.
 
 ## Philosophy
 
@@ -148,7 +148,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   limits, and acceptance coverage for the current base image and package
   overlay.
 - [Host Tool Reference](docs/HOST_TOOL_REFERENCE.md): host-side package,
-  repository, ports catalog, static-host, base-image, and model-bundle tools.
+  repository, ports catalog, static-host, hosted URL, base-image, and
+  model-bundle tools.
 - [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
@@ -186,8 +187,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Application Cookbook](docs/APPLICATION_COOKBOOK.md): copy-paste recipes for
   SwiftOS commands, C utilities, package overlays, and tests.
 - [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
-  troubleshoot `.swpkg`, repository, package-store, ports, and static-host
-  artifacts.
+  troubleshoot `.swpkg`, repository, package-store, ports, static-host, and
+  hosted URL artifacts.
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
   recipe, Lua/zlib cross-build fixtures, CI smoke-test, and repository publishing
   workflow for maintainers.

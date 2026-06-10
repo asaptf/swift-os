@@ -21,7 +21,7 @@ format details.
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
 | Administer accounts, capabilities, base configuration, packages, and services | [Administration Guide](ADMINISTRATION_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
-| Look up host-side package, repository, ports, static-host, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
+| Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
 | Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
@@ -46,7 +46,7 @@ format details.
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Build, inspect, boot, test, and troubleshoot package, repository, ports, and static-host artifacts | [Package Guide](PACKAGE_GUIDE.md) |
 | Understand package format and package-manager direction | [Package Management](PACKAGE_MANAGEMENT.md) |
-| Design package recipes, Lua/zlib cross-build fixtures, CI smoke tests, and repository publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
+| Design package recipes, Lua/zlib cross-build fixtures, CI smoke tests, static-host, and hosted URL publishing | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) |
 | Read the `.swpkg` package container format | [SWPKG Format](SWPKG_FORMAT.md) |
 | Read the package-store image and activation-record format | [Package Store Format](PKGSTORE_FORMAT.md) |
 | Read the signed static HTTP package repository format | [Static Package Repository](PKGREPO_FORMAT.md) |
@@ -97,8 +97,8 @@ native Swift userland, serve files from a read-only base image, allocate tmpfs
 scratch space, run a small TCP/IP stack, and execute user programs through its
 own POSIX-like syscall surface. Package fixtures cover local `.swpkg`
 installation, signed static repository installation, Lua/zlib source-port
-repository fixtures, and a static-hostable repository layout that can be served
-to QEMU.
+repository fixtures, a static-hostable repository layout, and a DNS-resolved
+hosted-style repository URL path that can be served to QEMU.
 
 Current product-shaping work is tracked in
 [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md). The most important

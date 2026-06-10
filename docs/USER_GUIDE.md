@@ -388,9 +388,11 @@ These are current implementation boundaries, not necessarily design goals:
   P7 seed workflow publishes Lua and zlib into one signed local repository,
   installs both by package name, and runs Lua plus `minigzip` smoke commands.
   The P8 static-host workflow publishes that seed into a deployable web root and
-  proves the same install path from the hosted layout. Remove, upgrade,
-  rollback, public hosted channels, version-constraint solving, and
-  large-package streaming downloads are not implemented yet.
+  proves the same install path from the hosted layout. The P9 hosted-URL smoke
+  proves that `/bin/pkg` can install from a DNS-resolved HTTP repository
+  hostname. Remove, upgrade, rollback, public production channels,
+  version-constraint solving, and large-package streaming downloads are not
+  implemented yet.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

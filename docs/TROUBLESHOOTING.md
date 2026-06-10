@@ -469,6 +469,8 @@ For the source-built Lua/zlib static-host path, use:
 ```sh
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The tested guest flow is:
@@ -499,9 +501,11 @@ static-host-ok
 If this path fails, inspect `build/ports-static-host-root`, verify that
 `hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS` exist, and rerun
 `make ports-static-host-publish`. The guest still needs virtio-net and a
-default repository URL pointing at the served `/aarch64/current` path. Public
-hosted package channels are not implemented yet; this is a local static-host
-fixture.
+default repository URL pointing at the served `/aarch64/current` path. If the
+DNS-hosted smoke fails, confirm that the fixture DNS server started, the URL is
+`http://host/aarch64/current`, and `/bin/pkg` did not print `pkg: bad URL`.
+Public production package channels are not implemented yet; these are local
+static-host and hosted-URL fixtures.
 
 ### `swpkg verify` Fails
 
