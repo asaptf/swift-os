@@ -12,6 +12,8 @@ Use it with:
 - [API Reference](API_REFERENCE.md) for file-backed `mmap`, sockets, and `poll`.
 - [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) for interpreting QEMU
   inference metrics and sizing evidence.
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) for AI hosting candidate artifacts,
+  validation gates, and handoff evidence.
 - [Support Guide](SUPPORT_GUIDE.md) for failure reports and support bundles.
 
 ## What Exists Today

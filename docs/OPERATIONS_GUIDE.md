@@ -11,6 +11,8 @@ Use this guide with:
 - [Getting Started](GETTING_STARTED.md) for the first boot.
 - [Installation Guide](INSTALLATION_GUIDE.md) for choosing and verifying direct,
   UEFI, graphical, and VirtualBox boot profiles.
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) for preparing validated deployment
+  candidates and handoff evidence.
 - [Update And Rollback Guide](UPDATE_GUIDE.md) for rebuilding immutable
   artifacts, validating candidates, and returning to a known-good image.
 - [Administration Guide](ADMINISTRATION_GUIDE.md) for account, capability,

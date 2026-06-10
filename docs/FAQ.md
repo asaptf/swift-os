@@ -91,6 +91,14 @@ commit available for rollback.
 
 See [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
 
+### How do I prepare a deployment candidate?
+
+Choose a profile, rebuild the immutable artifacts, record hashes and sizes, run
+the focused validation gate, save boot or service evidence, and keep a previous
+artifact set for rollback.
+
+See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+
 ### Where does writable data go?
 
 Current writable guest storage is `/tmp`, backed by RAM. It is lost on reboot.

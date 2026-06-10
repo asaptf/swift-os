@@ -15,6 +15,7 @@ format details.
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
 | Learn the core SwiftOS concepts and terminology | [Concepts](CONCEPTS.md) |
 | Choose and verify a direct, UEFI, graphical, or VirtualBox boot profile | [Installation Guide](INSTALLATION_GUIDE.md) |
+| Prepare, validate, hand off, and roll back deployment candidates | [Deployment Guide](DEPLOYMENT_GUIDE.md) |
 | Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Rebuild, update, validate, and roll back immutable SwiftOS artifacts | [Update And Rollback Guide](UPDATE_GUIDE.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
@@ -68,15 +69,18 @@ document, but the headers remain the build-time contract.
 
 Installation and boot profile procedures live in
 [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), administrative procedures live
-in [ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md), operational procedures
-live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), update and rollback
-runbooks live in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking runbooks live in
-[NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle rules live in
-[SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability procedures live in
-[OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them aligned with the
-acceptance tests under `tests/`; a command in the installation, operations,
-networking, service, or observability guide should either be a normal manual
-workflow or have a nearby test that proves the same path.
+[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md), deployment candidate runbooks
+live in [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), administrative procedures
+live in [ADMINISTRATION_GUIDE.md](ADMINISTRATION_GUIDE.md), operational
+procedures live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md), update and
+rollback runbooks live in [UPDATE_GUIDE.md](UPDATE_GUIDE.md), networking
+runbooks live in [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md), service lifecycle
+rules live in [SERVICE_GUIDE.md](SERVICE_GUIDE.md), and observability
+procedures live in [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md). Keep them
+aligned with the acceptance tests under `tests/`; a command in the installation,
+deployment, operations, networking, service, or observability guide should
+either be a normal manual workflow or have a nearby test that proves the same
+path.
 
 ## Product State
 

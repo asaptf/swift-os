@@ -127,6 +127,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   identity, packages, services, testing, and roadmap boundaries.
 - [Installation Guide](docs/INSTALLATION_GUIDE.md): choose and verify direct
   QEMU, UEFI/GPT, graphical smoke, and VirtualBox ARM boot profiles.
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md): prepare, validate, hand off,
+  and roll back application, AI, package, and appliance deployment candidates.
 - [Release Notes](docs/RELEASE_NOTES.md): shipped features, verification gates,
   known limits, and upgrade notes for the current checked-in snapshot.
 - [Update And Rollback Guide](docs/UPDATE_GUIDE.md): rebuild immutable

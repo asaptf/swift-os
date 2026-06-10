@@ -14,6 +14,8 @@ Use this guide with:
 
 - [Installation Guide](INSTALLATION_GUIDE.md) for boot profiles and artifact
   setup.
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) for candidate manifests, validation
+  gates, handoff bundles, and rollback evidence.
 - [Operations Guide](OPERATIONS_GUIDE.md) for day-to-day runbooks.
 - [Release Notes](RELEASE_NOTES.md) for shipped features and known limits.
 - [Package Guide](PACKAGE_GUIDE.md) for `.swpkg`, package payload, and

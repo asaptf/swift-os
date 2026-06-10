@@ -15,6 +15,8 @@ Use this guide when you need to choose the right artifact:
 For the shortest first login path, see [GETTING_STARTED.md](GETTING_STARTED.md).
 For exact variables and artifacts, see
 [CONFIGURATION_REFERENCE.md](CONFIGURATION_REFERENCE.md).
+For deployment candidate assembly, validation evidence, handoff, and rollback,
+see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ## Supported Install Targets
 
