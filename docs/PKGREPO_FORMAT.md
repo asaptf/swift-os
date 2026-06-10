@@ -33,7 +33,7 @@ build/ports-static-host-root/
 
 Build it with `make ports-static-host-publish`. Serve that directory with
 nginx, object storage, GitHub Pages, or a local `python3 -m http.server`; the
-guest repository URL remains `<host>/aarch64/current`.
+guest repository URL is `http://<host>/aarch64/current`.
 
 ## Signed Catalog
 
@@ -90,6 +90,7 @@ pkg repo set http://10.0.2.2:<port>/aarch64/current
 pkg update
 pkg repo show
 pkg update http://10.0.2.2:<port>/aarch64/current
+pkg repo set http://pkg.test.swos:<port>/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
@@ -103,6 +104,13 @@ rejects expired catalogs, rejects package entries for the wrong
 catalog package, then caches the catalog and URL in `/tmp`. If no URL is passed,
 `pkg update` uses `/tmp/pkg-repo-url`, falling back to `/etc/pkg/repo-url` when a
 base image or deployment provides one.
+
+Repository URLs currently use `http://`. The host part can be a numeric IPv4
+address or a DNS hostname. Hostname resolution uses the kernel resolver; when a
+deployment or QEMU test needs an explicit DNS server, place `IP[:port]` in
+`/etc/pkg/dns-server` through the base-image `PKG_DEFAULT_DNS_SERVER` make
+variable. Target-side HTTPS transport is future work; repository authenticity
+comes from signed catalogs and content hashes.
 
 `pkg install NAME` loads the verified cached catalog, resolves dependencies by
 name, downloads each content-addressed `.swpkg` listed by `url`, verifies
@@ -134,6 +142,12 @@ build/pkgrepo inspect build/pkgrepo-root/aarch64/current/catalog.signed
 - `tests/pkg_static_host_repo_install_test.sh` serves
   `build/ports-static-host-root`, verifies the hosted sidecar manifest and
   checksums, then boots QEMU and installs Lua and zlib from `/aarch64/current`.
+- `tests/pkg_hosted_url_verify_test.sh` serves `build/ports-static-host-root`
+  and proves the host-side hosted URL verifier fetches and verifies the served
+  root.
+- `tests/pkg_static_host_dns_repo_install_test.sh` serves the same root through
+  a hostname URL, answers DNS inside the QEMU user-networking path, and proves
+  `/bin/pkg` installs Lua and zlib from that DNS-resolved repository URL.
 
 ## Known Limits
 

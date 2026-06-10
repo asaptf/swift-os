@@ -28,8 +28,10 @@ prove the package model locally:
 | P6f Lua repository install smoke | QEMU installs real Lua from the signed local repository fixture and runs `lua -v` plus a small expression | `make package-lua-repo-install-test` |
 | Ports seed repository fixture | Lua and zlib publish into one signed local repository; SwiftOS boots with a default repo URL and installs both with `pkg update`/`pkg install` | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | The ports seed repository is copied into a deployable web root with a sidecar manifest, public key, and SHA-256 manifest suitable for nginx, object storage, or GitHub Pages | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
+| Hosted URL verifier | A deployed static-host root can be fetched and checked from the host, including `hosted-repo.json`, `SHA256SUMS`, package hashes, and catalog signature | `make ports-hosted-url-verify`, `make ports-hosted-url-verify-test` |
+| DNS-resolved target repository URL | `/bin/pkg` accepts HTTP repository URLs with DNS hostnames and installs Lua/zlib from a hosted-style URL in QEMU | `make package-static-host-dns-repo-install-test` |
 | `swport` ports tool | Catalog validation/list/inspect plus `recipe validate`, `recipe manifest`, checksum-verified `recipe fetch`, staged-root `recipe package`, and signed `recipe repo-fixture`; generalized build/test/QEMU smoke commands remain planned | `make swport` |
-| Public hosted repository | External deployment remains planned; production hosting, channels, key ceremony, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
+| Public production repository | External deployment remains planned; production hosting, channels, key ceremony, target-side HTTPS, and broad package publication are roadmap work | `PACKAGE_MANAGEMENT.md` tracks target-side milestones |
 
 The automation below is the intended maintainer and CI layer around the
 implemented `.swpkg`, package-store, local guest install, P5c signed static
@@ -79,8 +81,10 @@ make package-lua-repo-install-test
 make ports-zlib-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
+make ports-hosted-url-verify-test
 make package-ports-seed-repo-install-test
 make package-static-host-repo-install-test
+make package-static-host-dns-repo-install-test
 ```
 
 Inspect the signed repository fixture:
@@ -124,6 +128,8 @@ make package-lua-repo-install-test
 build/pkgrepo inspect build/ports-seed-repo-root/aarch64/current/catalog.signed
 make package-ports-seed-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 For a new experimental port before full `swport` build/test commands exist,
@@ -810,18 +816,31 @@ python3 -m http.server --directory build/ports-static-host-root 8000
 That root contains the exact `pkg` repository under `aarch64/current`, the
 repository public key as `repo-root.pub`, a `hosted-repo.json` sidecar for
 publish tooling and mirrors, and a `SHA256SUMS` file for host-side byte checks.
-If the root is uploaded to `https://pkg.swift-os.org/`, the guest repository URL
-is:
+If the root is uploaded to `https://pkg.swift-os.org/`, browsers and host-side
+publish checks can use HTTPS. The current bootstrap `/bin/pkg` transport is
+HTTP-only, so the guest repository URL is:
 
 ```text
-https://pkg.swift-os.org/aarch64/current
+http://pkg.swift-os.org/aarch64/current
 ```
 
-The local acceptance gate serves this publish root over HTTP and proves that
-SwiftOS can install Lua and zlib from it:
+The host-side verifier can check either the web root URL or the
+`/aarch64/current` URL. It fetches `hosted-repo.json`, `SHA256SUMS`, the signed
+catalog, and every listed package blob, then verifies both SHA-256 entries and
+the catalog signature:
+
+```sh
+make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://pkg.swift-os.org
+```
+
+The local acceptance gates serve this publish root over HTTP and prove that
+SwiftOS can install Lua and zlib from both numeric and DNS-resolved repository
+URLs:
 
 ```sh
 make package-static-host-repo-install-test
+make package-static-host-dns-repo-install-test
+make ports-hosted-url-verify-test
 ```
 
 `catalog.json` should be canonical JSON:
