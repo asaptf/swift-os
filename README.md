@@ -86,7 +86,8 @@ What exists today, in the order it was built:
   `listen`/`accept`/`connect`/`resolve`) are exposed to EL0. Userland tools:
   `/bin/udpecho`, `/bin/tcpecho`, `/bin/tcpget`, `/bin/nslookup`, `/bin/httpd`
   (a concurrent poll()-driven static-file HTTP server with MIME types and
-  directory listings). A ChaCha20-Poly1305 AEAD module (`kernel/crypto/`) is
+  directory listings), and `/bin/llmd` (TinyStories inference over HTTP). A
+  ChaCha20-Poly1305 AEAD module (`kernel/crypto/`) is
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 

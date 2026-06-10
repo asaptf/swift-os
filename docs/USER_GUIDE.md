@@ -141,6 +141,7 @@ Common native Swift tools:
 | `head`, `wc`, `touch`, `date` | Core utility coverage |
 | `calc` | Interactive expression REPL over Swift heap and ARC |
 | `kv` | In-memory key-value REPL |
+| `llm`, `llmd` | Native Swift TinyStories inference demo and HTTP serving daemon |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
 | `threadsdemo`, `mmapdemo` | Runtime and VM demos |
 
@@ -228,6 +229,27 @@ curl http://127.0.0.1:8080/hello.txt
 ```
 
 `httpd` is poll-driven and can service multiple live connections.
+
+### AI Inference Server
+
+Start the model-serving daemon:
+
+```sh
+/bin/llmd
+```
+
+It binds TCP port 8080 and serves the TinyStories model from `/models`.
+
+Host commands with TCP host forwarding:
+
+```sh
+curl http://127.0.0.1:8080/health
+curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl http://127.0.0.1:8080/metrics
+```
+
+`llmd` and `httpd` both bind guest TCP port 8080, so run one of them at a time.
+The daemon uses the same `capNet` requirement as the other socket tools.
 
 ### TCP Echo
 

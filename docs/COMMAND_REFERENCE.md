@@ -479,6 +479,50 @@ Notes:
 Acceptance coverage: `tests/httpd_test.sh`,
 `tests/net_zero_copy_throughput_test.sh`.
 
+### `llmd`
+
+Serve TinyStories completions over HTTP from the native Embedded Swift inference
+engine.
+
+```text
+llmd
+```
+
+Examples in the guest:
+
+```sh
+/bin/llmd
+```
+
+Examples on the host, when TCP port 8080 is forwarded:
+
+```sh
+curl http://127.0.0.1:8080/health
+curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl http://127.0.0.1:8080/metrics
+```
+
+Endpoints:
+
+| Endpoint | Method | Response |
+| --- | --- | --- |
+| `/health` | `GET` | Liveness plus model shape |
+| `/completion` | `POST` | Generated text for the request body prompt |
+| `/metrics` | `GET` | `requests`, `tokens_total`, `last_ttft_ms`, `last_tok_s` |
+
+Notes:
+
+- `llmd` listens on TCP port 8080, the same guest port used by `httpd`; run one
+  server at a time.
+- The daemon reads `/models/stories260K.bin` and `/models/tok512.bin`.
+- Model weights are mapped from the read-only base image with file-backed mmap.
+- The default generation length is 64 tokens.
+- Generation runs inline on the current single-core system. Other connections
+  can queue while one request is generating.
+- Socket creation still requires `capNet`.
+
+Acceptance coverage: `tests/llm_serve_test.sh`.
+
 ### `tcpecho`
 
 Run a one-shot TCP echo server.
@@ -704,6 +748,8 @@ Notes:
   the demo in a fresh checkout.
 
 Acceptance coverage: `tests/llm_run_test.sh`.
+
+See also `llmd` for serving the same native Swift inference engine over TCP.
 
 ## Runtime And Diagnostic Commands
 

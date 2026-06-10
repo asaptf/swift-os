@@ -321,7 +321,53 @@ Equivalent automated check:
 ./tests/llm_run_test.sh
 ```
 
-## 11. Exercise The Swift REPL Demos
+## 11. Serve LLM Completions Over TCP
+
+Host:
+
+```sh
+make model
+make base-image
+
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=build/virt.dtb,addr=0x4FF00000,force-raw=on \
+  -drive file=build/base.img,format=raw,if=none,id=swosbase,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:8080 \
+  -device virtio-net-device,netdev=n0 \
+  -kernel build/kernel.elf
+```
+
+Guest:
+
+```sh
+/bin/llmd
+```
+
+Host:
+
+```sh
+curl http://127.0.0.1:8080/health
+curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl http://127.0.0.1:8080/metrics
+```
+
+Expected signals:
+
+- `/health` starts with `ok stories260K`.
+- `/completion` returns generated story text.
+- `/metrics` includes `requests`, `tokens_total`, `last_ttft_ms`, and
+  `last_tok_s`.
+- The serial log includes `llmd: served`.
+
+Equivalent automated check:
+
+```sh
+./tests/llm_serve_test.sh
+```
+
+## 12. Exercise The Swift REPL Demos
 
 Guest:
 
@@ -357,7 +403,7 @@ Automated checks:
 ./tests/kv_test.sh
 ```
 
-## 12. Validate UEFI Boot
+## 13. Validate UEFI Boot
 
 Host:
 
@@ -376,7 +422,7 @@ SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 Use this path before claiming firmware, disk-image, or VirtualBox-related
 changes are healthy.
 
-## 13. Run The Full Gate
+## 14. Run The Full Gate
 
 Host:
 

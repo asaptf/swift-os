@@ -191,12 +191,15 @@ Guest defaults:
 | Guest service | Port | Host access with the profile above |
 | --- | ---: | --- |
 | `/bin/httpd` | TCP 8080 | `http://127.0.0.1:8080/` |
+| `/bin/llmd` | TCP 8080 | `http://127.0.0.1:8080/health` |
 | `/bin/tcpecho` | TCP 5555 | `nc 127.0.0.1 5555` |
 | `/bin/udpecho` | UDP 5555 | `nc -u 127.0.0.1 5555` |
 | `/bin/tcpget` outbound default | TCP `10.0.2.2:5555` | Host listener on TCP 5555 |
 | `/bin/nslookup` default resolver | UDP `10.0.2.3:53` | QEMU slirp DNS |
 
 The seeded `root` principal has `capNet`; `user` and `guest` do not.
+`/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080, so run one at a
+time or use separate boots.
 
 ## UEFI And Graphical Profiles
 
@@ -327,6 +330,7 @@ Most acceptance tests accept a small set of environment overrides.
 | `SMP_S1_PREFLIGHT_CPUS` | SMP S1 preflight | Space-separated CPU counts to validate |
 | `UEFI_BOOT` | UEFI boot test | Select `disk` or `fat` boot mode |
 | `HTTPD_HOST_PORT` | HTTP server test | Override host-forwarded HTTP port |
+| `LLMD_HOST_PORT` | LLM serving test | Override host-forwarded LLM server port |
 | `NET_ZC_HOST_PORT` | HTTP throughput test | Override host-forwarded throughput port |
 | `TCP_CONNECT_HOST_PORT` | TCP active-open test | Override host listener port |
 | `C4B_SOCK_HOST_PORT` | IPC socket-transfer test | Override host UDP port |
@@ -341,6 +345,7 @@ Examples:
 QEMU=/opt/qemu/bin/qemu-system-aarch64 ./tests/boot_test.sh
 TIMEOUT=180 ./tests/smp_boot_test.sh
 HTTPD_HOST_PORT=18080 ./tests/httpd_test.sh
+LLMD_HOST_PORT=18081 ./tests/llm_serve_test.sh
 SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 ```
 
@@ -408,6 +413,7 @@ After changing socket behavior, run the relevant acceptance tests:
 ./tests/udp_echo_test.sh
 ./tests/tcp_connect_test.sh
 ./tests/dns_test.sh
+./tests/llm_serve_test.sh
 ```
 
 ### Change Package Fixture Contents
@@ -434,6 +440,7 @@ make package-overlay-test
 | Base filesystem content | `make base-image`, `./tests/vfs_disk_test.sh`, command-specific tests |
 | Login or identity store | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network profile | Relevant socket test plus `./tests/virtio_net_test.sh` |
+| LLM serving profile | `make base-image`, `./tests/llm_serve_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
 | SMP boot parameters | `make s1-test` or the milestone-specific SMP target |

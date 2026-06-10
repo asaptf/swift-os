@@ -49,7 +49,7 @@ change installed software. Use `/tmp` only for runtime scratch.
 | `build/BOOTAA64.EFI` | `make uefi` | AArch64 UEFI loader |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample host package artifact |
 | `build/pkghello-payload.img` | `make package-fixture` | Read-only package payload overlay |
-| `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` demo inputs |
+| `models/stories260K.bin`, `models/tok512.bin` | `make model` or `make base-image` | `/bin/llm` and `/bin/llmd` model inputs |
 
 `make clean` removes build products but not downloaded toolchains. `make
 newlib`, `make busybox`, and `make model` are slower setup paths and are usually
@@ -306,9 +306,15 @@ explicit DNS responder address and port.
 
 ## AI Hosting Demo
 
-`/bin/llm` is the current native Swift CPU inference demo. It loads the
-TinyStories `stories260K` checkpoint and tokenizer from `/models`, runs in EL0,
-and prints generated tokens plus timing.
+SwiftOS has two native Swift TinyStories inference entry points:
+
+| Command | Use |
+| --- | --- |
+| `/bin/llm` | Run one local completion and print tokens plus timing on the serial console |
+| `/bin/llmd` | Serve completions over TCP with health and metrics endpoints |
+
+Both load the `stories260K` checkpoint and tokenizer from `/models` inside the
+read-only base image.
 
 Prepare model artifacts:
 
@@ -316,6 +322,8 @@ Prepare model artifacts:
 make model
 make base-image
 ```
+
+### Local Completion
 
 Inside the guest:
 
@@ -326,6 +334,31 @@ Inside the guest:
 
 Under QEMU TCG this is intentionally slow compared with native execution. Treat
 it as a correctness and isolation demo, not a performance target.
+
+### TCP Model Serving
+
+Boot with virtio-net and host TCP 8080 forwarded to guest TCP 8080. Inside the
+guest:
+
+```sh
+/bin/llmd
+```
+
+From the host:
+
+```sh
+curl http://127.0.0.1:8080/health
+curl -X POST --data "Once upon a time" http://127.0.0.1:8080/completion
+curl http://127.0.0.1:8080/metrics
+```
+
+`/bin/llmd` reports `llmd: serving on 8080` when it is ready. `POST
+/completion` uses the request body as the prompt and streams generated text
+until the HTTP/1.0 connection closes. `/metrics` reports request count, total
+generated tokens, last time-to-first-token in milliseconds, and last token rate.
+
+`/bin/llmd` and `/bin/httpd` both bind guest TCP port 8080, so run one of them
+at a time.
 
 ## Logging And Evidence
 
@@ -344,6 +377,8 @@ Useful markers:
 | `swift-os login:` | `console-login` is running |
 | `Welcome to swift-os, root` | Authentication succeeded |
 | `httpd: listening on 8080` | HTTP server bound and entered its event loop |
+| `llmd: serving on 8080` | Inference server bound and entered its event loop |
+| `llmd: served` | Inference server completed a request and logged serving metrics |
 | `tcpecho: listening on 5555` | TCP echo server is waiting in accept |
 | `udpecho: listening on 5555` | UDP echo server bound |
 | `pkghello: hello from package overlay` | Package payload overlay was visible and executable |
@@ -375,6 +410,7 @@ Run the narrowest test that proves the path you touched:
 | Swift coreutils | `./tests/swift_coreutils_test.sh` |
 | `top` | `./tests/top_test.sh` |
 | LLM demo | `./tests/llm_run_test.sh` |
+| LLM serving | `./tests/llm_serve_test.sh` |
 | Full gate | `make test` |
 
 Some QEMU tests drive an interactive serial boot and then attach host clients.
