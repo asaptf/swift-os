@@ -197,10 +197,9 @@ Batch process summary:
 top -b -n 2 -d 1
 ```
 
-`top` shows uptime, task counts, CPU and memory summaries, kernel footprint,
-and a process table. In SMP boot profiles it also prints per-CPU busy/idle
-utilization lines. The host-side acceptance gate is
-`make smp-cpu-utilization-test`.
+`top` shows uptime, task counts, aggregate CPU busy/idle, discovered CPU count,
+per-CPU busy percentages, memory summaries, kernel footprint, and a process
+table. The host-side SMP utilization gate is `make smp-cpu-utilization-test`.
 
 Interactive `top` uses raw terminal mode. Press `q` to quit.
 

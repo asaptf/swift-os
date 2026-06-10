@@ -312,6 +312,11 @@ Use `top` for resource snapshots:
 top -b -n 2 -d 1
 ```
 
+The summary includes uptime, task counts, aggregate CPU busy/idle, discovered
+CPU count, per-CPU busy percentages, memory totals, kernel footprint, and a
+process table. In SMP investigations, capture the `CPUs:` line together with
+the `SMP_CPUS` value used to boot QEMU.
+
 Interactive `top` repaints the serial terminal and exits on `q`:
 
 ```sh
@@ -320,6 +325,8 @@ top
 
 For automated logs, prefer `top -b`. It avoids cursor control and raw terminal
 mode.
+
+Acceptance coverage: `tests/top_test.sh` and `make smp-cpu-utilization-test`.
 
 ## Networking Operations
 
@@ -535,6 +542,9 @@ Run the narrowest test that proves the path you touched:
 | Direct boot | `./tests/boot_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP smoke | `SMP_CPUS=4 ./tests/smp_boot_test.sh` |
+| SMP CPU utilization | `make smp-cpu-utilization-test` |
+| Restricted S5 scheduler placement | `make s5-scheduler-placement-test` |
+| Restricted S5 placement stress | `make s5-placement-stress-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |

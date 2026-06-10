@@ -223,7 +223,9 @@ Notes:
 - `-b` uses batch mode. It does not clear the screen or use raw input.
 - `-d` sets the refresh delay in seconds.
 - `-n` exits after the selected number of refreshes.
-- SMP test profiles include per-CPU busy/idle utilization lines.
+- The aggregate `Cpu:` line reports busy and idle percentages.
+- The `CPUs:` line reports the discovered CPU count and per-CPU busy
+  percentages, for example `CPUs: 4 present, per-CPU busy: 0=...`.
 - Interactive mode accepts `q` to quit.
 
 Acceptance coverage: `tests/top_test.sh`, `make smp-cpu-utilization-test`.

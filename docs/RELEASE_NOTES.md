@@ -35,8 +35,9 @@ service-oriented.
 - Supports the primary UEFI/GPT disk image flow and a direct `-kernel` fallback.
 - Mounts the immutable base image from virtio-blk.
 - Keeps VirtualBox ARM notes as a best-effort hardware-adjacent path.
-- Has SMP readiness work, smoke tests, and S5a per-CPU utilization telemetry in
-  `/bin/top`, while broad multi-core EL0 execution remains roadmap work.
+- Has SMP readiness work, smoke tests, S5a per-CPU utilization telemetry in
+  `/bin/top`, and restricted S5b/S5c EL0 scheduler placement gates, while broad
+  multi-core EL0 scheduling remains roadmap work.
 
 ### User Experience
 
@@ -46,8 +47,8 @@ service-oriented.
 - Ships native SwiftOS tools for common workflows: `ls`, `cat`, `echo`, `pwd`,
   `ps`, `top`, `id`, `mkdir`, `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`,
   `touch`, `wc`, `date`, `calc`, `kv`, and more.
-- `/bin/top` can render process/resource snapshots and, under the SMP test
-  profile, per-CPU busy/idle utilization lines.
+- `/bin/top` can render process/resource snapshots, aggregate CPU busy/idle,
+  and per-CPU busy percentages under SMP test profiles.
 - Uses `/tmp` as writable scratch storage. `/tmp` is RAM-backed and cleared on
   reboot.
 
@@ -178,8 +179,9 @@ llmd: served
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. Restartable
   userland services are roadmap work.
-- SMP foundations and per-CPU utilization telemetry exist, but broad multi-core
-  EL0 scheduling is not the default product contract yet.
+- SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
+  stress gates exist, but broad multi-core EL0 scheduling is not the default
+  product contract yet.
 - TLS client support is a demo path. Treat production trust validation as
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,

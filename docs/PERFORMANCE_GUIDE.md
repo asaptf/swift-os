@@ -129,7 +129,8 @@ top -b -n 2 -d 1
 
 - Uptime.
 - Task count.
-- CPU busy/idle percentage.
+- Aggregate CPU busy/idle percentage.
+- Discovered CPU count and per-CPU busy percentages.
 - Total and free memory.
 - Kernel image and heap footprint.
 - Per-process state, principal, CPU time, and resident bytes.
@@ -147,6 +148,8 @@ Current limits:
 - Process count is small and fixed by current kernel tables.
 - There is no persistent historical metrics database.
 - There is no per-cell view yet.
+- S5 per-CPU utilization is an observability signal; it is not a completed
+  load-balancing or capacity contract.
 - CPU numbers under QEMU are relative indicators, not production capacity
   promises.
 

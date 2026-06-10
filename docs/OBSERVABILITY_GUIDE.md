@@ -159,12 +159,16 @@ ps aux
 ps -o pid,ppid,state,cmd
 ```
 
-Use `top` for process and memory snapshots:
+Use `top` for CPU, process, and memory snapshots:
 
 ```sh
 top -b -n 1
 top -b -n 2 -d 1
 ```
+
+The batch output includes an aggregate `Cpu:` busy/idle line and a `CPUs:` line
+with the discovered CPU count plus per-CPU busy percentages. In SMP reports,
+capture that line and the boot `SMP_CPUS` value together.
 
 Prefer batch mode in logs and support bundles. Interactive `top` repaints the
 serial terminal and exits on `q`.
@@ -174,7 +178,7 @@ Acceptance coverage:
 | Command | Test |
 | --- | --- |
 | `ps` | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
-| `top` | `./tests/top_test.sh` |
+| `top` | `./tests/top_test.sh`, `make smp-cpu-utilization-test` |
 
 ## Service Signals
 
