@@ -796,6 +796,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S2f OK: process dispatch telemetry ready", UInt64(smpMaxCpuCount()))
+    if !processSecondaryEl0GateSelfTest() {
+        uartPuts("panic: S2h secondary EL0 gate self-test failed\n")
+        while true {}
+    }
+    klog(.info, "smp", "S2h OK: secondary EL0 gate ready", UInt64(smpMaxCpuCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
     vfsInit()           // M11c: serves the read-only base from disk when present
@@ -858,6 +863,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S2f OK: process dispatch telemetry stayed CPU0-owned", UInt64(platform.cpuCount))
+        if !processSecondaryEl0GateHeldSelfTest() {
+            uartPuts("panic: S2h secondary EL0 gate guard failed\n")
+            while true {}
+        }
+        klog(.info, "smp", "S2h OK: secondary EL0 gate held CPU0-owned", UInt64(platform.cpuCount))
         if !smpS2bNoSecondaryEl0Execution() {
             uartPuts("panic: S2b secondary EL0 execution guard failed\n")
             while true {}

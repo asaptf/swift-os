@@ -217,7 +217,7 @@ func processInit() {
 
 private func processSchedulerCpuIndex() -> Int {
     let cpu = currentCpuId()
-    if cpu != 0 || cpu >= schedCtxCpuCount {
+    if cpu >= schedCtxCpuCount || !processSecondaryEl0GateAllowsCpu(cpu) {
         uartPuts("panic: EL0 process scheduler entered on non-owner CPU\n")
         while true {}
     }
@@ -266,6 +266,14 @@ private func processValidSchedulerCpu(_ cpu: UInt32) -> Bool {
     cpu < processRunQueueCpuCount && cpu < UInt32(processSchedulerCpuSlots)
 }
 
+private func processSecondaryEl0GateEnabled() -> Bool {
+    false
+}
+
+private func processSecondaryEl0GateAllowsCpu(_ cpu: UInt32) -> Bool {
+    processValidSchedulerCpu(cpu) && (cpu == 0 || processSecondaryEl0GateEnabled())
+}
+
 private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
     if currentCpuId() != cpu { return }
     let idx = Int(cpu)
@@ -274,9 +282,10 @@ private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
 }
 
 private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
-    // S2d records a placement decision but deliberately keeps all EL0 work on
-    // CPU0 until S2 enables real secondary scheduling.
     if slot < 0 || slot >= maxProc { return unassignedCpu }
+    // S2h keeps the placement policy behind an explicit gate. Today the gate is
+    // closed, so every runnable EL0 process remains CPU0-owned.
+    if !processSecondaryEl0GateEnabled() { return 0 }
     return 0
 }
 
@@ -295,7 +304,7 @@ private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
         uartPuts("panic: invalid EL0 process dispatch telemetry target\n")
         while true {}
     }
-    if cpu != 0 {
+    if !processSecondaryEl0GateAllowsCpu(cpu) {
         uartPuts("panic: EL0 process dispatched on secondary before S2\n")
         while true {}
     }
@@ -328,7 +337,7 @@ private func markProcessReady(_ slot: Int, cpu: UInt32) {
         uartPuts("panic: invalid EL0 process run queue target\n")
         while true {}
     }
-    if cpu != 0 {
+    if !processSecondaryEl0GateAllowsCpu(cpu) {
         uartPuts("panic: EL0 process scheduled on secondary before S2\n")
         while true {}
     }
@@ -433,6 +442,51 @@ func processDispatchTelemetrySelfTest() -> Bool {
         if pLastDispatchCpu[slot] != unassignedCpu { return false }
         if pDispatchCount[slot] != 0 { return false }
         if pDispatchCpuMask[slot] != 0 { return false }
+    }
+    return true
+}
+
+func processSecondaryEl0GateSelfTest() -> Bool {
+    if processSecondaryEl0GateEnabled() { return false }
+    if processRunQueueCpuCount != smpMaxCpuCount() { return false }
+    if !processSecondaryEl0GateAllowsCpu(0) { return false }
+    if processSecondaryEl0GateAllowsCpu(smpMaxCpuCount()) { return false }
+    if processHomeCpuForNewReadySlot(-1) != unassignedCpu { return false }
+    if processHomeCpuForNewReadySlot(maxProc) != unassignedCpu { return false }
+
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount {
+        if processSecondaryEl0GateAllowsCpu(cpu) { return false }
+        cpu += 1
+    }
+    for slot in 0..<maxProc {
+        if processHomeCpuForNewReadySlot(slot) != 0 { return false }
+    }
+    return true
+}
+
+func processSecondaryEl0GateHeldSelfTest() -> Bool {
+    if !processSecondaryEl0GateSelfTest() { return false }
+    let primaryMask = UInt64(1)
+    for slot in 0..<maxProc {
+        if (pDispatchCpuMask[slot] & ~primaryMask) != 0 { return false }
+        if pLastDispatchCpu[slot] != unassignedCpu && pLastDispatchCpu[slot] != 0 {
+            return false
+        }
+        if pHomeCpu[slot] != unassignedCpu && pHomeCpu[slot] != 0 {
+            return false
+        }
+    }
+
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        if processRunQueueEnqueueCount[idx] != 0 { return false }
+        if processRunQueueDispatchCount[idx] != 0 { return false }
+        if processDispatchTelemetryCount[idx] != 0 { return false }
+        if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
+        if !smpPerCpuProcessRunQueueIdle(cpu) { return false }
+        cpu += 1
     }
     return true
 }
