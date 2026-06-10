@@ -41,6 +41,34 @@ hosting experiments. The roadmap moves toward explicit handle-based service
 launch, restart policy, package service manifests, and restartable driver and
 network services.
 
+## Choose A Service Workflow
+
+Pick the workflow by the service lifecycle question, then collect the evidence
+that proves the service behaved as expected.
+
+| Goal | Start here | Guest action | Host action | Evidence |
+| --- | --- | --- | --- | --- |
+| Serve static files | Network launch profile with TCP 8080 | `/bin/httpd` | `curl -fsS http://127.0.0.1:8080/` | `httpd: listening on 8080` and `./tests/httpd_test.sh` |
+| Serve local AI completions | Network launch profile with TCP 8080 | `/bin/llmd` | POST to `/completion` and read `/metrics` | `llmd: serving on 8080` and `./tests/llm_serve_test.sh` |
+| Test one inbound TCP request | Network launch profile with TCP 5555 | `/bin/tcpecho` | `printf 'hello tcp\n' | nc -w8 127.0.0.1 5555` | Byte-count marker and `./tests/tcp_echo_test.sh` |
+| Test one inbound UDP datagram | Network launch profile with UDP 5555 | `/bin/udpecho` | `printf 'hello udp' | nc -u -w2 127.0.0.1 5555` | Sender marker and `./tests/udp_echo_test.sh` |
+| Prove driver-service restart shape | Direct QEMU test profile | `/bin/drvsvcdemo` | None for manual run | C5 OK markers and `make c5-device-authority-test` |
+| Debug a startup failure | Same profile as the service | Rerun the command under `root` | Capture host client output if a port is involved | First failure marker, QEMU command, and serial log |
+| Add a new service | Source under `userland/` or a package payload | Stable readiness marker and documented command | Focused host test drives the service | Command Reference entry, guide section, and focused test |
+
+Example static HTTP evidence package:
+
+```sh
+make build base-image build/virt.dtb
+./tests/httpd_test.sh
+```
+
+For a manual run, save the QEMU serial log and the host request output:
+
+```sh
+curl -v http://127.0.0.1:8080/ >curl-httpd.txt 2>&1
+```
+
 ## Service Catalog
 
 | Program | Class | Guest port | Readiness marker | Proof |
