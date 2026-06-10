@@ -194,6 +194,7 @@ Run the narrowest test that proves the path you changed.
 | Kernel-image runtime staging | `./tests/uefi_kstage_test.sh` |
 | Kernel-image runtime activation | `./tests/uefi_kactivate_test.sh` |
 | Kernel-image boot-attempt counter | `./tests/uefi_kattempt_test.sh` |
+| Kernel-image health confirmation | `./tests/uefi_kconfirm_test.sh` |
 | Kernel-image attempt rollback | `./tests/uefi_krollback_test.sh` |
 | HTTP server | `./tests/httpd_test.sh` |
 | TCP echo | `./tests/tcp_echo_test.sh` |
@@ -358,6 +359,7 @@ Kernel-image A/B through the UEFI ESP:
 ./tests/uefi_kstage_test.sh
 ./tests/uefi_kactivate_test.sh
 ./tests/uefi_kattempt_test.sh
+./tests/uefi_kconfirm_test.sh
 ./tests/uefi_krollback_test.sh
 ```
 
