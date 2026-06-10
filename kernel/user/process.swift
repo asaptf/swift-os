@@ -1010,6 +1010,32 @@ func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
     return base
 }
 
+/// I2a: file-backed read-only mmap. Map [0, len) bytes of the disk-backed file
+/// open on `fd` into the descending mmap arena, read-only, eagerly loaded from
+/// disk (the model-weights "mmap-backed bundle" path). Returns the base VA, or a
+/// negative errno encoded in the UInt result.
+func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    guard currentProc >= 0 else { return err(-22) } // EINVAL
+    let me = currentProc
+    if len == 0 { return err(-22) }
+    // I2a maps read-only file views only (model weights); write/exec is future work.
+    if prot != PROT_READ { return err(-22) }
+    let (ok, diskOff, dataLen) = vfsFileExtent(fd: fd)
+    if !ok { return err(-13) } // EACCES: not a readable disk-backed file
+    let mapLen = len > UInt(dataLen) ? UInt(dataLen) : len
+    if mapLen == 0 { return err(-22) }
+    let pages = roundUpPages(mapLen)
+    let bytes = pages * PageAllocator.pageSize
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+    let rc2 = addressSpaceMmapFile(pTtbr0[me], base, pages, UInt(diskOff), mapLen, prot)
+    if rc2 != 0 { return err(Int(rc2)) }
+    pMmapTop[me] = base
+    pResPages[me] += Int(pages)
+    return base
+}
+
 /// munmap(addr, len): unmap and free `len` (rounded up) bytes at `addr`. addr
 /// must be page-aligned and lie in the mmap arena. Returns 0 or a negative errno.
 func processMunmap(_ addr: UInt, _ len: UInt) -> Int {

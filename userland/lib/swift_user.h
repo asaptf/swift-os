@@ -157,6 +157,9 @@ void swiftos_thread_exit(void) __attribute__((noreturn));
 #define SWIFTOS_PROT_WRITE 0x2
 #define SWIFTOS_PROT_EXEC  0x4
 unsigned long swiftos_mmap(unsigned long len, int prot);
+// File-backed read-only mmap (I2a): map [0, len) of the file open on `fd`,
+// eagerly loaded from the read-only base image. Returns base VA, 0 on failure.
+unsigned long swiftos_mmap_file(int fd, unsigned long len, int prot);
 int swiftos_munmap(unsigned long addr, unsigned long len);
 int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 

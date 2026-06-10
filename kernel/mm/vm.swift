@@ -330,6 +330,41 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
     return 0
 }
 
+// I2a: file-backed read-only mmap. Like address_space_mmap, but each page is
+// filled from a contiguous on-disk extent (eager load) instead of zeroed, then
+// mapped read-only. `diskByteOffset` is the absolute byte offset on the
+// virtio-blk device; `fileLen` content bytes are spread across the pages, and
+// any tail past fileLen is left zero. Rolls back every frame on any failure.
+func addressSpaceMmapFile(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
+                          _ diskByteOffset: UInt, _ fileLen: UInt, _ prot: Int32) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 { return -22 } // EINVAL
+    if pageCount == 0 { return -22 }
+    if protPageDesc(0, prot) == 0 { return -22 } // W^X / PROT_NONE guard
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let frame = pmm_alloc_page()
+        if frame == 0 { unmapRange(ttbr0, va, i); return -12 } // ENOMEM
+        zeroFrame(frame)
+        let pageStart = i * PAGE_SIZE
+        if fileLen > pageStart {
+            let remaining = fileLen - pageStart
+            let toRead = remaining < PAGE_SIZE ? remaining : PAGE_SIZE
+            let rc = virtioBlkReadRange(UInt64(diskByteOffset + pageStart),
+                                        UnsafeMutableRawPointer(bitPattern: frame),
+                                        UInt32(toRead))
+            if rc != 0 { pmm_free_page(frame); unmapRange(ttbr0, va, i); return -5 } // EIO
+        }
+        if !linkPage(ttbr0, cur, protPageDesc(frame, prot)) {
+            pmm_free_page(frame); unmapRange(ttbr0, va, i); return -12
+        }
+        i += 1
+    }
+    dsb_sy()
+    tlbi_all()
+    return 0
+}
+
 // munmap: clear the leaf descriptors over [va, va+n*4K), free each backing
 // frame, and flush. Pages with no live mapping are skipped (munmap of a hole is
 // not an error). The page tables themselves are kept (cheap, and the region is

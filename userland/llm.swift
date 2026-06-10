@@ -14,7 +14,6 @@
 // weights" primitive), and I3 serves generated tokens over the network.
 
 private let protRead: Int32 = 0x1
-private let protWrite: Int32 = 0x2
 private let oRdOnly: Int32 = 0
 
 // ---- small output helpers (no libc; bridge only) ---------------------------
@@ -55,26 +54,21 @@ private func parseInt(_ p: UnsafeMutablePointer<CChar>) -> Int? {
     return any ? v : nil
 }
 
-/// Read an entire base-image file into a fresh anonymous mmap region. Returns
-/// the base pointer (kept mapped for the process lifetime) and byte length.
+/// mmap a base-image file read-only, file-backed (I2): the kernel maps the
+/// file's on-disk extent into this process — no read-into-anonymous copy.
+/// Returns the base pointer (kept mapped for the process lifetime) and length.
 private func loadFile(_ path: StaticString) -> (UnsafeRawPointer, Int)? {
     let cpath = UnsafeRawPointer(path.utf8Start).assumingMemoryBound(to: CChar.self)
     var mode: UInt32 = 0, uid: UInt32 = 0, gid: UInt32 = 0, nlink: UInt32 = 0
     var size: UInt = 0, mtime: UInt = 0
     if swiftos_stat(cpath, &mode, &uid, &gid, &nlink, &size, &mtime) != 0 { return nil }
     if size == 0 { return nil }
-    let base = swiftos_mmap(size, protRead | protWrite)
-    guard base != 0, let ptr = UnsafeMutableRawPointer(bitPattern: base) else { return nil }
     let fd = swiftos_open(cpath, oRdOnly)
     if fd < 0 { return nil }
-    var off: UInt = 0
-    while off < size {
-        let r = swiftos_read(fd, ptr + Int(off), size - off)
-        if r <= 0 { _ = swiftos_close(fd); return nil }
-        off += UInt(r)
-    }
-    _ = swiftos_close(fd)
-    return (UnsafeRawPointer(ptr), Int(size))
+    let base = swiftos_mmap_file(fd, size, protRead)
+    _ = swiftos_close(fd)   // the mapping owns the pages; the fd is no longer needed
+    guard base != 0, let ptr = UnsafeRawPointer(bitPattern: base) else { return nil }
+    return (ptr, Int(size))
 }
 
 // ---- entry point -----------------------------------------------------------
@@ -102,6 +96,7 @@ func main(_ argc: Int32,
         swiftos_puts("llm: cannot load /models/tok512.bin\n")
         return 1
     }
+    swiftos_puts("llm: weights mmap'd file-backed from /models\n")
 
     let model = Llama2(modelBytes: modelPtr)
     let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)

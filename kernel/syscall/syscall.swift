@@ -59,6 +59,7 @@ private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anony
 private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
 private let sysNanosleep: UInt = 57    // nanosleep(seconds, nanos) — block on the timer tick
 private let sysSpawnHandles: UInt = 58 // spawn_handles(path, argv, specs, count) — C2 explicit inheritance
+private let sysMmapFile: UInt = 59     // mmap_file(fd, len, prot) -> base VA — file-backed read-only (I2a)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -225,6 +226,11 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         // in [-4095, -1]); the userland bridge maps that to MAP_FAILED + errno.
         frame[0] = processMmap(frame[1], Int32(truncatingIfNeeded: frame[2]))
         return // result is an address, not an errno
+    } else if number == sysMmapFile {
+        // File-backed read-only mmap (I2a). Like mmap, the result is an address
+        // (base VA) or a negative errno encoded in the UInt, not a plain errno.
+        frame[0] = processMmapFile(Int(bitPattern: frame[0]), frame[1], Int32(truncatingIfNeeded: frame[2]))
+        return
     } else if number == sysMunmap {
         result = processMunmap(frame[0], frame[1])
     } else if number == sysMprotect {
