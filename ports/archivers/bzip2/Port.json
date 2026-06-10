@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "name": "bzip2",
+  "version": "1.0.8",
+  "revision": 1,
+  "category": "archivers",
+  "summary": "Legacy bzip2 compressor, decompressor, and libbz2 static library",
+  "homepage": "https://sourceware.org/bzip2/",
+  "license": ["Bzip2"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+    "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "manual",
+    "args": ["libbz2.a", "bzip2", "bzip2recover"],
+    "env": {
+      "CC": "aarch64-elf-gcc",
+      "AR": "aarch64-elf-ar",
+      "RANLIB": "aarch64-elf-ranlib",
+      "CFLAGS": "-ffreestanding -Os -Wall -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/swiftos_bzip2_compat.o -L${SYSROOT}/lib -Wl,--start-group -lc -lgcc -Wl,--end-group"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "bzip2", "bunzip2", "bzcat", "bzip2recover", "libbz2.a", "bzlib.h", "pkgconfig", "version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["bzip2", "bunzip2", "bzcat", "libbz2"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/bzip2", "to": "/usr/bin/bzip2", "mode": "0755" },
+      { "from": "destdir/usr/bin/bunzip2", "to": "/usr/bin/bunzip2", "mode": "0755" },
+      { "from": "destdir/usr/bin/bzcat", "to": "/usr/bin/bzcat", "mode": "0755" },
+      { "from": "destdir/usr/bin/bzip2recover", "to": "/usr/bin/bzip2recover", "mode": "0755" },
+      { "from": "destdir/usr/include/bzlib.h", "to": "/usr/include/bzlib.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libbz2.a", "to": "/usr/lib/libbz2.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/bzip2.pc", "to": "/usr/lib/pkgconfig/bzip2.pc", "mode": "0644" },
+      { "from": "destdir/usr/share/bzip2/swiftos-bzip2.version", "to": "/usr/share/bzip2/swiftos-bzip2.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "printf 'bzip2-ok\\n' | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc",
+      "cat /usr/share/bzip2/swiftos-bzip2.version"
+    ]
+  },
+  "notes": "Small Tier 0 archive package. scripts/build-bzip2.sh cross-builds static bzip2, bzip2recover, libbz2.a, and pkgconf metadata without relying on package-image symlinks."
+}

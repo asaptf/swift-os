@@ -326,7 +326,7 @@ The current checked-in fixtures cover five levels:
 | Package-store activation | A package-store image can activate a payload at boot | `make package-store-test` |
 | Guest local install | `/bin/pkg install FILE` installs into a writable package-store disk | `make package-local-install-test` |
 | Signed repository install | `/bin/pkg install NAME` resolves dependencies and verifies a signed catalog | `make package-repo-install-test` |
-| Real source-port repository install | `/bin/pkg install lua`, `zlib`, `ca-certificates`, `pcre2`, `tzdata`, `nginx`, and `sqlite` install real upstream/data packages | `make package-ports-seed-repo-install-test` |
+| Real source-port repository install | `/bin/pkg install lua`, `zlib`, `bzip2`, `ca-certificates`, `pcre2`, `tzdata`, `nginx`, and `sqlite` install real upstream/data packages | `make package-ports-seed-repo-install-test` |
 
 The sample fixture builds `/usr/bin/pkghello`:
 
@@ -374,16 +374,16 @@ solving are not current behavior.
 
 ### Recipe: Build And Install Source Ports
 
-Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite are the current
-real port fixtures. They prove checksum-verified source fetch, static AArch64
-cross-build or data-only staging, `.swpkg` creation, signed local repository
-publication, and target-side install from a default repository URL. The Lua-only
-smoke remains useful for the interpreter path; the seed repository smoke
-installs Lua, zlib, ca-certificates, pcre2, tzdata, nginx, and sqlite and runs
-the `minigzip` round trip, CA bundle marker, `pcre2grep` regex match, zoneinfo
-marker read, nginx version/marker smoke, and a SQLite in-memory query in the
-guest. The static-host smoke serves the same seed repository from a deployable
-web-root layout and repeats that
+Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and sqlite are the
+current real port fixtures. They prove checksum-verified source fetch, static
+AArch64 cross-build or data-only staging, `.swpkg` creation, signed local
+repository publication, and target-side install from a default repository URL.
+The Lua-only smoke remains useful for the interpreter path; the seed repository
+smoke installs Lua, zlib, bzip2, ca-certificates, pcre2, tzdata, nginx, and
+sqlite and runs the `minigzip` and bzip2 round trips, CA bundle marker,
+`pcre2grep` regex match, zoneinfo marker read, nginx version/marker smoke, and
+a SQLite in-memory query in the guest. The static-host smoke serves the same
+seed repository from a deployable web-root layout and repeats that
 install path; the hosted URL smoke proves that `/bin/pkg` can install from a
 DNS-resolved HTTP repository hostname.
 
@@ -447,7 +447,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, the individual package fixture for the port you changed, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`, `make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.

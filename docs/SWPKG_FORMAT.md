@@ -297,7 +297,7 @@ v1 `.swpkg` signature fields remain reserved and empty.
 | Target-side local install | `make package-local-install-test` |
 | Signed repository install by package name | `make package-repo-install-test` |
 | Ports package creation and verification | `make ports-recipe-test` plus the relevant `ports-*-repo-fixture` target |
-| Six-package seed repository install | `make package-ports-seed-repo-install-test` |
+| Eight-package seed repository install | `make package-ports-seed-repo-install-test` |
 
 For a narrow format-only edit, run:
 

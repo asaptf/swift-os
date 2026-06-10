@@ -3,6 +3,21 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## P15 bzip2 seed package (2026-06-10)
+
+- Added `ports/archivers/bzip2/Port.json` for Sourceware bzip2 1.0.8 as the
+  next checked archive-format package after zlib. It packages static
+  `bzip2`/`bunzip2`/`bzcat`/`bzip2recover`, `libbz2.a`, `bzlib.h`, pkgconf
+  metadata, and a marker file.
+- Added `scripts/build-bzip2.sh`. The script performs a manual static AArch64
+  object build against the local newlib sysroot because the upstream makefile's
+  link ordering is not suitable for the current freestanding runtime shape. A
+  tiny generated compat shim supplies metadata calls bzip2 expects but SwiftOS
+  does not implement yet.
+- The ports seed repository now publishes Lua, zlib, bzip2, ca-certificates,
+  pcre2, tzdata, nginx, and sqlite. Package seed, static-host, hosted URL, and
+  recipe tests were extended to install bzip2 and run a compression round trip.
+
 ## nginx compile probe (2026-06-08)
 
 - Added `scripts/build-nginx.sh` as an out-of-band compile probe. It fetches official nginx source,
