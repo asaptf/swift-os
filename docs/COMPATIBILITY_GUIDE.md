@@ -66,6 +66,7 @@ compatibility is not a goal.
 | QEMU `virt`, direct `-kernel` | Primary | Used by most development and acceptance tests |
 | QEMU `virt`, UEFI/AAVMF disk | Primary boot path | Uses `build/swift-os.img` plus read-only base image |
 | QEMU `virt`, virtio-net | Supported for network tests | Required for `httpd`, `llmd`, echo tools, DNS, TLS demos |
+| QEMU `virt`, `-smp 4` | Acceptance-tested hardening profile | Covers CPU bring-up, per-CPU telemetry, and gated S5f run-any EL0 placement |
 | QEMU `virt`, framebuffer/input | Smoke-tested | Used by graphical and busybox `vi` smoke paths |
 | VirtualBox ARM | Best effort | Board profile exists; see [VIRTUALBOX.md](VIRTUALBOX.md) |
 
@@ -77,7 +78,7 @@ compatibility is not a goal.
 | Raspberry Pi boards | Not supported |
 | PC BIOS boot | Not supported |
 | ACPI-first server hardware | Not supported |
-| SMP EL0 general execution | In hardening roadmap; use current SMP tests for readiness only |
+| Production SMP load balancing | Not a product contract yet; use current SMP tests for readiness only |
 
 Example primary boot:
 
@@ -486,6 +487,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| SMP run-any placement | `make s5-run-any-placement-test` |
 
 For broad release confidence, run:
 

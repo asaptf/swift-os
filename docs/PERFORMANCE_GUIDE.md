@@ -29,7 +29,7 @@ Use this guide with:
 | --- | --- |
 | Primary runtime | QEMU `virt` on AArch64 |
 | Default memory | 256 MiB in documented QEMU profiles |
-| CPU model | Single-core product contract, SMP hardening in progress |
+| CPU model | Single-core default; SMP hardening includes gated S5f run-any EL0 placement tests |
 | User programs | Static EL0 binaries |
 | Storage | Read-only packed base image plus RAM-backed `/tmp` |
 | Networking | virtio-net with QEMU user networking in tests |
@@ -324,9 +324,10 @@ When comparing LLM changes:
 
 ## SMP And CPU Count
 
-The current product contract is still conservative around broad multi-core EL0
-execution. SMP foundations and hardening work exist, and several tests run with
-`SMP_CPUS=4`, but performance claims should reflect the active roadmap state.
+The default product contract is still conservative around broad multi-core EL0
+execution. SMP foundations and hardening work exist, several tests run with
+`SMP_CPUS=4`, and S5f proves a gated run-any EL0 placement policy, but
+performance claims should still reflect the active roadmap state.
 
 Useful gates:
 
@@ -334,6 +335,7 @@ Useful gates:
 SMP_CPUS=4 ./tests/smp_boot_test.sh
 SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 make s1-test
+make s5-run-any-placement-test
 ```
 
 When recording CPU-count-sensitive results:
@@ -341,8 +343,8 @@ When recording CPU-count-sensitive results:
 - Include `SMP_CPUS`.
 - Include whether direct or UEFI boot was used.
 - Include boot markers for CPU discovery and online state.
-- Avoid claiming load balancing unless the active milestone explicitly proves
-  it.
+- Avoid claiming production load balancing or throughput scaling. S5f proves
+  placement coverage in a gated acceptance path, not a complete CPU policy.
 
 ## Package And Image Footprint
 
@@ -464,7 +466,7 @@ Before merging a performance-sensitive change:
 
 Future performance work includes:
 
-- Broader SMP scheduling and multi-core EL0 execution.
+- Production SMP load balancing and CPU policy.
 - Per-cell and per-service resource accounting.
 - Persistent metrics export.
 - Stronger service supervisor health and restart metrics.

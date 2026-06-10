@@ -170,6 +170,11 @@ The batch output includes an aggregate `Cpu:` busy/idle line and a `CPUs:` line
 with the discovered CPU count plus per-CPU busy percentages. In SMP reports,
 capture that line and the boot `SMP_CPUS` value together.
 
+For S5f run-any placement reports, also keep the serial markers
+`S5f OK: run-any placement policy completed` and either the multi-CPU coverage
+or CPU0 fallback `klog` line. Those markers prove the gated placement path ran
+before the normal userland login sequence.
+
 Prefer batch mode in logs and support bundles. Interactive `top` repaints the
 serial terminal and exits on `q`.
 
@@ -179,6 +184,7 @@ Acceptance coverage:
 | --- | --- |
 | `ps` | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | `top` | `./tests/top_test.sh`, `make smp-cpu-utilization-test` |
+| S5f placement markers | `make s5-run-any-placement-test` |
 
 ## Service Signals
 

@@ -55,7 +55,7 @@ SwiftOS is intentionally small and static.
 | Program model | Static binaries; native Embedded Swift userland is the direction |
 | Networking | virtio-net plus capability-gated socket syscalls |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store boot activation, and local `pkg install FILE` |
-| SMP status | SMP foundations and smoke tests exist; EL0 execution remains constrained by the current roadmap |
+| SMP status | Single-core is still the default profile; SMP tests cover CPU bring-up, per-CPU telemetry, restricted EL0 fanout, shared-address-space threads, and gated S5f run-any placement |
 
 The most important operational consequence is that a running guest has no
 persistent writable root. Rebuild the base image or attach a package payload to
@@ -545,6 +545,9 @@ Run the narrowest test that proves the path you touched:
 | SMP CPU utilization | `make smp-cpu-utilization-test` |
 | Restricted S5 scheduler placement | `make s5-scheduler-placement-test` |
 | Restricted S5 placement stress | `make s5-placement-stress-test` |
+| Restricted S5 EL0 fanout | `make s5-el0-fanout-test` |
+| S5 shared-address-space thread fanout | `make s5-thread-fanout-test` |
+| S5 run-any EL0 placement | `make s5-run-any-placement-test` |
 | VFS from disk | `./tests/vfs_disk_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |
@@ -592,6 +595,9 @@ Current limits that matter during operation:
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.
 - No general service manager; demos are started manually from the shell.
+- SMP hardening can boot and test multiple scheduler CPUs, including the S5f
+  run-any placement gate, but production load balancing and CPU policy remain
+  active hardening work.
 - IPv6 support exists in the stack and smoke tests, but Darwin/QEMU hostfwd
   behavior can limit end-to-end host tests.
 - In-kernel drivers and networking are still current reality; the roadmap moves

@@ -50,6 +50,20 @@ has documented firmware/device-model limitations.
 See [INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md) and
 [VIRTUALBOX.md](VIRTUALBOX.md).
 
+### Can SwiftOS use more than one CPU?
+
+The default interactive product profile remains conservative, but SMP is no
+longer only a boot experiment. The checked-in S5f gate boots QEMU with four
+CPUs and proves a gated run-any EL0 placement policy with:
+
+```sh
+make s5-run-any-placement-test
+```
+
+Do not treat this as a production load-balancing or capacity claim yet. Use it
+as readiness evidence while the roadmap finishes the broader SMP and service
+hardening work.
+
 ## Build And Installation
 
 ### What is the fastest way to boot it?
