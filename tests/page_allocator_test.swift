@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import Dispatch
+import Foundation
+
 @main
 struct PageAllocatorTest {
     static func expect(_ condition: Bool, _ message: String) {
@@ -105,6 +108,102 @@ struct PageAllocatorTest {
             expect(allocator.unref(a), "nil ref table treats unref as last drop")
         }
 
-        print("PASS: page allocator unit + adversarial tests")
+        final class LockedPageAllocator {
+            private var allocator: PageAllocator
+            private let lock = NSLock()
+
+            init(base: UInt, pageCount: Int,
+                 bitmap: UnsafeMutablePointer<UInt64>,
+                 refs: UnsafeMutablePointer<UInt16>) {
+                allocator = PageAllocator(base: base, pageCount: pageCount, bitmap: bitmap, refs: refs)
+            }
+
+            func allocate() -> UInt? {
+                lock.lock()
+                defer { lock.unlock() }
+                return allocator.allocate()
+            }
+
+            func free(_ addr: UInt) {
+                lock.lock()
+                allocator.free(addr)
+                lock.unlock()
+            }
+
+            func ref(_ addr: UInt) {
+                lock.lock()
+                allocator.ref(addr)
+                lock.unlock()
+            }
+
+            func unref(_ addr: UInt) -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                return allocator.unref(addr)
+            }
+
+            func freePages() -> Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return allocator.freePages
+            }
+        }
+
+        let stressPages = 256
+        var stressBitmap = [UInt64](repeating: 0, count: (stressPages + 63) / 64)
+        var stressRefs = [UInt16](repeating: 0, count: stressPages)
+        stressBitmap.withUnsafeMutableBufferPointer { bitmap in
+            stressRefs.withUnsafeMutableBufferPointer { refs in
+                let locked = LockedPageAllocator(base: 0x4000_0000,
+                                                 pageCount: stressPages,
+                                                 bitmap: bitmap.baseAddress!,
+                                                 refs: refs.baseAddress!)
+                let liveLock = NSLock()
+                var live = Set<UInt>()
+                let workers = 8
+                let iterations = 4_000
+                DispatchQueue.concurrentPerform(iterations: workers) { worker in
+                    var local: [UInt] = []
+                    local.reserveCapacity(12)
+                    for step in 0..<iterations {
+                        if local.count < 12 && ((step + worker) & 3) != 0 {
+                            if let addr = locked.allocate() {
+                                liveLock.lock()
+                                let inserted = live.insert(addr).inserted
+                                liveLock.unlock()
+                                expect(inserted, "concurrent allocator handed out a duplicate live frame")
+                                if ((step + worker) % 11) == 0 {
+                                    locked.ref(addr)
+                                    expect(!locked.unref(addr), "shared concurrent ref should not raw-free")
+                                }
+                                local.append(addr)
+                            }
+                        } else if !local.isEmpty {
+                            let idx = (step + worker) % local.count
+                            let addr = local.remove(at: idx)
+                            liveLock.lock()
+                            let removed = live.remove(addr) != nil
+                            liveLock.unlock()
+                            expect(removed, "concurrent allocator freed an unknown frame")
+                            locked.free(addr)
+                        }
+                    }
+                    for addr in local {
+                        liveLock.lock()
+                        let removed = live.remove(addr) != nil
+                        liveLock.unlock()
+                        expect(removed, "concurrent allocator cleanup saw an unknown frame")
+                        locked.free(addr)
+                    }
+                }
+                liveLock.lock()
+                let liveEmpty = live.isEmpty
+                liveLock.unlock()
+                expect(liveEmpty, "concurrent allocator stress leaked live tracking entries")
+                expect(locked.freePages() == stressPages, "concurrent allocator stress returned every page")
+            }
+        }
+
+        print("PASS: page allocator unit + adversarial + concurrent stress tests")
     }
 }

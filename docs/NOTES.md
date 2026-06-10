@@ -1192,6 +1192,38 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   not prove stale translation eviction across user threads on different CPUs,
   and does not change PMM/VFS/package-store concurrency policy.
 
+### S4a — PMM lock boundary and concurrent PageAllocator stress (DONE, 2026-06-10)
+
+- **Coarse PMM lock.** `kernel/mm/pmm.swift` now wraps the shared
+  `PageAllocator` owner in an IRQ-save spinlock built from the S0b atomic CAS
+  primitive. The exported PMM entry points (`pmm_alloc_page`,
+  `pmm_alloc_pages`, `pmm_free_page`, COW ref/unref/refcount, and PMM counters)
+  all enter through the same `pmmWithAllocator` boundary, so the bitmap, hint,
+  free-frame count, and refcount table are no longer raw global mutable state
+  once secondary CPUs can call allocation paths.
+- **Atomic last-ref release.** `pmm_frame_release` drops one COW reference and
+  raw-frees the frame under the same PMM lock. VM user-frame teardown now uses
+  this primitive instead of a split `pmm_frame_unref` / `pmm_free_page`
+  sequence.
+- **Executable checks.** Boot runs `pmmS4aConcurrencySelfTest()` after the S3d
+  readiness checks, then sends a bounded PMM stress request to discovered
+  secondary CPUs over the existing SGI/IPI path, and logs
+  `S4a OK: PMM lock boundary ready`. After the userland demos, boot verifies the
+  lock word is balanced, the PMM stress ack/failure masks are clean, and logs
+  `S4a OK: PMM lock boundary stayed balanced`.
+- **Host stress.** `tests/page_allocator_test.swift` keeps the existing unit and
+  adversarial cases and adds an 8-worker threaded allocation/free/ref/unref
+  stress through a synchronized wrapper over the same pure `PageAllocator`
+  logic. It asserts no duplicate live frames and full frame-count recovery.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the PMM lock
+  helpers, the atomic release primitive, the bounded SGI PMM stress path,
+  rejects direct optional PMM allocator access outside the wrapper, and checks
+  the S4a boot-marker order. `tests/smp_boot_test.sh` and the UEFI boot smoke
+  now require the S4a markers.
+- **Non-goals.** No per-CPU page magazines yet, no lock-free bitmap operations,
+  no small-object heap synchronization, and no VFS/handle/package-store pool
+  locking in this slice.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free

@@ -18,7 +18,7 @@ manifest entries left behind after globals move or disappear.
 | --- | --- | --- |
 | Boot/platform/MMU tables | Written during early boot, then read as platform truth. S0g also records post-MMU DTB CPU/PSCI discovery fields in `platform`. | Keep primary-only until secondary entry is defined; later publish with barriers before CPU release. Treat PSCI method/function IDs and enable masks as read-only boot-published facts until S1 review enables CPU_ON. |
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
-| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. | Protect allocation/free paths before secondary CPUs can allocate; PMM bitmap/refcounts are the first atomic/lock target. |
+| Runtime heap/PMM | Single allocator cursor plus `PageAllocator` owner. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | Keep the small-object heap CPU0-owned for now; add VFS/kernel object-pool protection before secondary CPUs can execute general kernel/user work. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
 | VFS/handles/pipes/endpoints/package store | Shared fixed tables; C4 work may change them. P3a package-store state is discovered and consumed during CPU0 boot activation, then read by VFS file reads/exec. | Do not change in S0c. Later protect table mutation, handle refcount paths, and target-side package-store append/activation before secondary CPUs can run package management or VFS mutation. |
@@ -104,6 +104,9 @@ manifest entries left behind after globals move or disappear.
 - `kernel/main.swift:c4aEndpointRightsPassed`
 - `kernel/main.swift:retainedProbe`
 - `kernel/mm/pmm.swift:pmm`
+- `kernel/mm/pmm.swift:pmmLockAcquireCount`
+- `kernel/mm/pmm.swift:pmmLockContentionCount`
+- `kernel/mm/pmm.swift:pmmLockWord`
 - `kernel/mm/vm_early.c:l0_table`
 - `kernel/mm/vm_early.c:l1_table`
 - `kernel/mm/vm_early.c:probe_l2_table`
@@ -162,6 +165,13 @@ manifest entries left behind after globals move or disappear.
 - `kernel/smp/percpu.swift:smpIpiProbeDeliveredMaskStorage`
 - `kernel/smp/percpu.swift:smpIpiProbeTargetMaskStorage`
 - `kernel/smp/percpu.swift:smpIpiReceivedCount`
+- `kernel/smp/percpu.swift:smpPmmStressAckGeneration`
+- `kernel/smp/percpu.swift:smpPmmStressProbeAckMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeFailureMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeGenerationStorage`
+- `kernel/smp/percpu.swift:smpPmmStressProbeTargetMaskStorage`
+- `kernel/smp/percpu.swift:smpPmmStressReceivedCount`
+- `kernel/smp/percpu.swift:smpPmmStressRequestGeneration`
 - `kernel/smp/percpu.swift:smpTlbShootdownAckGeneration`
 - `kernel/smp/percpu.swift:smpTlbShootdownProbeAckMaskStorage`
 - `kernel/smp/percpu.swift:smpTlbShootdownProbeGenerationStorage`
@@ -251,8 +261,8 @@ manifest entries left behind after globals move or disappear.
   CPU0-only address-space activation evidence, and S3d wires VM TLB flushes to
   that active-mask surface; none of these milestones make those structures
   concurrency-safe.
-- PMM and heap allocation must be protected before secondary EL1 code can call
-  Swift allocation hooks, process creation, VFS allocation, or network buffers.
+- PMM allocation/free/refcount entry points are now protected by the S4a lock
+  boundary. The small-object heap remains CPU0-owned until later S4 work.
 - The file-backed mmap VMA table and demand-fault counters added by the LLM I2
   path are process-owned today, but still live in global arrays and must be
   protected before a single address space can fault concurrently on multiple

@@ -63,6 +63,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S3b OK: GIC SGI IPI substrate ready"
   EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown IPI scaffold ready"
   EXPECTS+=$'\n'"[I] smp: S3d OK: address-space TLB flush facade ready"
+  EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary ready"
   EXPECTS+=$'\n'"[I] sched: M4.5 sched: real context switch OK"
   EXPECTS+=$'\n'"[I] smp: S2c OK: no secondary kernel scheduler execution"
   EXPECTS+=$'\n'"[I] smp: S2g OK: coproc pair dispatch telemetry CPU0-owned"
@@ -74,6 +75,7 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   EXPECTS+=$'\n'"[I] smp: S3b OK: IPI delivery stayed scheduler-safe"
   EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe"
   EXPECTS+=$'\n'"[I] smp: S3d OK: address-space TLB flush stayed CPU0-owned"
+  EXPECTS+=$'\n'"[I] smp: S4a OK: PMM lock boundary stayed balanced"
   EXPECTS+=$'\n'"[I] smp: S2b OK: no secondary EL0 execution"
 fi
 
@@ -176,6 +178,7 @@ if [[ "$found" -eq 1 ]]; then
   s3b_ipi_line="$(grep -nF "[I] smp: S3b OK: IPI delivery stayed scheduler-safe" "$LOG" | head -1 | cut -d: -f1)"
   s3c_tlb_line="$(grep -nF "[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe" "$LOG" | head -1 | cut -d: -f1)"
   s3d_tlb_line="$(grep -nF "[I] smp: S3d OK: address-space TLB flush stayed CPU0-owned" "$LOG" | head -1 | cut -d: -f1)"
+  s4a_pmm_line="$(grep -nF "[I] smp: S4a OK: PMM lock boundary stayed balanced" "$LOG" | head -1 | cut -d: -f1)"
   if [[ -z "$userland_line" || -z "$no_secondary_line" ||
         "$userland_line" -ge "$no_secondary_line" ]]; then
     echo "FAIL: S2b no-secondary-EL0 marker must appear after the Swift ps userland marker." >&2
@@ -266,8 +269,16 @@ if [[ "$found" -eq 1 ]]; then
     echo "---------------------------------------------" >&2
     exit 1
   fi
+  if [[ -z "$s4a_pmm_line" || "$s3d_tlb_line" -ge "$s4a_pmm_line" ||
+        "$s4a_pmm_line" -ge "$no_secondary_line" ]]; then
+    echo "FAIL: S4a PMM lock boundary marker must appear after S3d and before the no-secondary-EL0 marker." >&2
+    echo "---------------------------------------------" >&2
+    cat -v "$LOG" >&2
+    echo "---------------------------------------------" >&2
+    exit 1
+  fi
 
-  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d markers with -smp $SMP_CPU_COUNT:"
+  echo "PASS: SMP boot smoke produced expected S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a markers with -smp $SMP_CPU_COUNT:"
   while IFS= read -r line; do
     [[ -n "$line" ]] && echo "  - $line"
   done <<<"$EXPECTS"
