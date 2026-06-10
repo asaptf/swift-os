@@ -60,9 +60,8 @@ Current limitations:
 - No target-side package `upgrade` or rollback transaction.
 - No production image signing policy for the whole OS image.
 - Base-image rollback is implemented for the checked A/B update-store path.
-- Kernel-image staging, activation, boot-attempt counting, and attempt-based
-  rollback are implemented for the checked UEFI ESP slot path; kernel health
-  confirmation is still future work.
+- Kernel-image staging, activation, health confirmation, boot-attempt counting,
+  and rollback are implemented for the checked UEFI ESP slot path.
 
 The current verified model-bundle flow is a narrow working example of signed
 manifest verification and generation fallback for AI assets. It is not a whole
@@ -131,7 +130,11 @@ Then reboot through the UEFI disk profile. On the next boot, the loader verifies
 the alternate signed manifest and selected kernel slot before handoff. The
 loader also persists a per-slot boot-attempt counter in `kernel-state`; an
 unconfirmed kernel slot rolls back after the checked attempt window.
-`swos-kconfirm` remains future U1g-5c work.
+After a healthy trial boot, confirm that booted kernel slot:
+
+```sh
+swos-kconfirm
+```
 
 Minimum verification:
 
@@ -140,12 +143,13 @@ Minimum verification:
 ./tests/uefi_kstage_test.sh
 ./tests/uefi_kactivate_test.sh
 ./tests/uefi_kattempt_test.sh
+./tests/uefi_kconfirm_test.sh
 ./tests/uefi_krollback_test.sh
 ```
 
-Kernel-image A/B has end-to-end staging and activation for the checked ESP
-layout. A real new-kernel payload source and per-kernel-slot health confirmation
-are future work.
+Kernel-image A/B has end-to-end staging, activation, health confirmation, and
+attempt-based rollback for the checked ESP layout. A real new-kernel payload
+source is future work.
 
 ## Release Identity
 
@@ -446,7 +450,7 @@ touches shared code.
 | Package payload | `make package-overlay-test` | Package store test |
 | Package store | `make package-store-test` | Overlay test plus boot smoke |
 | Base-image A/B update store | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_confirm_test.sh` | `./tests/ab_rollback_test.sh`, `./tests/ab_flush_test.sh` |
-| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` | `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh`, `make test` |
+| Kernel-image A/B ESP slots | `./tests/uefi_kernel_ab_test.sh`, `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kconfirm_test.sh` | `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh`, `UEFI_BOOT=disk ./tests/uefi_boot_test.sh`, `make test` |
 | AI model bundle | `./tests/llm_run_test.sh` | `./tests/llm_serve_test.sh` |
 | Documentation only | `make docs-test`, `git diff --check` | `make build`, `./tests/boot_test.sh` |
 

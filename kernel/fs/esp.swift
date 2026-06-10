@@ -362,6 +362,110 @@ private func fatVerifyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UIn
     return true
 }
 
+// --- Kernel boot-state update (U1g-5c) --------------------------------------
+// The loader owns the self-managed \EFI\swift-os\kernel-state file. The kernel
+// only updates the already-created 512-byte record in place after a successful
+// boot, mirroring SWOSBOOT's health-confirm flow without signing anything.
+private let kernelStateSeqOff = 12
+private let kernelStateAttemptAOff = 16
+private let kernelStateAttemptBOff = 20
+private let kernelStateStateAOff = 24
+private let kernelStateStateBOff = 28
+private let kernelStateLastBootedOff = 32
+private let kernelStateConfirmed: UInt32 = 1
+
+@inline(__always) private func espSt32(_ p: UnsafeMutableRawPointer, _ o: Int, _ v: UInt32) {
+    p.storeBytes(of: UInt8(v & 0xFF), toByteOffset: o, as: UInt8.self)
+    p.storeBytes(of: UInt8((v >> 8) & 0xFF), toByteOffset: o + 1, as: UInt8.self)
+    p.storeBytes(of: UInt8((v >> 16) & 0xFF), toByteOffset: o + 2, as: UInt8.self)
+    p.storeBytes(of: UInt8((v >> 24) & 0xFF), toByteOffset: o + 3, as: UInt8.self)
+}
+
+@inline(__always) private func kernelStateAttemptOff(_ slot: Int) -> Int {
+    slot == 0 ? kernelStateAttemptAOff : kernelStateAttemptBOff
+}
+@inline(__always) private func kernelStateStateOff(_ slot: Int) -> Int {
+    slot == 0 ? kernelStateStateAOff : kernelStateStateBOff
+}
+
+private func kernelStateValid(_ p: UnsafeRawPointer) -> Bool {
+    let magic: StaticString = "SWOSKSTA"
+    var ok = true
+    magic.withUTF8Buffer { m in
+        var i = 0
+        while i < 8 {
+            if p.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }
+            i += 1
+        }
+    }
+    if !ok || espLd32(p, 8) != 1 { return false }
+
+    var digest = InlineArray<32, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &digest) { raw in
+        sha256(p, 480, raw.baseAddress!)
+    }
+    var i = 0
+    while i < 32 {
+        if digest[i] != p.load(fromByteOffset: 480 + i, as: UInt8.self) { return false }
+        i += 1
+    }
+    return true
+}
+
+private func kernelStateRehash(_ p: UnsafeMutableRawPointer) {
+    var digest = InlineArray<32, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &digest) { raw in
+        sha256(UnsafeRawPointer(p), 480, raw.baseAddress!)
+    }
+    var i = 0
+    while i < 32 {
+        p.storeBytes(of: digest[i], toByteOffset: 480 + i, as: UInt8.self)
+        i += 1
+    }
+}
+
+private func espConfirmInner() -> Int {
+    guard let (partLBA, _) = espFindPartition() else { return -2 }
+    guard let vol = fatReadBPB(partLBA) else { return -5 }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
+    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return -2 }
+
+    var rc = -5
+    var confirmedSlot = -1
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        let lba = fatClusterLBA(vol, ks.0)
+        if virtioBlkReadCurrent(lba, p) != 0 { return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { rc = -22; return }
+        let booted = espLd32(UnsafeRawPointer(p), kernelStateLastBootedOff)
+        if booted > 1 { rc = -22; return }
+
+        confirmedSlot = Int(booted)
+        espSt32(p, kernelStateStateOff(confirmedSlot), kernelStateConfirmed)
+        espSt32(p, kernelStateAttemptOff(confirmedSlot), 0)
+        espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
+        kernelStateRehash(p)
+        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        rc = 0
+    }
+    if rc != 0 { return rc }
+    if virtioBlkFlush() != 0 { return -5 }
+
+    var verify = false
+    var check = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &check) { raw in
+        let p = raw.baseAddress!
+        if virtioBlkReadCurrent(fatClusterLBA(vol, ks.0), p) != 0 { return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { return }
+        if espLd32(UnsafeRawPointer(p), kernelStateStateOff(confirmedSlot)) != kernelStateConfirmed { return }
+        if espLd32(UnsafeRawPointer(p), kernelStateAttemptOff(confirmedSlot)) != 0 { return }
+        verify = true
+    }
+    return verify ? confirmedSlot : -5
+}
+
 private func espStageInner() -> Int {
     guard let (partLBA, _) = espFindPartition() else { return -2 }
     guard let vol = fatReadBPB(partLBA) else { return -5 }
@@ -460,6 +564,28 @@ func espActivateOtherKernel() -> Int {
         return 0
     }
     uartPuts("kernel-store: kernel activate failed rc ")
+    uartPutUInt(UInt64(bitPattern: Int64(r)))
+    uartPuts("\n")
+    return r
+}
+
+/// U1g-5c: mark the kernel slot booted by the loader as CONFIRMED in the
+/// writable ESP kernel-state, so it stops accruing attempts and is not rolled
+/// back. capConsole-gated. Returns 0 on success, or a negative errno-style code.
+/// Invoked from EL0 via syscall 70 (/bin/swos-kconfirm).
+func espConfirmBootedKernel() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
+    if !virtioBlkHasEsp() { return -19 }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    let r = espConfirmInner()
+    virtioBlkReselectServed()
+    if r >= 0 {
+        uartPuts("kernel-store: confirmed kernel slot ")
+        uartPuts(r == 0 ? "A" : "B")
+        uartPuts(" healthy in kernel-state\n")
+        return 0
+    }
+    uartPuts("kernel-store: kernel confirm failed rc ")
     uartPutUInt(UInt64(bitPattern: Int64(r)))
     uartPuts("\n")
     return r

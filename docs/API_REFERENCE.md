@@ -64,7 +64,7 @@ source, then follow its Makefile rule and acceptance test.
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | A/B update store operations | `userland/swos-confirm.swift`, `userland/swos-activate.swift`, `userland/swos-update.swift` | `update_confirm`, `update_activate`, `update_stage`, `swiftos_update_*` | `./tests/ab_confirm_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_stage_test.sh` |
-| Kernel slot staging and activation | `userland/swos-kstage.swift`, `userland/swos-kactivate.swift` | `kernel_stage`, `kernel_activate`, `swiftos_kernel_*` | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` |
+| Kernel slot staging, activation, and health confirmation | `userland/swos-kstage.swift`, `userland/swos-kactivate.swift`, `userland/swos-kconfirm.swift` | `kernel_stage`, `kernel_activate`, `kernel_confirm`, `swiftos_kernel_*` | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kconfirm_test.sh` |
 
 When copying an example, keep the same API layer unless you are deliberately
 testing a lower layer. Mixing raw syscalls, native Swift bridge helpers, and
@@ -236,6 +236,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 67 | `update_stage` | none | 0 or negative error |
 | 68 | `kernel_stage` | none | 0 or negative error |
 | 69 | `kernel_activate` | none | 0 or negative error |
+| 70 | `kernel_confirm` | none | 0 or negative error |
 
 Notes:
 
@@ -1126,6 +1127,7 @@ int swiftos_update_activate(void);
 int swiftos_update_stage(void);
 int swiftos_kernel_stage(void);
 int swiftos_kernel_activate(void);
+int swiftos_kernel_confirm(void);
 ```
 
 ### Security And Process

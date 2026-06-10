@@ -274,6 +274,7 @@ USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
 USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
 USER_SWOSKSTAGE_ELF := $(BUILD)/swos-kstage.elf
 USER_SWOSKACTIVATE_ELF := $(BUILD)/swos-kactivate.elf
+USER_SWOSKCONFIRM_ELF := $(BUILD)/swos-kconfirm.elf
 USER_LS_ELF := $(BUILD)/ls.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
@@ -334,6 +335,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SWOSUPDATE_ELF) \
 	$(USER_SWOSKSTAGE_ELF) \
 	$(USER_SWOSKACTIVATE_ELF) \
+	$(USER_SWOSKCONFIRM_ELF) \
 	$(USER_LS_ELF) \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
@@ -501,6 +503,9 @@ $(BUILD)/user_swoskstage.o: userland/swos-kstage.swift userland/lib/swift_user.h
 
 $(BUILD)/user_swoskactivate.o: userland/swos-kactivate.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kactivate.swift -o $@
+
+$(BUILD)/user_swoskconfirm.o: userland/swos-kconfirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kconfirm.swift -o $@
 
 $(BUILD)/user_ls.o: userland/ls.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ls.swift -o $@
@@ -673,6 +678,9 @@ $(USER_SWOSKSTAGE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 
 $(USER_SWOSKACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskactivate.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskactivate.o -o $@
+
+$(USER_SWOSKCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskconfirm.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskconfirm.o -o $@
 
 $(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
@@ -988,6 +996,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_kstage_test.sh
 	./tests/uefi_kactivate_test.sh
 	./tests/uefi_kattempt_test.sh
+	./tests/uefi_kconfirm_test.sh
 	./tests/uefi_krollback_test.sh
 	./tests/fb_vi_test.sh
 
@@ -1355,6 +1364,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SWOSUPDATE_ELF) $(BASE_ROOT)/bin/swos-update
 	cp $(USER_SWOSKSTAGE_ELF) $(BASE_ROOT)/bin/swos-kstage
 	cp $(USER_SWOSKACTIVATE_ELF) $(BASE_ROOT)/bin/swos-kactivate
+	cp $(USER_SWOSKCONFIRM_ELF) $(BASE_ROOT)/bin/swos-kconfirm
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo

@@ -185,6 +185,10 @@ int swiftos_kernel_activate(void) {
     return kernel_activate();
 }
 
+int swiftos_kernel_confirm(void) {
+    return kernel_confirm();
+}
+
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
     struct security_info si;
     int rc = security_info(&si);
