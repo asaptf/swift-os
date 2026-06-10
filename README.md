@@ -134,6 +134,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   network demos, AI demo operation, logging evidence, and verification gates.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
   network, package overlay, LLM, and QEMU test failure diagnosis.
+- [Support Guide](docs/SUPPORT_GUIDE.md): evidence collection, support bundles,
+  severity levels, report templates, and handoff checklists.
 - [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
 - [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
   application paths, porting constraints, packages, and non-goals.

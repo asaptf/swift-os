@@ -14,6 +14,8 @@ Use this guide with:
   boot defaults, QEMU profiles, and test knobs.
 - [Troubleshooting](TROUBLESHOOTING.md) when a build, boot, login, or network
   path fails.
+- [Support Guide](SUPPORT_GUIDE.md) for evidence collection and handoff
+  checklists.
 - [Examples](EXAMPLES.md) for copy-paste operational recipes.
 
 ## Operating Model

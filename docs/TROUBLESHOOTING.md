@@ -4,7 +4,9 @@ This guide turns common build, boot, login, filesystem, networking, package, and
 test failures into concrete checks. It assumes the current QEMU `virt` workflow.
 
 For normal operation, see [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md). For
-copy-paste success paths, see [EXAMPLES.md](EXAMPLES.md).
+copy-paste success paths, see [EXAMPLES.md](EXAMPLES.md). For evidence
+collection, report templates, and handoff checklists, see
+[SUPPORT_GUIDE.md](SUPPORT_GUIDE.md).
 
 ## First Triage
 
