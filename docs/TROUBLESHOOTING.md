@@ -35,6 +35,28 @@ Then identify the failing layer:
 Keep the serial log when reporting a failure. It is usually the most useful
 artifact.
 
+## Failure Signature Index
+
+Use the first visible failure line to choose the next check. If several
+signatures appear, start with the earliest one in the serial log or test output.
+
+| First signal | Likely layer | Run next | Then collect |
+| --- | --- | --- | --- |
+| `stdio.h` missing, `libc.a` missing, or newlib include error | Host sysroot | `make newlib`, then `make build` | `make tools-check` output |
+| `build/busybox.elf` missing | Host userland prerequisite | `make busybox`, then `make base-image` | `test -f build/busybox.elf` |
+| QEMU prints nothing | Direct boot artifact or QEMU command | `make build base-image build/virt.dtb`, then `make run` | Full QEMU command and serial log |
+| `M7 tty: type a line then Enter` remains on screen | Expected interactive smoke gate | Type one line, press Enter, then Ctrl-C at the next prompt | Serial transcript through `swift-os login:` |
+| Missing `M11c: read-only base mounted from disk` | Base image or virtio-blk attach | `make base-image`, then `./tests/vfs_disk_test.sh` | QEMU drive/device arguments |
+| Login rejected for seeded users | Identity store or stale base image | `make base-image`, then `./tests/console_login_test.sh` | `base/etc/swos/passwd` diff if changed |
+| `permission denied (need capConsole)` | Update command under wrong authority | Log in as `root`, run `id`, then retry the update command | `./tests/cap_enforce_test.sh` if behavior changed |
+| `socket failed` | Missing NIC, missing `capNet`, or unsupported socket path | Boot a networking profile and run `id` | Network QEMU command and service marker |
+| Host `curl` cannot connect | Missing readiness marker, hostfwd mismatch, or host port conflict | Confirm `httpd: listening on 8080` or `llmd: serving on 8080` | Host `curl -v` output |
+| `/usr/bin/pkghello` missing | Package payload or store not attached or installed | `make package-overlay-test` or `make package-store-test` | Package image paths and guest `pkg` transcript |
+| `pkg: catalog updated` missing | Repository fetch, signature, URL, or network issue | `make package-repo-install-test` | Served repository root and `/bin/pkg` output |
+| `llmd: generation ... rejected` without later verified generation | Model bundle manifest or payload mismatch | `make model`, `make base-image`, `./tests/llm_serve_test.sh` | `/models/stories15M` listing and serial log |
+| `panic` | Kernel fatal path | Keep the first panic line and surrounding context before rerunning | 80 lines before and after the panic |
+| One smoke test flakes once | Host timing, stale artifact, or one-shot service timing | Rerun the same test once, then run the narrow prerequisite | Both test outputs |
+
 ## Build Problems
 
 ### `stdio.h` Or Newlib Headers Are Missing
