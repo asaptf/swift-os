@@ -1,4 +1,4 @@
-# CAPABILITIES
+# SwiftOS Capabilities And Handles
 
 The forward design for swift-os authority: the object-capability **handle** model, **spawn-with-handles**,
 handle-passing **IPC**, and the decision to make **Cells** a userland composition over small kernel
@@ -18,6 +18,54 @@ primitives rather than a fat in-kernel object.
 
 The maintainer should read this against the **current** model, not an idealized one. Where the current
 model already does the right thing, this note says so; where it is a placeholder, this note says that too.
+
+---
+
+## Product Contract Quick Reference
+
+Read this document as a bridge between the operator-facing
+[Security Guide](SECURITY_GUIDE.md), the syscall-level
+[API Reference](API_REFERENCE.md), and the longer isolation roadmap below.
+The current product contract is:
+
+| Authority surface | Granted today by | User-visible effect | Evidence |
+| --- | --- | --- | --- |
+| Login identity | `/etc/swos/passwd` plus `SYS_LOGIN`, gated by `capConsole` | `id` reports the adopted principal, session, and capability mask | `./tests/console_login_test.sh` |
+| Base filesystem reads | `capFsRead`, then per-handle `READ` rights | `cat /etc/motd` and `ls /` work only for contexts allowed to open readable objects | `./tests/cap_enforce_test.sh`, `./tests/boot_test.sh` |
+| tmpfs writes | `capTmpWrite`, then per-handle `WRITE` rights | `/tmp` files can be created, renamed, chmodded, chowned, and removed by authorized processes | `./tests/swift_chmodown_test.sh`, `./tests/boot_test.sh` |
+| Networking | `capNet` plus virtio-net in the boot profile | `/bin/nslookup`, `/bin/httpd`, `/bin/tcpecho`, and `/bin/udpecho` can create sockets | `./tests/dns_test.sh`, `./tests/httpd_test.sh`, `./tests/virtio_net_test.sh` |
+| Explicit child authority | `spawn_handles` handle specs | A child starts with stdio plus exactly the listed handles, with attenuated rights | `./tests/spawn_self_exec_test.sh`, `./tests/boot_test.sh` |
+| IPC delegation | `endpoint_create`, `ipc_send`, and `ipc_recv` | One handle can move across an endpoint; the sender loses the source fd on success | `./tests/ipc_socket_transfer_test.sh` |
+| Device discovery grants | C5 opaque device handles | `/bin/drvsvcdemo` can discover and transfer metadata-only pseudo or virtio-input grants, but not MMIO/IRQ/DMA authority | `make c5-test` |
+
+The practical rule is simple:
+
+1. Process capability bits decide whether a process may mint a class of object,
+   such as opening files or creating sockets.
+2. Handle rights decide what the process may do with an already-minted object.
+3. `spawn_handles` and IPC handle transfer are the intentional delegation
+   mechanisms.
+4. Device grants are currently metadata-only. Treat real MMIO, IRQ, DMA, and
+   virtio queue ownership as roadmap work until the C5 proper driver milestone
+   lands.
+
+Example: pass a read-only file handle to a child without handing it the
+parent's whole handle table:
+
+```c
+int fd = open("/etc/motd", O_RDONLY);
+struct swiftos_spawn_handle handles[] = {
+    { 0, 0, SWIFTOS_RIGHT_ALL, 0 },
+    { 1, 1, SWIFTOS_RIGHT_ALL, 0 },
+    { 2, 2, SWIFTOS_RIGHT_ALL, 0 },
+    { fd, 3, SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_GETATTR, 0 },
+};
+char *const argv[] = { "argvdemo", "inheritcheck", 0 };
+long status = spawn_handles("/bin/argvdemo", argv, handles, 4);
+```
+
+The child receives fd 3 with read and metadata rights only. It does not inherit
+the parent's other open files or sockets through `spawn`.
 
 ---
 
