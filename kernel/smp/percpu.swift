@@ -30,6 +30,10 @@ private let smpUninitializedCpu: UInt32 = 0xFFFF_FFFF
 // Fixed static storage: no Swift Array, no heap, and safe to address before any
 // future secondary CPU is allowed to call allocator-backed code.
 private var smpCpuState: InlineArray<8, SMPPerCpuState> = .init(repeating: SMPPerCpuState())
+private var smpIpiReceivedCount: InlineArray<8, UInt64> = .init(repeating: 0)
+private var smpIpiLastSourceCpu: InlineArray<8, UInt64> = .init(repeating: UInt64.max)
+private var smpIpiProbeTargetMaskStorage: UInt64 = 0
+private var smpIpiProbeDeliveredMaskStorage: UInt64 = 0
 
 @inline(__always)
 private func smpValidCpu(_ cpu: UInt32) -> Bool {
@@ -207,6 +211,69 @@ func smpPerCpuEl0SwitchCount(_ cpu: UInt32) -> UInt64 {
     return smpCpuState[Int(cpu)].el0SwitchCount
 }
 
+func smpRecordIpiForCurrentCpu(source: UInt32) {
+    let cpu = currentCpuId()
+    if !smpValidCpu(cpu) { return }
+    let idx = Int(cpu)
+    withUnsafeMutablePointer(to: &smpIpiLastSourceCpu[idx]) { lastSource in
+        smpAtomicStore(lastSource, UInt64(source))
+    }
+    withUnsafeMutablePointer(to: &smpIpiReceivedCount[idx]) { count in
+        _ = smpAtomicFetchAdd(count, 1)
+    }
+}
+
+func smpPerCpuIpiReceivedCount(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return 0 }
+    return withUnsafeMutablePointer(to: &smpIpiReceivedCount[Int(cpu)]) { count in
+        smpAtomicLoad(count)
+    }
+}
+
+func smpPerCpuIpiLastSource(_ cpu: UInt32) -> UInt64 {
+    if !smpValidCpu(cpu) { return UInt64.max }
+    return withUnsafeMutablePointer(to: &smpIpiLastSourceCpu[Int(cpu)]) { source in
+        smpAtomicLoad(source)
+    }
+}
+
+func smpResetIpiProbe(targetMask: UInt64) {
+    withUnsafeMutablePointer(to: &smpIpiProbeTargetMaskStorage) { mask in
+        smpAtomicStore(mask, targetMask)
+    }
+    withUnsafeMutablePointer(to: &smpIpiProbeDeliveredMaskStorage) { mask in
+        smpAtomicStore(mask, 0)
+    }
+}
+
+func smpMarkIpiProbeDelivered(cpu: UInt32) {
+    if !smpValidCpu(cpu) { return }
+    let bit = UInt64(1) << UInt64(cpu)
+    withUnsafeMutablePointer(to: &smpIpiProbeDeliveredMaskStorage) { mask in
+        var current = smpAtomicLoad(mask)
+        while true {
+            var expected = current
+            let desired = current | bit
+            if smpAtomicCompareExchange(mask, expected: &expected, desired: desired) {
+                break
+            }
+            current = expected
+        }
+    }
+}
+
+func smpIpiProbeTargetMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpIpiProbeTargetMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
+func smpIpiProbeDeliveredMask() -> UInt64 {
+    withUnsafeMutablePointer(to: &smpIpiProbeDeliveredMaskStorage) { mask in
+        smpAtomicLoad(mask)
+    }
+}
+
 func smpPerCpuKernelSchedulerReady(_ cpu: UInt32) -> Bool {
     if !smpValidCpu(cpu) { return false }
     let idx = Int(cpu)
@@ -261,6 +328,8 @@ func smpPerCpuSelfTest() -> Bool {
         smpCpuState[slot].schedulerContext = UInt(slot + 1)
         smpCpuState[slot].kernelSchedulerActivityCount = UInt32(slot + 4)
         smpCpuState[slot].el0SwitchCount = UInt64(slot + 5)
+        smpIpiReceivedCount[slot] = UInt64(slot + 6)
+        smpIpiLastSourceCpu[slot] = UInt64(slot + 7)
         if smpCpuState[slot].logicalId != UInt32(slot) { return false }
         if smpCpuState[slot].timerTicks != UInt64(slot) { return false }
         if smpCpuState[slot].currentThread != Int32(slot) { return false }
@@ -270,7 +339,11 @@ func smpPerCpuSelfTest() -> Bool {
         if smpCpuState[slot].schedulerContext != UInt(slot + 1) { return false }
         if smpCpuState[slot].kernelSchedulerActivityCount != UInt32(slot + 4) { return false }
         if smpCpuState[slot].el0SwitchCount != UInt64(slot + 5) { return false }
+        if smpPerCpuIpiReceivedCount(UInt32(slot)) != UInt64(slot + 6) { return false }
+        if smpPerCpuIpiLastSource(UInt32(slot)) != UInt64(slot + 7) { return false }
         smpCpuState[slot] = SMPPerCpuState()
+        smpIpiReceivedCount[slot] = 0
+        smpIpiLastSourceCpu[slot] = UInt64.max
         slot += 1
     }
 
@@ -288,6 +361,10 @@ func smpPerCpuSelfTest() -> Bool {
     let savedSchedulerContext = smpCpuState[idx].schedulerContext
     let savedKernelSchedulerActivityCount = smpCpuState[idx].kernelSchedulerActivityCount
     let savedEl0SwitchCount = smpCpuState[idx].el0SwitchCount
+    let savedIpiReceivedCount = smpPerCpuIpiReceivedCount(cpu)
+    let savedIpiLastSource = smpPerCpuIpiLastSource(cpu)
+    let savedIpiProbeTargetMask = smpIpiProbeTargetMask()
+    let savedIpiProbeDeliveredMask = smpIpiProbeDeliveredMask()
     let savedFlags = withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicLoad(flags)
     }
@@ -321,6 +398,19 @@ func smpPerCpuSelfTest() -> Bool {
     smpRecordKernelSchedulerActivityForCurrentCpu()
     if smpPerCpuKernelSchedulerActivityCount(cpu) != 12 { return false }
 
+    withUnsafeMutablePointer(to: &smpIpiReceivedCount[idx]) { count in
+        smpAtomicStore(count, 13)
+    }
+    smpRecordIpiForCurrentCpu(source: 2)
+    if smpPerCpuIpiReceivedCount(cpu) != 14 { return false }
+    if smpPerCpuIpiLastSource(cpu) != 2 { return false }
+
+    smpResetIpiProbe(targetMask: 0x5)
+    smpMarkIpiProbeDelivered(cpu: 0)
+    smpMarkIpiProbeDelivered(cpu: 2)
+    if smpIpiProbeTargetMask() != 0x5 { return false }
+    if smpIpiProbeDeliveredMask() != 0x5 { return false }
+
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags | smpCpuFlagOnline)
     }
@@ -335,6 +425,16 @@ func smpPerCpuSelfTest() -> Bool {
     smpCpuState[idx].schedulerContext = savedSchedulerContext
     smpCpuState[idx].kernelSchedulerActivityCount = savedKernelSchedulerActivityCount
     smpCpuState[idx].el0SwitchCount = savedEl0SwitchCount
+    withUnsafeMutablePointer(to: &smpIpiReceivedCount[idx]) { count in
+        smpAtomicStore(count, savedIpiReceivedCount)
+    }
+    withUnsafeMutablePointer(to: &smpIpiLastSourceCpu[idx]) { source in
+        smpAtomicStore(source, savedIpiLastSource)
+    }
+    smpResetIpiProbe(targetMask: savedIpiProbeTargetMask)
+    withUnsafeMutablePointer(to: &smpIpiProbeDeliveredMaskStorage) { mask in
+        smpAtomicStore(mask, savedIpiProbeDeliveredMask)
+    }
     withUnsafeMutablePointer(to: &smpCpuState[idx].flags) { flags in
         smpAtomicStore(flags, savedFlags)
     }

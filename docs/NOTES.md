@@ -1107,6 +1107,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   secondary CPU dispatches EL0 work, and no process migrates between CPUs in
   this checkpoint.
 
+### S3b — GIC SGI / IPI substrate preflight (DONE, 2026-06-10)
+
+- **GICv2 SGI sender.** `kernel/drivers/gic.swift` now reserves SGI ID 1 for
+  SMP IPIs, enables SGIs per CPU interface, and writes GICD_SGIR at offset
+  `0xF00` in target-list mode (`SGIINTID[3:0]`,
+  `CPUTargetList[23:16]`, `TargetListFilter[25:24] = 0b00`). The encoding was
+  checked against QEMU 11.0.1 `hw/intc/arm_gic.c`, whose `gic_dist_writel`
+  handles offset `0xf00` by setting `sgi_pending[irq][target_cpu]`.
+- **Parked secondaries can receive IPIs.** After their early timer heartbeat,
+  secondary CPUs now remain in an IRQ-enabled `wfi` loop. Their IRQ path still
+  does no scheduler/process/VFS/driver work: timer PPIs only rearm the local
+  timer, and SGI ID 1 only records atomic per-CPU IPI counters and source CPU.
+- **Runtime acceptance.** Boot runs `smpIpiSubstrateSelfTest` after S3a
+  readiness. On SMP boots CPU0 sends SGI ID 1 to every discovered secondary,
+  waits for the delivered mask, verifies the source CPU, and logs
+  `S3b OK: GIC SGI IPI substrate ready`. After userland demos, boot verifies the
+  IPI delivery mask stayed complete and secondary scheduler state stayed idle,
+  then logs `S3b OK: IPI delivery stayed scheduler-safe`.
+- **Static guard.** `tests/smp_release_guard_test.sh` requires the SGIR offset,
+  SGI sender/source helpers, IPI counters, IRQ handler hook, IRQ-enabled
+  secondary park loop, and the boot-order contract (`S3a readiness -> S3b
+  readiness -> demos`, then `S3a no-secondary -> S3b scheduler-safe -> S2b
+  no-secondary`).
+- **Non-goals.** No TLB shootdown protocol is implemented yet, no reschedule
+  IPI is consumed by the scheduler, no secondary CPU dispatches EL0 work, and
+  no PMM/VFS/process locking policy changes in this checkpoint.
+
 ### C1 — handle table + fds-as-handles (DONE, 2026-06-08)
 
 - **Typed handle slots.** `kernel/vfs/handle.swift` now owns the dependency-free
