@@ -56,7 +56,7 @@ source, then follow its Makefile rule and acceptance test.
 | Process launch and explicit handles | `userland/argvdemo.c`, `userland/spawndemo.c` | `spawn`, `spawn_handles`, `swiftos_spawn_handle`, handle rights | `./tests/boot_test.sh`, `./tests/spawn_self_exec_test.sh` |
 | Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
-| Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-discovery-test` |
+| Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-metadata-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
@@ -425,11 +425,14 @@ if rc >= 0 {
 
 ## Device Grants
 
-C5b adds an opaque device-handle scaffold for restartable driver services. C5c
-adds read-only discovery so a supervisor can match a device manifest before
-claiming it. The current registry has one pseudo device, `pseudo-input.0`, used
-by `/bin/drvsvcdemo` and `/bin/drvinputd` to prove device ownership moves over
-IPC. It is not a real MMIO, IRQ, or DMA grant yet.
+C5b added an opaque device-handle scaffold for restartable driver services, and
+C5c connects that scaffold to real virtio-input discovery when QEMU exposes a
+`virtio-keyboard-device`. The focused C5c gate claims `virtio-input.0`, checks
+its fixed manifest metadata, transfers the handle to `/bin/drvinputd`, and
+reclaims it after service exit. C5d keeps that virtio-mmio location visible as
+metadata through the public device-info ABI and the focused
+`make c5-device-metadata-test` gate. Headless boots without an input device keep
+the `pseudo-input.0` fallback so the supervisor path remains testable.
 
 ```c
 struct swiftos_device_info {
@@ -454,14 +457,21 @@ Contract:
 - `device_discover(index, &info)` enumerates the registry by stable manifest
   ordinal. It writes the same 64-byte record as `device_info`; `claimed` reports
   whether a live grant owns the device. An out-of-range ordinal returns `-2`.
-- `device_claim("pseudo-input.0", &info)` returns a device fd with metadata and
-  `getattr`/`transfer` authority, or a negative error.
+- `device_claim("virtio-input.0", &info)` returns a discovered virtio-mmio input
+  device fd when the platform exposes one. `kind` is
+  `SWIFTOS_DEVICE_KIND_VIRTIO_INPUT`, `bus` is
+  `SWIFTOS_DEVICE_BUS_VIRTIO_MMIO`, `mmio_base`/`mmio_len` identify the transport
+  window, and `SWIFTOS_DEVICE_FLAG_DISCOVERED` (also exported as the C5d
+  `SWIFTOS_DEVICE_FLAG_DISCOVERED_MMIO` alias) is set.
+- `device_claim("pseudo-input.0", &info)` remains the headless fallback when no
+  real input device is discovered.
 - A second claim while a live handle owns the grant returns `-16`.
 - Moving the handle through `ipc_send` invalidates the sender's source fd.
 - Closing the final fd for the device releases the registry claim.
-- `device_info` fills the fixed 64-byte metadata record. `mmio_base`,
-  `mmio_len`, and `irq` are zero in the current scaffold because hardware
-  access is deliberately not granted.
+- `device_info` fills the fixed 64-byte metadata record. C5c/C5d expose discovery
+  metadata only: device handles still have `getattr + transfer` rights and
+  `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT`, so there is no userland MMIO map, IRQ
+  endpoint, or DMA window yet.
 
 Supervisor-side handoff pattern:
 
@@ -476,8 +486,16 @@ for (int i = 0; i < 4; i += 1) {
     if (r < 0) {
         return r;
     }
-    if (info.kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
+    int real = info.kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+        info.bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
+        info.mmio_base != 0 &&
+        info.mmio_len != 0 &&
+        (info.flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0;
+    int pseudo = info.kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
         info.bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
+        info.mmio_base == 0 &&
+        info.mmio_len == 0;
+    if ((real || pseudo) &&
         (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
         info.claimed == 0) {
         found = 1;
@@ -492,8 +510,8 @@ int dev_fd = device_claim(info.name, &info);
 if (dev_fd < 0) {
     return dev_fd;
 }
-if (info.kind != SWIFTOS_DEVICE_KIND_PSEUDO_INPUT ||
-    info.bus != SWIFTOS_DEVICE_BUS_PSEUDO ||
+if ((info.kind != SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+     info.kind != SWIFTOS_DEVICE_KIND_PSEUDO_INPUT) ||
     (info.flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0 ||
     info.claimed != 1) {
     close(dev_fd);
@@ -528,9 +546,10 @@ if (n == 4 && received_fd >= 0) {
 ```
 
 The complete checked-in example is `userland/drvsvcdemo.c` supervising
-`userland/drvinputd.c`; `make c5-device-discovery-test` validates the discovery,
-handoff, busy-claim, and release markers under `-smp 4`.
-`make c5-device-handle-test` remains a compatible alias for the same harness.
+`userland/drvinputd.c`; `make c5-device-metadata-test` validates the discovery
+metadata, handoff, busy-claim, and release markers under `-smp 4`.
+`make c5-device-discovery-test` and `make c5-device-handle-test` remain
+compatible aliases for the same harness.
 
 ## Terminal API
 
@@ -1243,11 +1262,11 @@ one booting acceptance path:
 | Filesystem and native Swift file tools | `kernel/vfs/vfs.swift`, `userland/lib/fs.h`, `userland/lib/swift_user.h` | `./tests/swift_fileops_test.sh`, `./tests/swift_ls_test.sh`, `./tests/boot_test.sh` |
 | Terminal and signals | `userland/lib/termios.h`, `kernel/tty/tty.swift`, `kernel/signal/signal.swift` | `./tests/boot_test.sh`, focused interactive smoke where needed |
 | IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
-| Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-discovery-test` |
+| Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-metadata-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
-| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
+| Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,

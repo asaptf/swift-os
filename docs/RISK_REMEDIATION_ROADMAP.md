@@ -231,11 +231,18 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   `fork`/`waitpid`, and `spawn`/exec of `/bin/argvdemo`. This is the
   restricted-SMP stress slice for the current S2h gate and fixed-size tmpfs
   vnode table; S5 still owns broad secondary EL0 execution.
+- S4f stress gate (2026-06-10): `make test` also includes a dedicated
+  `tests/smp_resource_stress_test.sh` run under `-smp 4`. The test keeps the
+  current S2h policy intact (general EL0 work is still CPU0-owned), but repeats
+  fork/IPC handle transfer, fd/pipe/poll/tmpfs churn, exec, futex-thread churn,
+  and tmpfs create/write/move/remove loops after the boot demos while
+  secondaries are online and ticking. It also verifies the S4a-S4e post-demo
+  lock-boundary markers stayed balanced.
 - Make the PMM (PageAllocator bitmap + pmm_alloc/free) safe for concurrent calls from multiple CPUs. Options (choose and record): atomic bit operations (LDSET/STCLR or similar), a per-CPU magazine / cache layer in front of a locked central allocator, or a coarse spinlock + IRQ disable for the bitmap walk. The host PageAllocator unit test must be extended to concurrent alloc/free stress.
 - Protect the shared VFS pools (`openDescriptions`, `pipes`, `endpoints`, the node table itself if mutations happen). Most per-process state is already indexed by slot; the shared descriptions need refcounting that is atomic or locked.
 - Network engine state (if still in-kernel at this point) gets the same treatment or is explicitly documented as "will be moved out in the next phase". S4e gives the current in-kernel engine a coarse correctness boundary; moving it to a userland service remains the architectural target.
-- Add a concurrency stress test that runs many alloc/free, pipe create/close, fork/exec, and tmpfs create/write cycles while all CPUs are under timer load. Look for use-after-free, double-free, or lost updates.
-- Acceptance: the stress test runs for a long time without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
+- Add a concurrency stress test that runs many alloc/free, pipe create/close, fork/exec, and tmpfs create/write cycles while all CPUs are under timer load. Look for use-after-free, double-free, or lost updates. S4f provides the first bounded `make test` gate; S5 still needs the full general multi-CPU EL0 stress once broad secondary scheduling is enabled.
+- Acceptance: the stress test runs without corruption or panic on `-smp 4`. `pmm_free_count` and VFS handle accounting remain accurate. All prior tests still pass.
 
 ### S5 — Full multi-CPU EL0 execution + end-to-end validation
 - S5a preflight (2026-06-10): per-CPU timer and idle counters are exported
@@ -313,21 +320,46 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   manifest matching executable and then begin moving a non-boot-critical driver
   out of the kernel.
 
-### C5c — device discovery manifest matching (DONE, 2026-06-10)
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
 
 - New `device_discover(index, info*)` syscall exposes read-only device registry
   metadata to the boot authority. It returns the same fixed `device_info` record
   used by device handles and reports `-2` when enumeration is exhausted.
-- `/bin/drvsvcdemo` now discovers `pseudo-input.0` by matching kind, bus, flags,
-  claim state, and manifest name before calling `device_claim`; it also proves
-  the current registry exhausts after the single pseudo device.
-- The boot path requires `C5c OK: device discovery manifest matched pseudo input`;
-  `make c5-device-discovery-test` is the focused direct-boot gate, with
-  `make c5-device-handle-test` kept as a compatible alias.
-- Non-goals: C5c still does not expose MMIO mapping, IRQ endpoints, DMA windows,
-  or real virtio-input ownership. The next C5 slice should attach real
-  device-tree/virtio discovery metadata and start replacing an in-kernel driver
-  path with a userland service.
+- The device registry now prefers a discovered `virtio-input.0` grant when the
+  QEMU virtio-mmio input transport is present. The registry records the
+  transport window, bus/kind metadata, and `DISCOVERED`/`NO_MMIO_GRANT` flags.
+  Headless direct boots without a keyboard device keep `pseudo-input.0` as a
+  fallback so the C5 supervisor/lifecycle path remains executable.
+- `/bin/drvsvcdemo` discovers the registry manifest first, claims the discovered
+  device name, validates the metadata, transfers the grant to `/bin/drvinputd`,
+  proves busy/reclaim behavior, and emits
+  `C5c OK: virtio-input device grant discovered and matched` when the focused
+  QEMU keyboard path is present. The broad headless boot still emits
+  `C5c OK: device discovery manifest matched pseudo input`.
+- `make c5-device-discovery-test` attaches QEMU `virtio-keyboard-device` and
+  runs the focused `-smp 4` acceptance gate; `make c5-device-handle-test`
+  remains a compatibility alias for the same C5 driver-service gate.
+- Non-goals: C5c still does not grant userland MMIO mappings, IRQ endpoints, or
+  DMA windows, and the in-kernel virtio-input path still owns the actual input
+  queue. The next C5 slice should decide the first real hardware authority
+  grant and driver replacement boundary.
+
+### C5d — virtio-input discovery metadata (DONE, 2026-06-10)
+
+- The virtio-input probe now uses the discovered `platform.virtioMmio*` window
+  instead of fixed QEMU constants. The device registry reuses that probe to
+  surface a `VIRTIO_MMIO` bus, MMIO base, and MMIO length for `virtio-input.0`
+  when a `virtio-keyboard-device` is attached.
+- The grant still carries `NO_MMIO_GRANT`; MMIO fields are discovery metadata,
+  not authority. IRQ remains zero because the current keyboard path is polled and
+  IRQ endpoints are still future work.
+- `/bin/drvsvcdemo` and `/bin/drvinputd` accept both the synthetic fallback and
+  discovered virtio-input metadata, and the focused boot gate requires
+  `C5d OK: virtio input discovery metadata surfaced`.
+- `make c5-device-metadata-test` is the focused `-smp 4` gate. It attaches a
+  QEMU virtio keyboard while preserving the headless C5b/C5c tests.
+- Non-goals: C5d still does not map MMIO into userland, deliver IRQs as
+  endpoints, create DMA windows, or replace the in-kernel virtio-input driver.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

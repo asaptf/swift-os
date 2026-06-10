@@ -91,16 +91,19 @@ What exists today, in the order it was built:
   built and tested as TLS groundwork. DNS queries resolve against slirp's
   nameserver by default.
 
-- **Restartable driver-service and device-discovery smoke:** the C5a-C5c path
-  stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts a
-  pseudo input-driver service, exchanges endpoint IPC messages, discovers and
-  claims `pseudo-input.0`, transfers an opaque pseudo-device handle, proves the
-  grant moves, stays busy while the service owns it, is reclaimed after exit,
-  and recovers with `C5a OK: restartable driver service recovered over IPC`,
-  `C5b OK: opaque device handle transferred and released`, and
-  `C5c OK: device discovery manifest matched pseudo input`. The focused
-  acceptance gate is `make c5-device-discovery-test` under `-smp 4`; real MMIO,
-  IRQ, DMA, and virtio-input ownership are still roadmap work.
+- **Restartable driver-service and device-discovery smoke:** the C5a-C5d path
+  stages `/bin/drvsvcdemo` and `/bin/drvinputd`. The supervisor starts an
+  input-driver service, exchanges endpoint IPC messages, discovers and claims
+  `virtio-input.0` when QEMU exposes a keyboard device, falls back to
+  `pseudo-input.0` in headless boots, surfaces virtio-mmio base/length as
+  discovery metadata, transfers an opaque device handle, proves the grant moves,
+  stays busy while the service owns it, is reclaimed after exit, and recovers
+  with `C5a OK: restartable driver service recovered over IPC`, `C5b OK: opaque
+  device handle transferred and released`, `C5c OK: virtio-input device grant
+  discovered and matched`, and `C5d OK: virtio input discovery metadata
+  surfaced`. The focused acceptance gate is `make c5-device-metadata-test`
+  under `-smp 4`; real MMIO, IRQ, DMA, and virtio-input queue ownership are
+  still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
   syscalls; EL0 threads share one address space; a futex-based mutex demo proves
@@ -170,7 +173,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
-  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5c
+  SwiftOS services such as `httpd`, `llmd`, echo tools, and the C5a-C5d
   driver-service smoke.
 - [AI Hosting Guide](docs/AI_HOSTING_GUIDE.md): run local TinyStories
   inference, serve completions over HTTP, and operate verified model bundles.
@@ -192,6 +195,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   application paths, porting constraints, packages, and non-goals.
 - [Security Guide](docs/SECURITY_GUIDE.md): current login flow, capability
   bits, handle rights, confinement, immutable images, and security limits.
+- [Base Image](docs/BASE_IMAGE.md): immutable packed filesystem contents,
+  build inputs, and base-image verification.
 - [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
   programs, port C/newlib programs, and stage binaries into the base image.
 - [Porting Guide](docs/PORTING_GUIDE.md): evaluate and port source-built
@@ -201,6 +206,8 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Package Guide](docs/PACKAGE_GUIDE.md): build, inspect, boot, test, and
   troubleshoot `.swpkg`, repository, package-store, ports, static-host, and
   hosted URL artifacts.
+- [Package Management](docs/PACKAGE_MANAGEMENT.md): package-system design,
+  current implementation status, and roadmap boundaries.
 - [Package Build Automation Guide](docs/PACKAGE_BUILD_AUTOMATION.md): package
   recipe, Lua/zlib cross-build fixtures, CI smoke-test, and repository publishing
   workflow for maintainers.
@@ -409,9 +416,10 @@ series), moves drivers and the network stack toward the documented restartable
 userland service model, and makes global kernel state concurrent-safe. Each
 sub-milestone follows the strict rule: builds, boots (including `-smp N`), has
 tests, is committed, then review. SMP and "restartable services" are tracked
-work, not non-goals; C5a-C5c now prove the supervisor/service IPC shape,
-pseudo-device discovery, and opaque pseudo-device handle transfer before real
-device handoff lands.
+work, not non-goals; C5a-C5d now prove the supervisor/service IPC shape,
+virtio-input discovery metadata, fallback pseudo-device discovery, surfaced
+virtio-mmio metadata, and opaque device-handle transfer before real device
+handoff lands.
 
 ### Phase 2 — full-OS capabilities (forward, record-don't-build-yet)
 

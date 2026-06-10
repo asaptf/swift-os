@@ -194,6 +194,69 @@ private func checkSyscallTableSync() {
     }
 }
 
+private func checkDocumentationMapCoverage() {
+    let mapPath = "docs/DOCUMENTATION.md"
+    guard let mapText = try? String(contentsOfFile: mapPath, encoding: .utf8) else {
+        fail("\(mapPath): could not read")
+        ok = false
+        return
+    }
+    guard let docs = try? FileManager.default.contentsOfDirectory(atPath: "docs") else {
+        fail("docs: could not list documentation directory")
+        ok = false
+        return
+    }
+
+    for name in docs.sorted() where name.hasSuffix(".md") && name != "DOCUMENTATION.md" {
+        if !mapText.contains("(\(name))") {
+            fail("\(mapPath): missing public documentation map link for docs/\(name)")
+            ok = false
+        }
+    }
+}
+
+private func stagedBaseCommands() -> [String] {
+    let path = "Makefile"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return []
+    }
+
+    let copyRegex = try! NSRegularExpression(
+        pattern: #"^\s*cp\s+.+\Q$(BASE_ROOT)/bin/\E([A-Za-z0-9._+-]+)\s*$"#
+    )
+    var commands = Set<String>()
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        if let groups = firstMatchGroups(copyRegex, in: String(line), groupCount: 1) {
+            commands.insert(groups[0])
+        }
+    }
+    if commands.isEmpty {
+        fail("\(path): no base image /bin copy rules found")
+        ok = false
+    }
+    return commands.sorted()
+}
+
+private func checkCommandReferenceCoverage() {
+    let path = "docs/COMMAND_REFERENCE.md"
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+        fail("\(path): could not read")
+        ok = false
+        return
+    }
+
+    for command in stagedBaseCommands() {
+        let hasHeading = text.contains("### `\(command)`")
+        let hasTableRow = text.contains("| `\(command)` |")
+        if !hasHeading && !hasTableRow {
+            fail("\(path): missing command reference entry for /bin/\(command)")
+            ok = false
+        }
+    }
+}
+
 let linkPattern = #"!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#
 let linkRegex = try! NSRegularExpression(pattern: linkPattern)
 
@@ -242,9 +305,11 @@ for file in markdownFiles() {
 }
 
 checkSyscallTableSync()
+checkDocumentationMapCoverage()
+checkCommandReferenceCoverage()
 
 if !ok {
     exit(1)
 }
 
-print("PASS: documentation markdown fences, local links, and API syscall table are valid")
+print("PASS: documentation markdown fences, local links, API table, map coverage, and command coverage are valid")

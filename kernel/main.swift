@@ -946,13 +946,14 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
-    let windowKeyboard = virtioKbdInit() > 0  // graphical window has a keyboard
-    if windowKeyboard {
+    let inputKeyboard = virtioKbdInit() > 0
+    let interactiveConsole = inputKeyboard && fb_available() != 0
+    if inputKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }
     enable_irq()
 
-    if windowKeyboard {
+    if interactiveConsole {
         // Interactive graphical session (make run-gfx): boot straight into the
         // shell so the window is immediately usable. The milestone demos still
         // run on the serial/test path below (and the acceptance tests depend on

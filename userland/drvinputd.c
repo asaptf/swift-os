@@ -1,4 +1,4 @@
-// drvinputd.c - C5 pseudo driver service.
+// drvinputd.c - C5 pseudo/virtio-input driver service smoke.
 //
 // This is deliberately not a real virtio-input driver yet. It is the smallest
 // restartable service shape C5 needs: a process receives only endpoint/device
@@ -43,13 +43,23 @@ static void gen_msg(char out[10], const char *prefix, int gen) {
     out[i] = (char)('0' + gen);
 }
 
+static int is_real_virtio_input(const struct swiftos_device_info *info) {
+    return info->kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
+           info->bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
+           info->mmio_base != 0 &&
+           info->mmio_len != 0 &&
+           (info->flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0 &&
+           cstr_eq(info->name, "virtio-input.0");
+}
+
 static int valid_device_info(const struct swiftos_device_info *info) {
+    if (info->claimed != 1) { return 0; }
+    if ((info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) == 0) { return 0; }
+    if (is_real_virtio_input(info)) { return 1; }
     return info->kind == SWIFTOS_DEVICE_KIND_PSEUDO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_PSEUDO &&
            info->mmio_base == 0 &&
            info->mmio_len == 0 &&
-           (info->flags & SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT) != 0 &&
-           info->claimed == 1 &&
            cstr_eq(info->name, "pseudo-input.0");
 }
 
@@ -113,6 +123,9 @@ int main(int argc, char **argv) {
             }
             device_fd = received_fd;
             puts_raw("drvinputd: C5b device grant accepted\n");
+            if (is_real_virtio_input(&info)) {
+                puts_raw("drvinputd: C5c virtio-input grant accepted\n");
+            }
             gen_msg(msg, "DEVACK", gen);
             if (ipc_send(ready_fd, msg, 7, -1) != 0) {
                 puts_raw("drvinputd: device ack send failed\n");

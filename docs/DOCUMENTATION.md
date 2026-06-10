@@ -14,7 +14,9 @@ format details.
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
 | Learn the core SwiftOS concepts and terminology | [Concepts](CONCEPTS.md) |
+| Understand the design philosophy and tradeoffs | [Philosophy](PHILOSOPHY.md) |
 | Choose and verify a direct, UEFI, graphical, or VirtualBox boot profile | [Installation Guide](INSTALLATION_GUIDE.md) |
+| Run the best-effort VirtualBox ARM validation path | [VirtualBox Guide](VIRTUALBOX.md) |
 | Prepare, validate, hand off, and roll back deployment candidates | [Deployment Guide](DEPLOYMENT_GUIDE.md) |
 | Review shipped features, verification gates, and known limits | [Release Notes](RELEASE_NOTES.md) |
 | Rebuild, update, validate, and roll back immutable SwiftOS artifacts | [Update And Rollback Guide](UPDATE_GUIDE.md) |
@@ -26,7 +28,7 @@ format details.
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
 | Operate boot profiles, networking demos, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
-| Run, observe, test, and design SwiftOS services and the C5a-C5c driver-service smoke | [Service Guide](SERVICE_GUIDE.md) |
+| Run, observe, test, and design SwiftOS services and the C5 driver-service/device-metadata smoke | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
 | Measure resource usage, throughput guards, service metrics, and sizing limits | [Performance And Sizing Guide](PERFORMANCE_GUIDE.md) |
 | Read boot health, service metrics, process snapshots, and log evidence | [Observability Guide](OBSERVABILITY_GUIDE.md) |
@@ -53,6 +55,20 @@ format details.
 | Plan server package priorities and porting prerequisites | [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) |
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |
+
+## Maintainer Planning And Audit Artifacts
+
+These files are useful for maintainers and reviewers. They are not the primary
+user path, but they are part of the checked-in documentation set and should stay
+discoverable.
+
+| Need | Document |
+| --- | --- |
+| Track the package ecosystem end state and current package roadmap | [Package Ecosystem Goal](PACKAGE_ECOSYSTEM_GOAL.md) |
+| Read the historical package-manager implementation plan | [Package Manager Implementation Plan](PACKAGE_MANAGER_IMPLEMENTATION_PLAN.md) |
+| Reuse package-manager session prompts and milestone prompts | [Package Manager Session Prompts](PACKAGE_MANAGER_SESSION_PROMPTS.md) |
+| Review the machine-checked SMP mutable-state inventory | [SMP Mutable State Audit](SMP_STATE_AUDIT.md) |
+| Pick up the latest handoff notes for the next engineering session | [Next Session](NEXT_SESSION.md) |
 
 ## Documentation Contract
 
@@ -145,7 +161,8 @@ When adding public docs:
 2. Link to the source header or implementation that defines the contract.
 3. Separate current behavior from future roadmap language.
 4. Keep all docs in English.
-5. Run `make docs-test` for Markdown fence, local-link, and API table integrity.
+5. Run `make docs-test` for Markdown fence, local-link, API table,
+   documentation map, and command-reference integrity.
 6. Run at least the relevant build or test target before committing.
 7. For operational docs, name the acceptance test that proves each workflow when
    such a test exists.

@@ -1354,10 +1354,17 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   the packed base image, and requires the S2 timer heartbeat plus the S4e
   post-run lock-balance marker before accepting the S4f markers. `make test`
   runs the harness after the SMP boot smoke.
+- **Post-boot SMP churn harness.** `tests/smp_resource_stress_test.sh` boots
+  with `-smp 4`, logs in after the normal boot demos, and reruns resource-heavy
+  userland paths (`forkdemo`, `fdopsdemo`, `execdemo`, `threadsdemo`, and a
+  tmpfs create/write/pipe/move/remove loop) while all discovered CPUs remain
+  online and ticking. It checks the S4a-S4e post-demo lock-boundary markers and
+  its own `S4F-*` status markers, and is available as
+  `make smp-resource-stress-test`.
 - **Static guard.** `tests/smp_release_guard_test.sh` now requires the
-  `/bin/s4stress` Makefile wiring, base-image install step, executable harness,
-  and workload coverage markers so the S4f stress does not silently fall out of
-  the release contract.
+  `/bin/s4stress` Makefile wiring, base-image install step, executable
+  harnesses, and workload coverage markers so the S4f stress does not silently
+  fall out of the release contract.
 - **Non-goals.** S4f is intentionally a restricted-SMP stress pass for the
   current S2h gate. It does not enable broad secondary EL0 execution or make one
   address space execute concurrently on multiple CPUs; that remains S5.
@@ -1670,25 +1677,50 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   virtio-input device claim, manifest matching, or driver replacement. C5b only
   makes the ownership/transfer/release contract executable.
 
-### C5c — device discovery manifest matching (DONE, 2026-06-10)
+### C5c — virtio-input device discovery and manifest matching (DONE, 2026-06-10)
 
 - **Discovery ABI.** Added `device_discover(index, info*)` as syscall 64. It is
   read-only, requires the same boot authority capability as `device_claim`, and
   enumerates the device registry by manifest ordinal. It writes the same 64-byte
   `swiftos_device_info` record as `device_info`; out-of-range enumeration returns
   `-2`.
-- **Supervisor matching.** `/bin/drvsvcdemo` discovers registry metadata, matches
-  `pseudo-input.0` by kind, bus, `NO_MMIO_GRANT`, unclaimed state, and manifest
-  name, proves enumeration exhaustion, then claims the discovered name and runs
-  the existing C5b IPC transfer/release checks.
-- **Executable checks.** Boot now requires
-  `C5c OK: device discovery manifest matched pseudo input`; `make
-  c5-device-discovery-test` is the focused `-smp 4` gate, and
-  `c5-device-handle-test` remains a compatibility alias.
-- **Non-goals.** Still no MMIO mapping, IRQ endpoint, DMA window, real
-  device-tree/virtio-input metadata extraction, or userland replacement of the
-  in-kernel virtio-input driver. C5c only turns the pseudo registry into an
-  executable discovery/matching contract.
+- **Discovery-backed registry.** The VFS device registry now probes the
+  platform virtio-mmio window for device id 18 and registers `virtio-input.0`
+  when a QEMU virtio-input transport is present. The grant metadata records
+  `SWIFTOS_DEVICE_KIND_VIRTIO_INPUT`, `SWIFTOS_DEVICE_BUS_VIRTIO_MMIO`, the
+  transport MMIO base/length, and `DISCOVERED | NO_MMIO_GRANT`.
+- **Headless fallback.** Direct serial boots that do not attach a keyboard
+  device still register `pseudo-input.0`, so the C5 supervisor and lifecycle
+  smoke remains part of the broad boot path.
+- **Supervisor/service manifest check.** `/bin/drvsvcdemo` prefers
+  `virtio-input.0`, validates the manifest fields, transfers the device handle
+  to `/bin/drvinputd`, proves the grant is busy while the service owns it, and
+  reclaims it after service exit. `/bin/drvinputd` validates the same manifest
+  before acknowledging. The focused path emits
+  `C5c OK: virtio-input device grant discovered and matched`.
+- **Executable checks.** `make c5-device-discovery-test` attaches QEMU
+  `virtio-keyboard-device` and runs the C5 gate under `-smp 4`; the ordinary
+  `boot_test.sh` still covers the pseudo fallback and requires
+  `C5c OK: device discovery manifest matched pseudo input`.
+- **Non-goals.** C5c still grants only `getattr + transfer`. No userland MMIO
+  map syscall, IRQ endpoint, DMA window, or replacement of the in-kernel
+  virtio-input queue owner lands in this slice.
+
+### C5d — virtio-input discovery metadata (DONE, 2026-06-10)
+
+- **Metadata source.** The virtio-input keyboard probe now scans
+  `platform.virtioMmioBase/Stride/Count` instead of the old fixed QEMU window
+  constants. VFS device-registry setup reuses the same read-only probe: when a
+  `virtio-keyboard-device` is present, `virtio-input.0` reports
+  `VIRTIO_MMIO`, the transport MMIO base, and the slot length in
+  `swiftos_device_info`.
+- **Authority boundary.** The registry still sets `NO_MMIO_GRANT`, and IRQ is
+  still zero. These MMIO fields are discovery manifest metadata only; no userland
+  mapping, IRQ endpoint, DMA window, or driver ownership is handed out.
+- **Executable checks.** `/bin/drvsvcdemo` and `/bin/drvinputd` validate both the
+  synthetic no-device fallback and the virtio-mmio metadata case. `make
+  c5-device-metadata-test` boots with a QEMU virtio keyboard and asserts
+  `C5d OK: virtio input discovery metadata surfaced`.
 
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 

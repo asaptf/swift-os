@@ -43,7 +43,7 @@ Choose the delivery path before wiring the build:
 | Base image `/bin` | The command is part of the default OS image | `make build base-image` plus a QEMU command test |
 | Local `.swpkg` install | The command is optional but should install inside the guest from a package file | `make package-local-install-test` |
 | Signed repository fixture | The command should be resolved by package name through `/bin/pkg` | `make package-repo-install-test` |
-| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
+| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make ports-ca-certificates-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 
 Packages install under `/usr` today. Keep boot-critical tools in the immutable
 base image, and use package workflows for optional commands and maintainer-side
@@ -399,6 +399,6 @@ Package and port examples:
 | Path | Shows |
 | --- | --- |
 | `fixtures/pkghello/manifest.json` | Minimal `.swpkg` manifest |
-| `ports/lang/lua/Port.json` | Current source-port recipe shape |
-| `scripts/build-lua.sh` | Static AArch64 Lua cross-build and signed local repository fixture |
-| `tests/pkg_lua_repo_install_test.sh` | Guest `pkg install lua`, `lua -v`, and Lua expression smoke |
+| `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/security/ca-certificates/Port.json` | Current source-port and data-package recipe shapes |
+| `scripts/build-lua.sh`, `scripts/build-zlib.sh`, `scripts/build-ca-certificates.sh` | Static AArch64 source builds and data-package staging for signed repository fixtures |
+| `tests/pkg_ports_seed_repo_install_test.sh` | Guest `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`, Lua smoke, `minigzip`, and CA bundle marker checks |

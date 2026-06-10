@@ -9,6 +9,7 @@ KERNEL="$ROOT/build/kernel.elf"
 BOOT_OBJ="$ROOT/build/boot.o"
 BOOT_SRC="$ROOT/kernel/arch/aarch64/boot.S"
 IO_HDR="$ROOT/kernel/arch/aarch64/io.h"
+MAKEFILE_PATH="$ROOT/Makefile"
 MAIN_SWIFT="$ROOT/kernel/main.swift"
 GIC_SWIFT="$ROOT/kernel/drivers/gic.swift"
 PERCPU_SWIFT="$ROOT/kernel/smp/percpu.swift"
@@ -28,6 +29,7 @@ SWIFT_USER_H="$ROOT/userland/lib/swift_user.h"
 API_REFERENCE="$ROOT/docs/API_REFERENCE.md"
 S4_STRESS_C="$ROOT/userland/s4stress.c"
 S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
+SMP_RESOURCE_STRESS_TEST="$ROOT/tests/smp_resource_stress_test.sh"
 SMP_BOOT_TEST="$ROOT/tests/smp_boot_test.sh"
 OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
 
@@ -630,6 +632,35 @@ done
 
 if rg -n 'gNet|virtioNetPoll|virtioNetTxSubmit|virtioNetTxBuffer' "$MAIN_SWIFT" >/dev/null; then
   echo "FAIL: S4e main boot probe must use network lock-boundary helpers instead of direct gNet/virtio-net access." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SMP_RESOURCE_STRESS_TEST" ]]; then
+  echo "FAIL: S4f resource stress test script is missing." >&2
+  exit 1
+fi
+for needle in \
+  '-smp "$SMP_CPUS"' \
+  '/bin/forkdemo; echo S4F-FORK-RC=$?' \
+  '/bin/fdopsdemo; echo S4F-FDOPS-RC=$?' \
+  '/bin/execdemo; echo S4F-EXEC-RC=$?' \
+  '/bin/threadsdemo; echo S4F-THREADS-RC=$?' \
+  'S4F-TMPFS-DONE' \
+  'S4F-TMPFS-CLEAN' \
+  'S4F-RESOURCE-STRESS-DONE' \
+  'S4a OK: PMM lock boundary stayed balanced' \
+  'S4b OK: VFS lock boundary stayed balanced' \
+  'S4c OK: kernel heap lock boundary stayed balanced' \
+  'S4d OK: package-store lock boundary stayed balanced' \
+  'S4e OK: network lock boundary stayed balanced'; do
+  if ! grep -Fq -- "$needle" "$SMP_RESOURCE_STRESS_TEST"; then
+    echo "FAIL: S4f resource stress test missing $needle." >&2
+    exit 1
+  fi
+done
+if ! grep -Fq 'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh' "$MAKEFILE_PATH" ||
+   ! grep -q '^smp-resource-stress-test:' "$MAKEFILE_PATH"; then
+  echo "FAIL: S4f resource stress test must be wired into make test and expose a dedicated make target." >&2
   exit 1
 fi
 

@@ -62,10 +62,11 @@ The checked-in system currently provides these practical guarantees:
    exactly the handles requested by the parent, with attenuated rights.
 8. IPC handle passing moves one handle to the receiver and clears the sender's
    source fd on success.
-9. C5b/C5c device discovery and opaque grants are metadata-only handles: the
-   supervisor can discover `pseudo-input.0`, inspect the grant, and prove
-   ownership movement, but cannot use it for MMIO, IRQ, DMA, or real
-   virtio-input access.
+9. C5b-C5d device discovery and opaque grants are metadata-only handles: the
+   supervisor can discover `virtio-input.0` when QEMU exposes it or the
+   `pseudo-input.0` fallback on headless boots, inspect the grant, observe
+   virtio-mmio base/length as discovery metadata, and prove ownership movement,
+   but cannot use it for MMIO, IRQ, DMA, or real virtio-input queue access.
 10. Device discovery and claiming are gated to the boot authority; claimed
     device grants are inspectable and transferable but not duplicable.
 11. `confine(path)` can narrow a process to a filesystem subtree and cannot widen
@@ -85,7 +86,7 @@ architecture.
 | No persistent user data store | `/tmp` is scratch; reboot clears it |
 | `capSpawn` and `capProcessInspect` are scaffold bits | They are part of the identity model, but not the main enforcement boundary yet |
 | `capLogExport` is reserved | No seeded account receives it by default |
-| Drivers and networking are still in kernel | C5c proves discovery metadata and an opaque pseudo-device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
+| Drivers and networking are still in kernel | C5d proves virtio-input or pseudo fallback discovery metadata plus an opaque device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
 | Single global cell today | `CellId` exists as a field; real Cells are future work |
 
 Do not describe the current system as a finished object-capability OS. It is a
@@ -344,22 +345,26 @@ Acceptance evidence:
 
 ### Opaque Device Grants
 
-C5b adds the first device-shaped handle, `pseudo-input.0`, and C5c adds
-discovery metadata/manifest matching for the checked-in driver-service smoke.
-The supervisor discovers the pseudo device with `device_discover`, claims the
-grant with `device_claim`, checks its metadata with `device_info`, moves it to
-`/bin/drvinputd` over an IPC endpoint, and then proves the registry reports the
-device as busy until the service exits and closes its final fd.
+C5b adds the first device-shaped handle, C5c adds discovery metadata/manifest
+matching, and C5d keeps the discovered virtio-mmio base and length visible as
+non-authoritative metadata for the checked-in driver-service smoke. The
+supervisor discovers the current input grant with `device_discover`, claims the
+discovered name with `device_claim`, checks its metadata with `device_info`,
+moves it to `/bin/drvinputd` over an IPC endpoint, and then proves the registry
+reports the device as busy until the service exits and closes its final fd.
 
 Security properties:
 
 - The grant is a handle, not a global permission bit.
-- Discovery returns metadata for the pseudo device and then reports exhaustion.
+- Discovery returns metadata for the current input grant and then reports
+  exhaustion. In the focused gate that grant is `virtio-input.0`; in headless
+  boots it is `pseudo-input.0`.
 - The sender loses the fd when `ipc_send` moves the handle.
-- A second `device_claim("pseudo-input.0", ...)` returns `-16` while the service
-  owns the live grant.
-- The C5b metadata explicitly reports no MMIO base, no MMIO length, no IRQ, and
-  the `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT` flag.
+- A second `device_claim` of the discovered name returns `-16` while the
+  service owns the live grant.
+- The C5d metadata always carries `SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT`.
+  `virtio-input.0` includes MMIO base/length as manifest metadata only; there is
+  still no userland mapping, IRQ endpoint, DMA window, or queue ownership.
 - Closing the final device fd releases the claim.
 
 This is a security boundary smoke, not a production driver sandbox. Real device
@@ -369,11 +374,11 @@ userland driver.
 Acceptance evidence:
 
 ```sh
-make c5-device-discovery-test
+make c5-device-metadata-test
 ```
 
-`make c5-device-handle-test` remains a compatible alias through the same
-driver-service harness.
+`make c5-device-discovery-test` and `make c5-device-handle-test` remain
+compatible aliases through the same driver-service harness.
 
 ## Filesystem Confinement
 
@@ -508,7 +513,7 @@ make build
 ./tests/swift_chmodown_test.sh
 ./tests/spawn_self_exec_test.sh
 ./tests/ipc_socket_transfer_test.sh
-make c5-device-discovery-test
+make c5-device-metadata-test
 ./tests/mmap_test.sh
 make package-overlay-test
 ```

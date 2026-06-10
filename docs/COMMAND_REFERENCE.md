@@ -790,7 +790,7 @@ diagnostic fixtures than stable application interfaces.
 | `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
-| `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus device discovery and opaque handle handoff over endpoint IPC. | `make c5-device-discovery-test` (`-smp 4`) |
+| `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff and virtio-input discovery metadata over endpoint IPC. | `make c5-device-metadata-test` (`-smp 4`) |
 | `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 
 Examples:
@@ -805,12 +805,15 @@ pkg list
 ```
 
 `drvsvcdemo` starts `/bin/drvinputd` twice, exchanges endpoint IPC messages,
-expects `C5a OK: restartable driver service recovered over IPC`, discovers and
-matches the `pseudo-input.0` manifest, claims the device grant, transfers it to
-the restarted service, and expects both `C5b OK: opaque device handle
-transferred and released` and `C5c OK: device discovery manifest matched pseudo
-input`. It is a driver-service shape smoke with an opaque registry grant, not a
-real MMIO/IRQ/DMA device handoff.
+expects `C5a OK: restartable driver service recovered over IPC`, claims either
+the discovered `virtio-input.0` device grant or the `pseudo-input.0` fallback,
+transfers it to the restarted service, and expects
+`C5b OK: opaque device handle transferred and released`. When the QEMU keyboard
+device is attached, it also expects
+`C5c OK: virtio-input device grant discovered and matched`. It is a
+driver-service shape smoke with an opaque registry grant, not a userland
+MMIO/IRQ/DMA driver handoff. The C5d metadata gate additionally expects
+`C5d OK: virtio input discovery metadata surfaced`.
 
 ## Package Commands
 
@@ -965,8 +968,8 @@ are not the primary operator interface.
 | `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
-| `drvsvcdemo` | C5a-C5c pseudo driver supervisor, discovery, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-device-discovery-test` |
-| `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-discovery-test` |
+| `drvsvcdemo` | C5a-C5d pseudo/virtio-input driver supervisor, discovery metadata, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-device-metadata-test` |
+| `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-metadata-test` |
 
 Prefer the commands in the earlier sections for normal use. Use these demo
 commands when validating a specific milestone or investigating a regression.
