@@ -30,7 +30,7 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
 | Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
-| Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, and local static-host ports fixture |
+| Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
 | Linux binaries | Not supported |
 | x86-64 binaries | Not supported |
@@ -327,8 +327,9 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 ## Package And Distribution Compatibility
 
 SwiftOS package compatibility is currently image-based, with a narrow local
-target-side install path, a signed static HTTP repository fixture, and a local
-static-host ports fixture for Lua plus zlib.
+target-side install path, a signed static HTTP repository fixture, a local
+static-host ports fixture for Lua plus zlib, and a hosted-style HTTP repository
+URL smoke.
 
 Supported now:
 
@@ -346,6 +347,9 @@ Supported now:
 - Source-built Lua and zlib packages published into one seed repository.
 - Static-hostable repository root under `build/ports-static-host-root`, proven
   by `make package-static-host-repo-install-test`.
+- Host-side hosted URL verification for a deployed static root.
+- Target-side HTTP repository URLs with DNS hostnames, proven by
+  `make package-static-host-dns-repo-install-test`.
 
 Not supported now:
 
@@ -364,6 +368,8 @@ make package-store-test
 make package-local-install-test
 make package-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 For the complete package runbook, see [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md). See
@@ -475,7 +481,7 @@ Use the narrowest test that proves the compatibility path you changed.
 | Native Swift user program | `make build base-image`, command-specific QEMU test |
 | C/newlib user program | `make newlib`, `make build base-image`, relevant QEMU test |
 | Base image content | `make base-image`, `./tests/vfs_disk_test.sh` |
-| Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test` |
+| Package overlay/store/repository | `make package-overlay-test`; `make package-store-test`; `make package-repo-install-test`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 | Login or capabilities | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
 | Network service | Service-specific network test plus `./tests/virtio_net_test.sh` |
 | LLM serving | `./tests/llm_serve_test.sh` |

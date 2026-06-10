@@ -380,7 +380,9 @@ signed local repository publication, and target-side install from a default
 repository URL. The Lua-only smoke remains useful for the interpreter path; the
 seed repository smoke installs both Lua and zlib and runs the `minigzip` round
 trip in the guest. The static-host smoke serves the same seed repository from a
-deployable web-root layout and repeats the Lua+zlib install path.
+deployable web-root layout and repeats the Lua+zlib install path; the P9 hosted
+URL smoke proves that `/bin/pkg` can install from a DNS-resolved HTTP repository
+hostname.
 
 ```sh
 make ports-lua-repo-fixture
@@ -392,6 +394,8 @@ make ports-seed-repo-fixture
 make package-ports-seed-repo-install-test
 make ports-static-host-publish
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 The guest-side flow exercised by the test is:
@@ -424,7 +428,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make package-ports-seed-repo-install-test`, and `make package-static-host-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.

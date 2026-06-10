@@ -31,6 +31,7 @@ Current supported support targets:
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
+| Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | LLM local and serving demos | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | SMP readiness | milestone-specific SMP targets from [RISK_REMEDIATION_ROADMAP.md](RISK_REMEDIATION_ROADMAP.md) |
 
@@ -77,6 +78,7 @@ Then run the narrowest acceptance test that proves the failing path:
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
 | Static-host ports fixture | `make package-static-host-repo-install-test` |
+| Hosted package URL fixture | `make ports-hosted-url-verify-test`, `make package-static-host-dns-repo-install-test` |
 | UEFI boot | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | SMP readiness | `make s1-test` or the active milestone target |
 
@@ -350,13 +352,16 @@ make package-store-test
 make package-local-install-test
 make package-repo-install-test
 make package-static-host-repo-install-test
+make ports-hosted-url-verify-test
+make package-static-host-dns-repo-install-test
 ```
 
 Mention whether the guest saw `/usr/bin/pkghello`, whether `pkg list` reported
 `pkghello-1.0.0_1`, and whether the repository flow printed
 `pkg: catalog updated`. For the static-host ports fixture, mention whether
 `pkg install lua` and `pkg install zlib` succeeded, whether Lua printed `42`,
-and whether the `minigzip` round trip printed `static-host-ok`.
+whether the `minigzip` round trip printed `static-host-ok`, and whether the
+hosted-URL path used an IP literal or DNS hostname.
 
 ### SMP Readiness
 
