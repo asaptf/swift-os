@@ -663,8 +663,9 @@ The importer can copy or translate:
 - package plist;
 - dependency hints.
 
-The importer must mark uncertain fields with TODOs. It should not pretend that a
-FreeBSD port is automatically valid for swift-os. Common manual work will be:
+The importer must mark uncertain fields with review markers. It should not
+pretend that a FreeBSD port is automatically valid for SwiftOS. Common manual
+work will be:
 
 - remove FreeBSD-specific assumptions;
 - replace system calls not present on swift-os;
@@ -1037,7 +1038,7 @@ useful, and much less demanding than `curl`, Node.js, or the JVM.
   a privileged package-store service.
 - Repository key rotation policy.
 - How much FreeBSD ports metadata should be imported automatically versus
-  scaffolded with TODOs.
+  scaffolded with review markers.
 - Whether the first hosted repository lives on GitHub Releases, GitHub Pages,
   or object storage.
 - When to introduce compression.
