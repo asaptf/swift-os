@@ -204,7 +204,7 @@ log-export service.
 ## Capability Boundary
 
 `capLogExport` is reserved as the future authority for exporting the kernel log
-ring or installing a non-UART log sink. It is not granted to the default demo
+ring or installing a non-UART log sink. It is not granted to the default service
 authority today.
 
 Current hook helpers:

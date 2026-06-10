@@ -328,7 +328,7 @@ Common service commands:
 | UDP echo | `/bin/udpecho` | `capNet` |
 | LLM HTTP serving | `/bin/llmd` | `capFsRead`, `capNet` |
 
-Use the seeded `root` account for service demos unless you have created a
+Use the seeded `root` account for service validation unless you have created a
 service-specific account with `capNet`.
 
 Important current limits:
@@ -387,7 +387,7 @@ Current limits:
 - No target-side network configuration command.
 - No persistent network profile store.
 - No firewall or routing administration surface.
-- TLS client trust validation is still a demo path, not production policy.
+- TLS client trust validation is still a smoke path, not production policy.
 
 ## Administrative Verification Matrix
 
@@ -426,7 +426,7 @@ When handing an administrative issue to support, include:
 10. Whether `/tmp`, base image files, package images, or model files were
     involved.
 
-Redact any non-demo passwords, salts, private keys, model keys, or local tokens
+Redact any non-test passwords, salts, private keys, model keys, or local tokens
 before sharing logs.
 
 ## Roadmap Notes

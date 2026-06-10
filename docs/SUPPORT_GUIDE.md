@@ -25,7 +25,7 @@ Current supported support targets:
 | UEFI QEMU boot | [Installation Guide](INSTALLATION_GUIDE.md) profile plus `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Serial console login | `./tests/console_login_test.sh` |
 | Native commands | command-specific tests from [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md), starting with `./tests/swift_coreutils_test.sh` |
-| Networking demos | [Networking Guide](NETWORKING_GUIDE.md) profiles plus `./tests/tcp_echo_test.sh`, `./tests/udp_echo_test.sh`, and `./tests/httpd_test.sh` |
+| Networking workflows | [Networking Guide](NETWORKING_GUIDE.md) profiles plus `./tests/tcp_echo_test.sh`, `./tests/udp_echo_test.sh`, and `./tests/httpd_test.sh` |
 | Package payload overlay | `make package-overlay-test` |
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
@@ -93,7 +93,7 @@ the next person from retesting the wrong layer.
 
 ## Minimum Report Template
 
-Use this template for bugs, regressions, and failed demos.
+Use this template for bugs, regressions, and failed validation runs.
 
 ```text
 Title:

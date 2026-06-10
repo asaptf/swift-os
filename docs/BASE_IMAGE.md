@@ -28,7 +28,7 @@ The base image is the immutable system root:
 
 | Path | Source | Writable In Guest | Purpose |
 | --- | --- | --- | --- |
-| `/bin` | Staged EL0 programs | No | Native Swift tools, demos, services, update commands, package manager, busybox |
+| `/bin` | Staged EL0 programs | No | Native Swift tools, diagnostics, services, update commands, package manager, busybox |
 | `/etc` | `base/etc` plus generated trust roots | No | Login identity store, hostname, package repository trust, model signing trust |
 | `/www` | `base/www` | No | Static content served by `/bin/httpd` |
 | `/models` | `models/` build artifacts | No | Local LLM files and signed serving bundles |
@@ -99,7 +99,7 @@ packs it into `build/base.img` with `build/basepack`.
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |
 | `PKG_DEFAULT_REPO_URL` | `/etc/pkg/repo-url` | Optional default repository URL baked into a custom base image |
 | `PKG_DEFAULT_DNS_SERVER` | `/etc/pkg/dns-server` | Optional DNS server for hosted package-repository tests |
-| `models/stories260K.bin`, `models/tok512.bin` | `/models` | Local `/bin/llm` demo inputs |
+| `models/stories260K.bin`, `models/tok512.bin` | `/models` | Local `/bin/llm` inference inputs |
 | `models/stories15M-q8.bin`, `models/tokenizer.bin` | `/models/stories15M/1` | Verified `/bin/llmd` serving bundle |
 | Deliberately corrupt generation 2 model | `/models/stories15M/2` | Test fixture for verify-and-fall-back behavior |
 | `models/dev-signing.pub` | `/etc/swos/model-signing.pub` | Model manifest trust root |

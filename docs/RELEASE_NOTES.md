@@ -21,9 +21,9 @@ service-oriented.
 | Userland | Static native SwiftOS programs plus busybox shell compatibility |
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
-| Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
+| Networking | virtio-net, TCP/UDP/DNS smoke paths, static HTTP server, LLM serving |
 | Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the eight-package seed ports repository fixture |
-| AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
+| AI hosting | Local TinyStories inference and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
@@ -216,12 +216,12 @@ llmd: served
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.
-- TLS client support is a demo path. Treat production trust validation as
+- TLS client support is a smoke path. Treat production trust validation as
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,
   not a throughput target.
 - The deliberately corrupt `/models/stories15M/2` generation is expected in the
-  checked-in demo image. Its manifest signature is valid, but its model payload
+  checked-in model image. Its manifest signature is valid, but its model payload
   hash fails, proving fallback to generation 1.
 - Model-bundle manifests are signed with the development Ed25519 trust root
   staged as `/etc/swos/model-signing.pub`. Production key rotation and

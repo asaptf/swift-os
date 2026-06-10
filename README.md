@@ -108,12 +108,12 @@ What exists today, in the order it was built:
   virtio-input queue ownership are still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
-  syscalls; EL0 threads share one address space; a futex-based mutex demo proves
+  syscalls; EL0 threads share one address space; a futex-based mutex test proves
   correct concurrent increment across preemption.
 
 - **Process teardown reclaims frames:** `address_space_destroy` walks and frees
   all user-half page tables and leaf frames on process exit/exec/reap; a boot-
-  time reclaim demo asserts zero leak across fork+exec+spawn round-trips.
+  time reclaim test asserts zero leak across fork+exec+spawn round-trips.
 
 - **Package and ports fixtures:** `.swpkg` packages, writable package-store
   images, signed static repository catalogs, and target-side `pkg install NAME`

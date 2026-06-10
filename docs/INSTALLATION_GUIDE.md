@@ -7,7 +7,7 @@ and run one of the checked-in boot profiles.
 
 Use this guide when you need to choose the right artifact:
 
-- Direct serial QEMU boot for everyday development and demos.
+- Direct serial QEMU boot for everyday development and validation.
 - UEFI/GPT disk image boot through QEMU+AAVMF for firmware validation.
 - Graphical smoke boot for framebuffer and keyboard checks.
 - VirtualBox ARM preparation for best-effort Apple Silicon validation.
