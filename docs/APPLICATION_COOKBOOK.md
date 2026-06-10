@@ -469,3 +469,4 @@ Use these checked-in programs as reference implementations:
 | `userland/llmd.swift` | File-backed mmap, TCP service, model-bundle verification |
 | `userland/spawndemo.c` | `spawn`, `spawn_handles`, handle inheritance |
 | `userland/c4b_sockxfer.c` | Endpoint handle transfer |
+| `userland/drvsvcdemo.c`, `userland/drvinputd.c` | Restartable service supervision and opaque device-grant transfer |
