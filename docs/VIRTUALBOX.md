@@ -1,152 +1,205 @@
-# Running swift-os in VirtualBox (Apple Silicon) — M10.5 validation
+# SwiftOS On VirtualBox ARM
 
-This is the manual validation step for **M10.5**: boot the M10 UEFI image under VirtualBox's
-experimental ARM support on an Apple Silicon Mac, capture the console, and send the log back so the HAL
-can be adapted to VirtualBox's device model.
+This guide describes the best-effort VirtualBox ARM boot path for Apple Silicon
+hosts. Use it when you need firmware-adjacent evidence outside QEMU, or when you
+are investigating whether a VirtualBox release can launch the SwiftOS UEFI disk.
 
-VirtualBox ARM is a developer preview and its `virt`-style machine model differs from QEMU (UART,
-interrupt controller, ACPI vs device tree). So the realistic goal of the **first** run is *diagnostic*:
-confirm the firmware launches our loader and capture what hardware it exposes. The kernel may stay silent
-after handoff if VirtualBox's UART differs from QEMU's — that is expected, and the loader prints the
-information we need *before* it hands off.
-
-## 0. One command (recommended)
-
-`./run_in_virtual_box.sh` checks every dependency (Homebrew, llvm/clang, lld, mtools, gptfdisk, the Swift
-Embedded toolchain, and VirtualBox), offers to install anything missing, then builds the image and
-converts it to `build/swift-os.vdi`. Use `./run_in_virtual_box.sh --check` to only report what is
-missing, or `-y` to auto-accept installs. After it finishes, jump to step 3 (create the VM).
-
-The manual steps below are what that script automates.
-
-## 1. Build the bootable disk image
-
-On the dev host (this repo):
+VirtualBox ARM is not the primary supported runtime. The primary firmware boot
+target remains QEMU with AAVMF:
 
 ```sh
-make disk            # builds build/swift-os.img (GPT + EFI System Partition + BOOTAA64.EFI)
+make disk-run
 ```
 
-`build/swift-os.img` is a real 96 MiB GPT disk: one EFI System Partition (FAT32) containing
-`\EFI\BOOT\BOOTAA64.EFI`, which embeds the kernel. It already boots to the login prompt under QEMU+AAVMF
-(`make disk-run`), so it is a known-good image — any VirtualBox-specific failure is about the device
-model, not the image.
+For the general install matrix, use [Installation Guide](INSTALLATION_GUIDE.md).
 
-## 2. Convert the image for VirtualBox
+## Current Support Status
 
-VirtualBox prefers VDI/VMDK over raw. Convert with the bundled tool:
+| Area | Status |
+| --- | --- |
+| Build a VirtualBox-targeted kernel and disk | Supported by `BOARD=virtualbox` |
+| Convert the disk to VDI | Supported with `VBoxManage convertfromraw` |
+| Boot the same disk under QEMU+AAVMF | Supported reference check |
+| Boot under VirtualBox ARM | Best effort; currently blocked by firmware not launching `\EFI\BOOT\BOOTAA64.EFI` on observed 7.2.x previews |
+| Graphics console | Not expected; observed framebuffer is 0x0 |
+| Serial evidence | Required for useful reports |
+
+Observed VirtualBox ARM devices differ from QEMU `virt`: RAM starts at
+`0x0800_0000`, the PL011 UART is at `0xFFDD_F000`, and the GIC is at
+`0xFCD3_0000`. The `BOARD=virtualbox` build relinks the kernel for that map and
+uses VirtualBox HAL defaults. The remaining open problem is firmware boot
+selection, not the QEMU disk image itself.
+
+## Quick Path
+
+Run the helper:
 
 ```sh
-VBoxManage convertfromraw build/swift-os.img swift-os.vdi --format VDI
+./run_in_virtual_box.sh --check
+./run_in_virtual_box.sh
 ```
 
-(`VBoxManage` ships with VirtualBox; run on the machine that has VirtualBox installed.)
+The script checks host dependencies, builds the VirtualBox board profile, and
+creates:
 
-## 3. Create the VM
-
-Use VirtualBox **7.1 or newer** on Apple Silicon (the build with ARM guest support).
-
-- **New VM** → Type/Version: an **ARM / 64-bit** guest (e.g. "Linux … ARM 64-bit" / "Other ARM 64-bit").
-- **Memory:** 256 MB (matches our bring-up; more is fine).
-- **CPU:** 1 core (swift-os is single-core).
-- **Firmware: EFI must be enabled** (required for ARM; this is what launches our loader).
-- **Disk:** attach `swift-os.vdi` as the VM's hard disk (whatever storage controller the ARM VM offers —
-  virtio / NVMe / SATA; any is fine, the firmware enumerates it).
-- **Boot order:** hard disk enabled.
-
-## 4. Capture the console
-
-Our loader prints through the UEFI console. Capture it both ways so we do not miss it:
-
-- **Serial to file (preferred):** VM **Settings → Serial Ports → Port 1 → Enable**, Port Mode =
-  **Raw File**, Path = e.g. `/tmp/swiftos-serial.log`. After the run, send that file.
-- **Screen:** also take a **screenshot** of the VM window after boot — if VirtualBox routes the UEFI
-  console to the graphics adapter rather than serial, the text will be on screen.
-
-Start the VM, let it sit ~15 seconds, then grab the serial file and/or screenshot.
-
-## 5. What to send back
-
-The lines beginning `UEFI:` are the payload. From QEMU+AAVMF they look like:
-
+```text
+build/swift-os.img
+build/swift-os.vdi
 ```
+
+After the script finishes, create a VirtualBox ARM VM and attach
+`build/swift-os.vdi`.
+
+## Manual Build
+
+Build the VirtualBox board profile:
+
+```sh
+make BOARD=virtualbox disk
+```
+
+Convert the raw GPT disk image to VDI:
+
+```sh
+VBoxManage convertfromraw build/swift-os.img build/swift-os.vdi --format VDI
+```
+
+Before testing VirtualBox itself, prove the disk/loader path still works under
+the reference firmware path:
+
+```sh
+make BOARD=virtualbox disk-run
+```
+
+That QEMU+AAVMF check should reach the SwiftOS serial boot path. If it does not,
+fix the disk or board build before spending time in VirtualBox.
+
+## Create The VM
+
+Use VirtualBox 7.1 or newer on Apple Silicon with ARM guest support.
+
+Recommended VM settings:
+
+| Setting | Value |
+| --- | --- |
+| Type/version | ARM 64-bit guest, such as Other ARM 64-bit |
+| Memory | 256 MB or more |
+| CPU | 1 core |
+| Firmware | EFI enabled |
+| Disk | Existing disk: `build/swift-os.vdi` |
+| Boot order | Hard disk enabled |
+| Network | Optional for this validation |
+| Display | Optional; do not rely on graphics output |
+
+Attach the disk to any storage controller the ARM VM offers. If the VM reaches
+the EFI Boot Manager instead of launching SwiftOS, retry with another controller
+type before changing the disk image.
+
+## Capture Evidence
+
+Enable serial capture before the first boot:
+
+1. Open VM Settings.
+2. Select Serial Ports.
+3. Enable Port 1.
+4. Set Port Mode to Raw File.
+5. Set the path, for example `/tmp/swiftos-virtualbox-serial.log`.
+
+Start the VM and let it run for about 15 seconds. Save:
+
+- the serial raw file;
+- a screenshot of the VM window;
+- `Logs/VBox.log` from the VM directory;
+- the VirtualBox version.
+
+The useful lines begin with `UEFI:`. A healthy QEMU+AAVMF reference run looks
+like:
+
+```text
 swift-os UEFI loader (M10)
-UEFI: device tree found at 0x0000000047EF2000
-UEFI: CurrentEL 0x0000000000000001 MMU 0x0000000000000001
-UEFI: ACPI 2.0 table absent
-UEFI: largest RAM region base 0x0000000048000000 size 0x00000000045DD000
-UEFI: kernel staged, launching (no more firmware output)
+UEFI: kernel staged, launching
 Hello from Swift kernel
-...
 ```
 
-From VirtualBox we specifically want:
+On VirtualBox, the most useful evidence is whether any loader text appears at
+all. If there is no loader text, the current blocker is the firmware boot path.
+If loader text appears but the kernel stays silent after handoff, collect the
+reported memory, ACPI, device-tree, and exception-level lines; that points to
+board HAL work.
 
-- whether **`swift-os UEFI loader (M10)`** appears at all (proves VBox launches our EFI app);
-- **`device tree found …`** vs **`device tree NOT in config table`** (DTB vs ACPI-only — VBox is likely
-  ACPI, which changes how we discover hardware);
-- **`ACPI 2.0 table present/absent`**;
-- the **`largest RAM region base … size …`** (VBox's RAM base may not be `0x40000000`);
-- **`CurrentEL …`** (do we enter at EL1 or EL2?);
-- whether anything appears **after** `kernel staged, launching` (if `Hello from Swift kernel` shows, the
-  kernel's UART assumptions already match; if not, we adapt the HAL to VBox's UART/RAM).
+## Expected Outcomes
 
-Paste the captured `UEFI:` lines (and any later output) back into the session. That report is what M10.5
-uses to adjust `kernel/arch/aarch64/platform.swift` (and, if VBox is ACPI-only, to add minimal ACPI
-table discovery alongside the M9 device-tree path).
+| Outcome | Meaning | Next action |
+| --- | --- | --- |
+| `swift-os UEFI loader` appears | VirtualBox launched the EFI app | Capture all `UEFI:` lines and continue HAL validation |
+| Loader reaches `kernel staged, launching` then stops | Firmware worked; kernel board assumptions need work | Report serial log and `VBox.log` |
+| No serial or screen output | Current known VirtualBox ARM limitation | Check Boot Manager, controller type, and NVRAM; keep QEMU+AAVMF as reference |
+| Firmware setup opens | Disk was not selected as bootable | Confirm disk attachment and boot order |
 
-## Observed VirtualBox ARM machine model (7.2.x preview)
+## Observed VirtualBox ARM Machine Model
 
-Captured from the VM's `Logs/VBox.log` device tree. These differ fundamentally from the QEMU
-`virt` board the kernel currently targets, which is why an unmodified swift-os produces **no**
-output here (serial or graphics): the kernel is linked/located for RAM at `0x4000_0000` and talks
-to a PL011 at `0x0900_0000`, neither of which exists on this board.
+The following values were captured from VirtualBox ARM 7.2.x preview logs and
+are encoded by the `BOARD=virtualbox` build:
 
-| Resource        | QEMU `virt` (current kernel) | VirtualBox ARM (observed)        |
-|-----------------|------------------------------|----------------------------------|
-| RAM base        | `0x4000_0000`                | `0x0800_0000` (–`0x17ff_ffff`)   |
-| PL011 UART MMIO | `0x0900_0000`                | `0xFFDD_F000`                    |
-| GIC             | QEMU layout                  | `0xFCD3_0000`                    |
-| Flash (EFI ROM) | n/a (`-kernel`)              | `0x0400_0000`–`0x07ff_ffff`      |
-| PL061 GPIO      | —                            | `0xFFDD_D000`                    |
-| PL031 RTC       | —                            | `0xFFDD_E000`                    |
-
-VBox ARM also brings up **no graphics console** (headless and GUI both report a 0x0 framebuffer),
-so its EFI console is serial-only via the PL011 at `0xFFDD_F000`.
-
-### M10.5 build (done)
-
-The kernel is now buildable for this board: `make BOARD=virtualbox disk` (the default `BOARD=qemu`
-is unchanged). The board switch relinks the kernel at `0x0808_0000`, compiles in the VBox HAL
-defaults (`platform.swift`), maps the VBox RAM/MMIO split in `kernel/mm/vm.c`, and — because VBox
-leaves the PL011 disabled (it is not the EFI console) — explicitly enables it (`uartInit`) before
-the banner. `run_in_virtual_box.sh` builds this variant. Verified end-to-end under **QEMU UEFI**
-(`make disk-run`): loader → `Hello from Swift kernel` → `M9 platform`, proving the ESP/loader/kernel
-chain is correct.
-
-### Open: VBox EFI does not launch our bootloader
-
-The same disk image boots cleanly under QEMU's EDK2/AAVMF firmware but produces **no** output under
-VirtualBox — not even the loader's first line written directly to the (now-enabled) PL011. So VBox's
-ARM EFI is not starting `\EFI\BOOT\BOOTAA64.EFI` from our GPT/ESP. Suspected cause: the removable-media
-fallback boot policy combined with the NVRAM-corruption workaround (deleting the NVRAM to boot also
-clears any boot entry). Next step is a VBox-side boot investigation (persisted boot entry / controller
-/ ESP layout), independent of the kernel port.
+| Resource | QEMU `virt` | VirtualBox ARM observed |
+| --- | ---: | ---: |
+| RAM base | `0x4000_0000` | `0x0800_0000` |
+| Kernel physical base | `0x4008_0000` | `0x0808_0000` |
+| PL011 UART MMIO | `0x0900_0000` | `0xFFDD_F000` |
+| GIC | QEMU `virt` layout | `0xFCD3_0000` |
+| EFI flash | n/a for direct `-kernel` | `0x0400_0000` to `0x07FF_FFFF` |
+| PL061 GPIO | not used | `0xFFDD_D000` |
+| PL031 RTC | QEMU `virt` RTC | `0xFFDD_E000` |
 
 ## Troubleshooting
 
-- **VM shows the firmware setup/Boot Manager, no loader text:** the firmware did not find
-  `\EFI\BOOT\BOOTAA64.EFI`. Re-check the disk is attached and bootable; in the EFI Boot Manager you can
-  also pick the disk manually.
-- **`VBoxManage` not found:** it is inside the VirtualBox app bundle
-  (`/Applications/VirtualBox.app/Contents/MacOS/VBoxManage`).
-- **No serial output but a screen:** the firmware is using the graphics console; screenshot it.
-- **`Failed to load the NVRAM store ... VERR_TAR_BAD_CHKSUM_FIELD`:** the VBox 7.2 ARM preview
-  sometimes persists a corrupt EFI NVRAM on power-off, which then blocks the next start. Delete the
-  VM's NVRAM file before booting — VirtualBox re-initialises a clean one:
-  `rm -f "$HOME/VirtualBox VMs/SwiftOS/SwiftOS.nvram"`. Boot entries are not needed; the disk boots
-  via the removable-media fallback path `\EFI\BOOT\BOOTAA64.EFI`.
-- **Capturing the PL011 console:** on the ARM board, `--uart1 0x3f8 4` (the legacy 16550) is **not**
-  the PL011 and captures nothing. The PL011 (`0xFFDD_F000`) is wired to VBox serial port 1; enable it
-  in Settings → Serial Ports → Port 1 → Raw File. (No output will appear until the kernel HAL targets
-  that address — see the machine-model note above.)
+`VBoxManage` is not found.
+
+: Use the copy inside the app bundle:
+  `/Applications/VirtualBox.app/Contents/MacOS/VBoxManage`.
+
+The VM shows firmware setup or Boot Manager.
+
+: The firmware did not boot `\EFI\BOOT\BOOTAA64.EFI`. Confirm the VDI is
+  attached, boot order includes the disk, and the controller type is usable by
+  the ARM firmware.
+
+The VM has no serial output.
+
+: Confirm Serial Port 1 is enabled in Raw File mode. On the observed ARM board,
+  legacy 16550 settings such as `--uart1 0x3f8 4` are not the PL011 console and
+  will not capture SwiftOS output.
+
+VirtualBox reports a corrupt NVRAM store.
+
+: Some 7.2 ARM preview builds leave a corrupt NVRAM file after power-off. Delete
+  the VM NVRAM file and retry:
+
+```sh
+rm -f "$HOME/VirtualBox VMs/SwiftOS/SwiftOS.nvram"
+```
+
+Deleting NVRAM can also remove manually added boot entries, so keep testing the
+removable-media fallback path `\EFI\BOOT\BOOTAA64.EFI`.
+
+The QEMU reference path works but VirtualBox is silent.
+
+: Treat this as the current known limitation. Keep the serial raw file,
+  screenshot, `VBox.log`, VirtualBox version, storage-controller type, and exact
+  disk image hash with the report.
+
+## Report Template
+
+```text
+VirtualBox version:
+Host Mac:
+SwiftOS commit:
+Build command:
+Disk hash:
+VM type/version:
+Storage controller:
+Serial raw file attached: yes/no
+Screenshot attached: yes/no
+VBox.log attached: yes/no
+Observed output:
+```
