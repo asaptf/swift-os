@@ -335,6 +335,7 @@ Useful gates:
 SMP_CPUS=4 ./tests/smp_boot_test.sh
 SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
 make s1-test
+make s4-resource-stress-test
 make s5-run-any-placement-test
 ```
 
