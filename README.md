@@ -124,6 +124,11 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   and attach QEMU networking.
 - [User Guide](docs/USER_GUIDE.md): accounts, capabilities, filesystem,
   process tools, networking tools, and current system limits.
+- [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
+  network demos, AI demo operation, logging evidence, and verification gates.
+- [Troubleshooting](docs/TROUBLESHOOTING.md): build, boot, login, filesystem,
+  network, package overlay, LLM, and QEMU test failure diagnosis.
+- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
 - [Developer Guide](docs/DEVELOPER_GUIDE.md): write native Embedded Swift
   programs, port C/newlib programs, and stage binaries into the base image.
 - [API Reference](docs/API_REFERENCE.md): syscall table, structure layouts,

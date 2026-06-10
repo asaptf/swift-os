@@ -14,6 +14,9 @@ format details.
 | --- | --- |
 | Build, boot, log in, run commands, and use QEMU | [Getting Started](GETTING_STARTED.md) |
 | Use the installed system from the serial console | [User Guide](USER_GUIDE.md) |
+| Operate boot profiles, networking demos, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
+| Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
+| Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |
 | Call the EL0 syscall ABI or Swift bridge directly | [API Reference](API_REFERENCE.md) |
 | Understand the system architecture and non-goals | [Architecture](ARCHITECTURE.md) |
@@ -42,6 +45,11 @@ Normative API details live in:
 
 The API reference mirrors those sources so application authors can work from one
 document, but the headers remain the build-time contract.
+
+Operational procedures live in [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md).
+Keep them aligned with the acceptance tests under `tests/`; a command in the
+operations guide should either be a normal manual workflow or have a nearby test
+that proves the same path.
 
 ## Product State
 
@@ -94,3 +102,5 @@ When adding public docs:
 3. Separate current behavior from future roadmap language.
 4. Keep all docs in English.
 5. Run at least the relevant build or test target before committing.
+6. For operational docs, name the acceptance test that proves each workflow when
+   such a test exists.
