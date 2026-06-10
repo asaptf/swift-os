@@ -8,17 +8,20 @@
 //
 // Layout (little-endian):
 //   0   u8[8] "SWOSKERN"
-//   8   u32   version = 2          (v1 = no hashes; v2 = per-slot SHA-256)
+//   8   u32   version = 3          (v2 = per-slot SHA-256; v3 = + Ed25519 sig)
 //   12  u32   active   (0 = slot A, 1 = slot B)
 //   16  u32   fallback (0/1)
 //   20  u32   generation
 //   24  u64   slotA_size           32  u8[32] slotA_sha256
-//   64  u64   slotB_size           72  u8[32] slotB_sha256   (104 bytes total)
+//   64  u64   slotB_size           72  u8[32] slotB_sha256   (104-byte body)
+//   104 u8[64] Ed25519 signature over bytes [0,104)          (168 bytes total)
 //
-// Host-authored at image build for now (no CRC); a CRC + double-buffering, as in
-// the SWOSBOOT base-image store, and an Ed25519 signature (U1g-3b) come later.
+// The signature uses the image-signing key (the same root the kernel embeds);
+// the loader verifies it against its compiled-in copy before trusting the slot
+// selection. Host-authored at image build for now (no CRC / double-buffering —
+// added when the OS writes it at runtime).
 //
-// Usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> [generation]
+// Usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> <signing-seed> [generation]
 
 import Foundation
 
@@ -48,31 +51,49 @@ private func sha256Of(_ data: Data) -> [UInt8] {
 struct KernelBootTool {
     static func main() {
         let args = CommandLine.arguments
-        guard args.count == 5 || args.count == 6 else {
-            fail("usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> [generation]")
+        guard args.count == 6 || args.count == 7 else {
+            fail("usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> <signing-seed> [generation]")
         }
         let outPath = args[1]
         let activeArg = args[2].uppercased()
         guard activeArg == "A" || activeArg == "B" else { fail("active must be A or B") }
         let active: UInt32 = activeArg == "A" ? 0 : 1
         let fallback: UInt32 = 1 - active
-        let generation: UInt32 = args.count == 6 ? (UInt32(args[5]) ?? 1) : 1
+        let generation: UInt32 = args.count == 7 ? (UInt32(args[6]) ?? 1) : 1
 
         guard let ka = FileManager.default.contents(atPath: args[3]) else { fail("cannot read \(args[3])") }
         guard let kb = FileManager.default.contents(atPath: args[4]) else { fail("cannot read \(args[4])") }
+        guard let seed = FileManager.default.contents(atPath: args[5]), seed.count == 32 else {
+            fail("signing seed \(args[5]) must be 32 bytes")
+        }
         let hashA = sha256Of(ka)
         let hashB = sha256Of(kb)
 
-        var bytes = [UInt8]()
-        bytes.append(contentsOf: Array("SWOSKERN".utf8)) // 0
-        bytes.append(contentsOf: le32(2))                // 8: version
-        bytes.append(contentsOf: le32(active))           // 12
-        bytes.append(contentsOf: le32(fallback))         // 16
-        bytes.append(contentsOf: le32(generation))       // 20
-        bytes.append(contentsOf: le64(UInt64(ka.count))) // 24: slotA_size
-        bytes.append(contentsOf: hashA)                  // 32: slotA_sha256
-        bytes.append(contentsOf: le64(UInt64(kb.count))) // 64: slotB_size
-        bytes.append(contentsOf: hashB)                  // 72: slotB_sha256
+        var body = [UInt8]()
+        body.append(contentsOf: Array("SWOSKERN".utf8)) // 0
+        body.append(contentsOf: le32(3))                // 8: version
+        body.append(contentsOf: le32(active))           // 12
+        body.append(contentsOf: le32(fallback))         // 16
+        body.append(contentsOf: le32(generation))       // 20
+        body.append(contentsOf: le64(UInt64(ka.count))) // 24: slotA_size
+        body.append(contentsOf: hashA)                  // 32: slotA_sha256
+        body.append(contentsOf: le64(UInt64(kb.count))) // 64: slotB_size
+        body.append(contentsOf: hashB)                  // 72: slotB_sha256
+        precondition(body.count == 104)
+
+        // Ed25519 signature over the 104-byte body, image-signing key.
+        var sig = [UInt8](repeating: 0, count: 64)
+        body.withUnsafeBytes { msg in
+            seed.withUnsafeBytes { sk in
+                sig.withUnsafeMutableBytes { out in
+                    ed25519Sign(message: msg.baseAddress!, 104, seed: sk.baseAddress!,
+                                signature: out.baseAddress!)
+                }
+            }
+        }
+
+        var bytes = body
+        bytes.append(contentsOf: sig)                   // 104: signature
 
         do {
             try Data(bytes).write(to: URL(fileURLWithPath: outPath))
@@ -80,7 +101,7 @@ struct KernelBootTool {
             fail("\(error)")
         }
         let hexA = hashA.prefix(4).map { String(format: "%02x", $0) }.joined()
-        print("kernelboot: wrote \(bytes.count) bytes, active slot \(activeArg) (gen \(generation)), "
-            + "slotA \(ka.count)B sha256 \(hexA).., slotB \(kb.count)B")
+        print("kernelboot: wrote \(bytes.count) bytes (signed v3), active slot \(activeArg) "
+            + "(gen \(generation)), slotA \(ka.count)B sha256 \(hexA).., slotB \(kb.count)B")
     }
 }

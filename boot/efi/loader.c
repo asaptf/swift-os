@@ -20,6 +20,12 @@
 
 #include "efi.h"
 #include "loader_sha256.h"
+#include "loader_ed25519.h"
+
+// U1g-3b: the image-signing Ed25519 public key (boot/efi/efi_pubkey.S, the same
+// root the kernel embeds). The loader verifies the signed kernel A/B manifest
+// against it before trusting any slot selection.
+extern const unsigned char efi_image_signing_pubkey[32];
 
 // Kernel link/load base (kernel.ld). The embedded flat image's byte 0 maps here.
 // Supplied by the Makefile per board (-DKERNEL_LOAD_ADDR=…); the default matches
@@ -224,32 +230,33 @@ static int read_file_into(EFI_FILE_PROTOCOL *f, UINT64 dst, UINT64 size) {
     return 1;
 }
 
-// U1g-2/3a: the kernel A/B boot manifest (\EFI\swift-os\kernel-boot). Layout (LE):
+// U1g-2/3a/3b: the kernel A/B boot manifest (\EFI\swift-os\kernel-boot). Layout (LE):
 //   0  u8[8] "SWOSKERN"   8  u32 version   12 u32 active(0/1)
 //   16 u32 fallback(0/1)  20 u32 generation
-//   --- version 2 adds per-slot SHA-256 of the kernel image (U1g-3a): ---
-//   24 u64 slotA_size   32 u8[32] slotA_sha256
-//   64 u64 slotB_size   72 u8[32] slotB_sha256   (104 bytes total)
-// Returns 1 and fills *active/*fallback/*gen on a valid manifest, else 0 (the
-// caller then loads slot A by default). For version >= 2 it also fills hashA/hashB
-// and sets *has_hashes. The manifest is host-authored at image build for now and
-// carries no CRC; once the OS writes it at runtime a CRC and double-buffering
-// (like SWOSBOOT) will be added, along with U1g-3b's Ed25519 signature.
+//   24 u64 slotA_size   32 u8[32] slotA_sha256   (U1g-3a, integrity)
+//   64 u64 slotB_size   72 u8[32] slotB_sha256   (104-byte signed body)
+//   --- version 3 (U1g-3b, authenticity): ---
+//   104 u8[64] Ed25519 signature over bytes [0,104)
+// Returns 1 ONLY for a TRUSTED manifest: version 3 with a valid signature over
+// its body, verified against the compiled-in image-signing key. Fills
+// *active/*fallback/*gen and hashA/hashB. Returns 0 for absent / malformed /
+// unsigned (v1/v2 — a signature is required) / bad-signature manifests; the
+// caller then boots the embedded blob rather than honor an untrusted selection.
+#define SWOSKERN_BODY_LEN 104
 static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
                                 int *active, int *fallback, UINT32 *gen,
-                                UINT8 hashA[32], UINT8 hashB[32], int *has_hashes) {
-    *has_hashes = 0;
+                                UINT8 hashA[32], UINT8 hashB[32]) {
     EFI_FILE_PROTOCOL *f = 0;
     UINT64 sz = 0;
     if (!open_esp_file(image_handle, st, KERNEL_MANIFEST_PATH, &f, &sz)) {
         return 0;
     }
-    UINT8 buf[128];
-    if (sz < 24 || sz > sizeof(buf)) { f->Close(f); return 0; }
+    UINT8 buf[256];
+    if (sz < SWOSKERN_BODY_LEN + 64 || sz > sizeof(buf)) { f->Close(f); return 0; }
     UINTN n = (UINTN)sz;
     EFI_STATUS rs = f->Read(f, &n, buf);
     f->Close(f);
-    if (rs != EFI_SUCCESS || n < 24) {
+    if (rs != EFI_SUCCESS || n < SWOSKERN_BODY_LEN + 64) {
         return 0;
     }
     static const char magic[8] = { 'S','W','O','S','K','E','R','N' };
@@ -257,18 +264,23 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
         if (buf[i] != (UINT8)magic[i]) return 0;
     }
     UINT32 version = ld32(buf + 8);
-    if (version != 1 && version != 2) return 0;
+    if (version != 3) {
+        puts16(st, "UEFI: kernel manifest is unsigned (version != 3), ignoring\r\n");
+        return 0;
+    }
+    // Authenticity: the 64-byte signature at offset 104 must verify over the body.
+    if (!ed25519_verify(buf + SWOSKERN_BODY_LEN, buf, SWOSKERN_BODY_LEN, efi_image_signing_pubkey)) {
+        puts16(st, "UEFI: kernel manifest signature INVALID\r\n");
+        return 0;
+    }
     UINT32 a = ld32(buf + 12), fb = ld32(buf + 16);
     if (a > 1 || fb > 1) return 0;                // slot indices out of range
     *active = (int)a;
     *fallback = (int)fb;
     *gen = ld32(buf + 20);
-    if (version >= 2 && n >= 104) {
-        for (int i = 0; i < 32; i++) {
-            hashA[i] = buf[32 + i];
-            hashB[i] = buf[72 + i];
-        }
-        *has_hashes = 1;
+    for (int i = 0; i < 32; i++) {
+        hashA[i] = buf[32 + i];
+        hashB[i] = buf[72 + i];
     }
     return 1;
 }
@@ -401,52 +413,48 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     }
 
     // U1g: load the kernel image from a file on the ESP (decoupled from the loader
-    // binary so it can be A/B-staged); fall back to the embedded blob if no slot
-    // file is usable. U1g-2: a kernel A/B manifest selects the active slot
-    // (kernelA.bin / kernelB.bin), rolling back to the other slot if the active
-    // one is unusable. U1g-3a: a v2 manifest carries each slot's SHA-256, and
-    // load_slot verifies it — a corrupt/truncated active slot fails its hash and
-    // triggers the same rollback (integrity, not yet authenticity — that is
-    // U1g-3b's Ed25519). The whole load + verify happens before ExitBootServices.
+    // binary so it can be A/B-staged). The kernel A/B manifest is TRUSTED only if
+    // it is a v3 manifest with a valid Ed25519 signature over its body (U1g-3b,
+    // authenticity); then it selects the active slot (kernelA.bin / kernelB.bin)
+    // and load_slot verifies that slot's SHA-256 (U1g-3a, integrity), rolling back
+    // to the other slot if the active one is missing or fails its hash. If there
+    // is NO trusted manifest (absent / unsigned / bad signature), the loader boots
+    // its own embedded blob rather than honor an untrusted slot selection. All of
+    // this happens before ExitBootServices.
     UINTN blob_size = (UINTN)(kernel_blob_end - kernel_blob);
 
     int active = 0, fallback = 1;
     UINT32 kgen = 0;
     UINT8 hashA[32], hashB[32];
-    int has_hashes = 0;
-    int have_manifest = read_kernel_manifest(image_handle, st, &active, &fallback,
-                                             &kgen, hashA, hashB, &has_hashes);
-    if (have_manifest) {
+    int trusted = read_kernel_manifest(image_handle, st, &active, &fallback, &kgen, hashA, hashB);
+
+    UINTN ksize = 0;
+    int loaded_slot = -1;
+    if (trusted) {
         puts16(st, "UEFI: kernel A/B manifest active slot ");
         puts16(st, active == 0 ? "A" : "B");
         puts16(st, " gen ");
         puthex(st, kgen);
-        puts16(st, has_hashes ? " (sha256 verified)\r\n" : " (no hashes)\r\n");
-    } else {
-        puts16(st, "UEFI: no kernel A/B manifest, defaulting to slot A\r\n");
-        active = 0;
-        fallback = 0;
-    }
+        puts16(st, " (signature OK)\r\n");
 
-    const UINT8 *active_hash = has_hashes ? (active == 0 ? hashA : hashB) : 0;
-    const UINT8 *fallback_hash = has_hashes ? (fallback == 0 ? hashA : hashB) : 0;
+        const UINT8 *active_hash = active == 0 ? hashA : hashB;
+        const UINT8 *fallback_hash = fallback == 0 ? hashA : hashB;
 
-    // Try the active slot (load + verify); on any failure roll back to the other
-    // slot if it is distinct. load_slot frees its pages on failure.
-    UINTN ksize = 0;
-    int loaded_slot = -1;
-    UINT64 sz = load_slot(image_handle, st, active, active_hash);
-    if (sz) {
-        loaded_slot = active;
-        ksize = (UINTN)sz;
-    } else if (fallback != active) {
-        puts16(st, "UEFI: active slot unusable, rolling back to slot ");
-        puts16(st, fallback == 0 ? "A" : "B");
-        puts16(st, "\r\n");
-        sz = load_slot(image_handle, st, fallback, fallback_hash);
+        // Try the active slot (load + SHA-256 verify); on any failure roll back to
+        // the other slot if distinct. load_slot frees its pages on failure.
+        UINT64 sz = load_slot(image_handle, st, active, active_hash);
         if (sz) {
-            loaded_slot = fallback;
+            loaded_slot = active;
             ksize = (UINTN)sz;
+        } else if (fallback != active) {
+            puts16(st, "UEFI: active slot unusable, rolling back to slot ");
+            puts16(st, fallback == 0 ? "A" : "B");
+            puts16(st, "\r\n");
+            sz = load_slot(image_handle, st, fallback, fallback_hash);
+            if (sz) {
+                loaded_slot = fallback;
+                ksize = (UINTN)sz;
+            }
         }
     }
 

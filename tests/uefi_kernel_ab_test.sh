@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DISK_IMG="$ROOT/build/swift-os.img"
 KERNELBOOT="$ROOT/build/kernelboot"
 KERNEL_BIN="$ROOT/build/kernel.bin"
+SIGN_SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
 MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
@@ -29,6 +30,7 @@ PART_OFFSET=$((2048 * 512))
 [[ -f "$DISK_IMG" ]]   || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
 [[ -x "$KERNELBOOT" ]] || { echo "FAIL: $KERNELBOOT missing (run 'make kernelboot')" >&2; exit 2; }
 [[ -f "$KERNEL_BIN" ]] || { echo "FAIL: $KERNEL_BIN missing (run 'make build')" >&2; exit 2; }
+[[ -f "$SIGN_SEED" ]]  || { echo "FAIL: $SIGN_SEED missing (run 'make base-image')" >&2; exit 2; }
 for t in "$MCOPY" "$MDEL"; do [[ -x "$t" ]] || { echo "FAIL: missing mtools $t" >&2; exit 2; }; done
 
 BASE="$ROOT/build/base.img"
@@ -73,7 +75,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 
 # --- Case B: active=B, both slots present -> loader boots slot B -------------
 cp "$DISK_IMG" "$WORK"
-"$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" >/dev/null || fail "could not build active-B manifest"
+"$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" "$SIGN_SEED" >/dev/null || fail "could not build active-B manifest"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest into the ESP"
 boot_work
@@ -112,8 +114,25 @@ await "UEFI: booted kernel slot B" 30 || fail "integrity: loader did not roll ba
 await "Hello from Swift kernel" 60    || fail "integrity: kernel did not start from slot B"
 stop_qemu
 
+# --- Authenticity: tamper the manifest signature -> loader refuses the manifest
+# and boots its own embedded blob (never an attacker-chosen slot). Flip a byte in
+# the 64-byte Ed25519 signature region (offset 104) of the kernel-boot manifest.
+cp "$DISK_IMG" "$WORK"
+MANI2="$(mktemp -t swiftos-uabk-mani2.XXXXXX)"
+"$MCOPY" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernel-boot "$MANI2" \
+  || fail "could not read kernel-boot manifest"
+printf '\xFF' | dd of="$MANI2" bs=1 count=1 seek=104 conv=notrunc 2>/dev/null
+"$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI2" ::/EFI/swift-os/kernel-boot \
+  || fail "could not write tampered manifest"
+rm -f "$MANI2"
+boot_work
+await "UEFI: kernel manifest signature INVALID" 60 || fail "auth: loader did not reject the tampered manifest"
+await "using embedded blob" 30 || fail "auth: loader did not fall back to the embedded blob"
+await "Hello from Swift kernel" 60 || fail "auth: kernel did not start from the embedded blob"
+stop_qemu
+
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: UEFI kernel A/B — manifest selects the active slot; missing or SHA-256-mismatched active slot rolls back to the other"
+  echo "PASS: UEFI kernel A/B — signed manifest selects the active slot; missing/SHA-256-mismatched slot rolls back; a tampered manifest signature is refused (embedded blob)"
   exit 0
 fi
 echo "--- serial (last boot) ---" >&2

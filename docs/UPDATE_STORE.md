@@ -232,16 +232,21 @@ itself is A/B'd through the UEFI loader, which is being built in slices.
   fallback slot when the active file is missing/unopenable.
 - **U1g-3a (done):** SWOSKERN **v2** carries each slot's SHA-256; the loader
   hashes the loaded image and rolls back to the other slot on a mismatch
-  (integrity, catching a corrupt/truncated kernel — not yet authenticity, since
-  the manifest is unsigned). SHA-256 in the loader is host-tested
-  (`tests/loader_sha256_test.c`); `tests/uefi_kernel_ab_test.sh` covers active-B
-  selection, missing-slot fallback, and SHA-256-mismatch fallback.
-- **Next:** Ed25519 signature for authenticity (U1g-3b), against the compiled-in
-  trust root.
+  (integrity, catching a corrupt/truncated kernel). SHA-256 in the loader is
+  host-tested (`tests/loader_sha256_test.c`).
+- **U1g-3b (done):** SWOSKERN **v3** appends a 64-byte Ed25519 signature over the
+  manifest body; the loader verifies it against its compiled-in image-signing key
+  (`boot/efi/efi_pubkey.S`, the same root the kernel embeds) and honors the
+  manifest only if the signature is valid — otherwise it boots its own embedded
+  blob, never an attacker-chosen slot. Ed25519+SHA-512 verify in the loader is a
+  host-tested C port of the kernel's Swift crypto (`tests/loader_ed25519_test.c`,
+  RFC 8032 vectors). `tests/uefi_kernel_ab_test.sh` adds a tampered-signature case.
+  Signing stays host-side (`tools/kernelboot.swift`). The kernel-image A/B trust
+  chain (sign → verify → integrity → fallback) is complete.
 
 ## Not implemented yet
 
-- Kernel A/B Ed25519 verification (U1g-3b, needs Ed25519+SHA-512 in the loader);
-  runtime manifest writes (CRC + double-buffering) so the OS can flip the active
-  kernel slot.
+- Runtime kernel-manifest writes (CRC + double-buffering) so the OS can flip the
+  active kernel slot, plus staging a new kernel image into the inactive slot —
+  the kernel-image analogue of the base-image U1f stage/activate flow.
 - Key rotation / revocation.

@@ -3156,3 +3156,42 @@ level") — a multi-file Swift module needs `@main`, not top-level statements.
 **Still future (U1g-3b).** Ed25519 signature over the manifest (or the kernel
 images) verified against the compiled-in trust root, for authenticity — needs
 Ed25519+SHA-512 in the loader (C port of `kernel/crypto/{ed25519,sha512}.swift`).
+
+### U1g-3b — kernel manifest Ed25519 authenticity in the loader (DONE, 2026-06-10)
+
+**Scope.** U1g-3a gave integrity (a corrupt slot is caught) but not authenticity
+(the manifest was unsigned, so a tamperer who rewrites a slot can rewrite its
+hash). U1g-3b signs the manifest and has the loader verify it against the
+compiled-in image-signing key — the kernel-image analogue of I8's signed base
+image. This completes the kernel-A/B trust chain: a manifest is honored only with
+a valid signature; otherwise the loader boots its own embedded blob (never an
+attacker-chosen slot).
+
+- `boot/efi/loader_ed25519.h`: header-only SHA-512 + Ed25519 **verify** (RFC 8032),
+  the compact TweetNaCl shape ported from the tested `kernel/crypto/{ed25519,
+  sha512}.swift` with curve constants copied verbatim. Host-tested.
+- `boot/efi/efi_pubkey.S`: incbins `build/image_trust_root.bin` (the same
+  image-signing pubkey the kernel embeds) as `efi_image_signing_pubkey`.
+- **SWOSKERN manifest v3**: appends a 64-byte Ed25519 signature over the 104-byte
+  body (168 bytes). `read_kernel_manifest` returns "trusted" only for v3 with a
+  valid signature; v1/v2 (unsigned) and bad-signature manifests are refused
+  ("kernel manifest signature INVALID" / "unsigned … ignoring"). `efi_main` boots
+  the embedded blob when there is no trusted manifest. Integrity (U1g-3a) then runs
+  within the trusted manifest, so authenticity + integrity are layered.
+- `tools/kernelboot.swift` v3: signs the body with the image-signing seed
+  (host `ed25519Sign`). Makefile passes `$(IMG_SIGNING_SEED)`; the loader links
+  `efi_pubkey.obj`.
+
+**Acceptance.** `tests/loader_ed25519_test.c` (host, in `make test`) checks the C
+verify against RFC 8032 §7.1 vectors and that it rejects a tampered sig/message.
+`tests/uefi_kernel_ab_test.sh` gains a fourth case: a byte flipped in the
+manifest's signature → loader logs "signature INVALID" and boots the embedded
+blob. The active-B, missing-slot, and SHA-256-mismatch cases now run against
+signed v3 manifests. `uefi_boot_test` (default disk, signed v3) verifies the
+signature and boots slot A to busybox, single-core and `-smp 4` — an end-to-end
+check that the loader's embedded pubkey matches the signing key.
+
+**Note.** Verify-only in the loader; signing stays host-side (Swift). The manifest
+is still single-copy/no-CRC — runtime writes (CRC + double-buffering) come when
+the OS can flip the kernel slot. The kernel-image A/B trust chain (sign → verify →
+integrity → fallback) is now complete.
