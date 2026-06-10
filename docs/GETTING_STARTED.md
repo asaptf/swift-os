@@ -34,6 +34,9 @@ Tool paths are overridable:
 make SWIFTC=/path/to/swiftc QEMU=/path/to/qemu-system-aarch64 build
 ```
 
+For the complete set of build, boot, QEMU, board, and test configuration knobs,
+see [CONFIGURATION_REFERENCE.md](CONFIGURATION_REFERENCE.md).
+
 The current pinned flags are in the Makefile and recorded in
 [NOTES.md](NOTES.md). Do not reuse flags from memory; Embedded Swift target
 flags are toolchain-version-specific.
