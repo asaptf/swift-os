@@ -35,6 +35,38 @@ focused test output, and host client output for network services.
 There is no persistent log store in the guest. `/tmp` is RAM scratch and is lost
 on reboot. Capture logs on the host when the evidence matters.
 
+## Operator Triage Order
+
+When a SwiftOS run looks unhealthy, collect signals in this order before
+changing the image or rerunning a different profile:
+
+1. Prove the boot path reached the expected boundary: `./tests/boot_test.sh`,
+   `make disk-run`, or the captured QEMU serial log.
+2. Check the last boot health marker reached. If `swift-os login:` is absent,
+   stay in the boot-health section below.
+3. After login, record identity and authority:
+
+   ```sh
+   id
+   ```
+
+4. Record process and resource state:
+
+   ```sh
+   ps -f
+   top -b -n 2 -d 1
+   ```
+
+5. For a service issue, require both a guest readiness marker and a host-visible
+   check such as `curl`, a TCP echo, or `/health`.
+6. For a panic or hang, keep the first fatal line, the previous boot/service
+   markers, the QEMU command, and the exact commit.
+
+This order avoids mixing unrelated evidence. A missing boot marker, a missing
+capability bit, a stopped process, and a host-forwarding failure are different
+classes of problem even when they all look like "the service is down" from the
+outside.
+
 ## Capture Serial Output
 
 For a manual direct boot:
@@ -76,7 +108,7 @@ These markers tell you how far the system got.
 | `[I] platform: M9 OK: hardware discovered from device tree` | Device tree platform discovery succeeded |
 | `M11c: read-only base mounted from disk` | Packed base image was mounted from virtio-blk |
 | `M11d: exec loaded from disk /bin/...` | User program loaded through VFS |
-| `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim demo passed |
+| `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim self-test passed |
 | `swift-os M12c: starting console-login (init)` | Login init was launched |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
 | `drvsvc: C5c device manifest matched` | Registry metadata matched the expected pseudo or virtio-input manifest |
