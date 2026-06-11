@@ -283,6 +283,25 @@ struct NetTest {
         check(c.outCount == 0, "no retransmit once data is acked")
         c.clearOut()
 
+        // --- 15b. send-space readiness tracks ACK backpressure ------------
+        var w = TCPConnection()
+        w.passiveOpen(localPort: 2222)
+        _ = feed(&w, tcpFlagSYN, 7000, 0)
+        let wiss = w.outSegment(0).seq
+        w.clearOut()
+        var we = feed(&w, tcpFlagACK, 7001, wiss &+ 1)
+        check(we.established && w.canAcceptSend(), "fresh TCP connection is writable")
+        let space0 = w.sendSpace()
+        let filler = [UInt8](repeating: 0x51, count: space0 + 17)
+        let filled = filler.withUnsafeBytes { w.appSend($0.baseAddress!, filler.count, now: 10) }
+        check(filled == space0, "appSend caps at available send space")
+        check(w.sendSpace() == 0 && !w.canAcceptSend(), "full send buffer is not writable")
+        w.clearOut()
+        let wakeAck = wiss &+ 1 &+ UInt32(filled)
+        we = feed(&w, tcpFlagACK, 7001, wakeAck)
+        check(w.sendSpace() == space0 && w.canAcceptSend(), "ACK reopens TCP write space")
+        w.clearOut()
+
         // --- 16. RTO retransmit -------------------------------------------
         let xyz: [UInt8] = Array("xyz".utf8)
         _ = xyz.withUnsafeBytes { c.appSend($0.baseAddress!, 3, now: 2000) }

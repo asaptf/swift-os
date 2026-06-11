@@ -3,6 +3,28 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC17 TCP write backpressure preflight (2026-06-11)
+
+- Added TCP send-space readiness helpers so socket poll/write paths can observe
+  whether an established or CLOSE_WAIT connection can accept more queued bytes.
+  `socketPollWritable` now reports TCP writable only when the connection has
+  free send-buffer space instead of treating all socket fds as unconditionally
+  writable.
+- Updated VFS TCP socket writes to pump the network, queue as much as TCP will
+  accept, and block until ACKs reopen send space for blocking fds. Nonblocking
+  TCP writes now return `EAGAIN` only when no bytes were queued and the
+  connection is still open; a closed write side reports `EPIPE` when nothing was
+  written.
+- Raised `/bin/sshd` bounded exec output from the HC16 temporary 1536-byte cap
+  to 4096 bytes. The OpenSSH transport acceptance still runs
+  `/bin/cat /models/tok512.bin`, now requiring the full 4096-byte bounded reply
+  plus the serial truncation marker.
+
+**Acceptance.** `make sshd-transport-test` proves that SSHD can return a
+4096-byte bounded remote-exec response over a normal OpenSSH session, with TCP
+write backpressure handling ACK-driven send-buffer refill instead of requiring a
+single send-buffer-sized channel-data packet.
+
 ## HC16 SSHD bounded output capture preflight (2026-06-11)
 
 - Moved `/bin/sshd` remote exec stdout/stderr capture off the old pipe and into
@@ -441,9 +463,9 @@ now observes DHCP before the existing ARP/ICMP proof under QEMU/slirp.
   `mmap`/`munmap`, `chown`, `utimes`, `setitimer`, `gethostname`, `initgroups`, and nginx control-message
   header shapes.
 - Runtime caveats: `sendmsg`/`recvmsg` fd passing still returns `ENOSYS`, `setitimer` is a no-op,
-  write-side socket nonblocking readiness is not yet modeled, and nginx has not been added to the boot
-  image or exercised under QEMU. `sleep`/`usleep`/`nanosleep` now use the timer-backed `SYS_NANOSLEEP`
-  path from main. The expected first runtime configuration should still be single-process
+  and nginx has not been added to the boot image or exercised under QEMU. `sleep`/`usleep`/`nanosleep`
+  now use the timer-backed `SYS_NANOSLEEP` path from main. The expected first runtime configuration
+  should still be single-process
   (`daemon off; master_process off;`) until master/worker channel fd passing is real.
 
 ## Environment (host) — captured 2026-06-04
@@ -2613,9 +2635,9 @@ newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
   value (`0x4000`) because compat `fcntl` passes `F_SETFL` flags directly. `F_SETFL` currently records
   only that mutable status bit in the shared open description; `F_GETFL` reports it with the stored flags.
   TCP `accept`/`read` on nonblocking fds return `EAGAIN` when `socketPollReadable` says no child/data is
-  ready, and accepted TCP children inherit `O_NONBLOCK` from the listener. TCP write-side readiness is still
-  intentionally limited: there is no `socketPollWritable`/send-space helper, so VFS keeps the existing
-  `tcpSend` path instead of peeking into TCP internals.
+  ready, and accepted TCP children inherit `O_NONBLOCK` from the listener. HC17 later added
+  `socketPollWritable` plus TCP send-space helpers, so VFS TCP writes can block or return `EAGAIN`
+  based on actual send-buffer availability.
 - Out of scope: `dup3`, file locking (`F_GETLK`/`F_SETLK`).
 
 ## Native Swift `/bin/ls` (DONE, 2026-06-05)

@@ -195,6 +195,9 @@ struct TCPConnection {
     // ---- output queue accessors (drained by the caller) ----
     func outSegment(_ i: Int) -> TCPSegmentOut { out[i] }
     func availableBytes() -> Int { rcvCount }
+    func sendSpace() -> Int { tcpSndCap - sndCount }
+    func writeOpen() -> Bool { state == .established || state == .closeWait }
+    func canAcceptSend() -> Bool { writeOpen() && sendSpace() > 0 }
     func segmentPayloadByte(_ seg: TCPSegmentOut, _ i: Int) -> UInt8 { sndBuf[seg.payloadOff + i] }
     /// Copy a segment's payload out of the (private) send buffer into `dst`.
     func copySegmentPayload(_ seg: TCPSegmentOut, to dst: UnsafeMutableRawPointer) {

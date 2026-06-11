@@ -1793,10 +1793,22 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
 
     if entry.kind == .socket {
         if socketIsTCP(file.node) {
-            // There is no socketPollWritable/TCP send-space helper yet. Keep the
-            // existing tcpSend path for O_NONBLOCK sockets rather than peeking
-            // into TCP internals from VFS.
-            return tcpSend(file.node, src: UnsafeRawPointer(src), len: Int(count))
+            var written = 0
+            enable_irq()
+            while written < Int(count) {
+                netPump()
+                let n = tcpSend(file.node, src: UnsafeRawPointer(src + written),
+                                len: Int(count) - written)
+                if n > 0 {
+                    written += n
+                    continue
+                }
+                if n < 0 { return written > 0 ? written : n }
+                if !socketWriteOpen(file.node) { return written > 0 ? written : errPipe }
+                if (file.flags & oNonblock) != 0 { return written > 0 ? written : errAgain }
+                wfi()
+            }
+            return written
         }
         return errInvalid   // UDP: use sendto
     }
@@ -2564,7 +2576,7 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
     }
     if kind == .socket {
         if (events & pollIn) != 0 && rights.contains(.read) && socketPollReadable(desc.node) { revents |= pollIn }
-        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }   // always writable
+        if (events & pollOut) != 0 && rights.contains(.write) && socketPollWritable(desc.node) { revents |= pollOut }
         return revents
     }
     if kind == .pipe {
