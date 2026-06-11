@@ -741,12 +741,16 @@ Notes:
 - It uses a base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the
   checked-in default seed is development-only. It still uses weak temporary KEX
   entropy. The
-  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
+  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines plus
+  the safe restriction options `restrict`, `no-pty`, `no-port-forwarding`,
+  `no-agent-forwarding`, and `no-X11-forwarding`. Other options, including
+  forced commands and source restrictions, fail closed until `/bin/sshd` can
+  enforce them. The
   command parser supports direct single-component `/bin/` and `/usr/bin/`
   executables with whitespace splitting, quote removal, and backslash escaping;
   redirects, globbing, shell sessions, PTY, scp, sftp, runtime host-key
-  rotation, larger streaming stdin/stdout, and broader key options are not
-  implemented yet.
+  rotation, larger streaming stdin/stdout, and broader key option enforcement
+  are not implemented yet.
   Output beyond the current 4096-byte cap is truncated and logged on the serial
   console.
 - A successful host command exits 0 and prints the remote command's stdout.

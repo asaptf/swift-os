@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC21 SSHD authorized_keys options preflight (2026-06-11)
+
+- Hardened `/bin/sshd` authorized-key matching so key options are no longer
+  silently ignored. A line whose first field is not `ssh-ed25519` must now carry
+  only the supported safe restriction options before the key:
+  `restrict`, `no-pty`, `no-port-forwarding`, `no-agent-forwarding`, and
+  `no-X11-forwarding`.
+- Unsupported or not-yet-enforced options such as `command=`, `from=`,
+  `environment=`, `permitopen=`, and unknown options fail closed for that line.
+  This prevents deploy images from accidentally granting broader access than an
+  operator intended while shell/PTY/forwarding policy is still incomplete.
+- Extended `./tests/sshd_authorized_keys_test.sh` so the custom deploy key is
+  staged with safe restriction options and the denied fixture key is staged with
+  an unsupported forced-command option that must not authenticate.
+
+**Acceptance.** `make sshd-authorized-keys-test` proves that the safe restricted
+deploy key authenticates through host OpenSSH, while the unsupported
+forced-command fixture key is rejected.
+
 ## HC20 SSHD package-tool exec preflight (2026-06-11)
 
 - Extended `/bin/sshd`'s bounded direct remote-exec allowlist from

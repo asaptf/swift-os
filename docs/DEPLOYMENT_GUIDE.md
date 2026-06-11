@@ -460,11 +460,11 @@ Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
   milestones should add runtime host-key rotation, real entropy, broader
-  authorized-key options, shell/PTY behavior, larger stdin/output streaming,
-  production service policy, and broader remote commands beyond bounded direct
-  `/bin/<tool>` or `/usr/bin/<tool>` exec. Dropbear remains a candidate full
-  server package if the first-party preflight does not grow into the supported
-  daemon.
+  authorized-key option enforcement, shell/PTY behavior, larger stdin/output
+  streaming, production service policy, and broader remote commands beyond
+  bounded direct `/bin/<tool>` or `/usr/bin/<tool>` exec. Dropbear remains a
+  candidate full server package if the first-party preflight does not grow into
+  the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.

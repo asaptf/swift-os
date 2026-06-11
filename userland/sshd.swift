@@ -482,6 +482,91 @@ private func nextAuthorizedToken(_ p: UnsafeRawPointer,
     return SSHStringView(p: p + start, len: off - start)
 }
 
+private func nextAuthorizedField(_ p: UnsafeRawPointer,
+                                 _ lineEnd: Int,
+                                 _ off: inout Int) -> SSHStringView? {
+    while off < lineEnd && isAuthSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    if off >= lineEnd { return nil }
+    let start = off
+    var quoted = false
+    while off < lineEnd {
+        let c = p.load(fromByteOffset: off, as: UInt8.self)
+        if c == 0 { return nil }
+        if quoted {
+            if c == 0x5C {
+                off += 1
+                if off >= lineEnd { return nil }
+            } else if c == 0x22 {
+                quoted = false
+            }
+        } else {
+            if isAuthSpace(c) { break }
+            if c == 0x22 { quoted = true }
+        }
+        off += 1
+    }
+    if quoted { return nil }
+    return SSHStringView(p: p + start, len: off - start)
+}
+
+private func authorizedOptionEquals(_ p: UnsafeRawPointer,
+                                    _ start: Int,
+                                    _ end: Int,
+                                    _ s: StaticString) -> Bool {
+    s.withUTF8Buffer { sb -> Bool in
+        if end - start != sb.count { return false }
+        return bytesEqual(p + start, sb.baseAddress!, sb.count)
+    }
+}
+
+private func authorizedOptionIsSupported(_ p: UnsafeRawPointer,
+                                         _ start: Int,
+                                         _ end: Int) -> Bool {
+    authorizedOptionEquals(p, start, end, "restrict") ||
+    authorizedOptionEquals(p, start, end, "no-pty") ||
+    authorizedOptionEquals(p, start, end, "no-port-forwarding") ||
+    authorizedOptionEquals(p, start, end, "no-agent-forwarding") ||
+    authorizedOptionEquals(p, start, end, "no-X11-forwarding") ||
+    authorizedOptionEquals(p, start, end, "no-x11-forwarding")
+}
+
+private func authorizedOptionsSupported(_ field: SSHStringView) -> Bool {
+    if field.len == 0 { return false }
+    var start = 0
+    while start < field.len {
+        let optStart = start
+        var quoted = false
+        while start < field.len {
+            let c = field.p.load(fromByteOffset: start, as: UInt8.self)
+            if c == 0 { return false }
+            if quoted {
+                if c == 0x5C {
+                    start += 1
+                    if start >= field.len { return false }
+                } else if c == 0x22 {
+                    quoted = false
+                }
+            } else {
+                if c == 0x22 {
+                    quoted = true
+                } else if c == 0x2C {
+                    break
+                }
+            }
+            start += 1
+        }
+        if quoted || start == optStart { return false }
+        if !authorizedOptionIsSupported(field.p, optStart, start) { return false }
+        if start < field.len {
+            start += 1
+            if start >= field.len { return false }
+        }
+    }
+    return true
+}
+
 private func ed25519PublicKeyFromBlob(_ blob: SSHStringView) -> SSHStringView? {
     var r = SSHReader(p: blob.p, len: blob.len)
     guard let alg = r.string(),
@@ -509,15 +594,20 @@ private func authorizedKeysBufferMatches(_ blob: SSHStringView,
             off += 1
         }
         if off < lineEnd && p.load(fromByteOffset: off, as: UInt8.self) != 0x23 {
-            if let first = nextAuthorizedToken(p, lineEnd, &off) {
+            if let first = nextAuthorizedField(p, lineEnd, &off) {
                 var keyType = first
-                var keyData = nextAuthorizedToken(p, lineEnd, &off)
-                if !stringEquals(keyType, "ssh-ed25519"),
-                   let second = keyData,
-                   stringEquals(second, "ssh-ed25519") {
-                    keyType = second
-                    keyData = nextAuthorizedToken(p, lineEnd, &off)
+                if !stringEquals(keyType, "ssh-ed25519") {
+                    if !authorizedOptionsSupported(first) {
+                        lineStart = lineEnd + 1
+                        continue
+                    }
+                    guard let token = nextAuthorizedToken(p, lineEnd, &off) else {
+                        lineStart = lineEnd + 1
+                        continue
+                    }
+                    keyType = token
                 }
+                let keyData = nextAuthorizedToken(p, lineEnd, &off)
 
                 if stringEquals(keyType, "ssh-ed25519"), let data = keyData {
                     let matched = withUnsafeTemporaryAllocation(byteCount: 128, alignment: 8) { decoded -> Bool in
