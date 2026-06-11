@@ -78,6 +78,7 @@ private let sysPkgStreamCommit: UInt = 74 // pkg_stream_commit() — verify, pub
 private let sysPkgStreamAbort: UInt = 75  // pkg_stream_abort() — discard the active streamed package install
 private let sysSigreturn: UInt = 76       // sigreturn() — restore a kernel-built user signal frame
 private let sysLogRead: UInt = 77         // log_read(buf, cap, max_count) — needs capLogExport
+private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local full-duplex fd pair
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -295,6 +296,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
     } else if number == sysLogRead {
         result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
+    } else if number == sysSocketpair {
+        result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
     } else {
         result = -38 // ENOSYS
     }

@@ -5052,3 +5052,31 @@ broader `full libuv thread audit` blocker.
 `make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM14 — libuv local socketpair probe (DONE, 2026-06-11)
+
+**Scope.** Cover the `AF_UNIX` `socketpair(SOCK_STREAM)` primitive used by
+Node's vendored libuv 1.52.1 for local stream/process pipe paths. SwiftOS still
+does not provide a Linux socket ABI, but the VFS now exposes a narrow local
+full-duplex pair over two existing pipe queues. Each returned fd carries normal
+read/write POSIX rights, supports `SOCK_NONBLOCK` and `SOCK_CLOEXEC`, reports
+read/write readiness through `poll`, and reports peer close through
+`POLLHUP`/`POLLERR`. This closes one concrete libuv local-stream primitive
+while the catalog keeps the broader `full libuv thread audit` blocker.
+
+- `kernel/vfs/vfs.swift` and `kernel/syscall/syscall.swift`: add SwiftOS
+  syscall 77 and a full-duplex pipe-pair description that participates in the
+  existing fd rights, `read`, `write`, `poll`, `fcntl`, close, and S4b VFS
+  accounting paths.
+- `userland/compat/stubs.c`: implements `socketpair(AF_UNIX, SOCK_STREAM, 0,
+  fds)` over the SwiftOS syscall, including nonblocking/close-on-exec flags and
+  `SO_TYPE` metadata.
+- `/bin/uvsocketpairprobe`: proves unsupported-domain errors, flags, `SO_TYPE`,
+  nonblocking empty reads, bidirectional `read`/`write` and `send`/`recv`, and
+  peer-close readiness.
+- `make uvsocketpair-test`: boots QEMU, logs in, runs the probe, and asserts
+  the local-pair markers.
+
+**Acceptance.** `make uvsocketpair-test`, `make docs-test`,
+`make ports-catalog-test`, `make socket-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
