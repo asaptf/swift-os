@@ -4,8 +4,8 @@
 # Boots with a slirp NIC that hostfwds an unprivileged host TCP port to guest
 # TCP/22. After login, the shell runs /bin/sshd. A real host OpenSSH client then
 # first rejects an old dev Ed25519 key, then accepts the key staged in
-# /etc/ssh/authorized_keys, opens a session channel, runs /bin/echo, receives
-# stdout, and observes exit-status 0.
+# /etc/ssh/authorized_keys, opens session channels, runs /bin/id and /bin/echo,
+# receives stdout, and observes exit-status 0.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,6 +32,8 @@ command -v "$SSH" >/dev/null 2>&1 || { echo "FAIL: ssh client not found" >&2; ex
 LOG="$(mktemp -t swiftos-sshd.XXXXXX)"
 SSHOUT="$(mktemp -t swiftos-sshd-stdout.XXXXXX)"
 SSHERR="$(mktemp -t swiftos-sshd-stderr.XXXXXX)"
+IDOUT="$(mktemp -t swiftos-sshd-id-stdout.XXXXXX)"
+IDERR="$(mktemp -t swiftos-sshd-id-stderr.XXXXXX)"
 DENYOUT="$(mktemp -t swiftos-sshd-deny-stdout.XXXXXX)"
 DENYERR="$(mktemp -t swiftos-sshd-deny-stderr.XXXXXX)"
 KEY_ALLOW="$(mktemp -t swiftos-sshd-allow-key.XXXXXX)"
@@ -50,7 +52,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$PIDFILE" "$INFIFO"' EXIT
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
@@ -82,6 +84,10 @@ drive_fail() {
   cat "$SSHOUT" >&2 2>/dev/null || true
   echo "--- ssh stderr ---" >&2
   cat "$SSHERR" >&2 2>/dev/null || true
+  echo "--- id ssh stdout ---" >&2
+  cat "$IDOUT" >&2 2>/dev/null || true
+  echo "--- id ssh stderr ---" >&2
+  cat "$IDERR" >&2 2>/dev/null || true
   echo "--- denied ssh stdout ---" >&2
   cat "$DENYOUT" >&2 2>/dev/null || true
   echo "--- denied ssh stderr ---" >&2
@@ -138,7 +144,11 @@ await "sshd: listening on 22 (session exec preflight)" 120 || drive_fail "/bin/s
 deny_rc=$?
 
 "$SSH" "${ssh_common[@]}" -i "$KEY_ALLOW" \
-  root@127.0.0.1 /bin/echo HC5-OK >"$SSHOUT" 2>"$SSHERR" </dev/null
+  root@127.0.0.1 /bin/id >"$IDOUT" 2>"$IDERR" </dev/null
+id_rc=$?
+
+"$SSH" "${ssh_common[@]}" -i "$KEY_ALLOW" \
+  root@127.0.0.1 /bin/echo HC6-OK >"$SSHOUT" 2>"$SSHERR" </dev/null
 ssh_rc=$?
 
 await "sshd: session exec completed status 0" 20 || true
@@ -172,19 +182,25 @@ grep -qF "chacha20-poly1305@openssh.com" "$SSHERR" \
   || { echo "FAIL: host ssh did not negotiate chacha20-poly1305" >&2; ok=0; }
 grep -qF "Authenticated to 127.0.0.1" "$SSHERR" \
   || { echo "FAIL: host ssh did not report publickey authentication success" >&2; ok=0; }
+grep -qF "Authenticated to 127.0.0.1" "$IDERR" \
+  || { echo "FAIL: host ssh did not report id publickey authentication success" >&2; ok=0; }
 grep -qF "Permission denied (publickey)." "$DENYERR" \
   || { echo "FAIL: denied key did not fail with publickey permission denied" >&2; ok=0; }
 ! grep -qF "DENIED" "$DENYOUT" \
   || { echo "FAIL: denied key unexpectedly executed the remote command" >&2; ok=0; }
 [[ "$deny_rc" -ne 0 ]] \
   || { echo "FAIL: denied ssh key unexpectedly exited 0" >&2; ok=0; }
-grep -qFx "HC5-OK" "$SSHOUT" \
-  || { echo "FAIL: remote stdout was not HC5-OK" >&2; ok=0; }
+grep -qF "principal=1(root)" "$IDOUT" \
+  || { echo "FAIL: /bin/id did not run as root over SSH" >&2; ok=0; }
+[[ "$id_rc" -eq 0 ]] \
+  || { echo "FAIL: ssh /bin/id exited with $id_rc, expected 0" >&2; ok=0; }
+grep -qFx "HC6-OK" "$SSHOUT" \
+  || { echo "FAIL: remote stdout was not HC6-OK" >&2; ok=0; }
 [[ "$ssh_rc" -eq 0 ]] \
   || { echo "FAIL: ssh exited with $ssh_rc, expected 0" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd loaded authorized_keys, rejected an old key, and executed /bin/echo over a session channel"
+  echo "PASS: /bin/sshd loaded authorized_keys, rejected an old key, and executed /bin/id plus /bin/echo over session channels"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2
@@ -193,6 +209,10 @@ echo "--- ssh stdout ---" >&2
 cat "$SSHOUT" >&2
 echo "--- ssh stderr ---" >&2
 cat "$SSHERR" >&2
+echo "--- id ssh stdout ---" >&2
+cat "$IDOUT" >&2
+echo "--- id ssh stderr ---" >&2
+cat "$IDERR" >&2
 echo "--- denied ssh stdout ---" >&2
 cat "$DENYOUT" >&2
 echo "--- denied ssh stderr ---" >&2

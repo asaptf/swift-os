@@ -417,17 +417,18 @@ Current Hetzner readiness status:
   OpenSSH client, completes `curve25519-sha256` KEX with an `ssh-ed25519`
   development host key and `chacha20-poly1305@openssh.com`, authenticates
   `root` with an `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`,
-  opens a `session` channel, and executes one direct `/bin/echo ...` command.
-  The checked proof is `./tests/sshd_transport_test.sh`; it also verifies that
-  the older HC4 fixture key is rejected.
+  opens a `session` channel, and executes bounded direct `/bin/<tool>` commands
+  such as `/bin/id` and `/bin/echo HC6-OK`. The checked proof is
+  `./tests/sshd_transport_test.sh`; it also verifies that the older HC4 fixture
+  key is rejected.
 
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
   milestones should add persisted host keys, real entropy, broader
-  authorized-key options, shell/PTY behavior, service launch, and broader
-  remote commands. Dropbear remains a candidate full server package if the
-  first-party preflight does not grow into the supported daemon.
+  authorized-key options, shell/PTY behavior, stdin/streaming output, service
+  launch, and broader remote commands. Dropbear remains a candidate full server
+  package if the first-party preflight does not grow into the supported daemon.
 - SSH client support is also desired for admin and deploy workflows, but it
   should not replace the server-first remote-login proof.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

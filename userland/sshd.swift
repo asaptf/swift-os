@@ -18,6 +18,8 @@ private let disconnectText: StaticString =
 private let maxPacketLen = 8192
 private let maxPayloadLen = 7800
 private let sshBlockSize = 8
+private let maxExecCommandLen = 512
+private let maxExecArgs = 8
 private let spawnRightWrite: UInt32 = 1 << 1
 
 private let msgDisconnect: UInt8 = 1
@@ -701,49 +703,76 @@ private func readEncryptedChachaPacket(_ fd: Int32,
     }
 }
 
-private func commandEchoArgument(_ command: SSHStringView) -> SSHStringView? {
-    func matchPrefix(_ s: StaticString) -> Int? {
-        s.withUTF8Buffer { sb -> Int? in
-            if command.len < sb.count { return nil }
-            var i = 0
-            while i < sb.count {
-                if command.p.load(fromByteOffset: i, as: UInt8.self) != sb[i] { return nil }
-                i += 1
-            }
-            if command.len > sb.count &&
-                command.p.load(fromByteOffset: sb.count, as: UInt8.self) != 0x20 {
-                return nil
-            }
-            return sb.count
-        }
-    }
-
-    guard var off = matchPrefix("/bin/echo") ?? matchPrefix("echo") else { return nil }
-    while off < command.len &&
-        command.p.load(fromByteOffset: off, as: UInt8.self) == 0x20 {
-        off += 1
-    }
-    return SSHStringView(p: command.p + off, len: command.len - off)
+private func isExecSpace(_ c: UInt8) -> Bool {
+    c == 0x20 || c == 0x09 || c == 0x0D
 }
 
-private func writeCStringStatic(_ out: UnsafeMutableRawPointer, _ s: StaticString) -> Int {
-    s.withUTF8Buffer { sb -> Int in
-        copyBytes(out, 0, sb.baseAddress!, sb.count)
-        out.storeBytes(of: UInt8(0), toByteOffset: sb.count, as: UInt8.self)
-        return sb.count + 1
+private func firstExecToken(_ command: SSHStringView) -> SSHStringView? {
+    var off = 0
+    while off < command.len && isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    if off >= command.len { return nil }
+    let start = off
+    while off < command.len && !isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    return SSHStringView(p: command.p + start, len: off - start)
+}
+
+private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
+    let prefix: StaticString = "/bin/"
+    return prefix.withUTF8Buffer { pb -> Bool in
+        if path.len <= pb.count { return false }
+        var i = 0
+        while i < pb.count {
+            if path.p.load(fromByteOffset: i, as: UInt8.self) != pb[i] { return false }
+            i += 1
+        }
+        while i < path.len {
+            let c = path.p.load(fromByteOffset: i, as: UInt8.self)
+            if c == 0x2F || c == 0 { return false }
+            i += 1
+        }
+        return true
+    }
+}
+
+private func execArgCount(_ command: SSHStringView) -> Int {
+    var off = 0
+    var count = 0
+    while off < command.len {
+        while off < command.len && isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
+            off += 1
+        }
+        if off >= command.len { break }
+        count += 1
+        while off < command.len && !isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
+            off += 1
+        }
+    }
+    return count
+}
+
+private func copyStaticToOutput(_ s: StaticString,
+                                _ output: UnsafeMutableRawPointer,
+                                _ outputCap: Int) -> Int {
+    s.withUTF8Buffer { mb -> Int in
+        let count = min(mb.count, outputCap)
+        copyBytes(output, 0, mb.baseAddress!, count)
+        return count
     }
 }
 
 private func runExecCommand(_ command: SSHStringView,
                             _ output: UnsafeMutableRawPointer,
                             _ outputCap: Int) -> (Int, UInt32) {
-    guard let arg = commandEchoArgument(command) else {
-        let msg: StaticString = "sshd: unsupported exec command\n"
-        let n = msg.withUTF8Buffer { mb -> Int in
-            let count = min(mb.count, outputCap)
-            copyBytes(output, 0, mb.baseAddress!, count)
-            return count
-        }
+    guard command.len > 0,
+          command.len <= maxExecCommandLen,
+          let path = firstExecToken(command),
+          execPathIsAllowed(path),
+          execArgCount(command) <= maxExecArgs else {
+        let n = copyStaticToOutput("sshd: unsupported exec command\n", output, outputCap)
         return (n, 127)
     }
 
@@ -752,12 +781,7 @@ private func runExecCommand(_ command: SSHStringView,
         swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
     }
     if pipeRc != 0 {
-        let msg: StaticString = "sshd: pipe failed\n"
-        let n = msg.withUTF8Buffer { mb -> Int in
-            let count = min(mb.count, outputCap)
-            copyBytes(output, 0, mb.baseAddress!, count)
-            return count
-        }
+        let n = copyStaticToOutput("sshd: pipe failed\n", output, outputCap)
         return (n, 126)
     }
 
@@ -765,26 +789,35 @@ private func runExecCommand(_ command: SSHStringView,
     let writeFd = fds.1
     var status: UInt32 = 126
 
-    withUnsafeTemporaryAllocation(byteCount: 10, alignment: 1) { pathRaw in
-      withUnsafeTemporaryAllocation(byteCount: 5, alignment: 1) { argv0Raw in
-      withUnsafeTemporaryAllocation(byteCount: arg.len + 1, alignment: 1) { argRaw in
-      withUnsafeTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: 3) { argv in
+    withUnsafeTemporaryAllocation(byteCount: command.len + 1, alignment: 1) { commandRaw in
+      withUnsafeTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: maxExecArgs + 1) { argv in
       withUnsafeTemporaryAllocation(byteCount: 32, alignment: 4) { handles in
-        _ = writeCStringStatic(pathRaw.baseAddress!, "/bin/echo")
-        _ = writeCStringStatic(argv0Raw.baseAddress!, "echo")
-        if arg.len > 0 {
-            copyBytes(argRaw.baseAddress!, 0, arg.p, arg.len)
-        }
-        argRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: arg.len, as: UInt8.self)
+        copyBytes(commandRaw.baseAddress!, 0, command.p, command.len)
+        commandRaw.baseAddress!.storeBytes(of: UInt8(0),
+                                           toByteOffset: command.len,
+                                           as: UInt8.self)
 
-        argv[0] = pathRaw.baseAddress!.assumingMemoryBound(to: CChar.self)
-        if arg.len > 0 {
-            argv[1] = argRaw.baseAddress!.assumingMemoryBound(to: CChar.self)
-            argv[2] = nil
-        } else {
-            argv[1] = nil
-            argv[2] = nil
+        var off = 0
+        var argc = 0
+        while off < command.len && argc < maxExecArgs {
+            while off < command.len &&
+                isExecSpace(commandRaw.baseAddress!.load(fromByteOffset: off, as: UInt8.self)) {
+                commandRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: off, as: UInt8.self)
+                off += 1
+            }
+            if off >= command.len { break }
+            argv[argc] = (commandRaw.baseAddress! + off).assumingMemoryBound(to: CChar.self)
+            argc += 1
+            while off < command.len &&
+                !isExecSpace(commandRaw.baseAddress!.load(fromByteOffset: off, as: UInt8.self)) {
+                off += 1
+            }
+            if off < command.len {
+                commandRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: off, as: UInt8.self)
+                off += 1
+            }
         }
+        argv[argc] = nil
 
         let hp = handles.baseAddress!
         hp.storeBytes(of: writeFd, toByteOffset: 0, as: Int32.self)
@@ -797,13 +830,13 @@ private func runExecCommand(_ command: SSHStringView,
         hp.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
 
         let rc = swiftos_spawn_handles_raw(
-            pathRaw.baseAddress!.assumingMemoryBound(to: CChar.self),
+            argv[0]!,
             UnsafeMutableRawPointer(argv.baseAddress!),
             handles.baseAddress!,
             2
         )
         status = rc >= 0 ? UInt32(rc) : 126
-      }}}}}
+      }}}
 
     _ = swiftos_close(writeFd)
     var used = 0

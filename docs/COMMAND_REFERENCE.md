@@ -667,7 +667,7 @@ ssh -F /dev/null -vvv -p 2222 \
   -o HostKeyAlgorithms=ssh-ed25519 \
   -o Ciphers=chacha20-poly1305@openssh.com \
   -o MACs=hmac-sha2-256 \
-  root@127.0.0.1 /bin/echo HC5-OK
+  root@127.0.0.1 /bin/id
 ```
 
 Notes:
@@ -677,12 +677,14 @@ Notes:
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
-  one direct `/bin/echo ...` command.
+  a bounded direct `/bin/<tool>` command.
 - It uses a development-only host key seed and weak temporary KEX entropy. The
-  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines; PTY,
-  shell sessions, scp, sftp, persisted host keys, and broader key options are
-  not implemented yet.
-- A successful host command exits 0 and prints the remote `/bin/echo` output.
+  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
+  command parser supports simple ASCII-whitespace argv splitting for
+  single-component `/bin/` executables only; quoting, redirects, globbing,
+  shell sessions, PTY, scp, sftp, persisted host keys, and broader key options
+  are not implemented yet.
+- A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`.
 

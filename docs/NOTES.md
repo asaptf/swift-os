@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC6 SSHD generic direct exec preflight (2026-06-11)
+
+- Generalized SSHD `exec` handling from a special `/bin/echo ...` path to a
+  bounded direct `/bin/<tool>` launcher. The command string is split on simple
+  ASCII whitespace into `argv`, requires an absolute single-component `/bin/`
+  executable path, and is run through `spawn_handles` with stdout/stderr
+  connected to the SSH channel pipe.
+- This is intentionally still not shell semantics: no quoting, globbing,
+  redirects, environment assignment, pipelines, PTY, stdin forwarding, or
+  long-output streaming beyond the current bounded pipe read. It is enough to
+  support remote checks such as `/bin/id` and simple argument passing such as
+  `/bin/echo HC6-OK`.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` now keeps the HC5 negative-key
+check, then authenticates with the HC5 key and executes both `/bin/id` and
+`/bin/echo HC6-OK` over separate OpenSSH session channels. The host must see
+`principal=1(root)` from `/bin/id`, `HC6-OK` from `/bin/echo`, and exit status
+0 for both accepted commands.
+
 ## HC5 SSHD authorized_keys loading preflight (2026-06-11)
 
 - Replaced the hardcoded HC4 authorized public key in `/bin/sshd` with a small
