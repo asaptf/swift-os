@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/select.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <errno.h>
@@ -1180,17 +1181,123 @@ W int ppoll(void *fds, unsigned long n, const void *ts, const void *sig) {
     return poll(fds, n, timeout);
 }
 
-// ---- networking -----------------------------------------------------------
-// POSIX-shaped wrappers over swift-os's intentionally small socket syscalls.
-// The kernel ABI is not Linux: bind/connect take port/ip scalars, and UDP
-// sendto/recvfrom carry their extra arguments in swiftos_udp_msg.
-#define SOCKET_META_MAX 64
 #define COMPAT_POLLIN  0x001
+#define COMPAT_POLLPRI 0x002
 #define COMPAT_POLLOUT 0x004
 #define COMPAT_POLLERR 0x008
 #define COMPAT_POLLHUP 0x010
 #define COMPAT_POLLNVAL 0x020
 
+struct select_pollfd { int fd; short events; short revents; };
+
+static int select_timeout_ms_from_timeval(const struct timeval *tv) {
+    if (!tv) { return -1; }
+    if (tv->tv_sec < 0 || tv->tv_usec < 0 || tv->tv_usec >= 1000000) {
+        errno = EINVAL;
+        return -2;
+    }
+    unsigned long ms = (unsigned long)tv->tv_sec * 1000UL;
+    ms += ((unsigned long)tv->tv_usec + 999UL) / 1000UL;
+    return ms > (unsigned long)INT_MAX ? INT_MAX : (int)ms;
+}
+
+static int select_timeout_ms_from_timespec(const struct timespec *ts) {
+    if (!ts) { return -1; }
+    if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000L) {
+        errno = EINVAL;
+        return -2;
+    }
+    unsigned long ms = (unsigned long)ts->tv_sec * 1000UL;
+    ms += ((unsigned long)ts->tv_nsec + 999999UL) / 1000000UL;
+    return ms > (unsigned long)INT_MAX ? INT_MAX : (int)ms;
+}
+
+static void select_sleep_ms(int timeout_ms) {
+    if (timeout_ms <= 0) { return; }
+    struct timespec ts;
+    ts.tv_sec = timeout_ms / 1000;
+    ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+    (void)nanosleep(&ts, 0);
+}
+
+static int select_common(int nfds, fd_set *readfds, fd_set *writefds,
+                         fd_set *exceptfds, int timeout_ms) {
+    if (nfds < 0 || nfds > FD_SETSIZE) { errno = EINVAL; return -1; }
+    if (timeout_ms == -2) { return -1; }
+
+    struct select_pollfd pfds[FD_SETSIZE];
+    int map[FD_SETSIZE];
+    int count = 0;
+    for (int fd = 0; fd < nfds; fd++) {
+        short events = 0;
+        if (readfds && FD_ISSET(fd, readfds)) { events |= COMPAT_POLLIN; }
+        if (writefds && FD_ISSET(fd, writefds)) { events |= COMPAT_POLLOUT; }
+        if (exceptfds && FD_ISSET(fd, exceptfds)) { events |= COMPAT_POLLPRI; }
+        if (events) {
+            pfds[count].fd = fd;
+            pfds[count].events = events;
+            pfds[count].revents = 0;
+            map[count] = fd;
+            count++;
+        }
+    }
+
+    if (readfds) { FD_ZERO(readfds); }
+    if (writefds) { FD_ZERO(writefds); }
+    if (exceptfds) { FD_ZERO(exceptfds); }
+
+    if (count == 0) {
+        if (timeout_ms < 0) {
+            for (;;) { select_sleep_ms(1000); }
+        }
+        select_sleep_ms(timeout_ms);
+        return 0;
+    }
+
+    long r = sys3(SYS_POLL, (long)pfds, (long)count, timeout_ms);
+    if (r < 0) { errno = (int)-r; return -1; }
+    int ready = 0;
+    for (int i = 0; i < count; i++) {
+        int fd = map[i];
+        short re = pfds[i].revents;
+        if (re & COMPAT_POLLNVAL) { errno = EBADF; return -1; }
+        int fd_ready = 0;
+        if (readfds && (re & (COMPAT_POLLIN | COMPAT_POLLHUP | COMPAT_POLLERR))) {
+            FD_SET(fd, readfds);
+            fd_ready = 1;
+        }
+        if (writefds && (re & (COMPAT_POLLOUT | COMPAT_POLLERR))) {
+            FD_SET(fd, writefds);
+            fd_ready = 1;
+        }
+        if (exceptfds && (re & COMPAT_POLLPRI)) {
+            FD_SET(fd, exceptfds);
+            fd_ready = 1;
+        }
+        if (fd_ready) { ready++; }
+    }
+    return ready;
+}
+
+W int select(int nfds, fd_set *readfds, fd_set *writefds,
+             fd_set *exceptfds, struct timeval *timeout) {
+    int timeout_ms = select_timeout_ms_from_timeval(timeout);
+    return select_common(nfds, readfds, writefds, exceptfds, timeout_ms);
+}
+
+W int pselect(int nfds, fd_set *readfds, fd_set *writefds,
+              fd_set *exceptfds, const struct timespec *timeout,
+              const sigset_t *sigmask) {
+    (void)sigmask;
+    int timeout_ms = select_timeout_ms_from_timespec(timeout);
+    return select_common(nfds, readfds, writefds, exceptfds, timeout_ms);
+}
+
+// ---- networking -----------------------------------------------------------
+// POSIX-shaped wrappers over swift-os's intentionally small socket syscalls.
+// The kernel ABI is not Linux: bind/connect take port/ip scalars, and UDP
+// sendto/recvfrom carry their extra arguments in swiftos_udp_msg.
+#define SOCKET_META_MAX 64
 struct socket_meta { int used; int domain; int type; int protocol; int error; };
 static struct socket_meta g_sockmeta[SOCKET_META_MAX];
 

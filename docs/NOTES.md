@@ -4564,3 +4564,19 @@ SwiftOS thread id.
 **Acceptance.** `make pthread-test`, `make docs-test`, `make clock-test`,
 `make mprotect-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM2 — newlib select/pselect facade probe (DONE, 2026-06-11)
+
+**Scope.** Add a POSIX `select`/`pselect` surface for C runtimes that expect an
+fd-set event primitive. The implementation translates `fd_set` inputs into the
+existing SwiftOS `poll` syscall, maps readiness back into the read/write/except
+sets, handles timeout-only calls, and preserves `EBADF` for invalid descriptors.
+
+- `userland/compat/stubs.c`: implements weak `select` and `pselect` wrappers over
+  `SYS_POLL`.
+- `/bin/selectprobe`: proves empty-read timeout, pipe read readiness after a
+  write, pselect write readiness, and `select(0, ..., timeout)`.
+
+**Acceptance.** `make select-test`, `make docs-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

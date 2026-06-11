@@ -232,7 +232,7 @@ lists everywhere. Each row still calls out package-specific extras where needed.
 | --- | --- |
 | `base-posix` | `open`, `read`, `write`, `close`, `lseek`, `stat`, `fstat`, `mkdir`, `unlink`, `rename`, `readdir`, `getcwd`, `chdir`, `isatty`, `errno`, `argv`, `envp`, exit status, monotonic/realtime clocks, `getpid`, `uname`, and deterministic path handling. |
 | `proc-basic` | `spawn`/`exec`, `waitpid`, pipes, fd inheritance/close-on-exec, `dup2`, basic signals, and exit status propagation. `fork` is not assumed unless listed explicitly. |
-| `net-client` | `socket`, `connect`, `send`, `recv`, `shutdown`, DNS resolver or `getaddrinfo`, IPv4 at first, timeouts, and `poll` or `select`. |
+| `net-client` | `socket`, `connect`, `send`, `recv`, `shutdown`, DNS resolver or `getaddrinfo`, IPv4 at first, timeouts, and `poll` plus C `select`/`pselect`. |
 | `net-server` | `bind`, `listen`, `accept`, nonblocking sockets, `poll`/`select`, socket options, address reuse, backlog handling, and fd limits. |
 | `tls-base` | Cryptographic entropy, reliable realtime clock, CA certificate store, file permissions for private keys, and a TLS library package. |
 | `term-ui` | `termios`, terminal size ioctl, ANSI console behavior, UTF-8 path/text handling, and stable stdin/stdout/stderr semantics. |
