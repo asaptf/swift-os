@@ -48,6 +48,23 @@ struct LLMQ8EngineTest {
         return d
     }
 
+    static func check(_ condition: @autoclosure () -> Bool, _ message: String) {
+        if !condition() { fail(message) }
+    }
+
+    static func testActivationQuantizationEdges() {
+        check(llamaRoundedInt8Saturating(0.49) == 0, "rounding below half changed")
+        check(llamaRoundedInt8Saturating(0.5) == 1, "rounding half away from zero changed")
+        check(llamaRoundedInt8Saturating(-0.5) == -1, "negative half rounding changed")
+        check(llamaRoundedInt8Saturating(127.49) == 127, "valid high int8 edge changed")
+        check(llamaRoundedInt8Saturating(127.5) == 127, "positive overflow not saturated")
+        check(llamaRoundedInt8Saturating(-128.5) == -128, "negative overflow not saturated")
+        check(llamaRoundedInt8Saturating(Float.infinity) == 127, "positive infinity not saturated")
+        check(llamaRoundedInt8Saturating(-Float.infinity) == -128, "negative infinity not saturated")
+        check(llamaRoundedInt8Saturating(Float.nan) == 0, "NaN should quantize to zero")
+        print("llm_q8_engine_test: activation quantization edge cases are saturating")
+    }
+
     static func runCase(model modelPath: String, tokenizer tokPath: String,
                         golden: String, label: String,
                         dim: Int, gs: Int, vocab: Int) {
@@ -81,6 +98,7 @@ struct LLMQ8EngineTest {
     }
 
     static func main() {
+        testActivationQuantizationEdges()
         runCase(model: "models/stories260K-q8.bin", tokenizer: "models/tok512.bin",
                 golden: golden260K, label: "260K-q8", dim: 64, gs: 4, vocab: 512)
         runCase(model: "models/stories15M-q8.bin", tokenizer: "models/tokenizer.bin",

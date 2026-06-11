@@ -75,8 +75,13 @@ drive_fail() {
 }
 
 send_line() {
+  local line="$1" i
   sleep 0.1
-  printf '%s\n' "$1" >&3
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep 0.005
+  done
+  printf '\n' >&3
   sleep 0.05
 }
 
@@ -95,6 +100,8 @@ send_line "root"
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line "swordfish"
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+send_line "echo cow-shell-ready"
+await "cow-shell-ready" 60 || drive_fail "root shell did not accept commands"
 send_line "COWV=before"
 send_line '( COWV=child; echo cow-child-after:$COWV )'
 await "cow-child-after:child" 60 || drive_fail "child shell did not print isolated value"

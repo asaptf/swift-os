@@ -402,17 +402,34 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   endpoint, DMA window, or virtio-input queue ownership. It is the rights-side
   contract before the first real authority grant.
 
+### C5g — device authority capability gate (DONE, 2026-06-11)
+
+- `/bin/deviceauthdemo` is a negative EL0 probe for restricted principals. It
+  calls `device_discover(0, info*)` and `device_claim("pseudo-input.0", info*)`
+  after the guest login path has adopted principal 3 with only `capSpawn`.
+- The probe emits `DEVICE-AUTH-DISCOVER-DENY-OK err=-13`,
+  `DEVICE-AUTH-CLAIM-DENY-OK err=-13`, and
+  `C5g OK: non-console principal cannot discover or claim device grants`.
+- `make device-authority-cap-test` is the focused QEMU gate. It proves C5
+  authority is capability-gated before any opaque grant exists, complementing
+  C5e/C5f's metadata-only and rights checks after the boot authority has minted
+  a grant.
+- Non-goals: C5g does not add a new authority type, does not change device
+  registry policy, and does not move virtio-input out of the kernel. It freezes
+  the existing `capConsole` minting boundary as an executable check.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - `make c5-test` is the review-facing aggregate for the C5 driver-service and
-  device-authority readiness slice. It names the existing C5a-C5f focused gates
+  device-authority readiness slice. It names the existing C5a-C5g focused gates
   in order: `c5-driver-service-test`, `c5-device-handle-test`,
   `c5-device-discovery-test`, `c5-device-metadata-test`,
-  `c5-device-authority-test`, and `c5-device-rights-test`.
+  `c5-device-authority-test`, `c5-device-rights-test`, and
+  `device-authority-cap-test`.
 - The aggregate preserves the narrow gates for targeted debugging while giving
   broader reviews a single command that covers restartable supervision, opaque
-  device grants, discovery metadata, withheld hardware authority, and the
-  metadata-only rights contract.
+  device grants, discovery metadata, withheld hardware authority, the
+  metadata-only rights contract, and guest denial before grant minting.
 - The full `make test` gate now runs `make c5-test`, and
   `make stability-coverage-test` statically guards the required memory/resource,
   hardware/SMP, security/isolation, update/rollback, package, network, C5, and

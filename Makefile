@@ -281,6 +281,7 @@ USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
 USER_EVENTFDPROBE_ELF := $(BUILD)/eventfdprobe.elf
 USER_UVWAKEPROBE_ELF := $(BUILD)/uvwakeprobe.elf
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
+USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
 USER_SIGNALPROBE_ELF := $(BUILD)/signalprobe.elf
 USER_SOCKETPROBE_ELF := $(BUILD)/socketprobe.elf
@@ -290,6 +291,7 @@ USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
+USER_DEVICEAUTHDEMO_ELF := $(BUILD)/deviceauthdemo.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
@@ -401,6 +403,7 @@ BASE_EXEC_ELFS := \
 	$(USER_EVENTFDPROBE_ELF) \
 	$(USER_UVWAKEPROBE_ELF) \
 	$(USER_UVBARRIERPROBE_ELF) \
+	$(USER_UVCONDPROBE_ELF) \
 	$(USER_UVSOCKETPAIRPROBE_ELF) \
 	$(USER_SIGNALPROBE_ELF) \
 	$(USER_SOCKETPROBE_ELF) \
@@ -410,12 +413,14 @@ BASE_EXEC_ELFS := \
 	$(USER_FDOPSDEMO_ELF) \
 	$(USER_S4STRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
+	$(USER_DEVICEAUTHDEMO_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
 .PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test uvsocketpair-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test uvcond-test uvsocketpair-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 .PHONY: sshd-ipv6-listener-test
 
@@ -526,6 +531,9 @@ $(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/li
 
 $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/securitydemo.c -o $@
+
+$(BUILD)/user_deviceauthdemo.o: userland/deviceauthdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/deviceauthdemo.c -o $@
 
 $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
@@ -718,6 +726,9 @@ $(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4
 
 $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_securitydemo.o -o $@
+
+$(USER_DEVICEAUTHDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o -o $@
 
 $(USER_IDENTITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o -o $@
@@ -937,6 +948,12 @@ $(BUILD)/n_uvbarrierprobe.o: userland/uvbarrierprobe.c userland/compat/pthread.h
 
 $(USER_UVBARRIERPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvbarrierprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvbarrierprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+$(BUILD)/n_uvcondprobe.o: userland/uvcondprobe.c userland/compat/pthread.h userland/compat/time.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_UVCONDPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvcondprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvcondprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
 $(BUILD)/n_uvsocketpairprobe.o: userland/uvsocketpairprobe.c userland/compat/sys/socket.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
@@ -1180,6 +1197,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/swift_date_test.sh
 	./tests/clock_test.sh
 	./tests/mprotect_test.sh
+	./tests/largemmap_test.sh
+	./tests/mmapreserve_test.sh
 	./tests/sleep_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
@@ -1259,6 +1278,9 @@ uvwake-test: build $(QEMU_DTB) base-image
 uvbarrier-test: build $(QEMU_DTB) base-image
 	./tests/uvbarrier_test.sh
 
+uvcond-test: build $(QEMU_DTB) base-image
+	./tests/uvcond_test.sh
+
 uvsocketpair-test: build $(QEMU_DTB) base-image
 	./tests/uvsocketpair_test.sh
 
@@ -1318,7 +1340,10 @@ c5-device-rights-test: $(BUILD)/.dir
 	$(BUILD)/handle_test
 	./tests/device_authority_guard_test.sh
 
-c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test
+device-authority-cap-test: build $(QEMU_DTB) base-image
+	./tests/device_authority_cap_test.sh
+
+c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test
 
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
@@ -1666,6 +1691,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
 	cp $(USER_UVBARRIERPROBE_ELF) $(BASE_ROOT)/bin/uvbarrierprobe
+	cp $(USER_UVCONDPROBE_ELF) $(BASE_ROOT)/bin/uvcondprobe
 	cp $(USER_UVSOCKETPAIRPROBE_ELF) $(BASE_ROOT)/bin/uvsocketpairprobe
 	cp $(USER_SIGNALPROBE_ELF) $(BASE_ROOT)/bin/signalprobe
 	cp $(USER_SOCKETPROBE_ELF) $(BASE_ROOT)/bin/socketprobe
@@ -1675,6 +1701,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
 	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
+	cp $(USER_DEVICEAUTHDEMO_ELF) $(BASE_ROOT)/bin/deviceauthdemo
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps

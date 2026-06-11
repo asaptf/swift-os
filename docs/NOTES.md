@@ -205,6 +205,26 @@ can execute a command that writes more than the old pipe capacity, return a
 bounded 1536-byte SSH channel response, and log truncation without wedging the
 session.
 
+## EL0 FP/SIMD trap-frame hardening (2026-06-11)
+
+- Extended the lower-EL trap frame in `kernel/arch/aarch64/exceptions.S` from
+  GPR-only state to include q0..q31 plus FPCR/FPSR. Preemptive scheduling can
+  now switch away from an FP-heavy EL0 process and run another Swift process
+  without corrupting the interrupted process's floating-point temporaries.
+- Updated `fork()` trap-frame cloning to copy the full 800-byte frame. The
+  existing x0/SP_EL0/ELR_EL1/SPSR_EL1 word offsets are unchanged; the FP/SIMD
+  payload is appended after the original return state.
+- Added a saturating Q8 activation conversion guard in `userland/lib/llama2.swift`
+  so rare numerical edge values cannot lower to an EL0 `BRK #1`. The host
+  `llm_q8_engine_test` now checks the edge conversion while still pinning both
+  q8 model goldens byte-for-byte to `runq.c`.
+
+**Acceptance.** The default base image, which autostarts `/bin/sshd`, now passes
+`./tests/llm_serve_test.sh` with the pinned stories15M-q8 reference output.
+`./tests/cow_test.sh`, `./tests/spawn_self_exec_test.sh`, and
+`./tests/boot_test.sh` cover fork-return and baseline boot behavior with the
+larger trap frame.
+
 ## HC15 SSHD bounded stdin exec preflight (2026-06-11)
 
 - Extended `/bin/sshd` session exec handling to read post-`exec`
@@ -877,7 +897,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
     `ps aux`, `ps -aux`, `ps -p pid[,pid...]`, and `ps -o pid,ppid,state,stat,user,uid,cmd` (plus aliases
     `comm`/`command`/`args` for `cmd`). CPU, memory, tty, and time columns need more kernel accounting.
   - **(a1) Full trap frame — DONE.** `exceptions.S` now saves/restores a complete frame (x0..x30 +
-    SP_EL0/ELR_EL1/SPSR_EL1) on every lower-EL entry, making exceptions nestable. This resolves the M7
+    SP_EL0/ELR_EL1/SPSR_EL1 plus FP/SIMD q0..q31 and FPCR/FPSR) on every lower-EL entry, making exceptions nestable. This resolves the M7
     constraint: `read(0)` is back to a clean `enable_irq` + `wfi` block (validated — it panicked before
     the frame, passes now), and it unblocks preemptive EL0 scheduling. No regressions: M5/M6/M7 green.
   - **(a2-argv) Process arguments — DONE.** `ustack.c` builds the SysV AArch64 entry stack
@@ -2396,13 +2416,33 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   boot smokes now require
   `C5f OK: device grant rights stayed metadata-only`.
 
+### C5g — device authority capability gate (DONE, 2026-06-11)
+
+- **Negative EL0 probe.** Added `/bin/deviceauthdemo`, a small guest-side probe
+  that calls `device_discover(0, info*)` and
+  `device_claim("pseudo-input.0", info*)`. A restricted principal must receive
+  `-13` for both operations before it can enumerate or mint an opaque device
+  grant.
+- **Acceptance.** `make device-authority-cap-test` boots QEMU, logs in as the
+  seeded `guest` principal (`principal=3 session=3 caps=2`), runs the probe, and
+  requires `DEVICE-AUTH-DISCOVER-DENY-OK err=-13`,
+  `DEVICE-AUTH-CLAIM-DENY-OK err=-13`, and
+  `C5g OK: non-console principal cannot discover or claim device grants`.
+- **Aggregate wiring.** `make c5-test` now includes the C5g gate after the
+  C5a-C5f driver-service/device-authority checks, and the stability coverage
+  guard requires the Makefile, testing guide, roadmap, and notes references.
+- **Non-goals.** C5g does not change the registry or hand real MMIO/IRQ/DMA to
+  userland. It freezes the existing `capConsole` device-authority minting
+  boundary as an executable regression test.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5
-  readiness. It names the existing C5a-C5f gates in order:
+  readiness. It names the existing C5a-C5g gates in order:
   `c5-driver-service-test`, `c5-device-handle-test`,
   `c5-device-discovery-test`, `c5-device-metadata-test`,
-  `c5-device-authority-test`, and `c5-device-rights-test`.
+  `c5-device-authority-test`, `c5-device-rights-test`, and
+  `device-authority-cap-test`.
 - **Why.** C5 review previously required remembering which QEMU gates cover the
   restartable driver-service path and which host/static guard covers
   metadata-only grant rights. The aggregate keeps focused gates available but
@@ -2412,8 +2452,9 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   visible.
 - **Full-gate coverage hardening.** `make test` now runs `make c5-test`, so the
   broad shipped gate includes restartable driver-service supervision, device
-  grant transfer, virtio-input discovery metadata, authority withholding, and
-  metadata-only rights checks under `-smp 4`. Added
+  grant transfer, virtio-input discovery metadata, authority withholding,
+  metadata-only rights checks under `-smp 4`, and guest denial before device
+  grant minting. Added
   `tests/qemu_virt_hardware_map_test.sh` / `make qemu-virt-hardware-map-test`
   to validate QEMU `virt` PL011, GIC, timer, PSCI, CPU topology, and
   virtio-mmio DTB facts for 1-CPU and 4-CPU profiles. Added
@@ -5109,7 +5150,7 @@ read/write readiness through `poll`, and reports peer close through
 while the catalog keeps the broader `full libuv thread audit` blocker.
 
 - `kernel/vfs/vfs.swift` and `kernel/syscall/syscall.swift`: add SwiftOS
-  syscall 77 and a full-duplex pipe-pair description that participates in the
+  syscall 78 and a full-duplex pipe-pair description that participates in the
   existing fd rights, `read`, `write`, `poll`, `fcntl`, close, and S4b VFS
   accounting paths.
 - `userland/compat/stubs.c`: implements `socketpair(AF_UNIX, SOCK_STREAM, 0,
@@ -5123,4 +5164,31 @@ while the catalog keeps the broader `full libuv thread audit` blocker.
 
 **Acceptance.** `make uvsocketpair-test`, `make docs-test`,
 `make ports-catalog-test`, `make socket-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM15 — libuv timed condition wait probe (DONE, 2026-06-11)
+
+**Scope.** Cover the `pthread_cond_timedwait` path used by Node's vendored
+libuv 1.52.1 in `deps/uv/src/unix/thread.c`. libuv initializes Unix condition
+variables with `pthread_condattr_setclock(CLOCK_MONOTONIC)` and then passes
+monotonic absolute deadlines to `pthread_cond_timedwait`; SwiftOS previously
+accepted the condattr clock but did not provide the timed wait implementation.
+The C/newlib compat layer now records process-local condvar clock attributes
+out-of-band and supports realtime plus monotonic timed waits over the existing
+mutex, condition-sequence, and `nanosleep` primitives. This closes one concrete
+libuv thread primitive while the catalog keeps the broader `full libuv thread
+audit` blocker.
+
+- `userland/compat/stubs.c`: implements `pthread_cond_timedwait`, preserves
+  condattr clock selection despite newlib's 32-bit `pthread_cond_t`, returns
+  `ETIMEDOUT` for expired absolute deadlines, and reacquires the mutex before
+  returning.
+- `/bin/uvcondprobe`: proves a libuv-style `CLOCK_MONOTONIC` timeout and a
+  worker-thread signal that wakes the waiter before its deadline.
+- `make uvcond-test`: boots QEMU, logs in, runs the probe, and asserts the
+  timed-condition markers.
+
+**Acceptance.** `make uvcond-test`, `make docs-test`,
+`make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

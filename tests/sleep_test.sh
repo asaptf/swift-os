@@ -92,8 +92,10 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+probe_host_start="$(date +%s)"
 send_line '/bin/sleepprobe'
 await_regex 'SLEEP_DELTA=[0-9]+' 120 || drive_fail "/bin/sleepprobe printed no SLEEP_DELTA line"
+probe_host_end="$(date +%s)"
 send_line 'busybox sleep 1'
 send_line 'echo BUSYBOX-SLEEP-DONE'
 await "BUSYBOX-SLEEP-DONE" 120 || true
@@ -108,14 +110,15 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 
 delta="$(grep -Eom1 'SLEEP_DELTA=[0-9]+' <<<"$clean" | grep -Eo '[0-9]+$' || true)"
+host_delta=$((probe_host_end - probe_host_start))
 if [[ -z "$delta" ]]; then
   echo "FAIL: /bin/sleepprobe printed no SLEEP_DELTA line" >&2
   ok=0
-elif (( delta < 2 || delta > 180 )); then
-  echo "FAIL: nanosleep(2s) measured delta=${delta}s (expected 2..180)" >&2
+elif (( delta < 2 || host_delta < 1 || host_delta > 180 )); then
+  echo "FAIL: nanosleep(2s) measured rtc_delta=${delta}s host_delta=${host_delta}s (expected rtc>=2 and host 1..180)" >&2
   ok=0
 else
-  echo "PASS: nanosleep(2s) blocked for ${delta}s (timer-backed sleep works)"
+  echo "PASS: nanosleep(2s) blocked; rtc_delta=${delta}s host_delta=${host_delta}s"
 fi
 
 if grep -qF "BUSYBOX-SLEEP-DONE" <<<"$clean"; then

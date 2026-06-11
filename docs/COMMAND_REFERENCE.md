@@ -51,7 +51,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
 | Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
 | Work with packages | `pkg`, `/usr/bin/pkghello`, `/usr/bin/lua`, `/usr/bin/minigzip`, `/usr/bin/bzip2`, `/usr/bin/pcre2grep`, `/usr/bin/nginx`, `/usr/bin/sqlite3` | Package payload, package-store, or signed repository fixture mounted or installed | Package tests listed in [Package Guide](PACKAGE_GUIDE.md) |
-| Prove driver-service/device-grant behavior | `drvsvcdemo` | C5 test profile or manual direct boot | `make c5-device-authority-test` |
+| Prove driver-service/device-grant behavior | `drvsvcdemo`, `deviceauthdemo` | C5 test profile or manual direct boot | `make c5-device-authority-test`, `make device-authority-cap-test` |
 
 Example: to prove writable scratch space from the guest shell, use only tmpfs
 paths:
@@ -981,6 +981,7 @@ diagnostic fixtures than stable application interfaces.
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
 | `uvbarrierprobe` | `uvbarrierprobe` | Exercise C/newlib pthread barriers used by libuv's native barrier path. | `tests/uvbarrier_test.sh` |
+| `uvcondprobe` | `uvcondprobe` | Exercise C/newlib timed condition waits used by libuv's Unix thread layer. | `tests/uvcond_test.sh` |
 | `uvsocketpairprobe` | `uvsocketpairprobe` | Exercise C/newlib `AF_UNIX` socketpair behavior used by libuv local streams. | `tests/uvsocketpair_test.sh` |
 | `uvwakeprobe` | `uvwakeprobe` | Exercise C/newlib pthread-to-eventfd async wake over a blocking poll waiter. | `tests/uvwake_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
@@ -995,7 +996,8 @@ diagnostic fixtures than stable application interfaces.
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
+| `deviceauthdemo` | `deviceauthdemo` | Prove a non-console principal cannot discover or claim opaque device grants. | `make device-authority-cap-test` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, inspect catalog or installed package metadata, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 | `swos-confirm` | `swos-confirm` | Mark the booted A/B update-store slot confirmed healthy. | `tests/ab_confirm_test.sh` |
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
@@ -1201,6 +1203,7 @@ Example local install fixture:
 pkg list
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg info pkghello
 pkg files pkghello
 /usr/bin/pkghello
 ```
@@ -1211,6 +1214,7 @@ Expected output includes:
 no packages installed
 pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
+source: installed
 /usr/bin/pkghello
 pkghello: hello from package overlay
 ```
@@ -1265,9 +1269,11 @@ Notes:
   DNS hostname. If a test or deployment needs an explicit DNS resolver, provide
   `/etc/pkg/dns-server` in the base image; the makefile accepts
   `PKG_DEFAULT_DNS_SERVER=IP[:port]`.
-- `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
-  cached by `pkg update`; install by name resolves package-name dependencies
-  and verifies each downloaded package SHA-256 before activation.
+- `pkg search` and `pkg install NAME` use the verified catalog cached by
+  `pkg update`; install by name resolves package-name dependencies and verifies
+  each downloaded package SHA-256 before activation. `pkg info NAME` prints the
+  verified catalog entry when present, otherwise it falls back to active
+  installed package metadata.
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active
@@ -1340,6 +1346,7 @@ are not the primary operator interface.
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
 | `uvbarrierprobe` | newlib compat reusable `pthread_barrier_*` phases, matching libuv's native barrier branch. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvbarrier_test.sh` |
+| `uvcondprobe` | newlib compat `pthread_cond_timedwait` with `CLOCK_MONOTONIC` timeout and signal wake, matching libuv's Unix timed condition waits. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvcond_test.sh` |
 | `uvsocketpairprobe` | newlib compat full-duplex `AF_UNIX` `socketpair`, matching libuv local stream/process pipe expectations. | Yes, when validating C runtime libuv local stream compatibility. | `tests/uvsocketpair_test.sh` |
 | `uvwakeprobe` | newlib compat worker-thread `eventfd_write` waking a main-thread blocking `poll`, matching libuv async wake expectations. | Yes, when validating C runtime event-loop wake compatibility. | `tests/uvwake_test.sh` |
 | `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `sigreturn` handler frames, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
@@ -1349,6 +1356,7 @@ are not the primary operator interface.
 | `execdemo` | `execve` replacement of the current process image. | Yes, for exec diagnostics. | `tests/boot_test.sh` |
 | `fdopsdemo` | `dup`, `dup2`, shared offsets, pipes, `poll`, rename, unlink, mkdir, and rmdir. | Yes, for fd/VFS diagnostics. | `tests/boot_test.sh` |
 | `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
+| `deviceauthdemo` | C5g negative device discovery and claim checks for restricted principals. | Yes, but run it as `guest` or prefer the make target. | `make device-authority-cap-test` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
 | `logtail-probe` | Capability-gate probe for `SYS_LOG_READ`: denied without `capLogExport`, then reads after an explicit admin-context grant. | Yes, for log export acceptance only. | `tests/log_export_test.sh` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |

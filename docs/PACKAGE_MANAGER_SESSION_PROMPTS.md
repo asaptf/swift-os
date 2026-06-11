@@ -6,9 +6,9 @@ maintainer explicitly asks for a larger unstable branch.
 
 P1, P2, P3a boot activation, and the narrow P3b/P4-local install path are
 already implemented in the current tree. `/bin/pkg install FILE`, `pkg list`,
-and `pkg files NAME` work for the local `pkghello.swpkg` smoke test. The next
-implementation prompt is Prompt 4b if you want to finish local
-remove/rollback/history, or Prompt 5 if you intentionally want to start
+`pkg info NAME`, and `pkg files NAME` work for the local `pkghello.swpkg`
+smoke test. The next implementation prompt is Prompt 4b if you want to finish
+local remove/rollback/history, or Prompt 5 if you intentionally want to start
 repository download work first.
 
 ## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
@@ -105,14 +105,13 @@ Acceptance:
 
 ```text
 Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P3 package-store
-state where `/bin/pkg install FILE`, `pkg list`, and `pkg files NAME` already
-work for `pkghello.swpkg`.
+state where `/bin/pkg install FILE`, `pkg list`, `pkg info NAME`, and
+`pkg files NAME` already work for `pkghello.swpkg`.
 
 Implement the remaining local package-manager milestone only. Do not implement
 remote repository catalogs yet.
 
 Required commands:
-- `pkg info <name>`
 - `pkg remove <name>`
 - `pkg history`
 - `pkg rollback [generation]`
@@ -120,7 +119,7 @@ Required commands:
 Requirements:
 - keep output concise and scriptable;
 - preserve the existing local install/list flow;
-- add installed package metadata enough for info/history;
+- add installed package metadata enough for history;
 - make remove a new activation generation without the package;
 - make rollback select an older activation generation;
 - reject ABI, architecture, or static-linkage mismatches with focused tests;

@@ -46,6 +46,7 @@ are package-manager roadmap items.
 | Boot a preseeded active generation | `make package-store-test` |
 | Install a local `.swpkg` into a writable store | `make package-local-install-test` |
 | List active package records in the guest | `pkg list` |
+| Inspect an active installed package | `pkg info NAME` |
 | List files in an active package payload | `pkg files NAME` |
 | Install by name from signed repository fixtures into a writable store | `make package-repo-install-test` and seed repository tests |
 | Store-level signatures or encryption | Not implemented |
@@ -235,6 +236,7 @@ Inside the guest:
 ```sh
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg info pkghello
 pkg files pkghello
 /usr/bin/pkghello
 ```
