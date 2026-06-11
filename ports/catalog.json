@@ -359,7 +359,7 @@
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
       "blockedBy": ["V8 JIT or jitless policy", "full libuv thread audit"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
-      "notes": "Native addons are deferred until dynamic loading policy exists."
+      "notes": "Native addons are deferred until dynamic loading policy exists. A dedicated probe now covers worker-thread eventfd wakeups over poll; full libuv audit and V8 JIT/jitless policy remain blockers."
     },
     {
       "name": "npm",
