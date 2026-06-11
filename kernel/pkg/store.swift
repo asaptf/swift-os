@@ -12,6 +12,7 @@ private let pkgStoreActivationHeaderSize = 16
 private let pkgStoreActivationEntrySize = 80
 private let pkgStoreInstallChunkSize = 4096
 private let swpkgHeaderSize = 128
+private let pkgStreamBeginDescSize = 88
 
 private let pkgRecordKindPayload: UInt32 = 1
 private let pkgRecordKindActivation: UInt32 = 2
@@ -48,6 +49,22 @@ private var pkgStoreLockWord: UInt64 = 0
 private var pkgStoreLockAcquireCount: UInt64 = 0
 private var pkgStoreLockContentionCount: UInt64 = 0
 private var pkgStoreMutationInProgress = false
+private var pkgStreamActive = false
+private var pkgStreamOwnerPid = -1
+private var pkgStreamGeneration: UInt64 = 0
+private var pkgStreamRecordOffset: UInt64 = 0
+private var pkgStreamDataOffset: UInt64 = 0
+private var pkgStreamNextOffset: UInt64 = 0
+private var pkgStreamPayloadSize: UInt64 = 0
+private var pkgStreamWritten: UInt64 = 0
+private var pkgStreamName = [UInt8](repeating: 0, count: 32)
+private var pkgStreamVersion = [UInt8](repeating: 0, count: 16)
+private var pkgStreamNameLen = 0
+private var pkgStreamVersionLen = 0
+private var pkgStreamPayloadHash = [UInt8](repeating: 0, count: 32)
+private var pkgStreamFirstBytes = [UInt8](repeating: 0, count: 64)
+private var pkgStreamFirstByteCount = 0
+private var pkgStreamSHA = SHA256Stream()
 
 @inline(__always)
 private func pkgStoreLock() -> UInt64 {
@@ -163,6 +180,18 @@ private func pkgClear() {
     pkgActiveGeneration = 0
     pkgMaxGeneration = 0
     pkgNextRecordOffset = UInt64(pkgStoreHeaderSize)
+    pkgStreamActive = false
+    pkgStreamOwnerPid = -1
+    pkgStreamGeneration = 0
+    pkgStreamRecordOffset = 0
+    pkgStreamDataOffset = 0
+    pkgStreamNextOffset = 0
+    pkgStreamPayloadSize = 0
+    pkgStreamWritten = 0
+    pkgStreamNameLen = 0
+    pkgStreamVersionLen = 0
+    pkgStreamFirstByteCount = 0
+    pkgStreamSHA = SHA256Stream()
 }
 
 private func pkgStoreBeginMutation() -> Bool {
@@ -210,6 +239,38 @@ private func pkgCommitRecordNext(_ next: UInt64) {
 
 private func pkgRecordHashParts(_ p: UnsafePointer<UInt8>, _ off: Int) -> (UInt64, UInt64, UInt64, UInt64) {
     (pkgLe64(p, off), pkgLe64(p, off + 8), pkgLe64(p, off + 16), pkgLe64(p, off + 24))
+}
+
+private func pkgResetStreamState() {
+    pkgStreamActive = false
+    pkgStreamOwnerPid = -1
+    pkgStreamGeneration = 0
+    pkgStreamRecordOffset = 0
+    pkgStreamDataOffset = 0
+    pkgStreamNextOffset = 0
+    pkgStreamPayloadSize = 0
+    pkgStreamWritten = 0
+    pkgStreamNameLen = 0
+    pkgStreamVersionLen = 0
+    pkgStreamFirstByteCount = 0
+    pkgStreamSHA = SHA256Stream()
+    var i = 0
+    while i < 32 {
+        pkgStreamName[i] = 0
+        pkgStreamPayloadHash[i] = 0
+        if i < 16 { pkgStreamVersion[i] = 0 }
+        i += 1
+    }
+    i = 0
+    while i < 64 {
+        pkgStreamFirstBytes[i] = 0
+        i += 1
+    }
+}
+
+private func pkgFailStreamMutation() {
+    pkgResetStreamState()
+    pkgStoreEndMutation()
 }
 
 private func pkgAddPayload(_ dataOffset: UInt64, _ dataSize: UInt64,
@@ -369,13 +430,10 @@ private func pkgAppendRecord(kind: UInt32, generation: UInt64,
     return (0, reserved.dataOffset)
 }
 
-private func pkgAppendFilePayload(fd: Int, fileOffset: UInt64, size: UInt64,
-                                  hash: UnsafePointer<UInt8>,
-                                  name: UnsafePointer<UInt8>, nameLen: Int,
-                                  version: UnsafePointer<UInt8>, versionLen: Int) -> (rc: Int, dataOffset: UInt64) {
-    let reserved = pkgReserveRecord(dataSize: size)
-    if reserved.rc != 0 { return (reserved.rc, 0) }
-
+private func pkgWritePayloadRecordHeader(recordOffset: UInt64, dataOffset: UInt64, size: UInt64,
+                                         hash: UnsafePointer<UInt8>,
+                                         name: UnsafePointer<UInt8>, nameLen: Int,
+                                         version: UnsafePointer<UInt8>, versionLen: Int) -> Int {
     var header = [UInt8](repeating: 0, count: pkgStoreRecordHeaderSize)
     let ok = header.withUnsafeMutableBufferPointer { bp -> Bool in
         let h = bp.baseAddress!
@@ -388,18 +446,33 @@ private func pkgAppendFilePayload(fd: Int, fileOffset: UInt64, size: UInt64,
         pkgPutLe32(h, 16, pkgRecordKindPayload)
         pkgPutLe32(h, 20, 0)
         pkgPutLe64(h, 24, 0)
-        pkgPutLe64(h, 32, reserved.dataOffset)
+        pkgPutLe64(h, 32, dataOffset)
         pkgPutLe64(h, 40, size)
         var i = 0
         while i < 32 { h[48 + i] = hash[i]; i += 1 }
         return pkgCopyPadded(h, 80, 32, name, nameLen) &&
                pkgCopyPadded(h, 112, 16, version, versionLen)
     }
-    if !ok { return (-22, 0) }
+    if !ok { return -22 }
     let hrc = header.withUnsafeBytes { raw in
-        virtioBlkWritePackageStoreRange(reserved.recordOffset, raw.baseAddress, UInt32(pkgStoreRecordHeaderSize))
+        virtioBlkWritePackageStoreRange(recordOffset, raw.baseAddress, UInt32(pkgStoreRecordHeaderSize))
     }
-    if hrc != 0 { return (Int(hrc), 0) }
+    return hrc == 0 ? 0 : Int(hrc)
+}
+
+private func pkgAppendFilePayload(fd: Int, fileOffset: UInt64, size: UInt64,
+                                  hash: UnsafePointer<UInt8>,
+                                  name: UnsafePointer<UInt8>, nameLen: Int,
+                                  version: UnsafePointer<UInt8>, versionLen: Int) -> (rc: Int, dataOffset: UInt64) {
+    let reserved = pkgReserveRecord(dataSize: size)
+    if reserved.rc != 0 { return (reserved.rc, 0) }
+
+    let hrc = pkgWritePayloadRecordHeader(recordOffset: reserved.recordOffset,
+                                          dataOffset: reserved.dataOffset,
+                                          size: size, hash: hash,
+                                          name: name, nameLen: nameLen,
+                                          version: version, versionLen: versionLen)
+    if hrc != 0 { return (hrc, 0) }
     let drc = pkgWriteFileRangeToStore(fd: fd, fileOffset: fileOffset, storeOffset: reserved.dataOffset, size: size)
     if drc != 0 { return (drc, 0) }
     let prc = pkgWriteZeroPadding(from: reserved.dataOffset + size, to: reserved.next)
@@ -595,6 +668,130 @@ private func pkgPublishInstalledPayloads(generation: UInt64,
     pkgActiveGeneration = generation
     if generation > pkgMaxGeneration { pkgMaxGeneration = generation }
     return pkgStoreS4dInvariantsLocked()
+}
+
+private func pkgActivateInstalledPayload(generation: UInt64,
+                                         payloadOffset: UInt64,
+                                         payloadSize: UInt64,
+                                         payloadHash: UnsafePointer<UInt8>,
+                                         name: UnsafePointer<UInt8>, nameLen: Int,
+                                         version: UnsafePointer<UInt8>, versionLen: Int) -> Int {
+    var h0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h2s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var h3s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    let newParts = pkgRecordHashParts(payloadHash, 0)
+    var activationCount = 0
+    var alreadyActive = false
+    let activeDaif = pkgStoreLock()
+    var activeIndex = 0
+    while activeIndex < pkgActivePayloadCountValue && activationCount < pkgStoreMaxPayloads {
+        let pidx = pkgActivePayloadIndex[activeIndex]
+        if pidx >= 0 && pidx < pkgStoreMaxPayloads {
+            let p = pkgPayloads[pidx]
+            if p.inUse && p.active {
+                if p.h0 == newParts.0 && p.h1 == newParts.1 && p.h2 == newParts.2 && p.h3 == newParts.3 {
+                    alreadyActive = true
+                }
+                h0s[activationCount] = p.h0
+                h1s[activationCount] = p.h1
+                h2s[activationCount] = p.h2
+                h3s[activationCount] = p.h3
+                activationCount += 1
+            }
+        }
+        activeIndex += 1
+    }
+    pkgStoreUnlock(activeDaif)
+    if !alreadyActive {
+        if activationCount >= pkgStoreMaxPayloads { return -28 }
+        h0s[activationCount] = newParts.0
+        h1s[activationCount] = newParts.1
+        h2s[activationCount] = newParts.2
+        h3s[activationCount] = newParts.3
+        activationCount += 1
+    }
+
+    var activation = [UInt8](repeating: 0,
+                             count: pkgStoreActivationHeaderSize + activationCount * pkgStoreActivationEntrySize)
+    let actOk = activation.withUnsafeMutableBufferPointer { bp -> Bool in
+        let a = bp.baseAddress!
+        pkgActivationMagicString.withUTF8Buffer { m in
+            var i = 0
+            while i < 8 { a[i] = m[i]; i += 1 }
+        }
+        pkgPutLe32(a, 8, 1)
+        pkgPutLe32(a, 12, UInt32(activationCount))
+        var entry = 0
+        while entry < activationCount {
+            let off = pkgStoreActivationHeaderSize + entry * pkgStoreActivationEntrySize
+            pkgPutLe64(a, off, h0s[entry])
+            pkgPutLe64(a, off + 8, h1s[entry])
+            pkgPutLe64(a, off + 16, h2s[entry])
+            pkgPutLe64(a, off + 24, h3s[entry])
+            let namesOk: Bool
+            if entry == activationCount - 1 && !alreadyActive {
+                namesOk = pkgCopyPadded(a, off + 32, 32, name, nameLen) &&
+                          pkgCopyPadded(a, off + 64, 16, version, versionLen)
+            } else {
+                namesOk = pkgCopyStaticPadded(a, off + 32, 32, "active") &&
+                          pkgCopyStaticPadded(a, off + 64, 16, "0")
+            }
+            if !namesOk { return false }
+            entry += 1
+        }
+        return true
+    }
+    if !actOk { return -22 }
+    var activationHash = [UInt8](repeating: 0, count: 32)
+    activation.withUnsafeBytes { raw in
+        activationHash.withUnsafeMutableBufferPointer { hp in
+            sha256(raw.baseAddress!, activation.count, hp.baseAddress!)
+        }
+    }
+    let activationRecord = activation.withUnsafeBytes { raw in
+        activationHash.withUnsafeBufferPointer { hp in
+            pkgAppendRecord(kind: pkgRecordKindActivation, generation: generation,
+                            dataPtr: raw.baseAddress, dataSize: UInt64(activation.count),
+                            dataHash: hp.baseAddress!,
+                            name: name, nameLen: nameLen,
+                            version: version, versionLen: versionLen)
+        }
+    }
+    if activationRecord.rc != 0 { return activationRecord.rc }
+
+    var emptyHash = [UInt8](repeating: 0, count: 32)
+    emptyHash.withUnsafeMutableBufferPointer { hp in
+        sha256(UnsafeRawPointer(bitPattern: 1)!, 0, hp.baseAddress!)
+    }
+    let activeName: StaticString = "active"
+    let activeVersion: StaticString = "0"
+    let activeRecord = emptyHash.withUnsafeBufferPointer { hp in
+        activeName.withUTF8Buffer { an in
+            activeVersion.withUTF8Buffer { av in
+                pkgAppendRecord(kind: pkgRecordKindActivePointer, generation: generation,
+                                dataPtr: nil, dataSize: 0, dataHash: hp.baseAddress!,
+                                name: an.baseAddress!, nameLen: an.count,
+                                version: av.baseAddress!, versionLen: av.count)
+            }
+        }
+    }
+    if activeRecord.rc != 0 { return activeRecord.rc }
+
+    let published = pkgPublishInstalledPayloads(generation: generation,
+                                                payloadOffset: payloadOffset,
+                                                payloadSize: payloadSize,
+                                                payloadHash: payloadHash,
+                                                activationOffset: activationRecord.dataOffset,
+                                                activationSize: UInt64(activation.count),
+                                                h0s: h0s, h1s: h1s,
+                                                h2s: h2s, h3s: h3s,
+                                                count: activationCount)
+    if !published { return -28 }
+    let mountRc = vfsMountActivePackageStore()
+    if mountRc != 0 { return mountRc }
+    klog(.info, "pkg", "P3b: package installed and activated", generation)
+    return 0
 }
 
 func pkgStoreInit() {
@@ -829,133 +1026,175 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
     }
     if install.rc != 0 { return install.rc }
 
-    var h0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
-    var h1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
-    var h2s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
-    var h3s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
-    let newParts = payloadHash.withUnsafeBufferPointer { hp in
-        pkgRecordHashParts(hp.baseAddress!, 0)
-    }
-    var activationCount = 0
-    var alreadyActive = false
-    let activeDaif = pkgStoreLock()
-    var activeIndex = 0
-    while activeIndex < pkgActivePayloadCountValue && activationCount < pkgStoreMaxPayloads {
-        let pidx = pkgActivePayloadIndex[activeIndex]
-        if pidx >= 0 && pidx < pkgStoreMaxPayloads {
-            let p = pkgPayloads[pidx]
-            if p.inUse && p.active {
-                if p.h0 == newParts.0 && p.h1 == newParts.1 && p.h2 == newParts.2 && p.h3 == newParts.3 {
-                    alreadyActive = true
-                }
-                h0s[activationCount] = p.h0
-                h1s[activationCount] = p.h1
-                h2s[activationCount] = p.h2
-                h3s[activationCount] = p.h3
-                activationCount += 1
+    return name.withUnsafeBufferPointer { nbp in
+        version.withUnsafeBufferPointer { vbp in
+            payloadHash.withUnsafeBufferPointer { hp in
+                pkgActivateInstalledPayload(generation: generation,
+                                            payloadOffset: install.dataOffset,
+                                            payloadSize: payloadSize,
+                                            payloadHash: hp.baseAddress!,
+                                            name: nbp.baseAddress!, nameLen: nameLen,
+                                            version: vbp.baseAddress!, versionLen: versionLen)
             }
         }
-        activeIndex += 1
     }
-    pkgStoreUnlock(activeDaif)
-    if !alreadyActive {
-        if activationCount >= pkgStoreMaxPayloads { return -28 }
-        h0s[activationCount] = newParts.0
-        h1s[activationCount] = newParts.1
-        h2s[activationCount] = newParts.2
-        h3s[activationCount] = newParts.3
-        activationCount += 1
+}
+
+func pkgStoreStreamBegin(descVA: UInt) -> Int {
+    if processCurrentPrincipal() != 1 { return -13 }
+    if !virtioBlkPackageStoreAvailable() { return -2 }
+    guard let desc = userReadableBuffer(descVA, UInt(pkgStreamBeginDescSize)) else { return -22 }
+    if !pkgStoreBeginMutation() { return -11 }
+    var started = false
+    defer {
+        if !started { pkgStoreEndMutation() }
     }
 
-    var activation = [UInt8](repeating: 0,
-                             count: pkgStoreActivationHeaderSize + activationCount * pkgStoreActivationEntrySize)
-    let actOk = activation.withUnsafeMutableBufferPointer { bp -> Bool in
-        let a = bp.baseAddress!
-        pkgActivationMagicString.withUTF8Buffer { m in
-            var i = 0
-            while i < 8 { a[i] = m[i]; i += 1 }
-        }
-        pkgPutLe32(a, 8, 1)
-        pkgPutLe32(a, 12, UInt32(activationCount))
-        var entry = 0
-        while entry < activationCount {
-            let off = pkgStoreActivationHeaderSize + entry * pkgStoreActivationEntrySize
-            pkgPutLe64(a, off, h0s[entry])
-            pkgPutLe64(a, off + 8, h1s[entry])
-            pkgPutLe64(a, off + 16, h2s[entry])
-            pkgPutLe64(a, off + 24, h3s[entry])
-            let namesOk: Bool
-            if entry == activationCount - 1 && !alreadyActive {
-                namesOk = name.withUnsafeBufferPointer { nbp in
-                    version.withUnsafeBufferPointer { vbp in
-                        pkgCopyPadded(a, off + 32, 32, nbp.baseAddress!, nameLen) &&
-                        pkgCopyPadded(a, off + 64, 16, vbp.baseAddress!, versionLen)
-                    }
-                }
-            } else {
-                namesOk = pkgCopyStaticPadded(a, off + 32, 32, "active") &&
-                          pkgCopyStaticPadded(a, off + 64, 16, "0")
-            }
-            if !namesOk { return false }
-            entry += 1
-        }
-        return true
+    pkgResetStreamState()
+    let nameLen = pkgStreamName.withUnsafeMutableBufferPointer { bp in
+        pkgCopyCString(descVA, 32, bp.baseAddress!, 32)
     }
-    if !actOk { return -22 }
-    var activationHash = [UInt8](repeating: 0, count: 32)
-    activation.withUnsafeBytes { raw in
-        activationHash.withUnsafeMutableBufferPointer { hp in
-            sha256(raw.baseAddress!, activation.count, hp.baseAddress!)
-        }
+    if nameLen < 0 { return nameLen }
+    let versionLen = pkgStreamVersion.withUnsafeMutableBufferPointer { bp in
+        pkgCopyCString(descVA + 32, 16, bp.baseAddress!, 16)
     }
-    let activationRecord = activation.withUnsafeBytes { raw in
-        activationHash.withUnsafeBufferPointer { hp in
-            name.withUnsafeBufferPointer { nbp in
-                version.withUnsafeBufferPointer { vbp in
-                    pkgAppendRecord(kind: pkgRecordKindActivation, generation: generation,
-                                    dataPtr: raw.baseAddress, dataSize: UInt64(activation.count),
-                                    dataHash: hp.baseAddress!,
-                                    name: nbp.baseAddress!, nameLen: nameLen,
-                                    version: vbp.baseAddress!, versionLen: versionLen)
-                }
-            }
-        }
+    if versionLen < 0 { return versionLen }
+    let payloadSize = pkgLe64(desc, 48)
+    if payloadSize == 0 { return -22 }
+    var i = 0
+    while i < 32 {
+        pkgStreamPayloadHash[i] = desc[56 + i]
+        i += 1
     }
-    if activationRecord.rc != 0 { return activationRecord.rc }
 
-    var emptyHash = [UInt8](repeating: 0, count: 32)
-    emptyHash.withUnsafeMutableBufferPointer { hp in
-        sha256(UnsafeRawPointer(bitPattern: 1)!, 0, hp.baseAddress!)
+    let reserved = pkgReserveRecord(dataSize: payloadSize)
+    if reserved.rc != 0 { return reserved.rc }
+    pkgStreamActive = true
+    pkgStreamOwnerPid = processCurrentPid()
+    pkgStreamGeneration = pkgStoreNextGeneration()
+    pkgStreamRecordOffset = reserved.recordOffset
+    pkgStreamDataOffset = reserved.dataOffset
+    pkgStreamNextOffset = reserved.next
+    pkgStreamPayloadSize = payloadSize
+    pkgStreamWritten = 0
+    pkgStreamNameLen = nameLen
+    pkgStreamVersionLen = versionLen
+    pkgStreamFirstByteCount = 0
+    pkgStreamSHA = SHA256Stream()
+    started = true
+    return 0
+}
+
+func pkgStoreStreamWrite(bufVA: UInt, count: UInt) -> Int {
+    if processCurrentPrincipal() != 1 { return -13 }
+    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    if count == 0 { return 0 }
+    if count > UInt(pkgStoreInstallChunkSize) { pkgFailStreamMutation(); return -22 }
+    guard let src = userReadableBuffer(bufVA, count) else {
+        pkgFailStreamMutation()
+        return -22
     }
-    let activeName: StaticString = "active"
-    let activeVersion: StaticString = "0"
-    let activeRecord = emptyHash.withUnsafeBufferPointer { hp in
-        activeName.withUTF8Buffer { an in
-            activeVersion.withUTF8Buffer { av in
-                pkgAppendRecord(kind: pkgRecordKindActivePointer, generation: generation,
-                                dataPtr: nil, dataSize: 0, dataHash: hp.baseAddress!,
-                                name: an.baseAddress!, nameLen: an.count,
-                                version: av.baseAddress!, versionLen: av.count)
+    let remaining = pkgStreamPayloadSize - pkgStreamWritten
+    if UInt64(count) > remaining {
+        pkgFailStreamMutation()
+        return -22
+    }
+
+    var i = 0
+    while i < Int(count) && pkgStreamFirstByteCount < 64 {
+        pkgStreamFirstBytes[pkgStreamFirstByteCount] = src[i]
+        pkgStreamFirstByteCount += 1
+        i += 1
+    }
+    pkgStreamSHA.update(UnsafeRawPointer(src), Int(count))
+    let rc = virtioBlkWritePackageStoreRange(pkgStreamDataOffset + pkgStreamWritten,
+                                             UnsafeRawPointer(src), UInt32(count))
+    if rc != 0 {
+        pkgFailStreamMutation()
+        return Int(rc)
+    }
+    pkgStreamWritten += UInt64(count)
+    return 0
+}
+
+func pkgStoreStreamCommit() -> Int {
+    if processCurrentPrincipal() != 1 { return -13 }
+    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    if pkgStreamWritten != pkgStreamPayloadSize {
+        pkgFailStreamMutation()
+        return -22
+    }
+    let payloadLooksPacked = pkgStreamFirstBytes.withUnsafeBufferPointer { bp -> Bool in
+        if pkgStreamFirstByteCount != 64 { return false }
+        let p = bp.baseAddress!
+        return pkgBytesEqual(p, 0, "SWOSBASE") && pkgLe32(p, 8) == 2
+    }
+    if !payloadLooksPacked {
+        pkgFailStreamMutation()
+        return -22
+    }
+
+    var actualHash = [UInt8](repeating: 0, count: 32)
+    actualHash.withUnsafeMutableBufferPointer { hp in
+        pkgStreamSHA.finalize(UnsafeMutableRawPointer(hp.baseAddress!))
+    }
+    let hashOk = actualHash.withUnsafeBufferPointer { ahp in
+        pkgStreamPayloadHash.withUnsafeBufferPointer { ehp in
+            pkgBytesEqualRaw(ahp.baseAddress!, ehp.baseAddress!, 32)
+        }
+    }
+    if !hashOk {
+        pkgFailStreamMutation()
+        return -22
+    }
+
+    let prc = pkgWriteZeroPadding(from: pkgStreamDataOffset + pkgStreamPayloadSize, to: pkgStreamNextOffset)
+    if prc != 0 {
+        pkgFailStreamMutation()
+        return prc
+    }
+    let hrc = pkgStreamName.withUnsafeBufferPointer { nbp in
+        pkgStreamVersion.withUnsafeBufferPointer { vbp in
+            pkgStreamPayloadHash.withUnsafeBufferPointer { hp in
+                pkgWritePayloadRecordHeader(recordOffset: pkgStreamRecordOffset,
+                                            dataOffset: pkgStreamDataOffset,
+                                            size: pkgStreamPayloadSize,
+                                            hash: hp.baseAddress!,
+                                            name: nbp.baseAddress!, nameLen: pkgStreamNameLen,
+                                            version: vbp.baseAddress!, versionLen: pkgStreamVersionLen)
             }
         }
     }
-    if activeRecord.rc != 0 { return activeRecord.rc }
-
-    let published = payloadHash.withUnsafeBufferPointer { hp in
-        pkgPublishInstalledPayloads(generation: generation,
-                                    payloadOffset: install.dataOffset,
-                                    payloadSize: payloadSize,
-                                    payloadHash: hp.baseAddress!,
-                                    activationOffset: activationRecord.dataOffset,
-                                    activationSize: UInt64(activation.count),
-                                    h0s: h0s, h1s: h1s,
-                                    h2s: h2s, h3s: h3s,
-                                    count: activationCount)
+    if hrc != 0 {
+        pkgFailStreamMutation()
+        return hrc
     }
-    if !published { return -28 }
-    let mountRc = vfsMountActivePackageStore()
-    if mountRc != 0 { return mountRc }
-    klog(.info, "pkg", "P3b: package installed and activated", generation)
+    pkgCommitRecordNext(pkgStreamNextOffset)
+    let arc = pkgStreamName.withUnsafeBufferPointer { nbp in
+        pkgStreamVersion.withUnsafeBufferPointer { vbp in
+            pkgStreamPayloadHash.withUnsafeBufferPointer { hp in
+                pkgActivateInstalledPayload(generation: pkgStreamGeneration,
+                                            payloadOffset: pkgStreamDataOffset,
+                                            payloadSize: pkgStreamPayloadSize,
+                                            payloadHash: hp.baseAddress!,
+                                            name: nbp.baseAddress!, nameLen: pkgStreamNameLen,
+                                            version: vbp.baseAddress!, versionLen: pkgStreamVersionLen)
+            }
+        }
+    }
+    if arc != 0 {
+        pkgFailStreamMutation()
+        return arc
+    }
+    pkgFailStreamMutation()
+    return 0
+}
+
+func pkgStoreStreamAbort() -> Int {
+    if processCurrentPrincipal() != 1 { return -13 }
+    if !pkgStreamActive { return 0 }
+    if pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    pkgFailStreamMutation()
     return 0
 }
 

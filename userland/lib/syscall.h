@@ -78,6 +78,11 @@
 #define SYS_KERNEL_ACTIVATE 69
 #define SYS_KERNEL_CONFIRM 70
 #define SYS_EVENTFD        71
+#define SYS_PKG_STREAM_BEGIN 72
+#define SYS_PKG_STREAM_WRITE 73
+#define SYS_PKG_STREAM_COMMIT 74
+#define SYS_PKG_STREAM_ABORT 75
+#define SYS_SIGRETURN      76
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -314,6 +319,29 @@ static inline int pkg_install(int fd, const char *name, const char *version_revi
 
 static inline int pkg_info(int index, char *buf, size_t cap) {
     return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
+}
+
+struct swiftos_pkg_stream_begin_desc {
+    char name[32];
+    char version_revision[16];
+    unsigned long payload_size;
+    unsigned char payload_sha256[32];
+};
+
+static inline int pkg_stream_begin(const struct swiftos_pkg_stream_begin_desc *desc) {
+    return (int)__syscall3(SYS_PKG_STREAM_BEGIN, (long)desc, 0, 0);
+}
+
+static inline int pkg_stream_write(const void *buf, size_t count) {
+    return (int)__syscall3(SYS_PKG_STREAM_WRITE, (long)buf, (long)count, 0);
+}
+
+static inline int pkg_stream_commit(void) {
+    return (int)__syscall3(SYS_PKG_STREAM_COMMIT, 0, 0, 0);
+}
+
+static inline int pkg_stream_abort(void) {
+    return (int)__syscall3(SYS_PKG_STREAM_ABORT, 0, 0, 0);
 }
 
 struct swiftos_device_info {

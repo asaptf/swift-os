@@ -398,7 +398,7 @@ Before merging a port:
 | `userland/threadsyncprobe.c` | newlib compat POSIX semaphores and pthread read/write locks |
 | `userland/selectprobe.c` | newlib compat select/pselect readiness over poll |
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
-| `userland/signalprobe.c` | newlib compat signal disposition, kill probes, SIGTERM child termination, and waitpid status |
+| `userland/signalprobe.c` | newlib compat signal disposition, current-process handler frames, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |

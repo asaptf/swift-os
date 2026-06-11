@@ -918,8 +918,9 @@ because `fork` needs parent and child alive at once. Staged:
   - **Signals** (`kernel/signal/signal.swift`): pending mask + dispositions for the foreground process.
     Ctrl-C (ETX, with `ISIG`) raises SIGINT; delivered from the IRQ handler after the GIC EOI. Default
     action terminates the process (status 128+signo); `SIG_IGN` honored. `sigaction`/`kill`/`getpid`
-    (9/10/11) present. **Caveat:** custom (catch) handlers are recorded but not yet *delivered* — that
-    needs signal frames/sigreturn (future work); today a custom handler falls back to terminate.
+    (9/10/11) present. **Current state:** NPM10 added current-process custom handler delivery via
+    user signal frames and `sigreturn`; masks, process groups, blocked-syscall interruption, and remote
+    async custom-handler delivery remain future work.
   - **Important constraint discovered:** a blocking syscall must NOT unmask IRQs, because an interrupt
     taken at EL1 overwrites `ELR_EL1`/`SPSR_EL1` (no save/restore in the sync vector yet), corrupting the
     pending return to EL0. `read(0)` therefore *polls* the UART with IRQs masked; the UART IRQ still
@@ -2890,8 +2891,8 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
 
 - **Enable.** `scripts/build-busybox.sh` now sets `CONFIG_VI` + a curated feature set (COLON, YANKMARK,
   SEARCH, DOT_CMD, SET/SETOPTS, UNDO). Three features are deliberately forced OFF because swift-os's headless
-  serial tty breaks their assumptions: `FEATURE_VI_USE_SIGNALS` (needs SIGWINCH/SIGINT delivered to a custom
-  handler — the kernel records but does not yet deliver custom handlers), `FEATURE_VI_WIN_RESIZE` (SIGWINCH;
+  serial tty breaks their assumptions: `FEATURE_VI_USE_SIGNALS` (needs SIGWINCH/SIGINT custom handler delivery
+  while the editor is blocked in terminal reads; NPM10 only covers syscall-return delivery), `FEATURE_VI_WIN_RESIZE` (SIGWINCH;
   our console is a fixed 80×24, which `ioctl(TIOCGWINSZ)` already reports), and `FEATURE_VI_ASK_TERMINAL`
   (emits `ESC[6n` and blocks reading the cursor-position report, which our tty never sends back — vi would
   hang at startup). Note: the int-valued config symbols `FEATURE_VI_MAX_LEN`/`FEATURE_VI_UNDO_QUEUE_MAX`
@@ -4927,4 +4928,32 @@ unsupported.
 **Acceptance.** `make mapfixed-test`, `make docs-test`,
 `make ports-catalog-test`, `./tests/mmap_test.sh`, `make mmapreserve-test`,
 `make mprotect-test`, `make largemmap-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM10 — current-process signal handler frame probe (DONE, 2026-06-11)
+
+**Scope.** Add the smallest tested signal-frame slice needed by
+Node.js/npm/pm2-shaped runtimes. SwiftOS now delivers current-process custom C
+handlers at syscall-return safe points by building a user-stack signal frame,
+entering the registered handler at EL0, and restoring the interrupted trap frame
+through a compat `sigreturn` trampoline. This closes the Node.js catalog blocker
+for signal handler frames. Full libuv signal watcher semantics remain future
+work: signal masks, process groups, blocked-syscall interruption, and remote
+async custom-handler delivery are still not implemented.
+
+- `kernel/signal/signal.swift`: tracks a userspace restorer per disposition and
+  delivers pending custom handlers only when a syscall-return trap frame is
+  available.
+- `kernel/user/process.swift`: stores/restores a kernel-built user signal frame,
+  guards one active frame per process slot, and resets frame state across
+  fork/thread creation, exec, and reap.
+- `kernel/syscall/syscall.swift`, `userland/lib/syscall.h`, and
+  `userland/compat/stubs.c`: add SwiftOS `sigreturn` number 76 and pass a compat
+  restorer trampoline with `sigaction`.
+- `/bin/signalprobe`: now proves custom SIGTERM handler delivery via `raise`,
+  `sigreturn` frame restore, and old-handler reporting before the child
+  termination status checks.
+
+**Acceptance.** `make signal-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

@@ -18,7 +18,6 @@ private let defaultDNSServerPath = "/etc/pkg/dns-server"
 private let defaultRepoURLPath = "/etc/pkg/repo-url"
 private let repoURLPath = "/tmp/pkg-repo-url"
 private let catalogCachePath = "/tmp/pkg-catalog.signed"
-private let packageCachePath = "/tmp/pkg-download.swpkg"
 private let maxCatalogPackages = 64
 private let maxPackageDepends = 8
 
@@ -980,27 +979,45 @@ private func hexString(_ bytes: [UInt8]) -> String {
     return String(decoding: out, as: UTF8.self)
 }
 
-private func sha256FileHex(_ path: String) -> String? {
-    let fd = openCString(path, oRdOnly)
-    if fd < 0 { return nil }
-    var hasher = SHA256Stream()
-    var ok = true
-    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: ioChunk) { buf in
-        let base = buf.baseAddress!
-        while true {
-            let r = swiftos_read(fd, UnsafeMutableRawPointer(base), UInt(ioChunk))
-            if r < 0 { ok = false; break }
-            if r == 0 { break }
-            hasher.update(UnsafeRawPointer(base), Int(r))
+private func sha256Bytes(_ bytes: [UInt8]) -> [UInt8] {
+    var digest = [UInt8](repeating: 0, count: sha256DigestLen)
+    bytes.withUnsafeBytes { raw in
+        digest.withUnsafeMutableBytes { out in
+            let p = raw.baseAddress ?? UnsafeRawPointer(bitPattern: 1)!
+            sha256(p, bytes.count, out.baseAddress!)
         }
     }
-    _ = swiftos_close(fd)
-    if !ok { return nil }
-    var digest = [UInt8](repeating: 0, count: sha256DigestLen)
-    digest.withUnsafeMutableBytes { raw in
-        hasher.finalize(raw.baseAddress!)
+    return digest
+}
+
+private func bytesEqualRange(_ a: [UInt8], _ aStart: Int,
+                             _ b: [UInt8], _ bStart: Int,
+                             _ count: Int) -> Bool {
+    if aStart < 0 || bStart < 0 || aStart + count > a.count || bStart + count > b.count {
+        return false
     }
-    return hexString(digest)
+    var i = 0
+    while i < count {
+        if a[aStart + i] != b[bStart + i] { return false }
+        i += 1
+    }
+    return true
+}
+
+private func streamBegin(_ name: String, _ versionRevision: String,
+                         _ payloadSize: UInt, _ payloadHash: [UInt8]) -> Bool {
+    if payloadHash.count != sha256DigestLen { return false }
+    var cname = Array(name.utf8CString)
+    var cver = Array(versionRevision.utf8CString)
+    let rc = cname.withUnsafeMutableBufferPointer { nbp in
+        cver.withUnsafeMutableBufferPointer { vbp in
+            payloadHash.withUnsafeBufferPointer { hp in
+                swiftos_pkg_stream_begin(nbp.baseAddress!, vbp.baseAddress!,
+                                         payloadSize, hp.baseAddress!)
+            }
+        }
+    }
+    return rc == 0
 }
 
 private func isLocalPackageArgument(_ arg: String) -> Bool {
@@ -1132,27 +1149,286 @@ private func installedPackageNamed(_ name: String) -> Bool {
     return false
 }
 
+private func installHTTPPackage(_ pkg: CatalogPackage, from urlText: String) -> Int32 {
+    guard let url = parseURL(urlText) else {
+        put("pkg: bad URL\n")
+        return 1
+    }
+    let sock = swiftos_socket_stream()
+    if sock < 0 {
+        put("pkg: socket failed\n")
+        return 1
+    }
+    if swiftos_connect(sock, url.ip, url.port) != 0 {
+        put("pkg: connect failed\n")
+        _ = swiftos_close(sock)
+        return 1
+    }
+
+    let request = "GET \(url.path) HTTP/1.0\r\nHost: \(url.host)\r\nConnection: close\r\n\r\n"
+    if !writeAll(sock, Array(request.utf8)) {
+        put("pkg: request failed\n")
+        _ = swiftos_close(sock)
+        return 1
+    }
+
+    var httpHeader: [UInt8] = []
+    var sawHTTPHeader = false
+    var ok = false
+    var expectedBody = -1
+    var bodySeen = 0
+
+    var packageHasher = SHA256Stream()
+    var packageHeader: [UInt8] = []
+    var manifest: [UInt8] = []
+    var manifestSize: UInt = 0
+    var payloadOffset: UInt = 0
+    var payloadSize: UInt = 0
+    var packageSize: UInt = 0
+    var payloadHash = [UInt8](repeating: 0, count: sha256DigestLen)
+    var manifestReady = false
+    var streamStarted = false
+    var payloadWritten: UInt = 0
+    var bodyRead: UInt = 0
+    var installName = ""
+    var installVersionRevision = ""
+
+    func abortStream() {
+        if streamStarted {
+            _ = swiftos_pkg_stream_abort()
+            streamStarted = false
+        }
+    }
+
+    func validatePackageHeader() -> Bool {
+        let magic = staticBytes("SWPKG001")
+        if packageHeader.count != swpkgHeaderSize { return false }
+        if !bytesEqualRange(packageHeader, 0, magic, 0, magic.count) { return false }
+        if le32(packageHeader, 8) != 1 || le32(packageHeader, 12) != UInt32(swpkgHeaderSize) {
+            return false
+        }
+        let manifestOffset = le64(packageHeader, 16)
+        manifestSize = le64(packageHeader, 24)
+        payloadOffset = le64(packageHeader, 32)
+        payloadSize = le64(packageHeader, 40)
+        let signatureOffset = le64(packageHeader, 112)
+        let signatureSize = le64(packageHeader, 120)
+        let (computedPayloadOffset, payloadOffsetOverflow) = manifestOffset.addingReportingOverflow(manifestSize)
+        let (computedPackageSize, packageSizeOverflow) = payloadOffset.addingReportingOverflow(payloadSize)
+        if signatureOffset != 0 || signatureSize != 0 { return false }
+        if manifestOffset != UInt(swpkgHeaderSize) { return false }
+        if payloadOffsetOverflow || payloadOffset != computedPayloadOffset { return false }
+        if packageSizeOverflow || manifestSize == 0 || payloadSize == 0 { return false }
+        if manifestSize > UInt(manifestMax) { return false }
+        if pkg.size != 0 && pkg.size != computedPackageSize { return false }
+        if expectedBody >= 0 && UInt(expectedBody) != computedPackageSize { return false }
+        packageSize = computedPackageSize
+        var i = 0
+        while i < sha256DigestLen {
+            payloadHash[i] = packageHeader[80 + i]
+            i += 1
+        }
+        return true
+    }
+
+    func finishManifest() -> Bool {
+        let manifestHash = sha256Bytes(manifest)
+        if !bytesEqualRange(manifestHash, 0, packageHeader, 48, sha256DigestLen) {
+            put("pkg: manifest SHA-256 mismatch\n")
+            return false
+        }
+        guard let name = jsonString(manifest, "name"),
+              let version = jsonString(manifest, "version") else {
+            put("pkg: invalid package manifest\n")
+            return false
+        }
+        let revision = jsonUInt(manifest, "revision") ?? 1
+        if name != pkg.name || version != pkg.version || revision != pkg.revision {
+            put("pkg: catalog/package metadata mismatch\n")
+            return false
+        }
+        let versionRevision = "\(version)_\(revision)"
+        if name.utf8.count > 31 || versionRevision.utf8.count > 15 {
+            put("pkg: package metadata too long\n")
+            return false
+        }
+        if !streamBegin(name, versionRevision, payloadSize, payloadHash) {
+            put("pkg: package stream begin failed\n")
+            return false
+        }
+        streamStarted = true
+        manifestReady = true
+        installName = name
+        installVersionRevision = versionRevision
+        return true
+    }
+
+    func consumeBody(_ ptr: UnsafeRawPointer, _ count: Int) -> Bool {
+        if count <= 0 { return true }
+        packageHasher.update(ptr, count)
+        let src = ptr.assumingMemoryBound(to: UInt8.self)
+        var off = 0
+        while off < count {
+            if packageHeader.count < swpkgHeaderSize {
+                var take = swpkgHeaderSize - packageHeader.count
+                if take > count - off { take = count - off }
+                var i = 0
+                while i < take {
+                    packageHeader.append(src[off + i])
+                    i += 1
+                }
+                off += take
+                bodyRead += UInt(take)
+                if packageHeader.count == swpkgHeaderSize && !validatePackageHeader() {
+                    put("pkg: invalid package header\n")
+                    return false
+                }
+            } else if !manifestReady {
+                let remainingManifest = Int(manifestSize) - manifest.count
+                var take = remainingManifest
+                if take > count - off { take = count - off }
+                if take <= 0 { return false }
+                var i = 0
+                while i < take {
+                    manifest.append(src[off + i])
+                    i += 1
+                }
+                off += take
+                bodyRead += UInt(take)
+                if manifest.count == Int(manifestSize) && !finishManifest() {
+                    return false
+                }
+            } else {
+                if payloadWritten >= payloadSize {
+                    put("pkg: package has trailing data\n")
+                    return false
+                }
+                let remainingPayload = payloadSize - payloadWritten
+                var take = count - off
+                if UInt(take) > remainingPayload { take = Int(remainingPayload) }
+                if take <= 0 { return false }
+                let rc = swiftos_pkg_stream_write(ptr.advanced(by: off), UInt(take))
+                if rc != 0 {
+                    put("pkg: package stream write failed\n")
+                    return false
+                }
+                off += take
+                bodyRead += UInt(take)
+                payloadWritten += UInt(take)
+            }
+        }
+        return true
+    }
+
+    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: ioChunk) { buf in
+        let base = buf.baseAddress!
+        while true {
+            let r = swiftos_read(sock, UnsafeMutableRawPointer(base), UInt(ioChunk))
+            if r < 0 {
+                if sawHTTPHeader && ok { break }
+                ok = false
+                break
+            }
+            if r == 0 { break }
+            if !sawHTTPHeader {
+                var i = 0
+                while i < Int(r) {
+                    httpHeader.append(base[i])
+                    i += 1
+                }
+                if httpHeader.count > httpHeaderMax { ok = false; break }
+                let split = findBytes(httpHeader, [0x0D, 0x0A, 0x0D, 0x0A])
+                if split >= 0 {
+                    if !httpStatusOK(httpHeader) {
+                        put("pkg: HTTP status not OK\n")
+                        ok = false
+                        break
+                    }
+                    expectedBody = httpContentLength(httpHeader, upTo: split)
+                    sawHTTPHeader = true
+                    ok = true
+                    let bodyStart = split + 4
+                    if bodyStart < httpHeader.count {
+                        var bodyCount = httpHeader.count - bodyStart
+                        if expectedBody >= 0 && bodyCount > expectedBody {
+                            bodyCount = expectedBody
+                        }
+                        if bodyCount > 0 {
+                            let consumed = httpHeader.withUnsafeBytes { raw in
+                                consumeBody(raw.baseAddress!.advanced(by: bodyStart), bodyCount)
+                            }
+                            if !consumed {
+                                ok = false
+                                break
+                            }
+                            bodySeen += bodyCount
+                        }
+                    }
+                    if expectedBody >= 0 && bodySeen >= expectedBody { break }
+                }
+            } else {
+                var bodyCount = Int(r)
+                if expectedBody >= 0 {
+                    let remaining = expectedBody - bodySeen
+                    if remaining <= 0 { break }
+                    if bodyCount > remaining { bodyCount = remaining }
+                }
+                if bodyCount > 0 {
+                    if !consumeBody(UnsafeRawPointer(base), bodyCount) {
+                        ok = false
+                        break
+                    }
+                    bodySeen += bodyCount
+                }
+                if expectedBody >= 0 && bodySeen >= expectedBody { break }
+            }
+        }
+    }
+    _ = swiftos_close(sock)
+
+    if sawHTTPHeader && ok && expectedBody >= 0 && bodySeen != expectedBody {
+        put("pkg: response truncated\n")
+        ok = false
+    }
+    if !sawHTTPHeader || !ok {
+        if !sawHTTPHeader { put("pkg: response header missing\n") }
+        abortStream()
+        return 1
+    }
+    if !streamStarted || !manifestReady || payloadWritten != payloadSize || bodyRead != packageSize {
+        put("pkg: package truncated\n")
+        abortStream()
+        return 1
+    }
+
+    var packageDigest = [UInt8](repeating: 0, count: sha256DigestLen)
+    packageDigest.withUnsafeMutableBytes { raw in
+        packageHasher.finalize(raw.baseAddress!)
+    }
+    if hexString(packageDigest) != pkg.sha256 {
+        put("pkg: package SHA-256 mismatch\n")
+        abortStream()
+        return 1
+    }
+    let commitRc = swiftos_pkg_stream_commit()
+    streamStarted = false
+    if commitRc != 0 {
+        put("pkg: install failed\n")
+        return 1
+    }
+    put("pkg: installed ")
+    putString(installName)
+    put("-")
+    putString(installVersionRevision)
+    put("\n")
+    return 0
+}
+
 private func installCatalogPackage(_ pkg: CatalogPackage, repoURL: String) -> Int32 {
     put("pkg: fetching ")
     printPackageLine(pkg)
     let packageURL = joinURL(repoURL, pkg.url)
-    if !downloadHTTP(packageURL, to: packageCachePath) {
-        put("pkg: package download failed\n")
-        return 1
-    }
-    guard let digest = sha256FileHex(packageCachePath), digest == pkg.sha256 else {
-        put("pkg: package SHA-256 mismatch\n")
-        unlinkPath(packageCachePath)
-        return 1
-    }
-    let rc = install(packageCachePath)
-    // Keep the successful download cache in place. The kernel heap is bump-only
-    // during bring-up, so reusing this tmpfs file avoids package-install churn
-    // when a seed install pulls several large packages in one boot.
-    if rc != 0 {
-        unlinkPath(packageCachePath)
-    }
-    return rc
+    return installHTTPPackage(pkg, from: packageURL)
 }
 
 private func installResolved(_ name: String, repoURL: String, catalog: [UInt8], stack: [String]) -> Int32 {

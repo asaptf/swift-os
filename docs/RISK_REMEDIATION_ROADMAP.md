@@ -27,7 +27,10 @@ As of 2026-06 the system has a real capability model, real networking, real nati
 
 4. **Global mutable state was written under a single-CPU execution model.** Scheduler tables, PMM bitmap, VFS shared description/pool tables, network engine state (ARP cache, connection tables), timer counters, etc. have no atomics, no per-CPU structure, and rely on IRQ masking + "only one CPU runs kernel code" for safety. Adding cores without fixing this will create data races and heisenbugs.
 
-5. **Signal delivery is incomplete.** Custom handlers are recorded but not delivered via signal frames / sigreturn (noted in signal.swift and NOTES.md).
+5. **Signal delivery is still incomplete.** Current-process custom handlers have
+   signal-frame/`sigreturn` delivery, but signal masks, process groups,
+   blocked-syscall interruption, and remote async custom-handler delivery remain
+   incomplete.
 
 6. **Observability, resource domains, and A/B update/rollback are still only vision.** The CellId tag exists; real per-cell accounting, health, and signed image discipline do not.
 
@@ -66,7 +69,9 @@ Because the risks interact, a pure "SMP first" or "C first" ordering is suboptim
 
 6. **A/B update story**, signed base images, manifest-driven boot, rollback health checks (builds on the two-tier FS and the now-smaller trusted core).
 
-7. **Signal frames / sigreturn**, full custom handler delivery, and any remaining M13 follow-ups that were deferred.
+7. **Remaining signal semantics**: masks, process groups, blocked-syscall
+   interruption, remote async custom-handler delivery, and any remaining M13
+   follow-ups that were deferred.
 
 Interleaving is allowed only when a sub-piece is small, reviewable, and has its own test. Large rewrites of scheduler + VFS + PMM at the same time are forbidden.
 
