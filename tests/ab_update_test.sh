@@ -26,6 +26,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$BASE" ]]   || { echo "FAIL: $BASE missing (make base-image)" >&2; exit 2; }
 [[ -x "$USTORE" ]] || { echo "FAIL: $USTORE missing (make updatestore)" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 not found" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 
 CORRUPT="$(mktemp -t swiftos-ab-corrupt.XXXXXX)"
 STORE_A="$(mktemp -t swiftos-ab-a.XXXXXX)"

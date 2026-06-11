@@ -23,6 +23,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$BASE" ]]   || { echo "FAIL: $BASE missing (make base-image)" >&2; exit 2; }
 [[ -x "$USTORE" ]] || { echo "FAIL: $USTORE missing (make updatestore)" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 
 STORE="$(mktemp -t swiftos-abc.XXXXXX)"
 LOG="$(mktemp -t swiftos-abc-log.XXXXXX)"

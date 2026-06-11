@@ -21,6 +21,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 not found" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 
 META_IMG="$(mktemp -t swiftos-sigmeta.XXXXXX)"
 DATA_IMG="$(mktemp -t swiftos-sigdata.XXXXXX)"
