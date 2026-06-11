@@ -164,6 +164,8 @@ grep -qF "sshd: publickey auth accepted for root" <<<"$clean" \
   || { echo "FAIL: guest did not accept root publickey auth" >&2; ok=0; }
 grep -qF "sshd: authorized key matched /etc/ssh/authorized_keys" <<<"$clean" \
   || { echo "FAIL: guest did not load a matching authorized_keys entry" >&2; ok=0; }
+grep -qF "sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed" <<<"$clean" \
+  || { echo "FAIL: guest did not load the file-backed SSHD host key seed" >&2; ok=0; }
 grep -qF "sshd: session channel opened" <<<"$clean" \
   || { echo "FAIL: guest did not open a session channel" >&2; ok=0; }
 grep -qF "sshd: session exec completed status 0" <<<"$clean" \

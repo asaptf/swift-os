@@ -415,8 +415,9 @@ Current Hetzner readiness status:
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
   started at boot by `/bin/swos-init` from `/etc/swos/services`, binds guest
   TCP/22, exchanges SSH identification strings with a normal OpenSSH client,
-  completes `curve25519-sha256` KEX with an `ssh-ed25519` development host key
-  and `chacha20-poly1305@openssh.com`, authenticates `root` with an
+  completes `curve25519-sha256` KEX with an `ssh-ed25519` host key derived from
+  `/etc/ssh/ssh_host_ed25519_seed` and `chacha20-poly1305@openssh.com`,
+  authenticates `root` with an
   `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
   channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
   and `/bin/echo HC6-OK`. The checked proof is
@@ -432,11 +433,11 @@ Current Hetzner readiness status:
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
-  milestones should add persisted host keys, real entropy, broader
-  authorized-key options, shell/PTY behavior, stdin/streaming output,
-  supervision/restart policy, and broader remote commands. Dropbear remains a
-  candidate full server package if the first-party preflight does not grow into
-  the supported daemon.
+  milestones should add per-instance host-key provisioning or rotation, real
+  entropy, broader authorized-key options, shell/PTY behavior,
+  stdin/streaming output, supervision/restart policy, and broader remote
+  commands. Dropbear remains a candidate full server package if the first-party
+  preflight does not grow into the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has no known_hosts trust store,
   user authentication, session/exec channels, PTY, scp, or sftp.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

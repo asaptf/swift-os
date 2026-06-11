@@ -47,7 +47,7 @@ verification target, but the source of truth is always a host-side input.
 
 | Need | Edit or generate | Rebuild | Focused proof |
 | --- | --- | --- | --- |
-| Change login text, hostname, or identity seed files | `base/etc/*` | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/boot_test.sh` for general boot |
+| Change login text, hostname, SSH preflight keys, or identity seed files | `base/etc/*` | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/sshd_transport_test.sh` for SSHD, `./tests/boot_test.sh` for general boot |
 | Change static HTTP content | `base/www/` | `make base-image` | `./tests/httpd_test.sh` |
 | Add or update a default `/bin` command | `userland/`, Makefile build rules, base staging rule | `make build base-image` | Command-specific QEMU test plus command reference update |
 | Update package repository trust or defaults | `build/pkgrepo-root.pub`, `PKG_DEFAULT_REPO_URL`, `PKG_DEFAULT_DNS_SERVER` | `make base-image` or custom `BASE_IMG=... base-image` | Matching package repository install test |
@@ -117,7 +117,7 @@ packs it into `build/base.img` with `build/basepack`.
 
 | Input | Staged Into | Notes |
 | --- | --- | --- |
-| `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/www`, `/readme.txt`, and `/hello.txt` |
+| `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
 | `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |
 | `build/pkghello.swpkg` | `/packages/pkghello.swpkg` | Local install fixture |
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |

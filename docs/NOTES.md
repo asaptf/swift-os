@@ -3,6 +3,23 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC9 SSHD file-backed host key seed preflight (2026-06-11)
+
+- Moved the SSHD Ed25519 host-key seed out of `/bin/sshd` and into the signed
+  base image at `/etc/ssh/ssh_host_ed25519_seed`. The daemon now loads exactly
+  32 bytes from a hex-encoded seed file before deriving the server host key.
+- The loader skips ASCII whitespace and `#` comments, rejects malformed or
+  wrong-length input, and fails closed if the seed file is missing or invalid.
+  This keeps the current proof deterministic while making deploy artifacts
+  carry explicit host-key material.
+- The checked-in seed remains development material for the QEMU preflight. A
+  real cloud deployment still needs per-instance host-key provisioning or
+  rotation plus real entropy.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` now requires the guest log to
+include `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed` before it
+accepts the HC5 key and executes `/bin/id` plus `/bin/echo` through OpenSSH.
+
 ## HC8 SSHD boot autostart preflight (2026-06-11)
 
 - Added `/bin/swos-init` as the first user process when present in the base

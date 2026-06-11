@@ -715,12 +715,13 @@ Notes:
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
   a bounded direct `/bin/<tool>` command.
-- It uses a development-only host key seed and weak temporary KEX entropy. The
+- It uses a development-only host-key seed from
+  `/etc/ssh/ssh_host_ed25519_seed` and weak temporary KEX entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
   command parser supports simple ASCII-whitespace argv splitting for
   single-component `/bin/` executables only; quoting, redirects, globbing,
-  shell sessions, PTY, scp, sftp, persisted host keys, and broader key options
-  are not implemented yet.
+  shell sessions, PTY, scp, sftp, per-instance host-key provisioning, and
+  broader key options are not implemented yet.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`.

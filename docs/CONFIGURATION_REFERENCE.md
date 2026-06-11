@@ -330,6 +330,20 @@ The compatibility files `base/etc/passwd` and `base/etc/group` are generated or
 maintained for POSIX-like tools. Kernel authorization uses SwiftOS principals,
 capabilities, and handle rights.
 
+### SSH Preflight Files
+
+The default base image includes development SSH material for the checked QEMU
+preflights:
+
+| Path | Source | Purpose |
+| --- | --- | --- |
+| `/etc/ssh/authorized_keys` | `base/etc/ssh/authorized_keys` | Public keys accepted by the current `/bin/sshd` preflight for `root` |
+| `/etc/ssh/ssh_host_ed25519_seed` | `base/etc/ssh/ssh_host_ed25519_seed` | Hex-encoded 32-byte development seed used to derive the SSHD Ed25519 host key |
+
+Replace this material when building a deploy-specific artifact. The checked-in
+host-key seed is deterministic test material, not a per-instance production
+identity.
+
 ### Filesystem
 
 | Path | Source | Writable | Lifetime |

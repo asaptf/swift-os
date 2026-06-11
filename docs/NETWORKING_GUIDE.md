@@ -12,8 +12,9 @@ of native userland network tools. It is enough to serve static files, serve
 local TinyStories completions, run TCP and UDP echo services, resolve DNS, and
 exercise the TLS 1.3 client path. It also includes an SSH client transport
 preflight against OpenSSH and an SSHD session/exec preflight that accepts a
-normal OpenSSH client on guest TCP/22, authenticates a development Ed25519 key,
-and runs one direct remote command.
+normal OpenSSH client on guest TCP/22, loads development SSH key material from
+the base image, authenticates a configured Ed25519 key, and runs one direct
+remote command.
 
 Use this guide with:
 
@@ -158,8 +159,9 @@ Use this profile to validate host-to-guest SSH reachability through a minimal
 authenticated remote command. The current `/bin/sshd` exchanges SSH
 identification strings with an OpenSSH client, negotiates `curve25519-sha256`,
 `ssh-ed25519`, OpenSSH strict KEX, and `chacha20-poly1305@openssh.com`,
-authenticates `root` with a key from `/etc/ssh/authorized_keys`, opens a
-`session` channel, and executes a bounded direct `/bin/<tool>` command.
+loads its host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, authenticates
+`root` with a key from `/etc/ssh/authorized_keys`, opens a `session` channel,
+and executes a bounded direct `/bin/<tool>` command.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -439,11 +441,12 @@ version `swift-os_sshd-session`, KEX debug lines for `curve25519-sha256`,
 `ssh-ed25519`, and `chacha20-poly1305@openssh.com`, publickey authentication,
 stdout like `principal=1(root) ...`, and exit status 0. The checked test also
 proves that the old HC4 key is rejected, the HC5 key is loaded from
-`/etc/ssh/authorized_keys`, `/bin/id` runs as root, and `/bin/echo HC6-OK`
-receives an argv argument. This proves TCP/22 reachability through SSH KEX,
-encrypted userauth, session channel setup, and bounded direct remote exec; PTY,
-shell command parsing, scp, sftp, persisted host keys, real entropy, and
-broader authorized-key options are follow-up work.
+`/etc/ssh/authorized_keys`, the host-key seed is loaded from
+`/etc/ssh/ssh_host_ed25519_seed`, `/bin/id` runs as root, and `/bin/echo
+HC6-OK` receives an argv argument. This proves TCP/22 reachability through SSH
+KEX, encrypted userauth, session channel setup, and bounded direct remote exec;
+PTY, shell command parsing, scp, sftp, per-instance host-key provisioning, real
+entropy, and broader authorized-key options are follow-up work.
 
 Proof:
 
@@ -593,7 +596,7 @@ The user-visible end-to-end paths are the shell tests above.
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; run `./tests/ssh_transport_test.sh` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
-| SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
+| SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 
@@ -609,12 +612,13 @@ Current limits that matter when exposing a SwiftOS network service:
 - There is no target-side firewall command, routing table command, or network
   configuration command yet. DHCPv4 is boot-time only and does not renew leases.
 - `/bin/sshd` is a session/exec preflight, not a full login daemon. It uses a
-  development-only host key seed and weak temporary KEX entropy. It supports
-  only simple `ssh-ed25519` lines in `/etc/ssh/authorized_keys`, bounded stdout,
-  and direct single-component `/bin/<tool>` remote exec with ASCII-whitespace
-  argv splitting; PTY, shell command parsing, stdin forwarding, scp, sftp,
-  persisted host keys, real entropy, and broader authorized-key options are
-  still missing.
+  development-only host-key seed from `/etc/ssh/ssh_host_ed25519_seed` and
+  weak temporary KEX entropy. It supports only simple `ssh-ed25519` lines in
+  `/etc/ssh/authorized_keys`, bounded stdout, and direct single-component
+  `/bin/<tool>` remote exec with ASCII-whitespace argv splitting; PTY, shell
+  command parsing, stdin forwarding, scp, sftp, per-instance host-key
+  provisioning, real entropy, and broader authorized-key options are still
+  missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange but has no known_hosts
   trust store, no user authentication, and no session/exec or file-copy modes.

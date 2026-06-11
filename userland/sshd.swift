@@ -5,8 +5,8 @@
 // and pre-login path that Hetzner-style remote access needs next: TCP/22, SSH
 // identification, curve25519-sha256, ssh-ed25519 host authentication,
 // chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
-// command. PTY, shells, scp/sftp, service supervision, real entropy, and real
-// host-key storage are separate milestones.
+// command. PTY, shells, scp/sftp, service supervision, and real entropy are
+// separate milestones.
 
 private let defaultPort: UInt16 = 22
 private let pollIn: Int16 = 0x001
@@ -178,12 +178,93 @@ private func fillPseudoRandom(_ p: UnsafeMutableRawPointer, _ len: Int, _ domain
     }
 }
 
-private func fillDevHostSeed(_ p: UnsafeMutableRawPointer) {
-    let bytes: (UInt64, UInt64, UInt64, UInt64) = (
-        0x4b45_5831_5f53_574f, 0x5353_4844_5f44_4556,
-        0x4845_545a_4e45_525f, 0x484f_5354_4b45_5931
-    )
-    withUnsafeBytes(of: bytes) { raw in copyBytes(p, 0, raw.baseAddress!, 32) }
+private func hexNibble(_ c: UInt8) -> UInt8? {
+    if c >= 0x30 && c <= 0x39 { return c - 0x30 }
+    if c >= 0x61 && c <= 0x66 { return c - 0x61 + 10 }
+    if c >= 0x41 && c <= 0x46 { return c - 0x41 + 10 }
+    return nil
+}
+
+private func isSeedSpace(_ c: UInt8) -> Bool {
+    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
+}
+
+private func readHostKeySeed(_ out32: UnsafeMutableRawPointer) -> Bool {
+    let fd = swiftos_open("/etc/ssh/ssh_host_ed25519_seed", 0)
+    guard fd >= 0 else {
+        swiftos_puts("sshd: host key seed missing /etc/ssh/ssh_host_ed25519_seed\n")
+        return false
+    }
+    defer { _ = swiftos_close(fd) }
+
+    return withUnsafeTemporaryAllocation(byteCount: 160, alignment: 1) { raw -> Bool in
+        var used = 0
+        while used < raw.count {
+            let r = swiftos_read(fd, raw.baseAddress! + used, UInt(raw.count - used))
+            if r < 0 {
+                swiftos_puts("sshd: host key seed read failed\n")
+                return false
+            }
+            if r == 0 { break }
+            used += Int(r)
+        }
+        if used == raw.count {
+            let extraRead = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Int in
+                swiftos_read(fd, extra.baseAddress!, 1)
+            }
+            if extraRead < 0 {
+                swiftos_puts("sshd: host key seed read failed\n")
+                return false
+            }
+            if extraRead > 0 {
+                swiftos_puts("sshd: host key seed too long\n")
+                return false
+            }
+        }
+
+        var outOff = 0
+        var high: UInt8 = 0
+        var haveHigh = false
+        var i = 0
+        while i < used {
+            let c = raw.baseAddress!.load(fromByteOffset: i, as: UInt8.self)
+            if c == 0x23 { // '#'
+                while i < used &&
+                      raw.baseAddress!.load(fromByteOffset: i, as: UInt8.self) != 0x0A {
+                    i += 1
+                }
+                continue
+            }
+            if isSeedSpace(c) {
+                i += 1
+                continue
+            }
+            guard let n = hexNibble(c) else {
+                swiftos_puts("sshd: host key seed invalid hex\n")
+                return false
+            }
+            if haveHigh {
+                if outOff >= 32 {
+                    swiftos_puts("sshd: host key seed too long\n")
+                    return false
+                }
+                out32.storeBytes(of: (high << 4) | n, toByteOffset: outOff, as: UInt8.self)
+                outOff += 1
+                haveHigh = false
+            } else {
+                high = n
+                haveHigh = true
+            }
+            i += 1
+        }
+
+        guard !haveHigh, outOff == 32 else {
+            swiftos_puts("sshd: host key seed wrong length\n")
+            return false
+        }
+        swiftos_puts("sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed\n")
+        return true
+    }
 }
 
 private struct SSHWriter {
@@ -1201,7 +1282,10 @@ private func serveOne(_ fd: Int32) {
             UInt64(0), UInt64(0), UInt64(0), UInt64(0)
         )
 
-        withUnsafeMutableBytes(of: &hostSeed) { hs in fillDevHostSeed(hs.baseAddress!) }
+        let hostSeedOK = withUnsafeMutableBytes(of: &hostSeed) { hs in
+            readHostKeySeed(hs.baseAddress!)
+        }
+        guard hostSeedOK else { return }
         withUnsafeMutableBytes(of: &serverPriv) { sp in
             fillPseudoRandom(sp.baseAddress!, 32, 0x535348445f4b4558)
         }
