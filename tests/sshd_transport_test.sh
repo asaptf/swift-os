@@ -7,7 +7,8 @@
 # then verifies the SwiftOS host key through a known_hosts entry derived from
 # /etc/ssh/ssh_host_ed25519_seed, accepts the key staged in
 # /etc/ssh/authorized_keys, opens session channels, runs /bin/id and
-# /bin/echo, forwards a small stdin payload into /bin/cat, receives stdout, and
+# /bin/echo, forwards a small stdin payload into /bin/cat, receives stdout,
+# proves a long command output is bounded without pipe backpressure, and
 # observes exit-status 0.
 
 set -u
@@ -50,6 +51,8 @@ IDERR="$(mktemp -t swiftos-sshd-id-stderr.XXXXXX)"
 CATOUT="$(mktemp -t swiftos-sshd-cat-stdout.XXXXXX)"
 CATERR="$(mktemp -t swiftos-sshd-cat-stderr.XXXXXX)"
 CATEXPECT="$(mktemp -t swiftos-sshd-cat-expected.XXXXXX)"
+BIGOUT="$(mktemp -t swiftos-sshd-big-stdout.XXXXXX)"
+BIGERR="$(mktemp -t swiftos-sshd-big-stderr.XXXXXX)"
 DENYOUT="$(mktemp -t swiftos-sshd-deny-stdout.XXXXXX)"
 DENYERR="$(mktemp -t swiftos-sshd-deny-stderr.XXXXXX)"
 KEY_ALLOW="$(mktemp -t swiftos-sshd-allow-key.XXXXXX)"
@@ -72,7 +75,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$CATOUT" "$CATERR" "$CATEXPECT" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$KNOWN_HOSTS" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$CATOUT" "$CATERR" "$CATEXPECT" "$BIGOUT" "$BIGERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$KNOWN_HOSTS" "$PIDFILE" "$INFIFO"' EXIT
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
@@ -112,6 +115,10 @@ drive_fail() {
   cat "$CATOUT" >&2 2>/dev/null || true
   echo "--- cat ssh stderr ---" >&2
   cat "$CATERR" >&2 2>/dev/null || true
+  echo "--- big ssh stdout bytes ---" >&2
+  wc -c <"$BIGOUT" >&2 2>/dev/null || true
+  echo "--- big ssh stderr ---" >&2
+  cat "$BIGERR" >&2 2>/dev/null || true
   echo "--- denied ssh stdout ---" >&2
   cat "$DENYOUT" >&2 2>/dev/null || true
   echo "--- denied ssh stderr ---" >&2
@@ -177,12 +184,17 @@ printf 'HC15-STDIN\nline-two\n' >"$CATEXPECT"
   root@127.0.0.1 /bin/cat >"$CATOUT" 2>"$CATERR" <"$CATEXPECT"
 cat_rc=$?
 
+"$SSH" "${ssh_common[@]}" -i "$KEY_ALLOW" \
+  root@127.0.0.1 /bin/cat /models/tok512.bin >"$BIGOUT" 2>"$BIGERR" </dev/null
+big_rc=$?
+
 await "sshd: session exec completed status 0" 20 || true
 exec 3>&-
 stop_qemu
 QP=""
 
 clean="$(sed 's/\r//' "$LOG")"
+big_bytes="$(wc -c <"$BIGOUT" | tr -d '[:space:]')"
 ok=1
 grep -qF "sshd: client SSH-2.0-" <<<"$clean" \
   || { echo "FAIL: guest did not receive a host SSH client banner" >&2; ok=0; }
@@ -200,6 +212,10 @@ grep -qF "sshd: session exec completed status 0" <<<"$clean" \
   || { echo "FAIL: guest did not complete remote exec with status 0" >&2; ok=0; }
 grep -qF "sshd: exec stdin bytes 20" <<<"$clean" \
   || { echo "FAIL: guest did not log forwarded SSH exec stdin bytes" >&2; ok=0; }
+grep -qF "sshd: exec output bytes 1536" <<<"$clean" \
+  || { echo "FAIL: guest did not log bounded SSH exec output bytes" >&2; ok=0; }
+grep -qF "sshd: exec output truncated" <<<"$clean" \
+  || { echo "FAIL: guest did not log SSH exec output truncation" >&2; ok=0; }
 grep -qF "swift-os_sshd-session" "$SSHERR" \
   || { echo "FAIL: host ssh did not report the swift-os SSH banner" >&2; ok=0; }
 grep -qF "kex: algorithm: curve25519-sha256" "$SSHERR" \
@@ -220,6 +236,8 @@ grep -qF "Authenticated to 127.0.0.1" "$IDERR" \
   || { echo "FAIL: host ssh did not report id publickey authentication success" >&2; ok=0; }
 grep -qF "Authenticated to 127.0.0.1" "$CATERR" \
   || { echo "FAIL: host ssh did not report cat publickey authentication success" >&2; ok=0; }
+grep -qF "Authenticated to 127.0.0.1" "$BIGERR" \
+  || { echo "FAIL: host ssh did not report long-output publickey authentication success" >&2; ok=0; }
 grep -qF "Permission denied (publickey)." "$DENYERR" \
   || { echo "FAIL: denied key did not fail with publickey permission denied" >&2; ok=0; }
 ! grep -qF "DENIED" "$DENYOUT" \
@@ -238,9 +256,13 @@ cmp -s "$CATEXPECT" "$CATOUT" \
   || { echo "FAIL: remote /bin/cat did not echo forwarded stdin exactly" >&2; ok=0; }
 [[ "$cat_rc" -eq 0 ]] \
   || { echo "FAIL: ssh /bin/cat exited with $cat_rc, expected 0" >&2; ok=0; }
+[[ "$big_rc" -eq 0 ]] \
+  || { echo "FAIL: ssh /bin/cat /models/tok512.bin exited with $big_rc, expected 0" >&2; ok=0; }
+[[ "$big_bytes" -eq 1536 ]] \
+  || { echo "FAIL: bounded long-output command returned $big_bytes bytes, expected 1536" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id, /bin/echo, plus stdin-fed /bin/cat"
+  echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id, /bin/echo, stdin-fed /bin/cat, plus bounded long output"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2
@@ -257,6 +279,10 @@ echo "--- cat ssh stdout ---" >&2
 cat "$CATOUT" >&2
 echo "--- cat ssh stderr ---" >&2
 cat "$CATERR" >&2
+echo "--- big ssh stdout bytes ---" >&2
+wc -c <"$BIGOUT" >&2
+echo "--- big ssh stderr ---" >&2
+cat "$BIGERR" >&2
 echo "--- denied ssh stdout ---" >&2
 cat "$DENYOUT" >&2
 echo "--- denied ssh stderr ---" >&2
