@@ -136,6 +136,8 @@ send_line "pkg search sqlite"
 await "sqlite-3.53.2_1" 60 || drive_fail "pkg search did not find sqlite"
 send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
+send_line 'test ! -e /tmp/pkg-download.swpkg && echo pkg-stream-no-cache'
+await "pkg-stream-no-cache" 60 || drive_fail "repository install created the old tmpfs package cache"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
 send_line "a=hosted; b=url; c=ok; echo \$a-\$b-\$c | /usr/bin/minigzip | /usr/bin/minigzip -d"

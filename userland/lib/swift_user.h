@@ -78,6 +78,12 @@ int  swiftos_kernel_confirm(void);
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int  swiftos_pkg_stream_begin(const char *name, const char *version_revision,
+                              unsigned long payload_size,
+                              const unsigned char *payload_sha256);
+int  swiftos_pkg_stream_write(const void *buf, unsigned long count);
+int  swiftos_pkg_stream_commit(void);
+int  swiftos_pkg_stream_abort(void);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
 int  swiftos_exec_shell(const char *path);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
