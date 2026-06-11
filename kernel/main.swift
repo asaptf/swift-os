@@ -601,13 +601,23 @@ private func runVirtioNetProbe() {
 }
 
 private func runInit() {
-    uartPuts("swift-os M12c: starting console-login (init)\n")
+    uartPuts("swift-os M12c: starting swos-init\n")
     // Keep the system usable: when a session ends, start a fresh login rather
     // than leaving the VM idle. The image is (re)loaded each iteration because
     // the shell exec inside the session overwrites the shared ELF buffer.
     while true {
+        let (initImage, initSize) = loadProgramImage("/bin/swos-init")
+        if initImage != 0 {
+            let (p, n, argc) = packArgs(["swos-init"])
+            let code = processRunElf(initImage, initSize, packed: p, packedLen: n, argc: argc)
+            uartPuts("M12c: session ended, code ")
+            uartPutUInt(UInt64(code))
+            uartPuts("; restarting init\n")
+            continue
+        }
         let (login, loginSize) = loadProgramImage("/bin/console-login")
         if login != 0 {
+            uartPuts("M12c: /bin/swos-init missing; starting console-login\n")
             let (p, n, argc) = packArgs(["console-login"])
             let code = processRunElf(login, loginSize, packed: p, packedLen: n, argc: argc)
             uartPuts("M12c: session ended, code ")
@@ -615,9 +625,9 @@ private func runInit() {
             uartPuts("; restarting login\n")
             continue
         }
-        // No login program on disk: fall back to a raw shell so the system is
-        // still usable (e.g. a base image built without console-login).
-        uartPuts("M12c: /bin/console-login missing; starting raw shell\n")
+        // No init/login program on disk: fall back to a raw shell so the system
+        // is still usable (e.g. a minimal base image built without login).
+        uartPuts("M12c: init/login missing; starting raw shell\n")
         let (image, size) = resolveBusyboxImage()
         if image == 0 {
             uartPuts("panic: no shell or login program available\n")

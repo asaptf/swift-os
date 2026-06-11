@@ -253,6 +253,7 @@ KERNEL_BIN := $(BUILD)/kernel.bin
 
 # Userland artifacts (static C programs, embedded into the kernel image).
 USER_HELLO_ELF := $(BUILD)/hello.elf
+USER_SWOSINIT_ELF := $(BUILD)/swos-init.elf
 USER_TTYDEMO_ELF := $(BUILD)/ttydemo.elf
 USER_ARGVDEMO_ELF := $(BUILD)/argvdemo.elf
 USER_SPAWNDEMO_ELF := $(BUILD)/spawndemo.elf
@@ -354,6 +355,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CHOWN_ELF) \
 	$(USER_DATE_ELF) \
 	$(USER_HELLO_ELF) \
+	$(USER_SWOSINIT_ELF) \
 	$(USER_TTYDEMO_ELF) \
 	$(USER_ARGVDEMO_ELF) \
 	$(USER_SPAWNDEMO_ELF) \
@@ -434,6 +436,9 @@ $(BUILD)/user_swift_user.o: userland/lib/swift_user.c userland/lib/swift_user.h 
 
 $(BUILD)/user_hello.o: userland/hello.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/hello.c -o $@
+
+$(BUILD)/user_swos_init.o: userland/swos-init.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/swos-init.c -o $@
 
 $(BUILD)/user_ttydemo.o: userland/ttydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/ttydemo.c -o $@
@@ -617,6 +622,9 @@ $(BUILD)/user_top.o: userland/top.swift userland/lib/swift_user.h Makefile | $(B
 
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
+
+$(USER_SWOSINIT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_swos_init.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_swos_init.o -o $@
 
 $(USER_TTYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_ttydemo.o -o $@
@@ -1409,6 +1417,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	$(MODELSIGN) sign $(BASE_ROOT)/models/stories15M/2/manifest.toml $(SIGNING_SEED)
 	cp $(SIGNING_PUB) $(BASE_ROOT)/etc/swos/model-signing.pub
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
+	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
 	cp $(USER_SPAWNDEMO_ELF) $(BASE_ROOT)/bin/spawndemo

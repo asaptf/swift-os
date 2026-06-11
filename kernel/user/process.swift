@@ -2150,6 +2150,9 @@ private func reapProcess(_ slot: Int) {
         }
         pKstack[slot] = 0
     }
+    for i in 0..<maxProc where pParent[i] == slot {
+        pParent[i] = -1
+    }
     pState[slot] = pUnused
     clearProcessSchedulerSlot(slot)
     pSchedulerQuiesced[slot] = true

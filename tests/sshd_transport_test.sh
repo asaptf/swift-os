@@ -2,8 +2,9 @@
 # sshd_transport_test.sh — SSHD remote-command acceptance.
 #
 # Boots with a slirp NIC that hostfwds an unprivileged host TCP port to guest
-# TCP/22. After login, the shell runs /bin/sshd. A real host OpenSSH client then
-# first rejects an old dev Ed25519 key, then accepts the key staged in
+# TCP/22. /bin/swos-init starts /bin/sshd from /etc/swos/services before any
+# shell login. A real host OpenSSH client then first rejects an old dev key,
+# then accepts the key staged in
 # /etc/ssh/authorized_keys, opens session channels, runs /bin/id and /bin/echo,
 # receives stdout, and observes exit-status 0.
 
@@ -131,13 +132,10 @@ await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3
-await "swift-os login:" 90 || drive_fail "login prompt did not appear"
-send_line 'root'
-await "Password:" 90 || drive_fail "password prompt did not appear"
-send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-send_line '/bin/sshd'
-await "sshd: listening on 22 (session exec preflight)" 120 || drive_fail "/bin/sshd did not listen"
+await "swos-init: starting configured services" 90 || drive_fail "swos-init did not start"
+await "swos-init: started sshd pid" 90 || drive_fail "swos-init did not start sshd"
+await "sshd: listening on 22 (session exec preflight)" 120 || drive_fail "autostarted /bin/sshd did not listen"
+await "swift-os login:" 90 || drive_fail "console-login prompt did not appear after autostart"
 
 "$SSH" "${ssh_common[@]}" -i "$KEY_DENY" \
   root@127.0.0.1 /bin/echo DENIED >"$DENYOUT" 2>"$DENYERR" </dev/null
@@ -160,6 +158,8 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 grep -qF "sshd: client SSH-2.0-" <<<"$clean" \
   || { echo "FAIL: guest did not receive a host SSH client banner" >&2; ok=0; }
+grep -qF "swos-init: started sshd pid" <<<"$clean" \
+  || { echo "FAIL: guest did not autostart sshd from swos-init" >&2; ok=0; }
 grep -qF "sshd: publickey auth accepted for root" <<<"$clean" \
   || { echo "FAIL: guest did not accept root publickey auth" >&2; ok=0; }
 grep -qF "sshd: authorized key matched /etc/ssh/authorized_keys" <<<"$clean" \
@@ -200,11 +200,11 @@ grep -qFx "HC6-OK" "$SSHOUT" \
   || { echo "FAIL: ssh exited with $ssh_rc, expected 0" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd loaded authorized_keys, rejected an old key, and executed /bin/id plus /bin/echo over session channels"
+  echo "PASS: /bin/sshd autostarted, loaded authorized_keys, rejected an old key, and executed /bin/id plus /bin/echo over session channels"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2
-grep -iE 'sshd:|login:|panic|abort|M7' <<<"$clean" | tail -40 >&2 || true
+grep -iE 'swos-init:|sshd:|login:|panic|abort|M7' <<<"$clean" | tail -60 >&2 || true
 echo "--- ssh stdout ---" >&2
 cat "$SSHOUT" >&2
 echo "--- ssh stderr ---" >&2
