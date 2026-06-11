@@ -132,9 +132,10 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make disk` | Build the bootable GPT image `build/swift-os.img`. |
 | `make disk-run` | Boot the GPT disk image through AAVMF. |
 | `make run-gfx` | Boot the UEFI disk with ramfb, virtio keyboard, and a Cocoa display. |
-| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map coverage, command references, and host tool references. |
+| `make docs-test` | Check public Markdown links/anchors, API tables, Swift bridge coverage, documentation map coverage, command references, host tool references, and full-gate stability coverage wiring. |
 | `make model` | Fetch LLM checkpoints/tokenizers and build the Q8 serving artifacts. |
 | `make swpkg` | Build the host-side `.swpkg` tool. |
+| `make swpkg-header-integrity-test` | Verify `.swpkg` rejects tampered header trust fields before verification or payload extraction. |
 | `make pkgstore` | Build the host-side package-store image tool. |
 | `make pkgrepo` | Build the signed static package repository tool. |
 | `make swport` | Build the ports catalog and recipe helper. |
@@ -169,11 +170,13 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make ports-hosted-url-verify-test` | Verify the static package host root through an HTTP URL from the host. |
 | `make package-static-host-dns-repo-install-test` | Run target-side package install from a DNS-resolved hosted repository URL. |
 | `make package-hosted-url-install-test` | Run target-side install from an explicitly supplied hosted repository URL. |
-| `make test` | Run host tests plus QEMU acceptance tests. |
+| `make test` | Run host tests plus QEMU acceptance tests, including the C5 driver-service/device-authority aggregate. |
+| `make stability-coverage-test` | Check that the full gate still includes required memory/resource, hardware/SMP, security/isolation, update, package, network, C5, and UEFI coverage. |
 | `make smp-test` | Run the default SMP boot smoke. |
 | `make smp-release-guard` | Run static SMP release-readiness contract checks. |
 | `make smp-release-contract` | Alias for the SMP release-readiness guard. |
 | `make phase1-roadmap-test` | Check Phase 1 roadmap, notes, Makefile target, docs, and executable-marker alignment. |
+| `make qemu-virt-hardware-map-test` | Validate QEMU `virt` PL011, GIC, timer, PSCI, CPU topology, and virtio-mmio DTB facts for the supported SMP profiles. |
 | `make s4-resource-stress-test` | Run the SMP resource-boundary stress gate under `-smp 4`. |
 | `make smp-cpu-utilization-test` | Run the per-CPU utilization `top` gate under `-smp 4`. |
 | `make s5-scheduler-placement-test` | Run the S5b bounded EL0 scheduler placement gate under `-smp 4`. |
@@ -537,9 +540,10 @@ make package-overlay-test
 | Package-store activation | `make package-store-test` |
 | Local package install | `make package-local-install-test` |
 | Signed repository install | `make package-repo-install-test` |
+| Package artifact integrity | `make swpkg-header-integrity-test` |
 | Static-host or hosted package repository | `make package-static-host-repo-install-test`, `make ports-hosted-url-verify-test`, or `make package-static-host-dns-repo-install-test` |
 | UEFI loader or disk | `make disk`, `./tests/uefi_boot_test.sh` |
-| SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, or the milestone-specific SMP target |
+| SMP boot parameters | `make s1-test`, `make s4-resource-stress-test`, `make qemu-virt-hardware-map-test`, or the milestone-specific SMP target |
 | C5 driver-service/device-authority path | `make c5-device-authority-test` |
 | Documentation-only configuration update | `make docs-test`, `git diff --check`, and a build or relevant acceptance test |
 

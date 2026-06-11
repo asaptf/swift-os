@@ -61,6 +61,16 @@ drive_fail() {
   exit 1
 }
 
+send_line() {
+  local line="$1" delay="${CONSOLE_LOGIN_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${CONSOLE_LOGIN_SEND_DELAY:-0.08}"
+}
+
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
@@ -72,22 +82,22 @@ QP=$!
 exec 3<>"$INFIFO"
 
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
-printf 'user\n' >&3
+send_line 'user'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
-printf 'wrongpw\n' >&3
+send_line 'wrongpw'
 await "Login incorrect" 60 || drive_fail "wrong password was not rejected"
 await_count "swift-os login:" 2 60 || drive_fail "second login prompt did not appear"
-printf 'user\n' >&3
+send_line 'user'
 await_count "Password:" 2 90 || drive_fail "timed out waiting for second password prompt"
-printf 'swordfish\n' >&3
+send_line 'swordfish'
 await "Welcome to swift-os, user" 120 || drive_fail "authentication did not succeed"
-printf 'echo LOGGED-IN-SHELL\n' >&3
+send_line 'echo LOGGED-IN-SHELL'
 await "LOGGED-IN-SHELL" 60 || drive_fail "user shell did not start"
-printf 'exit\n' >&3
+send_line 'exit'
 await "M12c: session ended" 60 || true
 
 exec 3>&-

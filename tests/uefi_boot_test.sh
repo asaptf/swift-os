@@ -25,6 +25,18 @@ if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 || 10#$SMP_CPUS > 8 ))
 fi
 SMP_CPU_COUNT=$((10#$SMP_CPUS))
 
+LOG="$(mktemp -t swiftos-uefi.XXXXXX)"
+IN="$(mktemp -u -t swiftos-uefi-in.XXXXXX)"
+WORK_DISK=""
+mkfifo "$IN"
+QP=""
+cleanup() {
+    [[ -n "$QP" ]] && kill "$QP" 2>/dev/null
+    exec 3>&- 2>/dev/null || true
+    rm -f "$LOG" "$IN" "$WORK_DISK"
+}
+trap cleanup EXIT
+
 drive_args=()
 # U1g-4: the ESP/GPT boot disk is attached on virtio-MMIO (if=none + a modern
 # virtio-blk-device), not if=virtio (PCI). AAVMF boots from it, AND the kernel —
@@ -32,7 +44,11 @@ drive_args=()
 drive_args=(-global virtio-mmio.force-legacy=false)
 if [[ "$UEFI_BOOT" == "disk" ]]; then
     [[ -f "$DISK_IMG" ]] || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
-    drive_args+=(-drive "file=$DISK_IMG,format=raw,if=none,id=esp" -device virtio-blk-device,drive=esp)
+    WORK_DISK="$(mktemp -t swiftos-uefi-disk.XXXXXX)"
+    "$ROOT/scripts/make-disk.sh" "$WORK_DISK" >/dev/null \
+        || { echo "FAIL: could not create a fresh UEFI disk image (run 'make disk')" >&2; exit 2; }
+    drive_args+=(-drive "file=$WORK_DISK,format=raw,if=none,id=esp,cache=writethrough" \
+                 -device virtio-blk-device,drive=esp)
 elif [[ "$UEFI_BOOT" == "fat" ]]; then
     [[ -f "$EFI_APP" ]] || { echo "FAIL: $EFI_APP missing (run 'make uefi')" >&2; exit 2; }
     drive_args+=(-drive "file=fat:rw:$ESP_DIR,format=raw,if=none,id=esp" -device virtio-blk-device,drive=esp)
@@ -49,17 +65,6 @@ if [[ -f "$DISK" ]]; then
     drive_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
                  -device virtio-blk-device,drive=swosbase)
 fi
-
-LOG="$(mktemp -t swiftos-uefi.XXXXXX)"
-IN="$(mktemp -u -t swiftos-uefi-in.XXXXXX)"
-mkfifo "$IN"
-QP=""
-cleanup() {
-    [[ -n "$QP" ]] && kill "$QP" 2>/dev/null
-    exec 3>&- 2>/dev/null || true
-    rm -f "$LOG" "$IN"
-}
-trap cleanup EXIT
 
 wait_for() {
     local needle="$1"

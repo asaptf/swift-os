@@ -41,6 +41,9 @@ make test
 It builds the kernel and key artifacts, runs host-side Swift tests, boots QEMU
 through direct and UEFI paths, exercises networking and package flows, and runs
 the current user-visible command and service checks.
+It also runs a full-gate coverage guard so memory/resource, hardware/SMP,
+security/isolation, network, package, update/rollback, C5, and UEFI coverage
+cannot silently fall out of the shipped gate.
 
 ## Choose A Test Scope
 
@@ -166,7 +169,7 @@ Current full-gate coverage includes:
   reference integrity.
 - Host tests for page allocation, base image format, packages, package store,
   FDT parsing, networking stack, crypto, handles, TLS primitives, LLM engine,
-  model bundles, and Ed25519.
+  model bundles, package header integrity, and Ed25519.
 - Static SMP guards for mailbox layout, release contracts, state audit, and
   preflight checks.
 - Direct QEMU boot and userland smoke.
@@ -177,7 +180,12 @@ Current full-gate coverage includes:
 - VFS, disk exec, console login, capability enforcement, redirection, core
   commands, busybox shell, `vi`, `top`, threads, mmap, packages, and LLM
   serving.
+- C5 driver-service/device-authority readiness under SMP, including restartable
+  supervision, device grant transfer, discovery metadata, and authority
+  withholding.
 - Framebuffer/input smoke.
+- Full-gate coverage guard for the required stability, hardware, security,
+  update, package, network, C5, and SMP categories.
 
 If `make test` fails, keep the first failing command and its log. Do not keep
 rerunning the whole suite before understanding the first failure.
@@ -189,6 +197,8 @@ Run the narrowest test that proves the path you changed.
 | Changed area | First test |
 | --- | --- |
 | Documentation links/anchors, examples, API tables, Swift bridge coverage, map coverage, command references, host tool references, or port recipe references | `make docs-test` |
+| Full-gate stability coverage wiring | `make stability-coverage-test` |
+| QEMU `virt` hardware map drift | `make qemu-virt-hardware-map-test` |
 | Kernel build only | `make build` |
 | Base image format or contents | `make base-image`, `./tests/vfs_disk_test.sh` |
 | Direct serial boot | `./tests/boot_test.sh` |
@@ -202,6 +212,7 @@ Run the narrowest test that proves the path you changed.
 | Pipes and redirection | `./tests/redirect_test.sh` |
 | Threads and futexes | `./tests/threads_test.sh` |
 | mmap, mprotect, W^X | `./tests/mmap_test.sh` |
+| `.swpkg` header integrity | `make swpkg-header-integrity-test` |
 | Package payload overlay | `make package-overlay-test` |
 | Package store activation | `make package-store-test` |
 | Local package install flow | `make package-local-install-test` |
@@ -438,6 +449,7 @@ make smp-test
 make smp-headroom-test
 make smp-uefi-test
 make s4-resource-stress-test
+make qemu-virt-hardware-map-test
 make smp-cpu-utilization-test
 make s5-scheduler-placement-test
 make s5-placement-stress-test
@@ -453,6 +465,7 @@ make c5-device-metadata-test
 make c5-device-authority-test
 make c5-device-rights-test
 make c5-test
+make swpkg-header-integrity-test
 ```
 
 Use the active roadmap milestone to choose the exact target. `smp-release-contract`

@@ -72,15 +72,24 @@ boot_quiet() { # non-interactive boot (observe early markers only)
     -kernel "$KERNEL" </dev/null >"$LOG" 2>&1 &
   QP=$!
 }
+send_line() {
+  local line="$1" delay="${AB_CONFIRM_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${AB_CONFIRM_SEND_DELAY:-0.08}"
+}
 to_shell() {
   await "M7 tty: type a line then Enter" 60 || return 1
-  printf 'tty-line\n' >&3
+  send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   printf '\003' >&3
   await "swift-os login:" 90 || return 1
-  printf 'root\n' >&3
+  send_line 'root'
   await "Password:" 90 || return 1
-  printf 'swordfish\n' >&3
+  send_line 'swordfish'
   await "built-in shell (ash)" 120 || return 1
   return 0
 }
@@ -92,7 +101,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 boot_fifo
 if to_shell; then
   await "update-store: recorded boot attempt 1 for active slot A" 30 || fail "boot1: attempt 1 not recorded"
-  printf '/bin/swos-confirm\n' >&3
+  send_line '/bin/swos-confirm'
   await "swos-confirm: active slot confirmed healthy" 60 || fail "boot1: swos-confirm did not succeed"
   await "update-store: slot A confirmed healthy" 30 || fail "boot1: kernel did not record the confirm"
 else

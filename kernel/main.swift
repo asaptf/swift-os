@@ -643,7 +643,7 @@ func irqHandler() {
 
     if interruptId == physicalTimerIrq && currentCpuId() != 0 {
         smpRecordTimerTickForCurrentCpu()
-        if !processSecondarySchedulerActiveForCurrentCpu() {
+        if !processSecondarySchedulerCanTickForCurrentCpu() {
             smpRecordIdleTickForCurrentCpu()
         }
         timerScheduleNext()
@@ -670,7 +670,7 @@ func irqHandler() {
         fb_cursor_blink() // blink the on-screen cursor (no-op without a framebuffer)
         schedulerTick()  // M4.5 kernel-thread scheduler (idle once its demo ends)
         processOnTick(fromEL0: fromEL0)  // preempt the current EL0 process + CPU accounting
-    } else if interruptId == physicalTimerIrq && processSecondarySchedulerActiveForCurrentCpu() {
+    } else if interruptId == physicalTimerIrq && processSecondarySchedulerCanTickForCurrentCpu() {
         processOnTick(fromEL0: fromEL0)
     } else if interruptId == uartIrqId {
         signalDeliverToForeground() // Ctrl-C → SIGINT; may terminate the process

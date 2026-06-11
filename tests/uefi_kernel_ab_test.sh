@@ -38,9 +38,11 @@ LOG="$(mktemp -t swiftos-uabk.XXXXXX)"
 MANI="$(mktemp -t swiftos-uabk-mani.XXXXXX)"
 FRESH="$(mktemp -t swiftos-uabk-fresh.XXXXXX)"
 WORK="$(mktemp -t swiftos-uabk-img.XXXXXX)"
+BADA=""
+MANI2=""
 QP=""
 stop_qemu() { [[ -n "$QP" ]] && { kill "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; }; QP=""; }
-trap 'stop_qemu; rm -f "$LOG" "$MANI" "$FRESH" "$WORK"' EXIT
+trap 'stop_qemu; rm -f "$LOG" "$MANI" "$FRESH" "$WORK" "$BADA" "$MANI2"' EXIT
 export MTOOLS_SKIP_CHECK=1
 
 "$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
@@ -113,7 +115,7 @@ cp "$KERNEL_BIN" "$BADA"
 printf '\xFF' | dd of="$BADA" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$BADA" ::/EFI/swift-os/kernelA.bin \
   || fail "could not write corrupt kernelA.bin"
-rm -f "$BADA"
+rm -f "$BADA"; BADA=""
 boot_work
 await "kernel slot A FAILED integrity check (sha256)" 60 || fail "integrity: loader did not detect the corrupt slot A"
 await "UEFI: booted kernel slot B" 30 || fail "integrity: loader did not roll back to slot B"
@@ -125,12 +127,13 @@ stop_qemu
 # the 64-byte Ed25519 signature region (offset 104) of the kernel-boot manifest.
 cp "$FRESH" "$WORK"
 MANI2="$(mktemp -t swiftos-uabk-mani2.XXXXXX)"
+rm -f "$MANI2"
 "$MCOPY" -i "${WORK}@@${PART_OFFSET}" ::/EFI/swift-os/kernel-boot "$MANI2" \
   || fail "could not read kernel-boot manifest"
 printf '\xFF' | dd of="$MANI2" bs=1 count=1 seek=104 conv=notrunc 2>/dev/null
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI2" ::/EFI/swift-os/kernel-boot \
   || fail "could not write tampered manifest"
-rm -f "$MANI2"
+rm -f "$MANI2"; MANI2=""
 boot_work
 await "UEFI: kernel manifest signature INVALID" 60 || fail "auth: loader did not reject the tampered manifest"
 await "using embedded blob" 30 || fail "auth: loader did not fall back to the embedded blob"

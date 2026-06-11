@@ -282,7 +282,10 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
   than scheduler CPUs without explicit home CPU affinity, then proves the policy
   selection count matched process creation, the dispatch CPU mask exactly matched
   the scheduler CPU mask, every process stayed on its selected home CPU, and all
-  queues/gates were idle after stop.
+  queues/gates were idle after stop. Secondary scheduler start waits send the
+  reserved SGI/IPI so the S5f gate is not dependent on a timer tick waking a CPU
+  sleeping in `wfi`; secondary timer preemption is gated by active+run masks and
+  rejects the stop mask while the gate closes.
 - S5 aggregate readiness gate (2026-06-10): `make s5-test` now runs the S5a-S5f
   focused gates in order, giving reviews one aggregate runtime-readiness command
   while preserving the narrow milestone targets.
@@ -405,6 +408,13 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   broader reviews a single command that covers restartable supervision, opaque
   device grants, discovery metadata, withheld hardware authority, and the
   metadata-only rights contract.
+- The full `make test` gate now runs `make c5-test`, and
+  `make stability-coverage-test` statically guards the required memory/resource,
+  hardware/SMP, security/isolation, update/rollback, package, network, C5, and
+  UEFI coverage categories. The hardware/SMP category includes an executable
+  QEMU `virt` DTB hardware-map guard for PL011, GIC, timer, PSCI, CPU topology,
+  and virtio-mmio facts, plus a `.swpkg` header-integrity negative test for
+  package artifact trust fields.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

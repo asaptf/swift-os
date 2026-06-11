@@ -1568,6 +1568,12 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   policy selections to match created processes, dispatch coverage to match the
   scheduler mask, every process to dispatch only on its selected CPU, and all
   run queues plus secondary gate masks to be idle after stop.
+- **Wake robustness.** Full-gate stress exposed that secondary EL0 scheduler
+  start waits were relying on `sev` plus timer interrupts while the secondary
+  loop sleeps in `wfi`. `processWaitForSecondaryActive` now sends the reserved
+  SGI/IPI only while opening the gate, and secondary timer preemption requires
+  active+run masks while rejecting the stop mask, so S5f does not depend on
+  timer luck without widening the stop race.
 - **Executable checks.** Boot prints `S5f OK: run-any placement policy
   completed` and logs either `S5f OK: run-any placement covered scheduler CPUs`
   or the CPU0 fallback. `make s5-run-any-placement-test` runs the focused
@@ -1844,6 +1850,20 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Guard.** `tests/phase1_roadmap_test.swift` checks the Makefile target and
   docs references so future C5 additions keep the aggregate readiness contract
   visible.
+- **Full-gate coverage hardening.** `make test` now runs `make c5-test`, so the
+  broad shipped gate includes restartable driver-service supervision, device
+  grant transfer, virtio-input discovery metadata, authority withholding, and
+  metadata-only rights checks under `-smp 4`. Added
+  `tests/qemu_virt_hardware_map_test.sh` / `make qemu-virt-hardware-map-test`
+  to validate QEMU `virt` PL011, GIC, timer, PSCI, CPU topology, and
+  virtio-mmio DTB facts for 1-CPU and 4-CPU profiles. Added
+  `tests/stability_coverage_test.swift` plus `make stability-coverage-test`;
+  `docs-test` runs this static guard so memory/resource, hardware/SMP,
+  security/isolation, update/rollback, package, network, C5, and UEFI coverage
+  cannot silently fall out of the full gate. Added
+  `tests/swpkg_header_integrity_test.swift` / `make swpkg-header-integrity-test`
+  to reject tampered `.swpkg` manifest hash, payload hash, and reserved
+  signature header fields before verification or payload extraction.
 
 ## Post-M8 roadmap (M9 → M13) — locked 2026-06-04
 

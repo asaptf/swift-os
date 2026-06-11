@@ -345,7 +345,8 @@ if [[ "$ready_assignment_count" != "1" ]]; then
 fi
 
 if ! grep -q 'cpu >= schedCtxCpuCount || !processCpuCanSchedule(cpu)' "$PROCESS_SWIFT" ||
-   ! grep -q 'processOnTick entered on inactive scheduler CPU' "$PROCESS_SWIFT"; then
+   ! grep -q 'processOnTick entered on inactive scheduler CPU' "$PROCESS_SWIFT" ||
+   ! grep -q 'processSecondarySchedulerCanTickForCurrentCpu' "$PROCESS_SWIFT"; then
   echo "FAIL: S2 process scheduler paths must panic if entered from an inactive scheduler CPU." >&2
   exit 1
 fi
@@ -354,8 +355,25 @@ cpu0_timer_block="$(sed -n '/if interruptId == physicalTimerIrq && currentCpuId(
 if [[ -z "$cpu0_timer_block" ]] ||
    ! grep -q 'schedulerTick()' <<<"$cpu0_timer_block" ||
    ! grep -q 'processOnTick(fromEL0: fromEL0)' <<<"$cpu0_timer_block" ||
-   ! grep -q 'processSecondarySchedulerActiveForCurrentCpu()' <<<"$cpu0_timer_block"; then
+   ! grep -q 'processSecondarySchedulerCanTickForCurrentCpu()' <<<"$cpu0_timer_block"; then
   echo "FAIL: S2 requires irqHandler to keep kernel scheduler ticks on CPU0 and gate secondary EL0 ticks on active scheduler CPUs." >&2
+  exit 1
+fi
+
+secondary_tick_gate="$(sed -n '/func processSecondarySchedulerCanTickForCurrentCpu()/,/func processSecondarySchedulerService()/p' "$PROCESS_SWIFT")"
+if [[ -z "$secondary_tick_gate" ]] ||
+   ! grep -q 'processSecondaryActiveMask()' <<<"$secondary_tick_gate" ||
+   ! grep -q 'processSecondaryRunMask()' <<<"$secondary_tick_gate" ||
+   ! grep -q 'processSecondaryStopMask()' <<<"$secondary_tick_gate"; then
+  echo "FAIL: secondary EL0 timer ticks must require active+run masks and reject the stop mask." >&2
+  exit 1
+fi
+
+secondary_wait_block="$(sed -n '/private func processWaitForSecondaryActive/,/private func processStartSecondaryScheduler/p' "$PROCESS_SWIFT")"
+if [[ -z "$secondary_wait_block" ]] ||
+   ! grep -q 'if active {' <<<"$secondary_wait_block" ||
+   ! grep -q 'gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu)' <<<"$secondary_wait_block"; then
+  echo "FAIL: secondary scheduler SGI wake must stay on the start path only." >&2
   exit 1
 fi
 
@@ -1323,6 +1341,7 @@ for needle in \
   's5fRunAnyPlacementActive' \
   's5fRunAnySlots' \
   'processNextS5fRunAnyHomeCpu' \
+  'processSecondarySchedulerCanTickForCurrentCpu' \
   'captureLastS5fRunAnyTelemetry' \
   'func processRunS5fRunAnyPlacement' \
   'homeCpu: unassignedCpu' \

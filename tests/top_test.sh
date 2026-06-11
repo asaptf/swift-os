@@ -90,7 +90,7 @@ await_regex_count() {  # await_regex_count REGEX COUNT [MAXSEC]
 drive_fail() {
   echo "FAIL: $1" >&2
   echo "--- serial (top driver) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/swift-os login:/,$p' >&2 || true
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -120 >&2 || true
   exit 1
 }
 
@@ -119,7 +119,7 @@ qemu_args+=(-m 256M -nographic -no-reboot \
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" 120 || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

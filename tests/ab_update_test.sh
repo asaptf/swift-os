@@ -95,16 +95,26 @@ boot_with() { # boot_with <store-image> — the store disk is writable (A/B stor
   exec 3<>"$INFIFO"
 }
 
+send_line() {
+  local line="$1" delay="${AB_UPDATE_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${AB_UPDATE_SEND_DELAY:-0.08}"
+}
+
 # Drive the boot demo past the interactive ttydemo to a root shell.
 to_shell() {
   await "M7 tty: type a line then Enter" 60 || return 1
-  printf 'tty-line\n' >&3
+  send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   printf '\003' >&3
   await "swift-os login:" 90 || return 1
-  printf 'root\n' >&3
+  send_line 'root'
   await "Password:" 90 || return 1
-  printf 'swordfish\n' >&3
+  send_line 'swordfish'
   await "built-in shell (ash)" 120 || return 1
   return 0
 }
@@ -136,9 +146,9 @@ await "vfs: base image signature INVALID" 60 || fail "FB: corrupt slot B not rej
 await "rolling back to fallback slot" 60 || fail "FB: did not roll back"
 await "update-store: mounted fallback slot" 60 || fail "FB: fallback slot not mounted"
 if to_shell; then
-  printf 'cat /etc/motd\n' >&3
+  send_line 'cat /etc/motd'
   await "Welcome to swift-os" 60 || fail "FB: fallback slot did not serve /etc/motd"
-  printf 'echo AB-FALLBACK-OK\n' >&3
+  send_line 'echo AB-FALLBACK-OK'
   await "AB-FALLBACK-OK" 60 || fail "FB: shell not functional after fallback"
 else
   fail "FB: could not reach a shell on the fallback slot"

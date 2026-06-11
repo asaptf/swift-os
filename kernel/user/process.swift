@@ -513,6 +513,9 @@ private func processWaitForSecondaryActive(_ cpu: UInt32, active: Bool) -> Bool 
     while read_cntpct_el0() &- start < timeout {
         let isActive = (processSecondaryActiveMask() & bit) != 0
         if isActive == active { return true }
+        if active {
+            _ = gicSendSoftwareGeneratedInterruptToCpu(smpIpiInterruptId, cpu)
+        }
         cpu_sev()
     }
     return false
@@ -549,6 +552,16 @@ func processSecondarySchedulerActiveForCurrentCpu() -> Bool {
     let cpu = currentCpuId()
     if cpu == 0 || !processValidSchedulerCpu(cpu) { return false }
     return (processSecondaryActiveMask() & processCpuBit(cpu)) != 0
+}
+
+func processSecondarySchedulerCanTickForCurrentCpu() -> Bool {
+    let cpu = currentCpuId()
+    if cpu == 0 || !processValidSchedulerCpu(cpu) { return false }
+    let bit = processCpuBit(cpu)
+    if (processSecondaryActiveMask() & bit) == 0 { return false }
+    if (processSecondaryRunMask() & bit) == 0 { return false }
+    if (processSecondaryStopMask() & bit) != 0 { return false }
+    return true
 }
 
 func processSecondarySchedulerService() {

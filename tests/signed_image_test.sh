@@ -109,16 +109,26 @@ await() {  # await MARKER [MAXSEC]  (override: needs the per-boot reset above)
 ok=1
 fail() { echo "FAIL: $1" >&2; ok=0; }
 
+send_line() {
+  local line="$1" delay="${SIGNED_IMAGE_CHAR_DELAY:-0.01}" i
+  for (( i = 0; i < ${#line}; i++ )); do
+    printf '%s' "${line:i:1}" >&3
+    sleep "$delay"
+  done
+  printf '\n' >&3
+  sleep "${SIGNED_IMAGE_SEND_DELAY:-0.08}"
+}
+
 # Drive the boot demo past the interactive ttydemo to a root shell.
 to_shell() {
   await "M7 tty: type a line then Enter" 60 || return 1
-  printf 'tty-line\n' >&3
+  send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   printf '\003' >&3
   await "swift-os login:" 90 || return 1
-  printf 'root\n' >&3
+  send_line 'root'
   await "Password:" 90 || return 1
-  printf 'swordfish\n' >&3
+  send_line 'swordfish'
   await "built-in shell (ash)" 120 || return 1
   return 0
 }
