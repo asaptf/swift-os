@@ -138,7 +138,7 @@ for dependency in ["bzip2", "xz", "zlib", "zstd"] {
 let nodeInspect = run(tool, ["catalog", "inspect", "nodejs", catalog.path])
 requireSuccess(nodeInspect, "inspect nodejs")
 let nodeInspectText = output(nodeInspect)
-for blocker in ["V8 JIT or jitless policy", "event notification API", "large mmap support"] {
+for blocker in ["V8 JIT or jitless policy", "full libuv thread audit", "MAP_FIXED/guard-page mmap audit"] {
     guard nodeInspectText.contains(blocker) else {
         fail("nodejs inspect output did not show blocker \(blocker): \(nodeInspectText)")
     }

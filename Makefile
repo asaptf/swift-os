@@ -268,6 +268,7 @@ USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
 USER_CLOCKPROBE_ELF := $(BUILD)/clockprobe.elf
 USER_MPROTECTPROBE_ELF := $(BUILD)/mprotectprobe.elf
 USER_LARGEMMAPPROBE_ELF := $(BUILD)/largemmapprobe.elf
+USER_MMAPRESERVEPROBE_ELF := $(BUILD)/mmapreserveprobe.elf
 USER_PTHREADPROBE_ELF := $(BUILD)/pthreadprobe.elf
 USER_THREADSYNCPROBE_ELF := $(BUILD)/threadsyncprobe.elf
 USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
@@ -379,6 +380,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CLOCKPROBE_ELF) \
 	$(USER_MPROTECTPROBE_ELF) \
 	$(USER_LARGEMMAPPROBE_ELF) \
+	$(USER_MMAPRESERVEPROBE_ELF) \
 	$(USER_PTHREADPROBE_ELF) \
 	$(USER_THREADSYNCPROBE_ELF) \
 	$(USER_SELECTPROBE_ELF) \
@@ -396,7 +398,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test largemmap-test pthread-test threadsync-test select-test eventfd-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test largemmap-test mmapreserve-test pthread-test threadsync-test select-test eventfd-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -858,6 +860,12 @@ $(BUILD)/n_largemmapprobe.o: userland/largemmapprobe.c userland/compat/sys/mman.
 $(USER_LARGEMMAPPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_largemmapprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_largemmapprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_mmapreserveprobe.o: userland/mmapreserveprobe.c userland/compat/sys/mman.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_MMAPRESERVEPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_mmapreserveprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_mmapreserveprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_pthreadprobe.o: userland/pthreadprobe.c userland/compat/pthread.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -1165,6 +1173,9 @@ mprotect-test: build $(QEMU_DTB) base-image
 
 largemmap-test: build $(QEMU_DTB) base-image
 	./tests/largemmap_test.sh
+
+mmapreserve-test: build $(QEMU_DTB) base-image
+	./tests/mmapreserve_test.sh
 
 pthread-test: build $(QEMU_DTB) base-image
 	./tests/pthread_test.sh
@@ -1554,6 +1565,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_CLOCKPROBE_ELF) $(BASE_ROOT)/bin/clockprobe
 	cp $(USER_MPROTECTPROBE_ELF) $(BASE_ROOT)/bin/mprotectprobe
 	cp $(USER_LARGEMMAPPROBE_ELF) $(BASE_ROOT)/bin/largemmapprobe
+	cp $(USER_MMAPRESERVEPROBE_ELF) $(BASE_ROOT)/bin/mmapreserveprobe
 	cp $(USER_PTHREADPROBE_ELF) $(BASE_ROOT)/bin/pthreadprobe
 	cp $(USER_THREADSYNCPROBE_ELF) $(BASE_ROOT)/bin/threadsyncprobe
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe

@@ -179,8 +179,10 @@ void swiftos_thread_exit(void) __attribute__((noreturn));
 // Anonymous mmap / munmap / mprotect (Track B). swiftos_mmap reserves `len`
 // bytes of fresh zero-filled RAM with the given PROT bits and returns its base
 // address (0 on failure — convenient for Swift, which has no errno). munmap and
-// mprotect return 0 on success or a negative errno. PROT_WRITE|PROT_EXEC is
+// mprotect return 0 on success or a negative errno. PROT_NONE reserves VA without
+// resident frames; mprotect commits/decommits pages. PROT_WRITE|PROT_EXEC is
 // rejected (W^X); the JIT pattern is mmap RW, write code, mprotect RX, call.
+#define SWIFTOS_PROT_NONE  0x0
 #define SWIFTOS_PROT_READ  0x1
 #define SWIFTOS_PROT_WRITE 0x2
 #define SWIFTOS_PROT_EXEC  0x4

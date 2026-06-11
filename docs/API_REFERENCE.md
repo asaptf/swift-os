@@ -62,6 +62,7 @@ source, then follow its Makefile rule and acceptance test.
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
 | C large mmap compatibility | `userland/largemmapprobe.c` | multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse through newlib compat | `make largemmap-test` |
+| C lazy mmap reservation compatibility | `userland/mmapreserveprobe.c` | `mmap(PROT_NONE)`, `MAP_NORESERVE`, `mprotect` commit/decommit, reserved-region JIT path | `make mmapreserve-test` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
 | C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
@@ -830,13 +831,18 @@ Flags accepted by the POSIX-shaped wrapper:
 | `MAP_PRIVATE` | `0x02` |
 | `MAP_ANONYMOUS` | `0x20` |
 | `MAP_ANON` | `MAP_ANONYMOUS` |
+| `MAP_NORESERVE` | `0x4000` |
 | `MAP_FAILED` | `(void *)-1` |
 
 Current behavior:
 
 - Only anonymous private mappings are supported.
 - `addr`, `fd`, and `offset` are ignored by the wrapper.
-- The kernel allocates fresh zero-filled pages.
+- `PROT_NONE` reserves virtual address space without resident frames.
+- Non-`PROT_NONE` `mmap` allocates fresh zero-filled pages eagerly.
+- `mprotect` inside an anonymous reservation commits missing pages for
+  `PROT_READ`, `PROT_WRITE`, or `PROT_EXEC`, and `mprotect(PROT_NONE)`
+  decommits live pages while preserving the reservation.
 - `PROT_WRITE | PROT_EXEC` is rejected.
 - The JIT pattern is RW mapping, write code, then `mprotect` to RX.
 
@@ -1255,6 +1261,7 @@ void swiftos_set_raw(int on);
 
 ```c
 unsigned long swiftos_heap_break(void);
+#define SWIFTOS_PROT_NONE  0x0
 #define SWIFTOS_PROT_READ  0x1
 #define SWIFTOS_PROT_WRITE 0x2
 #define SWIFTOS_PROT_EXEC  0x4
@@ -1365,6 +1372,7 @@ one booting acceptance path:
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |
 | C compat large mmap | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/largemmapprobe.c` | `make largemmap-test`, `./tests/boot_test.sh` |
+| C compat mmap reservation | `kernel/user/process.swift`, `userland/compat/sys/mman.h`, `userland/mmapreserveprobe.c` | `make mmapreserve-test`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |

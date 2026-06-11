@@ -89,6 +89,7 @@
 #define MAP_PRIVATE   0x02
 #define MAP_ANONYMOUS 0x20
 #define MAP_ANON      MAP_ANONYMOUS
+#define MAP_NORESERVE 0x4000
 #define MAP_FAILED    ((void *)-1)
 
 // Handle rights and C2 spawn-with-handles ABI. Rights match
@@ -373,10 +374,11 @@ static inline void *sbrk(long incr) {
     return (void *)__syscall3(SYS_SBRK, incr, 0, 0);
 }
 
-// Anonymous mmap (Track B). Only MAP_ANONYMOUS|MAP_PRIVATE is meaningful; addr,
-// fd, and offset are ignored (the kernel always allocates fresh zero-filled
-// RAM). The raw syscall returns a base VA or a small negative errno; we convert
-// the error range to MAP_FAILED. PROT_WRITE|PROT_EXEC is rejected (W^X).
+// Anonymous mmap (Track B). Only MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE is
+// meaningful; addr, fd, and offset are ignored. PROT_NONE reserves VA without
+// resident frames; mprotect commits/decommits pages later. The raw syscall
+// returns a base VA or a small negative errno; we convert the error range to
+// MAP_FAILED. PROT_WRITE|PROT_EXEC is rejected (W^X).
 static inline void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset) {
     (void)flags; (void)fd; (void)offset;
     long r = __syscall3(SYS_MMAP, (long)addr, (long)length, prot);

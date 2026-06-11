@@ -77,8 +77,9 @@ void address_space_destroy(uintptr_t ttbr0);     // free a process's frames on t
 // Track B: mmap/munmap/mprotect over the EL0 half of an address space. The
 // caller (process.swift) owns the VA cursor + page accounting and passes an
 // aligned base VA and a page count; these do the frame work and TLB flush.
-// `prot` is a PROT_* bitmask (READ=1, WRITE=2, EXEC=4). W^X (WRITE|EXEC) and
-// PROT_NONE are rejected. Return 0 on success or a negative errno.
+// `prot` is a PROT_* bitmask (NONE=0, READ=1, WRITE=2, EXEC=4). W^X
+// (WRITE|EXEC) is rejected. PROT_NONE reservations/decommit are handled in
+// process.swift before calling these leaf-mapping helpers.
 int address_space_mmap(uintptr_t ttbr0, uintptr_t va, uintptr_t page_count, int prot);
 int address_space_munmap(uintptr_t ttbr0, uintptr_t va, uintptr_t page_count);
 int address_space_mprotect(uintptr_t ttbr0, uintptr_t va, uintptr_t page_count, int prot);
