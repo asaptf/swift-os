@@ -153,9 +153,10 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
 ### SSHD Transport Profile
 
 Use this profile to validate host-to-guest SSH transport reachability. The
-current `/bin/sshd` is a pre-auth transport probe: it exchanges SSH
-identification strings with an OpenSSH client and sends a valid
-SSH_MSG_DISCONNECT before key exchange.
+current `/bin/sshd` is a KEX transport probe: it exchanges SSH identification
+strings with an OpenSSH client, negotiates `curve25519-sha256`, `ssh-ed25519`,
+OpenSSH strict KEX, and `chacha20-poly1305@openssh.com`, then sends an
+encrypted SSH_MSG_DISCONNECT before user authentication.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -407,7 +408,7 @@ Boot with host TCP 2222 forwarded to guest TCP 22, log in as `root`, and start:
 Wait for:
 
 ```text
-sshd: listening on 22 (transport preflight)
+sshd: listening on 22 (transport kex preflight)
 ```
 
 Then connect from the host:
@@ -417,13 +418,18 @@ ssh -F /dev/null -vvv -p 2222 \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
+  -o KexAlgorithms=curve25519-sha256 \
+  -o HostKeyAlgorithms=ssh-ed25519 \
+  -o Ciphers=chacha20-poly1305@openssh.com \
+  -o MACs=hmac-sha2-256 \
   root@127.0.0.1 true
 ```
 
 Expected current behavior is a failed SSH login attempt with the remote software
-version `swift-os_sshd-preauth` and the disconnect reason `transport
-preflight`. This proves TCP/22 reachability and the SSH identification /
-disconnect packet path only; KEX, host keys, user authentication, PTY, and shell
+version `swift-os_sshd-kex`, KEX debug lines for `curve25519-sha256`,
+`ssh-ed25519`, and `chacha20-poly1305@openssh.com`, plus the encrypted
+disconnect reason `kex preflight`. This proves TCP/22 reachability through SSH
+KEX and encrypted transport setup only; user authentication, PTY, and shell
 session channels are follow-up work.
 
 Proof:
@@ -550,7 +556,7 @@ The user-visible end-to-end paths are the shell tests above.
 | TCP or UDP echo works once then stops | Echo programs are one-shot | Start `/bin/tcpecho` or `/bin/udpecho` again |
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
-| SSH exits before authentication | Expected current SSHD preflight behavior | Check that the host sees `swift-os_sshd-preauth` and `transport preflight` |
+| SSH exits before authentication | Expected current SSHD preflight behavior | Check that the host sees `swift-os_sshd-kex`, KEX debug lines, and `kex preflight` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 
@@ -565,8 +571,9 @@ Current limits that matter when exposing a SwiftOS network service:
   specific port, address, or protocol.
 - There is no target-side firewall command, routing table command, or network
   configuration command yet. DHCPv4 is boot-time only and does not renew leases.
-- `/bin/sshd` is a transport preflight, not a login daemon. It has no KEX, host
-  key, user authentication, PTY, shell, scp, or sftp support yet.
+- `/bin/sshd` is a KEX transport preflight, not a login daemon. It uses a
+  development-only host key seed and weak temporary KEX entropy, and it has no
+  user authentication, PTY, shell, scp, or sftp support yet.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.

@@ -414,17 +414,19 @@ Current Hetzner readiness status:
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD transport preflight. It binds
   guest TCP/22, exchanges SSH identification strings with a normal OpenSSH
-  client, and returns a valid pre-auth SSH disconnect reason. The checked proof
-  is `./tests/sshd_transport_test.sh`.
+  client, completes `curve25519-sha256` KEX with an `ssh-ed25519` development
+  host key and `chacha20-poly1305@openssh.com`, then returns an encrypted
+  pre-auth SSH disconnect reason. The checked proof is
+  `./tests/sshd_transport_test.sh`.
 
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a login-capable SSH daemon yet. The next remote-login
-  milestone should be server-first: KEX, host keys, key-based login, PTY/TTY
-  behavior, service launch, and a QEMU host-to-guest SSH acceptance test that
-  runs a command through the authenticated session. Dropbear remains the likely
-  full server package if the first-party preflight does not grow into the
-  supported daemon.
+  milestone should be server-first: persisted host keys, real entropy,
+  key-based login, PTY/TTY behavior, service launch, and a QEMU host-to-guest
+  SSH acceptance test that runs a command through the authenticated session.
+  Dropbear remains the likely full server package if the first-party preflight
+  does not grow into the supported daemon.
 - SSH client support is also desired for admin and deploy workflows, but it
   should not replace the server-first remote-login proof.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

@@ -657,17 +657,25 @@ Examples in the guest:
 Example on the host, when host TCP 2222 is forwarded to guest TCP 22:
 
 ```sh
-ssh -F /dev/null -vvv -p 2222 root@127.0.0.1 true
+ssh -F /dev/null -vvv -p 2222 \
+  -o BatchMode=yes \
+  -o KexAlgorithms=curve25519-sha256 \
+  -o HostKeyAlgorithms=ssh-ed25519 \
+  -o Ciphers=chacha20-poly1305@openssh.com \
+  -o MACs=hmac-sha2-256 \
+  root@127.0.0.1 true
 ```
 
 Notes:
 
 - The default guest port is TCP 22.
-- This command is a pre-auth transport probe. It exchanges SSH identification
-  strings with a normal SSH client and sends a valid SSH_MSG_DISCONNECT with a
-  `transport preflight` reason.
-- It does not implement key exchange, host keys, user authentication, PTY,
-  shell sessions, scp, or sftp yet.
+- This command is a KEX transport probe. It exchanges SSH identification
+  strings with a normal SSH client, negotiates `curve25519-sha256`,
+  `ssh-ed25519`, OpenSSH strict KEX, and
+  `chacha20-poly1305@openssh.com`, then sends an encrypted
+  SSH_MSG_DISCONNECT with a `kex preflight` reason.
+- It uses a development-only host key seed and weak temporary KEX entropy. It
+  does not implement user authentication, PTY, shell sessions, scp, or sftp yet.
 - A non-zero host `ssh` exit is expected until the next remote-login milestone.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`.

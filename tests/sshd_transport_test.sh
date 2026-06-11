@@ -3,9 +3,10 @@
 #
 # Boots with a slirp NIC that hostfwds an unprivileged host TCP port to guest
 # TCP/22. After login, the shell runs /bin/sshd. A real host OpenSSH client then
-# connects and must see the swift-os SSH identification string plus the explicit
-# pre-auth disconnect reason. This proves the deploy-critical listener shape
-# without pretending KEX, authentication, or session channels exist yet.
+# connects and must complete KEX with the swift-os SSH identification string,
+# an Ed25519 host key, and chacha20-poly1305 before the explicit encrypted
+# pre-auth disconnect. This proves the deploy-critical listener shape without
+# pretending authentication or session channels exist yet.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -95,7 +96,7 @@ await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 send_line '/bin/sshd'
-await "sshd: listening on 22 (transport preflight)" 120 || drive_fail "/bin/sshd did not listen"
+await "sshd: listening on 22 (transport kex preflight)" 120 || drive_fail "/bin/sshd did not listen"
 
 "$SSH" -F /dev/null -vvv -p "$HOST_PORT" \
   -o BatchMode=yes \
@@ -105,10 +106,14 @@ await "sshd: listening on 22 (transport preflight)" 120 || drive_fail "/bin/sshd
   -o GlobalKnownHostsFile=/dev/null \
   -o PreferredAuthentications=publickey \
   -o NumberOfPasswordPrompts=0 \
+  -o KexAlgorithms=curve25519-sha256 \
+  -o HostKeyAlgorithms=ssh-ed25519 \
+  -o Ciphers=chacha20-poly1305@openssh.com \
+  -o MACs=hmac-sha2-256 \
   root@127.0.0.1 true >"$SSHOUT" 2>&1 </dev/null
 ssh_rc=$?
 
-await "sshd: sent preauth disconnect" 20 || true
+await "sshd: kex complete; sent encrypted preauth disconnect" 20 || true
 exec 3>&-
 stop_qemu
 QP=""
@@ -117,17 +122,27 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 grep -qF "sshd: client SSH-2.0-" <<<"$clean" \
   || { echo "FAIL: guest did not receive a host SSH client banner" >&2; ok=0; }
-grep -qF "sshd: sent preauth disconnect" <<<"$clean" \
-  || { echo "FAIL: guest did not send the pre-auth disconnect" >&2; ok=0; }
-grep -qF "swift-os_sshd-preauth" "$SSHOUT" \
+grep -qF "sshd: kex complete; sent encrypted preauth disconnect" <<<"$clean" \
+  || { echo "FAIL: guest did not complete KEX and send the encrypted disconnect" >&2; ok=0; }
+grep -qF "swift-os_sshd-kex" "$SSHOUT" \
   || { echo "FAIL: host ssh did not report the swift-os SSH banner" >&2; ok=0; }
-grep -qF "transport preflight" "$SSHOUT" \
+grep -qF "kex: algorithm: curve25519-sha256" "$SSHOUT" \
+  || { echo "FAIL: host ssh did not negotiate curve25519-sha256" >&2; ok=0; }
+grep -qF "kex: host key algorithm: ssh-ed25519" "$SSHOUT" \
+  || { echo "FAIL: host ssh did not negotiate the ssh-ed25519 host key" >&2; ok=0; }
+grep -qF "will use strict KEX ordering" "$SSHOUT" \
+  || { echo "FAIL: host ssh did not enable strict KEX ordering" >&2; ok=0; }
+grep -qF "resetting read seqnr" "$SSHOUT" \
+  || { echo "FAIL: host ssh did not reset the receive sequence number after NEWKEYS" >&2; ok=0; }
+grep -qF "chacha20-poly1305@openssh.com" "$SSHOUT" \
+  || { echo "FAIL: host ssh did not negotiate chacha20-poly1305" >&2; ok=0; }
+grep -qF "kex preflight" "$SSHOUT" \
   || { echo "FAIL: host ssh did not report the explicit pre-auth disconnect reason" >&2; ok=0; }
 [[ "$ssh_rc" -ne 0 ]] \
   || { echo "FAIL: ssh unexpectedly authenticated/executed a command" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd accepted OpenSSH on guest TCP/22 and returned a pre-auth SSH disconnect"
+  echo "PASS: /bin/sshd completed OpenSSH KEX on guest TCP/22 and returned an encrypted pre-auth SSH disconnect"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2

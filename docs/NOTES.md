@@ -3,6 +3,29 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC3 SSHD KEX transport preflight (2026-06-11)
+
+- Extended `/bin/sshd` from an identification-only probe into a real SSH
+  transport KEX preflight. It now negotiates `curve25519-sha256`,
+  `ssh-ed25519`, OpenSSH strict KEX, and `chacha20-poly1305@openssh.com` with a
+  normal OpenSSH client, signs the exchange hash with a development Ed25519 host
+  key, sends NEWKEYS, and returns an encrypted SSH_MSG_DISCONNECT with the
+  current auth/session limitation reason.
+- This is still intentionally not a remote-login-capable SSH daemon. The host
+  key seed and server KEX entropy are development-only, there is no persisted
+  host-key store, and user authentication, PTY allocation, shell/session
+  channels, scp/sftp, service supervision, and target-side SSH client support
+  remain follow-up work.
+- The SSHD Makefile rule now links the pure Swift SHA-256, SHA-512, Ed25519,
+  X25519, and ChaCha20-Poly1305 sources into `/bin/sshd`.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` boots QEMU with host TCP
+forwarding to guest TCP/22, starts `/bin/sshd`, and drives it with host
+OpenSSH. The transcript must show `swift-os_sshd-kex`,
+`curve25519-sha256`, `ssh-ed25519`, `chacha20-poly1305@openssh.com`, strict KEX
+sequence reset, and the encrypted `kex preflight` disconnect reason. The SSH
+command still exits non-zero because auth/session are not implemented.
+
 ## HC2 SSHD transport preflight (2026-06-11)
 
 - Added `/bin/sshd` as a native Swift SSH server transport preflight. It opens a

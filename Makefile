@@ -586,8 +586,9 @@ $(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swi
 $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
 
-$(BUILD)/user_sshd.o: userland/sshd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sshd.swift -o $@
+SSHD_SWIFT_SRCS := kernel/crypto/sha256.swift kernel/crypto/sha512.swift kernel/crypto/ed25519.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+$(BUILD)/user_sshd.o: userland/sshd.swift $(SSHD_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sshd.swift $(SSHD_SWIFT_SRCS) -o $@
 
 $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/nslookup.swift -o $@

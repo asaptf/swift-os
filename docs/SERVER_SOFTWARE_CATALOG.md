@@ -81,7 +81,7 @@ paths are available in the current tree:
 | Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all eleven from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | Publish the seed repository into a deployable web root and install all eleven packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
 | DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
-| First-party SSHD transport preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-preauth`, and disconnects before KEX with an explicit current-limit reason | `make sshd-transport-test` |
+| First-party SSHD KEX transport preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-kex`, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com` transport setup, and sends an encrypted pre-auth current-limit disconnect | `make sshd-transport-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
