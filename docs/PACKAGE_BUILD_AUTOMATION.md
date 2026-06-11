@@ -23,7 +23,7 @@ prove the package model locally:
 | Static signed repository fixture | `build/pkgrepo` creates a signed HTTP catalog tree for `pkghello` | `make package-repo-fixture` |
 | Guest repository install | `/bin/pkg repo set`, `update [URL]`, `search`, `info`, and `install NAME` work against the signed HTTP fixture, including name-based dependencies | `make package-repo-install-test` |
 | Ports seed catalog | `ports/catalog.json` records first package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`, `ports/archivers/xz/Port.json`, `ports/archivers/libarchive/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures. `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` validate as blocked intake scaffolds and emit package manifests. | `make ports-recipe-test` |
+| Recipe repository fixtures | `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`, `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`, `ports/archivers/xz/Port.json`, `ports/archivers/libarchive/Port.json`, `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`, `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` validate against the catalog, emit package manifests, package clean staged roots, and publish into signed local static repository fixtures. `ports/net/curl/Port.json`, `ports/security/acme-sh/Port.json`, `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` validate as intake scaffolds and emit package manifests without being published yet. | `make ports-recipe-test` |
 | Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite cross-build repository fixtures | Static AArch64 Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite cross-build against the local newlib sysroot, package into `.swpkg`, and publish into signed local repository fixtures | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`, `make ports-zstd-repo-fixture`, `make ports-xz-repo-fixture`, `make ports-libarchive-repo-fixture`, `make ports-openssl-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture` |
 | ca-certificates repository fixture | The pinned Mozilla CA bundle is packaged as data and published into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | tzdata repository fixture | IANA zoneinfo data is compiled with host `zic`, packaged as data, and published into a signed local repository fixture | `make ports-tzdata-repo-fixture` |
@@ -152,6 +152,8 @@ build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
 build/swport recipe validate databases/sqlite
+build/swport recipe validate net/curl
+build/swport recipe validate security/acme-sh
 build/swport recipe validate lang/nodejs
 build/swport recipe validate lang/npm
 build/swport recipe validate sysutils/pm2
@@ -166,6 +168,8 @@ build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest net/curl --output build/curl-manifest.json
+build/swport recipe manifest security/acme-sh --output build/acme-sh-manifest.json
 build/swport recipe manifest lang/nodejs --output build/nodejs-manifest.json
 build/swport recipe manifest lang/npm --output build/npm-manifest.json
 build/swport recipe manifest sysutils/pm2 --output build/pm2-manifest.json
