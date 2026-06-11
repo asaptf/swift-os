@@ -833,8 +833,7 @@ private func isExecSpace(_ c: UInt8) -> Bool {
     c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
 }
 
-private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
-    let prefix: StaticString = "/bin/"
+private func execPathHasAllowedPrefix(_ path: SSHStringView, _ prefix: StaticString) -> Bool {
     return prefix.withUTF8Buffer { pb -> Bool in
         if path.len <= pb.count { return false }
         var i = 0
@@ -849,6 +848,11 @@ private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
         }
         return true
     }
+}
+
+private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
+    execPathHasAllowedPrefix(path, "/bin/") ||
+    execPathHasAllowedPrefix(path, "/usr/bin/")
 }
 
 private func cStringLen(_ p: UnsafePointer<CChar>) -> Int {

@@ -3,6 +3,24 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC20 SSHD package-tool exec preflight (2026-06-11)
+
+- Extended `/bin/sshd`'s bounded direct remote-exec allowlist from
+  single-component `/bin/<tool>` paths to single-component `/bin/<tool>` and
+  `/usr/bin/<tool>` paths. Nested paths, NUL bytes, shell syntax, redirects,
+  globbing, PTY, scp, and sftp remain outside this preflight.
+- This lets deploy candidates run package-installed operational tools from the
+  read-only package overlay over an authenticated SSHD session without widening
+  the boundary to a shell.
+- Added `./tests/sshd_usr_bin_exec_test.sh` and
+  `make sshd-usr-bin-exec-test`, which boot QEMU with the base image plus the
+  `pkghello` payload overlay, pin the SwiftOS host key with host OpenSSH, and
+  run `/usr/bin/pkghello` through `/bin/sshd`.
+
+**Acceptance.** `make sshd-usr-bin-exec-test` proves that boot-autostarted SSHD
+can authenticate the staged root key, execute a package-overlay `/usr/bin`
+tool, and return its stdout over the pinned OpenSSH remote-exec path.
+
 ## HC19 IPv4 route-target preflight (2026-06-11)
 
 - Added a pure `ipv4RouteTarget` helper for outbound IPv4 next-hop selection.

@@ -729,9 +729,9 @@ Notes:
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
-  a bounded direct `/bin/<tool>` command. It forwards up to 512 bytes of remote
-  stdin into the command's fd 0 and returns up to 4096 bytes of captured
-  stdout/stderr.
+  a bounded direct `/bin/<tool>` or `/usr/bin/<tool>` command. It forwards up
+  to 512 bytes of remote stdin into the command's fd 0 and returns up to 4096
+  bytes of captured stdout/stderr.
 - Use `build/sshkey known-host --host HOST --seed-file
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
   the same seed file `/bin/sshd` loads in the guest. For a deploy-specific
@@ -742,15 +742,17 @@ Notes:
   checked-in default seed is development-only. It still uses weak temporary KEX
   entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
-  command parser supports direct single-component `/bin/` executables with
-  whitespace splitting, quote removal, and backslash escaping; redirects,
-  globbing, shell sessions, PTY, scp, sftp, runtime host-key rotation, larger
-  streaming stdin/stdout, and broader key options are not implemented yet.
+  command parser supports direct single-component `/bin/` and `/usr/bin/`
+  executables with whitespace splitting, quote removal, and backslash escaping;
+  redirects, globbing, shell sessions, PTY, scp, sftp, runtime host-key
+  rotation, larger streaming stdin/stdout, and broader key options are not
+  implemented yet.
   Output beyond the current 4096-byte cap is truncated and logged on the serial
   console.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,
+`tests/sshd_usr_bin_exec_test.sh`,
 `tests/sshd_host_key_rotation_test.sh`,
 `tests/sshd_authorized_keys_test.sh`.
 

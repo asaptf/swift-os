@@ -423,8 +423,9 @@ Current Hetzner readiness status:
   `/etc/ssh/ssh_host_ed25519_seed` and `chacha20-poly1305@openssh.com`,
   authenticates `root` with an
   `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
-  channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
-  and `/bin/echo HC6-OK`; bounded remote stdin is forwarded into fd 0 for tools
+  channel, and executes bounded direct `/bin/<tool>` and `/usr/bin/<tool>`
+  commands such as `/bin/id`, `/bin/echo HC6-OK`, and package-overlay tools;
+  bounded remote stdin is forwarded into fd 0 for tools
   such as `/bin/cat`, and bounded stdout/stderr capture returns up to 4096
   bytes. The direct exec parser supports whitespace splitting, quote removal,
   and backslash escaping for argv, but it is still not a shell. The host helper
@@ -439,7 +440,9 @@ Current Hetzner readiness status:
   proofs are `./tests/sshd_transport_test.sh`,
   `./tests/sshd_host_key_rotation_test.sh`,
   `./tests/sshd_authorized_keys_test.sh`, and
-  `./tests/sshd_supervision_test.sh`; they verify that host OpenSSH pins the
+  `./tests/sshd_supervision_test.sh`; `./tests/sshd_usr_bin_exec_test.sh`
+  also boots the `pkghello` package payload and runs `/usr/bin/pkghello` over
+  SSHD. Together they verify that host OpenSSH pins the
   SwiftOS host key through known_hosts, that stale fixture keys are rejected,
   that custom images can boot with rotated SSHD host-key and authorized-key
   material, that quoted argv reaches remote `/bin/echo`, that bounded stdin
@@ -459,8 +462,9 @@ Not deploy-complete yet:
   milestones should add runtime host-key rotation, real entropy, broader
   authorized-key options, shell/PTY behavior, larger stdin/output streaming,
   production service policy, and broader remote commands beyond bounded direct
-  `/bin/<tool>` exec. Dropbear remains a candidate full server package if the
-  first-party preflight does not grow into the supported daemon.
+  `/bin/<tool>` or `/usr/bin/<tool>` exec. Dropbear remains a candidate full
+  server package if the first-party preflight does not grow into the supported
+  daemon.
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
