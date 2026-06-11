@@ -730,7 +730,7 @@ Notes:
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
   a bounded direct `/bin/<tool>` command. It forwards up to 512 bytes of remote
-  stdin into the command's fd 0 and returns up to 1536 bytes of captured
+  stdin into the command's fd 0 and returns up to 4096 bytes of captured
   stdout/stderr.
 - Use `build/sshkey known-host --host HOST --seed-file
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
@@ -746,7 +746,7 @@ Notes:
   single-component `/bin/` executables only; quoting, redirects, globbing,
   shell sessions, PTY, scp, sftp, runtime host-key rotation, larger streaming
   stdin/stdout, and broader key options are not implemented yet. Output beyond
-  the current 1536-byte cap is truncated and logged on the serial console.
+  the current 4096-byte cap is truncated and logged on the serial console.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,

@@ -212,7 +212,7 @@ grep -qF "sshd: session exec completed status 0" <<<"$clean" \
   || { echo "FAIL: guest did not complete remote exec with status 0" >&2; ok=0; }
 grep -qF "sshd: exec stdin bytes 20" <<<"$clean" \
   || { echo "FAIL: guest did not log forwarded SSH exec stdin bytes" >&2; ok=0; }
-grep -qF "sshd: exec output bytes 1536" <<<"$clean" \
+grep -qF "sshd: exec output bytes 4096" <<<"$clean" \
   || { echo "FAIL: guest did not log bounded SSH exec output bytes" >&2; ok=0; }
 grep -qF "sshd: exec output truncated" <<<"$clean" \
   || { echo "FAIL: guest did not log SSH exec output truncation" >&2; ok=0; }
@@ -258,8 +258,8 @@ cmp -s "$CATEXPECT" "$CATOUT" \
   || { echo "FAIL: ssh /bin/cat exited with $cat_rc, expected 0" >&2; ok=0; }
 [[ "$big_rc" -eq 0 ]] \
   || { echo "FAIL: ssh /bin/cat /models/tok512.bin exited with $big_rc, expected 0" >&2; ok=0; }
-[[ "$big_bytes" -eq 1536 ]] \
-  || { echo "FAIL: bounded long-output command returned $big_bytes bytes, expected 1536" >&2; ok=0; }
+[[ "$big_bytes" -eq 4096 ]] \
+  || { echo "FAIL: bounded long-output command returned $big_bytes bytes, expected 4096" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id, /bin/echo, stdin-fed /bin/cat, plus bounded long output"

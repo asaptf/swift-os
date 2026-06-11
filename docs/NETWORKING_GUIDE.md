@@ -163,8 +163,10 @@ identification strings with an OpenSSH client, negotiates `curve25519-sha256`,
 loads its host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, authenticates
 `root` with a key from `/etc/ssh/authorized_keys`, opens a `session` channel,
 executes a bounded direct `/bin/<tool>` command, and forwards small remote
-stdin payloads into fd 0. It currently returns up to 1536 bytes of captured
-stdout/stderr per remote exec and logs when output is truncated.
+stdin payloads into fd 0. It currently returns up to 4096 bytes of captured
+stdout/stderr per remote exec and logs when output is truncated. TCP write-side
+backpressure now waits for ACK-driven send-buffer space on blocking socket
+writes; larger streaming stdin/stdout remains a later SSHD milestone.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
