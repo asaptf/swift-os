@@ -81,7 +81,7 @@ paths are available in the current tree:
 | Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all eleven from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
 | Static-host publish root | Publish the seed repository into a deployable web root and install all eleven packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
 | DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
-| First-party SSHD session/exec preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-session`, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com` transport setup, authenticates `root` with the HC4 dev Ed25519 key, opens a session channel, and executes `/bin/echo HC4-OK` | `make sshd-transport-test` |
+| First-party SSHD session/exec preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-session`, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com` transport setup, rejects the old HC4 dev key, authenticates `root` with the HC5 `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a session channel, and executes `/bin/echo HC5-OK` | `make sshd-transport-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:

@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC5 SSHD authorized_keys loading preflight (2026-06-11)
+
+- Replaced the hardcoded HC4 authorized public key in `/bin/sshd` with a small
+  OpenSSH `authorized_keys` loader. The daemon now opens
+  `/etc/ssh/authorized_keys`, parses `ssh-ed25519` public-key lines, base64
+  decodes the SSH public-key blob, and compares it with the client's offered key
+  before accepting publickey authentication for `root`.
+- Userauth signature verification now uses the public key from the client's
+  authorized key blob instead of an embedded raw key. This keeps the signature
+  check tied to the exact key material that matched `/etc/ssh/authorized_keys`.
+- Added a new HC5 fixture key at `fixtures/ssh/sshd_hc5_ed25519(.pub)` and
+  staged only its public key in the base image's `/etc/ssh/authorized_keys`.
+  The older HC4 key remains as a negative test fixture.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` now performs two OpenSSH
+attempts against the same QEMU guest: the old HC4 key must fail with
+`Permission denied (publickey)`, then the HC5 key from
+`/etc/ssh/authorized_keys` must authenticate, run
+`/bin/echo HC5-OK`, print `HC5-OK`, and exit 0. The guest log must include
+`sshd: authorized key matched /etc/ssh/authorized_keys`.
+
 ## HC4 SSHD publickey session/exec preflight (2026-06-11)
 
 - Extended `/bin/sshd` past transport-only KEX into a minimal authenticated SSH
@@ -18,9 +39,9 @@ Newest notes at the top of each section.
   PTY allocation, or scp/sftp yet.
 - Added the HC4 OpenSSH fixture key at `fixtures/ssh/sshd_hc4_ed25519(.pub)` and
   staged the matching development public key in `/etc/ssh/authorized_keys` in
-  the base image. The current daemon still compares the embedded raw dev key;
-  persisted host keys, real entropy, and real authorized-key loading remain
-  follow-up work.
+  the base image. At this slice, the daemon still compared the embedded raw dev
+  key; persisted host keys, real entropy, and real authorized-key loading
+  remained follow-up work.
 - Added Swift userland bridges for `pipe` and raw `spawn_handles` so native
   tools can inherit explicit file handles when launching children.
 

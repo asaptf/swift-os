@@ -77,7 +77,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
-| Exercise SSHD remote command | SSHD profile | `/bin/sshd` | `ssh -i fixtures/ssh/sshd_hc4_ed25519 -p <host-port> root@127.0.0.1 /bin/echo HC4-OK` | `./tests/sshd_transport_test.sh` |
+| Exercise SSHD remote command | SSHD profile | `/bin/sshd` | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/echo HC5-OK` | `./tests/sshd_transport_test.sh` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
 Operator flow:
@@ -156,8 +156,8 @@ Use this profile to validate host-to-guest SSH reachability through a minimal
 authenticated remote command. The current `/bin/sshd` exchanges SSH
 identification strings with an OpenSSH client, negotiates `curve25519-sha256`,
 `ssh-ed25519`, OpenSSH strict KEX, and `chacha20-poly1305@openssh.com`,
-authenticates `root` with the HC4 development key, opens a `session` channel,
-and executes one direct `/bin/echo ...` command.
+authenticates `root` with a key from `/etc/ssh/authorized_keys`, opens a
+`session` channel, and executes one direct `/bin/echo ...` command.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -416,7 +416,7 @@ Then connect from the host:
 
 ```sh
 ssh -F /dev/null -vvv -p 2222 \
-  -i fixtures/ssh/sshd_hc4_ed25519 \
+  -i fixtures/ssh/sshd_hc5_ed25519 \
   -o BatchMode=yes \
   -o IdentitiesOnly=yes \
   -o PasswordAuthentication=no \
@@ -427,16 +427,18 @@ ssh -F /dev/null -vvv -p 2222 \
   -o HostKeyAlgorithms=ssh-ed25519 \
   -o Ciphers=chacha20-poly1305@openssh.com \
   -o MACs=hmac-sha2-256 \
-  root@127.0.0.1 /bin/echo HC4-OK
+  root@127.0.0.1 /bin/echo HC5-OK
 ```
 
 Expected current behavior is a successful SSH command with remote software
 version `swift-os_sshd-session`, KEX debug lines for `curve25519-sha256`,
 `ssh-ed25519`, and `chacha20-poly1305@openssh.com`, publickey authentication,
-stdout `HC4-OK`, and exit status 0. This proves TCP/22 reachability through SSH
-KEX, encrypted userauth, session channel setup, and one direct remote exec;
-PTY, shell command parsing, scp, sftp, persisted host keys, real entropy, and
-real authorized-key loading are follow-up work.
+stdout `HC5-OK`, and exit status 0. The checked test also proves that the old
+HC4 key is rejected and the HC5 key is loaded from `/etc/ssh/authorized_keys`.
+This proves TCP/22 reachability through SSH KEX, encrypted userauth, session
+channel setup, and one direct remote exec; PTY, shell command parsing, scp,
+sftp, persisted host keys, real entropy, and broader authorized-key options are
+follow-up work.
 
 Proof:
 
@@ -562,7 +564,7 @@ The user-visible end-to-end paths are the shell tests above.
 | TCP or UDP echo works once then stops | Echo programs are one-shot | Start `/bin/tcpecho` or `/bin/udpecho` again |
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
-| SSH exits before stdout | Missing fixture key, stale base image, or a protocol regression | Use `fixtures/ssh/sshd_hc4_ed25519`, rebuild `base-image`, and check for `swift-os_sshd-session`, publickey auth, and `sshd: session exec completed status 0` |
+| SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, and check for `swift-os_sshd-session`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 
@@ -578,10 +580,10 @@ Current limits that matter when exposing a SwiftOS network service:
 - There is no target-side firewall command, routing table command, or network
   configuration command yet. DHCPv4 is boot-time only and does not renew leases.
 - `/bin/sshd` is a session/exec preflight, not a full login daemon. It uses a
-  development-only host key seed, weak temporary KEX entropy, and a
-  development-only authorized key. It supports only direct `/bin/echo ...`
-  remote exec; PTY, shell command parsing, scp, sftp, persisted host keys, real
-  entropy, and real authorized-key loading are still missing.
+  development-only host key seed and weak temporary KEX entropy. It supports
+  only simple `ssh-ed25519` lines in `/etc/ssh/authorized_keys` and direct
+  `/bin/echo ...` remote exec; PTY, shell command parsing, scp, sftp, persisted
+  host keys, real entropy, and broader authorized-key options are still missing.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.

@@ -6,7 +6,7 @@
 // identification, curve25519-sha256, ssh-ed25519 host authentication,
 // chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
 // command. PTY, shells, scp/sftp, service supervision, real entropy, and real
-// host/user key storage are separate milestones.
+// host-key storage are separate milestones.
 
 private let defaultPort: UInt16 = 22
 private let pollIn: Int16 = 0x001
@@ -296,30 +296,138 @@ private func stringEquals(_ view: SSHStringView, _ s: StaticString) -> Bool {
     }
 }
 
-private func writeAuthorizedPubKey(_ out32: UnsafeMutableRawPointer) {
-    // Dev-only HC4 key, matching fixtures/ssh/sshd_hc4_ed25519.pub.
-    let words: (UInt64, UInt64, UInt64, UInt64) = (
-        0x50c5_99ad_a66e_f4d0,
-        0x4c9e_e4b8_6471_ad64,
-        0x5675_3e2f_75df_5859,
-        0xc940_0cca_0c37_3565
-    )
-    withUnsafeBytes(of: words) { raw in copyBytes(out32, 0, raw.baseAddress!, 32) }
+private func isAuthSpace(_ c: UInt8) -> Bool {
+    c == 0x20 || c == 0x09 || c == 0x0D
 }
 
-private func authorizedKeyBlobMatches(_ blob: SSHStringView) -> Bool {
+private func base64Value(_ c: UInt8) -> Int {
+    if c >= 0x41 && c <= 0x5A { return Int(c - 0x41) }
+    if c >= 0x61 && c <= 0x7A { return Int(c - 0x61) + 26 }
+    if c >= 0x30 && c <= 0x39 { return Int(c - 0x30) + 52 }
+    if c == 0x2B { return 62 }
+    if c == 0x2F { return 63 }
+    return -1
+}
+
+private func decodeBase64(_ src: UnsafeRawPointer, _ len: Int,
+                          _ out: UnsafeMutableRawPointer, _ cap: Int) -> Int {
+    var bits = 0
+    var acc: UInt32 = 0
+    var outLen = 0
+    var sawPad = false
+    var i = 0
+    while i < len {
+        let c = src.load(fromByteOffset: i, as: UInt8.self)
+        if c == 0x3D {
+            sawPad = true
+            i += 1
+            continue
+        }
+        let v = base64Value(c)
+        if v < 0 || sawPad { return -1 }
+        acc = (acc << 6) | UInt32(v)
+        bits += 6
+        if bits >= 8 {
+            bits -= 8
+            if outLen >= cap { return -1 }
+            out.storeBytes(of: UInt8((acc >> UInt32(bits)) & 0xFF),
+                           toByteOffset: outLen,
+                           as: UInt8.self)
+            outLen += 1
+        }
+        i += 1
+    }
+    return outLen
+}
+
+private func nextAuthorizedToken(_ p: UnsafeRawPointer,
+                                 _ lineEnd: Int,
+                                 _ off: inout Int) -> SSHStringView? {
+    while off < lineEnd && isAuthSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    if off >= lineEnd { return nil }
+    let start = off
+    while off < lineEnd && !isAuthSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    return SSHStringView(p: p + start, len: off - start)
+}
+
+private func ed25519PublicKeyFromBlob(_ blob: SSHStringView) -> SSHStringView? {
     var r = SSHReader(p: blob.p, len: blob.len)
     guard let alg = r.string(),
           stringEquals(alg, "ssh-ed25519"),
           let key = r.string(),
           key.len == 32,
           r.remaining == 0 else {
-        return false
+        return nil
     }
-    var expected = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
-    return withUnsafeMutableBytes(of: &expected) { eb -> Bool in
-        writeAuthorizedPubKey(eb.baseAddress!)
-        return bytesEqual(key.p, eb.baseAddress!, 32)
+    return key
+}
+
+private func authorizedKeysBufferMatches(_ blob: SSHStringView,
+                                         _ p: UnsafeRawPointer,
+                                         _ len: Int) -> Bool {
+    var lineStart = 0
+    while lineStart < len {
+        var lineEnd = lineStart
+        while lineEnd < len && p.load(fromByteOffset: lineEnd, as: UInt8.self) != 0x0A {
+            lineEnd += 1
+        }
+
+        var off = lineStart
+        while off < lineEnd && isAuthSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+            off += 1
+        }
+        if off < lineEnd && p.load(fromByteOffset: off, as: UInt8.self) != 0x23 {
+            if let first = nextAuthorizedToken(p, lineEnd, &off) {
+                var keyType = first
+                var keyData = nextAuthorizedToken(p, lineEnd, &off)
+                if !stringEquals(keyType, "ssh-ed25519"),
+                   let second = keyData,
+                   stringEquals(second, "ssh-ed25519") {
+                    keyType = second
+                    keyData = nextAuthorizedToken(p, lineEnd, &off)
+                }
+
+                if stringEquals(keyType, "ssh-ed25519"), let data = keyData {
+                    let matched = withUnsafeTemporaryAllocation(byteCount: 128, alignment: 8) { decoded -> Bool in
+                        let decodedLen = decodeBase64(data.p, data.len,
+                                                      decoded.baseAddress!,
+                                                      decoded.count)
+                        return decodedLen == blob.len &&
+                               bytesEqual(decoded.baseAddress!, blob.p, blob.len)
+                    }
+                    if matched { return true }
+                }
+            }
+        }
+
+        lineStart = lineEnd + 1
+    }
+    return false
+}
+
+private func authorizedKeyBlobMatches(_ blob: SSHStringView) -> Bool {
+    guard ed25519PublicKeyFromBlob(blob) != nil else { return false }
+    let fd = swiftos_open("/etc/ssh/authorized_keys", 0)
+    if fd < 0 { return false }
+    defer { _ = swiftos_close(fd) }
+
+    return withUnsafeTemporaryAllocation(byteCount: 4096, alignment: 8) { raw -> Bool in
+        var used = 0
+        while used < raw.count {
+            let r = swiftos_read(fd, raw.baseAddress! + used, UInt(raw.count - used))
+            if r < 0 { return false }
+            if r == 0 { break }
+            used += Int(r)
+        }
+        let matched = authorizedKeysBufferMatches(blob, raw.baseAddress!, used)
+        if matched {
+            swiftos_puts("sshd: authorized key matched /etc/ssh/authorized_keys\n")
+        }
+        return matched
     }
 }
 
@@ -723,21 +831,21 @@ private func signatureView(_ sigBlob: SSHStringView) -> SSHStringView? {
 private func verifyUserauthSignature(sessionId: UnsafeRawPointer,
                                      requestPayload: UnsafeRawPointer,
                                      signedLen: Int,
+                                     keyBlob: SSHStringView,
                                      sigBlob: SSHStringView) -> Bool {
-    guard let sig = signatureView(sigBlob) else { return false }
-    var pub = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
-    return withUnsafeMutableBytes(of: &pub) { pb -> Bool in
-        writeAuthorizedPubKey(pb.baseAddress!)
-        return withUnsafeTemporaryAllocation(byteCount: 4 + 32 + signedLen, alignment: 8) { raw -> Bool in
-            var w = SSHWriter(p: raw.baseAddress!, cap: raw.count)
-            guard w.string(sessionId, 32),
-                  w.bytes(requestPayload, signedLen) else {
-                return false
-            }
-            return ed25519Verify(message: raw.baseAddress!, w.len,
-                                 signature: sig.p,
-                                 publicKey: pb.baseAddress!)
+    guard let sig = signatureView(sigBlob),
+          let pub = ed25519PublicKeyFromBlob(keyBlob) else {
+        return false
+    }
+    return withUnsafeTemporaryAllocation(byteCount: 4 + 32 + signedLen, alignment: 8) { raw -> Bool in
+        var w = SSHWriter(p: raw.baseAddress!, cap: raw.count)
+        guard w.string(sessionId, 32),
+              w.bytes(requestPayload, signedLen) else {
+            return false
         }
+        return ed25519Verify(message: raw.baseAddress!, w.len,
+                             signature: sig.p,
+                             publicKey: pub.p)
     }
 }
 
@@ -819,11 +927,19 @@ private func handleSSHSession(_ fd: Int32,
 
         let signedLen = r.off
         if !signed {
-            w = SSHWriter(p: packet, cap: cap)
-            guard w.u8(msgUserauthPkOk),
-                  writerStringStatic(&w, "ssh-ed25519"),
-                  w.string(keyBlob.p, keyBlob.len),
-                  sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+            let sentPkOk = withUnsafeTemporaryAllocation(byteCount: 128, alignment: 8) { saved -> Bool in
+                if keyBlob.len > saved.count { return false }
+                copyBytes(saved.baseAddress!, 0, keyBlob.p, keyBlob.len)
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgUserauthPkOk),
+                      writerStringStatic(&w, "ssh-ed25519"),
+                      w.string(saved.baseAddress!, keyBlob.len) else {
+                    return false
+                }
+                return sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq)
+            }
+            if !sentPkOk {
+                swiftos_puts("sshd: userauth pk-ok failed\n")
                 return false
             }
             continue
@@ -834,6 +950,7 @@ private func handleSSHSession(_ fd: Int32,
               verifyUserauthSignature(sessionId: sessionId,
                                       requestPayload: packet,
                                       signedLen: signedLen,
+                                      keyBlob: keyBlob,
                                       sigBlob: sigBlob) else {
             if !sendUserauthFailure(fd, packet, cap, serverKey, &serverSeq) { return false }
             continue

@@ -658,7 +658,7 @@ Example on the host, when host TCP 2222 is forwarded to guest TCP 22:
 
 ```sh
 ssh -F /dev/null -vvv -p 2222 \
-  -i fixtures/ssh/sshd_hc4_ed25519 \
+  -i fixtures/ssh/sshd_hc5_ed25519 \
   -o BatchMode=yes \
   -o IdentitiesOnly=yes \
   -o PasswordAuthentication=no \
@@ -667,7 +667,7 @@ ssh -F /dev/null -vvv -p 2222 \
   -o HostKeyAlgorithms=ssh-ed25519 \
   -o Ciphers=chacha20-poly1305@openssh.com \
   -o MACs=hmac-sha2-256 \
-  root@127.0.0.1 /bin/echo HC4-OK
+  root@127.0.0.1 /bin/echo HC5-OK
 ```
 
 Notes:
@@ -675,12 +675,13 @@ Notes:
 - The default guest port is TCP 22.
 - This command exchanges SSH identification strings with a normal OpenSSH
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
-  `chacha20-poly1305@openssh.com`, authenticates `root` with the HC4 dev
-  Ed25519 key, opens a `session` channel, and runs one direct `/bin/echo ...`
-  command.
-- It uses a development-only host key seed, weak temporary KEX entropy, and a
-  development-only authorized key. PTY, shell sessions, scp, sftp, persisted
-  host keys, and real authorized-key loading are not implemented yet.
+  `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
+  key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
+  one direct `/bin/echo ...` command.
+- It uses a development-only host key seed and weak temporary KEX entropy. The
+  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines; PTY,
+  shell sessions, scp, sftp, persisted host keys, and broader key options are
+  not implemented yet.
 - A successful host command exits 0 and prints the remote `/bin/echo` output.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`.
