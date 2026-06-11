@@ -180,9 +180,9 @@ Current full-gate coverage includes:
 - VFS, disk exec, console login, capability enforcement, redirection, core
   commands, busybox shell, `vi`, `top`, threads, mmap, packages, and LLM
   serving.
-- C5 driver-service/device-authority readiness under SMP, including restartable
-  supervision, device grant transfer, discovery metadata, and authority
-  withholding.
+- C5 driver-service/device-authority readiness, including restartable
+  supervision, device grant transfer, discovery metadata, authority
+  withholding, metadata-only rights, and guest denial before grant minting.
 - Framebuffer/input smoke.
 - Full-gate coverage guard for the required stability, hardware, security,
   update, package, network, C5, and SMP categories.
@@ -241,6 +241,7 @@ Run the narrowest test that proves the path you changed.
 | Virtio-input discovery metadata | `make c5-device-metadata-test` |
 | Device authority envelope | `make c5-device-authority-test` |
 | Metadata-only device grant rights | `make c5-device-rights-test` |
+| Device discovery/claim capability gate | `make device-authority-cap-test` |
 | C5 aggregate driver-service readiness | `make c5-test` |
 | Phase 1 roadmap/test alignment | `make phase1-roadmap-test` |
 | SMP readiness | `make s1-test`, `make s5-test`, or the active milestone target |

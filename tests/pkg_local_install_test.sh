@@ -106,10 +106,14 @@ send_line 'pkg list'
 await "no packages installed" 60 || drive_fail "empty package list was not reported"
 send_line 'pkg files pkghello'
 await "pkg: package not installed" 60 || drive_fail "pkg files did not reject missing package"
+send_line 'pkg info pkghello'
+await "pkg: package not found" 60 || drive_fail "pkg info did not reject missing package"
 send_line 'pkg install /packages/pkghello.swpkg'
 await "pkg: installed pkghello-1.0.0_1" 90 || drive_fail "pkg install did not complete"
 send_line 'pkg list'
 await "pkghello-1.0.0_1" 60 || drive_fail "installed package not listed"
+send_line 'pkg info pkghello'
+await "source: installed" 60 || drive_fail "pkg info did not show installed package metadata"
 send_line 'pkg files pkghello'
 await "/usr/bin/pkghello" 60 || drive_fail "pkg files did not list installed payload"
 send_line '/usr/bin/pkghello'
@@ -125,6 +129,8 @@ ok=1
 grep -qF "M11c: read-only base mounted from disk" "$LOG" || { echo "FAIL: base was not mounted from disk" >&2; ok=0; }
 grep -qF "pkg: installed pkghello-1.0.0_1" "$LOG" || { echo "FAIL: pkg install output missing" >&2; ok=0; }
 grep -qF "pkg: package not installed" "$LOG" || { echo "FAIL: pkg files missing-package rejection missing" >&2; ok=0; }
+grep -qF "pkg: package not found" "$LOG" || { echo "FAIL: pkg info missing-package rejection missing" >&2; ok=0; }
+grep -qF "source: installed" "$LOG" || { echo "FAIL: pkg info installed metadata missing" >&2; ok=0; }
 grep -qF "/usr/bin/pkghello" "$LOG" || { echo "FAIL: pkg files output missing" >&2; ok=0; }
 grep -qF "P3b: package installed and activated" "$LOG" || { echo "FAIL: kernel did not activate installed package" >&2; ok=0; }
 grep -qF "P3b: package store payload live-mounted" "$LOG" || { echo "FAIL: live package-store mount missing" >&2; ok=0; }

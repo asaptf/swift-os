@@ -8,9 +8,9 @@ content, and collect support evidence.
 SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
 content under `/usr`. The current target-side package manager supports local
-file install, `pkg install FILE`, into a writable package-store disk, `pkg list`
-and `pkg files NAME` for active package inspection, plus a signed static HTTP
-repository fixture with `pkg repo set`, `pkg update [URL]`, and
+file install, `pkg install FILE`, into a writable package-store disk, `pkg list`,
+`pkg info NAME`, and `pkg files NAME` for active package inspection, plus a
+signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`, and
 `pkg install NAME`. Repository installs resolve dependencies by package name.
 Public production channels, version-constraint solving, remove, upgrade, and
 rollback are staged work, not current behavior. The ports workflow can
@@ -51,6 +51,7 @@ Use this guide with:
 | Package-store boot activation | Implemented and proven by `make package-store-test` |
 | Target-side `/bin/pkg install FILE` | Implemented for local `.swpkg` files and proven by `make package-local-install-test` |
 | Target-side `/bin/pkg list` | Implemented for the active package-store records |
+| Target-side `/bin/pkg info NAME` | Implemented for verified catalog entries and active installed package metadata |
 | Target-side `/bin/pkg files NAME` | Implemented for active package payload file lists and proven by `make package-local-install-test` and `make package-repo-install-test` |
 | Host static repository tool | Implemented as `build/pkgrepo` |
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
@@ -120,7 +121,7 @@ Pick the narrowest workflow that proves the behavior you care about:
 | --- | --- | --- | --- |
 | Show one package payload under `/usr` | Direct read-only payload overlay | `/usr/bin/pkghello` is present at boot | `make package-overlay-test` |
 | Validate package-store boot activation | Preseeded package-store image | Active package generation mounts at boot | `make package-store-test` |
-| Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello`; `pkg files pkghello` lists the payload | `make package-local-install-test` |
+| Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello`; `pkg info pkghello` reports the installed version; `pkg files pkghello` lists the payload | `make package-local-install-test` |
 | Prove signed repository install | Signed HTTP fixture | `pkg update`, `pkg search`, `pkg info`, `pkg install pkghello`, and `pkg files pkghello` work by name | `make package-repo-install-test` |
 | Prove one real source port | Lua repository fixture | Guest installs `lua` and runs `lua -e 'print(21 * 2)'` | `make package-lua-repo-install-test` |
 | Prove the current seed repository | Ports seed repository fixture | Guest installs Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite | `make package-ports-seed-repo-install-test` |
@@ -389,6 +390,7 @@ Log in as `root`, then run:
 pkg list
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg info pkghello
 pkg files pkghello
 /usr/bin/pkghello
 ```
@@ -399,6 +401,7 @@ Expected output includes:
 no packages installed
 pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
+source: installed
 /usr/bin/pkghello
 pkghello: hello from package overlay
 ```

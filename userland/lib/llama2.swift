@@ -355,6 +355,15 @@ extension Llama2: LlamaModel {}
 // element-for-element the same values runq.c gets from its predequantized
 // table, without spending vocab*dim*4 bytes of RAM on a copy.
 
+@inline(__always)
+func llamaRoundedInt8Saturating(_ x: Float) -> Int8 {
+    let r = x.rounded()
+    if r != r { return 0 }       // NaN: keep the request alive, contribute zero.
+    if r > 127.0 { return 127 }
+    if r < -128.0 { return -128 }
+    return Int8(r)
+}
+
 final class QLlama2: LlamaModel {
     let cfg: LlamaConfig
     let gs: Int
@@ -504,18 +513,7 @@ final class QLlama2: LlamaModel {
             if scale == 0 {
                 for i in 0..<gs { qg[i] = 0 }
             } else {
-                for i in 0..<gs {
-                    let qf = (xg[i] / scale).rounded()
-                    if qf != qf {
-                        qg[i] = 0
-                    } else if qf >= 127.0 {
-                        qg[i] = 127
-                    } else if qf <= -127.0 {
-                        qg[i] = -127
-                    } else {
-                        qg[i] = Int8(Int(qf))
-                    }
-                }
+                for i in 0..<gs { qg[i] = llamaRoundedInt8Saturating(xg[i] / scale) }
             }
         }
     }
