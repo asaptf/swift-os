@@ -112,8 +112,9 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     tzdata, nginx, and sqlite from a DNS-resolved HTTP repository URL.
 - The Node.js application-hosting intake is now tracked as scaffolded, blocked
   ports:
-  - `ports/lang/nodejs/Port.json` pins the current LTS source tarball and records
-    the static runtime/V8/libuv policy blockers;
+  - `ports/lang/nodejs/Port.json` pins the current LTS source tarball, records
+    the static runtime/libuv blockers, and locks the first V8 profile to
+    Node's `--v8-lite-mode` jitless configuration;
   - `ports/lang/npm/Port.json` tracks npm as an explicit package, separate from
     Node.js, so registry access, cache, and global-prefix policy are reviewable;
   - `ports/sysutils/pm2/Port.json` tracks the process-manager layer separately

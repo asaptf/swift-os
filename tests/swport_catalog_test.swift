@@ -147,10 +147,11 @@ guard opensslInspectText.contains("runtimeDependencies: ca-certificates") else {
 let nodeInspect = run(tool, ["catalog", "inspect", "nodejs", catalog.path])
 requireSuccess(nodeInspect, "inspect nodejs")
 let nodeInspectText = output(nodeInspect)
-for blocker in ["V8 JIT or jitless policy", "full libuv thread audit"] {
-    guard nodeInspectText.contains(blocker) else {
-        fail("nodejs inspect output did not show blocker \(blocker): \(nodeInspectText)")
-    }
+guard nodeInspectText.contains("full libuv thread audit") else {
+    fail("nodejs inspect output did not show full libuv blocker: \(nodeInspectText)")
+}
+guard !nodeInspectText.contains("V8 JIT or jitless policy") else {
+    fail("nodejs inspect output still treats V8 policy as blocked: \(nodeInspectText)")
 }
 let npmInspect = run(tool, ["catalog", "inspect", "npm", catalog.path])
 requireSuccess(npmInspect, "inspect npm")

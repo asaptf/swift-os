@@ -309,7 +309,8 @@ packages should prove the machinery, not stress every missing POSIX surface.
 - `swift`: native Swift application runtime and tools. Split runtime, standard
   libraries, and compiler pieces if needed.
 - `nodejs`: requires careful work on libuv, sockets, timers, mmap, signals,
-  threading, and static linking policy.
+  threading, and static linking. The first V8 profile is locked to Node's
+  `--v8-lite-mode` jitless configuration.
 - `npm`: depends on the Node.js runtime and needs explicit cache/global-prefix,
   registry transport, script execution, and native-addon policy.
 - `pm2`: depends on Node.js/npm plus service supervision, signal delivery,
