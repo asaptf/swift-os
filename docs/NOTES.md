@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC24 SSHD IPv6 listener preflight (2026-06-11)
+
+- Added `-6` / `--ipv6` mode to `/bin/sshd`, selecting the existing AF_INET6
+  passive TCP socket path while keeping the default IPv4 listener unchanged.
+- Added the `sshd6` `/bin/swos-init` service token so custom base images can
+  autostart `/bin/sshd -6` from `/etc/swos/services` without adding argument
+  parsing to the tiny service manifest format.
+- Added `./tests/sshd_ipv6_listener_test.sh` and
+  `make sshd-ipv6-listener-test`. The test builds a temporary signed base image
+  with `sshd6`, boots QEMU with `ipv6=on`, and requires the IPv6 listener marker.
+  On QEMU builds with IPv6 hostfwd, it also drives a host OpenSSH remote exec
+  through `::1`.
+- This is an AF_INET6 listener deploy preflight. Provider-routed SSHD-over-IPv6
+  on a real cloud network remains a separate acceptance run.
+
+**Acceptance.** `make sshd-ipv6-listener-test` proves that `swos-init` starts
+`sshd6`, that `/bin/sshd -6` binds TCP/22 as an IPv6 listener under QEMU
+`ipv6=on`, and that the boot continues to the serial login without a crash.
+
 ## HC23 Hetzner static IPv6 config preflight (2026-06-11)
 
 - Added a boot-time `/etc/swos/net-ipv6` parser for static cloud IPv6

@@ -153,6 +153,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make sshd-kex-seed-test` | Build a temporary base image with a generated SSHD KEX seed and prove SSHD loads it while completing OpenSSH remote exec. |
 | `make sshd-authorized-keys-test` | Build a temporary base image with a generated SSHD authorized key and prove OpenSSH accepts it while rejecting the default fixture key. |
 | `make sshd-supervision-test` | Build a temporary base image with `sshd-once` and prove `swos-init` restarts SSHD between two host OpenSSH commands. |
+| `make sshd-ipv6-listener-test` | Build a temporary base image with `sshd6` and prove `/bin/sshd -6` autostarts as an AF_INET6 listener under `ipv6=on`. |
 | `make net-static-ipv6-test` | Build a temporary base image with Hetzner-style static IPv6 config and prove the kernel applies it at boot. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
@@ -405,10 +406,10 @@ To change package payload files, rebuild the package fixture or the relevant
 ### Console
 
 `/bin/swos-init` runs as the first user process when present in the base image.
-It reads `/etc/swos/services`, starts allowlisted boot services such as `sshd`,
-and then replaces itself with `/bin/console-login` unless an opt-in supervised
-service token keeps it running as a restart loop. If `swos-init` is missing, the
-kernel falls back to `/bin/console-login` directly.
+It reads `/etc/swos/services`, starts allowlisted boot services such as `sshd`
+or `sshd6`, and then replaces itself with `/bin/console-login` unless an opt-in
+supervised service token keeps it running as a restart loop. If `swos-init` is
+missing, the kernel falls back to `/bin/console-login` directly.
 
 After successful authentication, console-login starts the configured shell. When
 the shell exits, init/login starts again for the next session.

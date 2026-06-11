@@ -15,10 +15,12 @@ int puts_raw(const char *s);
 
 #define MAX_SUPERVISED_SERVICES 4
 #define SSHD_ONCE_MARKER "/tmp/swos-sshd-once"
+#define SSHD_IPV6_MARKER "/tmp/swos-sshd-ipv6"
 
 enum service_kind {
     SERVICE_SSHD = 1,
     SERVICE_SSHD_ONCE = 2,
+    SERVICE_SSHD6 = 3,
 };
 
 struct supervised_service {
@@ -64,21 +66,28 @@ static const char *service_name(enum service_kind kind) {
     if (kind == SERVICE_SSHD_ONCE) {
         return "sshd-once";
     }
+    if (kind == SERVICE_SSHD6) {
+        return "sshd6";
+    }
     return "sshd";
 }
 
-static void prepare_sshd_mode(enum service_kind kind) {
-    if (kind != SERVICE_SSHD_ONCE) {
-        return;
-    }
-
-    int fd = open(SSHD_ONCE_MARKER, O_WRONLY | O_CREAT);
+static void create_marker(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT);
     if (fd < 0) {
-        puts_raw("swos-init: could not create sshd-once marker\n");
+        puts_raw("swos-init: could not create service marker\n");
         return;
     }
     (void)write(fd, "1\n", 2);
     close(fd);
+}
+
+static void prepare_sshd_mode(enum service_kind kind) {
+    if (kind == SERVICE_SSHD_ONCE) {
+        create_marker(SSHD_ONCE_MARKER);
+    } else if (kind == SERVICE_SSHD6) {
+        create_marker(SSHD_IPV6_MARKER);
+    }
 }
 
 static int start_service(enum service_kind kind) {
@@ -91,8 +100,9 @@ static int start_service(enum service_kind kind) {
         return -1;
     }
     if (pid == 0) {
-        char *argv[] = { "sshd", 0 };
-        execve("/bin/sshd", argv, 0);
+        char *argv4[] = { "sshd", 0 };
+        char *argv6[] = { "sshd6", "-6", 0 };
+        execve("/bin/sshd", kind == SERVICE_SSHD6 ? argv6 : argv4, 0);
         puts_raw("swos-init: exec /bin/sshd failed\n");
         _exit(127);
     }
@@ -126,6 +136,8 @@ static void add_supervised_service(enum service_kind kind) {
 static void run_service_token(char *tok) {
     if (streq(tok, "sshd") || streq(tok, "/bin/sshd")) {
         start_sshd();
+    } else if (streq(tok, "sshd6")) {
+        (void)start_service(SERVICE_SSHD6);
     } else if (streq(tok, "sshd-supervised")) {
         add_supervised_service(SERVICE_SSHD);
     } else if (streq(tok, "sshd-once")) {

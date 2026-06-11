@@ -82,6 +82,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
 | Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd` | `./tests/ssh_transport_test.sh` |
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
+| Exercise SSHD IPv6 listener | SSHD IPv6 profile | Custom `/etc/swos/services` containing `sshd6`; manual `/bin/sshd -6` | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available | `make sshd-ipv6-listener-test` |
 | Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
@@ -441,16 +442,22 @@ Boot with host TCP 2222 forwarded to guest TCP 22. The default base image starts
 `sshd`. Custom images can stage a different service manifest with
 `SWOS_SERVICES_FILE=PATH`; `sshd-supervised` restarts a normal SSHD child and
 `sshd-once` is the restart acceptance token used by `make sshd-supervision-test`.
+The `sshd6` token starts `/bin/sshd -6` as an AF_INET6 TCP/22 listener for
+IPv6 cloud preflights. The default checked-in service manifest stays IPv4-only
+so the existing local hostfwd path remains stable.
 For a manual debug run or a custom port, log in as `root` and start:
 
 ```sh
 /bin/sshd
+# or
+/bin/sshd -6
 ```
 
 Wait for:
 
 ```text
 sshd: listening on 22 (session exec preflight)
+sshd: listening on 22 (IPv6 session exec preflight)
 ```
 
 Then connect from the host:
@@ -508,6 +515,7 @@ Proof:
 
 ```sh
 ./tests/sshd_transport_test.sh
+make sshd-ipv6-listener-test
 make sshd-kex-seed-test
 ```
 
@@ -631,6 +639,7 @@ Run the narrowest proof for the path you changed:
 | UDP echo | `./tests/udp_echo_test.sh` |
 | Static cloud IPv6 config | `make net-static-ipv6-test` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
+| SSHD IPv6 listener preflight | `make sshd-ipv6-listener-test` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
@@ -675,9 +684,10 @@ Current limits that matter when exposing a SwiftOS network service:
   default seed and authorized key are development-only, and deploy builds should
   provide `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
   `SSHD_AUTHORIZED_KEYS_FILE`. The KEX seed is mixed with a per-session counter,
-  but runtime entropy is still missing. It supports simple `ssh-ed25519` lines
-  plus safe restriction options in `/etc/ssh/authorized_keys`, bounded
-  stdout/stdin, and
+  but runtime entropy is still missing. It can bind IPv4 by default or AF_INET6
+  with `-6`/`sshd6`; provider-routed SSHD-over-IPv6 still needs a real cloud
+  acceptance run. It supports simple `ssh-ed25519` lines plus safe restriction
+  options in `/etc/ssh/authorized_keys`, bounded stdout/stdin, and
   direct single-component `/bin/<tool>` or `/usr/bin/<tool>` remote exec with
   whitespace splitting, quote removal, and backslash escaping; PTY, shell
   command parsing, scp, sftp, runtime host-key rotation, runtime entropy, larger

@@ -424,7 +424,8 @@ Current Hetzner readiness status:
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
   started at boot by `/bin/swos-init` from `/etc/swos/services`, binds guest
-  TCP/22, exchanges SSH identification strings with a normal OpenSSH client,
+  IPv4 TCP/22 by default, exchanges SSH identification strings with a normal
+  OpenSSH client,
   completes `curve25519-sha256` KEX with an `ssh-ed25519` host key derived from
   `/etc/ssh/ssh_host_ed25519_seed` and `chacha20-poly1305@openssh.com`,
   authenticates `root` with an
@@ -443,12 +444,14 @@ Current Hetzner readiness status:
   material, and login keys into the signed image. The KEX seed is only a
   per-image hardening input; runtime entropy is still follow-up work.
   `SWOS_SERVICES_FILE` can replace
-  `/etc/swos/services` for a custom candidate; the `sshd-supervised` and
-  `sshd-once` tokens exercise the current opt-in restart loop. The checked
+  `/etc/swos/services` for a custom candidate; the `sshd6` token starts
+  `/bin/sshd -6` as an AF_INET6 TCP/22 listener, while `sshd-supervised` and
+  `sshd-once` exercise the current opt-in restart loop. The checked
   proofs are `./tests/sshd_transport_test.sh`,
   `./tests/sshd_host_key_rotation_test.sh`,
   `./tests/sshd_kex_seed_test.sh`,
-  `./tests/sshd_authorized_keys_test.sh`, and
+  `./tests/sshd_authorized_keys_test.sh`,
+  `./tests/sshd_ipv6_listener_test.sh`, and
   `./tests/sshd_supervision_test.sh`; `./tests/sshd_usr_bin_exec_test.sh`
   also boots the `pkghello` package payload and runs `/usr/bin/pkghello` over
   SSHD. Together they verify that host OpenSSH pins the
@@ -477,8 +480,9 @@ Not deploy-complete yet:
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
-- Primary IPv6 can be staged as static image config, but cloud metadata
-  ingestion, automatic refresh/reconfigure, firewall policy, SSHD-over-IPv6
+- Primary IPv6 can be staged as static image config and SSHD can be started as
+  an AF_INET6 listener, but cloud metadata ingestion, automatic
+  refresh/reconfigure, firewall policy, provider-routed SSHD-over-IPv6
   acceptance, and a general service manager remain follow-up work.
 
 Provider references to re-check before a real cloud run:

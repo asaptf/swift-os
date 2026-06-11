@@ -721,6 +721,9 @@ Notes:
 - The default base image starts `/bin/sshd` at boot through `/bin/swos-init`
   and `/etc/swos/services`; manual `/bin/sshd` remains useful for custom ports
   or debug runs.
+- Pass `-6` or `--ipv6` to bind an AF_INET6 stream socket. Custom service
+  manifests can use the `sshd6` token to autostart `/bin/sshd -6` from
+  `/bin/swos-init`.
 - Custom base images can replace `/etc/swos/services` with
   `SWOS_SERVICES_FILE=PATH`. The opt-in tokens `sshd-supervised` and
   `sshd-once` keep `/bin/swos-init` alive as a restart loop for SSHD
@@ -743,7 +746,8 @@ Notes:
 - It uses a base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the
   checked-in default seed is development-only. It mixes a daemon-local KEX
   session counter and, when present, `/etc/ssh/ssh_kex_seed`; runtime entropy is
-  still missing. The
+  still missing. It can bind IPv4 by default or AF_INET6 with `-6`/`sshd6`, but
+  provider-routed SSHD-over-IPv6 remains a deploy acceptance item. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines plus
   the safe restriction options `restrict`, `no-pty`, `no-port-forwarding`,
   `no-agent-forwarding`, and `no-X11-forwarding`. Other options, including

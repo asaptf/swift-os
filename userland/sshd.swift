@@ -82,10 +82,21 @@ private func isOnceArg(_ p: UnsafePointer<CChar>) -> Bool {
     (p[0] == 0x2D && p[1] == 0x31 && p[2] == 0)
 }
 
+private func isIPv6Arg(_ p: UnsafePointer<CChar>) -> Bool {
+    (p[0] == 0x2D && p[1] == 0x36 && p[2] == 0) ||
+    (p[0] == 0x2D && p[1] == 0x2D && p[2] == 0x69 && p[3] == 0x70 &&
+     p[4] == 0x76 && p[5] == 0x36 && p[6] == 0)
+}
+
 private func isSshdOnceName(_ p: UnsafePointer<CChar>) -> Bool {
     p[0] == 0x73 && p[1] == 0x73 && p[2] == 0x68 && p[3] == 0x64 &&
     p[4] == 0x2D && p[5] == 0x6F && p[6] == 0x6E && p[7] == 0x63 &&
     p[8] == 0x65 && p[9] == 0
+}
+
+private func isSshdIPv6Name(_ p: UnsafePointer<CChar>) -> Bool {
+    p[0] == 0x73 && p[1] == 0x73 && p[2] == 0x68 && p[3] == 0x64 &&
+    p[4] == 0x36 && p[5] == 0
 }
 
 private func fileRequestsOnceMode() -> Bool {
@@ -95,9 +106,18 @@ private func fileRequestsOnceMode() -> Bool {
     return true
 }
 
+private func fileRequestsIPv6Mode() -> Bool {
+    let fd = swiftos_open("/tmp/swos-sshd-ipv6", 0)
+    if fd < 0 { return false }
+    _ = swiftos_close(fd)
+    _ = swiftos_unlink("/tmp/swos-sshd-ipv6")
+    return true
+}
+
 private struct SSHDConfig {
     var port: UInt16 = defaultPort
     var once: Bool = false
+    var ipv6: Bool = false
 }
 
 private func parseConfig(_ argc: Int32,
@@ -107,12 +127,17 @@ private func parseConfig(_ argc: Int32,
     if let name = av[0], isSshdOnceName(name) {
         cfg.once = true
     }
+    if let name = av[0], isSshdIPv6Name(name) {
+        cfg.ipv6 = true
+    }
     if argc < 2 { return cfg }
     var i: Int32 = 1
     while i < argc {
         if let arg = av[Int(i)] {
             if isOnceArg(arg) {
                 cfg.once = true
+            } else if isIPv6Arg(arg) {
+                cfg.ipv6 = true
             } else if arg[0] == 0x2D, arg[1] == 0x70, arg[2] == 0,
                       i + 1 < argc, let next = av[Int(i + 1)] {
                 if let p = parsePort(next) { cfg.port = p }
@@ -1879,8 +1904,11 @@ func main(_ argc: Int32,
     if fileRequestsOnceMode() {
         config.once = true
     }
+    if fileRequestsIPv6Mode() {
+        config.ipv6 = true
+    }
     let port = config.port
-    let lfd = swiftos_socket_stream()
+    let lfd = config.ipv6 ? swiftos_socket_stream_ipv6() : swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("sshd: socket failed\n"); return 1 }
     if swiftos_bind(lfd, port) != 0 {
         swiftos_puts("sshd: bind failed\n")
@@ -1894,7 +1922,7 @@ func main(_ argc: Int32,
     }
     swiftos_puts("sshd: listening on ")
     printUInt(UInt(port))
-    swiftos_puts(" (session exec preflight)\n")
+    swiftos_puts(config.ipv6 ? " (IPv6 session exec preflight)\n" : " (session exec preflight)\n")
     if config.once {
         swiftos_puts("sshd: once mode enabled\n")
     }
