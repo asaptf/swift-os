@@ -431,14 +431,17 @@ Current Hetzner readiness status:
   and backslash escaping for argv, but it is still not a shell. The host helper
   `build/sshkey` can derive the OpenSSH public host key or a known_hosts line
   from the base image seed file, and can generate a deploy-specific replacement
-  seed. Build-time provisioning uses the
-  `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE` make variables with
-  `make base-image` to stage deploy-specific host identity and login keys into
-  the signed image. `SWOS_SERVICES_FILE` can replace
+  seed. Build-time provisioning uses the `SSHD_HOST_SEED_FILE`,
+  `SSHD_KEX_SEED_FILE`, and `SSHD_AUTHORIZED_KEYS_FILE` make variables with
+  `make base-image` to stage deploy-specific host identity, image-time KEX seed
+  material, and login keys into the signed image. The KEX seed is only a
+  per-image hardening input; runtime entropy is still follow-up work.
+  `SWOS_SERVICES_FILE` can replace
   `/etc/swos/services` for a custom candidate; the `sshd-supervised` and
   `sshd-once` tokens exercise the current opt-in restart loop. The checked
   proofs are `./tests/sshd_transport_test.sh`,
   `./tests/sshd_host_key_rotation_test.sh`,
+  `./tests/sshd_kex_seed_test.sh`,
   `./tests/sshd_authorized_keys_test.sh`, and
   `./tests/sshd_supervision_test.sh`; `./tests/sshd_usr_bin_exec_test.sh`
   also boots the `pkghello` package payload and runs `/usr/bin/pkghello` over
@@ -459,7 +462,7 @@ Current Hetzner readiness status:
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
-  milestones should add runtime host-key rotation, real entropy, broader
+  milestones should add runtime host-key rotation, runtime entropy, broader
   authorized-key option enforcement, shell/PTY behavior, larger stdin/output
   streaming, production service policy, and broader remote commands beyond
   bounded direct `/bin/<tool>` or `/usr/bin/<tool>` exec. Dropbear remains a
@@ -599,6 +602,7 @@ A deployment handoff should include:
 - Service logs, readiness markers, and health responses.
 - SSHD public host key or known_hosts line derived from the exact seed staged
   into the image.
+- SSHD KEX seed source, if `SSHD_KEX_SEED_FILE` was used.
 - SSHD authorized_keys source and the public-key fingerprint expected to log in.
 - `top -b -n 1` output for resource-sensitive candidates.
 - Test command list and pass/fail result.

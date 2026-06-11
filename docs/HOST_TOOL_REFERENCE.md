@@ -20,7 +20,7 @@ format, manifest, signature, or fixture.
 | Repack the immutable base image | `make base-image` | `build/basepack` | `./tests/boot_test.sh`, `./tests/vfs_disk_test.sh` |
 | Build direct boot artifacts | `make build base-image build/virt.dtb` | Makefile, Swift compiler, linker | `./tests/boot_test.sh` |
 | Build the UEFI disk image | `make disk base-image` | `build/BOOTAA64.EFI`, `build/kernelboot` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
-| Generate or derive SwiftOS SSHD host-key material | `make sshkey` | `build/sshkey` | `make sshd-transport-test`, `make sshd-host-key-rotation-test` |
+| Generate or derive SwiftOS SSHD seed material | `make sshkey` | `build/sshkey` | `make sshd-transport-test`, `make sshd-host-key-rotation-test`, `make sshd-kex-seed-test` |
 | Create or inspect a `.swpkg` | `make package-fixture` | `build/swpkg` | `build/swpkg verify ...`, `make package-overlay-test` |
 | Build a package-store image | `make package-store-fixture` | `build/pkgstore` | `make package-store-test` |
 | Publish a signed repository fixture | `make package-repo-fixture` | `build/pkgrepo` | `make package-repo-install-test` |
@@ -36,7 +36,7 @@ format, manifest, signature, or fixture.
 | `build/basepack` | `make base-image` | Pack a directory into a `SWOSBASE` read-only base image. | `./tests/boot_test.sh` |
 | `build/updatestore` | `make updatestore` | Build an A/B `SWOSBOOT` update-store disk from two signed base images. | `tests/updatestore_test.swift`, `tests/ab_update_test.sh` |
 | `build/kernelboot` | `make kernelboot` | Build the signed UEFI kernel A/B boot manifest consumed from the ESP. | `tests/uefi_kernel_ab_test.sh` |
-| `build/sshkey` | `make sshkey` | Generate SwiftOS SSHD seed files and derive OpenSSH `ssh-ed25519` public keys and known_hosts lines from them. | `make sshd-transport-test`, `make sshd-host-key-rotation-test` |
+| `build/sshkey` | `make sshkey` | Generate SwiftOS SSHD seed files and derive OpenSSH `ssh-ed25519` public keys and known_hosts lines from host-key seeds. | `make sshd-transport-test`, `make sshd-host-key-rotation-test`, `make sshd-kex-seed-test` |
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
@@ -96,7 +96,10 @@ Example:
 ```sh
 make sshkey
 build/sshkey seed --out support/keys/ssh_host_ed25519_seed
-make SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed base-image
+build/sshkey seed --out support/keys/ssh_kex_seed
+make SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed \
+  SSHD_KEX_SEED_FILE=support/keys/ssh_kex_seed \
+  base-image
 build/sshkey known-host \
   --host '[127.0.0.1]:2222' \
   --seed-file support/keys/ssh_host_ed25519_seed
@@ -105,7 +108,10 @@ build/sshkey known-host \
 `make sshd-transport-test` uses this tool to prove host OpenSSH can pin the
 SwiftOS SSHD host key with `StrictHostKeyChecking=yes`. `make
 sshd-host-key-rotation-test` builds a temporary base image with a generated seed
-and proves the rotated key is what host OpenSSH pins.
+and proves the rotated key is what host OpenSSH pins. `make
+sshd-kex-seed-test` uses the same seed generator for `/etc/ssh/ssh_kex_seed`;
+that seed is mixed into the SSHD KEX pseudo-random context, but runtime entropy
+remains separate work.
 
 ## Package Artifact Tool
 

@@ -47,7 +47,7 @@ verification target, but the source of truth is always a host-side input.
 
 | Need | Edit or generate | Rebuild | Focused proof |
 | --- | --- | --- | --- |
-| Change login text, hostname, SSH preflight keys, boot services, or identity seed files | `base/etc/*`; `SSHD_HOST_SEED_FILE=PATH` and `SSHD_AUTHORIZED_KEYS_FILE=PATH` for deploy-specific SSHD keys; `SWOS_SERVICES_FILE=PATH` for custom boot services | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/sshd_transport_test.sh`, `make sshd-host-key-rotation-test`, `make sshd-authorized-keys-test`, or `make sshd-supervision-test` for SSHD, `./tests/boot_test.sh` for general boot |
+| Change login text, hostname, SSH preflight keys, boot services, or identity seed files | `base/etc/*`; `SSHD_HOST_SEED_FILE=PATH`, `SSHD_KEX_SEED_FILE=PATH`, and `SSHD_AUTHORIZED_KEYS_FILE=PATH` for deploy-specific SSHD keys and KEX seed material; `SWOS_SERVICES_FILE=PATH` for custom boot services | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/sshd_transport_test.sh`, `make sshd-host-key-rotation-test`, `make sshd-kex-seed-test`, `make sshd-authorized-keys-test`, or `make sshd-supervision-test` for SSHD, `./tests/boot_test.sh` for general boot |
 | Change static HTTP content | `base/www/` | `make base-image` | `./tests/httpd_test.sh` |
 | Add or update a default `/bin` command | `userland/`, Makefile build rules, base staging rule | `make build base-image` | Command-specific QEMU test plus command reference update |
 | Update package repository trust or defaults | `build/pkgrepo-root.pub`, `PKG_DEFAULT_REPO_URL`, `PKG_DEFAULT_DNS_SERVER` | `make base-image` or custom `BASE_IMG=... base-image` | Matching package repository install test |
@@ -119,6 +119,7 @@ packs it into `build/base.img` with `build/basepack`.
 | --- | --- | --- |
 | `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/known_hosts`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
 | `SSHD_HOST_SEED_FILE` | `/etc/ssh/ssh_host_ed25519_seed` | Optional deploy-specific replacement for the checked-in SSHD development host-key seed |
+| `SSHD_KEX_SEED_FILE` | `/etc/ssh/ssh_kex_seed` | Optional deploy-specific KEX mix seed; runtime entropy remains a separate SSHD milestone |
 | `SSHD_AUTHORIZED_KEYS_FILE` | `/etc/ssh/authorized_keys` | Optional deploy-specific replacement for the checked-in SSHD development authorized key |
 | `SWOS_SERVICES_FILE` | `/etc/swos/services` | Optional replacement boot service manifest for custom images and service supervision tests |
 | `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |

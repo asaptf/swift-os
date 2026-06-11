@@ -102,6 +102,7 @@ Makefile and [NOTES.md](NOTES.md) before changing them.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SSHD_HOST_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD host-key seed staged into `/etc/ssh/ssh_host_ed25519_seed` during `make base-image` |
+| `SSHD_KEX_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD KEX mix seed staged into `/etc/ssh/ssh_kex_seed` during `make base-image`; this is image-time hardening, not runtime entropy |
 | `SSHD_AUTHORIZED_KEYS_FILE` | empty | Optional SSHD authorized_keys file staged into `/etc/ssh/authorized_keys` during `make base-image` |
 | `SWOS_SERVICES_FILE` | empty | Optional boot service manifest staged into `/etc/swos/services` during `make base-image` |
 
@@ -148,6 +149,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make pkgrepo` | Build the signed static package repository tool. |
 | `make sshkey` | Build the host-side SSH key helper for generating SSHD seed files and deriving OpenSSH host-key lines from them. |
 | `make sshd-host-key-rotation-test` | Build a temporary base image with a generated SSHD host-key seed and prove host OpenSSH pins the rotated key. |
+| `make sshd-kex-seed-test` | Build a temporary base image with a generated SSHD KEX seed and prove SSHD loads it while completing OpenSSH remote exec. |
 | `make sshd-authorized-keys-test` | Build a temporary base image with a generated SSHD authorized key and prove OpenSSH accepts it while rejecting the default fixture key. |
 | `make sshd-supervision-test` | Build a temporary base image with `sshd-once` and prove `swos-init` restarts SSHD between two host OpenSSH commands. |
 | `make swport` | Build the ports catalog and recipe helper. |
@@ -354,6 +356,7 @@ preflights:
 | `/etc/ssh/authorized_keys` | `base/etc/ssh/authorized_keys` | Public keys accepted by the current `/bin/sshd` preflight for `root` |
 | `/etc/ssh/known_hosts` | `base/etc/ssh/known_hosts` | Public host keys trusted by the current `/bin/ssh` preflight |
 | `/etc/ssh/ssh_host_ed25519_seed` | `base/etc/ssh/ssh_host_ed25519_seed` | Hex-encoded 32-byte development seed used to derive the SSHD Ed25519 host key |
+| `/etc/ssh/ssh_kex_seed` | `SSHD_KEX_SEED_FILE=PATH` | Optional hex-encoded 32-byte deploy seed mixed into SSHD KEX pseudo-random context |
 
 Replace this material when building a deploy-specific artifact. The checked-in
 SSHD host-key seed and SSH client trust anchor are deterministic test material,
@@ -362,7 +365,9 @@ Generate deploy-specific SSHD material, then stage it into the base image:
 
 ```sh
 build/sshkey seed --out support/keys/ssh_host_ed25519_seed
+build/sshkey seed --out support/keys/ssh_kex_seed
 make SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed \
+  SSHD_KEX_SEED_FILE=support/keys/ssh_kex_seed \
   SSHD_AUTHORIZED_KEYS_FILE=support/keys/authorized_keys \
   base-image
 build/sshkey known-host \
@@ -371,6 +376,7 @@ build/sshkey known-host \
 ```
 
 `SSHD_HOST_SEED_FILE` becomes `/etc/ssh/ssh_host_ed25519_seed`;
+`SSHD_KEX_SEED_FILE` becomes `/etc/ssh/ssh_kex_seed`;
 `SSHD_AUTHORIZED_KEYS_FILE` becomes `/etc/ssh/authorized_keys`;
 `SWOS_SERVICES_FILE` becomes `/etc/swos/services` when a custom service
 manifest is supplied.
