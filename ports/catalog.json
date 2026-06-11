@@ -359,7 +359,7 @@
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
       "blockedBy": ["full libuv thread audit"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
-      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, and AF_UNIX socketpair local streams used by libuv process/stream paths; full libuv audit remains the runtime blocker."
+      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
     },
     {
       "name": "npm",
@@ -389,7 +389,7 @@
       "prerequisiteBundles": ["base-posix", "proc-basic", "net-server", "service", "threads"],
       "blockedBy": ["nodejs runtime port", "full signal watcher support", "service supervisor contract", "persistent PM2 state policy"],
       "smokeTest": "pm2-runtime start /tmp/app.js --no-daemon and fetch the app from the host",
-      "notes": "Start with pm2-runtime/no-daemon against one app. Cluster mode, startup generation, file watching, and durable process lists wait for service and storage policy."
+      "notes": "Start with pm2-runtime/no-daemon against one app. The libuv signal watcher self-pipe shape is covered by uvsignalprobe, but full PM2 lifecycle handling still waits for Node.js plus service and storage policy. Cluster mode, startup generation, file watching, and durable process lists remain deferred."
     },
     {
       "name": "openjdk-runtime",

@@ -201,7 +201,7 @@ USER_SWIFT_FLAGS := \
 SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
 NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
-NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -isystem userland/compat -isystem $(SYSROOT)/include -c
+NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -isystem userland/compat -isystem $(SYSROOT)/include -c
 NEWLIB_LDFLAGS := -nostartfiles -nostdlib -static -T userland/user_newlib.ld -Wl,-z,max-page-size=4096 -L $(SYSROOT)/lib
 NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 # Garbage-collect unused sections; entry is _start from the boot stub.
@@ -283,6 +283,7 @@ USER_UVWAKEPROBE_ELF := $(BUILD)/uvwakeprobe.elf
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
+USER_UVSIGNALPROBE_ELF := $(BUILD)/uvsignalprobe.elf
 USER_SIGNALPROBE_ELF := $(BUILD)/signalprobe.elf
 USER_SOCKETPROBE_ELF := $(BUILD)/socketprobe.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
@@ -405,6 +406,7 @@ BASE_EXEC_ELFS := \
 	$(USER_UVBARRIERPROBE_ELF) \
 	$(USER_UVCONDPROBE_ELF) \
 	$(USER_UVSOCKETPAIRPROBE_ELF) \
+	$(USER_UVSIGNALPROBE_ELF) \
 	$(USER_SIGNALPROBE_ELF) \
 	$(USER_SOCKETPROBE_ELF) \
 	$(USER_COPROC_ELF) \
@@ -419,8 +421,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test uvsocketpair-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-hosted-url-install-test
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test uvcond-test uvsocketpair-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 .PHONY: sshd-ipv6-listener-test
 
@@ -961,6 +962,12 @@ $(BUILD)/n_uvsocketpairprobe.o: userland/uvsocketpairprobe.c userland/compat/sys
 $(USER_UVSOCKETPAIRPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvsocketpairprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvsocketpairprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_uvsignalprobe.o: userland/uvsignalprobe.c userland/compat/pthread.h userland/compat/signal.h userland/compat/unistd.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_UVSIGNALPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvsignalprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvsignalprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_signalprobe.o: userland/signalprobe.c userland/compat/signal.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -1283,6 +1290,9 @@ uvcond-test: build $(QEMU_DTB) base-image
 
 uvsocketpair-test: build $(QEMU_DTB) base-image
 	./tests/uvsocketpair_test.sh
+
+uvsignal-test: build $(QEMU_DTB) base-image
+	./tests/uvsignal_test.sh
 
 signal-test: build $(QEMU_DTB) base-image
 	./tests/signal_test.sh
@@ -1693,6 +1703,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_UVBARRIERPROBE_ELF) $(BASE_ROOT)/bin/uvbarrierprobe
 	cp $(USER_UVCONDPROBE_ELF) $(BASE_ROOT)/bin/uvcondprobe
 	cp $(USER_UVSOCKETPAIRPROBE_ELF) $(BASE_ROOT)/bin/uvsocketpairprobe
+	cp $(USER_UVSIGNALPROBE_ELF) $(BASE_ROOT)/bin/uvsignalprobe
 	cp $(USER_SIGNALPROBE_ELF) $(BASE_ROOT)/bin/signalprobe
 	cp $(USER_SOCKETPROBE_ELF) $(BASE_ROOT)/bin/socketprobe
 	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc
