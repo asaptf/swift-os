@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "name": "acme-sh",
+  "version": "3.1.3",
+  "revision": 1,
+  "category": "security",
+  "summary": "Shell-based ACME client for SwiftOS HTTPS hosting",
+  "homepage": "https://github.com/acmesh-official/acme.sh",
+  "license": ["GPL-3.0-only"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.1.3.tar.gz",
+    "sha256": "efd12b265252f8875269960b6b31830731ccce2b3e6ff8e7ecfbee21fde35ab4"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "script-stage",
+    "args": [
+      "--install-home=/usr/lib/acme-sh",
+      "--bin-path=/usr/bin/acme.sh",
+      "--accountconf=/tmp/acme-sh/account.conf",
+      "--cert-home=/tmp/acme-sh/certs",
+      "--http-01-webroot=/tmp/acme-challenge"
+    ],
+    "env": {
+      "ACME_OPENSSL_BIN": "/usr/bin/openssl",
+      "ACME_HTTP_BIN": "/usr/bin/curl",
+      "ACME_POSIX_SHELL": "/usr/bin/oksh"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "acme.sh", "hooks", "version-marker"]
+  },
+  "package": {
+    "depends": ["ca-certificates", "curl", "oksh", "openssl"],
+    "provides": ["acme-client", "acme-sh"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/acme.sh", "to": "/usr/bin/acme.sh", "mode": "0755" },
+      { "type": "tree", "from": "destdir/usr/lib/acme-sh", "to": "/usr/lib/acme-sh", "mode": "0644" },
+      { "from": "destdir/usr/share/acme-sh/swiftos-acme-sh.version", "to": "/usr/share/acme-sh/swiftos-acme-sh.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": ["capFsRead", "capTmpWrite"],
+      "services": ["dns", "http-01", "tcp-client", "tls-client"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/acme.sh --version",
+      "ACME_HOME=/tmp/acme-sh /usr/bin/acme.sh --help"
+    ]
+  },
+  "notes": "Scaffold only. acme.sh is the smallest plausible Let's Encrypt path for early SwiftOS web hosting because it is a script package that can reuse packaged curl, OpenSSL, and ca-certificates instead of bringing in Go or Python. The first package should stage the main executable under /usr/bin, keep hook libraries under /usr/lib/acme-sh, and write account, challenge, and certificate state under /tmp until persistent data-disk policy exists. Promotion to packages waits on oksh, curl, a build script, and a Pebble HTTP-01 QEMU smoke."
+}

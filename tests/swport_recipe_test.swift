@@ -53,6 +53,18 @@ private func requireString(_ object: [String: Any], _ key: String, _ expected: S
     }
 }
 
+private func stringSet(_ object: [String: Any], _ key: String) -> Set<String> {
+    Set((object[key] as? [String]) ?? [])
+}
+
+private func dependencySet(_ object: [String: Any]) -> Set<String> {
+    Set((object["depends"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String })
+}
+
+private func manifestFileSet(_ object: [String: Any]) -> Set<String> {
+    Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+}
+
 private func loadJSONObject(_ url: URL, context: String) -> [String: Any] {
     do {
         guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
@@ -83,6 +95,8 @@ let xzRecipe = repo.appendingPathComponent("ports/archivers/xz/Port.json")
 let libarchiveRecipe = repo.appendingPathComponent("ports/archivers/libarchive/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let opensslRecipe = repo.appendingPathComponent("ports/security/openssl/Port.json")
+let curlRecipe = repo.appendingPathComponent("ports/net/curl/Port.json")
+let acmeRecipe = repo.appendingPathComponent("ports/security/acme-sh/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
 let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
@@ -116,6 +130,12 @@ guard FileManager.default.isReadableFile(atPath: libarchiveRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: opensslRecipe.path) else {
     fail("missing ports/security/openssl/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: curlRecipe.path) else {
+    fail("missing ports/net/curl/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: acmeRecipe.path) else {
+    fail("missing ports/security/acme-sh/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -238,6 +258,81 @@ do {
     }
 } catch {
     fail("could not parse generated pm2 manifest: \(error)")
+}
+
+let curlValidate = run(swport, ["recipe", "validate", "net/curl"])
+requireSuccess(curlValidate, "validate curl recipe")
+guard output(curlValidate).contains("recipe: OK curl-8.20.0_1") else {
+    fail("validate output did not confirm curl recipe: \(output(curlValidate))")
+}
+let curlRecipeObject = loadJSONObject(curlRecipe, context: "ports/net/curl/Port.json")
+guard let curlBuild = curlRecipeObject["build"] as? [String: Any],
+      let curlArgs = curlBuild["args"] as? [String] else {
+    fail("curl recipe does not expose build args")
+}
+for disabled in ["--disable-ftp", "--disable-smtp", "--disable-tftp", "--disable-threaded-resolver"] {
+    guard curlArgs.contains(disabled) else {
+        fail("curl recipe lost intentionally minimal protocol/runtime flag \(disabled): \(curlArgs)")
+    }
+}
+let curlManifestURL = temp.appendingPathComponent("curl-manifest.json")
+let curlManifest = run(swport, ["recipe", "manifest", "net/curl", "--output", curlManifestURL.path])
+requireSuccess(curlManifest, "generate curl manifest")
+let curlManifestObject = loadJSONObject(curlManifestURL, context: "generated curl manifest")
+requireString(curlManifestObject, "name", "curl")
+requireString(curlManifestObject, "version", "8.20.0")
+guard dependencySet(curlManifestObject) == ["ca-certificates", "openssl", "zlib"] else {
+    fail("curl manifest dependencies were \(String(describing: curlManifestObject["depends"]))")
+}
+guard stringSet(curlManifestObject, "provides") == ["curl", "libcurl"] else {
+    fail("curl manifest provides were \(String(describing: curlManifestObject["provides"]))")
+}
+let curlFilePaths = manifestFileSet(curlManifestObject)
+guard curlFilePaths == [
+    "/usr/bin/curl",
+    "/usr/include/curl/curl.h",
+    "/usr/include/curl/curlver.h",
+    "/usr/include/curl/easy.h",
+    "/usr/include/curl/header.h",
+    "/usr/include/curl/mprintf.h",
+    "/usr/include/curl/multi.h",
+    "/usr/include/curl/options.h",
+    "/usr/include/curl/stdcheaders.h",
+    "/usr/include/curl/system.h",
+    "/usr/include/curl/typecheck-gcc.h",
+    "/usr/include/curl/urlapi.h",
+    "/usr/include/curl/websockets.h",
+    "/usr/lib/libcurl.a",
+    "/usr/lib/pkgconfig/libcurl.pc",
+    "/usr/share/curl/swiftos-curl.version",
+] else {
+    fail("unexpected curl manifest files: \(curlFilePaths.sorted())")
+}
+
+let acmeValidate = run(swport, ["recipe", "validate", "security/acme-sh"])
+requireSuccess(acmeValidate, "validate acme-sh recipe")
+guard output(acmeValidate).contains("recipe: OK acme-sh-3.1.3_1") else {
+    fail("validate output did not confirm acme-sh recipe: \(output(acmeValidate))")
+}
+let acmeManifestURL = temp.appendingPathComponent("acme-sh-manifest.json")
+let acmeManifest = run(swport, ["recipe", "manifest", "security/acme-sh", "--output", acmeManifestURL.path])
+requireSuccess(acmeManifest, "generate acme-sh manifest")
+let acmeManifestObject = loadJSONObject(acmeManifestURL, context: "generated acme-sh manifest")
+requireString(acmeManifestObject, "name", "acme-sh")
+requireString(acmeManifestObject, "version", "3.1.3")
+guard dependencySet(acmeManifestObject) == ["ca-certificates", "curl", "oksh", "openssl"] else {
+    fail("acme-sh manifest dependencies were \(String(describing: acmeManifestObject["depends"]))")
+}
+guard stringSet(acmeManifestObject, "provides") == ["acme-client", "acme-sh"] else {
+    fail("acme-sh manifest provides were \(String(describing: acmeManifestObject["provides"]))")
+}
+let acmeFilePaths = manifestFileSet(acmeManifestObject)
+guard acmeFilePaths == [
+    "/usr/bin/acme.sh",
+    "/usr/lib/acme-sh",
+    "/usr/share/acme-sh/swiftos-acme-sh.version",
+] else {
+    fail("unexpected acme-sh manifest files: \(acmeFilePaths.sorted())")
 }
 
 let manifestURL = temp.appendingPathComponent("manifest.json")
@@ -1225,4 +1320,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates nodejs/npm/pm2 intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, openssl, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates nodejs/npm/pm2/curl/acme-sh intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, openssl, pcre2, tzdata, nginx, and sqlite recipe fixtures")
