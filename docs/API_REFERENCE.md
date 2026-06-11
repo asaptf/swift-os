@@ -244,6 +244,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 69 | `kernel_activate` | none | 0 or negative error |
 | 70 | `kernel_confirm` | none | 0 or negative error |
 | 71 | `eventfd` | `initval`, `flags` | fd or negative error |
+| 72 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 
 Notes:
 
@@ -665,6 +666,9 @@ the caller holds `capConsole`. The normal path is `/bin/console-login`.
 process-launch behavior is documented by the syscall table and the handle
 inheritance rules below; do not treat `capSpawn` as Linux-style execute
 permission.
+
+`capLogExport` gates `log_read` / `/bin/logtail`. The default seeded accounts do
+not include this bit.
 
 ### Seeded Principals
 
@@ -1187,6 +1191,12 @@ int swiftos_kernel_activate(void);
 int swiftos_kernel_confirm(void);
 ```
 
+### Logging
+
+```c
+long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
+```
+
 ### Security And Process
 
 ```c
@@ -1363,6 +1373,7 @@ one booting acceptance path:
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
+| Log export | `kernel/log/log.swift`, `kernel/syscall/syscall.swift`, `userland/logtail.swift`, `userland/lib/swift_user.h` | `make log-export-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,

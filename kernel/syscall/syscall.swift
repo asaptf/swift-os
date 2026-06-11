@@ -72,6 +72,7 @@ private let sysKernelStage: UInt = 68    // kernel_stage() — copy the active k
 private let sysKernelActivate: UInt = 69 // kernel_activate() — flip the active kernel slot in kernel-state (U1g-5d); needs capConsole
 private let sysKernelConfirm: UInt = 70  // kernel_confirm() — mark the booted ESP kernel slot healthy (U1g-5c); needs capConsole
 private let sysEventfd: UInt = 71         // eventfd(initval, flags) — event notification counter
+private let sysLogRead: UInt = 72         // log_read(buf, cap, max_count) — needs capLogExport
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -275,6 +276,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = espActivateOtherKernel() // U1g-5d: capConsole-gated kernel-slot flip via kernel-state
     } else if number == sysKernelConfirm {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
+    } else if number == sysLogRead {
+        result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
     } else {
         result = -38 // ENOSYS
     }
@@ -299,4 +302,12 @@ private func syscallTcSetAttr(termios ptr: UInt) -> Int {
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
     ttySetLflag(lflag)
     return 0
+}
+
+private func syscallLogRead(buffer ptr: UInt, capacity cap: UInt, maxCount: UInt) -> Int {
+    if !klogCanExportRing(capabilities: processCurrentCaps()) { return -1 } // EPERM
+    if cap == 0 || maxCount == 0 { return 0 }
+    if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return -22 }
+    guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
+    return logFormatRecentTail(Int(maxCount), into: dst, capacity: Int(cap))
 }

@@ -25,6 +25,7 @@ focused test output, and host client output for network services.
 | Boot milestones | Kernel UART and `klog` lines | QEMU serial output | `./tests/boot_test.sh` |
 | Structured kernel ring tail | `kernel/log/log.swift` | Ring dump in serial boot log | `./tests/boot_test.sh` |
 | Log export serialization sample | `logFormatRecentTail` | `LOG-EXPORT-BEGIN` block in boot log | `./tests/boot_test.sh` |
+| Userland log export | `/bin/logtail` over `SYS_LOG_READ` | Guest command output with `capLogExport` | `./tests/log_export_test.sh` |
 | Process snapshot | `/bin/ps` | Guest command output | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | System/process statistics | `/bin/top` | Guest command output | `./tests/top_test.sh` |
 | Service readiness | Service-prefixed serial markers | QEMU serial output | service-specific tests |
@@ -186,15 +187,14 @@ Useful logger foundation markers:
 | `source filtering active` | Per-source filtering is active |
 | `source override allows error` | Source override table allowed an error record |
 | `sink indirection active` | Live log sink dispatch is active |
-| `sink capability hook active` | Future `capLogExport` hooks are compiled in |
+| `sink capability hook active` | `capLogExport` hooks are compiled in |
 | `log: recent` | Ring-tail dump was rendered |
 
 Acceptance coverage: `./tests/boot_test.sh`.
 
 ## Log Export Sample
 
-The current tree has an internal ring serializer, not a user-visible `/dev/klog`
-or remote log daemon. During boot, the smoke path prints a sample block:
+The boot smoke path prints a small serializer sample block:
 
 ```text
 LOG-EXPORT bytes=...
@@ -203,11 +203,16 @@ tick=23 level=I source=log_export msg="tail serialization ready"
 LOG-EXPORT-END
 ```
 
-This proves the ring can be formatted into stable key=value lines for a future
-export path. Treat this as a diagnostic marker, not a supported external API.
+This proves the ring can be formatted into stable key=value lines before any
+userland tooling runs. The supported local target-side command is:
 
-`capLogExport` is reserved for the future export authority. No seeded account
-uses it as a production workflow today.
+```sh
+logtail [max-records]
+```
+
+`logtail` uses `SYS_LOG_READ` and requires `capLogExport`. No seeded account
+receives that bit by default, so the command normally reports permission denied
+unless an admin/supervisor context explicitly delegates it.
 
 ## Process And System Inspection
 
@@ -376,11 +381,10 @@ curl -v http://127.0.0.1:8080/metrics >support/llmd-metrics.txt 2>&1
 ## Known Limits
 
 - There is no persistent guest log store.
-- There is no supported `/dev/klog`, sysctl, or target command to dump the log
-  ring yet.
+- There is no supported `/dev/klog` or sysctl interface to dump the log ring.
 - There is no remote log service or collector protocol yet.
-- Kernel log export is an internal serialized sample in the boot log.
-- `capLogExport` is reserved but not a seeded operational capability.
+- Kernel log export is local and capability-gated through `/bin/logtail`.
+- `capLogExport` is supported for local export but not seeded by default.
 - Most historical boot banners still use direct UART output, not structured
   `klog` records.
 - Service metrics are service-specific. `llmd` has `/metrics`; `httpd` uses

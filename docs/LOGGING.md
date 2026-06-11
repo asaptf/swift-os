@@ -37,7 +37,8 @@ Use this guide with:
 | Structured detail | Optional `UInt64` detail payload | `detail=...` boot markers |
 | Context | Ring records can carry `pid` and `principal` | `pid=... principal=...` dump/export lines |
 | Export sample | Allocation-free key=value serializer for ring tail | `LOG-EXPORT-BEGIN` block |
-| Capability hook | `capLogExport` is reserved for future export/sink authority | security docs and boot marker |
+| Userland export | `SYS_LOG_READ` plus `/bin/logtail`, gated by `capLogExport` | `./tests/log_export_test.sh` |
+| Capability hook | `capLogExport` gates ring export and future sink authority | security docs and boot marker |
 
 The live UART path remains the primary user-visible logging path. The ring and
 serializer are current internal foundations, not stable external APIs.
@@ -212,15 +213,15 @@ Optional fields appear only when present:
 tick=23 level=I source=psinfo msg="process snapshot" detail=4 pid=1 principal=1
 ```
 
-This is not a supported external wire protocol yet. Treat it as evidence that
-the ring can already produce a stable machine-readable shape for a future
-log-export service.
+The same record shape is now exposed to userland through `SYS_LOG_READ` (72)
+and `/bin/logtail` when the caller holds `capLogExport`. It remains a local
+diagnostic format, not a remote collector protocol.
 
 ## Capability Boundary
 
-`capLogExport` is reserved as the future authority for exporting the kernel log
-ring or installing a non-UART log sink. It is not granted to the default service
-authority today.
+`capLogExport` is the authority for exporting the kernel log ring and remains
+the reserved authority for future non-UART sink installation. It is not granted
+to seeded accounts by default; root remains `0x3f`.
 
 Current hook helpers:
 
@@ -236,9 +237,15 @@ sink indirection active
 sink capability hook active
 ```
 
-There is no target command today that reads the ring through this capability.
-When that changes, update this reference, the security docs, and the relevant
-acceptance tests in the same milestone.
+Target command:
+
+```sh
+logtail [max-records]
+```
+
+Without `capLogExport`, `logtail` returns a permission-denied diagnostic. The
+focused acceptance test exercises both denial and a deliberately granted
+context via `/bin/logtail-probe`.
 
 ## Panic Behavior
 
@@ -311,14 +318,14 @@ make test
 ## Current Limits
 
 - No persistent guest log store.
-- No supported `/dev/klog`, sysctl, or target command for ring export.
+- No supported `/dev/klog` or sysctl interface for ring export.
 - No remote log daemon or collector protocol.
 - No production central log ingestion service.
 - No per-cell log namespace yet.
 - No high-cardinality metrics or histograms in the logger.
 - Most historical milestone banners still use direct UART output.
 - Service metrics remain service-specific.
-- `capLogExport` is reserved but not a seeded operational capability.
+- `capLogExport` is supported for local ring export but not seeded by default.
 
 These limits are current behavior, not design gaps to paper over. Consumer docs
 should describe them directly.
@@ -337,10 +344,10 @@ The implemented logging arc is:
 | L4b | Done | Exact-source filtering |
 | L4c | Done | Allocation-free key=value ring serializer |
 | L4d | Done | Log sink indirection and `capLogExport` hook |
+| L5a | Done | Capability-gated userland log tail export |
 
 Future work:
 
-- user-visible ring export through an explicit authority path;
 - supervised userland `logd` or equivalent collector;
 - remote batch export over a verified transport;
 - per-cell log namespaces;

@@ -78,6 +78,7 @@
 #define SYS_KERNEL_ACTIVATE 69
 #define SYS_KERNEL_CONFIRM 70
 #define SYS_EVENTFD        71
+#define SYS_LOG_READ       72
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -366,6 +367,12 @@ static inline int kernel_activate(void) {
 // -5 EIO).
 static inline int kernel_confirm(void) {
     return (int)__syscall3(SYS_KERNEL_CONFIRM, 0, 0, 0);
+}
+
+// Export a serialized tail of the kernel log ring into buf. Returns bytes
+// written, or a negative errno-style value. Privileged: needs CAP_LOG_EXPORT.
+static inline long log_read(void *buf, size_t cap, size_t max_count) {
+    return __syscall3(SYS_LOG_READ, (long)buf, (long)cap, (long)max_count);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.
