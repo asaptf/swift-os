@@ -203,6 +203,7 @@ Start with a narrow smoke:
 ./tests/tcp_echo_test.sh
 ./tests/udp_echo_test.sh
 ./tests/dns_test.sh
+./tests/socket_test.sh
 ```
 
 Use these reference programs:
@@ -232,6 +233,7 @@ Current process and concurrency tools include:
 | Run another image | `spawn`, `spawn_handles`, `execve` |
 | Wait for a child | `waitpid` |
 | Pipes and redirection | `pipe`, `dup`, `dup2`, `fcntl`, `poll`, `select`, `pselect` |
+| Nonblocking fd helpers | `pipe2`, `socket(... SOCK_NONBLOCK ...)`, `accept4`, and `O_NONBLOCK` pipe read/write |
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
 | C pthread facade | `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data through newlib compat |

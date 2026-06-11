@@ -1003,11 +1003,17 @@ selected POSIX-shaped calls onto SwiftOS syscalls:
 - `connect`
 - `listen`
 - `accept`
+- `accept4` with `SOCK_NONBLOCK` and `SOCK_CLOEXEC`
 - `send`, `recv`
 - `sendto`, `recvfrom`
 - `sendmsg`, `recvmsg` for supported paths
 - `setsockopt`, `getsockopt` for a minimal set
 - `gethostbyname`, `getaddrinfo`, `getnameinfo`
+
+`socket(..., SOCK_* | SOCK_NONBLOCK | SOCK_CLOEXEC, ...)` applies the requested
+status and descriptor flags through `fcntl`. `pipe2(O_NONBLOCK | O_CLOEXEC)` is
+available through the newlib compatibility headers, and pipe read/write honor
+`O_NONBLOCK` with `EAGAIN`.
 
 Unsupported options return conventional errors where possible.
 

@@ -931,6 +931,7 @@ diagnostic fixtures than stable application interfaces.
 | `threadsdemo` | `threadsdemo` | Create EL0 threads and prove futex-backed synchronization. | `tests/threads_test.sh` |
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
+| `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
 | `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
@@ -1269,6 +1270,7 @@ are not the primary operator interface.
 | `mprotectprobe` | newlib compat `mmap`, `mprotect`, executable mappings, and W^X rejection. | Yes, when validating C runtime memory-permission compatibility. | `tests/mprotect_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
+| `socketprobe` | newlib compat `pipe2`, `socket` flags, `accept4`, `getaddrinfo`, socket options, TCP client, and TCP server paths. | Yes, when validating C runtime network compatibility. | `tests/socket_test.sh` |
 | `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |
 | `forkdemo` | `fork`, `waitpid`, inherited cwd/fd state, IPC polling, and moved-handle receive. | Yes, for process and IPC diagnostics. | `tests/boot_test.sh`, `tests/cow_test.sh` |
 | `execdemo` | `execve` replacement of the current process image. | Yes, for exec diagnostics. | `tests/boot_test.sh` |

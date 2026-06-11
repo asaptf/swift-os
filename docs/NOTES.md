@@ -4599,3 +4599,25 @@ sets, handles timeout-only calls, and preserves `EBADF` for invalid descriptors.
 **Acceptance.** `make select-test`, `make docs-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM3 — newlib fd-flag and socket facade probe (DONE, 2026-06-11)
+
+**Scope.** Tighten the C/newlib fd and network surface that libuv-shaped
+runtimes expect. The compat layer now applies `SOCK_NONBLOCK` and
+`SOCK_CLOEXEC` on `socket`, exposes `accept4`, exposes `pipe2`, and relies on
+the existing `fcntl` syscall for descriptor/status flag storage. Kernel pipe
+read/write now honor `O_NONBLOCK` with `EAGAIN`, and the newlib `_read`,
+`_write`, `_close`, and `_lseek` bottom-end stubs translate negative SwiftOS
+errors to `-1` plus `errno`.
+
+- `userland/compat/unistd.h`: declares `pipe2` while preserving the sysroot
+  `unistd.h` through `include_next`.
+- `userland/compat/sys/socket.h`: declares `accept4` beside the existing socket
+  facade.
+- `/bin/socketprobe`: proves `pipe2(O_NONBLOCK | O_CLOEXEC)`,
+  `socket(... SOCK_NONBLOCK | SOCK_CLOEXEC ...)`, guest TCP client exchange,
+  and guest TCP server exchange through `accept4`.
+
+**Acceptance.** `make socket-test`, `make docs-test`, `make select-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

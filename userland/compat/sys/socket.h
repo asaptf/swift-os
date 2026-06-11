@@ -67,6 +67,7 @@ int bind(int fd, const struct sockaddr *addr, socklen_t len);
 int connect(int fd, const struct sockaddr *addr, socklen_t len);
 int listen(int fd, int backlog);
 int accept(int fd, struct sockaddr *addr, socklen_t *len);
+int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags);
 long send(int fd, const void *buf, size_t n, int flags);
 long recv(int fd, void *buf, size_t n, int flags);
 int setsockopt(int fd, int level, int opt, const void *val, socklen_t len);

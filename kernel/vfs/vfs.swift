@@ -1684,6 +1684,10 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
                 copied += 1
             }
             let done = copied > 0 || pipes[p].writeRefs == 0
+            if !done && (file.flags & oNonblock) != 0 {
+                vfsUnlock(daif)
+                return errAgain
+            }
             vfsUnlock(daif)
             if done { break }
             processYieldForIO()
@@ -1820,6 +1824,10 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
                 written += 1
             }
             let done = written >= Int(count)
+            if !done && (file.flags & oNonblock) != 0 {
+                vfsUnlock(daif)
+                return written > 0 ? written : errAgain
+            }
             vfsUnlock(daif)
             if done { break }
             if written < Int(count) { processYieldForIO() }

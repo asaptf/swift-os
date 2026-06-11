@@ -36,6 +36,16 @@ static long sys3(long n, long a0, long a1, long a2) {
     return x0;
 }
 
+static int ret_int(long r) {
+    if (r < 0) { errno = (int)-r; return -1; }
+    return (int)r;
+}
+
+static _off_t ret_off(long r) {
+    if (r < 0) { errno = (int)-r; return (_off_t)-1; }
+    return (_off_t)r;
+}
+
 // Kernel stat layout (kernel/vfs/vfs.swift writeStatMode), 24 bytes:
 //   u32 mode, u32 uid, u64 size, u32 gid, u32 nlink.
 struct kstat {
@@ -55,13 +65,13 @@ void _exit(int code) {
     for (;;) {}
 }
 
-int _close(int fd) { return (int)sys3(SYS_CLOSE, fd, 0, 0); }
+int _close(int fd) { return ret_int(sys3(SYS_CLOSE, fd, 0, 0)); }
 
-int _read(int fd, char *buf, int len) { return (int)sys3(SYS_READ, fd, (long)buf, len); }
+int _read(int fd, char *buf, int len) { return ret_int(sys3(SYS_READ, fd, (long)buf, len)); }
 
-int _write(int fd, const char *buf, int len) { return (int)sys3(SYS_WRITE, fd, (long)buf, len); }
+int _write(int fd, const char *buf, int len) { return ret_int(sys3(SYS_WRITE, fd, (long)buf, len)); }
 
-_off_t _lseek(int fd, _off_t off, int whence) { return (_off_t)sys3(SYS_LSEEK, fd, off, whence); }
+_off_t _lseek(int fd, _off_t off, int whence) { return ret_off(sys3(SYS_LSEEK, fd, off, whence)); }
 
 // Translate newlib's BSD-style open flags into the kernel ABI (kernel/vfs/
 // vfs.swift). The access mode bits (O_RDONLY 0, O_WRONLY 1, O_RDWR 2) already

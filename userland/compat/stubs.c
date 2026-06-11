@@ -123,6 +123,15 @@ static long sysret_long(long r) {
 #ifndef ENOPROTOOPT
 #define ENOPROTOOPT 92
 #endif
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 1
+#endif
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 0x4000
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0x40000
+#endif
 
 // newlib's fcntl (sysfcntl.o) is a hard ENOSYS stub that never reaches a syscall
 // stub, so override the symbol here (strong, pulled before libc). The busybox
@@ -134,6 +143,20 @@ int fcntl(int fd, int cmd, ...) {
     int arg = va_arg(ap, int);
     va_end(ap);
     return sysret(sys3(SYS_FCNTL, fd, cmd, arg));
+}
+
+static int compat_apply_fd_flags(int fd, int set_nonblock, int set_cloexec) {
+    if (set_nonblock) {
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl < 0) { return -1; }
+        if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) { return -1; }
+    }
+    if (set_cloexec) {
+        int fl = fcntl(fd, F_GETFD, 0);
+        if (fl < 0) { return -1; }
+        if (fcntl(fd, F_SETFD, fl | FD_CLOEXEC) < 0) { return -1; }
+    }
+    return 0;
 }
 
 // ---- process ---------------------------------------------------------------
@@ -1411,7 +1434,13 @@ W int socket(int domain, int type, int protocol) {
     if (base != SOCK_STREAM && base != SOCK_DGRAM) { errno = EPROTONOSUPPORT; return -1; }
     if (!socket_protocol_ok(base, protocol)) { errno = EPROTONOSUPPORT; return -1; }
     int fd = sysret(sys3(SYS_SOCKET, domain, base, protocol));
-    if (fd >= 0) { socket_meta_set(fd, domain, base, protocol); }
+    if (fd >= 0) {
+        socket_meta_set(fd, domain, base, protocol);
+        if (compat_apply_fd_flags(fd, (type & SOCK_NONBLOCK) != 0,
+                                  (type & SOCK_CLOEXEC) != 0) < 0) {
+            return -1;
+        }
+    }
     return fd;
 }
 
@@ -1456,6 +1485,20 @@ W int accept(int fd, struct sockaddr *addr, socklen_t *len) {
             sa.sin_family = AF_INET;
             copy_sockaddr_out(addr, len, &sa, sizeof(sa));
         }
+    }
+    return cfd;
+}
+
+W int accept4(int fd, struct sockaddr *addr, socklen_t *len, int flags) {
+    if (flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)) {
+        errno = EINVAL;
+        return -1;
+    }
+    int cfd = accept(fd, addr, len);
+    if (cfd < 0) { return -1; }
+    if (compat_apply_fd_flags(cfd, (flags & SOCK_NONBLOCK) != 0,
+                              (flags & SOCK_CLOEXEC) != 0) < 0) {
+        return -1;
     }
     return cfd;
 }
@@ -1959,6 +2002,23 @@ W int dup2(int o, int n) {
     return nfd;
 }
 W int pipe(int fds[2]) { return sysret(sys3(SYS_PIPE, (long)fds, 0, 0)); }
+W int pipe2(int fds[2], int flags) {
+    if (!fds) { errno = EFAULT; return -1; }
+    if (flags & ~(O_NONBLOCK | O_CLOEXEC)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (pipe(fds) < 0) { return -1; }
+    if (compat_apply_fd_flags(fds[0], (flags & O_NONBLOCK) != 0,
+                              (flags & O_CLOEXEC) != 0) < 0) {
+        return -1;
+    }
+    if (compat_apply_fd_flags(fds[1], (flags & O_NONBLOCK) != 0,
+                              (flags & O_CLOEXEC) != 0) < 0) {
+        return -1;
+    }
+    return 0;
+}
 W int unlink(const char *p) { return sysret(sys3(SYS_UNLINK, (long)p, 0, 0)); }
 W int rename(const char *o, const char *n) { return sysret(sys3(SYS_RENAME, (long)o, (long)n, 0)); }
 W int mkdir(const char *p, mode_t m) { return sysret(sys3(SYS_MKDIR, (long)p, m, 0)); }
