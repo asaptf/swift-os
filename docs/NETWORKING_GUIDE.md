@@ -7,9 +7,10 @@ of the current limits.
 
 SwiftOS networking today is real but intentionally small: a QEMU `virt`
 virtio-net device, an in-kernel pure-Swift TCP/IP stack, capability-gated socket
-syscalls, static guest addressing, and a set of native userland network tools.
-It is enough to serve static files, serve local TinyStories completions, run TCP
-and UDP echo services, resolve DNS, and exercise the TLS 1.3 client path.
+syscalls, DHCPv4 lease acquisition with a QEMU/slirp static fallback, and a set
+of native userland network tools. It is enough to serve static files, serve
+local TinyStories completions, run TCP and UDP echo services, resolve DNS, and
+exercise the TLS 1.3 client path.
 
 Use this guide with:
 
@@ -26,11 +27,11 @@ Use this guide with:
 | Area | Current behavior |
 | --- | --- |
 | Hardware profile | QEMU `virt` with `virtio-net-device` over virtio-mmio |
-| Link mode | QEMU user networking, also called slirp |
-| Guest IPv4 | Static `10.0.2.15` |
-| Host/gateway alias | `10.0.2.2` |
-| Default DNS | QEMU slirp DNS at `10.0.2.3:53` |
-| DHCP | Not implemented; addresses are static in the checked-in stack |
+| Link mode | QEMU user networking, also called slirp; cloud virtio-net DHCP is the first deployment target |
+| Guest IPv4 | DHCPv4 lease when offered; fallback `10.0.2.15` for QEMU slirp |
+| Host/gateway alias | DHCP router option when offered; fallback `10.0.2.2` |
+| Default DNS | DHCP DNS option when offered; fallback QEMU slirp DNS at `10.0.2.3:53` |
+| DHCP | Minimal boot-time DHCPv4 DISCOVER/OFFER/REQUEST/ACK; no renewal or user command yet |
 | Socket authority | Processes need `capNet`; seeded `root` has it |
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |
 | Outbound guest access | Guest clients connect to `10.0.2.2` for host services |
@@ -229,6 +230,7 @@ Use the virtio-net acceptance test for the lowest-level network bring-up:
 Healthy serial output includes:
 
 ```text
+net-dhcp OK: lease 10.0.2.15 gateway 10.0.2.2 dns 10.0.2.3
 net-a: virtio-net up, MAC
 net-a: ARP reply, 10.0.2.2 is at
 net-a OK: ICMP echo reply from 10.0.2.2
@@ -236,6 +238,9 @@ net-a OK: ICMP echo reply from 10.0.2.2
 
 These markers prove that the driver attached, ARP resolved the slirp gateway,
 and the ICMP probe completed.
+
+If a DHCP server does not answer, the boot path logs the fallback and keeps the
+old slirp constants so local QEMU validation remains usable.
 
 ### Serve Static Files
 
@@ -498,8 +503,8 @@ Current limits that matter when exposing a SwiftOS network service:
 
 - `capNet` is coarse. It grants the ability to create sockets generally, not a
   specific port, address, or protocol.
-- There is no target-side firewall command, routing table command, or DHCP
-  client workflow yet.
+- There is no target-side firewall command, routing table command, or network
+  configuration command yet. DHCPv4 is boot-time only and does not renew leases.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.
@@ -520,6 +525,7 @@ network.
 | Area | Source |
 | --- | --- |
 | Socket constants and static slirp addresses | [kernel/net/socket.swift](../kernel/net/socket.swift) |
+| DHCPv4 codec | [kernel/net/dhcp.swift](../kernel/net/dhcp.swift) |
 | Virtio-net driver | [kernel/drivers/virtio_net.swift](../kernel/drivers/virtio_net.swift) |
 | Socket syscall dispatch | [kernel/syscall/syscall.swift](../kernel/syscall/syscall.swift) |
 | Native Swift socket bridge | [userland/lib/swift_user.h](../userland/lib/swift_user.h) |

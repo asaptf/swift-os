@@ -3,6 +3,35 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC1 DHCPv4 cloud network preflight (2026-06-11)
+
+- Added a minimal sans-IO DHCPv4 client codec in `kernel/net/dhcp.swift`.
+  It builds DISCOVER/REQUEST Ethernet frames and parses BOOTP/DHCP replies for
+  message type, `yiaddr`, server identifier, router, DNS, subnet mask, and lease
+  time. The parser validates transaction ID when requested and always validates
+  the client MAC in `chaddr`.
+- The IPv4 `NetStack` path now accepts DHCP server replies on UDP 67 -> 68 by
+  DHCP `chaddr`, including broadcast replies and unicast replies to a
+  not-yet-configured lease address. Ordinary UDP/TCP/ICMP still require packets
+  addressed to the current local IPv4.
+- `netInit()` keeps the old QEMU/slirp constants as a fallback, then attempts
+  DHCPv4 after virtio-net is live. On ACK it adopts the lease address, gateway,
+  DNS, and subnet mask before the existing net-a ARP/ICMP probe. The boot log
+  reports `net-dhcp OK: lease ... gateway ... dns ...` on success, otherwise it
+  reports the static fallback.
+- Hetzner Cloud preparation note: Hetzner documents Primary IPv4 as DHCP by
+  default, with static `/32` examples using gateway `172.31.1.1`; Arm64 custom
+  ISO/snapshot paths must match Arm64 servers. This slice is network readiness
+  only. Remote login still needs an `sshd` milestone, likely Dropbear
+  server-first, with SSH client support after or alongside the port if it stays
+  small.
+
+**Acceptance.** `tests/net_test.swift` now covers DHCP discover/request
+construction, broadcast offer parsing, wrong-MAC rejection, and unicast ACKs to
+a not-yet-configured address. `make build` verifies the DHCP codec under
+Embedded Swift. The focused runtime gate is `./tests/virtio_net_test.sh`, which
+now observes DHCP before the existing ARP/ICMP proof under QEMU/slirp.
+
 ## P18 libarchive seed package (2026-06-11)
 
 - Added `ports/archivers/libarchive/Port.json` for upstream libarchive 3.8.7 as

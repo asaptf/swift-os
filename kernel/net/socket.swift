@@ -10,9 +10,16 @@
 // the socket arrives or a timeout fires, then copies once across the syscall
 // boundary into the caller's user buffer and releases the RX descriptor.
 
-let netLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest address)
-let netGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
-let netDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
+let netFallbackLocalIP: IPv4 = 0x0A00_020F     // 10.0.2.15 (slirp's default guest address)
+let netFallbackGatewayIP: IPv4 = 0x0A00_0202   // 10.0.2.2  (slirp gateway)
+let netFallbackDnsIP: IPv4 = 0x0A00_0203       // 10.0.2.3  (slirp DNS server)
+let netFallbackSubnetMask: IPv4 = 0xFFFF_FF00  // 255.255.255.0
+
+var netLocalIP: IPv4 = netFallbackLocalIP
+var netGatewayIP: IPv4 = netFallbackGatewayIP
+var netDnsIP: IPv4 = netFallbackDnsIP
+var netSubnetMask: IPv4 = netFallbackSubnetMask
+var netDhcpConfigured = false
 
 // Our IPv6 address is derived at netInit time from the virtio-net MAC (link-local EUI-64 style).
 var netLocalIPv6: IPv6 = .zero
@@ -152,10 +159,13 @@ private func allocEphemeralPortLocked(for s: Int) -> UInt16 {
 /// false, so socket() returns ENETDOWN and the other boot paths are unaffected).
 func netInit() {
     let daif = netLock()
-    defer { netUnlock(daif) }
-    if netReady { return }
+    if netReady {
+        netUnlock(daif)
+        return
+    }
     if !virtioNetInit() {
         uartPuts("net: no virtio-net device attached\n")
+        netUnlock(daif)
         return
     }
     let m = virtioNetMac()
@@ -164,10 +174,114 @@ func netInit() {
     // For many QEMU slirp setups the "gateway" link-local is fe80::2 or similar.
     // We leave netGatewayIPv6 zero here; NDP/RA will populate neighbors as needed.
     // For direct testing we can also hardcode a common one if desired.
+    netLocalIP = netFallbackLocalIP
+    netGatewayIP = netFallbackGatewayIP
+    netDnsIP = netFallbackDnsIP
+    netSubnetMask = netFallbackSubnetMask
+    netDhcpConfigured = false
     gNet = NetStack(mac: m, ip: netLocalIP, ipv6: our6)
     gDnsScratch = pmm_alloc_page()   // 0 on failure → dnsResolve returns 0 gracefully
     netReady = true
+    netUnlock(daif)
+
+    _ = netTryDHCPv4(mac: m)
     uartPuts("net: IPv6 link-local configured (EUI-64 from MAC)\n")
+}
+
+private func netPrintIPv4(_ ip: IPv4) {
+    uartPutUInt(UInt64((ip >> 24) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64((ip >> 16) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64((ip >> 8) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64(ip & 0xFF))
+}
+
+private func netAwaitDHCP(xid: UInt32, messageType: UInt8, timeoutMs: Int) -> DHCPLease {
+    let start = systemTicks
+    let ticks = UInt64((timeoutMs + 9) / 10)
+    enable_irq()
+    while true {
+        let daif = netLock()
+        let r = netPumpLocked()
+        netUnlock(daif)
+        if r.gotDHCP && r.dhcp.xid == xid && r.dhcp.messageType == messageType {
+            return r.dhcp
+        }
+        if timeoutMs > 0 && systemTicks - start >= ticks {
+            return DHCPLease()
+        }
+        wfi()
+    }
+}
+
+private func netTryDHCPv4(mac: MAC) -> Bool {
+    let xid = UInt32(truncatingIfNeeded: rtcNow()) ^ 0xD4C3_B2A1
+    var daif = netLock()
+    if !netReady {
+        netUnlock(daif)
+        return false
+    }
+    virtioNetTxSubmit(frameLen: dhcpBuildDiscover(mac: mac, xid: xid, out: virtioNetTxBuffer()))
+    netUnlock(daif)
+
+    let offer = netAwaitDHCP(xid: xid, messageType: dhcpMsgOffer, timeoutMs: 1500)
+    if offer.messageType != dhcpMsgOffer {
+        uartPuts("net: DHCPv4 no offer; using static IPv4 ")
+        netPrintIPv4(netFallbackLocalIP)
+        uartPuts(" gateway ")
+        netPrintIPv4(netFallbackGatewayIP)
+        uartPuts("\n")
+        return false
+    }
+
+    daif = netLock()
+    if !netReady {
+        netUnlock(daif)
+        return false
+    }
+    virtioNetTxSubmit(frameLen: dhcpBuildRequest(mac: mac, xid: xid,
+                                                 requestedIP: offer.address,
+                                                 serverIP: offer.server,
+                                                 out: virtioNetTxBuffer()))
+    netUnlock(daif)
+
+    var ack = netAwaitDHCP(xid: xid, messageType: dhcpMsgAck, timeoutMs: 2000)
+    if ack.messageType != dhcpMsgAck {
+        uartPuts("net: DHCPv4 request timed out; using static IPv4 ")
+        netPrintIPv4(netFallbackLocalIP)
+        uartPuts(" gateway ")
+        netPrintIPv4(netFallbackGatewayIP)
+        uartPuts("\n")
+        return false
+    }
+    if ack.router == 0 { ack.router = offer.router }
+    if ack.dns == 0 { ack.dns = offer.dns }
+    if ack.subnetMask == 0 { ack.subnetMask = offer.subnetMask }
+    if ack.server == 0 { ack.server = offer.server }
+
+    daif = netLock()
+    if !netReady {
+        netUnlock(daif)
+        return false
+    }
+    netLocalIP = ack.address
+    netGatewayIP = ack.router == 0 ? netFallbackGatewayIP : ack.router
+    netDnsIP = ack.dns == 0 ? netFallbackDnsIP : ack.dns
+    netSubnetMask = ack.subnetMask == 0 ? netFallbackSubnetMask : ack.subnetMask
+    netDhcpConfigured = true
+    gNet = NetStack(mac: mac, ip: netLocalIP, ipv6: netLocalIPv6)
+    netUnlock(daif)
+
+    uartPuts("net-dhcp OK: lease ")
+    netPrintIPv4(netLocalIP)
+    uartPuts(" gateway ")
+    netPrintIPv4(netGatewayIP)
+    uartPuts(" dns ")
+    netPrintIPv4(netDnsIP)
+    uartPuts("\n")
+    return true
 }
 
 /// Resolve `name` (`nameLen` bytes, dotted form) to an IPv4 by querying a DNS
@@ -182,7 +296,8 @@ func dnsResolve(name: UnsafeRawPointer, nameLen: Int, serverIP: IPv4, serverPort
     let ready = netReady && scratch != 0
     netUnlock(daif)
     if !ready { return 0 }
-    let server = serverIP == 0 ? netDnsIP : serverIP
+    let dnsDefault = netDnsIP
+    let server = serverIP == 0 ? dnsDefault : serverIP
     let port = serverPort == 0 ? UInt16(53) : serverPort
     let s = socketCreate(owner: 0)
     if s < 0 { return 0 }

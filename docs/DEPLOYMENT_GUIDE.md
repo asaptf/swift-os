@@ -394,6 +394,42 @@ start it. The current system does not yet have a production service supervisor,
 so "deployed service" means "booted artifact set plus documented manual launch
 or test harness launch."
 
+### Hetzner Cloud Preparation
+
+Hetzner Cloud deploy readiness is tracked separately from the local QEMU
+application-service profile because it adds provider-specific boot, network, and
+remote-login requirements.
+
+Current HC1 status:
+
+- The network stack attempts a DHCPv4 lease during virtio-net bring-up and
+  adopts the offered IPv4 address, router, DNS server, and subnet mask before
+  the existing ARP/ICMP probe runs.
+- If DHCP does not answer, the QEMU/slirp fallback remains
+  `10.0.2.15` / `10.0.2.2` / `10.0.2.3`, preserving local network tests.
+- This matches Hetzner's documented Primary IPv4 model, where cloud servers get
+  their Primary IPv4 via DHCP. Their static examples use `/32` IPv4 addressing
+  with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.
+- A Hetzner custom ISO or snapshot must match the server architecture. For this
+  repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
+
+Not deploy-complete yet:
+
+- There is no `sshd` in the base image. The next remote-login milestone should
+  be Dropbear server-first: static build, host keys, key-based login, PTY/TTY
+  behavior, service launch, and a QEMU host-to-guest SSH acceptance test.
+- SSH client support is also desired for admin and deploy workflows, but it
+  should not replace the server-first remote-login proof.
+- IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and
+  service supervision remain follow-up work.
+
+Provider references to re-check before a real cloud run:
+
+- Hetzner Cloud static IP configuration:
+  <https://docs.hetzner.com/cloud/servers/static-configuration/>
+- Hetzner Cloud server FAQ, architecture and custom ISO notes:
+  <https://docs.hetzner.com/cloud/servers/faq/>
+
 ### AI Hosting Candidate
 
 Build model and base artifacts:

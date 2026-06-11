@@ -100,6 +100,9 @@ struct RxOutcome {
     var tcpPayloadOff = 0
     var tcpPayloadLen = 0
 
+    var gotDHCP = false
+    var dhcp = DHCPLease()
+
     // IPv6 UDP/TCP delivery (new for full dual-stack).
     var gotUDPv6 = false
     var udpSrcIPv6: IPv6 = .zero
@@ -166,16 +169,18 @@ struct NetStack {
         if type == ethTypeIPv4 {
             if payloadLen < ipv4HeaderLen { return r }
             let ipp = payload
-            guard ipVersion(ipp) == 4, ipValidChecksum(ipp), ipDst(ipp) == ip else { return r }
-            arp.insert(ipSrc(ipp), ethSrcMac(p))   // learn L2 so we can route replies
+            guard ipVersion(ipp) == 4, ipValidChecksum(ipp) else { return r }
             let ihl = ipHeaderLenBytes(ipp)
             let total = Int(ipTotalLen(ipp))
             guard total >= ihl, total <= payloadLen else { return r }
             let proto = ipProto(ipp)
             let l4 = ipp + ihl
             let l4Len = total - ihl
+            let dstIP = ipDst(ipp)
 
             if proto == ipProtoICMP {
+                guard dstIP == ip else { return r }
+                arp.insert(ipSrc(ipp), ethSrcMac(p))   // learn L2 so we can route replies
                 guard l4Len >= icmpHeaderLen, inetChecksum(l4, l4Len) == 0 else { return r }
                 let t = icmpType(l4)
                 if t == icmpTypeEchoReply {
@@ -187,12 +192,22 @@ struct NetStack {
                 }
             } else if proto == ipProtoUDP {
                 guard l4Len >= udpHeaderLen else { return r }
-                if udpChecksumField(l4) != 0 {
-                    guard udpChecksumValid(src: ipSrc(ipp), dst: ipDst(ipp),
-                                           udp: l4, udpLen: l4Len) else { return r }
-                }
                 let udpLen = Int(udpLength(l4))
                 guard udpLen >= udpHeaderLen, udpLen <= l4Len else { return r }
+                if udpChecksumField(l4) != 0 {
+                    guard udpChecksumValid(src: ipSrc(ipp), dst: dstIP,
+                                           udp: l4, udpLen: udpLen) else { return r }
+                }
+                if udpSrcPort(l4) == dhcpServerPort && udpDstPort(l4) == dhcpClientPort {
+                    let lease = dhcpParseReply(l4 + udpHeaderLen, udpLen - udpHeaderLen,
+                                               expectedXid: 0, mac: mac)
+                    if lease.messageType != 0 {
+                        r.gotDHCP = true
+                        r.dhcp = lease
+                    }
+                }
+                guard dstIP == ip else { return r }
+                arp.insert(ipSrc(ipp), ethSrcMac(p))   // learn L2 so we can route replies
                 r.gotUDP = true
                 r.udpSrcIP = ipSrc(ipp)
                 r.udpSrcPort = udpSrcPort(l4)
@@ -201,8 +216,10 @@ struct NetStack {
                 r.udpPayloadOff = ethHeaderLen + ihl + udpHeaderLen
                 r.udpPayloadLen = udpLen - udpHeaderLen
             } else if proto == ipProtoTCP {
+                guard dstIP == ip else { return r }
+                arp.insert(ipSrc(ipp), ethSrcMac(p))   // learn L2 so we can route replies
                 guard l4Len >= tcpMinHeaderLen,
-                      tcpChecksumValid(src: ipSrc(ipp), dst: ipDst(ipp), seg: l4, segLen: l4Len) else { return r }
+                      tcpChecksumValid(src: ipSrc(ipp), dst: dstIP, seg: l4, segLen: l4Len) else { return r }
                 let dataOff = tcpDataOffset(l4)
                 guard dataOff >= tcpMinHeaderLen, dataOff <= l4Len else { return r }
                 r.gotTCP = true

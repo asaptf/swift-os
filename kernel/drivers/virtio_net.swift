@@ -455,6 +455,10 @@ func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
                 agg.arpResolved = true; agg.resolvedIP = r.resolvedIP; agg.resolvedMac = r.resolvedMac
             }
             if r.echoReply { agg.echoReply = true; agg.echoSeq = r.echoSeq }
+            if r.gotDHCP {
+                agg.gotDHCP = true
+                agg.dhcp = r.dhcp
+            }
             if r.gotUDP {
                 netRxRefDeliveredTotal += 1
                 retained = socketDeliverUDP(srcIP: r.udpSrcIP, srcPort: r.udpSrcPort,

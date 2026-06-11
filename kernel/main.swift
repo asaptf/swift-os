@@ -522,6 +522,17 @@ private func printMac(_ m: MAC) {
     }
 }
 
+/// Print an IPv4 address in dotted decimal.
+private func printIPv4(_ ip: IPv4) {
+    uartPutUInt(UInt64((ip >> 24) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64((ip >> 16) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64((ip >> 8) & 0xFF))
+    uartPutc(0x2E)
+    uartPutUInt(UInt64(ip & 0xFF))
+}
+
 /// net-a: bring up virtio-net and exercise the sans-IO stack against the QEMU
 /// user-net (slirp) gateway. We ARP for 10.0.2.2, then send an ICMP echo request
 /// and wait for the reply — proving driver RX/TX plus the Ethernet/ARP/IPv4/ICMP
@@ -536,7 +547,7 @@ private func runVirtioNetProbe() {
     printMac(netCurrentMac())
     uartPuts("\n")
 
-    let gwIP = netGatewayIP   // 10.0.2.2 (slirp gateway)
+    let gwIP = netGatewayIP
 
     // 1) Resolve the gateway's MAC via ARP.
     netProbeSendArpRequest(targetIP: gwIP)
@@ -549,10 +560,22 @@ private func runVirtioNetProbe() {
         spins += 1
     }
     if !resolved {
-        uartPuts("net-a: ARP for 10.0.2.2 timed out\n")
+        if gwIP == netFallbackGatewayIP {
+            uartPuts("net-a: ARP for 10.0.2.2 timed out\n")
+        } else {
+            uartPuts("net-a: ARP for gateway ")
+            printIPv4(gwIP)
+            uartPuts(" timed out\n")
+        }
         return
     }
-    uartPuts("net-a: ARP reply, 10.0.2.2 is at ")
+    if gwIP == netFallbackGatewayIP {
+        uartPuts("net-a: ARP reply, 10.0.2.2 is at ")
+    } else {
+        uartPuts("net-a: ARP reply, gateway ")
+        printIPv4(gwIP)
+        uartPuts(" is at ")
+    }
     printMac(gwMac)
     uartPuts("\n")
 
@@ -565,7 +588,13 @@ private func runVirtioNetProbe() {
         spins += 1
     }
     if got {
-        uartPuts("net-a OK: ICMP echo reply from 10.0.2.2\n")
+        if gwIP == netFallbackGatewayIP {
+            uartPuts("net-a OK: ICMP echo reply from 10.0.2.2\n")
+        } else {
+            uartPuts("net-a OK: ICMP echo reply from gateway ")
+            printIPv4(gwIP)
+            uartPuts("\n")
+        }
     } else {
         uartPuts("net-a: ICMP echo reply timed out\n")
     }

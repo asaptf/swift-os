@@ -169,7 +169,66 @@ struct NetTest {
         out = stack.onFrame(inBuf, inLen, out: outBuf, outCap: 2048)
         check(!out.gotUDP, "UDP datagram with a bad checksum is dropped")
 
-        // --- 12. TCP: sequence arithmetic + checksum ----------------------
+        // --- 12. DHCPv4 discover/request codec + broadcast reply delivery -
+        let dhcpXid: UInt32 = 0x1234_ABCD
+        let discoverLen = dhcpBuildDiscover(mac: ourMac, xid: dhcpXid, out: outBuf)
+        check(discoverLen == ethHeaderLen + ipv4HeaderLen + udpHeaderLen + 300,
+              "DHCP discover frame length, got \(discoverLen)")
+        check(ethDstMac(outBuf) == .broadcast, "DHCP discover is Ethernet broadcast")
+        do {
+            let ip = outBuf + ethHeaderLen
+            let udp = ip + ipv4HeaderLen
+            let dhcp = udp + udpHeaderLen
+            check(ipSrc(ip) == 0 && ipDst(ip) == dhcpIPv4Broadcast, "DHCP discover IPv4 0.0.0.0 -> broadcast")
+            check(udpSrcPort(udp) == dhcpClientPort && udpDstPort(udp) == dhcpServerPort,
+                  "DHCP discover UDP ports")
+            check(udpChecksumValid(src: 0, dst: dhcpIPv4Broadcast, udp: udp, udpLen: Int(udpLength(udp))),
+                  "DHCP discover UDP checksum verifies")
+            check(be32(dhcp, 4) == dhcpXid && macGet(dhcp, 28) == ourMac, "DHCP discover xid/chaddr")
+            check(dhcpOptionU8(dhcp, Int(udpLength(udp)) - udpHeaderLen, 53) == dhcpMsgDiscover,
+                  "DHCP discover option 53")
+        }
+        let requestLen = dhcpBuildRequest(mac: ourMac, xid: dhcpXid,
+                                          requestedIP: ourIP, serverIP: gwIP, out: outBuf)
+        check(requestLen == ethHeaderLen + ipv4HeaderLen + udpHeaderLen + 300,
+              "DHCP request frame length, got \(requestLen)")
+        do {
+            let dhcp = outBuf + ethHeaderLen + ipv4HeaderLen + udpHeaderLen
+            check(dhcpOptionU8(dhcp, 300, 53) == dhcpMsgRequest, "DHCP request option 53")
+            check(dhcpOptionIPv4(dhcp, 300, 50) == ourIP, "DHCP request requested-address option")
+            check(dhcpOptionIPv4(dhcp, 300, 54) == gwIP, "DHCP request server-id option")
+        }
+
+        let leaseSeconds: UInt32 = 3600
+        let offerLen = craftDHCPReply(inBuf, messageType: dhcpMsgOffer, xid: dhcpXid,
+                                      yiaddr: ourIP, server: gwIP, router: gwIP,
+                                      dns: 0x0A00_0203, subnetMask: 0xFFFF_FF00,
+                                      leaseSeconds: leaseSeconds)
+        out = stack.onFrame(inBuf, offerLen, out: outBuf, outCap: 2048)
+        check(out.gotDHCP, "DHCP broadcast offer delivered through NetStack")
+        check(out.dhcp.xid == dhcpXid && out.dhcp.messageType == dhcpMsgOffer, "DHCP offer xid/type")
+        check(out.dhcp.address == ourIP && out.dhcp.router == gwIP, "DHCP offer address/router")
+        check(out.dhcp.dns == 0x0A00_0203 && out.dhcp.subnetMask == 0xFFFF_FF00,
+              "DHCP offer DNS/subnet")
+        check(out.dhcp.leaseSeconds == leaseSeconds, "DHCP offer lease time")
+        let wrongMacLen = craftDHCPReply(inBuf, messageType: dhcpMsgAck, xid: dhcpXid,
+                                         yiaddr: ourIP, server: gwIP, router: gwIP,
+                                         dns: 0x0A00_0203, subnetMask: 0xFFFF_FF00,
+                                         leaseSeconds: leaseSeconds,
+                                         clientMac: MAC(0, 1, 2, 3, 4, 5))
+        out = stack.onFrame(inBuf, wrongMacLen, out: outBuf, outCap: 2048)
+        check(!out.gotDHCP, "DHCP reply for another MAC is ignored")
+        let unicastLeaseIP: IPv4 = 0xC000_020A
+        let unicastAckLen = craftDHCPReply(inBuf, messageType: dhcpMsgAck, xid: dhcpXid,
+                                           yiaddr: unicastLeaseIP, server: gwIP, router: gwIP,
+                                           dns: 0x0A00_0203, subnetMask: 0xFFFF_FF00,
+                                           leaseSeconds: leaseSeconds,
+                                           dstIP: unicastLeaseIP)
+        out = stack.onFrame(inBuf, unicastAckLen, out: outBuf, outCap: 2048)
+        check(out.gotDHCP && out.dhcp.address == unicastLeaseIP,
+              "DHCP unicast reply to not-yet-configured address is accepted by chaddr")
+
+        // --- 13. TCP: sequence arithmetic + checksum ----------------------
         check(seqLT(0xFFFF_FFF0, 0x0000_0010), "seqLT handles wraparound")
         check(seqGT(0x0000_0010, 0xFFFF_FFF0), "seqGT handles wraparound")
         tcpWriteHeader(outBuf, srcPort: 1234, dstPort: 80, seq: 1000, ack: 0,
@@ -865,7 +924,7 @@ struct NetTest {
         check(u6o.gotUDPv6 && u6o.udpDstPortv6 == 9, "UDPv6 with hopLimit=0 still accepted locally at L4 (no early drop)")
 
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + DAD sim + many roundtrips + extra RA/UDPv6 hop0 edges)")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DHCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + DAD sim + many roundtrips + extra RA/UDPv6 hop0 edges)")
     }
 
     /// Feed one TCP segment into a connection (optional payload).
@@ -907,6 +966,80 @@ struct NetTest {
         let icmpLen = icmpWriteEcho(icmp, type: type, id: id, seq: seq, payloadLen: payloadLen)
         let total = ipv4HeaderLen + icmpLen
         ipWriteHeader(ip, src: srcIP, dst: dstIP, proto: ipProtoICMP, totalLen: total, id: id)
+        return ethHeaderLen + total
+    }
+
+    static func dhcpOptionU8(_ p: UnsafeRawPointer, _ len: Int, _ code: UInt8) -> UInt8 {
+        var off = 240
+        while off < len {
+            let c = b8(p, off)
+            off += 1
+            if c == 0 { continue }
+            if c == 255 || off >= len { break }
+            let optLen = Int(b8(p, off))
+            off += 1
+            if off + optLen > len { break }
+            if c == code && optLen >= 1 { return b8(p, off) }
+            off += optLen
+        }
+        return 0
+    }
+
+    static func dhcpOptionIPv4(_ p: UnsafeRawPointer, _ len: Int, _ code: UInt8) -> IPv4 {
+        var off = 240
+        while off < len {
+            let c = b8(p, off)
+            off += 1
+            if c == 0 { continue }
+            if c == 255 || off >= len { break }
+            let optLen = Int(b8(p, off))
+            off += 1
+            if off + optLen > len { break }
+            if c == code && optLen >= 4 { return be32(p, off) }
+            off += optLen
+        }
+        return 0
+    }
+
+    static func craftDHCPReply(_ p: UnsafeMutableRawPointer, messageType: UInt8,
+                               xid: UInt32, yiaddr: IPv4, server: IPv4,
+                               router: IPv4, dns: IPv4, subnetMask: IPv4,
+                               leaseSeconds: UInt32,
+                               clientMac: MAC = ourMac,
+                               dstIP: IPv4 = dhcpIPv4Broadcast) -> Int {
+        ethWriteHeader(p, dst: .broadcast, src: gwMac, type: ethTypeIPv4)
+        let ip = p + ethHeaderLen
+        let udp = ip + ipv4HeaderLen
+        let dhcp = udp + udpHeaderLen
+        var i = 0
+        while i < 300 {
+            b8set(dhcp, i, 0)
+            i += 1
+        }
+        b8set(dhcp, 0, 2)                  // BOOTREPLY
+        b8set(dhcp, 1, 1)                  // Ethernet
+        b8set(dhcp, 2, 6)                  // MAC-48
+        be32set(dhcp, 4, xid)
+        be32set(dhcp, 16, yiaddr)
+        macSet(dhcp, 28, clientMac)
+        be32set(dhcp, 236, 0x6382_5363)
+        var off = 240
+        b8set(dhcp, off, 53); off += 1; b8set(dhcp, off, 1); off += 1; b8set(dhcp, off, messageType); off += 1
+        b8set(dhcp, off, 54); off += 1; b8set(dhcp, off, 4); off += 1; be32set(dhcp, off, server); off += 4
+        b8set(dhcp, off, 1); off += 1; b8set(dhcp, off, 4); off += 1; be32set(dhcp, off, subnetMask); off += 4
+        b8set(dhcp, off, 3); off += 1; b8set(dhcp, off, 4); off += 1; be32set(dhcp, off, router); off += 4
+        b8set(dhcp, off, 6); off += 1; b8set(dhcp, off, 4); off += 1; be32set(dhcp, off, dns); off += 4
+        b8set(dhcp, off, 51); off += 1; b8set(dhcp, off, 4); off += 1; be32set(dhcp, off, leaseSeconds); off += 4
+        b8set(dhcp, off, 255)
+        let udpLen = udpHeaderLen + 300
+        be16set(udp, 0, dhcpServerPort)
+        be16set(udp, 2, dhcpClientPort)
+        be16set(udp, 4, UInt16(udpLen))
+        be16set(udp, 6, 0)
+        be16set(udp, 6, udpChecksum(src: gwIP, dst: dstIP, udp: udp, udpLen: udpLen))
+        let total = ipv4HeaderLen + udpLen
+        ipWriteHeader(ip, src: gwIP, dst: dstIP, proto: ipProtoUDP,
+                      totalLen: total, id: 0xD00D)
         return ethHeaderLen + total
     }
 }
