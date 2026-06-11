@@ -458,14 +458,15 @@ proves that the old HC4 key is rejected, the HC5 key is loaded from
 `/etc/ssh/authorized_keys`, the host-key seed is loaded from
 `/etc/ssh/ssh_host_ed25519_seed`, the host OpenSSH client pins the derived
 SwiftOS host key through known_hosts, `/bin/id` runs as root, and `/bin/echo
-HC6-OK` receives an argv argument. It also pipes a small host payload into
-remote `/bin/cat` and requires exact stdout, then reads a capped long output
-from `/bin/cat /models/tok512.bin` and requires the truncation marker. This
-proves TCP/22 reachability through SSH KEX, host-key pinning, encrypted
-userauth, session channel setup, bounded direct remote exec, bounded stdin
-forwarding, and bounded output capture; PTY, shell command parsing, scp, sftp,
-runtime host-key rotation, real entropy, larger streaming, and broader
-authorized-key options are follow-up work.
+HC6-OK` receives an argv argument. It also runs a quoted `/bin/echo` command
+that proves quote removal, backslash escaping, and empty argv preservation,
+pipes a small host payload into remote `/bin/cat` and requires exact stdout,
+then reads a capped long output from `/bin/cat /models/tok512.bin` and requires
+the truncation marker. This proves TCP/22 reachability through SSH KEX,
+host-key pinning, encrypted userauth, session channel setup, bounded direct
+remote exec, bounded stdin forwarding, and bounded output capture; PTY, shell
+command parsing, scp, sftp, runtime host-key rotation, real entropy, larger
+streaming, and broader authorized-key options are follow-up work.
 
 For deploy-specific image-time keys, generate a host-key seed with
 `build/sshkey seed --out support/keys/ssh_host_ed25519_seed`, create
@@ -644,10 +645,10 @@ Current limits that matter when exposing a SwiftOS network service:
   provide `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE`. KEX entropy is
   still weak and temporary. It supports only simple `ssh-ed25519` lines in
   `/etc/ssh/authorized_keys`, bounded stdout/stdin, and direct
-  single-component `/bin/<tool>` remote exec with ASCII-whitespace argv
-  splitting; PTY, shell command parsing, scp, sftp, runtime host-key rotation,
-  real entropy, larger streaming, and broader authorized-key options are still
-  missing.
+  single-component `/bin/<tool>` remote exec with whitespace splitting, quote
+  removal, and backslash escaping; PTY, shell command parsing, scp, sftp,
+  runtime host-key rotation, real entropy, larger streaming, and broader
+  authorized-key options are still missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange and checks a minimal
   `/etc/ssh/known_hosts` trust store, but has no user authentication and no
