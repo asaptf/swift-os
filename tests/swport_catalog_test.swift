@@ -104,6 +104,43 @@ guard listText.contains("tier4 pm2 blocked L sysutils/pm2") else {
     fail("list output did not include blocked pm2")
 }
 
+let packaged = run(tool, ["catalog", "packaged", catalog.path])
+requireSuccess(packaged, "list packaged catalog entries")
+let packagedLines = output(packaged).split(separator: "\n").map(String.init)
+do {
+    guard let root = try JSONSerialization.jsonObject(with: Data(contentsOf: catalog)) as? [String: Any],
+          let packages = root["packages"] as? [[String: Any]] else {
+        fail("could not parse catalog for packaged list test")
+    }
+    let expectedLines = packages.compactMap { package -> String? in
+        guard package["status"] as? String == "packages",
+              let name = package["name"] as? String,
+              let portPath = package["portPath"] as? String else {
+            return nil
+        }
+        return "\(name) \(portPath)"
+    }
+    guard packagedLines == expectedLines else {
+        fail("packaged catalog output was \(packagedLines), expected \(expectedLines)")
+    }
+    guard !packagedLines.contains(where: { $0.hasPrefix("nodejs ") || $0.hasPrefix("npm ") || $0.hasPrefix("pm2 ") }) else {
+        fail("packaged catalog output included blocked runtime scaffolds: \(packagedLines)")
+    }
+    guard let zlibIndex = expectedLines.firstIndex(where: { $0.hasPrefix("zlib ") }),
+          let bzip2Index = expectedLines.firstIndex(where: { $0.hasPrefix("bzip2 ") }),
+          let zstdIndex = expectedLines.firstIndex(where: { $0.hasPrefix("zstd ") }),
+          let xzIndex = expectedLines.firstIndex(where: { $0.hasPrefix("xz ") }),
+          let libarchiveIndex = expectedLines.firstIndex(where: { $0.hasPrefix("libarchive ") }),
+          zlibIndex < libarchiveIndex,
+          bzip2Index < libarchiveIndex,
+          zstdIndex < libarchiveIndex,
+          xzIndex < libarchiveIndex else {
+        fail("packaged catalog output did not preserve dependency-safe catalog order: \(packagedLines)")
+    }
+} catch {
+    fail("packaged catalog test failed: \(error)")
+}
+
 let inspect = run(tool, ["catalog", "inspect", "nginx", catalog.path])
 requireSuccess(inspect, "inspect nginx")
 let inspectText = output(inspect)

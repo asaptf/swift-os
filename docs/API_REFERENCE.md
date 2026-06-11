@@ -70,6 +70,7 @@ source, then follow its Makefile rule and acceptance test.
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
 | C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
 | C libuv async wake compatibility | `userland/uvwakeprobe.c` | worker-thread `eventfd_write` waking a main-thread `poll` waiter | `./tests/uvwake_test.sh` |
+| C libuv barrier compatibility | `userland/uvbarrierprobe.c` | reusable `pthread_barrier_*` phases for libuv's native barrier path | `./tests/uvbarrier_test.sh` |
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
@@ -367,10 +368,30 @@ Related file formats:
 ```c
 int pkg_install(int fd, const char *name, const char *version_revision);
 int pkg_info(int index, char *buf, size_t cap);
+
+struct swiftos_pkg_stream_begin_desc {
+    char name[32];
+    char version_revision[16];
+    unsigned long payload_size;
+    unsigned char payload_sha256[32];
+};
+
+int pkg_stream_begin(const struct swiftos_pkg_stream_begin_desc *desc);
+int pkg_stream_write(const void *buf, size_t count);
+int pkg_stream_commit(void);
+int pkg_stream_abort(void);
 ```
 
 `pkg_install` appends the package payload, writes a new activation record, moves
 the active pointer, and mounts the active package view.
+
+`pkg_stream_begin` starts the repository install path after `/bin/pkg` has
+already parsed and verified the `.swpkg` header, manifest hash, manifest
+metadata, and catalog entry. The descriptor names the package, revision, payload
+byte count, and expected payload SHA-256. `pkg_stream_write` appends payload
+chunks directly to the package store, `pkg_stream_commit` validates the final
+payload and activates the package, and `pkg_stream_abort` drops the in-progress
+mutation. This avoids caching full repository `.swpkg` blobs in `/tmp`.
 
 Contract:
 
@@ -385,7 +406,8 @@ Contract:
   SHA-256 hashes in the header.
 - The payload must be a packed `SWOSBASE` v2 image.
 - Repository catalog signatures and package download hashes are verified by
-  `/bin/pkg` before it calls `pkg_install`; they are not part of this syscall.
+  `/bin/pkg` before it calls `pkg_install` or the streaming API; they are not
+  part of these syscalls.
 
 Example:
 
@@ -1204,6 +1226,12 @@ int swiftos_chown(const char *path, unsigned int owner);
 ```c
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
+                             unsigned long payload_size,
+                             const unsigned char *payload_sha256);
+int swiftos_pkg_stream_write(const void *buf, unsigned long count);
+int swiftos_pkg_stream_commit(void);
+int swiftos_pkg_stream_abort(void);
 ```
 
 ### Update Store
@@ -1390,6 +1418,7 @@ one booting acceptance path:
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
 | C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
 | C compat libuv async wake | `userland/compat/pthread.h`, `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/uvwakeprobe.c` | `make uvwake-test`, `./tests/boot_test.sh` |
+| C compat libuv barrier | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvbarrierprobe.c` | `make uvbarrier-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |

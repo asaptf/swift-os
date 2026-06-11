@@ -15,14 +15,19 @@ maintainers planning `swift-os-ports` recipes.
 > tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
+> `swport catalog packaged` is the machine-readable source for the seed
+> repository package set, so entries with `status: "packages"` are published
+> without duplicating the list in repository scripts.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
 > the twelve-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, remove, upgrade, version-constraint solving, package
-> transaction rollback, and large-package streaming downloads remain roadmap
-> work.
+> transaction rollback, and remove/upgrade lifecycle work remain roadmap work.
+> Repository package installs stream package payloads into the package store, so
+> the target no longer needs to cache full `.swpkg` blobs in tmpfs before
+> activation.
 
 Use this guide with:
 
@@ -243,7 +248,7 @@ lists everywhere. Each row still calls out package-specific extras where needed.
 | `pty` | Pseudo-terminal allocation, session/process-group concepts, signal delivery for interactive programs, and window-size propagation. |
 | `db-fs` | `fsync`, `fdatasync`, file locks, durable rename, pread/pwrite, directory sync if available, large files, monotonic time, and clear ENOSPC behavior. |
 | `mmap-vm` | `mmap`, `munmap`, `mprotect`, page permissions, executable mappings if JIT is enabled, multi-MiB mappings covered by `largemmapprobe`, PROT_NONE reservation/commit/decommit covered by `mmapreserveprobe`, fixed-address guard-page flows covered by `mapfixedprobe`, address-space layout control, and signal/trap reporting. |
-| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, POSIX semaphores, read/write locks, atomics, blocking wakeups, and scheduler behavior under many sleeping threads; the current C facade is covered by `pthreadprobe` and `threadsyncprobe`. |
+| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, POSIX semaphores, read/write locks, barriers, atomics, blocking wakeups, and scheduler behavior under many sleeping threads; the current C facade is covered by `pthreadprobe`, `threadsyncprobe`, and `uvbarrierprobe`. |
 | `service` | First-party service supervisor, service manifests, log routing, restart policy, persistent config/data directories, system users/groups or an equivalent capability model. |
 | `procfs-like` | A documented way to inspect process, memory, fd, network, and system metrics. It does not have to be Linux `/proc`, but tools need a stable API. |
 

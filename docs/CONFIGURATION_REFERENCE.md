@@ -618,11 +618,12 @@ These are intentional current limits:
 - No dynamic loader.
 - No persistent writable filesystem.
 - No public hosted package channel, package upgrade, remove, rollback,
-  version-constraint solver, or streaming large-package install path. Local
+  or version-constraint solver. Local
   `pkg install FILE` and signed `pkg repo set`/`pkg update [URL]`/
   `pkg install NAME` work for signed fixtures when a writable package-store
-  image is attached, including name-based dependency resolution and rejection
-  paths for expired or incompatible catalogs and package hash mismatches.
+  image is attached, including name-based dependency resolution, streamed
+  repository package installs, and rejection paths for expired or incompatible
+  catalogs and package hash mismatches.
 - No production certificate store for `tlsget`.
 - No default graphical desktop shell.
 

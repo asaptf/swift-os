@@ -5023,3 +5023,28 @@ full libuv thread audit before the runtime can be claimed runnable.
 **Acceptance.** `make ports-recipe-test`, `make ports-catalog-test`,
 `make docs-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM13 — pthread barrier probe for libuv native path (DONE, 2026-06-11)
+
+**Scope.** Cover the pthread barrier primitive selected by Node's vendored
+libuv 1.52.1. SwiftOS newlib exposes `PTHREAD_BARRIER_SERIAL_THREAD` and
+`pthread_barrier_*` declarations, so libuv's Unix thread layer uses its native
+pthread barrier branch rather than the internal mutex/cond fallback. The compat
+layer now provides process-local `pthread_barrierattr_*` and reusable
+`pthread_barrier_*` behavior over the existing futex-backed thread primitives.
+This closes one concrete libuv thread primitive while the catalog keeps the
+broader `full libuv thread audit` blocker.
+
+- `userland/compat/pthread.h` and `userland/compat/stubs.c`: enable
+  `_POSIX_BARRIERS` and implement process-local barrier attrs, zero-count
+  rejection, reusable barrier phases, one serial-thread return per phase, busy
+  destroy rejection, and cleanup.
+- `/bin/uvbarrierprobe`: proves libuv's native barrier shape with two worker
+  threads plus the main thread across two reusable phases.
+- `make uvbarrier-test`: boots QEMU, logs in, runs the probe, and asserts the
+  barrier attr/native-path and reusable-phase markers.
+
+**Acceptance.** `make uvbarrier-test`, `make docs-test`,
+`make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

@@ -69,6 +69,8 @@ PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d
 PORTS_SEED_REPO_ROOT := $(BUILD)/ports-seed-repo-root
 PORTS_SEED_REPO_PUB := $(BUILD)/ports-seed-repo-root.pub
 PORTS_STATIC_HOST_ROOT := $(BUILD)/ports-static-host-root
+PORT_RECIPE_FILES := $(shell find ports -name Port.json | sort)
+PORT_BUILD_SCRIPTS := $(shell find scripts -name 'build-*.sh' | sort)
 PORTS_STATIC_HOST_BASE_URL ?=
 PKG_HOSTED_REPO_URL ?=
 PKG_DEFAULT_DNS_SERVER ?=
@@ -277,6 +279,7 @@ USER_THREADSYNCPROBE_ELF := $(BUILD)/threadsyncprobe.elf
 USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
 USER_EVENTFDPROBE_ELF := $(BUILD)/eventfdprobe.elf
 USER_UVWAKEPROBE_ELF := $(BUILD)/uvwakeprobe.elf
+USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_SIGNALPROBE_ELF := $(BUILD)/signalprobe.elf
 USER_SOCKETPROBE_ELF := $(BUILD)/socketprobe.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
@@ -391,6 +394,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SELECTPROBE_ELF) \
 	$(USER_EVENTFDPROBE_ELF) \
 	$(USER_UVWAKEPROBE_ELF) \
+	$(USER_UVBARRIERPROBE_ELF) \
 	$(USER_SIGNALPROBE_ELF) \
 	$(USER_SOCKETPROBE_ELF) \
 	$(USER_COPROC_ELF) \
@@ -405,6 +409,7 @@ BASE_EXEC_ELFS := \
 	$(BUILD)/busybox.elf
 
 .PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: uvbarrier-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -908,6 +913,12 @@ $(BUILD)/n_uvwakeprobe.o: userland/uvwakeprobe.c userland/compat/pthread.h userl
 $(USER_UVWAKEPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvwakeprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvwakeprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_uvbarrierprobe.o: userland/uvbarrierprobe.c userland/compat/pthread.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_UVBARRIERPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvbarrierprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvbarrierprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_signalprobe.o: userland/signalprobe.c userland/compat/signal.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -1214,6 +1225,9 @@ eventfd-test: build $(QEMU_DTB) base-image
 uvwake-test: build $(QEMU_DTB) base-image
 	./tests/uvwake_test.sh
 
+uvbarrier-test: build $(QEMU_DTB) base-image
+	./tests/uvbarrier_test.sh
+
 signal-test: build $(QEMU_DTB) base-image
 	./tests/signal_test.sh
 
@@ -1414,7 +1428,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/security/openssl/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json ports/lang/nodejs/Port.json ports/lang/npm/Port.json ports/sysutils/pm2/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json $(PORT_RECIPE_FILES)
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
@@ -1453,7 +1467,7 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
 
-ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/security/openssl/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-bzip2.sh scripts/build-zstd.sh scripts/build-xz.sh scripts/build-libarchive.sh scripts/build-ca-certificates.sh scripts/build-openssl.sh scripts/build-pcre2.sh scripts/build-tzdata.sh scripts/build-nginx.sh scripts/build-sqlite.sh scripts/build-ports-seed-repo.sh
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/catalog.json $(PORT_RECIPE_FILES) $(PORT_BUILD_SCRIPTS)
 	./scripts/build-ports-seed-repo.sh
 
 ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-host.sh
@@ -1611,6 +1625,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
+	cp $(USER_UVBARRIERPROBE_ELF) $(BASE_ROOT)/bin/uvbarrierprobe
 	cp $(USER_SIGNALPROBE_ELF) $(BASE_ROOT)/bin/signalprobe
 	cp $(USER_SOCKETPROBE_ELF) $(BASE_ROOT)/bin/socketprobe
 	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc

@@ -71,7 +71,7 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`,
     `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and
     `ports/databases/sqlite/Port.json` are the checked recipe scaffolds;
-  - `build/swport catalog validate/list/inspect` and
+  - `build/swport catalog validate/list/inspect/packaged` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
   - `scripts/build-lua.sh` cross-builds static AArch64 `lua` and `luac`,
@@ -95,9 +95,9 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     local repository fixture;
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
-  - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, xz,
-    libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite into one
-    signed local seed repository, and `make package-ports-seed-repo-install-test`
+  - `make ports-seed-repo-fixture` publishes the catalog entries marked
+    `status: "packages"` into one signed local seed repository, and
+    `make package-ports-seed-repo-install-test`
     proves installing all twelve packages plus the `minigzip`, bzip2, zstd, and
     xz round trips, `bsdtar` tar create/list smoke, CA bundle marker, OpenSSL
     version/digest smoke, `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and SQLite SQL smoke
@@ -121,10 +121,11 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     from the runtime and records service/signal/persistence blockers;
   - `make ports-catalog-test` and `make ports-recipe-test` validate these intake
     records without claiming the runtime is built yet.
+- Repository package installs stream payload bytes directly into the package
+  store and no longer cache full `.swpkg` blobs in `/tmp`.
 - Public production binary repository publishing, target-side HTTPS transport,
   version-constraint solving, remove, upgrade, rollback, broad source-port
-  coverage, package publication, and streaming large-package downloads remain
-  future work.
+  coverage, and package publication remain future work.
 
 ## Workstreams
 

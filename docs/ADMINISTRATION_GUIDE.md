@@ -343,9 +343,10 @@ to a writable package-store image and live-mount it. Signed repository install
 can run `pkg repo set URL`, `pkg update [URL]`, `pkg search`,
 `pkg info`, and `pkg install NAME` against the static HTTP fixture while
 rejecting expired or incompatible catalogs, invalid dependency entries, and
-package hash mismatches. Name-based dependency resolution is implemented;
-version-constraint solving, remove, upgrade, rollback, public hosted package
-channels, and large-package streaming downloads remain roadmap work.
+package hash mismatches. Name-based dependency resolution and streamed
+repository package installs into the package store are implemented;
+version-constraint solving, remove, upgrade, rollback, and public hosted package
+channels remain roadmap work.
 
 ## Administer Services
 

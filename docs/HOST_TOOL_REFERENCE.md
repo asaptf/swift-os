@@ -40,7 +40,7 @@ format, manifest, signature, or fixture.
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
-| `build/swport` | `make swport` | Validate/list/inspect the ports catalog; validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and `databases/sqlite` recipes; and validate/manifest the `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` intake scaffolds. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `build/swport` | `make swport` | Validate/list/inspect the ports catalog, emit the catalog-driven packaged seed list, validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and `databases/sqlite` recipes, and validate/manifest the `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` intake scaffolds. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
 | `scripts/build-bzip2.sh` | `make ports-bzip2-repo-fixture` | Cross-build static bzip2 CLI tools, `libbz2.a`, header, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-bzip2-repo-fixture` |
@@ -53,7 +53,7 @@ format, manifest, signature, or fixture.
 | `scripts/build-tzdata.sh` | `make ports-tzdata-repo-fixture` | Compile IANA time zone data with host `zic`, package `/usr/share/zoneinfo`, and publish a signed local repository fixture. | `make ports-tzdata-repo-fixture` |
 | `scripts/build-nginx.sh` | `make ports-nginx-repo-fixture` | Cross-build minimal static HTTP-only nginx, package it, and publish a signed local repository fixture. | `make ports-nginx-repo-fixture` |
 | `scripts/build-sqlite.sh` | `make ports-sqlite-repo-fixture` | Cross-build static SQLite, package `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-sqlite-repo-fixture` |
-| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite packages into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
+| `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish every catalog entry with `status: "packages"` into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
@@ -204,7 +204,8 @@ current twelve-package seed: Lua, zlib, bzip2, zstd, xz, libarchive, ca-certific
 tzdata, nginx, and sqlite. It also validates the blocked Node.js/npm/PM2 intake
 recipes at `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and
 `ports/sysutils/pm2/Port.json`.
-The tool validates catalog metadata, validates recipes, emits `.swpkg`
+The tool validates catalog metadata, emits the `status: "packages"` seed list,
+validates recipes, emits `.swpkg`
 manifests, verifies source checksums, packages clean staged roots, and publishes
 signed local repository fixtures through `swpkg` and `pkgrepo`. The Makefile
 targets cross-build or package the checked seed artifacts, publish them into one
@@ -218,6 +219,7 @@ package-specific scripts and Makefile targets.
 swport catalog validate [catalog.json]
 swport catalog list [catalog.json]
 swport catalog inspect <name> [catalog.json]
+swport catalog packaged [catalog.json]
 swport recipe validate <port|Port.json> [--catalog catalog.json]
 swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
 swport recipe fetch <port|Port.json> [--cache dir]

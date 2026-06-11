@@ -19,6 +19,9 @@
 #ifndef _POSIX_SEMAPHORES
 #define _POSIX_SEMAPHORES 1
 #endif
+#ifndef _POSIX_BARRIERS
+#define _POSIX_BARRIERS 1
+#endif
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -166,6 +169,10 @@ static long sysret_long(long r) {
 #endif
 
 typedef uint64_t eventfd_t;
+
+#ifndef PTHREAD_PROCESS_PRIVATE
+#define PTHREAD_PROCESS_PRIVATE 0
+#endif
 
 // newlib's fcntl (sysfcntl.o) is a hard ENOSYS stub that never reaches a syscall
 // stub, so override the symbol here (strong, pulled before libc). The busybox
@@ -671,6 +678,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_RWLOCK_READER_MASK ((unsigned int)0x7FFFFFFFu)
 #define COMPAT_PTHREAD_MAX_THREADS 16
 #define COMPAT_PTHREAD_MAX_KEYS 32
+#define COMPAT_PTHREAD_MAX_BARRIERS 16
 #define COMPAT_PTHREAD_TID_MAX 32
 #define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
 
@@ -735,7 +743,16 @@ struct compat_pthread_record {
     void *arg;
 };
 
+struct compat_pthread_barrier_record {
+    unsigned int used;
+    unsigned int threshold;
+    unsigned int arrived;
+    unsigned int leaving;
+    unsigned int generation;
+};
+
 static struct compat_pthread_record pthread_records[COMPAT_PTHREAD_MAX_THREADS];
+static struct compat_pthread_barrier_record pthread_barriers[COMPAT_PTHREAD_MAX_BARRIERS];
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
 static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
 static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
@@ -793,6 +810,14 @@ static struct compat_pthread_record *pthread_find_locked(pthread_t tid) {
         }
     }
     return 0;
+}
+
+static struct compat_pthread_barrier_record *pthread_barrier_find_locked(const pthread_barrier_t *barrier) {
+    if (!barrier) { return 0; }
+    unsigned int id = *(const unsigned int *)barrier;
+    if (id == 0 || id > COMPAT_PTHREAD_MAX_BARRIERS) { return 0; }
+    struct compat_pthread_barrier_record *rec = &pthread_barriers[id - 1];
+    return rec->used ? rec : 0;
 }
 
 static void pthread_record_clear_locked(struct compat_pthread_record *rec) {
@@ -1145,6 +1170,113 @@ W int pthread_rwlock_unlock(pthread_rwlock_t *rwlock) {
             return EPERM;
         }
     }
+}
+
+W int pthread_barrierattr_init(pthread_barrierattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    attr->is_initialized = 1;
+#if defined(_POSIX_THREAD_PROCESS_SHARED)
+    attr->process_shared = PTHREAD_PROCESS_PRIVATE;
+#endif
+    return 0;
+}
+W int pthread_barrierattr_destroy(pthread_barrierattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    return 0;
+}
+W int pthread_barrierattr_getpshared(const pthread_barrierattr_t *attr, int *pshared) {
+    if (!attr || !pshared) { return EINVAL; }
+#if defined(_POSIX_THREAD_PROCESS_SHARED)
+    *pshared = attr->process_shared;
+#else
+    *pshared = 0;
+#endif
+    return 0;
+}
+W int pthread_barrierattr_setpshared(pthread_barrierattr_t *attr, int pshared) {
+    if (!attr || pshared != PTHREAD_PROCESS_PRIVATE) { return EINVAL; }
+#if defined(_POSIX_THREAD_PROCESS_SHARED)
+    attr->process_shared = pshared;
+#endif
+    return 0;
+}
+W int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned count) {
+    if (!barrier || count == 0) { return EINVAL; }
+    if (attr) {
+        int pshared = PTHREAD_PROCESS_PRIVATE;
+        int r = pthread_barrierattr_getpshared(attr, &pshared);
+        if (r != 0) { return r; }
+        if (pshared != PTHREAD_PROCESS_PRIVATE) { return EINVAL; }
+    }
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_BARRIERS; i++) {
+        if (!pthread_barriers[i].used) {
+            memset(&pthread_barriers[i], 0, sizeof(pthread_barriers[i]));
+            pthread_barriers[i].used = 1;
+            pthread_barriers[i].threshold = count;
+            *(unsigned int *)barrier = (unsigned int)(i + 1);
+            futex_unlock_word(&pthread_global_lock);
+            return 0;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return EAGAIN;
+}
+W int pthread_barrier_destroy(pthread_barrier_t *barrier) {
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_barrier_record *rec = pthread_barrier_find_locked(barrier);
+    if (!rec) {
+        futex_unlock_word(&pthread_global_lock);
+        return EINVAL;
+    }
+    if (rec->arrived != 0 || rec->leaving != 0) {
+        futex_unlock_word(&pthread_global_lock);
+        return EBUSY;
+    }
+    memset(rec, 0, sizeof(*rec));
+    *(unsigned int *)barrier = 0;
+    futex_unlock_word(&pthread_global_lock);
+    return 0;
+}
+W int pthread_barrier_wait(pthread_barrier_t *barrier) {
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_barrier_record *rec = pthread_barrier_find_locked(barrier);
+    if (!rec) {
+        futex_unlock_word(&pthread_global_lock);
+        return EINVAL;
+    }
+    unsigned int generation = rec->generation;
+    rec->arrived++;
+    if (rec->arrived == rec->threshold) {
+        rec->arrived = 0;
+        rec->leaving = rec->threshold;
+        rec->generation = generation + 1;
+        (void)futex_raw(&rec->generation, COMPAT_FUTEX_WAKE, UINT_MAX);
+        rec->leaving--;
+        if (rec->leaving == 0) {
+            (void)futex_raw(&rec->leaving, COMPAT_FUTEX_WAKE, UINT_MAX);
+        }
+        futex_unlock_word(&pthread_global_lock);
+        return PTHREAD_BARRIER_SERIAL_THREAD;
+    }
+    while (generation == rec->generation) {
+        futex_unlock_word(&pthread_global_lock);
+        (void)futex_raw(&rec->generation, COMPAT_FUTEX_WAIT, generation);
+        futex_lock_word(&pthread_global_lock);
+        rec = pthread_barrier_find_locked(barrier);
+        if (!rec) {
+            futex_unlock_word(&pthread_global_lock);
+            return EINVAL;
+        }
+    }
+    rec->leaving--;
+    if (rec->leaving == 0) {
+        (void)futex_raw(&rec->leaving, COMPAT_FUTEX_WAKE, UINT_MAX);
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return 0;
 }
 
 W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
