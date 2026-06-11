@@ -4957,3 +4957,26 @@ async custom-handler delivery are still not implemented.
 **Acceptance.** `make signal-test`, `make docs-test`,
 `make ports-catalog-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM11 — libuv async eventfd wake probe (DONE, 2026-06-11)
+
+**Scope.** Add a focused event-loop wake proof for Node.js/libuv-shaped
+runtimes. SwiftOS already had pthreads, eventfd counters, and poll readiness as
+separate C/newlib probes; this milestone proves the combined pattern libuv
+depends on: a worker thread writes to an eventfd while the main thread is blocked
+inside `poll`, and the main thread wakes, drains the counter, and observes the
+fd as no longer readable. This is not a full upstream libuv audit; it closes one
+concrete async-wake surface while the catalog keeps the broader libuv thread
+audit blocker.
+
+- `/bin/uvwakeprobe`: creates a nonblocking close-on-exec eventfd, starts a
+  pthread worker, waits in `poll(POLLIN)`, verifies the worker's
+  `eventfd_write` wakes the waiter with the expected counter value, joins the
+  worker, and verifies a drained zero-timeout poll.
+- `make uvwake-test`: boots QEMU, logs in, runs the probe, and asserts the
+  cross-thread wake and drained-poll markers.
+
+**Acceptance.** `make uvwake-test`, `make docs-test`,
+`make ports-catalog-test`, `make eventfd-test`, `make threadsync-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

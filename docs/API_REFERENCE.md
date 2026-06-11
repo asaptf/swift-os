@@ -69,6 +69,7 @@ source, then follow its Makefile rule and acceptance test.
 | C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
 | C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
+| C libuv async wake compatibility | `userland/uvwakeprobe.c` | worker-thread `eventfd_write` waking a main-thread `poll` waiter | `./tests/uvwake_test.sh` |
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
@@ -1388,6 +1389,7 @@ one booting acceptance path:
 | C compat semaphores and rwlocks | `userland/compat/pthread.h`, `userland/compat/semaphore.h`, `userland/compat/stubs.c`, `userland/threadsyncprobe.c` | `make threadsync-test`, `./tests/boot_test.sh` |
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
 | C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
+| C compat libuv async wake | `userland/compat/pthread.h`, `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/uvwakeprobe.c` | `make uvwake-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
