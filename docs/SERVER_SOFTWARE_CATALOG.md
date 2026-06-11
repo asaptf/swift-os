@@ -23,8 +23,8 @@ maintainers planning `swift-os-ports` recipes.
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
 > the twelve-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
-> target-side HTTPS, remove, upgrade, version-constraint solving, package
-> transaction rollback, and remove/upgrade lifecycle work remain roadmap work.
+> target-side HTTPS, live package unmount, upgrade, version-constraint solving,
+> package transaction rollback, and broader lifecycle work remain roadmap work.
 > Repository package installs stream package payloads into the package store, so
 > the target no longer needs to cache full `.swpkg` blobs in tmpfs before
 > activation.

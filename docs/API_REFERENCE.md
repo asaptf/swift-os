@@ -77,7 +77,7 @@ source, then follow its Makefile rule and acceptance test.
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
-| Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
+| Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `pkg_remove`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-remove-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | A/B update store operations | `userland/swos-confirm.swift`, `userland/swos-activate.swift`, `userland/swos-update.swift` | `update_confirm`, `update_activate`, `update_stage`, `swiftos_update_*` | `./tests/ab_confirm_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_stage_test.sh` |
 | Kernel slot staging, activation, and health confirmation | `userland/swos-kstage.swift`, `userland/swos-kactivate.swift`, `userland/swos-kconfirm.swift` | `kernel_stage`, `kernel_activate`, `kernel_confirm`, `swiftos_kernel_*` | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kconfirm_test.sh` |
 
@@ -262,6 +262,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 78 | `socketpair` | `fds*`, `flags` | 0 or negative error |
 | 79 | `pkg_files` | `name`, `buf`, `cap` | bytes needed or negative error |
 | 80 | `random` | `buf`, `cap` | bytes written or negative error |
+| 81 | `pkg_remove` | `name` | 0 or negative error |
 
 Notes:
 
@@ -377,6 +378,7 @@ Related file formats:
 int pkg_install(int fd, const char *name, const char *version_revision);
 int pkg_info(int index, char *buf, size_t cap);
 int pkg_files(const char *name, char *buf, size_t cap);
+int pkg_remove(const char *name);
 
 struct swiftos_pkg_stream_begin_desc {
     char name[32];
@@ -393,6 +395,11 @@ int pkg_stream_abort(void);
 
 `pkg_install` appends the package payload, writes a new activation record, moves
 the active pointer, and mounts the active package view.
+
+`pkg_remove` appends a new activation record without the named package and
+makes that activation the next boot's active generation. Current VFS package
+payloads are not live-unmounted, so applications should treat the deactivation
+as effective after reboot.
 
 `pkg_stream_begin` starts the repository install path after `/bin/pkg` has
 already parsed and verified the `.swpkg` header, manifest hash, manifest
@@ -469,6 +476,7 @@ Embedded Swift tools:
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
 int swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
+int swiftos_pkg_remove(const char *name);
 int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                              unsigned long payload_size,
                              const unsigned char *payload_sha256);
@@ -1255,6 +1263,7 @@ int swiftos_chown(const char *path, unsigned int owner);
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
 int swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
+int swiftos_pkg_remove(const char *name);
 int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                              unsigned long payload_size,
                              const unsigned char *payload_sha256);

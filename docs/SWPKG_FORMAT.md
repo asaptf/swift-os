@@ -33,7 +33,7 @@ Use this document with:
 | Install by name from signed repository fixtures | Implemented by `/bin/pkg update` and `/bin/pkg install NAME` |
 | Payload path policy | Package files must live under `/usr` |
 | Package signatures inside `.swpkg` | Reserved; must be empty in v1 |
-| Compression, maintainer scripts, upgrades, remove, version solving | Not implemented |
+| Compression, maintainer scripts, live unmount, upgrades, version solving | Not implemented |
 
 ## Quick Start
 

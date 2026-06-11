@@ -1001,7 +1001,7 @@ diagnostic fixtures than stable application interfaces.
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
 | `deviceauthdemo` | `deviceauthdemo` | Prove a non-console principal cannot discover or claim opaque device grants. | `make device-authority-cap-test` |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, inspect catalog or installed package metadata, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg remove NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, inspect catalog or installed package metadata, deactivate installed packages for the next boot, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_remove_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 | `swos-confirm` | `swos-confirm` | Mark the booted A/B update-store slot confirmed healthy. | `tests/ab_confirm_test.sh` |
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
@@ -1197,6 +1197,7 @@ pkg search TEXT
 pkg info NAME
 pkg install FILE
 pkg install NAME
+pkg remove NAME
 pkg list
 pkg files NAME
 ```
@@ -1209,6 +1210,7 @@ pkg install /packages/pkghello.swpkg
 pkg list
 pkg info pkghello
 pkg files pkghello
+pkg remove pkghello
 /usr/bin/pkghello
 ```
 
@@ -1220,6 +1222,7 @@ pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
 source: installed
 /usr/bin/pkghello
+pkg: deactivated pkghello (effective after reboot)
 pkghello: hello from package overlay
 ```
 
@@ -1280,12 +1283,17 @@ Notes:
   installed package metadata.
 - The guest must be booted with a writable package-store image for install to
   succeed.
+- `pkg remove NAME` appends a new package-store activation without the named
+  package. In the current VFS, package payloads are not live-unmounted, so the
+  deactivation becomes visible after rebooting with the same writable
+  package-store image.
 - `pkg list` reports the package records currently visible through the active
   package store. `pkg files NAME` reports newline-separated absolute file paths
   from the named active package payload.
 - See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for the complete runbook.
 
-Acceptance coverage: `tests/pkg_local_install_test.sh` and
+Acceptance coverage: `tests/pkg_local_install_test.sh`,
+`tests/pkg_remove_test.sh`, and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
 flow for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite is
 by `tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved

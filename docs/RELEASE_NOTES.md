@@ -87,7 +87,8 @@ the exact command and evidence requirement.
 - Provides tmpfs mutation under `/tmp` for writable runtime state.
 - Builds sample `.swpkg` artifacts, read-only package payload overlays, and a
   preseeded package-store image.
-- Provides a narrow local target-side `pkg install FILE` and `pkg list` path.
+- Provides a narrow local target-side `pkg install FILE`, `pkg list`,
+  `pkg info`, `pkg files`, and next-boot `pkg remove NAME` path.
 - Provides signed HTTP repository fixture install with `pkg repo set`,
   `pkg update [URL]`, `pkg search`, `pkg info`, dependency resolution by package
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
@@ -122,8 +123,8 @@ the exact command and evidence requirement.
   from a DNS-resolved HTTP repository hostname with
   `make package-static-host-dns-repo-install-test`.
 - Does not yet provide public hosted package channels, version-constraint
-  solving, broad source-port coverage, remove, upgrade, rollback, or streaming
-  large-package downloads.
+  solving, broad source-port coverage, live package unmount, upgrade, rollback,
+  or streaming large-package downloads.
 
 ### Networking And Services
 
@@ -220,9 +221,9 @@ llmd: served
   tzdata, nginx, and sqlite in QEMU, publish the same seed into a
   static-hostable web root, verify hosted static-root URLs, and install from
   target-side DNS-resolved HTTP repository URLs. Public production channels,
-  broad source-port coverage, version-constraint solving, removal, upgrade,
-  and rollback remain roadmap work. Repository installs stream payload bytes
-  directly into the package store.
+  broad source-port coverage, version-constraint solving, live package unmount,
+  upgrade, and rollback remain roadmap work. Repository installs stream payload
+  bytes directly into the package store.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. C5a-C5f prove

@@ -81,6 +81,7 @@ private let sysLogRead: UInt = 77         // log_read(buf, cap, max_count) — n
 private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local full-duplex fd pair
 private let sysPkgFiles: UInt = 79        // pkg_files(name, buf, cap) — list active package payload files
 private let sysRandom: UInt = 80          // random(buf, cap) — runtime entropy from virtio-rng
+private let sysPkgRemove: UInt = 81       // pkg_remove(name) — deactivate package on next boot
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -264,6 +265,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = pkgStoreActiveInfo(Int(bitPattern: frame[0]), frame[1], frame[2])
     } else if number == sysPkgFiles {
         result = pkgStoreActiveFiles(nameVA: frame[0], outVA: frame[1], cap: frame[2])
+    } else if number == sysPkgRemove {
+        result = pkgStoreRemove(nameVA: frame[0])
     } else if number == sysPkgStreamBegin {
         result = pkgStoreStreamBegin(descVA: frame[0])
     } else if number == sysPkgStreamWrite {
