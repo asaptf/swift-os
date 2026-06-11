@@ -226,6 +226,10 @@ long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count) {
     return log_read(buf, cap, max_count);
 }
 
+long swiftos_random(void *buf, unsigned long count) {
+    return __syscall3(SYS_RANDOM, (long)buf, (long)count, 0);
+}
+
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision) {
     return pkg_install(fd, name, version_revision);
 }
@@ -614,13 +618,21 @@ int putchar(int c) {
     return c;
 }
 
-// Dictionary/Set seed their hashers from arc4random_buf. We have no entropy
-// source and want reproducible behaviour, so fill deterministically — fine for a
-// single-user REPL (the seed only randomises hash-table iteration order).
+// Dictionary/Set seed their hashers from arc4random_buf. Prefer runtime entropy
+// when the kernel has a source, but keep the previous deterministic fallback so
+// non-rng test profiles stay reproducible and bootable.
 void arc4random_buf(void *buf, size_t n) {
     unsigned char *p = (unsigned char *)buf;
-    unsigned long x = 0x9E3779B97F4A7C15UL; // splitmix64-ish constant
-    for (size_t i = 0; i < n; i += 1) {
+    size_t off = 0;
+    while (off < n) {
+        long r = swiftos_random(p + off, (unsigned long)(n - off));
+        if (r <= 0) {
+            break;
+        }
+        off += (size_t)r;
+    }
+    unsigned long x = 0x9E3779B97F4A7C15UL ^ (unsigned long)n ^ (unsigned long)off;
+    for (size_t i = off; i < n; i += 1) {
         x = x * 6364136223846793005UL + 1442695040888963407UL;
         p[i] = (unsigned char)(x >> 56);
     }

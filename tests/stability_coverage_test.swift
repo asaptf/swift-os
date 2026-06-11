@@ -138,6 +138,7 @@ private let fullGateGroups = [
             "./tests/tcp_echo_test.sh",
             "./tests/httpd_test.sh",
             "./tests/dns_test.sh",
+            "./tests/sshd_runtime_entropy_test.sh",
             "./tests/net_zero_copy_throughput_test.sh"
         ]
     ),

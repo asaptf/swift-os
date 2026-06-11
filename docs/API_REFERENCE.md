@@ -73,6 +73,7 @@ source, then follow its Makefile rule and acceptance test.
 | C libuv barrier compatibility | `userland/uvbarrierprobe.c` | reusable `pthread_barrier_*` phases for libuv's native barrier path | `./tests/uvbarrier_test.sh` |
 | C libuv timed condition compatibility | `userland/uvcondprobe.c` | `pthread_cond_timedwait` with `CLOCK_MONOTONIC` timeout and signal wake paths | `./tests/uvcond_test.sh` |
 | C libuv socketpair compatibility | `userland/uvsocketpairprobe.c` | `AF_UNIX` full-duplex `socketpair` with flags and poll readiness | `./tests/uvsocketpair_test.sh` |
+| C libuv signal watcher compatibility | `userland/uvsignalprobe.c` | `pthread_sigmask` facade plus handler-to-pipe wake path | `./tests/uvsignal_test.sh` |
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
@@ -260,6 +261,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 77 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 | 78 | `socketpair` | `fds*`, `flags` | 0 or negative error |
 | 79 | `pkg_files` | `name`, `buf`, `cap` | bytes needed or negative error |
+| 80 | `random` | `buf`, `cap` | bytes written or negative error |
 
 Notes:
 
@@ -1098,15 +1100,20 @@ SwiftOS signal support is deliberately narrow while the runtime port matures:
 
 - `sigaction` records `SIG_DFL`, `SIG_IGN`, and handler pointers.
 - `signal` and `raise` are provided by the newlib compatibility layer.
+- `sigprocmask`/`pthread_sigmask` expose a no-op mask facade with conventional
+  `oldset` reporting and argument validation for ported runtimes that bracket
+  handler installation.
 - Current-process custom handlers are delivered on syscall return through a
   kernel-built user signal frame and the compat `sigreturn` trampoline.
+- `/bin/uvsignalprobe` covers the libuv-shaped watcher path where a handler
+  writes a compact message into a nonblocking pipe that the event loop polls.
 - `kill(pid, 0)` probes positive PIDs.
 - `kill(pid, SIGTERM)` terminates a child under the default disposition.
 - `waitpid` reports signaled children with the signal number in the low bits.
 
-Process groups, signal masks, blocked-syscall interruption, remote async custom
-handler delivery, and full libuv-style signal watcher semantics are not
-implemented yet.
+Process groups, enforced signal masks, blocked-syscall interruption, remote
+async custom handler delivery, and complete libuv-style signal watcher
+semantics are not implemented yet.
 
 ### POSIX-Shaped Event Counters
 
@@ -1271,6 +1278,12 @@ int swiftos_kernel_confirm(void);
 
 ```c
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
+```
+
+### Runtime Entropy
+
+```c
+long swiftos_random(void *buf, unsigned long count);
 ```
 
 ### Security And Process
@@ -1449,6 +1462,7 @@ one booting acceptance path:
 | C compat libuv barrier | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvbarrierprobe.c` | `make uvbarrier-test`, `./tests/boot_test.sh` |
 | C compat libuv timed condition wait | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvcondprobe.c` | `make uvcond-test`, `./tests/boot_test.sh` |
 | C compat libuv socketpair | `kernel/vfs/vfs.swift`, `kernel/syscall/syscall.swift`, `userland/compat/sys/socket.h`, `userland/compat/stubs.c`, `userland/uvsocketpairprobe.c` | `make uvsocketpair-test`, `./tests/boot_test.sh` |
+| C compat libuv signal watcher | `userland/compat/pthread.h`, `userland/compat/signal.h`, `userland/compat/stubs.c`, `userland/uvsignalprobe.c` | `make uvsignal-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
@@ -1459,6 +1473,7 @@ one booting acceptance path:
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Log export | `kernel/log/log.swift`, `kernel/syscall/syscall.swift`, `userland/logtail.swift`, `userland/lib/swift_user.h` | `make log-export-test` |
+| Runtime entropy | `kernel/drivers/virtio_rng.swift`, `kernel/syscall/syscall.swift`, `userland/lib/swift_user.h`, `userland/sshd.swift` | `make sshd-runtime-entropy-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,

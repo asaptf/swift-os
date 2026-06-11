@@ -88,8 +88,13 @@ qemu_args+=(
   -device virtio-blk-device,drive=swosbase
   -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:22"
   -device virtio-net-device,netdev=n0
-  -kernel "$KERNEL"
 )
+if [[ -n "${SSHD_EXTRA_QEMU_ARGS:-}" ]]; then
+  # Space-split only: callers pass QEMU options without embedded whitespace.
+  # shellcheck disable=SC2206
+  qemu_args+=(${SSHD_EXTRA_QEMU_ARGS})
+fi
+qemu_args+=(-kernel "$KERNEL")
 
 await() {
   local marker="$1" max="${2:-30}" n=0
@@ -226,6 +231,14 @@ if [[ -n "${SSHD_EXPECT_KEX_SEED:-}" ]]; then
     || { echo "FAIL: guest did not load the file-backed SSHD KEX seed" >&2; ok=0; }
   grep -qF "sshd: kex random context session 1 seeded" <<<"$clean" \
     || { echo "FAIL: guest did not mark the SSHD KEX context as seeded" >&2; ok=0; }
+fi
+if [[ -n "${SSHD_EXPECT_RUNTIME_ENTROPY:-}" ]]; then
+  grep -qF "virtio-rng: runtime entropy ready" <<<"$clean" \
+    || { echo "FAIL: guest did not bring up virtio-rng" >&2; ok=0; }
+  grep -qF "sshd: loaded runtime entropy from SYS_RANDOM" <<<"$clean" \
+    || { echo "FAIL: guest did not load SSHD runtime entropy" >&2; ok=0; }
+  grep -qF "sshd: kex random context session 1 seeded runtime" <<<"$clean" \
+    || { echo "FAIL: guest did not mark SSHD KEX as runtime-seeded" >&2; ok=0; }
 fi
 grep -qF "sshd: session channel opened" <<<"$clean" \
   || { echo "FAIL: guest did not open a session channel" >&2; ok=0; }

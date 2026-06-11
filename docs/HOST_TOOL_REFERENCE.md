@@ -110,8 +110,8 @@ SwiftOS SSHD host key with `StrictHostKeyChecking=yes`. `make
 sshd-host-key-rotation-test` builds a temporary base image with a generated seed
 and proves the rotated key is what host OpenSSH pins. `make
 sshd-kex-seed-test` uses the same seed generator for `/etc/ssh/ssh_kex_seed`;
-that seed is mixed into the SSHD KEX pseudo-random context, but runtime entropy
-remains separate work.
+that seed is mixed into the SSHD KEX context alongside `SYS_RANDOM` runtime
+entropy when virtio-rng is attached.
 
 ## Package Artifact Tool
 
