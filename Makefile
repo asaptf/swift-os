@@ -301,6 +301,7 @@ USER_MMAPDEMO_ELF := $(BUILD)/mmapdemo.elf
 USER_TCPGET_ELF := $(BUILD)/tcpget.elf
 USER_TLSGET_ELF := $(BUILD)/tlsget.elf
 USER_HTTPD_ELF := $(BUILD)/httpd.elf
+USER_SSHD_ELF := $(BUILD)/sshd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
@@ -325,6 +326,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TCPGET_ELF) \
 	$(USER_TLSGET_ELF) \
 	$(USER_HTTPD_ELF) \
+	$(USER_SSHD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
 	$(USER_DRVINPUTD_ELF) \
@@ -368,7 +370,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshd-transport-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -584,6 +586,9 @@ $(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swi
 $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
 
+$(BUILD)/user_sshd.o: userland/sshd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sshd.swift -o $@
+
 $(BUILD)/user_nslookup.o: userland/nslookup.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/nslookup.swift -o $@
 
@@ -763,6 +768,9 @@ $(USER_TLSGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/use
 
 $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o -o $@
+
+$(USER_SSHD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sshd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sshd.o -o $@
 
 $(USER_NSLOOKUP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_nslookup.o -o $@
@@ -971,6 +979,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/tcp_connect_test.sh
 	./tests/tls_test.sh
 	./tests/httpd_test.sh
+	./tests/sshd_transport_test.sh
 	bash ./tests/net_zero_copy_throughput_test.sh
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
@@ -1093,6 +1102,9 @@ c5-device-rights-test: $(BUILD)/.dir
 	./tests/device_authority_guard_test.sh
 
 c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test
+
+sshd-transport-test: build $(QEMU_DTB) base-image
+	./tests/sshd_transport_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
@@ -1433,6 +1445,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
+	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd

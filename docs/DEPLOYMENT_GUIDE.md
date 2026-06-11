@@ -400,7 +400,7 @@ Hetzner Cloud deploy readiness is tracked separately from the local QEMU
 application-service profile because it adds provider-specific boot, network, and
 remote-login requirements.
 
-Current HC1 status:
+Current Hetzner readiness status:
 
 - The network stack attempts a DHCPv4 lease during virtio-net bring-up and
   adopts the offered IPv4 address, router, DNS server, and subnet mask before
@@ -412,12 +412,19 @@ Current HC1 status:
   with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
+- The base image includes `/bin/sshd` as an SSHD transport preflight. It binds
+  guest TCP/22, exchanges SSH identification strings with a normal OpenSSH
+  client, and returns a valid pre-auth SSH disconnect reason. The checked proof
+  is `./tests/sshd_transport_test.sh`.
 
 Not deploy-complete yet:
 
-- There is no `sshd` in the base image. The next remote-login milestone should
-  be Dropbear server-first: static build, host keys, key-based login, PTY/TTY
-  behavior, service launch, and a QEMU host-to-guest SSH acceptance test.
+- `/bin/sshd` is not a login-capable SSH daemon yet. The next remote-login
+  milestone should be server-first: KEX, host keys, key-based login, PTY/TTY
+  behavior, service launch, and a QEMU host-to-guest SSH acceptance test that
+  runs a command through the authenticated session. Dropbear remains the likely
+  full server package if the first-party preflight does not grow into the
+  supported daemon.
 - SSH client support is also desired for admin and deploy workflows, but it
   should not replace the server-first remote-login proof.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

@@ -10,7 +10,9 @@ virtio-net device, an in-kernel pure-Swift TCP/IP stack, capability-gated socket
 syscalls, DHCPv4 lease acquisition with a QEMU/slirp static fallback, and a set
 of native userland network tools. It is enough to serve static files, serve
 local TinyStories completions, run TCP and UDP echo services, resolve DNS, and
-exercise the TLS 1.3 client path.
+exercise the TLS 1.3 client path. It also includes an SSHD transport preflight
+that accepts a normal SSH client on guest TCP/22 and reports the current
+pre-auth limit before key exchange.
 
 Use this guide with:
 
@@ -75,6 +77,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
+| Exercise SSHD transport preflight | SSHD profile | `/bin/sshd` | `ssh -p <host-port> root@127.0.0.1 true` | `./tests/sshd_transport_test.sh` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
 Operator flow:
@@ -147,6 +150,24 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
   -kernel build/kernel.elf
 ```
 
+### SSHD Transport Profile
+
+Use this profile to validate host-to-guest SSH transport reachability. The
+current `/bin/sshd` is a pre-auth transport probe: it exchanges SSH
+identification strings with an OpenSSH client and sends a valid
+SSH_MSG_DISCONNECT before key exchange.
+
+```sh
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
+  -global virtio-mmio.force-legacy=false \
+  -device loader,file=build/virt.dtb,addr=0x4FF00000,force-raw=on \
+  -drive file=build/base.img,format=raw,if=none,id=swosbase,readonly=on \
+  -device virtio-blk-device,drive=swosbase \
+  -netdev user,id=n0,hostfwd=tcp:127.0.0.1:2222-:22 \
+  -device virtio-net-device,netdev=n0 \
+  -kernel build/kernel.elf
+```
+
 ### Outbound-Only Profile
 
 Guest-initiated clients such as `/bin/tcpget`, `/bin/nslookup`, and
@@ -210,6 +231,7 @@ network traffic is sent.
 | `/bin/llmd` | Host to guest | TCP 8080 | TCP hostfwd to 8080 | `./tests/llm_serve_test.sh` |
 | `/bin/tcpecho` | Host to guest | TCP 5555 | TCP hostfwd to 5555 | `./tests/tcp_echo_test.sh` |
 | `/bin/udpecho` | Host to guest | UDP 5555 | UDP hostfwd to 5555 | `./tests/udp_echo_test.sh` |
+| `/bin/sshd` | Host to guest | TCP 22 | TCP hostfwd to 22 | `./tests/sshd_transport_test.sh` |
 | `/bin/tcpget` | Guest to host | Client-chosen | Host TCP listener | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | Guest to DNS | UDP client | Slirp DNS or host responder | `./tests/dns_test.sh` |
 | `/bin/tlsget` | Guest to host | TCP client | Host TLS 1.3 server | `./tests/tls_test.sh` |
@@ -374,6 +396,42 @@ Proof:
 ./tests/udp_echo_test.sh
 ```
 
+### Exercise SSHD Transport
+
+Boot with host TCP 2222 forwarded to guest TCP 22, log in as `root`, and start:
+
+```sh
+/bin/sshd
+```
+
+Wait for:
+
+```text
+sshd: listening on 22 (transport preflight)
+```
+
+Then connect from the host:
+
+```sh
+ssh -F /dev/null -vvv -p 2222 \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  root@127.0.0.1 true
+```
+
+Expected current behavior is a failed SSH login attempt with the remote software
+version `swift-os_sshd-preauth` and the disconnect reason `transport
+preflight`. This proves TCP/22 reachability and the SSH identification /
+disconnect packet path only; KEX, host keys, user authentication, PTY, and shell
+session channels are follow-up work.
+
+Proof:
+
+```sh
+./tests/sshd_transport_test.sh
+```
+
 ### Connect From Guest To Host
 
 Start a host listener:
@@ -469,6 +527,7 @@ Run the narrowest proof for the path you changed:
 | HTTP zero-copy throughput smoke | `bash ./tests/net_zero_copy_throughput_test.sh` |
 | TCP echo | `./tests/tcp_echo_test.sh` |
 | UDP echo | `./tests/udp_echo_test.sh` |
+| SSHD transport preflight | `./tests/sshd_transport_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
 | TLS client smoke | `./tests/tls_test.sh` |
@@ -491,6 +550,7 @@ The user-visible end-to-end paths are the shell tests above.
 | TCP or UDP echo works once then stops | Echo programs are one-shot | Start `/bin/tcpecho` or `/bin/udpecho` again |
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
+| SSH exits before authentication | Expected current SSHD preflight behavior | Check that the host sees `swift-os_sshd-preauth` and `transport preflight` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 
@@ -505,6 +565,8 @@ Current limits that matter when exposing a SwiftOS network service:
   specific port, address, or protocol.
 - There is no target-side firewall command, routing table command, or network
   configuration command yet. DHCPv4 is boot-time only and does not renew leases.
+- `/bin/sshd` is a transport preflight, not a login daemon. It has no KEX, host
+  key, user authentication, PTY, shell, scp, or sftp support yet.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.
@@ -531,6 +593,7 @@ network.
 | Native Swift socket bridge | [userland/lib/swift_user.h](../userland/lib/swift_user.h) |
 | Static HTTP server | [userland/httpd.swift](../userland/httpd.swift) |
 | LLM HTTP server | [userland/llmd.swift](../userland/llmd.swift) |
+| SSHD transport preflight | [userland/sshd.swift](../userland/sshd.swift) |
 | TCP echo | [userland/tcpecho.swift](../userland/tcpecho.swift) |
 | UDP echo | [userland/udpecho.swift](../userland/udpecho.swift) |
 | TCP client | [userland/tcpget.swift](../userland/tcpget.swift) |

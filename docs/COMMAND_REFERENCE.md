@@ -44,6 +44,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Inspect processes and resources | `ps`, `top` | Process-inspection authority in the current context | `tests/top_test.sh`, `tests/busybox_test.sh` |
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
+| Exercise SSHD transport | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet` | `tests/sshd_transport_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
 | Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
@@ -636,6 +637,40 @@ Notes:
 
 Acceptance coverage: `tests/udp_echo_test.sh`,
 `tests/ipv6_udp_echo_test.sh`.
+
+### `sshd`
+
+Run the current SSH server transport preflight.
+
+```text
+sshd [-p PORT]
+sshd [PORT]
+```
+
+Examples in the guest:
+
+```sh
+/bin/sshd
+/bin/sshd -p 2222
+```
+
+Example on the host, when host TCP 2222 is forwarded to guest TCP 22:
+
+```sh
+ssh -F /dev/null -vvv -p 2222 root@127.0.0.1 true
+```
+
+Notes:
+
+- The default guest port is TCP 22.
+- This command is a pre-auth transport probe. It exchanges SSH identification
+  strings with a normal SSH client and sends a valid SSH_MSG_DISCONNECT with a
+  `transport preflight` reason.
+- It does not implement key exchange, host keys, user authentication, PTY,
+  shell sessions, scp, or sftp yet.
+- A non-zero host `ssh` exit is expected until the next remote-login milestone.
+
+Acceptance coverage: `tests/sshd_transport_test.sh`.
 
 ### `tcpget`
 

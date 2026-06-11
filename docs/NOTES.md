@@ -3,6 +3,29 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC2 SSHD transport preflight (2026-06-11)
+
+- Added `/bin/sshd` as a native Swift SSH server transport preflight. It opens a
+  stream socket, binds guest TCP/22 by default, listens, accepts normal SSH
+  clients, sends `SSH-2.0-swift-os_sshd-preauth`, reads the client's
+  identification string, and sends a valid unencrypted SSH_MSG_DISCONNECT with
+  an explicit pre-auth limitation reason.
+- This is intentionally not a remote-login-capable SSH daemon. KEX, host keys,
+  user authentication, PTY allocation, shell/session channels, scp/sftp, service
+  supervision, and target-side SSH client support remain follow-up work. The
+  next remote-login milestone should prove an authenticated host-to-guest
+  command through the SSH session, likely by growing this first-party path or by
+  landing a static Dropbear server port.
+- The base image now stages `/bin/sshd`, and the focused QEMU test forwards a
+  host loopback port to guest TCP/22, runs `/bin/sshd` from the root shell, and
+  drives it with the host OpenSSH client.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` requires the guest to log
+`sshd: listening on 22 (transport preflight)`, receive a `SSH-2.0-...` client
+banner, and send the pre-auth disconnect. The host OpenSSH transcript must show
+the `swift-os_sshd-preauth` remote software version and the `transport
+preflight` reason, while the SSH command still exits non-zero.
+
 ## HC1 DHCPv4 cloud network preflight (2026-06-11)
 
 - Added a minimal sans-IO DHCPv4 client codec in `kernel/net/dhcp.swift`.
