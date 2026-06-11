@@ -209,6 +209,10 @@ int swiftos_context(unsigned int *principal, unsigned int *session, unsigned lon
     return 0;
 }
 
+long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count) {
+    return log_read(buf, cap, max_count);
+}
+
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision) {
     return pkg_install(fd, name, version_revision);
 }

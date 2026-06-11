@@ -281,6 +281,8 @@ USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
+USER_LOGTAIL_ELF := $(BUILD)/logtail.elf
+USER_LOGTAILPROBE_ELF := $(BUILD)/logtail-probe.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
 USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
 USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
@@ -346,6 +348,8 @@ BASE_EXEC_ELFS := \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
+	$(USER_LOGTAIL_ELF) \
+	$(USER_LOGTAILPROBE_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
 	$(USER_SWOSACTIVATE_ELF) \
 	$(USER_SWOSUPDATE_ELF) \
@@ -388,7 +392,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test pthread-test select-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test pthread-test select-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -513,6 +517,12 @@ $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h 
 
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
+
+$(BUILD)/user_logtail.o: userland/logtail.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail.swift -o $@
+
+$(BUILD)/user_logtail_probe.o: userland/logtail-probe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail-probe.swift -o $@
 
 $(BUILD)/user_swosconfirm.o: userland/swos-confirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-confirm.swift -o $@
@@ -699,6 +709,12 @@ $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
+
+$(USER_LOGTAIL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o -o $@
+
+$(USER_LOGTAILPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o -o $@
 
 $(USER_SWOSCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o -o $@
@@ -1030,6 +1046,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/ed25519_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	./tests/log_export_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
@@ -1121,6 +1138,9 @@ smp-s1-preflight: | $(BUILD)/.dir
 qemu-virt-hardware-map-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/fdt_test.swift kernel/arch/aarch64/fdt.swift -o $(BUILD)/fdt_test
 	FDT_TEST=$(BUILD)/fdt_test ./tests/qemu_virt_hardware_map_test.sh
+
+log-export-test: build $(QEMU_DTB) base-image
+	./tests/log_export_test.sh
 
 smp-test: build base-image
 	./tests/smp_boot_test.sh
@@ -1523,6 +1543,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
+	cp $(USER_LOGTAIL_ELF) $(BASE_ROOT)/bin/logtail
+	cp $(USER_LOGTAILPROBE_ELF) $(BASE_ROOT)/bin/logtail-probe
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm
 	cp $(USER_SWOSACTIVATE_ELF) $(BASE_ROOT)/bin/swos-activate
 	cp $(USER_SWOSUPDATE_ELF) $(BASE_ROOT)/bin/swos-update

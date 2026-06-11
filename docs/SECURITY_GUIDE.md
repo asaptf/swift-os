@@ -107,7 +107,7 @@ architecture.
 | No target-side account management | Accounts are edited in `base/etc/swos/passwd` and repacked into the image |
 | No persistent user data store | `/tmp` is scratch; reboot clears it |
 | `capSpawn` and `capProcessInspect` are scaffold bits | They are part of the identity model, but not the main enforcement boundary yet |
-| `capLogExport` is reserved | No seeded account receives it by default |
+| `capLogExport` is explicit | Local log export exists, but no seeded account receives the bit by default |
 | Drivers and networking are still in kernel | C5d proves virtio-input or pseudo fallback discovery metadata plus an opaque device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
 | Single global cell today | `CellId` exists as a field; real Cells are future work |
 
@@ -174,7 +174,7 @@ The capability constants are defined in `kernel/security/security.swift`.
 | 3 | `capTmpWrite` | `0x08` | Allows tmpfs writes and namespace mutations |
 | 4 | `capProcessInspect` | `0x10` | Identity-model process-inspection authority bit |
 | 5 | `capNet` | `0x20` | Allows sockets and DNS resolver use |
-| 6 | `capLogExport` | `0x40` | Reserved for future log export and sink installation |
+| 6 | `capLogExport` | `0x40` | Allows `SYS_LOG_READ` / `logtail` ring export; reserved for future sink installation |
 
 Check the current process:
 
