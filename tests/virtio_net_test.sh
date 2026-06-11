@@ -19,6 +19,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 
 LOG="$(mktemp -t swiftos-net.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-net-pid.XXXXXX)"
@@ -43,10 +46,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-dtb_args=()
-if [[ -f "$DTB" ]]; then
-  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+[[ -f "$DTB" ]] && qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
@@ -60,15 +63,14 @@ await() {  # await MARKER [MAXSEC]
 # A user-mode (slirp) NIC as a modern (v2) virtio-mmio device. The base image
 # rides along as a virtio-blk disk so the boot path is identical to the others.
 # The net-a probe runs early in boot; a short Ctrl-C just stops the kernel.
-( sleep 9; printf '\003'; sleep 1 ) | "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]:-}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0 \
-  -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" >"$LOG" 2>&1 &
+qemu_args+=(
+  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -netdev user,id=n0
+  -device virtio-net-device,netdev=n0
+  -kernel "$KERNEL"
+)
+( sleep 9; printf '\003'; sleep 1 ) | "${qemu_args[@]}" >"$LOG" 2>&1 &
 QP=$!
 await "net-a OK: ICMP echo reply from 10.0.2.2" 60 || true
 sleep 1
