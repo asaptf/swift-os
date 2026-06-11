@@ -1041,7 +1041,7 @@ Notes:
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
-flow for Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite is
+flow for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite is
 by `tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved
 hosted-style URL flow is covered by
 `tests/pkg_static_host_dns_repo_install_test.sh`.

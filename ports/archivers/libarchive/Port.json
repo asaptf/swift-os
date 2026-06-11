@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "name": "libarchive",
+  "version": "3.8.7",
+  "revision": 1,
+  "category": "archivers",
+  "summary": "libarchive static library and bsdtar archive tool",
+  "homepage": "https://libarchive.org/",
+  "license": ["BSD-2-Clause"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://libarchive.org/downloads/libarchive-3.8.7.tar.xz",
+    "sha256": "d3a8ba457ae25c27c84fd2830a2efdcc5b1d40bf585d4eb0d35f47e99e5d4774"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "autotools-make",
+    "args": [
+      "--host=aarch64-elf",
+      "--prefix=/usr",
+      "--disable-shared",
+      "--enable-static",
+      "--enable-bsdtar=static",
+      "--disable-bsdcat",
+      "--disable-bsdcpio",
+      "--disable-bsdunzip",
+      "--disable-dependency-tracking",
+      "--disable-acl",
+      "--disable-xattr",
+      "--without-iconv",
+      "--without-lz4",
+      "--without-lzo2",
+      "--without-libb2",
+      "--without-openssl",
+      "--without-xml2",
+      "--without-expat",
+      "--disable-posix-regex-lib"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -include ${RUNTIME}/swiftos_libarchive_compat.h -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CPPFLAGS": "-D_FORTIFY_SOURCE=0 -I${SWOS_ROOT}/build/zlib-root/usr/include -I${SWOS_ROOT}/build/bzip2-root/usr/include -I${SWOS_ROOT}/build/zstd-root/usr/include -I${SWOS_ROOT}/build/xz-root/usr/include",
+      "CONFIGURE_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o ${RUNTIME}/swiftos_libarchive_compat.o -L${SYSROOT}/lib -L${SWOS_ROOT}/build/zlib-root/usr/lib -L${SWOS_ROOT}/build/bzip2-root/usr/lib -L${SWOS_ROOT}/build/zstd-root/usr/lib -L${SWOS_ROOT}/build/xz-root/usr/lib",
+      "FINAL_LIBTOOL_LDFLAGS": "-static -L${SYSROOT}/lib -L${SWOS_ROOT}/build/zlib-root/usr/lib -L${SWOS_ROOT}/build/bzip2-root/usr/lib -L${SWOS_ROOT}/build/zstd-root/usr/lib -L${SWOS_ROOT}/build/xz-root/usr/lib",
+      "FINAL_PROGRAM_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o ${RUNTIME}/swiftos_libarchive_compat.o -L${SYSROOT}/lib -L${SWOS_ROOT}/build/zlib-root/usr/lib -L${SWOS_ROOT}/build/bzip2-root/usr/lib -L${SWOS_ROOT}/build/zstd-root/usr/lib -L${SWOS_ROOT}/build/xz-root/usr/lib",
+      "LIBS": "-Wl,--start-group -lzstd -llzma -lbz2 -lz -lc -lgcc -Wl,--end-group",
+      "RANLIB": "aarch64-elf-ranlib",
+      "ac_cv_func_fchdir": "yes",
+      "ac_cv_header_pthread_h": "no"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "bsdtar", "libarchive.a", "headers", "pkgconfig", "version-marker"]
+  },
+  "package": {
+    "depends": ["bzip2", "xz", "zlib", "zstd"],
+    "provides": ["libarchive", "bsdtar"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/bsdtar", "to": "/usr/bin/bsdtar", "mode": "0755" },
+      { "from": "destdir/usr/include/archive.h", "to": "/usr/include/archive.h", "mode": "0644" },
+      { "from": "destdir/usr/include/archive_entry.h", "to": "/usr/include/archive_entry.h", "mode": "0644" },
+      { "from": "destdir/usr/lib/libarchive.a", "to": "/usr/lib/libarchive.a", "mode": "0644" },
+      { "from": "destdir/usr/lib/pkgconfig/libarchive.pc", "to": "/usr/lib/pkgconfig/libarchive.pc", "mode": "0644" },
+      { "from": "destdir/usr/share/libarchive/swiftos-libarchive.version", "to": "/usr/share/libarchive/swiftos-libarchive.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/bsdtar --version",
+      "cd /tmp && echo libarchive-ok > libarchive.txt && /usr/bin/bsdtar -cf libarchive.tar libarchive.txt && /usr/bin/bsdtar -tf libarchive.tar",
+      "cat /usr/share/libarchive/swiftos-libarchive.version"
+    ]
+  },
+  "notes": "Tier 0 archive package. scripts/build-libarchive.sh cross-builds a static bsdtar plus libarchive.a and links against the packaged zlib, bzip2, zstd, and xz roots. The first SwiftOS package disables bsdcat, bsdcpio, bsdunzip, ACL/xattr, external program filters at runtime, iconv, lz4, lzo2, libb2, OpenSSL, XML backends, and POSIX regex. A tiny fchdir/pathconf shim is sufficient for simple bsdtar create/list smoke tests; deep directory traversal should be revisited when fd-relative directory support is stronger."
+}

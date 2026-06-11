@@ -331,7 +331,7 @@ See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
 
 SwiftOS package compatibility is currently image-based, with a narrow local
 target-side install path, a signed static HTTP repository fixture, and a local
-static-host ports fixture for Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata,
+static-host ports fixture for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata,
 nginx, and sqlite, plus a hosted-style HTTP repository URL smoke.
 
 Supported now:
@@ -347,7 +347,7 @@ Supported now:
 - Target-side `pkg update URL`, `pkg search`, `pkg info`, and
   `pkg install NAME` for packages present in a verified fixture catalog.
 - Guest execution from attached package namespace, proven by `/usr/bin/pkghello`.
-- Source-built Lua, zlib, bzip2, zstd, xz, pcre2, nginx, and sqlite packages plus the ca-certificates/tzdata data packages
+- Source-built Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and sqlite packages plus the ca-certificates/tzdata data packages
   published into one seed repository.
 - Static-hostable repository root under `build/ports-static-host-root`, proven
   by `make package-static-host-repo-install-test`.

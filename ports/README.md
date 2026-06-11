@@ -8,8 +8,8 @@ artifacts.
 
 This is not a full ports tree yet. The checked-in recipes are `lang/lua`,
 `archivers/zlib`, `archivers/bzip2`, `archivers/zstd`, `archivers/xz`,
-`security/ca-certificates`, `devel/pcre2`, `sysutils/tzdata`, `www/nginx`, and
-`databases/sqlite`, with validation,
+`archivers/libarchive`, `security/ca-certificates`, `devel/pcre2`,
+`sysutils/tzdata`, `www/nginx`, and `databases/sqlite`, with validation,
 manifest generation, checksum-verified distfile fetching, `.swpkg` creation
 from clean staged roots, and signed static repository fixture generation.
 `make ports-lua-repo-fixture` cross-builds real AArch64 static Lua against the
@@ -24,6 +24,9 @@ until those dependencies are packaged.
 `make ports-xz-repo-fixture` cross-builds static xz, unxz, xzcat, liblzma,
 headers, and pkgconf metadata with scripts, NLS, sandboxing, threading, and
 dynamic libraries disabled.
+`make ports-libarchive-repo-fixture` cross-builds static `bsdtar`,
+`libarchive.a`, public headers, and pkgconf metadata against the packaged zlib,
+bzip2, zstd, and xz roots.
 `make ports-ca-certificates-repo-fixture` packages the pinned Mozilla CA bundle
 as a data-only trust-store package. `make ports-pcre2-repo-fixture`
 cross-builds static PCRE2 libraries, headers, pkgconf metadata, and
@@ -32,7 +35,7 @@ zoneinfo files and packages the `/usr/share/zoneinfo` tree.
 `make ports-nginx-repo-fixture` cross-builds a minimal static HTTP-only nginx
 package. `make ports-sqlite-repo-fixture` cross-builds static SQLite,
 `libsqlite3.a`, headers, pkgconf metadata, and the `sqlite3` CLI.
-`make ports-seed-repo-fixture` publishes all ten packages into one signed
+`make ports-seed-repo-fixture` publishes all eleven packages into one signed
 seed repository. `make ports-static-host-publish` copies that seed repository
 into a deployable static-host web root with `hosted-repo.json`,
 `repo-root.pub`, and `SHA256SUMS`.
@@ -50,13 +53,14 @@ hardened inside `swift-os`.
 | bzip2 | `ports/archivers/bzip2/Port.json` | Static bzip2 CLI tools, `libbz2.a`, header, and pkgconf metadata |
 | zstd | `ports/archivers/zstd/Port.json` | Static single-threaded zstd CLI tools, `libzstd.a`, headers, and pkgconf metadata |
 | xz | `ports/archivers/xz/Port.json` | Static xz CLI tools, `liblzma.a`, headers, and pkgconf metadata |
+| libarchive | `ports/archivers/libarchive/Port.json` | Static `bsdtar`, `libarchive.a`, headers, and pkgconf metadata |
 | ca-certificates | `ports/security/ca-certificates/Port.json` | Data-only Mozilla CA bundle under packaged `/usr` paths |
 | PCRE2 | `ports/devel/pcre2/Port.json` | Static PCRE2 libraries, headers, pkgconf metadata, and `pcre2grep` |
 | tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
 | SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
 
-`make ports-seed-repo-fixture` publishes all ten packages into one signed local
+`make ports-seed-repo-fixture` publishes all eleven packages into one signed local
 repository. `make ports-static-host-publish` turns that seed into a deployable
 static-host web root containing `hosted-repo.json`, `repo-root.pub`, and
 `SHA256SUMS`.
@@ -71,6 +75,7 @@ make ports-zlib-repo-fixture
 make ports-bzip2-repo-fixture
 make ports-zstd-repo-fixture
 make ports-xz-repo-fixture
+make ports-libarchive-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -84,12 +89,14 @@ build/swport recipe validate www/nginx
 build/swport recipe validate archivers/bzip2
 build/swport recipe validate archivers/zstd
 build/swport recipe validate archivers/xz
+build/swport recipe validate archivers/libarchive
 build/swport recipe validate databases/sqlite
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
 build/swport recipe manifest archivers/zstd --output build/zstd-manifest.json
 build/swport recipe manifest archivers/xz --output build/xz-manifest.json
+build/swport recipe manifest archivers/libarchive --output build/libarchive-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
@@ -100,7 +107,7 @@ build/swport recipe package lang/lua --root <staged-root> --output build/lua.swp
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua, zlib, bzip2, zstd, xz, pcre2, nginx, and sqlite cross-build targets require
+The Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and sqlite cross-build targets require
 `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib` if the generated
 sysroot is not present.
 

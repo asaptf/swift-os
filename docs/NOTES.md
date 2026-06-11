@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## P18 libarchive seed package (2026-06-11)
+
+- Added `ports/archivers/libarchive/Port.json` for upstream libarchive 3.8.7 as
+  the next checked archive tooling package. It packages static `bsdtar`,
+  `libarchive.a`, public headers, pkgconf metadata, and a marker file.
+- Added `scripts/build-libarchive.sh`. The script cross-builds against the local
+  newlib sysroot and the checked zlib, bzip2, zstd, and xz package roots, then
+  verifies the AArch64 ELF and publishes both the `.swpkg` and signed local
+  repository fixture.
+- The first static build disables external program filters and supplies a small
+  SwiftOS compat shim for metadata calls that are not kernel-backed yet. Built-in
+  gzip, bzip2, xz, and zstd filters are available through the packaged
+  libraries.
+- The ports seed repository now publishes Lua, zlib, bzip2, zstd, xz,
+  libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite. Package seed,
+  static-host, hosted URL, catalog, recipe, and documentation tests were
+  extended to install libarchive, run `bsdtar --version`, and create/list a
+  tiny tar archive inside QEMU.
+
 ## P17 xz seed package (2026-06-10)
 
 - Added `ports/archivers/xz/Port.json` for upstream XZ Utils 5.8.3 as the next

@@ -341,7 +341,7 @@ make package-repo-install-test
 
 ## 11. Install Source-Built Packages From A Static-Host Fixture
 
-The current ports fixture cross-builds Lua, zlib, bzip2, zstd, xz, pcre2, nginx, and
+The current ports fixture cross-builds Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and
 sqlite, packages ca-certificates and tzdata, publishes them into one signed seed
 repository, copies that repository into a static-hostable web root, and proves
 that the guest can install from the hosted layout.
@@ -364,6 +364,9 @@ pkg update
 pkg search lua
 pkg search zlib
 pkg search bzip2
+pkg search zstd
+pkg search xz
+pkg search libarchive
 pkg search ca-certificates
 pkg search pcre2
 pkg search tzdata
@@ -372,6 +375,9 @@ pkg search sqlite
 pkg install lua
 pkg install zlib
 pkg install bzip2
+pkg install zstd
+pkg install xz
+pkg install libarchive
 pkg install ca-certificates
 pkg install pcre2
 pkg install tzdata
@@ -384,6 +390,13 @@ echo static-host-ok > /tmp/zlib.txt
 cat /tmp/zlib.txt
 echo bzip2-static-host-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc
 cat /usr/share/bzip2/swiftos-bzip2.version
+echo zstd-static-host-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c
+cat /usr/share/zstd/swiftos-zstd.version
+echo xz-static-host-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c
+cat /usr/share/xz/swiftos-xz.version
+/usr/bin/bsdtar --version
+cd /tmp && echo libarchive-static-host-ok > libarchive.txt && /usr/bin/bsdtar -cf libarchive.tar libarchive.txt && /usr/bin/bsdtar -tf libarchive.tar
+cat /usr/share/libarchive/swiftos-libarchive.version
 cat /usr/share/certs/swiftos-ca-bundle.version
 echo nginx-lighttpd > /tmp/pcre2.txt
 /usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
@@ -397,15 +410,17 @@ cat /usr/share/sqlite/swiftos-sqlite.version
 Expected signals:
 
 - `pkg update` accepts the static-hosted signed catalog.
-- `pkg search lua`, `pkg search zlib`, `pkg search bzip2`,
-  `pkg search ca-certificates`, `pkg search pcre2`, and `pkg search sqlite`
-  find the current seed packages.
-- `pkg install lua`, `pkg install zlib`, `pkg install ca-certificates`,
-  `pkg install bzip2`, `pkg install pcre2`, `pkg install tzdata`,
-  `pkg install nginx`, and `pkg install sqlite` activate all ten packages.
+- `pkg search lua`, `pkg search zlib`, `pkg search bzip2`, `pkg search zstd`,
+  `pkg search xz`, `pkg search libarchive`, `pkg search ca-certificates`,
+  `pkg search pcre2`, and `pkg search sqlite` find the current seed packages.
+- `pkg install lua`, `pkg install zlib`, `pkg install bzip2`,
+  `pkg install zstd`, `pkg install xz`, `pkg install libarchive`,
+  `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
+  `pkg install nginx`, and `pkg install sqlite` activate all eleven packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; bzip2
-  round-trips `bzip2-static-host-ok`; the CA marker prints
+  round-trips `bzip2-static-host-ok`; zstd and xz round-trip their marker
+  strings; `bsdtar` creates and lists a tiny archive; the CA marker prints
   `curl-ca-bundle 2026-05-14 121 certificates`; `pcre2grep` prints
   `nginx-lighttpd`; tzdata, nginx, and SQLite print their package
   markers; SQLite prints `42` in list mode.
