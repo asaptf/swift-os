@@ -10,9 +10,10 @@ virtio-net device, an in-kernel pure-Swift TCP/IP stack, capability-gated socket
 syscalls, DHCPv4 lease acquisition with a QEMU/slirp static fallback, and a set
 of native userland network tools. It is enough to serve static files, serve
 local TinyStories completions, run TCP and UDP echo services, resolve DNS, and
-exercise the TLS 1.3 client path. It also includes an SSHD session/exec
-preflight that accepts a normal OpenSSH client on guest TCP/22, authenticates a
-development Ed25519 key, and runs one direct remote command.
+exercise the TLS 1.3 client path. It also includes an SSH client transport
+preflight against OpenSSH and an SSHD session/exec preflight that accepts a
+normal OpenSSH client on guest TCP/22, authenticates a development Ed25519 key,
+and runs one direct remote command.
 
 Use this guide with:
 
@@ -77,6 +78,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
+| Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd` | `./tests/ssh_transport_test.sh` |
 | Exercise SSHD remote command | SSHD profile | `/bin/sshd` | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
@@ -172,8 +174,8 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
 
 ### Outbound-Only Profile
 
-Guest-initiated clients such as `/bin/tcpget`, `/bin/nslookup`, and
-`/bin/tlsget` do not need host forwarding. They only need a slirp NIC:
+Guest-initiated clients such as `/bin/tcpget`, `/bin/nslookup`, `/bin/tlsget`,
+and `/bin/ssh` do not need host forwarding. They only need a slirp NIC:
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -447,6 +449,28 @@ Proof:
 ./tests/sshd_transport_test.sh
 ```
 
+### Exercise The SSH Client
+
+Start a host OpenSSH `sshd` on a high loopback port with an Ed25519 host key and
+modern algorithms, boot SwiftOS with a slirp NIC, log in as `root`, and run:
+
+```sh
+/bin/ssh 10.0.2.2 2222
+```
+
+The current client preflight connects outbound, exchanges SSH identification
+strings, completes `curve25519-sha256`, verifies the server's `ssh-ed25519`
+host-key signature over the exchange hash, handles OpenSSH strict KEX, derives
+`chacha20-poly1305@openssh.com` keys, and completes one encrypted
+`ssh-userauth` service request/accept. It does not yet implement known_hosts
+trust policy, user authentication, session/exec channels, PTY, scp, or sftp.
+
+Proof:
+
+```sh
+./tests/ssh_transport_test.sh
+```
+
 ### Connect From Guest To Host
 
 Start a host listener:
@@ -543,6 +567,7 @@ Run the narrowest proof for the path you changed:
 | TCP echo | `./tests/tcp_echo_test.sh` |
 | UDP echo | `./tests/udp_echo_test.sh` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
+| SSH client transport preflight | `./tests/ssh_transport_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
 | TLS client smoke | `./tests/tls_test.sh` |
@@ -564,6 +589,7 @@ The user-visible end-to-end paths are the shell tests above.
 | Host `curl` cannot connect | Missing or mismatched `hostfwd`, service not ready, or host port conflict | Wait for the service readiness marker; confirm the hostfwd rule; choose another host port |
 | TCP or UDP echo works once then stops | Echo programs are one-shot | Start `/bin/tcpecho` or `/bin/udpecho` again |
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
+| `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; run `./tests/ssh_transport_test.sh` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
 | SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
@@ -587,6 +613,9 @@ Current limits that matter when exposing a SwiftOS network service:
   argv splitting; PTY, shell command parsing, stdin forwarding, scp, sftp,
   persisted host keys, real entropy, and broader authorized-key options are
   still missing.
+- `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
+  the server's host-key signature for the current exchange but has no known_hosts
+  trust store, no user authentication, and no session/exec or file-copy modes.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.
@@ -613,6 +642,7 @@ network.
 | Native Swift socket bridge | [userland/lib/swift_user.h](../userland/lib/swift_user.h) |
 | Static HTTP server | [userland/httpd.swift](../userland/httpd.swift) |
 | LLM HTTP server | [userland/llmd.swift](../userland/llmd.swift) |
+| SSH client transport preflight | [userland/ssh.swift](../userland/ssh.swift) |
 | SSHD session/exec preflight | [userland/sshd.swift](../userland/sshd.swift) |
 | TCP echo | [userland/tcpecho.swift](../userland/tcpecho.swift) |
 | UDP echo | [userland/udpecho.swift](../userland/udpecho.swift) |

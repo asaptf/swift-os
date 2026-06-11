@@ -3,6 +3,31 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC7 SSH client transport preflight (2026-06-11)
+
+- Added `/bin/ssh` as a native Swift SSH client transport preflight. It opens
+  an outbound TCP stream, sends `SSH-2.0-swift-os_ssh-transport`, reads a normal
+  OpenSSH server banner, sends client KEXINIT, completes `curve25519-sha256`,
+  verifies the server's `ssh-ed25519` host-key signature over the exchange
+  hash, handles OpenSSH strict-KEX sequence reset, derives
+  `chacha20-poly1305@openssh.com` keys, and performs one encrypted
+  `ssh-userauth` service request/accept exchange.
+- This is intentionally pre-auth only. It does not yet implement known_hosts
+  trust policy, user publickey authentication, session/exec channels, PTY,
+  scp/sftp, or interactive shell behavior. Randomness is still the development
+  pseudo-random helper, so the client is not production-secure yet.
+- The base image now stages `/bin/ssh`, and `make ssh-transport-test` starts a
+  temporary host OpenSSH `sshd` with a generated Ed25519 host key and restricted
+  modern algorithms, boots QEMU with a slirp NIC, logs in as `root`, and runs
+  `/bin/ssh 10.0.2.2 <port>` from the guest.
+
+**Acceptance.** `./tests/ssh_transport_test.sh` requires guest `/bin/ssh` to
+connect to the host OpenSSH server, report an OpenSSH server banner, verify the
+Ed25519 host-key signature, detect strict KEX, negotiate
+`curve25519-sha256` / `ssh-ed25519` / `chacha20-poly1305@openssh.com`, complete
+the encrypted `ssh-userauth` service request/accept, and print
+`ssh: transport ready (preauth)`.
+
 ## HC6 SSHD generic direct exec preflight (2026-06-11)
 
 - Generalized SSHD `exec` handling from a special `/bin/echo ...` path to a
