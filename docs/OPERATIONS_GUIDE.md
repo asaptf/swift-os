@@ -688,8 +688,8 @@ Current limits that matter during operation:
 - No production password policy or password rotation workflow.
 - No general service manager; most services are started manually from the
   shell. `/bin/swos-init` can start a small boot allowlist such as `sshd`, and
-  C5 proves a focused driver-service restart/device-grant/metadata path, not a
-  general daemon manager.
+  has opt-in SSHD restart tokens. C5 proves a focused driver-service
+  restart/device-grant/metadata path, not a general daemon manager.
 - SMP hardening can boot and test multiple scheduler CPUs, including the S5f
   run-any placement gate, but production load balancing and CPU policy remain
   active hardening work.

@@ -22,13 +22,14 @@ restartable driver-service plus device-discovery and opaque device-handle
 smoke. It does not yet have a general service manager. Most services are static
 user programs started from the serial shell after login; the default base image
 also has a tiny `/bin/swos-init` boot handoff that starts allowlisted services
-from `/etc/swos/services` before launching `console-login`. Long-running
-services report readiness through deterministic serial log markers.
+from `/etc/swos/services` before launching `console-login`, with opt-in restart
+tokens for SSHD preflight coverage. Long-running services report readiness
+through deterministic serial log markers.
 
 | Property | Current behavior |
 | --- | --- |
 | Launch | Manual shell command after login, or the boot allowlist handled by `/bin/swos-init` |
-| Supervision | None yet; restart manually by rerunning the command |
+| Supervision | Manual by default; `/bin/swos-init` has opt-in `sshd-supervised` and `sshd-once` restart tokens |
 | Configuration | Command arguments, immutable base image files such as `/etc/swos/services`, or `/tmp` scratch |
 | Writable state | `/tmp` only; cleared on reboot |
 | Service identity | The logged-in principal for manual services; boot context for `swos-init` services |
@@ -53,6 +54,7 @@ that proves the service behaved as expected.
 | Serve local AI completions | Network launch profile with TCP 8080 | `/bin/llmd` | POST to `/completion` and read `/metrics` | `llmd: serving on 8080` and `./tests/llm_serve_test.sh` |
 | Test one inbound TCP request | Network launch profile with TCP 5555 | `/bin/tcpecho` | `printf 'hello tcp\n' | nc -w8 127.0.0.1 5555` | Byte-count marker and `./tests/tcp_echo_test.sh` |
 | Test one inbound UDP datagram | Network launch profile with UDP 5555 | `/bin/udpecho` | `printf 'hello udp' | nc -u -w2 127.0.0.1 5555` | Sender marker and `./tests/udp_echo_test.sh` |
+| Prove SSHD restart supervision | Custom base image with `sshd-once` in `/etc/swos/services` | Boot under `/bin/swos-init` | Two host OpenSSH commands | `swos-init: service sshd-once ... restarting` and `make sshd-supervision-test` |
 | Prove driver-service restart shape | Direct QEMU test profile | `/bin/drvsvcdemo` | None for manual run | C5 OK markers and `make c5-device-authority-test` |
 | Debug a startup failure | Same profile as the service | Rerun the command under `root` | Capture host client output if a port is involved | First failure marker, QEMU command, and serial log |
 | Add a new service | Source under `userland/` or a package payload | Stable readiness marker and documented command | Focused host test drives the service | Command Reference entry, guide section, and focused test |
@@ -494,10 +496,11 @@ make test
 
 ## Known Limits
 
-- There is no general service manager, restart policy, dependency graph, or
-  background service registry yet. `/bin/swos-init` only starts a small
-  allowlist from `/etc/swos/services`; C5a-C5f only prove a focused
-  driver-service supervisor/restart/discovery/device-grant authority path.
+- There is no general service manager, dependency graph, or background service
+  registry yet. `/bin/swos-init` starts a small allowlist from
+  `/etc/swos/services` and has opt-in SSHD restart tokens; C5a-C5f only prove a
+  focused driver-service supervisor/restart/discovery/device-grant authority
+  path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.
 - `/tmp` is the only writable runtime area and is lost on reboot.

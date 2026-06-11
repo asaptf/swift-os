@@ -69,7 +69,8 @@ SwiftOS is headless by default. QEMU provides the primary serial console with
 `-nographic`.
 
 The boot init is `/bin/swos-init`. It starts configured boot services from
-`/etc/swos/services`, then hands the serial console to `/bin/console-login`.
+`/etc/swos/services`, then either hands the serial console to
+`/bin/console-login` or stays alive for opt-in supervised service tokens.
 The login shell is busybox `ash`. It supports normal command execution, pipes,
 redirection, and the PATH used by the base image. The examples below can be
 pasted at the shell prompt after login.
@@ -720,6 +721,10 @@ Notes:
 - The default base image starts `/bin/sshd` at boot through `/bin/swos-init`
   and `/etc/swos/services`; manual `/bin/sshd` remains useful for custom ports
   or debug runs.
+- Custom base images can replace `/etc/swos/services` with
+  `SWOS_SERVICES_FILE=PATH`. The opt-in tokens `sshd-supervised` and
+  `sshd-once` keep `/bin/swos-init` alive as a restart loop for SSHD
+  preflights; default `sshd` still hands off to the serial login.
 - This command exchanges SSH identification strings with a normal OpenSSH
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
@@ -926,7 +931,7 @@ diagnostic fixtures than stable application interfaces.
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
-| `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login`. | `tests/sshd_transport_test.sh` |
+| `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
 | `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
@@ -953,10 +958,15 @@ Notes:
   base image.
 - `swos-init` reads immutable `/etc/swos/services`, starts allowlisted services
   such as `sshd`, and then `execve()`s `/bin/console-login`.
+- The opt-in tokens `sshd-supervised` and `sshd-once` keep `swos-init` alive as
+  a simple restart loop. `sshd-once` is a test token: it starts `/bin/sshd` in
+  one-session mode and proves the supervisor can restart it for a second SSH
+  command.
 - It is deliberately not a full service manager: there is no dependency graph,
-  restart policy, package service activation, or health supervision yet.
+  package service activation, or production health policy yet.
 
-Acceptance coverage: `tests/sshd_transport_test.sh`.
+Acceptance coverage: `tests/sshd_transport_test.sh`,
+`tests/sshd_supervision_test.sh`.
 
 Examples:
 
