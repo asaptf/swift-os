@@ -186,6 +186,10 @@ await "pkg: installed pkghello-1.0.0_1" 120 || drive_fail "pkg install by name d
 send_line 'pkg list'
 await "pkgdep-1.0.0_1" 60 || drive_fail "installed dependency package not listed"
 await "pkghello-1.0.0_1" 60 || drive_fail "installed package not listed"
+send_line 'pkg files pkgdep'
+await "/usr/bin/pkgdep" 60 || drive_fail "pkg files did not list dependency payload"
+send_line 'pkg files pkghello'
+await "/usr/bin/pkghello" 60 || drive_fail "pkg files did not list installed package payload"
 send_line '/usr/bin/pkghello'
 await "pkghello: hello from package overlay" 60 || drive_fail "/usr/bin/pkghello did not execute after repo install"
 send_line "pkg update http://10.0.2.2:$PORT/badhash/aarch64/current"
@@ -210,6 +214,8 @@ grep -qF "pkg: repository set" <<<"$clean" || { echo "FAIL: repo set output miss
 grep -qF "depends: pkgdep" <<<"$clean" || { echo "FAIL: dependency info output missing" >&2; ok=0; }
 grep -qF "pkg: installed pkgdep-1.0.0_1" <<<"$clean" || { echo "FAIL: dependency install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pkghello-1.0.0_1" <<<"$clean" || { echo "FAIL: repo pkg install output missing" >&2; ok=0; }
+grep -qF "/usr/bin/pkgdep" <<<"$clean" || { echo "FAIL: pkg files dependency output missing" >&2; ok=0; }
+grep -qF "/usr/bin/pkghello" <<<"$clean" || { echo "FAIL: pkg files package output missing" >&2; ok=0; }
 grep -qF "P3b: package installed and activated" <<<"$clean" || { echo "FAIL: kernel did not activate installed package" >&2; ok=0; }
 grep -qF "pkghello: hello from package overlay" <<<"$clean" || { echo "FAIL: pkghello output missing" >&2; ok=0; }
 grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during repo pkg install" >&2; ok=0; }

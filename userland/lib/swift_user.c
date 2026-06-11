@@ -234,6 +234,10 @@ int swiftos_pkg_info(int index, char *buf, unsigned long cap) {
     return pkg_info(index, buf, cap);
 }
 
+int swiftos_pkg_files(const char *name, char *buf, unsigned long cap) {
+    return pkg_files(name, buf, cap);
+}
+
 int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                              unsigned long payload_size,
                              const unsigned char *payload_sha256) {

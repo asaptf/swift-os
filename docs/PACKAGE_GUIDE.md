@@ -8,11 +8,12 @@ content, and collect support evidence.
 SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
 content under `/usr`. The current target-side package manager supports local
-file install, `pkg install FILE`, into a writable package-store disk, plus a
-signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`,
-and `pkg install NAME`. Repository installs resolve dependencies by package
-name. Public production channels, version-constraint solving, remove, upgrade,
-and rollback are staged work, not current behavior. The ports workflow can
+file install, `pkg install FILE`, into a writable package-store disk, `pkg list`
+and `pkg files NAME` for active package inspection, plus a signed static HTTP
+repository fixture with `pkg repo set`, `pkg update [URL]`, and
+`pkg install NAME`. Repository installs resolve dependencies by package name.
+Public production channels, version-constraint solving, remove, upgrade, and
+rollback are staged work, not current behavior. The ports workflow can
 cross-build static AArch64 Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite packages
 on the host, package the pinned CA certificate bundle and IANA time zone data,
 publish them into signed local repository fixtures, install Lua by package name
@@ -50,6 +51,7 @@ Use this guide with:
 | Package-store boot activation | Implemented and proven by `make package-store-test` |
 | Target-side `/bin/pkg install FILE` | Implemented for local `.swpkg` files and proven by `make package-local-install-test` |
 | Target-side `/bin/pkg list` | Implemented for the active package-store records |
+| Target-side `/bin/pkg files NAME` | Implemented for active package payload file lists and proven by `make package-local-install-test` and `make package-repo-install-test` |
 | Host static repository tool | Implemented as `build/pkgrepo` |
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
@@ -118,8 +120,8 @@ Pick the narrowest workflow that proves the behavior you care about:
 | --- | --- | --- | --- |
 | Show one package payload under `/usr` | Direct read-only payload overlay | `/usr/bin/pkghello` is present at boot | `make package-overlay-test` |
 | Validate package-store boot activation | Preseeded package-store image | Active package generation mounts at boot | `make package-store-test` |
-| Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello` | `make package-local-install-test` |
-| Prove signed repository install | Signed HTTP fixture | `pkg update`, `pkg search`, `pkg info`, and `pkg install pkghello` work by name | `make package-repo-install-test` |
+| Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello`; `pkg files pkghello` lists the payload | `make package-local-install-test` |
+| Prove signed repository install | Signed HTTP fixture | `pkg update`, `pkg search`, `pkg info`, `pkg install pkghello`, and `pkg files pkghello` work by name | `make package-repo-install-test` |
 | Prove one real source port | Lua repository fixture | Guest installs `lua` and runs `lua -e 'print(21 * 2)'` | `make package-lua-repo-install-test` |
 | Prove the current seed repository | Ports seed repository fixture | Guest installs Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite | `make package-ports-seed-repo-install-test` |
 | Prove a deployable static web root | Static-host publish root | The seed repository is served from `build/ports-static-host-root` | `make ports-static-host-publish`, then `make package-static-host-repo-install-test` |
@@ -387,6 +389,7 @@ Log in as `root`, then run:
 pkg list
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg files pkghello
 /usr/bin/pkghello
 ```
 
@@ -396,6 +399,7 @@ Expected output includes:
 no packages installed
 pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
+/usr/bin/pkghello
 pkghello: hello from package overlay
 ```
 
@@ -445,6 +449,7 @@ pkg update http://10.0.2.2:<port>/good/aarch64/current
 pkg search pkghello
 pkg info pkghello
 pkg install pkghello
+pkg files pkghello
 /usr/bin/pkghello
 ```
 
@@ -457,6 +462,7 @@ pkg: catalog updated http://10.0.2.2:<port>/good/aarch64/current
 pkghello-1.0.0_1
 sha256:
 pkg: installed pkghello-1.0.0_1
+/usr/bin/pkghello
 pkghello: hello from package overlay
 ```
 

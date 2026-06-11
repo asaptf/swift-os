@@ -13,6 +13,7 @@ private let httpHeaderMax = 8192
 private let catalogMax = 131072
 private let repoURLMax = 512
 private let dnsServerMax = 64
+private let pkgFilesMax = 262144
 private let trustRootPath = "/etc/pkg/repo-root.pub"
 private let defaultDNSServerPath = "/etc/pkg/dns-server"
 private let defaultRepoURLPath = "/etc/pkg/repo-url"
@@ -1487,13 +1488,60 @@ private func list() -> Int32 {
     return 0
 }
 
+private func files(_ name: String) -> Int32 {
+    var cname = Array(name.utf8CString)
+    var dummy = [CChar](repeating: 0, count: 1)
+    let needed = cname.withUnsafeMutableBufferPointer { nbp in
+        dummy.withUnsafeMutableBufferPointer { dbp in
+            swiftos_pkg_files(nbp.baseAddress!, dbp.baseAddress!, 0)
+        }
+    }
+    if needed == -2 {
+        put("pkg: package not installed\n")
+        return 1
+    }
+    if needed < 0 {
+        put("pkg: files failed\n")
+        return 1
+    }
+    if needed == 0 {
+        put("pkg: no files\n")
+        return 0
+    }
+    let neededCount = Int(needed)
+    if neededCount > pkgFilesMax {
+        put("pkg: file list too large\n")
+        return 1
+    }
+    var out = [CChar](repeating: 0, count: neededCount)
+    let outCount = out.count
+    let rc = cname.withUnsafeMutableBufferPointer { nbp in
+        out.withUnsafeMutableBufferPointer { obp in
+            swiftos_pkg_files(nbp.baseAddress!, obp.baseAddress!, UInt(outCount))
+        }
+    }
+    if rc < 0 {
+        put("pkg: files failed\n")
+        return 1
+    }
+    let written = Int(rc)
+    if written > out.count {
+        put("pkg: files changed during read\n")
+        return 1
+    }
+    let ok = out.withUnsafeBufferPointer { bp in
+        writeAll(1, UnsafeRawPointer(bp.baseAddress!), written)
+    }
+    return ok ? 0 : 1
+}
+
 @_cdecl("main")
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     guard let argv = argv, argc >= 2, let cmdp = argv[1] else {
-        put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
+        put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list | pkg files NAME\n")
         return 1
     }
     let cmd = cString(cmdp)
@@ -1543,6 +1591,13 @@ func main(_ argc: Int32,
     if cmd == "list" {
         return list()
     }
+    if cmd == "files" {
+        guard argc >= 3, let namep = argv[2] else {
+            put("usage: pkg files NAME\n")
+            return 1
+        }
+        return files(cString(namep))
+    }
     if cmd == "install" {
         guard argc >= 3, let argp = argv[2] else {
             put("usage: pkg install FILE|NAME\n")
@@ -1554,6 +1609,6 @@ func main(_ argc: Int32,
         }
         return installFromRepository(arg)
     }
-    put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list\n")
+    put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list | pkg files NAME\n")
     return 1
 }

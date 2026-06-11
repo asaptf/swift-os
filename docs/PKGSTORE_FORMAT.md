@@ -31,7 +31,8 @@ virtio-blk disk that contains package payload generations.
 | `/usr/bin/pkghello` | Package-provided executable after activation | No, mounted from payload |
 
 The active package generation layers package payloads beside the base image.
-Package files are read-only after activation. The current store does not provide
+Package files are read-only after activation. `/bin/pkg files NAME` can inspect
+the file paths in an active package payload. The current store does not provide
 remove, rollback, garbage collection, version solving, or history commands; those
 are package-manager roadmap items.
 
@@ -45,6 +46,7 @@ are package-manager roadmap items.
 | Boot a preseeded active generation | `make package-store-test` |
 | Install a local `.swpkg` into a writable store | `make package-local-install-test` |
 | List active package records in the guest | `pkg list` |
+| List files in an active package payload | `pkg files NAME` |
 | Install by name from signed repository fixtures into a writable store | `make package-repo-install-test` and seed repository tests |
 | Store-level signatures or encryption | Not implemented |
 | Remove, rollback, garbage collection, package history | Not implemented |
@@ -233,6 +235,7 @@ Inside the guest:
 ```sh
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg files pkghello
 /usr/bin/pkghello
 ```
 
