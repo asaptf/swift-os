@@ -47,7 +47,7 @@ verification target, but the source of truth is always a host-side input.
 
 | Need | Edit or generate | Rebuild | Focused proof |
 | --- | --- | --- | --- |
-| Change login text, hostname, SSH preflight keys, or identity seed files | `base/etc/*`; `SSHD_HOST_SEED_FILE=PATH` for deploy-specific SSHD host keys | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/sshd_transport_test.sh` or `make sshd-host-key-rotation-test` for SSHD, `./tests/boot_test.sh` for general boot |
+| Change login text, hostname, SSH preflight keys, or identity seed files | `base/etc/*`; `SSHD_HOST_SEED_FILE=PATH` and `SSHD_AUTHORIZED_KEYS_FILE=PATH` for deploy-specific SSHD keys | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/sshd_transport_test.sh`, `make sshd-host-key-rotation-test`, or `make sshd-authorized-keys-test` for SSHD, `./tests/boot_test.sh` for general boot |
 | Change static HTTP content | `base/www/` | `make base-image` | `./tests/httpd_test.sh` |
 | Add or update a default `/bin` command | `userland/`, Makefile build rules, base staging rule | `make build base-image` | Command-specific QEMU test plus command reference update |
 | Update package repository trust or defaults | `build/pkgrepo-root.pub`, `PKG_DEFAULT_REPO_URL`, `PKG_DEFAULT_DNS_SERVER` | `make base-image` or custom `BASE_IMG=... base-image` | Matching package repository install test |
@@ -119,6 +119,7 @@ packs it into `build/base.img` with `build/basepack`.
 | --- | --- | --- |
 | `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/known_hosts`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
 | `SSHD_HOST_SEED_FILE` | `/etc/ssh/ssh_host_ed25519_seed` | Optional deploy-specific replacement for the checked-in SSHD development host-key seed |
+| `SSHD_AUTHORIZED_KEYS_FILE` | `/etc/ssh/authorized_keys` | Optional deploy-specific replacement for the checked-in SSHD development authorized key |
 | `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |
 | `build/pkghello.swpkg` | `/packages/pkghello.swpkg` | Local install fixture |
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |

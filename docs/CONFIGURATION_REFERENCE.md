@@ -102,6 +102,7 @@ Makefile and [NOTES.md](NOTES.md) before changing them.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SSHD_HOST_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD host-key seed staged into `/etc/ssh/ssh_host_ed25519_seed` during `make base-image` |
+| `SSHD_AUTHORIZED_KEYS_FILE` | empty | Optional SSHD authorized_keys file staged into `/etc/ssh/authorized_keys` during `make base-image` |
 
 ## Board Selection
 
@@ -146,6 +147,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make pkgrepo` | Build the signed static package repository tool. |
 | `make sshkey` | Build the host-side SSH key helper for generating SSHD seed files and deriving OpenSSH host-key lines from them. |
 | `make sshd-host-key-rotation-test` | Build a temporary base image with a generated SSHD host-key seed and prove host OpenSSH pins the rotated key. |
+| `make sshd-authorized-keys-test` | Build a temporary base image with a generated SSHD authorized key and prove OpenSSH accepts it while rejecting the default fixture key. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
 | `make package-store-fixture` | Build and inspect the sample package-store image. |
@@ -353,13 +355,20 @@ preflights:
 Replace this material when building a deploy-specific artifact. The checked-in
 SSHD host-key seed and SSH client trust anchor are deterministic test material,
 not per-instance production identity or deploy-specific trust policy.
-Generate a deploy-specific SSHD seed with `build/sshkey seed --out
-support/keys/ssh_host_ed25519_seed`, then build with `make
-SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed base-image` to
-stage it into `/etc/ssh/ssh_host_ed25519_seed`. Use `build/sshkey pubkey
---seed-file support/keys/ssh_host_ed25519_seed` or `build/sshkey known-host
---host HOST --seed-file support/keys/ssh_host_ed25519_seed` to publish the
-matching OpenSSH host key.
+Generate deploy-specific SSHD material, then stage it into the base image:
+
+```sh
+build/sshkey seed --out support/keys/ssh_host_ed25519_seed
+make SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed \
+  SSHD_AUTHORIZED_KEYS_FILE=support/keys/authorized_keys \
+  base-image
+build/sshkey known-host \
+  --host HOST \
+  --seed-file support/keys/ssh_host_ed25519_seed
+```
+
+`SSHD_HOST_SEED_FILE` becomes `/etc/ssh/ssh_host_ed25519_seed`;
+`SSHD_AUTHORIZED_KEYS_FILE` becomes `/etc/ssh/authorized_keys`.
 
 ### Filesystem
 

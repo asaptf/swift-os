@@ -18,8 +18,8 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
 SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
 HOST_PORT="${SSHD_HOST_PORT:-$((24000 + ($$ % 20000)))}"
-KEY_ALLOW_SRC="$ROOT/fixtures/ssh/sshd_hc5_ed25519"
-KEY_DENY_SRC="$ROOT/fixtures/ssh/sshd_hc4_ed25519"
+KEY_ALLOW_SRC="${SSHD_ALLOW_KEY_SRC:-$ROOT/fixtures/ssh/sshd_hc5_ed25519}"
+KEY_DENY_SRC="${SSHD_DENY_KEY_SRC:-$ROOT/fixtures/ssh/sshd_hc4_ed25519}"
 HOST_SEED_SRC="${SSHD_HOST_SEED_SRC:-$ROOT/base/etc/ssh/ssh_host_ed25519_seed}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }

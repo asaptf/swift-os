@@ -423,11 +423,14 @@ Current Hetzner readiness status:
   and `/bin/echo HC6-OK`. The host helper `build/sshkey` can derive the
   OpenSSH public host key or a known_hosts line from the base image seed file,
   and can generate a deploy-specific replacement seed. Build-time provisioning
-  uses `make SSHD_HOST_SEED_FILE=PATH base-image` to stage that seed into the
-  signed image. The checked proofs are `./tests/sshd_transport_test.sh` and
-  `./tests/sshd_host_key_rotation_test.sh`; they verify that host OpenSSH pins
-  the SwiftOS host key through known_hosts, that the older HC4 fixture key is
-  rejected, and that a custom image can boot with a rotated SSHD host key.
+  uses the `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE` make variables
+  with `make base-image` to stage deploy-specific host identity and login keys
+  into the signed image. The checked proofs are `./tests/sshd_transport_test.sh`,
+  `./tests/sshd_host_key_rotation_test.sh`, and
+  `./tests/sshd_authorized_keys_test.sh`; they verify that host OpenSSH pins the
+  SwiftOS host key through known_hosts, that stale fixture keys are rejected,
+  and that custom images can boot with rotated SSHD host-key and authorized-key
+  material.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
@@ -578,6 +581,7 @@ A deployment handoff should include:
 - Service logs, readiness markers, and health responses.
 - SSHD public host key or known_hosts line derived from the exact seed staged
   into the image.
+- SSHD authorized_keys source and the public-key fingerprint expected to log in.
 - `top -b -n 1` output for resource-sensitive candidates.
 - Test command list and pass/fail result.
 - Known limits and skipped tests.

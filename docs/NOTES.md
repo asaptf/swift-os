@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC13 SSHD deploy authorized_keys provisioning preflight (2026-06-11)
+
+- Added the `SSHD_AUTHORIZED_KEYS_FILE=PATH` base-image staging override. A
+  deploy build can now replace the checked-in SSHD development
+  `/etc/ssh/authorized_keys` with operator-provided public keys at image build
+  time.
+- Parameterized `./tests/sshd_transport_test.sh` with `SSHD_ALLOW_KEY_SRC` and
+  `SSHD_DENY_KEY_SRC` so the same OpenSSH session proof can validate custom
+  deploy key material instead of only the HC5 fixture.
+- Added `./tests/sshd_authorized_keys_test.sh` and
+  `make sshd-authorized-keys-test`. The test generates an ephemeral host
+  Ed25519 keypair with OpenSSH, stages only its `.pub` file into a temporary
+  signed base image, and proves the private key authenticates while the default
+  HC5 fixture key is rejected.
+
+**Acceptance.** `make sshd-authorized-keys-test` generates a non-default SSHD
+authorized key, builds a custom `BASE_IMG` with `SSHD_AUTHORIZED_KEYS_FILE`,
+boots the image under QEMU with TCP/22 forwarded, pins the SwiftOS SSHD host key
+through known_hosts, rejects the default HC5 fixture key, and runs `/bin/id`
+plus `/bin/echo` using the generated deploy key.
+
 ## HC12 SSHD deploy host-key rotation preflight (2026-06-11)
 
 - Added `sshkey seed --out PATH [--force]`, which creates a fresh
