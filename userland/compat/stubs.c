@@ -7,12 +7,21 @@
 // our syscall ABI where it matters (dirent via getdents, termios via 7/8,
 // fork/exec/wait); the rest are benign ENOSYS-style stubs.
 
+#ifndef _POSIX_THREADS
+#define _POSIX_THREADS 1
+#endif
+#ifndef _UNIX98_THREAD_MUTEX_ATTRIBUTES
+#define _UNIX98_THREAD_MUTEX_ATTRIBUTES 1
+#endif
+
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
@@ -31,6 +40,7 @@
 #include <netdb.h>
 #include <net/if.h>
 #include <signal.h>
+#include <pthread.h>
 
 #define W __attribute__((weak))
 
@@ -47,10 +57,12 @@ static long sys3(long n, long a0, long a1, long a2) {
 
 #define SYS_READ 2
 #define SYS_WRITE 3
+#define SYS_EXIT 5
 #define SYS_LSEEK 6
 #define SYS_TCGETATTR 7
 #define SYS_TCSETATTR 8
 #define SYS_WAITPID 13
+#define SYS_GETPID 11
 #define SYS_GETDENTS 16
 #define SYS_FORK 20
 #define SYS_EXECVE 21
@@ -75,6 +87,8 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_CONNECT 44
 #define SYS_RESOLVE 45
 #define SYS_SYSINFO 46
+#define SYS_THREAD_CREATE 48
+#define SYS_FUTEX 49
 #define SYS_MMAP 54
 #define SYS_MUNMAP 55
 #define SYS_MPROTECT 56
@@ -527,6 +541,587 @@ W void *mmap(void *a, size_t l, int p, int f, int fd, long o) {
 W int munmap(void *a, size_t l) { return sysret(sys3(SYS_MUNMAP, (long)a, (long)l, 0)); }
 W int mprotect(void *a, size_t l, int p) { return sysret(sys3(SYS_MPROTECT, (long)a, (long)l, p)); }
 W int poll(void *fds, unsigned long n, int timeout) { return sysret(sys3(SYS_POLL, (long)fds, (long)n, timeout)); }
+
+// ---- pthread facade over thread_create + futex ----------------------------
+#define COMPAT_FUTEX_WAIT 0
+#define COMPAT_FUTEX_WAKE 1
+#define COMPAT_MUTEX_STATIC ((unsigned int)0xFFFFFFFFu)
+#define COMPAT_COND_STATIC ((unsigned int)0xFFFFFFFFu)
+#define COMPAT_PTHREAD_MAX_THREADS 16
+#define COMPAT_PTHREAD_MAX_KEYS 32
+#define COMPAT_PTHREAD_TID_MAX 32
+#define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
+
+static unsigned int atomic_load_u32(unsigned int *p) {
+    return __atomic_load_n(p, __ATOMIC_SEQ_CST);
+}
+
+static void atomic_store_u32(unsigned int *p, unsigned int v) {
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+
+static unsigned int atomic_cas_u32(unsigned int *p, unsigned int expected, unsigned int desired) {
+    __atomic_compare_exchange_n(p, &expected, desired, 0,
+                                __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return expected;
+}
+
+static unsigned int atomic_swap_u32(unsigned int *p, unsigned int desired) {
+    return __atomic_exchange_n(p, desired, __ATOMIC_SEQ_CST);
+}
+
+static unsigned int atomic_add_u32(unsigned int *p, unsigned int delta) {
+    return __atomic_fetch_add(p, delta, __ATOMIC_SEQ_CST);
+}
+
+static int futex_raw(unsigned int *uaddr, int op, unsigned int val) {
+    long r = sys3(SYS_FUTEX, (long)uaddr, op, (long)val);
+    return r < 0 ? (int)-r : (int)r;
+}
+
+static void futex_lock_word(unsigned int *word) {
+    unsigned int c = atomic_cas_u32(word, 0, 1);
+    if (c == 0) { return; }
+    for (;;) {
+        if (c == 2 || atomic_cas_u32(word, 1, 2) != 0) {
+            (void)futex_raw(word, COMPAT_FUTEX_WAIT, 2);
+        }
+        c = atomic_cas_u32(word, 0, 2);
+        if (c == 0) { return; }
+    }
+}
+
+static void futex_unlock_word(unsigned int *word) {
+    if (atomic_swap_u32(word, 0) == 2) {
+        (void)futex_raw(word, COMPAT_FUTEX_WAKE, 1);
+    }
+}
+
+static unsigned int pthread_global_lock;
+
+struct compat_pthread_record {
+    unsigned int used;
+    unsigned int tid;
+    unsigned int done;
+    unsigned int detached;
+    unsigned int joining;
+    void *retval;
+    void *stack;
+    size_t stack_size;
+    int stack_owned;
+    void *(*start)(void *);
+    void *arg;
+};
+
+static struct compat_pthread_record pthread_records[COMPAT_PTHREAD_MAX_THREADS];
+static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
+static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
+static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
+static int pthread_concurrency_level;
+
+static pthread_t pthread_current_tid(void) {
+    long r = sys3(SYS_GETPID, 0, 0, 0);
+    return r > 0 ? (pthread_t)r : (pthread_t)0;
+}
+
+static void mutex_lazy_init(pthread_mutex_t *mutex) {
+    unsigned int *word = (unsigned int *)mutex;
+    if (atomic_load_u32(word) == COMPAT_MUTEX_STATIC) {
+        unsigned int expected = COMPAT_MUTEX_STATIC;
+        __atomic_compare_exchange_n(word, &expected, 0, 0,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    }
+}
+
+static void cond_lazy_init(pthread_cond_t *cond) {
+    unsigned int *word = (unsigned int *)cond;
+    if (atomic_load_u32(word) == COMPAT_COND_STATIC) {
+        unsigned int expected = COMPAT_COND_STATIC;
+        __atomic_compare_exchange_n(word, &expected, 0, 0,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    }
+}
+
+static struct compat_pthread_record *pthread_find_locked(pthread_t tid) {
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_THREADS; i++) {
+        if (pthread_records[i].used && pthread_records[i].tid == (unsigned int)tid) {
+            return &pthread_records[i];
+        }
+    }
+    return 0;
+}
+
+static void pthread_record_clear_locked(struct compat_pthread_record *rec) {
+    memset(rec, 0, sizeof(*rec));
+}
+
+static void pthread_release_record(struct compat_pthread_record *rec, int unmap_stack) {
+    void *stack = 0;
+    size_t stack_size = 0;
+    if (unmap_stack && rec->stack_owned) {
+        stack = rec->stack;
+        stack_size = rec->stack_size;
+    }
+    futex_lock_word(&pthread_global_lock);
+    pthread_record_clear_locked(rec);
+    futex_unlock_word(&pthread_global_lock);
+    if (stack && stack_size) {
+        (void)munmap(stack, stack_size);
+    }
+}
+
+static void pthread_run_key_destructors(void) {
+    pthread_t tid = pthread_current_tid();
+    if (tid >= COMPAT_PTHREAD_TID_MAX) { return; }
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_KEYS; i++) {
+        const void *value = pthread_key_values[i][tid];
+        if (value) {
+            pthread_key_values[i][tid] = 0;
+            if (pthread_key_live[i] && pthread_key_destructor[i]) {
+                pthread_key_destructor[i]((void *)value);
+            }
+        }
+    }
+}
+
+static void pthread_trampoline(unsigned long arg) {
+    struct compat_pthread_record *rec = (struct compat_pthread_record *)arg;
+    while (atomic_load_u32(&rec->tid) == 0) {
+        (void)futex_raw(&rec->tid, COMPAT_FUTEX_WAIT, 0);
+    }
+    void *retval = rec->start(rec->arg);
+    pthread_exit(retval);
+}
+
+W int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void)) {
+    (void)prepare; (void)parent; (void)child;
+    return 0;
+}
+
+W int pthread_attr_init(pthread_attr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    attr->is_initialized = 1;
+    attr->stacksize = COMPAT_PTHREAD_DEFAULT_STACK;
+    attr->contentionscope = PTHREAD_SCOPE_SYSTEM;
+    attr->inheritsched = PTHREAD_INHERIT_SCHED;
+    attr->detachstate = PTHREAD_CREATE_JOINABLE;
+    return 0;
+}
+W int pthread_attr_destroy(pthread_attr_t *attr) { if (!attr) { return EINVAL; } memset(attr, 0, sizeof(*attr)); return 0; }
+W int pthread_attr_setstack(pthread_attr_t *attr, void *stackaddr, size_t stacksize) {
+    if (!attr || !stackaddr || stacksize < PTHREAD_STACK_MIN || stacksize > (size_t)INT_MAX) { return EINVAL; }
+    attr->stackaddr = stackaddr;
+    attr->stacksize = (int)stacksize;
+    return 0;
+}
+W int pthread_attr_getstack(const pthread_attr_t *attr, void **stackaddr, size_t *stacksize) {
+    if (!attr || !stackaddr || !stacksize) { return EINVAL; }
+    *stackaddr = attr->stackaddr;
+    *stacksize = (size_t)attr->stacksize;
+    return 0;
+}
+W int pthread_attr_getstacksize(const pthread_attr_t *attr, size_t *stacksize) {
+    if (!attr || !stacksize) { return EINVAL; }
+    *stacksize = attr->stacksize > 0 ? (size_t)attr->stacksize : COMPAT_PTHREAD_DEFAULT_STACK;
+    return 0;
+}
+W int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize) {
+    if (!attr || stacksize < PTHREAD_STACK_MIN || stacksize > (size_t)INT_MAX) { return EINVAL; }
+    attr->stacksize = (int)stacksize;
+    return 0;
+}
+W int pthread_attr_getstackaddr(const pthread_attr_t *attr, void **stackaddr) {
+    if (!attr || !stackaddr) { return EINVAL; }
+    *stackaddr = attr->stackaddr;
+    return 0;
+}
+W int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr) {
+    if (!attr) { return EINVAL; }
+    attr->stackaddr = stackaddr;
+    return 0;
+}
+W int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *detachstate) {
+    if (!attr || !detachstate) { return EINVAL; }
+    *detachstate = attr->detachstate;
+    return 0;
+}
+W int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate) {
+    if (!attr || (detachstate != PTHREAD_CREATE_JOINABLE && detachstate != PTHREAD_CREATE_DETACHED)) { return EINVAL; }
+    attr->detachstate = detachstate;
+    return 0;
+}
+W int pthread_attr_getguardsize(const pthread_attr_t *attr, size_t *guardsize) {
+    if (!attr || !guardsize) { return EINVAL; }
+    *guardsize = 0;
+    return 0;
+}
+W int pthread_attr_setguardsize(pthread_attr_t *attr, size_t guardsize) {
+    (void)guardsize;
+    return attr ? 0 : EINVAL;
+}
+W int pthread_attr_setschedparam(pthread_attr_t *attr, const struct sched_param *param) {
+    if (!attr || !param) { return EINVAL; }
+    attr->schedparam = *param;
+    return 0;
+}
+W int pthread_attr_getschedparam(const pthread_attr_t *attr, struct sched_param *param) {
+    if (!attr || !param) { return EINVAL; }
+    *param = attr->schedparam;
+    return 0;
+}
+
+W int pthread_mutexattr_init(pthread_mutexattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    attr->is_initialized = 1;
+    attr->type = PTHREAD_MUTEX_NORMAL;
+    return 0;
+}
+W int pthread_mutexattr_destroy(pthread_mutexattr_t *attr) { if (!attr) { return EINVAL; } memset(attr, 0, sizeof(*attr)); return 0; }
+W int pthread_mutexattr_getpshared(const pthread_mutexattr_t *attr, int *pshared) {
+    if (!attr || !pshared) { return EINVAL; }
+    *pshared = 0;
+    return 0;
+}
+W int pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared) {
+    if (!attr || pshared != 0) { return EINVAL; }
+    return 0;
+}
+W int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *kind) {
+    if (!attr || !kind) { return EINVAL; }
+    *kind = attr->type;
+    return 0;
+}
+W int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int kind) {
+    if (!attr) { return EINVAL; }
+    if (kind != PTHREAD_MUTEX_NORMAL && kind != PTHREAD_MUTEX_DEFAULT) { return EINVAL; }
+    attr->type = kind;
+    return 0;
+}
+W int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr) {
+    (void)attr;
+    if (!mutex) { return EINVAL; }
+    atomic_store_u32((unsigned int *)mutex, 0);
+    return 0;
+}
+W int pthread_mutex_destroy(pthread_mutex_t *mutex) {
+    if (!mutex) { return EINVAL; }
+    atomic_store_u32((unsigned int *)mutex, COMPAT_MUTEX_STATIC);
+    return 0;
+}
+W int pthread_mutex_lock(pthread_mutex_t *mutex) {
+    if (!mutex) { return EINVAL; }
+    mutex_lazy_init(mutex);
+    futex_lock_word((unsigned int *)mutex);
+    return 0;
+}
+W int pthread_mutex_trylock(pthread_mutex_t *mutex) {
+    if (!mutex) { return EINVAL; }
+    mutex_lazy_init(mutex);
+    return atomic_cas_u32((unsigned int *)mutex, 0, 1) == 0 ? 0 : EBUSY;
+}
+W int pthread_mutex_unlock(pthread_mutex_t *mutex) {
+    if (!mutex) { return EINVAL; }
+    mutex_lazy_init(mutex);
+    unsigned int old = atomic_swap_u32((unsigned int *)mutex, 0);
+    if (old == 0) { return EPERM; }
+    if (old == 2) { (void)futex_raw((unsigned int *)mutex, COMPAT_FUTEX_WAKE, 1); }
+    return 0;
+}
+
+W int pthread_condattr_init(pthread_condattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    attr->is_initialized = 1;
+    attr->clock = CLOCK_REALTIME;
+    return 0;
+}
+W int pthread_condattr_destroy(pthread_condattr_t *attr) { if (!attr) { return EINVAL; } memset(attr, 0, sizeof(*attr)); return 0; }
+W int pthread_condattr_getclock(const pthread_condattr_t *attr, clockid_t *clock_id) {
+    if (!attr || !clock_id) { return EINVAL; }
+    *clock_id = attr->clock;
+    return 0;
+}
+W int pthread_condattr_setclock(pthread_condattr_t *attr, clockid_t clock_id) {
+    if (!attr) { return EINVAL; }
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) { return EINVAL; }
+    attr->clock = clock_id;
+    return 0;
+}
+W int pthread_condattr_getpshared(const pthread_condattr_t *attr, int *pshared) {
+    if (!attr || !pshared) { return EINVAL; }
+    *pshared = 0;
+    return 0;
+}
+W int pthread_condattr_setpshared(pthread_condattr_t *attr, int pshared) {
+    if (!attr || pshared != 0) { return EINVAL; }
+    return 0;
+}
+W int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr) {
+    (void)attr;
+    if (!cond) { return EINVAL; }
+    atomic_store_u32((unsigned int *)cond, 0);
+    return 0;
+}
+W int pthread_cond_destroy(pthread_cond_t *cond) {
+    if (!cond) { return EINVAL; }
+    atomic_store_u32((unsigned int *)cond, COMPAT_COND_STATIC);
+    return 0;
+}
+W int pthread_cond_signal(pthread_cond_t *cond) {
+    if (!cond) { return EINVAL; }
+    cond_lazy_init(cond);
+    atomic_add_u32((unsigned int *)cond, 1);
+    (void)futex_raw((unsigned int *)cond, COMPAT_FUTEX_WAKE, 1);
+    return 0;
+}
+W int pthread_cond_broadcast(pthread_cond_t *cond) {
+    if (!cond) { return EINVAL; }
+    cond_lazy_init(cond);
+    atomic_add_u32((unsigned int *)cond, 1);
+    (void)futex_raw((unsigned int *)cond, COMPAT_FUTEX_WAKE, UINT_MAX);
+    return 0;
+}
+W int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
+    if (!cond || !mutex) { return EINVAL; }
+    cond_lazy_init(cond);
+    unsigned int seq = atomic_load_u32((unsigned int *)cond);
+    int r = pthread_mutex_unlock(mutex);
+    if (r != 0) { return r; }
+    (void)futex_raw((unsigned int *)cond, COMPAT_FUTEX_WAIT, seq);
+    return pthread_mutex_lock(mutex);
+}
+
+W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
+                     void *(*start_routine)(void *), void *arg) {
+    if (!pthread || !start_routine) { return EINVAL; }
+    size_t stack_size = COMPAT_PTHREAD_DEFAULT_STACK;
+    void *stack = 0;
+    int stack_owned = 1;
+    int detached = PTHREAD_CREATE_JOINABLE;
+    if (attr) {
+        if (attr->stacksize > 0) { stack_size = (size_t)attr->stacksize; }
+        if (attr->stackaddr) { stack = attr->stackaddr; stack_owned = 0; }
+        detached = attr->detachstate;
+    }
+    if (stack_size < PTHREAD_STACK_MIN) { return EINVAL; }
+
+    struct compat_pthread_record *rec = 0;
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_THREADS; i++) {
+        if (!pthread_records[i].used) {
+            rec = &pthread_records[i];
+            memset(rec, 0, sizeof(*rec));
+            rec->used = 1;
+            break;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
+    if (!rec) { return EAGAIN; }
+
+    if (!stack) {
+        stack = mmap(0, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (stack == MAP_FAILED) {
+            pthread_release_record(rec, 0);
+            return errno ? errno : ENOMEM;
+        }
+    }
+
+    rec->stack = stack;
+    rec->stack_size = stack_size;
+    rec->stack_owned = stack_owned;
+    rec->detached = (detached == PTHREAD_CREATE_DETACHED);
+    rec->start = start_routine;
+    rec->arg = arg;
+
+    unsigned long top = ((unsigned long)stack + stack_size) & ~15UL;
+    long tid = sys3(SYS_THREAD_CREATE, (long)pthread_trampoline, (long)rec, (long)top);
+    if (tid < 0) {
+        int err = (int)-tid;
+        if (stack_owned) { (void)munmap(stack, stack_size); }
+        pthread_release_record(rec, 0);
+        return err;
+    }
+    atomic_store_u32(&rec->tid, (unsigned int)tid);
+    (void)futex_raw(&rec->tid, COMPAT_FUTEX_WAKE, UINT_MAX);
+    *pthread = (pthread_t)tid;
+    return 0;
+}
+
+W int pthread_join(pthread_t pthread, void **value_ptr) {
+    if (pthread == pthread_self()) { return EDEADLK; }
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(pthread);
+    if (!rec) {
+        futex_unlock_word(&pthread_global_lock);
+        return ESRCH;
+    }
+    if (rec->detached || rec->joining) {
+        futex_unlock_word(&pthread_global_lock);
+        return EINVAL;
+    }
+    rec->joining = 1;
+    futex_unlock_word(&pthread_global_lock);
+
+    while (atomic_load_u32(&rec->done) == 0) {
+        (void)futex_raw(&rec->done, COMPAT_FUTEX_WAIT, 0);
+    }
+    if (value_ptr) { *value_ptr = rec->retval; }
+    pthread_release_record(rec, 1);
+    return 0;
+}
+
+W int pthread_detach(pthread_t pthread) {
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(pthread);
+    if (!rec) {
+        futex_unlock_word(&pthread_global_lock);
+        return ESRCH;
+    }
+    if (rec->detached || rec->joining) {
+        futex_unlock_word(&pthread_global_lock);
+        return EINVAL;
+    }
+    rec->detached = 1;
+    int done = rec->done != 0;
+    int unmap_stack = done && pthread != pthread_self();
+    futex_unlock_word(&pthread_global_lock);
+    if (done) { pthread_release_record(rec, unmap_stack); }
+    return 0;
+}
+
+W void pthread_exit(void *value_ptr) {
+    pthread_run_key_destructors();
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(self);
+    if (rec) {
+        rec->retval = value_ptr;
+        atomic_store_u32(&rec->done, 1);
+        (void)futex_raw(&rec->done, COMPAT_FUTEX_WAKE, UINT_MAX);
+        int detached = rec->detached;
+        futex_unlock_word(&pthread_global_lock);
+        if (detached) { pthread_release_record(rec, 0); }
+    } else {
+        futex_unlock_word(&pthread_global_lock);
+    }
+    sys3(SYS_EXIT, 0, 0, 0);
+    for (;;) {}
+}
+
+W pthread_t pthread_self(void) { return pthread_current_tid(); }
+W int pthread_equal(pthread_t t1, pthread_t t2) { return t1 == t2; }
+W int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id) {
+    (void)thread; (void)clock_id;
+    return ENOSYS;
+}
+W int pthread_setconcurrency(int new_level) {
+    if (new_level < 0) { return EINVAL; }
+    pthread_concurrency_level = new_level;
+    return 0;
+}
+W int pthread_getconcurrency(void) { return pthread_concurrency_level; }
+W void pthread_yield(void) {}
+
+W int pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
+    if (!once_control || !init_routine) { return EINVAL; }
+    if (!once_control->is_initialized) { once_control->is_initialized = 1; }
+    for (;;) {
+        int state = __atomic_load_n(&once_control->init_executed, __ATOMIC_SEQ_CST);
+        if (state == 2) { return 0; }
+        if (state == 0) {
+            int expected = 0;
+            if (__atomic_compare_exchange_n(&once_control->init_executed, &expected, 1, 0,
+                                            __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                init_routine();
+                __atomic_store_n(&once_control->init_executed, 2, __ATOMIC_SEQ_CST);
+                (void)futex_raw((unsigned int *)&once_control->init_executed,
+                                COMPAT_FUTEX_WAKE, UINT_MAX);
+                return 0;
+            }
+        }
+        (void)futex_raw((unsigned int *)&once_control->init_executed,
+                        COMPAT_FUTEX_WAIT, 1);
+    }
+}
+
+W int pthread_key_create(pthread_key_t *key, void (*destructor)(void *)) {
+    if (!key) { return EINVAL; }
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_KEYS; i++) {
+        if (!pthread_key_live[i]) {
+            pthread_key_live[i] = 1;
+            pthread_key_destructor[i] = destructor;
+            for (int t = 0; t < COMPAT_PTHREAD_TID_MAX; t++) { pthread_key_values[i][t] = 0; }
+            *key = (pthread_key_t)i;
+            futex_unlock_word(&pthread_global_lock);
+            return 0;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return EAGAIN;
+}
+W int pthread_setspecific(pthread_key_t key, const void *value) {
+    pthread_t tid = pthread_current_tid();
+    if (key >= COMPAT_PTHREAD_MAX_KEYS || tid >= COMPAT_PTHREAD_TID_MAX || !pthread_key_live[key]) {
+        return EINVAL;
+    }
+    pthread_key_values[key][tid] = value;
+    return 0;
+}
+W void *pthread_getspecific(pthread_key_t key) {
+    pthread_t tid = pthread_current_tid();
+    if (key >= COMPAT_PTHREAD_MAX_KEYS || tid >= COMPAT_PTHREAD_TID_MAX || !pthread_key_live[key]) {
+        return 0;
+    }
+    return (void *)pthread_key_values[key][tid];
+}
+W int pthread_key_delete(pthread_key_t key) {
+    if (key >= COMPAT_PTHREAD_MAX_KEYS) { return EINVAL; }
+    futex_lock_word(&pthread_global_lock);
+    if (!pthread_key_live[key]) {
+        futex_unlock_word(&pthread_global_lock);
+        return EINVAL;
+    }
+    pthread_key_live[key] = 0;
+    pthread_key_destructor[key] = 0;
+    for (int t = 0; t < COMPAT_PTHREAD_TID_MAX; t++) { pthread_key_values[key][t] = 0; }
+    futex_unlock_word(&pthread_global_lock);
+    return 0;
+}
+
+W int pthread_cancel(pthread_t pthread) { (void)pthread; return ENOSYS; }
+W int pthread_setcancelstate(int state, int *oldstate) {
+    if (oldstate) { *oldstate = PTHREAD_CANCEL_DISABLE; }
+    return (state == PTHREAD_CANCEL_ENABLE || state == PTHREAD_CANCEL_DISABLE) ? 0 : EINVAL;
+}
+W int pthread_setcanceltype(int type, int *oldtype) {
+    if (oldtype) { *oldtype = PTHREAD_CANCEL_DEFERRED; }
+    return (type == PTHREAD_CANCEL_DEFERRED || type == PTHREAD_CANCEL_ASYNCHRONOUS) ? 0 : EINVAL;
+}
+W void pthread_testcancel(void) {}
+W void _pthread_cleanup_push(struct _pthread_cleanup_context *context,
+                             void (*routine)(void *), void *arg) {
+    if (context) {
+        context->_routine = routine;
+        context->_arg = arg;
+        context->_canceltype = PTHREAD_CANCEL_DISABLE;
+        context->_previous = 0;
+    }
+}
+W void _pthread_cleanup_pop(struct _pthread_cleanup_context *context, int execute) {
+    if (execute && context && context->_routine) {
+        context->_routine(context->_arg);
+    }
+}
+W void _pthread_cleanup_push_defer(struct _pthread_cleanup_context *context,
+                                   void (*routine)(void *), void *arg) {
+    _pthread_cleanup_push(context, routine, arg);
+}
+W void _pthread_cleanup_pop_restore(struct _pthread_cleanup_context *context, int execute) {
+    _pthread_cleanup_pop(context, execute);
+}
 
 W ssize_t readv(int fd, const struct iovec *iov, int iovcnt) {
     if (!iov || iovcnt < 0) { errno = EINVAL; return -1; }

@@ -4518,3 +4518,23 @@ and boots slot B. `uefi_kattempt_test`, `uefi_kconfirm_test`, and
 
 **Still future.** A real new-kernel payload source and key rotation / revocation
 remain separate follow-ups.
+
+### NPM1 — newlib pthread facade probe (DONE, 2026-06-11)
+
+**Scope.** Add the first C/newlib pthread compatibility slice required by the
+Node.js/npm/pm2 runtime track. The facade stays on SwiftOS primitives:
+`pthread_create` maps to `thread_create`, join/mutex/condition variables/once
+use futex waits and wakes, and pthread-specific data is keyed by the current
+SwiftOS thread id.
+
+- `userland/compat/pthread.h`: exposes the pthread declarations for compat
+  builds without requiring each port to pass `_POSIX_THREADS`.
+- `userland/compat/stubs.c`: implements the weak pthread symbols plus
+  mmap-backed default stacks for newlib-linked C programs.
+- `/bin/pthreadprobe`: proves create/join return values, static mutex init,
+  trylock contention, condition-variable wait/signal, `pthread_once`, and
+  thread-specific data.
+
+**Acceptance.** `make pthread-test`, `make docs-test`, `make clock-test`,
+`make mprotect-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

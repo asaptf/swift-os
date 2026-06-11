@@ -239,7 +239,7 @@ lists everywhere. Each row still calls out package-specific extras where needed.
 | `pty` | Pseudo-terminal allocation, session/process-group concepts, signal delivery for interactive programs, and window-size propagation. |
 | `db-fs` | `fsync`, `fdatasync`, file locks, durable rename, pread/pwrite, directory sync if available, large files, monotonic time, and clear ENOSPC behavior. |
 | `mmap-vm` | `mmap`, `munmap`, `mprotect`, page permissions, executable mappings if JIT is enabled, guard pages, address-space layout control, and signal/trap reporting. |
-| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, atomics, blocking wakeups, and scheduler behavior under many sleeping threads. |
+| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, atomics, blocking wakeups, and scheduler behavior under many sleeping threads; the current C facade is covered by `pthreadprobe`. |
 | `service` | First-party service supervisor, service manifests, log routing, restart policy, persistent config/data directories, system users/groups or an equivalent capability model. |
 | `procfs-like` | A documented way to inspect process, memory, fd, network, and system metrics. It does not have to be Linux `/proc`, but tools need a stable API. |
 

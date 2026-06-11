@@ -62,6 +62,7 @@ source, then follow its Makefile rule and acceptance test.
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
+| C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
@@ -1313,6 +1314,7 @@ one booting acceptance path:
 | IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
 | Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-authority-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
+| C compat pthreads | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/pthreadprobe.c` | `make pthread-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |

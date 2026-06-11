@@ -234,6 +234,7 @@ Current process and concurrency tools include:
 | Pipes and redirection | `pipe`, `dup`, `dup2`, `fcntl`, `poll` |
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
+| C pthread facade | `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data through newlib compat |
 | Memory mapping | `mmap`, `mmap_file`, `munmap`, `mprotect` |
 | Runtime clocks | `clock_gettime`, `clock_getres`, `nanosleep` through newlib compat |
 
@@ -388,6 +389,7 @@ Before merging a port:
 | `userland/tcpecho.swift` | TCP server |
 | `userland/udpecho.swift` | UDP server |
 | `userland/threadsdemo.swift` | Threads, atomics, futex |
+| `userland/pthreadprobe.c` | newlib compat pthread create/join, mutexes, condition variables, once, and thread-specific data |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |
