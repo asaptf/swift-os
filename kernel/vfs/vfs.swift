@@ -6,7 +6,7 @@
 // shared open-file descriptions, so dup/fork share offsets and pipe state.
 //
 // Implements: open, read, write, close, lseek, stat, fstat, getdents, chdir,
-// getcwd, dup, dup2, pipe, poll, unlink, rename, mkdir, rmdir.
+// getcwd, dup, dup2, pipe, eventfd, poll, unlink, rename, mkdir, rmdir.
 
 // errno-ish returns (negative).
 private let errNoEntry = -2
@@ -94,8 +94,9 @@ private var mountedPackageStorePayloads = 0
 
 // Handle kinds live in handle.swift (HandleKind): .none/.tty/.file/.pipe/.socket,
 // 1:1 with the former fdKind* constants (fdKindVNode → .file). net-b: a .socket
-// description's `node` field indexes the socket table; C5b .device descriptions
-// index the opaque device grant registry below.
+// description's `node` field indexes the socket table; eventfd descriptions use
+// `node` for the event counter table; C5b .device descriptions index the opaque
+// device grant registry below.
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
@@ -138,6 +139,12 @@ private struct Endpoint {
 }
 private let endpointMsgCap = 256
 
+private struct EventCounter {
+    var inUse = false
+    var counter: UInt64 = 0
+    var flags = 0
+}
+
 // C5b: a tiny opaque device registry. This deliberately does not map MMIO,
 // route IRQs, or allocate DMA windows yet; it only mints a unique transferable
 // handle that names a future driver-owned device grant.
@@ -161,10 +168,12 @@ private let maxOpenDescriptions = 96
 private let maxPipes = 16
 private let pipeCap = 1024
 private let maxVFSProcesses = 16
+private let maxEvents = 16
 
 private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * maxVFSProcesses)
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
+private var eventCounters = [EventCounter](repeating: EventCounter(), count: maxEvents)
 private let maxEndpoints = 16
 private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
@@ -174,6 +183,9 @@ private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
 private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
 private let deviceInfoNameCap = 24
+private let eventFlagSemaphore = 1
+private let eventAllowedFlags = eventFlagSemaphore | oNonblock | oCloexec
+private let eventMaxCounter = UInt64.max - 1
 private let deviceKindPseudoInput: UInt32 = 1
 private let deviceKindVirtioInput: UInt32 = 2
 private let deviceBusPseudo: UInt32 = 1
@@ -315,6 +327,14 @@ private func le64(_ p: UnsafePointer<UInt8>, _ off: Int) -> UInt64 {
     var i = 7
     while i >= 0 { v = (v << 8) | UInt64(p[off + i]); i -= 1 }
     return v
+}
+
+private func storeLe64(_ p: UnsafeMutablePointer<UInt8>, _ off: Int, _ v: UInt64) {
+    var i = 0
+    while i < 8 {
+        p[off + i] = UInt8((v >> UInt64(i * 8)) & 0xFF)
+        i += 1
+    }
 }
 
 private func bytesEqual(_ a: UnsafePointer<UInt8>, _ aLen: Int, _ b: UnsafePointer<UInt8>, _ bLen: Int) -> Bool {
@@ -777,6 +797,7 @@ func vfsInit() {
     }
     for i in 0..<maxOpenDescriptions { openDescriptions[i] = OpenDescription() }
     for i in 0..<maxPipes { pipes[i] = Pipe() }
+    for i in 0..<maxEvents { eventCounters[i] = EventCounter() }
     for i in 0..<maxEndpoints { resetEndpointSlotForReuse(i) }
     resetDeviceRegistry()
 }
@@ -1090,6 +1111,9 @@ private func releaseDescription(_ d: Int) {
             // endpointMsgCap bytes on every create/close cycle.
             resetEndpointSlotForReuse(ep)
         }
+    }
+    if desc.kind == .event && desc.node >= 0 && desc.node < maxEvents {
+        eventCounters[desc.node] = EventCounter()
     }
     if desc.kind == .device {
         releaseDeviceGrant(desc.node)
@@ -1441,6 +1465,11 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                                         !devices[dev].claimed {
                                         return false
                                     }
+                                } else if desc.kind == .event {
+                                    let ev = desc.node
+                                    if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse {
+                                        return false
+                                    }
                                 }
                             } else if desc.refCount != 0 {
                                 return false
@@ -1695,6 +1724,38 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         return copied
     }
 
+    if entry.kind == .event {
+        if count < 8 { return errInvalid }
+        let ev = file.node
+        enable_irq()
+        while true {
+            let daif = vfsLock()
+            if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse {
+                vfsUnlock(daif)
+                return errInvalid
+            }
+            if eventCounters[ev].counter > 0 {
+                let value: UInt64
+                if (eventCounters[ev].flags & eventFlagSemaphore) != 0 {
+                    value = 1
+                    eventCounters[ev].counter -= 1
+                } else {
+                    value = eventCounters[ev].counter
+                    eventCounters[ev].counter = 0
+                }
+                storeLe64(dst, 0, value)
+                vfsUnlock(daif)
+                return 8
+            }
+            if (file.flags & oNonblock) != 0 {
+                vfsUnlock(daif)
+                return errAgain
+            }
+            vfsUnlock(daif)
+            processYieldForIO()
+        }
+    }
+
     guard entry.kind == .file else { return errBadFD }
     let daif = vfsLock()
     var result = 0
@@ -1797,10 +1858,22 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
 
     if entry.kind == .socket {
         if socketIsTCP(file.node) {
-            // There is no socketPollWritable/TCP send-space helper yet. Keep the
-            // existing tcpSend path for O_NONBLOCK sockets rather than peeking
-            // into TCP internals from VFS.
-            return tcpSend(file.node, src: UnsafeRawPointer(src), len: Int(count))
+            var written = 0
+            enable_irq()
+            while written < Int(count) {
+                netPump()
+                let n = tcpSend(file.node, src: UnsafeRawPointer(src + written),
+                                len: Int(count) - written)
+                if n > 0 {
+                    written += n
+                    continue
+                }
+                if n < 0 { return written > 0 ? written : n }
+                if !socketWriteOpen(file.node) { return written > 0 ? written : errPipe }
+                if (file.flags & oNonblock) != 0 { return written > 0 ? written : errAgain }
+                wfi()
+            }
+            return written
         }
         return errInvalid   // UDP: use sendto
     }
@@ -1833,6 +1906,32 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             if written < Int(count) { processYieldForIO() }
         }
         return written
+    }
+
+    if entry.kind == .event {
+        if count < 8 { return errInvalid }
+        let value = le64(src, 0)
+        if value == UInt64.max { return errInvalid }
+        let ev = file.node
+        enable_irq()
+        while true {
+            let daif = vfsLock()
+            if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse {
+                vfsUnlock(daif)
+                return errInvalid
+            }
+            if value <= eventMaxCounter - eventCounters[ev].counter {
+                eventCounters[ev].counter += value
+                vfsUnlock(daif)
+                return 8
+            }
+            if (file.flags & oNonblock) != 0 {
+                vfsUnlock(daif)
+                return errAgain
+            }
+            vfsUnlock(daif)
+            processYieldForIO()
+        }
     }
 
     guard entry.kind == .file else { return errBadFD }
@@ -2021,6 +2120,39 @@ func vfsPipe(fdsVA: UInt) -> Int {
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
     return 0
+}
+
+private func allocEventCounter(initval: UInt64, flags: Int) -> Int {
+    for i in 0..<maxEvents where !eventCounters[i].inUse {
+        eventCounters[i] = EventCounter(inUse: true, counter: initval, flags: flags)
+        return i
+    }
+    return -1
+}
+
+func vfsEventfd(initval: UInt, flags: UInt) -> Int {
+    let f = Int(bitPattern: flags)
+    if (f & ~eventAllowedFlags) != 0 { return errInvalid }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd == -1 { return errNoSpace }
+    let ev = allocEventCounter(initval: UInt64(initval), flags: f & eventFlagSemaphore)
+    if ev == -1 { return errNoSpace }
+    let d = allocDescription()
+    if d == -1 {
+        eventCounters[ev] = EventCounter()
+        return errNoSpace
+    }
+
+    openDescriptions[d].kind = .event
+    openDescriptions[d].node = ev
+    openDescriptions[d].flags = f & oNonblock
+    installDescription(proc, fd, d, rights: posixRights(read: true, write: true))
+    if (f & oCloexec) != 0 { handles[fdIndex(proc, fd)].cloexec = true }
+    return fd
 }
 
 // ---- C4a: handle-passing IPC endpoints ------------------------------------
@@ -2326,6 +2458,7 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let now = rtcNow()
     if entry.kind == .tty { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .pipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
+    if entry.kind == .event { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .file { return writeStatNode(statbuf, file.node) }
     return errBadFD
 }
@@ -2572,7 +2705,7 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
     }
     if kind == .socket {
         if (events & pollIn) != 0 && rights.contains(.read) && socketPollReadable(desc.node) { revents |= pollIn }
-        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }   // always writable
+        if (events & pollOut) != 0 && rights.contains(.write) && socketPollWritable(desc.node) { revents |= pollOut }
         return revents
     }
     if kind == .pipe {
@@ -2605,6 +2738,18 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
                         rights.contains(.transfer) && !endpoints[ep].hasMsg {
                 revents |= pollOut
             }
+        }
+        return revents
+    }
+    if kind == .event {
+        let ev = desc.node
+        if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse { return pollNval }
+        if (events & pollIn) != 0 && rights.contains(.read) && eventCounters[ev].counter > 0 {
+            revents |= pollIn
+        }
+        if (events & pollOut) != 0 && rights.contains(.write) &&
+            eventCounters[ev].counter < eventMaxCounter {
+            revents |= pollOut
         }
         return revents
     }
@@ -2662,7 +2807,7 @@ func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
         let fd = Int(base.advanced(by: i * pollfdSize).load(fromByteOffset: 0, as: Int32.self))
         if fd >= 0 && validFD(proc, fd) {
             let kind = fdEntry(proc, fd).kind
-            if kind == .pipe || kind == .endpoint { hasPeerDriven = true }
+            if kind == .pipe || kind == .endpoint || kind == .event { hasPeerDriven = true }
             if kind == .socket { hasSocket = true }
         }
     }

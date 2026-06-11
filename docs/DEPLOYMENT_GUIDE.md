@@ -424,7 +424,7 @@ Current Hetzner readiness status:
   `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
   channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
   and `/bin/echo HC6-OK`; bounded remote stdin is forwarded into fd 0 for tools
-  such as `/bin/cat`, and bounded stdout/stderr capture returns up to 1536
+  such as `/bin/cat`, and bounded stdout/stderr capture returns up to 4096
   bytes. The host helper `build/sshkey` can derive the OpenSSH public host key
   or a known_hosts line from the base image seed file, and can generate a
   deploy-specific replacement seed. Build-time provisioning uses the

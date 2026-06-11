@@ -99,7 +99,7 @@ int _open(const char *path, int flags, int mode) {
 
 int _isatty(int fd) { return fd < 3 ? 1 : 0; }
 
-int _kill(int pid, int sig) { return (int)sys3(SYS_KILL, pid, sig, 0); }
+int _kill(int pid, int sig) { return ret_int(sys3(SYS_KILL, pid, sig, 0)); }
 
 int _getpid(void) { return (int)sys3(SYS_GETPID, 0, 0, 0); }
 

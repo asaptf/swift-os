@@ -3,6 +3,28 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC17 TCP write backpressure preflight (2026-06-11)
+
+- Added TCP send-space readiness helpers so socket poll/write paths can observe
+  whether an established or CLOSE_WAIT connection can accept more queued bytes.
+  `socketPollWritable` now reports TCP writable only when the connection has
+  free send-buffer space instead of treating all socket fds as unconditionally
+  writable.
+- Updated VFS TCP socket writes to pump the network, queue as much as TCP will
+  accept, and block until ACKs reopen send space for blocking fds. Nonblocking
+  TCP writes now return `EAGAIN` only when no bytes were queued and the
+  connection is still open; a closed write side reports `EPIPE` when nothing was
+  written.
+- Raised `/bin/sshd` bounded exec output from the HC16 temporary 1536-byte cap
+  to 4096 bytes. The OpenSSH transport acceptance still runs
+  `/bin/cat /models/tok512.bin`, now requiring the full 4096-byte bounded reply
+  plus the serial truncation marker.
+
+**Acceptance.** `make sshd-transport-test` proves that SSHD can return a
+4096-byte bounded remote-exec response over a normal OpenSSH session, with TCP
+write backpressure handling ACK-driven send-buffer refill instead of requiring a
+single send-buffer-sized channel-data packet.
+
 ## HC16 SSHD bounded output capture preflight (2026-06-11)
 
 - Moved `/bin/sshd` remote exec stdout/stderr capture off the old pipe and into
@@ -441,9 +463,9 @@ now observes DHCP before the existing ARP/ICMP proof under QEMU/slirp.
   `mmap`/`munmap`, `chown`, `utimes`, `setitimer`, `gethostname`, `initgroups`, and nginx control-message
   header shapes.
 - Runtime caveats: `sendmsg`/`recvmsg` fd passing still returns `ENOSYS`, `setitimer` is a no-op,
-  write-side socket nonblocking readiness is not yet modeled, and nginx has not been added to the boot
-  image or exercised under QEMU. `sleep`/`usleep`/`nanosleep` now use the timer-backed `SYS_NANOSLEEP`
-  path from main. The expected first runtime configuration should still be single-process
+  and nginx has not been added to the boot image or exercised under QEMU. `sleep`/`usleep`/`nanosleep`
+  now use the timer-backed `SYS_NANOSLEEP` path from main. The expected first runtime configuration
+  should still be single-process
   (`daemon off; master_process off;`) until master/worker channel fd passing is real.
 
 ## Environment (host) — captured 2026-06-04
@@ -2613,9 +2635,9 @@ newlib's `fcntl` is a hard ENOSYS stub, so it never worked.
   value (`0x4000`) because compat `fcntl` passes `F_SETFL` flags directly. `F_SETFL` currently records
   only that mutable status bit in the shared open description; `F_GETFL` reports it with the stored flags.
   TCP `accept`/`read` on nonblocking fds return `EAGAIN` when `socketPollReadable` says no child/data is
-  ready, and accepted TCP children inherit `O_NONBLOCK` from the listener. TCP write-side readiness is still
-  intentionally limited: there is no `socketPollWritable`/send-space helper, so VFS keeps the existing
-  `tcpSend` path instead of peeking into TCP internals.
+  ready, and accepted TCP children inherit `O_NONBLOCK` from the listener. HC17 later added
+  `socketPollWritable` plus TCP send-space helpers, so VFS TCP writes can block or return `EAGAIN`
+  based on actual send-buffer availability.
 - Out of scope: `dup3`, file locking (`F_GETLK`/`F_SETLK`).
 
 ## Native Swift `/bin/ls` (DONE, 2026-06-05)
@@ -4640,5 +4662,51 @@ errors to `-1` plus `errno`.
   and guest TCP server exchange through `accept4`.
 
 **Acceptance.** `make socket-test`, `make docs-test`, `make select-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM4 — newlib eventfd facade probe (DONE, 2026-06-11)
+
+**Scope.** Add an event notification primitive for libuv-shaped runtimes on the
+Node.js/npm/pm2 track. SwiftOS exposes its own `eventfd` syscall (71), backed by
+a fixed VFS event-counter table and ordinary typed handles. The C compatibility
+layer provides POSIX-shaped `eventfd`, `eventfd_read`, `eventfd_write`, and
+`sys/eventfd.h`; this is source compatibility, not Linux syscall ABI
+compatibility.
+
+- `kernel/vfs/handle.swift`: adds `.event` as a typed handle kind.
+- `kernel/vfs/vfs.swift`: adds event counters, blocking/nonblocking 8-byte
+  read/write semantics, `EFD_SEMAPHORE`, `EFD_CLOEXEC`, fstat shape, and
+  `poll` readiness. `select` inherits readiness through the existing newlib
+  facade.
+- `/bin/eventfdprobe`: proves flags, empty nonblocking `EAGAIN`, counter
+  poll/read behavior, semaphore reads, and select readiness.
+
+**Acceptance.** `make eventfd-test`, `make docs-test`, `make select-test`,
+`make socket-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM5 — newlib signal lifecycle probe (DONE, 2026-06-11)
+
+**Scope.** Add the first pid-targeted signal lifecycle slice required by the
+Node.js/npm/pm2 track. SwiftOS now supports positive-PID `kill(pid, 0)` probes,
+default/ignored signal dispositions through `sigaction`, `signal`, and `raise`,
+and `kill(child, SIGTERM)` termination with `waitpid` reporting signaled status.
+This is still source compatibility, not a complete POSIX signal subsystem:
+process groups, blocked-syscall interruption, masks, userspace signal frames,
+and libuv signal watchers remain future work.
+
+- `kernel/user/process.swift`: adds pid-aware process termination for nonrunning
+  targets and safely removes ready targets from the EL0 run queue before
+  zombifying them.
+- `kernel/signal/signal.swift`: tracks SIGTERM alongside SIGINT/SIGPIPE and
+  exposes disposition lookup for process lifecycle control.
+- `userland/compat/stubs.c`: maps `kill`, `signal`, `raise`, and `sigaction`
+  onto the SwiftOS syscall ABI with POSIX-style `errno` behavior.
+- `/bin/signalprobe`: proves `kill(getpid(), 0)`, missing-pid `ESRCH`,
+  SIGTERM ignore/restore old dispositions, child SIGTERM termination, and
+  `waitpid` signaled status.
+
+**Acceptance.** `make signal-test`, `make docs-test`, `make eventfd-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

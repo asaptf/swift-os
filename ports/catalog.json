@@ -357,7 +357,7 @@
       "summary": "JavaScript server runtime for modern web apps and tooling.",
       "runtimeDependencies": ["ca-certificates", "openssl", "zlib"],
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
-      "blockedBy": ["V8 JIT or jitless policy", "thread runtime", "event notification API", "large mmap support"],
+      "blockedBy": ["V8 JIT or jitless policy", "thread runtime", "signal handler frames", "large mmap support"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
       "notes": "Native addons are deferred until dynamic loading policy exists."
     },
@@ -387,7 +387,7 @@
       "summary": "Node.js process manager for SwiftOS-hosted services.",
       "runtimeDependencies": ["nodejs", "npm"],
       "prerequisiteBundles": ["base-posix", "proc-basic", "net-server", "service", "threads"],
-      "blockedBy": ["nodejs runtime port", "signal delivery", "service supervisor contract", "persistent PM2 state policy"],
+      "blockedBy": ["nodejs runtime port", "full signal watcher support", "service supervisor contract", "persistent PM2 state policy"],
       "smokeTest": "pm2-runtime start /tmp/app.js --no-daemon and fetch the app from the host",
       "notes": "Start with pm2-runtime/no-daemon against one app. Cluster mode, startup generation, file watching, and durable process lists wait for service and storage policy."
     },

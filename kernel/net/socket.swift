@@ -713,6 +713,26 @@ func socketIsTCP(_ s: Int) -> Bool {
     return socketValidLocked(s) && sockProto[s] == sockProtoTCP
 }
 
+func socketPollWritable(_ s: Int) -> Bool {
+    let daif = netLock()
+    defer { netUnlock(daif) }
+    if !socketValidLocked(s) { return false }
+    if sockProto[s] == sockProtoTCP {
+        return !sockIsListener[s] && tcpConns[s].canAcceptSend()
+    }
+    return true
+}
+
+func socketWriteOpen(_ s: Int) -> Bool {
+    let daif = netLock()
+    defer { netUnlock(daif) }
+    if !socketValidLocked(s) { return false }
+    if sockProto[s] == sockProtoTCP {
+        return !sockIsListener[s] && tcpConns[s].writeOpen()
+    }
+    return true
+}
+
 func socketIsListener(_ s: Int) -> Bool {
     let daif = netLock()
     defer { netUnlock(daif) }
