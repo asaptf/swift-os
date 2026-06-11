@@ -468,8 +468,8 @@ These are current implementation boundaries, not necessarily design goals:
   repository fixtures, including name-based dependency resolution. The checked
   ports seed publishes Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx,
   and sqlite into one signed local repository, installs all ten by package
-  name, and runs Lua, `minigzip`, bzip2, the CA bundle marker, `pcre2grep`,
-  zoneinfo, nginx, and SQLite smoke commands in QEMU. The static-host workflow publishes that
+  name, and runs Lua, `minigzip`, zstd, bzip2 version/marker, the CA bundle marker,
+  xz, `pcre2grep`, zoneinfo, nginx, and SQLite smoke commands in QEMU. The static-host workflow publishes that
   seed into a deployable web root and proves the same install path from the
   hosted layout.
   The hosted-URL smoke proves that `/bin/pkg` can install from a DNS-resolved

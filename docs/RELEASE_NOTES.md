@@ -94,7 +94,8 @@ service-oriented.
   `pkg install bzip2`, `pkg install zstd`, `pkg install xz`,
   `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
   `pkg install nginx`, and `pkg install sqlite`, Lua smoke commands,
-  `minigzip`, bzip2, zstd, and xz round trips, the CA bundle marker, a
+  `minigzip`, zstd, and xz round trips, bzip2 version/marker smoke, the CA
+  bundle marker, a
   `pcre2grep` regex match, the tzdata zoneinfo marker, nginx version/marker
   smoke, and a SQLite in-memory query with
   `make package-ports-seed-repo-install-test`.

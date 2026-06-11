@@ -89,9 +89,12 @@ pkg install ca-certificates
 pkg install pcre2
 /usr/bin/lua -e 'print(21 * 2)'
 /usr/bin/minigzip /tmp/zlib.txt
-echo bzip2-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc
+/usr/bin/bzip2 -V
 cat /usr/share/bzip2/swiftos-bzip2.version
-echo zstd-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c
+echo zstd-ok > /tmp/zstd.in
+/usr/bin/zstd -q -f /tmp/zstd.in -o /tmp/zstd.zst
+/usr/bin/zstd -q -d -f /tmp/zstd.zst -o /tmp/zstd.out
+cat /tmp/zstd.out
 cat /usr/share/zstd/swiftos-zstd.version
 echo xz-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c
 cat /usr/share/xz/swiftos-xz.version

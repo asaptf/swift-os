@@ -287,9 +287,10 @@ make package-static-host-dns-repo-install-test
 ```
 
 The seed test exercises `pkg install lua`, `pkg install zlib`,
-`pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
-`pkg install nginx`, and `pkg install sqlite`; Lua version and expression
-checks; a `minigzip` compression/decompression round trip; the CA bundle
+`pkg install bzip2`, `pkg install zstd`, `pkg install ca-certificates`,
+`pkg install pcre2`, `pkg install tzdata`, `pkg install nginx`, and
+`pkg install sqlite`; Lua version and expression checks; `minigzip` and zstd
+compression/decompression round trips; bzip2 version/marker checks; the CA bundle
 marker; a `pcre2grep` regex match; the tzdata marker; nginx version/marker
 checks; and a SQLite in-memory query. The static-host test serves
 `build/ports-static-host-root` and repeats that install path. The DNS smoke uses
