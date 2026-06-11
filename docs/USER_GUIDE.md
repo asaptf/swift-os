@@ -16,9 +16,10 @@ The boot flow is:
 
 1. Kernel initializes hardware, memory, scheduler, VFS, security, and userland.
 2. The early TTY smoke prompt may ask for one input line and then a Ctrl-C.
-3. `/bin/console-login` starts as init.
+3. `/bin/swos-init` starts configured boot services and then hands off to
+   `/bin/console-login`.
 4. After authentication, the configured shell is executed.
-5. When the shell exits, `console-login` is started again for the next session.
+5. When the shell exits, init/login is started again for the next session.
 
 There is no graphical desktop shell in the current product profile.
 

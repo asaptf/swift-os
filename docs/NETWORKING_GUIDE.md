@@ -79,7 +79,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
 | Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd` | `./tests/ssh_transport_test.sh` |
-| Exercise SSHD remote command | SSHD profile | `/bin/sshd` | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
+| Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
 Operator flow:
@@ -402,7 +402,9 @@ Proof:
 
 ### Exercise SSHD Remote Command
 
-Boot with host TCP 2222 forwarded to guest TCP 22, log in as `root`, and start:
+Boot with host TCP 2222 forwarded to guest TCP 22. The default base image starts
+`/bin/sshd` through `/bin/swos-init` because `/etc/swos/services` contains
+`sshd`. For a manual debug run or a custom port, log in as `root` and start:
 
 ```sh
 /bin/sshd

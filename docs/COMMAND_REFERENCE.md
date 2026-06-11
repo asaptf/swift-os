@@ -45,7 +45,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet` | `tests/ssh_transport_test.sh` |
-| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, fixture key | `tests/sshd_transport_test.sh` |
+| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, fixture key; default base image autostarts it via `swos-init` | `tests/sshd_transport_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
 | Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
@@ -68,9 +68,11 @@ rmdir /tmp/work
 SwiftOS is headless by default. QEMU provides the primary serial console with
 `-nographic`.
 
-The login shell is busybox `ash`, started by `/bin/console-login`. It supports
-normal command execution, pipes, redirection, and the PATH used by the base
-image. The examples below can be pasted at the shell prompt after login.
+The boot init is `/bin/swos-init`. It starts configured boot services from
+`/etc/swos/services`, then hands the serial console to `/bin/console-login`.
+The login shell is busybox `ash`. It supports normal command execution, pipes,
+redirection, and the PATH used by the base image. The examples below can be
+pasted at the shell prompt after login.
 
 ```sh
 pwd
@@ -705,6 +707,9 @@ ssh -F /dev/null -vvv -p 2222 \
 Notes:
 
 - The default guest port is TCP 22.
+- The default base image starts `/bin/sshd` at boot through `/bin/swos-init`
+  and `/etc/swos/services`; manual `/bin/sshd` remains useful for custom ports
+  or debug runs.
 - This command exchanges SSH identification strings with a normal OpenSSH
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
@@ -900,7 +905,8 @@ diagnostic fixtures than stable application interfaces.
 | `threadsdemo` | `threadsdemo` | Create EL0 threads and prove futex-backed synchronization. | `tests/threads_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
-| `console-login` | `console-login` | Run the console login program used as init. | `tests/console_login_test.sh` |
+| `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login`. | `tests/sshd_transport_test.sh` |
+| `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
@@ -911,6 +917,25 @@ diagnostic fixtures than stable application interfaces.
 | `swos-kstage` | `swos-kstage` | Copy the active ESP kernel slot image into the inactive kernel slot and verify it. | `tests/uefi_kstage_test.sh` |
 | `swos-kactivate` | `swos-kactivate` | Select the inactive ESP kernel slot in loader-managed `kernel-state` for the next boot. | `tests/uefi_kactivate_test.sh` |
 | `swos-kconfirm` | `swos-kconfirm` | Mark the booted ESP kernel slot confirmed healthy. | `tests/uefi_kconfirm_test.sh` |
+
+### `swos-init`
+
+Start the current boot service handoff program.
+
+```text
+swos-init
+```
+
+Notes:
+
+- The kernel starts `/bin/swos-init` automatically when it is present in the
+  base image.
+- `swos-init` reads immutable `/etc/swos/services`, starts allowlisted services
+  such as `sshd`, and then `execve()`s `/bin/console-login`.
+- It is deliberately not a full service manager: there is no dependency graph,
+  restart policy, package service activation, or health supervision yet.
+
+Acceptance coverage: `tests/sshd_transport_test.sh`.
 
 Examples:
 

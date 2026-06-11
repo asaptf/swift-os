@@ -12,7 +12,8 @@ A default SwiftOS boot gives you:
 - A freestanding Embedded Swift kernel running at EL1 on AArch64.
 - A serial console through QEMU's `-nographic` terminal.
 - A read-only packed base filesystem plus writable `/tmp` RAM scratch space.
-- `/bin/console-login` as init, followed by a static busybox `ash` shell.
+- `/bin/swos-init` as boot init, followed by `/bin/console-login` and a static
+  busybox `ash` shell.
 - Native Embedded Swift userland tools such as `ls`, `cat`, `ps`, `top`, `id`,
   `calc`, `kv`, `httpd`, `udpecho`, and `tcpecho`.
 - Package fixtures for local `.swpkg` install, signed repository install, and

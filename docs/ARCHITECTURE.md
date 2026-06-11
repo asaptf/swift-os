@@ -279,9 +279,10 @@ Stage responsibilities:
   namespace.
 - **Default cell/session.** Create the default/global cell and boot session, then grant only the capabilities
   needed for the first shell or init process.
-- **First user process.** Today this is `/bin/console-login` (init), which authenticates a principal and
-  `execve`s the shell with the adopted context in the default cell. Later it should become a small
-  `/sbin/init` supervisor.
+- **First user process.** Today this is `/bin/swos-init`, which starts a tiny allowlist of boot services
+  from `/etc/swos/services` and then `execve`s `/bin/console-login`. `console-login` authenticates a
+  principal and `execve`s the shell with the adopted context in the default cell. Later this should become
+  a small `/sbin/init` supervisor.
 
 `/sbin/init` should remain small. It is not a systemd-style orchestration layer and should not become part of
 the boot-critical kernel path. Its long-term responsibilities are:
@@ -497,8 +498,10 @@ cell management, clock access, IPC endpoints, and later network rights.
 
 The implemented model (M12/M13):
 
-- `/bin/console-login` is init: it authenticates a principal against `/etc/swos/passwd` (SHA-256-hashed
-  passwords), adopts its principal/session/capabilities via `SYS_LOGIN`, and `execve`s the shell.
+- `/bin/swos-init` is the first user process when present; it starts allowlisted boot services and then
+  hands off to `/bin/console-login`.
+- `/bin/console-login` authenticates a principal against `/etc/swos/passwd` (SHA-256-hashed passwords),
+  adopts its principal/session/capabilities via `SYS_LOGIN`, and `execve`s the shell.
 - `/etc/passwd` and `/etc/group` are generated compatibility views (for tools that expect them), not the
   security policy.
 - Still future work: roles, policy files, richer multi-session management, and a stronger password KDF.

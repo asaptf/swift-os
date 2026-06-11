@@ -31,7 +31,7 @@ Use this with:
 | Direct DTB | `build/virt.dtb` loaded at `0x4FF00000` |
 | UEFI firmware | AAVMF/edk2 AArch64 firmware |
 | UEFI disk image | `build/swift-os.img` |
-| Guest init | `/bin/console-login` |
+| Guest init | `/bin/swos-init`, falling back to `/bin/console-login` |
 | Login shell | `/bin/busybox` `ash` |
 | Writable guest storage | `/tmp` tmpfs only |
 | Package overlay fixture | `build/pkghello-payload.img` |
@@ -349,9 +349,13 @@ To change package payload files, rebuild the package fixture or the relevant
 
 ### Console
 
-`/bin/console-login` runs as init. After successful authentication it starts the
-configured shell. When the shell exits, console-login starts again for the next
-session.
+`/bin/swos-init` runs as the first user process when present in the base image.
+It reads `/etc/swos/services`, starts allowlisted boot services such as `sshd`,
+and then replaces itself with `/bin/console-login`. If `swos-init` is missing,
+the kernel falls back to `/bin/console-login` directly.
+
+After successful authentication, console-login starts the configured shell. When
+the shell exits, init/login starts again for the next session.
 
 The default shell is busybox `ash`, staged as `/bin/busybox`.
 

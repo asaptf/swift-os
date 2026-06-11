@@ -412,13 +412,14 @@ Current Hetzner readiness status:
   with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
-- The base image includes `/bin/sshd` as an SSHD session/exec preflight. It
-  binds guest TCP/22, exchanges SSH identification strings with a normal
-  OpenSSH client, completes `curve25519-sha256` KEX with an `ssh-ed25519`
-  development host key and `chacha20-poly1305@openssh.com`, authenticates
-  `root` with an `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`,
-  opens a `session` channel, and executes bounded direct `/bin/<tool>` commands
-  such as `/bin/id` and `/bin/echo HC6-OK`. The checked proof is
+- The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
+  started at boot by `/bin/swos-init` from `/etc/swos/services`, binds guest
+  TCP/22, exchanges SSH identification strings with a normal OpenSSH client,
+  completes `curve25519-sha256` KEX with an `ssh-ed25519` development host key
+  and `chacha20-poly1305@openssh.com`, authenticates `root` with an
+  `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
+  channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
+  and `/bin/echo HC6-OK`. The checked proof is
   `./tests/sshd_transport_test.sh`; it also verifies that the older HC4 fixture
   key is rejected.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
@@ -432,9 +433,10 @@ Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
   milestones should add persisted host keys, real entropy, broader
-  authorized-key options, shell/PTY behavior, stdin/streaming output, service
-  launch, and broader remote commands. Dropbear remains a candidate full server
-  package if the first-party preflight does not grow into the supported daemon.
+  authorized-key options, shell/PTY behavior, stdin/streaming output,
+  supervision/restart policy, and broader remote commands. Dropbear remains a
+  candidate full server package if the first-party preflight does not grow into
+  the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has no known_hosts trust store,
   user authentication, session/exec channels, PTY, scp, or sftp.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

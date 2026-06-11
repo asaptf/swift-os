@@ -1991,6 +1991,20 @@ private func copyProcessSecurity(from parent: Int, to child: Int) {
     pSecurity[child] = pSecurity[parent] // whole context, including the Cell tag
 }
 
+private func buildUserEntryStack(_ ttbr0: UInt, packed: UInt, packedLen: UInt,
+                                 argc: Int) -> UInt {
+    if packedLen > 0 && argc > 0, let p = UnsafePointer<CChar>(bitPattern: packed) {
+        return userStackBuild(ttbr0, userStackTop, p, packedLen, Int32(argc))
+    }
+
+    // Malformed or absent argv must not enter EL0 with SP at the unmapped
+    // one-past-the-stack address. Build a valid argc=0 process-entry frame.
+    var empty: CChar = 0
+    return withUnsafePointer(to: &empty) { p in
+        userStackBuild(ttbr0, userStackTop, p, 0, 0)
+    }
+}
+
 // Build a process from an ELF image. Returns its slot, or -1. `inherit` selects
 // how the child's handle table is seeded from the parent (C2): `.all` preserves
 // fork-inherits-everything behavior; `.stdioOnly` keeps legacy spawn tight; and
@@ -2022,11 +2036,10 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     if kstack == 0 { address_space_destroy(ttbr0); return -1 }
     let kstackTop = kstack + UInt(kernelStackPages) * PageAllocator.pageSize
 
-    var userSP = userStackTop
-    if packedLen > 0 && argc > 0 {
-        let built = userStackBuild(ttbr0, userStackTop,
-                                     UnsafePointer<CChar>(bitPattern: packed), packedLen, Int32(argc))
-        if built != 0 { userSP = built }
+    let userSP = buildUserEntryStack(ttbr0, packed: packed, packedLen: packedLen, argc: argc)
+    if userSP == 0 {
+        address_space_destroy(ttbr0)
+        return -1
     }
 
     let ctx = procCtx.advanced(by: slot)
@@ -2088,11 +2101,10 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
         va += PageAllocator.pageSize
     }
 
-    var userSP = userStackTop
-    if packedLen > 0 && argc > 0 {
-        let built = userStackBuild(ttbr0, userStackTop,
-                                     UnsafePointer<CChar>(bitPattern: packed), packedLen, Int32(argc))
-        if built != 0 { userSP = built }
+    let userSP = buildUserEntryStack(ttbr0, packed: packed, packedLen: packedLen, argc: argc)
+    if userSP == 0 {
+        address_space_destroy(ttbr0)
+        return (0, 0, 0)
     }
     return (ttbr0, entry, userSP)
 }

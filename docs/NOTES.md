@@ -3,6 +3,23 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC8 SSHD boot autostart preflight (2026-06-11)
+
+- Added `/bin/swos-init` as the first user process when present in the base
+  image. It reads immutable `/etc/swos/services`, starts allowlisted services
+  with `fork`/`execve`, and then replaces itself with `/bin/console-login`.
+- The default base image now includes `/etc/swos/services` with `sshd`, so the
+  SSHD session/exec preflight binds TCP/22 during boot before the serial login
+  prompt.
+- Hardened process entry-stack construction so `execve` never enters EL0 with
+  `SP_EL0` at the unmapped one-past-stack address when argv packing yields an
+  empty or malformed argument vector.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` boots QEMU, waits for
+`swos-init: started sshd pid` and `sshd: listening on 22 (session exec
+preflight)`, then drives OpenSSH publickey auth and remote `/bin/id` plus
+`/bin/echo` commands without manually launching `/bin/sshd`.
+
 ## HC7 SSH client transport preflight (2026-06-11)
 
 - Added `/bin/ssh` as a native Swift SSH client transport preflight. It opens

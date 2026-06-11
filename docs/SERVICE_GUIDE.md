@@ -20,17 +20,18 @@ Use it with:
 SwiftOS can run network-facing EL0 programs today, and C5a-C5f adds a narrow
 restartable driver-service plus device-discovery and opaque device-handle
 smoke. It does not yet have a general service manager. Most services are static
-user programs started from the serial shell after login. Long-running services
-run in the foreground and report readiness through deterministic serial log
-markers.
+user programs started from the serial shell after login; the default base image
+also has a tiny `/bin/swos-init` boot handoff that starts allowlisted services
+from `/etc/swos/services` before launching `console-login`. Long-running
+services report readiness through deterministic serial log markers.
 
 | Property | Current behavior |
 | --- | --- |
-| Launch | Manual shell command after login |
+| Launch | Manual shell command after login, or the boot allowlist handled by `/bin/swos-init` |
 | Supervision | None yet; restart manually by rerunning the command |
-| Configuration | Command arguments, immutable base image files, or `/tmp` scratch |
+| Configuration | Command arguments, immutable base image files such as `/etc/swos/services`, or `/tmp` scratch |
 | Writable state | `/tmp` only; cleared on reboot |
-| Service identity | The logged-in principal and its capability mask |
+| Service identity | The logged-in principal for manual services; boot context for `swos-init` services |
 | Network authority | Requires `capNet`; the seeded `root` principal has it |
 | Logging | Serial console markers and service-prefixed messages |
 | Port exposure | QEMU `hostfwd` from host ports to guest ports |
@@ -494,7 +495,8 @@ make test
 ## Known Limits
 
 - There is no general service manager, restart policy, dependency graph, or
-  background service registry yet. C5a-C5f only prove a focused
+  background service registry yet. `/bin/swos-init` only starts a small
+  allowlist from `/etc/swos/services`; C5a-C5f only prove a focused
   driver-service supervisor/restart/discovery/device-grant authority path.
 - Services inherit the current login session's capability mask; explicit
   spawn-with-handles is roadmap work.

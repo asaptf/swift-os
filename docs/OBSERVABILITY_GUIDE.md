@@ -125,7 +125,8 @@ These markers tell you how far the system got.
 | `M11c: read-only base mounted from disk` | Packed base image was mounted from virtio-blk |
 | `M11d: exec loaded from disk /bin/...` | User program loaded through VFS |
 | `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim self-test passed |
-| `swift-os M12c: starting console-login (init)` | Login init was launched |
+| `swift-os M12c: starting swos-init` | Boot init was launched |
+| `swos-init: started sshd pid` | Boot init started the configured SSHD service |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
 | `drvsvc: C5c device manifest matched` | Registry metadata matched the expected pseudo or virtio-input manifest |
 | `drvsvc: C5c discovery exhausted` | Device discovery reported end-of-registry after the current input grant |

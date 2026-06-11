@@ -201,9 +201,11 @@ The boot context starts with:
 principal=1 session=1 caps=capConsole|capSpawn|capFsRead|capTmpWrite|capProcessInspect|capNet
 ```
 
-`/bin/console-login` runs as init, reads `/etc/swos/passwd`, prompts for a login
-name and password, verifies the salted SHA-256 password field, calls
-`SYS_LOGIN`, and then `execve`s the configured shell.
+`/bin/swos-init` runs first when present, starts allowlisted boot services, and
+then hands off to `/bin/console-login`. `console-login` reads
+`/etc/swos/passwd`, prompts for a login name and password, verifies the salted
+SHA-256 password field, calls `SYS_LOGIN`, and then `execve`s the configured
+shell.
 
 Important behavior:
 
