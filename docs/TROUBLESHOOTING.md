@@ -562,9 +562,9 @@ signed static HTTP repository fixture, `pkg repo set URL && pkg update` or
 `pkg update URL` followed by `pkg install NAME`, and through the static-host
 ports fixture for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and
 sqlite.
-Name-based dependency resolution is implemented for signed catalogs. Remove,
-upgrade, rollback, version-constraint solving, public hosted channels, and
-large-package streaming downloads are future work.
+Name-based dependency resolution and streamed repository package installs are
+implemented for signed catalogs. Remove, upgrade, rollback,
+version-constraint solving, and public hosted channels are future work.
 
 For the package-store boot path, use:
 

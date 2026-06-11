@@ -499,9 +499,9 @@ Risks:
   use HTTP plus signatures for integrity, exactly as the design says.
 - Catalog parsing must stay bounded. Reject oversized catalogs in P5 rather
   than trying to support the future full public repository immediately.
-- P5c downloads packages into tmpfs before install. Downloads must become
-  streaming store writes before large packages such as Node.js, Swift,
-  PostgreSQL, or a JVM are realistic.
+- Repository package installs now stream payload bytes directly into the package
+  store. Keep this path covered before attempting large packages such as
+  Node.js, Swift, PostgreSQL, or a JVM.
 - DNS is available, but the QEMU acceptance should use `10.0.2.2:<port>` first
   to keep failures focused on package logic.
 

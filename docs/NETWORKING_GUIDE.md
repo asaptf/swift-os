@@ -467,20 +467,23 @@ then reads a capped long output from `/bin/cat /models/tok512.bin` and requires
 the truncation marker. This proves TCP/22 reachability through SSH KEX,
 host-key pinning, encrypted userauth, session channel setup, bounded direct
 remote exec, bounded stdin forwarding, and bounded output capture; PTY, shell
-command parsing, scp, sftp, runtime host-key rotation, real entropy, larger
+command parsing, scp, sftp, runtime host-key rotation, runtime entropy, larger
 streaming, and broader authorized-key option enforcement are follow-up work.
 
 For deploy-specific image-time keys, generate a host-key seed with
 `build/sshkey seed --out support/keys/ssh_host_ed25519_seed`, create
-`support/keys/authorized_keys` with the allowed login public keys, then build
-with `make base-image` while setting `SSHD_HOST_SEED_FILE` and
+`support/keys/authorized_keys` with the allowed login public keys, optionally
+generate `support/keys/ssh_kex_seed`, then build with `make base-image` while
+setting `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
 `SSHD_AUTHORIZED_KEYS_FILE`. Derive the host known_hosts line from the exact
-staged seed.
+staged host-key seed. The KEX seed is an image-time hardening input; it does
+not replace a runtime entropy source.
 
 Proof:
 
 ```sh
 ./tests/sshd_transport_test.sh
+make sshd-kex-seed-test
 ```
 
 ### Exercise The SSH Client
@@ -626,7 +629,7 @@ The user-visible end-to-end paths are the shell tests above.
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, `/etc/ssh/known_hosts` does not trust the host key, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; check for `ssh: host key matched /etc/ssh/known_hosts`; run `./tests/ssh_transport_test.sh` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
-| SSH exits before stdout | Missing private key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, stale or wrong host known_hosts entry, unsupported command syntax, or a protocol regression | Use a private key whose `.pub` line was staged into the exact image, rebuild `base-image`, derive known_hosts from the exact image seed with `build/sshkey`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, host-key match in OpenSSH debug output, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
+| SSH exits before stdout | Missing private key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, stale or wrong host known_hosts entry, unsupported command syntax, invalid `/etc/ssh/ssh_kex_seed`, or a protocol regression | Use a private key whose `.pub` line was staged into the exact image, rebuild `base-image`, derive known_hosts from the exact image seed with `build/sshkey`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, optional `sshd: loaded kex seed /etc/ssh/ssh_kex_seed`, host-key match in OpenSSH debug output, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 
@@ -644,12 +647,14 @@ Current limits that matter when exposing a SwiftOS network service:
 - `/bin/sshd` is a session/exec preflight, not a full login daemon. It uses a
   base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the checked-in
   default seed and authorized key are development-only, and deploy builds should
-  provide `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE`. KEX entropy is
-  still weak and temporary. It supports simple `ssh-ed25519` lines plus safe
-  restriction options in `/etc/ssh/authorized_keys`, bounded stdout/stdin, and
+  provide `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
+  `SSHD_AUTHORIZED_KEYS_FILE`. The KEX seed is mixed with a per-session counter,
+  but runtime entropy is still missing. It supports simple `ssh-ed25519` lines
+  plus safe restriction options in `/etc/ssh/authorized_keys`, bounded
+  stdout/stdin, and
   direct single-component `/bin/<tool>` or `/usr/bin/<tool>` remote exec with
   whitespace splitting, quote removal, and backslash escaping; PTY, shell
-  command parsing, scp, sftp, runtime host-key rotation, real entropy, larger
+  command parsing, scp, sftp, runtime host-key rotation, runtime entropy, larger
   streaming, and broader authorized-key option enforcement are still missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange and checks a minimal

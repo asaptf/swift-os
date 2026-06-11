@@ -477,8 +477,9 @@ These are current implementation boundaries, not necessarily design goals:
   hosted layout.
   The hosted-URL smoke proves that `/bin/pkg` can install from a DNS-resolved
   HTTP repository hostname. Remove, upgrade, rollback, public production
-  channels, version-constraint solving, and large-package streaming downloads
-  are not implemented yet.
+  channels, and version-constraint solving are not implemented yet. Repository
+  package installs stream payload bytes into the package store instead of
+  caching full `.swpkg` blobs in `/tmp`.
 - No graphical desktop shell.
 - Userland networking is currently exposed through kernel socket syscalls; the
   roadmap moves more services out of the kernel.

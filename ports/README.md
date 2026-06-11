@@ -41,9 +41,10 @@ zoneinfo files and packages the `/usr/share/zoneinfo` tree.
 `make ports-nginx-repo-fixture` cross-builds a minimal static HTTP-only nginx
 package. `make ports-sqlite-repo-fixture` cross-builds static SQLite,
 `libsqlite3.a`, headers, pkgconf metadata, and the `sqlite3` CLI.
-`make ports-seed-repo-fixture` publishes all twelve packages into one signed
-seed repository. `make ports-static-host-publish` copies that seed repository
-into a deployable static-host web root with `hosted-repo.json`,
+`make ports-seed-repo-fixture` publishes every catalog entry with
+`status: "packages"` into one signed seed repository. `make
+ports-static-host-publish` copies that seed repository into a deployable
+static-host web root with `hosted-repo.json`,
 `repo-root.pub`, and `SHA256SUMS`.
 Patches, QEMU smoke tests, and trusted public publishing workflows still belong
 to the planned `swift-os-ports` repository. The seed catalog keeps that work
@@ -70,10 +71,11 @@ hardened inside `swift-os`.
 | npm | `ports/lang/npm/Port.json` | Scaffolded JavaScript package-manager intake tied to Node.js |
 | PM2 | `ports/sysutils/pm2/Port.json` | Scaffolded Node.js process-manager intake tied to service policy |
 
-`make ports-seed-repo-fixture` publishes all twelve packages into one signed local
-repository. `make ports-static-host-publish` turns that seed into a deployable
-static-host web root containing `hosted-repo.json`, `repo-root.pub`, and
-`SHA256SUMS`.
+`make ports-seed-repo-fixture` publishes every catalog entry with
+`status: "packages"` into one signed local repository by using
+`build/swport catalog packaged ports/catalog.json` as the source package list.
+`make ports-static-host-publish` turns that seed into a deployable static-host
+web root containing `hosted-repo.json`, `repo-root.pub`, and `SHA256SUMS`.
 
 ## Common Checks
 

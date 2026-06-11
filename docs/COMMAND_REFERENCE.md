@@ -46,7 +46,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet` | `tests/ssh_transport_test.sh` |
-| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init` | `tests/sshd_transport_test.sh`, `tests/sshd_authorized_keys_test.sh` |
+| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init` | `tests/sshd_transport_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
 | Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
@@ -763,11 +763,14 @@ Notes:
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
   the same seed file `/bin/sshd` loads in the guest. For a deploy-specific
   image-time host key, generate a seed with `build/sshkey seed --out PATH` and
-  build with `make SSHD_HOST_SEED_FILE=PATH base-image`. For deploy-specific
+  build with `make SSHD_HOST_SEED_FILE=PATH base-image`. A deploy candidate can
+  also stage an image-time KEX mix seed with `SSHD_KEX_SEED_FILE=PATH`; this is
+  a per-image hardening input, not a runtime entropy source. For deploy-specific
   login keys, build with `make SSHD_AUTHORIZED_KEYS_FILE=PATH base-image`.
 - It uses a base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the
-  checked-in default seed is development-only. It still uses weak temporary KEX
-  entropy. The
+  checked-in default seed is development-only. It mixes a daemon-local KEX
+  session counter and, when present, `/etc/ssh/ssh_kex_seed`; runtime entropy is
+  still missing. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines plus
   the safe restriction options `restrict`, `no-pty`, `no-port-forwarding`,
   `no-agent-forwarding`, and `no-X11-forwarding`. Other options, including
@@ -785,6 +788,7 @@ Notes:
 Acceptance coverage: `tests/sshd_transport_test.sh`,
 `tests/sshd_usr_bin_exec_test.sh`,
 `tests/sshd_host_key_rotation_test.sh`,
+`tests/sshd_kex_seed_test.sh`,
 `tests/sshd_authorized_keys_test.sh`.
 
 ### `tcpget`

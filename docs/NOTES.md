@@ -3,6 +3,29 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC22 SSHD KEX seed preflight (2026-06-11)
+
+- Added a daemon-local SSHD KEX session counter and mixed it into the
+  SSH_MSG_KEXINIT cookie plus the Curve25519 server ephemeral scalar so
+  consecutive connections to the same daemon no longer reuse the same
+  time/PID/stack-derived context.
+- Added optional `/etc/ssh/ssh_kex_seed` loading. `make base-image` stages a
+  deploy-specific hex-encoded 32-byte seed when `SSHD_KEX_SEED_FILE=PATH` is
+  supplied. Invalid seed files fail closed; missing files keep the development
+  image behavior.
+- This is deploy-image hardening, not a full entropy subsystem. A real runtime
+  entropy source remains required before treating SSHD KEX randomness as
+  production complete.
+- Added `./tests/sshd_kex_seed_test.sh` and `make sshd-kex-seed-test`, which
+  build a temporary base image with a generated KEX seed and reuse the host
+  OpenSSH session/exec acceptance path.
+
+**Acceptance.** `make sshd-kex-seed-test` proves that `/bin/sshd` loads
+`/etc/ssh/ssh_kex_seed`, marks the KEX context as seeded, completes pinned
+OpenSSH transport/auth/session setup, and executes the bounded remote commands.
+`./tests/sshd_transport_test.sh` also now requires distinct logged KEX session
+contexts across multiple host OpenSSH connections.
+
 ## HC21 SSHD authorized_keys options preflight (2026-06-11)
 
 - Hardened `/bin/sshd` authorized-key matching so key options are no longer

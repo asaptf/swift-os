@@ -19,8 +19,9 @@ Design for binary package installation on SwiftOS.
 > the host, and `make package-static-host-dns-repo-install-test` proves
 > target-side install through a DNS-resolved hosted-style URL. Rollback, remove,
 > upgrade, public production channels, target-side HTTPS transport,
-> version-constraint solving, and large-package streaming downloads are still
-> staged work.
+> and version-constraint solving are still staged work. Repository package
+> installs stream payload bytes directly into the package store instead of
+> caching full `.swpkg` blobs in tmpfs.
 > The package work should continue to follow the project rule: one milestone at
 > a time, build, boot, test, commit, then stop for review.
 
@@ -912,20 +913,21 @@ Acceptance:
 Remaining repository work:
 
 - add version-constraint solving and `pkg upgrade`;
-- replace tmpfs package caching with streaming store writes for large packages;
 - add HTTPS/certificate verification after the userland TLS stack is ready.
 
 ### Ports Tree Bootstrap
 
 Current state: `swift-os` carries a checked machine-readable seed catalog,
 `ports/catalog.json`, host-side `build/swport catalog validate/list/inspect`
-commands, and checked recipes for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
+commands, a catalog-driven `build/swport catalog packaged` package list, and
+checked recipes for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
 tzdata, nginx, and sqlite. `swport recipe validate`, `swport recipe manifest`, checksum-verified
 `swport recipe fetch`, staged-root `swport recipe package`, and signed
 `swport recipe repo-fixture` exist for those checked paths. The seed targets
 cross-build real static AArch64 packages where applicable, package data-only
-artifacts for CA certificates and time zones, publish all twelve packages into one
-signed local seed repository, and install them by package name in QEMU. The
+artifacts for CA certificates and time zones, publish every catalog entry with
+`status: "packages"` into one signed local seed repository, and install the
+current twelve seed packages by package name in QEMU. The
 static-host targets publish that seed into a deployable web root and prove
 installs from the hosted layout; the DNS hosted-repository smoke proves the same
 path through a resolved repository hostname. This is deliberately not the full

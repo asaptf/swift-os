@@ -221,7 +221,8 @@ llmd: served
   static-hostable web root, verify hosted static-root URLs, and install from
   target-side DNS-resolved HTTP repository URLs. Public production channels,
   broad source-port coverage, version-constraint solving, removal, upgrade,
-  rollback, and streaming large-package downloads remain roadmap work.
+  and rollback remain roadmap work. Repository installs stream payload bytes
+  directly into the package store.
 - The current capability model is useful and tested, but the stronger long-term
   handle and service model is still being hardened.
 - Many drivers and the network stack still live in the kernel. C5a-C5f prove

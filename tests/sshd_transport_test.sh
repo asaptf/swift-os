@@ -217,6 +217,16 @@ grep -qF "sshd: authorized key matched /etc/ssh/authorized_keys" <<<"$clean" \
   || { echo "FAIL: guest did not load a matching authorized_keys entry" >&2; ok=0; }
 grep -qF "sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed" <<<"$clean" \
   || { echo "FAIL: guest did not load the file-backed SSHD host key seed" >&2; ok=0; }
+grep -qF "sshd: kex random context session 1" <<<"$clean" \
+  || { echo "FAIL: guest did not log per-session SSHD KEX context 1" >&2; ok=0; }
+grep -qF "sshd: kex random context session 2" <<<"$clean" \
+  || { echo "FAIL: guest did not log per-session SSHD KEX context 2" >&2; ok=0; }
+if [[ -n "${SSHD_EXPECT_KEX_SEED:-}" ]]; then
+  grep -qF "sshd: loaded kex seed /etc/ssh/ssh_kex_seed" <<<"$clean" \
+    || { echo "FAIL: guest did not load the file-backed SSHD KEX seed" >&2; ok=0; }
+  grep -qF "sshd: kex random context session 1 seeded" <<<"$clean" \
+    || { echo "FAIL: guest did not mark the SSHD KEX context as seeded" >&2; ok=0; }
+fi
 grep -qF "sshd: session channel opened" <<<"$clean" \
   || { echo "FAIL: guest did not open a session channel" >&2; ok=0; }
 grep -qF "sshd: session exec completed status 0" <<<"$clean" \

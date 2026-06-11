@@ -5,8 +5,8 @@
 // and pre-login path that Hetzner-style remote access needs next: TCP/22, SSH
 // identification, curve25519-sha256, ssh-ed25519 host authentication,
 // chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
-// command. PTY, shells, scp/sftp, a full service manager, and real entropy are
-// separate milestones.
+// command. PTY, shells, scp/sftp, a full service manager, and runtime entropy
+// are separate milestones.
 
 private let defaultPort: UInt16 = 22
 private let pollIn: Int16 = 0x001
@@ -28,6 +28,8 @@ private let oReadOnly: Int32 = 0
 private let oWriteOnly: Int32 = 1
 private let oCreate: Int32 = 0x40
 private let oTrunc: Int32 = 0x80
+
+private var kexSessionCounter: UInt64 = 0
 
 private let msgDisconnect: UInt8 = 1
 private let msgServiceRequest: UInt8 = 5
@@ -204,20 +206,48 @@ private func isSSHBanner(_ p: UnsafePointer<UInt8>, _ len: Int) -> Bool {
     len >= 4 && p[0] == 0x53 && p[1] == 0x53 && p[2] == 0x48 && p[3] == 0x2D
 }
 
-private func fillPseudoRandom(_ p: UnsafeMutableRawPointer, _ len: Int, _ domain: UInt64) {
+private func nextKexSessionID() -> UInt64 {
+    kexSessionCounter &+= 1
+    if kexSessionCounter == 0 { kexSessionCounter = 1 }
+    return kexSessionCounter
+}
+
+private func mix64(_ v: UInt64) -> UInt64 {
+    var z = v
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+}
+
+private func foldSeed32(_ p: UnsafeRawPointer) -> UInt64 {
+    var x: UInt64 = 0xD1B5_4A32_D192_ED03
+    var i = 0
+    while i < 4 {
+        let w = p.load(fromByteOffset: i * 8, as: UInt64.self)
+        x = mix64(x ^ w ^ (UInt64(i) &* 0x9E37_79B9_7F4A_7C15))
+        i += 1
+    }
+    if x == 0 { return 0xA076_1D64_78BD_642F }
+    return x
+}
+
+private func fillPseudoRandom(_ p: UnsafeMutableRawPointer,
+                              _ len: Int,
+                              _ domain: UInt64,
+                              _ sessionID: UInt64,
+                              _ seedMix: UInt64) {
     var probe: UInt64 = 0
     var x = UInt64(swiftos_time())
         ^ (UInt64(bitPattern: Int64(swiftos_getpid())) &* 0x9E37_79B9_7F4A_7C15)
         ^ withUnsafeMutablePointer(to: &probe) { UInt64(UInt(bitPattern: $0)) }
         ^ domain
+        ^ (sessionID &* 0xA076_1D64_78BD_642F)
+        ^ seedMix
     if x == 0 { x = 0xD1B5_4A32_D192_ED03 }
     var i = 0
     while i < len {
         x = x &* 6364136223846793005 &+ 1442695040888963407
-        var z = x
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        z = z ^ (z >> 31)
+        let z = mix64(x)
         p.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
         i += 1
     }
@@ -309,6 +339,81 @@ private func readHostKeySeed(_ out32: UnsafeMutableRawPointer) -> Bool {
         }
         swiftos_puts("sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed\n")
         return true
+    }
+}
+
+private func readKexSeed(_ out32: UnsafeMutableRawPointer) -> Int {
+    let fd = swiftos_open("/etc/ssh/ssh_kex_seed", 0)
+    guard fd >= 0 else { return 0 }
+    defer { _ = swiftos_close(fd) }
+
+    return withUnsafeTemporaryAllocation(byteCount: 160, alignment: 1) { raw -> Int in
+        var used = 0
+        while used < raw.count {
+            let r = swiftos_read(fd, raw.baseAddress! + used, UInt(raw.count - used))
+            if r < 0 {
+                swiftos_puts("sshd: kex seed read failed\n")
+                return -1
+            }
+            if r == 0 { break }
+            used += Int(r)
+        }
+        if used == raw.count {
+            let extraRead = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Int in
+                swiftos_read(fd, extra.baseAddress!, 1)
+            }
+            if extraRead < 0 {
+                swiftos_puts("sshd: kex seed read failed\n")
+                return -1
+            }
+            if extraRead > 0 {
+                swiftos_puts("sshd: kex seed too long\n")
+                return -1
+            }
+        }
+
+        var outOff = 0
+        var high: UInt8 = 0
+        var haveHigh = false
+        var i = 0
+        while i < used {
+            let c = raw.baseAddress!.load(fromByteOffset: i, as: UInt8.self)
+            if c == 0x23 { // '#'
+                while i < used &&
+                      raw.baseAddress!.load(fromByteOffset: i, as: UInt8.self) != 0x0A {
+                    i += 1
+                }
+                continue
+            }
+            if isSeedSpace(c) {
+                i += 1
+                continue
+            }
+            guard let n = hexNibble(c) else {
+                swiftos_puts("sshd: kex seed invalid hex\n")
+                return -1
+            }
+            if haveHigh {
+                if outOff >= 32 {
+                    swiftos_puts("sshd: kex seed too long\n")
+                    return -1
+                }
+                out32.storeBytes(of: (high << 4) | n, toByteOffset: outOff, as: UInt8.self)
+                outOff += 1
+                haveHigh = false
+            } else {
+                high = n
+                haveHigh = true
+            }
+            i += 1
+        }
+
+        guard !haveHigh, outOff == 32 else {
+            swiftos_puts("sshd: kex seed wrong length\n")
+            return -1
+        }
+        swiftos_puts("sshd: loaded kex seed /etc/ssh/ssh_kex_seed\n")
+        return 1
     }
 }
 
@@ -720,10 +825,13 @@ private func readPlainPacket(_ fd: Int32, _ payload: UnsafeMutableRawPointer,
     }
 }
 
-private func buildKexInit(_ out: UnsafeMutableRawPointer, _ cap: Int) -> Int {
+private func buildKexInit(_ out: UnsafeMutableRawPointer,
+                          _ cap: Int,
+                          _ sessionID: UInt64,
+                          _ seedMix: UInt64) -> Int {
     var w = SSHWriter(p: out, cap: cap)
     guard w.u8(20) else { return -1 } // SSH_MSG_KEXINIT
-    fillPseudoRandom(out + w.len, 16, 0x4b4558494e495431)
+    fillPseudoRandom(out + w.len, 16, 0x4b4558494e495431, sessionID, seedMix)
     w.len += 16
 
     guard writerStringStatic(&w, "curve25519-sha256,curve25519-sha256@libssh.org,kex-strict-s-v00@openssh.com"),
@@ -1562,13 +1670,27 @@ private func serveOne(_ fd: Int32) {
 
         var clientSeq: UInt32 = 0
         var serverSeq: UInt32 = 0
+        let kexSessionID = nextKexSessionID()
+        var kexSeed = (
+            UInt64(0), UInt64(0), UInt64(0), UInt64(0)
+        )
+        let kexSeedState = withUnsafeMutableBytes(of: &kexSeed) { ks in
+            readKexSeed(ks.baseAddress!)
+        }
+        guard kexSeedState >= 0 else { return }
+        var kexSeedMix: UInt64 = 0
+        if kexSeedState > 0 {
+            kexSeedMix = withUnsafeBytes(of: &kexSeed) { ks in
+                foldSeed32(ks.baseAddress!)
+            }
+        }
 
         let clientKexLen = readPlainPacket(fd, clientKex.baseAddress!, clientKex.count, &clientSeq)
         guard clientKexLen > 0 && clientKex.baseAddress!.load(fromByteOffset: 0, as: UInt8.self) == 20 else {
             swiftos_puts("sshd: expected client KEXINIT\n")
             return
         }
-        let serverKexLen = buildKexInit(serverKex.baseAddress!, serverKex.count)
+        let serverKexLen = buildKexInit(serverKex.baseAddress!, serverKex.count, kexSessionID, kexSeedMix)
         guard serverKexLen > 0,
               sendPlainPacket(fd, serverKex.baseAddress!, serverKexLen, &serverSeq) else {
             swiftos_puts("sshd: could not send KEXINIT\n")
@@ -1608,8 +1730,15 @@ private func serveOne(_ fd: Int32) {
             readHostKeySeed(hs.baseAddress!)
         }
         guard hostSeedOK else { return }
+        swiftos_puts("sshd: kex random context session ")
+        printUInt(UInt(kexSessionID))
+        if kexSeedState > 0 {
+            swiftos_puts(" seeded\n")
+        } else {
+            swiftos_puts(" unseeded\n")
+        }
         withUnsafeMutableBytes(of: &serverPriv) { sp in
-            fillPseudoRandom(sp.baseAddress!, 32, 0x535348445f4b4558)
+            fillPseudoRandom(sp.baseAddress!, 32, 0x535348445f4b4558, kexSessionID, kexSeedMix)
         }
         var basePoint = (
             UInt64(9), UInt64(0), UInt64(0), UInt64(0)

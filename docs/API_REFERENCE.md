@@ -368,10 +368,30 @@ Related file formats:
 ```c
 int pkg_install(int fd, const char *name, const char *version_revision);
 int pkg_info(int index, char *buf, size_t cap);
+
+struct swiftos_pkg_stream_begin_desc {
+    char name[32];
+    char version_revision[16];
+    unsigned long payload_size;
+    unsigned char payload_sha256[32];
+};
+
+int pkg_stream_begin(const struct swiftos_pkg_stream_begin_desc *desc);
+int pkg_stream_write(const void *buf, size_t count);
+int pkg_stream_commit(void);
+int pkg_stream_abort(void);
 ```
 
 `pkg_install` appends the package payload, writes a new activation record, moves
 the active pointer, and mounts the active package view.
+
+`pkg_stream_begin` starts the repository install path after `/bin/pkg` has
+already parsed and verified the `.swpkg` header, manifest hash, manifest
+metadata, and catalog entry. The descriptor names the package, revision, payload
+byte count, and expected payload SHA-256. `pkg_stream_write` appends payload
+chunks directly to the package store, `pkg_stream_commit` validates the final
+payload and activates the package, and `pkg_stream_abort` drops the in-progress
+mutation. This avoids caching full repository `.swpkg` blobs in `/tmp`.
 
 Contract:
 
@@ -386,7 +406,8 @@ Contract:
   SHA-256 hashes in the header.
 - The payload must be a packed `SWOSBASE` v2 image.
 - Repository catalog signatures and package download hashes are verified by
-  `/bin/pkg` before it calls `pkg_install`; they are not part of this syscall.
+  `/bin/pkg` before it calls `pkg_install` or the streaming API; they are not
+  part of these syscalls.
 
 Example:
 
@@ -1208,6 +1229,12 @@ int swiftos_chown(const char *path, unsigned int owner);
 ```c
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
+                             unsigned long payload_size,
+                             const unsigned char *payload_sha256);
+int swiftos_pkg_stream_write(const void *buf, unsigned long count);
+int swiftos_pkg_stream_commit(void);
+int swiftos_pkg_stream_abort(void);
 ```
 
 ### Update Store
