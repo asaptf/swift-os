@@ -7,7 +7,8 @@
 # then verifies the SwiftOS host key through a known_hosts entry derived from
 # /etc/ssh/ssh_host_ed25519_seed, accepts the key staged in
 # /etc/ssh/authorized_keys, opens session channels, runs /bin/id and
-# /bin/echo, receives stdout, and observes exit-status 0.
+# /bin/echo, forwards a small stdin payload into /bin/cat, receives stdout, and
+# observes exit-status 0.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,6 +47,9 @@ SSHOUT="$(mktemp -t swiftos-sshd-stdout.XXXXXX)"
 SSHERR="$(mktemp -t swiftos-sshd-stderr.XXXXXX)"
 IDOUT="$(mktemp -t swiftos-sshd-id-stdout.XXXXXX)"
 IDERR="$(mktemp -t swiftos-sshd-id-stderr.XXXXXX)"
+CATOUT="$(mktemp -t swiftos-sshd-cat-stdout.XXXXXX)"
+CATERR="$(mktemp -t swiftos-sshd-cat-stderr.XXXXXX)"
+CATEXPECT="$(mktemp -t swiftos-sshd-cat-expected.XXXXXX)"
 DENYOUT="$(mktemp -t swiftos-sshd-deny-stdout.XXXXXX)"
 DENYERR="$(mktemp -t swiftos-sshd-deny-stderr.XXXXXX)"
 KEY_ALLOW="$(mktemp -t swiftos-sshd-allow-key.XXXXXX)"
@@ -68,7 +72,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$KNOWN_HOSTS" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$CATOUT" "$CATERR" "$CATEXPECT" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$KNOWN_HOSTS" "$PIDFILE" "$INFIFO"' EXIT
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
@@ -104,6 +108,10 @@ drive_fail() {
   cat "$IDOUT" >&2 2>/dev/null || true
   echo "--- id ssh stderr ---" >&2
   cat "$IDERR" >&2 2>/dev/null || true
+  echo "--- cat ssh stdout ---" >&2
+  cat "$CATOUT" >&2 2>/dev/null || true
+  echo "--- cat ssh stderr ---" >&2
+  cat "$CATERR" >&2 2>/dev/null || true
   echo "--- denied ssh stdout ---" >&2
   cat "$DENYOUT" >&2 2>/dev/null || true
   echo "--- denied ssh stderr ---" >&2
@@ -164,6 +172,11 @@ id_rc=$?
   root@127.0.0.1 /bin/echo HC6-OK >"$SSHOUT" 2>"$SSHERR" </dev/null
 ssh_rc=$?
 
+printf 'HC15-STDIN\nline-two\n' >"$CATEXPECT"
+"$SSH" "${ssh_common[@]}" -i "$KEY_ALLOW" \
+  root@127.0.0.1 /bin/cat >"$CATOUT" 2>"$CATERR" <"$CATEXPECT"
+cat_rc=$?
+
 await "sshd: session exec completed status 0" 20 || true
 exec 3>&-
 stop_qemu
@@ -185,6 +198,8 @@ grep -qF "sshd: session channel opened" <<<"$clean" \
   || { echo "FAIL: guest did not open a session channel" >&2; ok=0; }
 grep -qF "sshd: session exec completed status 0" <<<"$clean" \
   || { echo "FAIL: guest did not complete remote exec with status 0" >&2; ok=0; }
+grep -qF "sshd: exec stdin bytes 20" <<<"$clean" \
+  || { echo "FAIL: guest did not log forwarded SSH exec stdin bytes" >&2; ok=0; }
 grep -qF "swift-os_sshd-session" "$SSHERR" \
   || { echo "FAIL: host ssh did not report the swift-os SSH banner" >&2; ok=0; }
 grep -qF "kex: algorithm: curve25519-sha256" "$SSHERR" \
@@ -203,6 +218,8 @@ grep -qF "Authenticated to 127.0.0.1" "$SSHERR" \
   || { echo "FAIL: host ssh did not report publickey authentication success" >&2; ok=0; }
 grep -qF "Authenticated to 127.0.0.1" "$IDERR" \
   || { echo "FAIL: host ssh did not report id publickey authentication success" >&2; ok=0; }
+grep -qF "Authenticated to 127.0.0.1" "$CATERR" \
+  || { echo "FAIL: host ssh did not report cat publickey authentication success" >&2; ok=0; }
 grep -qF "Permission denied (publickey)." "$DENYERR" \
   || { echo "FAIL: denied key did not fail with publickey permission denied" >&2; ok=0; }
 ! grep -qF "DENIED" "$DENYOUT" \
@@ -217,9 +234,13 @@ grep -qFx "HC6-OK" "$SSHOUT" \
   || { echo "FAIL: remote stdout was not HC6-OK" >&2; ok=0; }
 [[ "$ssh_rc" -eq 0 ]] \
   || { echo "FAIL: ssh exited with $ssh_rc, expected 0" >&2; ok=0; }
+cmp -s "$CATEXPECT" "$CATOUT" \
+  || { echo "FAIL: remote /bin/cat did not echo forwarded stdin exactly" >&2; ok=0; }
+[[ "$cat_rc" -eq 0 ]] \
+  || { echo "FAIL: ssh /bin/cat exited with $cat_rc, expected 0" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id plus /bin/echo"
+  echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id, /bin/echo, plus stdin-fed /bin/cat"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2
@@ -232,6 +253,10 @@ echo "--- id ssh stdout ---" >&2
 cat "$IDOUT" >&2
 echo "--- id ssh stderr ---" >&2
 cat "$IDERR" >&2
+echo "--- cat ssh stdout ---" >&2
+cat "$CATOUT" >&2
+echo "--- cat ssh stderr ---" >&2
+cat "$CATERR" >&2
 echo "--- denied ssh stdout ---" >&2
 cat "$DENYOUT" >&2
 echo "--- denied ssh stderr ---" >&2

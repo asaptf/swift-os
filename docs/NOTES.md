@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC15 SSHD bounded stdin exec preflight (2026-06-11)
+
+- Extended `/bin/sshd` session exec handling to read post-`exec`
+  `SSH_MSG_CHANNEL_DATA` packets until channel EOF and forward up to 512 bytes
+  into the spawned command's fd 0 through a pipe. The server now wires fd 0, fd
+  1, and fd 2 explicitly through `spawn_handles`, preserving the current
+  capability-scoped direct `/bin/<tool>` launcher.
+- Added the deterministic marker `sshd: exec stdin bytes N` when remote stdin
+  is forwarded. Oversized stdin fails closed with `sshd: exec stdin too large`.
+- Hardened `./tests/sshd_transport_test.sh` so the default SSHD acceptance now
+  feeds `HC15-STDIN\nline-two\n` through host OpenSSH into remote `/bin/cat`
+  and requires exact stdout round-trip, in addition to the existing denied-key,
+  host-key pinning, `/bin/id`, and `/bin/echo` checks.
+
+**Acceptance.** `make sshd-transport-test` proves that boot-autostarted SSHD
+still pins its host key, rejects a stale key, authenticates the staged key, runs
+remote `/bin/id` and `/bin/echo`, and forwards bounded remote stdin into
+`/bin/cat` with exact output over OpenSSH.
+
 ## HC14 SSHD opt-in restart supervision preflight (2026-06-11)
 
 - Extended `/bin/swos-init` with opt-in supervised service tokens while keeping

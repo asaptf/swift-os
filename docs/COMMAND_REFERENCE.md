@@ -729,7 +729,8 @@ Notes:
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
-  a bounded direct `/bin/<tool>` command.
+  a bounded direct `/bin/<tool>` command. It forwards up to 512 bytes of remote
+  stdin into the command's fd 0.
 - Use `build/sshkey known-host --host HOST --seed-file
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
   the same seed file `/bin/sshd` loads in the guest. For a deploy-specific
@@ -742,8 +743,8 @@ Notes:
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
   command parser supports simple ASCII-whitespace argv splitting for
   single-component `/bin/` executables only; quoting, redirects, globbing,
-  shell sessions, PTY, scp, sftp, runtime host-key rotation, and broader key
-  options are not implemented yet.
+  shell sessions, PTY, scp, sftp, runtime host-key rotation, larger streaming
+  stdin/stdout, and broader key options are not implemented yet.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,

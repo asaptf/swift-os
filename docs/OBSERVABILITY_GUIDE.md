@@ -257,7 +257,7 @@ socket and entered the serving path.
 | --- | --- | --- | --- |
 | `/bin/httpd` | `httpd: listening on 8080` | Host `curl /` | Serial `httpd: 200 ...` / `httpd: 404 ...` |
 | `/bin/llmd` | `llmd: serving on 8080` | `GET /health` | `GET /metrics` plus serial `llmd: served ...` |
-| `/bin/sshd` | `sshd: listening on 22 (session exec preflight)` | Host OpenSSH command | Serial auth/session markers; opt-in supervision adds `swos-init: supervision active` and restart markers |
+| `/bin/sshd` | `sshd: listening on 22 (session exec preflight)` | Host OpenSSH command | Serial auth/session markers; stdin forwarding adds `sshd: exec stdin bytes N`; opt-in supervision adds `swos-init: supervision active` and restart markers |
 | `/bin/tcpecho` | `tcpecho: listening on 5555` | One host TCP echo | Serial byte count |
 | `/bin/udpecho` | `udpecho: listening on 5555` | One host UDP echo | Serial byte count and peer |
 | `/bin/drvsvcdemo` | `C5a OK: restartable driver service recovered over IPC`; C5e gate also expects `C5e OK: device authority withheld until explicit handoff` | n/a | Serial supervisor markers |
