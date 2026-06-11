@@ -4,9 +4,10 @@
 # Boots with a slirp NIC that hostfwds an unprivileged host TCP port to guest
 # TCP/22. /bin/swos-init starts /bin/sshd from /etc/swos/services before any
 # shell login. A real host OpenSSH client then first rejects an old dev key,
-# then accepts the key staged in
-# /etc/ssh/authorized_keys, opens session channels, runs /bin/id and /bin/echo,
-# receives stdout, and observes exit-status 0.
+# then verifies the SwiftOS host key through a known_hosts entry derived from
+# /etc/ssh/ssh_host_ed25519_seed, accepts the key staged in
+# /etc/ssh/authorized_keys, opens session channels, runs /bin/id and
+# /bin/echo, receives stdout, and observes exit-status 0.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,9 +16,11 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
+SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
 HOST_PORT="${SSHD_HOST_PORT:-$((24000 + ($$ % 20000)))}"
 KEY_ALLOW_SRC="$ROOT/fixtures/ssh/sshd_hc5_ed25519"
 KEY_DENY_SRC="$ROOT/fixtures/ssh/sshd_hc4_ed25519"
+HOST_SEED_SRC="$ROOT/base/etc/ssh/ssh_host_ed25519_seed"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -27,8 +30,12 @@ if [[ ! -f "$DTB" ]]; then
   ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 command -v "$SSH" >/dev/null 2>&1 || { echo "FAIL: ssh client not found" >&2; exit 2; }
+if [[ ! -x "$SSHKEY" ]]; then
+  ( cd "$ROOT" && make build/sshkey ) >/dev/null 2>&1 || { echo "FAIL: cannot build sshkey tool" >&2; exit 2; }
+fi
 [[ -f "$KEY_ALLOW_SRC" ]] || { echo "FAIL: $KEY_ALLOW_SRC missing" >&2; exit 2; }
 [[ -f "$KEY_DENY_SRC" ]] || { echo "FAIL: $KEY_DENY_SRC missing" >&2; exit 2; }
+[[ -f "$HOST_SEED_SRC" ]] || { echo "FAIL: $HOST_SEED_SRC missing" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-sshd.XXXXXX)"
 SSHOUT="$(mktemp -t swiftos-sshd-stdout.XXXXXX)"
@@ -39,12 +46,16 @@ DENYOUT="$(mktemp -t swiftos-sshd-deny-stdout.XXXXXX)"
 DENYERR="$(mktemp -t swiftos-sshd-deny-stderr.XXXXXX)"
 KEY_ALLOW="$(mktemp -t swiftos-sshd-allow-key.XXXXXX)"
 KEY_DENY="$(mktemp -t swiftos-sshd-deny-key.XXXXXX)"
+KNOWN_HOSTS="$(mktemp -t swiftos-sshd-known-hosts.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-sshd-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-sshd-in.XXXXXX)"
 mkfifo "$INFIFO"
 cp "$KEY_ALLOW_SRC" "$KEY_ALLOW"
 cp "$KEY_DENY_SRC" "$KEY_DENY"
 chmod 600 "$KEY_ALLOW" "$KEY_DENY"
+"$SSHKEY" known-host --host "[127.0.0.1]:$HOST_PORT" \
+  --seed-file "$HOST_SEED_SRC" >"$KNOWN_HOSTS" \
+  || { echo "FAIL: could not derive SwiftOS SSHD known_hosts entry" >&2; exit 2; }
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -53,7 +64,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$SSHOUT" "$SSHERR" "$IDOUT" "$IDERR" "$DENYOUT" "$DENYERR" "$KEY_ALLOW" "$KEY_DENY" "$KNOWN_HOSTS" "$PIDFILE" "$INFIFO"' EXIT
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
@@ -100,8 +111,8 @@ ssh_common=(
   -F /dev/null -vvv -p "$HOST_PORT"
   -o BatchMode=yes
   -o ConnectTimeout=8
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
+  -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile="$KNOWN_HOSTS"
   -o GlobalKnownHostsFile=/dev/null
   -o IdentitiesOnly=yes
   -o PreferredAuthentications=publickey
@@ -176,6 +187,8 @@ grep -qF "kex: algorithm: curve25519-sha256" "$SSHERR" \
   || { echo "FAIL: host ssh did not negotiate curve25519-sha256" >&2; ok=0; }
 grep -qF "kex: host key algorithm: ssh-ed25519" "$SSHERR" \
   || { echo "FAIL: host ssh did not negotiate the ssh-ed25519 host key" >&2; ok=0; }
+grep -qF "Host '[127.0.0.1]:$HOST_PORT' is known and matches the ED25519 host key." "$SSHERR" "$IDERR" "$DENYERR" \
+  || { echo "FAIL: host ssh did not verify the SwiftOS host key through known_hosts" >&2; ok=0; }
 grep -qF "will use strict KEX ordering" "$SSHERR" \
   || { echo "FAIL: host ssh did not enable strict KEX ordering" >&2; ok=0; }
 grep -qF "resetting read seqnr" "$SSHERR" \
@@ -202,7 +215,7 @@ grep -qFx "HC6-OK" "$SSHOUT" \
   || { echo "FAIL: ssh exited with $ssh_rc, expected 0" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/sshd autostarted, loaded authorized_keys, rejected an old key, and executed /bin/id plus /bin/echo over session channels"
+  echo "PASS: /bin/sshd autostarted, pinned its host key through known_hosts, rejected an old key, and executed /bin/id plus /bin/echo"
   exit 0
 fi
 echo "--- serial (sshd region) ---" >&2

@@ -421,14 +421,20 @@ sshd: listening on 22 (session exec preflight)
 Then connect from the host:
 
 ```sh
+make sshkey
+build/sshkey known-host \
+  --host '[127.0.0.1]:2222' \
+  --seed-file base/etc/ssh/ssh_host_ed25519_seed \
+  > build/swift-os-sshd-known-hosts
+
 ssh -F /dev/null -vvv -p 2222 \
   -i fixtures/ssh/sshd_hc5_ed25519 \
   -o BatchMode=yes \
   -o IdentitiesOnly=yes \
   -o PasswordAuthentication=no \
   -o PubkeyAuthentication=yes \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=build/swift-os-sshd-known-hosts \
   -o KexAlgorithms=curve25519-sha256 \
   -o HostKeyAlgorithms=ssh-ed25519 \
   -o Ciphers=chacha20-poly1305@openssh.com \
@@ -442,11 +448,13 @@ version `swift-os_sshd-session`, KEX debug lines for `curve25519-sha256`,
 stdout like `principal=1(root) ...`, and exit status 0. The checked test also
 proves that the old HC4 key is rejected, the HC5 key is loaded from
 `/etc/ssh/authorized_keys`, the host-key seed is loaded from
-`/etc/ssh/ssh_host_ed25519_seed`, `/bin/id` runs as root, and `/bin/echo
+`/etc/ssh/ssh_host_ed25519_seed`, the host OpenSSH client pins the derived
+SwiftOS host key through known_hosts, `/bin/id` runs as root, and `/bin/echo
 HC6-OK` receives an argv argument. This proves TCP/22 reachability through SSH
-KEX, encrypted userauth, session channel setup, and bounded direct remote exec;
-PTY, shell command parsing, scp, sftp, per-instance host-key provisioning, real
-entropy, and broader authorized-key options are follow-up work.
+KEX, host-key pinning, encrypted userauth, session channel setup, and bounded
+direct remote exec; PTY, shell command parsing, scp, sftp, per-instance
+host-key provisioning, real entropy, and broader authorized-key options are
+follow-up work.
 
 Proof:
 
@@ -597,7 +605,7 @@ The user-visible end-to-end paths are the shell tests above.
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
 | `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, `/etc/ssh/known_hosts` does not trust the host key, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; check for `ssh: host key matched /etc/ssh/known_hosts`; run `./tests/ssh_transport_test.sh` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
-| SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
+| SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, stale host known_hosts entry, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, derive known_hosts with `build/sshkey`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, host-key match in OpenSSH debug output, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
 | IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
 

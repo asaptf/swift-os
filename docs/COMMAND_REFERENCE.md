@@ -693,12 +693,20 @@ Examples in the guest:
 Example on the host, when host TCP 2222 is forwarded to guest TCP 22:
 
 ```sh
+make sshkey
+build/sshkey known-host \
+  --host '[127.0.0.1]:2222' \
+  --seed-file base/etc/ssh/ssh_host_ed25519_seed \
+  > build/swift-os-sshd-known-hosts
+
 ssh -F /dev/null -vvv -p 2222 \
   -i fixtures/ssh/sshd_hc5_ed25519 \
   -o BatchMode=yes \
   -o IdentitiesOnly=yes \
   -o PasswordAuthentication=no \
   -o PubkeyAuthentication=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=build/swift-os-sshd-known-hosts \
   -o KexAlgorithms=curve25519-sha256 \
   -o HostKeyAlgorithms=ssh-ed25519 \
   -o Ciphers=chacha20-poly1305@openssh.com \
@@ -717,6 +725,9 @@ Notes:
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
   a bounded direct `/bin/<tool>` command.
+- Use `build/sshkey known-host --host HOST --seed-file
+  base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
+  the same seed file `/bin/sshd` loads in the guest.
 - It uses a development-only host-key seed from
   `/etc/ssh/ssh_host_ed25519_seed` and weak temporary KEX entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The

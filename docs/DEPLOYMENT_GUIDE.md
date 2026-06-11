@@ -420,9 +420,11 @@ Current Hetzner readiness status:
   authenticates `root` with an
   `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
   channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
-  and `/bin/echo HC6-OK`. The checked proof is
-  `./tests/sshd_transport_test.sh`; it also verifies that the older HC4 fixture
-  key is rejected.
+  and `/bin/echo HC6-OK`. The host helper `build/sshkey` can derive the
+  OpenSSH public host key or a known_hosts line from the base image seed file.
+  The checked proof is `./tests/sshd_transport_test.sh`; it also verifies that
+  host OpenSSH pins the SwiftOS host key through known_hosts and that the older
+  HC4 fixture key is rejected.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
