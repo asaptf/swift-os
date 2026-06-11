@@ -993,7 +993,7 @@ diagnostic fixtures than stable application interfaces.
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, inspect catalog or installed package metadata, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 | `swos-confirm` | `swos-confirm` | Mark the booted A/B update-store slot confirmed healthy. | `tests/ab_confirm_test.sh` |
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
@@ -1199,6 +1199,7 @@ Example local install fixture:
 pkg list
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg info pkghello
 pkg files pkghello
 /usr/bin/pkghello
 ```
@@ -1209,6 +1210,7 @@ Expected output includes:
 no packages installed
 pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
+source: installed
 /usr/bin/pkghello
 pkghello: hello from package overlay
 ```
@@ -1263,9 +1265,11 @@ Notes:
   DNS hostname. If a test or deployment needs an explicit DNS resolver, provide
   `/etc/pkg/dns-server` in the base image; the makefile accepts
   `PKG_DEFAULT_DNS_SERVER=IP[:port]`.
-- `pkg search`, `pkg info`, and `pkg install NAME` use the verified catalog
-  cached by `pkg update`; install by name resolves package-name dependencies
-  and verifies each downloaded package SHA-256 before activation.
+- `pkg search` and `pkg install NAME` use the verified catalog cached by
+  `pkg update`; install by name resolves package-name dependencies and verifies
+  each downloaded package SHA-256 before activation. `pkg info NAME` prints the
+  verified catalog entry when present, otherwise it falls back to active
+  installed package metadata.
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active

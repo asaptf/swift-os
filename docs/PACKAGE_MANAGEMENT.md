@@ -7,8 +7,10 @@ Design for binary package installation on SwiftOS.
 > static HTTP repository install are implemented. `pkg repo set`,
 > `pkg update [URL]`, `pkg search`, `pkg info`, `pkg install NAME`, and
 > `pkg files NAME` work against signed fixture catalogs and active package
-> payloads, including name-based dependency resolution, and reject expired
-> catalogs, incompatible catalog entries, missing packages, and package
+> payloads. `pkg info NAME` can also inspect active installed package metadata
+> when no catalog entry is available. Repository installs include name-based
+> dependency resolution and reject expired catalogs, incompatible catalog entries,
+> missing packages, and package
 > SHA-256 mismatches. The ports seed fixture cross-builds Lua, zlib, bzip2,
 > zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite, packages ca-certificates and
 > tzdata, publishes all twelve into one signed local repository, and can boot SwiftOS with
@@ -382,9 +384,10 @@ The current package-store boot path implements the read side of this model for
 activation: a `SWPKGST1` block image contains payload records, activation
 records, and an active pointer. The kernel mounts payload images referenced by
 the active generation. The local install path adds the first target-side append
-path for local `.swpkg` files and live activation; `pkg files NAME` now
-enumerates file paths from active package payloads. Later lifecycle work will
-broaden that into remove, rollback, history, upgrade, and garbage collection.
+path for local `.swpkg` files and live activation; `pkg info NAME` and
+`pkg files NAME` inspect active package metadata and payload file paths. Later
+lifecycle work will broaden that into remove, rollback, history, upgrade, and
+garbage collection.
 
 Activation manifest:
 
@@ -857,10 +860,13 @@ Implemented local target-side install:
 - The kernel verifies hashes, appends the payload to a writable package-store
   disk, switches the active generation, and live-mounts the payload.
 - `/bin/pkg list` reports active package-store records.
+- `/bin/pkg info NAME` reports the active installed package version when no
+  verified catalog entry is available.
 - `/bin/pkg files NAME` reports newline-separated absolute file paths from an
   active package payload.
 - `tests/pkg_local_install_test.sh` installs `/packages/pkghello.swpkg` and
-  runs `/usr/bin/pkghello` without rebooting; it also checks `pkg files`.
+  runs `/usr/bin/pkghello` without rebooting; it also checks `pkg info` and
+  `pkg files`.
 
 Remaining local lifecycle work:
 

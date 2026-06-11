@@ -811,13 +811,13 @@ private func verifySignedCatalog(_ signed: [UInt8]) -> [UInt8]? {
     return body
 }
 
-private func loadVerifiedCatalog() -> [UInt8]? {
+private func loadVerifiedCatalog(quiet: Bool = false) -> [UInt8]? {
     guard let signed = readFile(catalogCachePath, maxSize: catalogMax + signedHeaderSize) else {
-        put("pkg: run pkg update first\n")
+        if !quiet { put("pkg: run pkg update first\n") }
         return nil
     }
     guard let catalog = verifySignedCatalog(signed) else {
-        put("pkg: catalog verification failed\n")
+        if !quiet { put("pkg: catalog verification failed\n") }
         return nil
     }
     if !validateCatalogBody(catalog) { return nil }
@@ -935,12 +935,7 @@ private func searchCatalog(_ query: String) -> Int32 {
     return 0
 }
 
-private func infoCatalog(_ name: String) -> Int32 {
-    guard let catalog = loadVerifiedCatalog() else { return 1 }
-    guard let pkg = findCatalogPackage(catalog, name) else {
-        put("pkg: package not found\n")
-        return 1
-    }
+private func printCatalogInfo(_ pkg: CatalogPackage) {
     put("name: ")
     putString(pkg.name)
     put("\nversion: ")
@@ -965,7 +960,57 @@ private func infoCatalog(_ name: String) -> Int32 {
         }
     }
     put("\n")
-    return 0
+}
+
+private func installedPackageVersion(_ name: String) -> String? {
+    let nameBytes = Array(name.utf8)
+    if nameBytes.isEmpty || nameBytes.count > 31 { return nil }
+    var index: Int32 = 0
+    while index < 16 {
+        var buf = [CChar](repeating: 0, count: 80)
+        let rc = buf.withUnsafeMutableBufferPointer { bp in
+            swiftos_pkg_info(Int32(index), bp.baseAddress!, UInt(bp.count))
+        }
+        if rc < 0 { break }
+        var ok = true
+        var i = 0
+        while i < nameBytes.count {
+            if UInt8(bitPattern: buf[i]) != nameBytes[i] { ok = false; break }
+            i += 1
+        }
+        if ok && buf[nameBytes.count] == CChar(bitPattern: 0x2D) {
+            var versionBytes: [UInt8] = []
+            i = nameBytes.count + 1
+            while i < buf.count && buf[i] != 0 {
+                versionBytes.append(UInt8(bitPattern: buf[i]))
+                i += 1
+            }
+            return String(decoding: versionBytes, as: UTF8.self)
+        }
+        index += 1
+    }
+    return nil
+}
+
+private func printInstalledInfo(_ name: String) -> Bool {
+    guard let version = installedPackageVersion(name) else { return false }
+    put("name: ")
+    putString(name)
+    put("\nversion: ")
+    putString(version)
+    put("\nsource: installed\n")
+    return true
+}
+
+private func infoPackage(_ name: String) -> Int32 {
+    if let catalog = loadVerifiedCatalog(quiet: true),
+       let pkg = findCatalogPackage(catalog, name) {
+        printCatalogInfo(pkg)
+        return 0
+    }
+    if printInstalledInfo(name) { return 0 }
+    put("pkg: package not found\n")
+    return 1
 }
 
 private func hexString(_ bytes: [UInt8]) -> String {
@@ -1130,24 +1175,7 @@ private func updateRepository(_ url: String) -> Int32 {
 }
 
 private func installedPackageNamed(_ name: String) -> Bool {
-    let nameBytes = Array(name.utf8)
-    var index: Int32 = 0
-    while index < 16 {
-        var buf = [CChar](repeating: 0, count: 80)
-        let rc = buf.withUnsafeMutableBufferPointer { bp in
-            swiftos_pkg_info(Int32(index), bp.baseAddress!, UInt(bp.count))
-        }
-        if rc < 0 { break }
-        var ok = true
-        var i = 0
-        while i < nameBytes.count {
-            if UInt8(bitPattern: buf[i]) != nameBytes[i] { ok = false; break }
-            i += 1
-        }
-        if ok && buf[nameBytes.count] == CChar(bitPattern: 0x2D) { return true }
-        index += 1
-    }
-    return false
+    installedPackageVersion(name) != nil
 }
 
 private func installHTTPPackage(_ pkg: CatalogPackage, from urlText: String) -> Int32 {
@@ -1586,7 +1614,7 @@ func main(_ argc: Int32,
             put("usage: pkg info NAME\n")
             return 1
         }
-        return infoCatalog(cString(namep))
+        return infoPackage(cString(namep))
     }
     if cmd == "list" {
         return list()
