@@ -116,6 +116,7 @@ static long sys4(long n, long a0, long a1, long a2, long a3) {
 #define SYS_MPROTECT 56
 #define SYS_NANOSLEEP 57
 #define SYS_EVENTFD 71
+#define SYS_SIGRETURN 76
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -2356,6 +2357,11 @@ static void (*swiftos_siginfo_handlers[SWIFTOS_NSIG])(int, siginfo_t *, void *);
 static sigset_t swiftos_signal_masks[SWIFTOS_NSIG];
 static int swiftos_signal_flags[SWIFTOS_NSIG];
 
+__attribute__((noreturn)) static void swiftos_sigreturn_trampoline(void) {
+    (void)sys3(SYS_SIGRETURN, 0, 0, 0);
+    for (;;) {}
+}
+
 static void swiftos_siginfo_trampoline(int sig) {
     if (sig > 0 && sig < SWIFTOS_NSIG && swiftos_siginfo_handlers[sig]) {
         swiftos_siginfo_handlers[sig](sig, NULL, NULL);
@@ -2384,7 +2390,8 @@ W int sigaction(int sig, const struct sigaction *act, struct sigaction *old) {
         swiftos_signal_handlers[sig] = handler;
         swiftos_signal_masks[sig] = act->sa_mask;
         swiftos_signal_flags[sig] = act->sa_flags;
-        if (sysret(sys3(SYS_SIGACTION, sig, (long)handler, 0)) < 0) { return -1; }
+        if (sysret(sys3(SYS_SIGACTION, sig, (long)handler,
+                        (long)swiftos_sigreturn_trampoline)) < 0) { return -1; }
     }
     return 0;
 }

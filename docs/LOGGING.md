@@ -213,7 +213,7 @@ Optional fields appear only when present:
 tick=23 level=I source=psinfo msg="process snapshot" detail=4 pid=1 principal=1
 ```
 
-The same record shape is now exposed to userland through `SYS_LOG_READ` (76)
+The same record shape is now exposed to userland through `SYS_LOG_READ` (77)
 and `/bin/logtail` when the caller holds `capLogExport`. It remains a local
 diagnostic format, not a remote collector protocol.
 

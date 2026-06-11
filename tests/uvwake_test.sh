@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# signal_test.sh - C/newlib signal lifecycle checks for SwiftOS.
+# uvwake_test.sh - libuv-style pthread-to-eventfd wake over SwiftOS poll.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,9 +13,9 @@ if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
 
-LOG="$(mktemp -t swiftos-signal.XXXXXX)"
-PIDFILE="$(mktemp -t swiftos-signal-pid.XXXXXX)"
-INFIFO="$(mktemp -u -t swiftos-signal-in.XXXXXX)"; mkfifo "$INFIFO"
+LOG="$(mktemp -t swiftos-uvwake.XXXXXX)"
+PIDFILE="$(mktemp -t swiftos-uvwake-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-uvwake-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -40,19 +40,19 @@ await() {
 
 drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial (signal driver) ---" >&2
+  echo "--- serial (uvwake driver) ---" >&2
   sed 's/\r//' "$LOG" 2>/dev/null | tail -100 >&2 || true
   exit 1
 }
 
 send_line() {
-  local line="$1" delay="${SIGNAL_CHAR_DELAY:-0.01}" i
+  local line="$1" delay="${UVWAKE_CHAR_DELAY:-0.01}" i
   for (( i = 0; i < ${#line}; i++ )); do
     printf '%s' "${line:i:1}" >&3
     sleep "$delay"
   done
   printf '\n' >&3
-  sleep "${SIGNAL_SEND_DELAY:-0.08}"
+  sleep "${UVWAKE_SEND_DELAY:-0.08}"
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -74,8 +74,8 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-send_line '/bin/signalprobe'
-await "SIGNALPROBE-OK" 120 || drive_fail "/bin/signalprobe did not report success"
+send_line '/bin/uvwakeprobe'
+await "UVWAKEPROBE-OK" 120 || drive_fail "/bin/uvwakeprobe did not report success"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -86,11 +86,9 @@ QP=""
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
 for marker in \
-  "signalprobe: kill self probe OK" \
-  "signalprobe: sigaction ignore/old OK" \
-  "signalprobe: custom handler frame OK" \
-  "signalprobe: child SIGTERM status OK" \
-  "SIGNALPROBE-OK"; do
+  "uvwakeprobe: cross-thread eventfd wake OK" \
+  "uvwakeprobe: drained poll timeout OK" \
+  "UVWAKEPROBE-OK"; do
   if grep -qF "$marker" <<<"$clean"; then
     echo "PASS: $marker"
   else
@@ -100,6 +98,6 @@ for marker in \
 done
 
 if (( ok )); then exit 0; fi
-echo "--- serial (signalprobe region) ---" >&2
-sed -n '/signalprobe/,$p' <<<"$clean" | head -60 >&2
+echo "--- serial (uvwakeprobe region) ---" >&2
+sed -n '/uvwakeprobe/,$p' <<<"$clean" | head -60 >&2
 exit 1

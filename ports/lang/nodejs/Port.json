@@ -64,5 +64,5 @@
       "/usr/bin/node -e 'require(\"http\").createServer((_, r) => r.end(\"ok\")).listen(8080)'"
     ]
   },
-  "notes": "Scaffold only. The first SwiftOS Node.js port should be static, source-built, and likely start with a jitless or V8-lite configuration until the executable-memory policy is settled. Native addons, dlopen, corepack, and bundled npm are deliberately deferred; npm is tracked as its own package so package-manager behavior remains explicit."
+  "notes": "Scaffold only. The first SwiftOS Node.js port is static, source-built, and uses Node's --v8-lite-mode as the accepted jitless V8 profile; upstream configure documents that this implies no JIT support. Native addons, dlopen, corepack, and bundled npm are deliberately deferred; npm is tracked as its own package so package-manager behavior remains explicit."
 }

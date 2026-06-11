@@ -50,8 +50,12 @@ private let kernelLoadOffset: UInt = 0x80000 // kernel links/loads at ramBase + 
 private let trapFrameSPIndex = 31
 private let trapFrameELRIndex = 32
 private let trapFrameSPSRIndex = 33
-private let trapFrameSize = 816
-private let trapFrameWords = trapFrameSize / 8
+private let trapFrameBytes = 816
+private let trapFrameWords = trapFrameBytes / 8
+private let signalFrameMagic: UInt = 0x5349_4746_5241_4D45 // "SIGFRAME"
+private let signalFrameHeaderWords = 2
+private let signalFrameWords = signalFrameHeaderWords + trapFrameWords
+private let signalFrameBytes = signalFrameWords * 8
 
 // Process states.
 private let pUnused: Int32 = 0
@@ -195,6 +199,8 @@ private var pSecurity = [ProcessSecurityContext](
 // private one, so its exit must not be treated as an address-space teardown and
 // it joins via futex rather than waitpid.
 private var pIsThread = [Bool](repeating: false, count: maxProc)
+private var pSignalFrameActive = [Bool](repeating: false, count: maxProc)
+private var pSignalFrameSP = [UInt](repeating: 0, count: maxProc)
 
 // Accounting for /bin/top. CPU is charged one tick per timer interrupt to
 // whichever process is current (idle ticks when none is). Resident pages track
@@ -347,6 +353,8 @@ func processInit() {
         pDispatchCpuMask[i] = 0
         pAddressSpaceCpuMask[i] = 0
         pSchedulerQuiesced[i] = true
+        pSignalFrameActive[i] = false
+        pSignalFrameSP[i] = 0
     }
     for cpuSlot in 0..<processSchedulerCpuSlots {
         currentProcByCpu[cpuSlot] = -1
@@ -526,6 +534,12 @@ private func processCurrentCpuIndex() -> Int {
 
 private func currentProcessSlot() -> Int {
     currentProcByCpu[processCurrentCpuIndex()]
+}
+
+private func clearSignalFrameState(_ slot: Int) {
+    if slot < 0 || slot >= maxProc { return }
+    pSignalFrameActive[slot] = false
+    pSignalFrameSP[slot] = 0
 }
 
 private func setCurrentProcessSlot(_ slot: Int) {
@@ -2159,6 +2173,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     fileVmasClear(slot)
     anonVmasClear(slot)
     pIsThread[slot] = false
+    clearSignalFrameState(slot)
     // elfLoad (above) recorded the image's mapped page count; stack mapping used
     // the PMM directly, so it is still valid. RES = image + user stack pages.
     pCpuTicks[slot] = 0
@@ -2253,6 +2268,7 @@ private func reapProcess(_ slot: Int) {
         address_space_destroy(pTtbr0[slot])
         pTtbr0[slot] = 0
     }
+    clearSignalFrameState(slot)
     if pKstack[slot] != 0 {
         var pa = pKstack[slot]
         for _ in 0..<kernelStackPages {
@@ -2811,7 +2827,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
 
     // Copy the parent's full lower-EL trap frame, including FP/SIMD state, to
     // the top of the child kstack.
-    let childFrameAddr = kstackTop - UInt(trapFrameSize)
+    let childFrameAddr = kstackTop - UInt(trapFrameBytes)
     let childFrame = UnsafeMutablePointer<UInt>(bitPattern: childFrameAddr)!
     for i in 0..<trapFrameWords { childFrame[i] = frame[i] }
     childFrame[0] = 0 // child's fork() returns 0
@@ -2834,6 +2850,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     fileVmasCopy(child, parent)
     anonVmasCopy(child, parent)
     pIsThread[child] = false
+    clearSignalFrameState(child)
     // The COW address-space clone preserves the child's logical mapped
     // footprint; physical frames are copied lazily on write. CPU/time start
     // fresh.
@@ -2900,6 +2917,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     fileVmasCopy(slot, creator)
     anonVmasCopy(slot, creator)
     pIsThread[slot] = true
+    clearSignalFrameState(slot)
     pWakeTick[slot] = 0
     pSchedulerQuiesced[slot] = false
     pHomeCpu[slot] = unassignedCpu
@@ -3004,8 +3022,69 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
 /// POSIX-shaped kill(pid, sig) subset for process lifecycle control.
 ///
 /// Supported now: positive PIDs, signal 0 existence probes, and default/ignored
-/// termination signals. Process groups and userspace handler frames are future
-/// work; custom handlers still behave like the default action in the kernel.
+/// termination signals. Current-process custom handlers are delivered on syscall
+/// return through a kernel-built user signal frame and a userspace sigreturn
+/// trampoline. Process groups and remote async handler delivery are future work.
+func processInstallSignalFrame(sig: Int, handler: UInt, restorer: UInt,
+                               frame: UnsafeMutablePointer<UInt>) -> Bool {
+    let me = currentProcessSlot()
+    if me < 0 || me >= maxProc { return false }
+    if pSignalFrameActive[me] { return false }
+    if handler == SIG_DFL || handler == SIG_IGN || restorer == 0 { return false }
+
+    let oldSP = frame[trapFrameSPIndex]
+    if oldSP < UInt(signalFrameBytes) { return false }
+    let newSP = (oldSP - UInt(signalFrameBytes)) & ~UInt(15)
+    guard let dst = userWritableBuffer(newSP, UInt(signalFrameBytes)) else { return false }
+
+    let words = UnsafeMutableRawPointer(dst).bindMemory(to: UInt.self,
+                                                        capacity: signalFrameWords)
+    words[0] = signalFrameMagic
+    words[1] = UInt(sig)
+    var i = 0
+    while i < trapFrameWords {
+        words[signalFrameHeaderWords + i] = frame[i]
+        i += 1
+    }
+
+    pSignalFrameActive[me] = true
+    pSignalFrameSP[me] = newSP
+
+    frame[0] = UInt(sig)               // handler(int signo)
+    frame[30] = restorer               // LR: userspace sigreturn trampoline
+    frame[trapFrameSPIndex] = newSP
+    frame[trapFrameELRIndex] = handler
+    frame[trapFrameSPSRIndex] = 0
+    return true
+}
+
+func processSignalReturn(_ frame: UnsafeMutablePointer<UInt>) {
+    let me = currentProcessSlot()
+    guard me >= 0 && me < maxProc && pSignalFrameActive[me] else {
+        processTerminateBySignal(SIGSEGV)
+        return
+    }
+
+    let sp = pSignalFrameSP[me]
+    guard let src = userReadableBuffer(sp, UInt(signalFrameBytes)) else {
+        processTerminateBySignal(SIGSEGV)
+        return
+    }
+    let words = UnsafeRawPointer(src).bindMemory(to: UInt.self,
+                                                 capacity: signalFrameWords)
+    guard words[0] == signalFrameMagic else {
+        processTerminateBySignal(SIGSEGV)
+        return
+    }
+
+    var i = 0
+    while i < trapFrameWords {
+        frame[i] = words[signalFrameHeaderWords + i]
+        i += 1
+    }
+    clearSignalFrameState(me)
+}
+
 func processKill(_ pid: Int, _ sig: Int) -> Int {
     if !signalIsValid(sig) && sig != 0 { return -22 } // EINVAL
     if pid <= 0 { return -22 } // process groups are not modeled yet
@@ -3016,6 +3095,10 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
 
     let me = currentProcessSlot()
     if slot == me {
+        if signalDisposition(sig) != SIG_DFL && signalRestorer(sig) != 0 {
+            signalRaise(sig)
+            return 0
+        }
         processTerminateBySignal(sig) // never returns
     }
 
@@ -3056,6 +3139,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     pMmapTop[me] = userMmapTop // fresh image: empty mmap arena
     fileVmasClear(me)
     anonVmasClear(me)
+    clearSignalFrameState(me)
     // New image replaces the resident set (old pages are dropped with the old
     // address space); accumulated CPU time and the start tick survive the exec.
     pResPages[me] = Int(elfLastLoadPages()) + userStackPages

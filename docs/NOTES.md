@@ -771,7 +771,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 
 - **L4d (2026-06) — log sink indirection + capability hook.** Live `klog` output now routes through a tiny current-sink dispatch in `kernel/log/log.swift`; the default and only implemented sink remains UART, but `klog` no longer embeds the UART renderer inline. Added reserved `capLogExport` in `kernel/security/security.swift` (not granted to the boot/root context by default) plus `klogCanInstallSink(capabilities:)` / `klogCanExportRing(capabilities:)` hook helpers for the future userland log service/export path. Boot asserts both `sink indirection active` and `sink capability hook active`, while preserving the existing live line spelling and L4c wire-format sample. See `docs/LOGGING.md`.
 
-- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (76), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
+- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (77), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
 
 - **FP1 (2026-06) — lower-EL FP/SIMD trap-frame preservation.** Expanded the lower-EL trap frame in `kernel/arch/aarch64/exceptions.S` from the integer register/return-state frame to a full frame that also saves and restores `q0..q31`, `FPCR`, and `FPSR`. `fork()` now copies the full frame so children inherit the interrupted FP state correctly. This fixes nondeterministic Q8 inference when `/bin/llmd` is preempted while the default `sshd` service is also running. Acceptance: `make build`, host `llm_engine_test` / `llm_q8_engine_test`, and `./tests/llm_serve_test.sh` with the default base image all pass; the diagnostic no-service image is no longer needed.
 
@@ -899,8 +899,9 @@ because `fork` needs parent and child alive at once. Staged:
   - **Signals** (`kernel/signal/signal.swift`): pending mask + dispositions for the foreground process.
     Ctrl-C (ETX, with `ISIG`) raises SIGINT; delivered from the IRQ handler after the GIC EOI. Default
     action terminates the process (status 128+signo); `SIG_IGN` honored. `sigaction`/`kill`/`getpid`
-    (9/10/11) present. **Caveat:** custom (catch) handlers are recorded but not yet *delivered* — that
-    needs signal frames/sigreturn (future work); today a custom handler falls back to terminate.
+    (9/10/11) present. **Current state:** NPM10 added current-process custom handler delivery via
+    user signal frames and `sigreturn`; masks, process groups, blocked-syscall interruption, and remote
+    async custom-handler delivery remain future work.
   - **Important constraint discovered:** a blocking syscall must NOT unmask IRQs, because an interrupt
     taken at EL1 overwrites `ELR_EL1`/`SPSR_EL1` (no save/restore in the sync vector yet), corrupting the
     pending return to EL0. `read(0)` therefore *polls* the UART with IRQs masked; the UART IRQ still
@@ -2871,8 +2872,8 @@ future work). The same porting pipeline as M8 busybox: cross-build against `./sy
 
 - **Enable.** `scripts/build-busybox.sh` now sets `CONFIG_VI` + a curated feature set (COLON, YANKMARK,
   SEARCH, DOT_CMD, SET/SETOPTS, UNDO). Three features are deliberately forced OFF because swift-os's headless
-  serial tty breaks their assumptions: `FEATURE_VI_USE_SIGNALS` (needs SIGWINCH/SIGINT delivered to a custom
-  handler — the kernel records but does not yet deliver custom handlers), `FEATURE_VI_WIN_RESIZE` (SIGWINCH;
+  serial tty breaks their assumptions: `FEATURE_VI_USE_SIGNALS` (needs SIGWINCH/SIGINT custom handler delivery
+  while the editor is blocked in terminal reads; NPM10 only covers syscall-return delivery), `FEATURE_VI_WIN_RESIZE` (SIGWINCH;
   our console is a fixed 80×24, which `ioctl(TIOCGWINSZ)` already reports), and `FEATURE_VI_ASK_TERMINAL`
   (emits `ESC[6n` and blocks reading the cursor-position report, which our tty never sends back — vi would
   hang at startup). Note: the int-valued config symbols `FEATURE_VI_MAX_LEN`/`FEATURE_VI_UNDO_QUEUE_MAX`
@@ -4908,4 +4909,78 @@ unsupported.
 **Acceptance.** `make mapfixed-test`, `make docs-test`,
 `make ports-catalog-test`, `./tests/mmap_test.sh`, `make mmapreserve-test`,
 `make mprotect-test`, `make largemmap-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM10 — current-process signal handler frame probe (DONE, 2026-06-11)
+
+**Scope.** Add the smallest tested signal-frame slice needed by
+Node.js/npm/pm2-shaped runtimes. SwiftOS now delivers current-process custom C
+handlers at syscall-return safe points by building a user-stack signal frame,
+entering the registered handler at EL0, and restoring the interrupted trap frame
+through a compat `sigreturn` trampoline. This closes the Node.js catalog blocker
+for signal handler frames. Full libuv signal watcher semantics remain future
+work: signal masks, process groups, blocked-syscall interruption, and remote
+async custom-handler delivery are still not implemented.
+
+- `kernel/signal/signal.swift`: tracks a userspace restorer per disposition and
+  delivers pending custom handlers only when a syscall-return trap frame is
+  available.
+- `kernel/user/process.swift`: stores/restores a kernel-built user signal frame,
+  guards one active frame per process slot, and resets frame state across
+  fork/thread creation, exec, and reap.
+- `kernel/syscall/syscall.swift`, `userland/lib/syscall.h`, and
+  `userland/compat/stubs.c`: add SwiftOS `sigreturn` number 76 and pass a compat
+  restorer trampoline with `sigaction`.
+- `/bin/signalprobe`: now proves custom SIGTERM handler delivery via `raise`,
+  `sigreturn` frame restore, and old-handler reporting before the child
+  termination status checks.
+
+**Acceptance.** `make signal-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM11 — libuv async eventfd wake probe (DONE, 2026-06-11)
+
+**Scope.** Add a focused event-loop wake proof for Node.js/libuv-shaped
+runtimes. SwiftOS already had pthreads, eventfd counters, and poll readiness as
+separate C/newlib probes; this milestone proves the combined pattern libuv
+depends on: a worker thread writes to an eventfd while the main thread is blocked
+inside `poll`, and the main thread wakes, drains the counter, and observes the
+fd as no longer readable. This is not a full upstream libuv audit; it closes one
+concrete async-wake surface while the catalog keeps the broader libuv thread
+audit blocker.
+
+- `/bin/uvwakeprobe`: creates a nonblocking close-on-exec eventfd, starts a
+  pthread worker, waits in `poll(POLLIN)`, verifies the worker's
+  `eventfd_write` wakes the waiter with the expected counter value, joins the
+  worker, and verifies a drained zero-timeout poll.
+- `make uvwake-test`: boots QEMU, logs in, runs the probe, and asserts the
+  cross-thread wake and drained-poll markers.
+
+**Acceptance.** `make uvwake-test`, `make docs-test`,
+`make ports-catalog-test`, `make eventfd-test`, `make threadsync-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM12 — Node.js V8 lite-mode jitless policy (DONE, 2026-06-11)
+
+**Scope.** Settle the first SwiftOS V8 policy for Node.js. The pinned Node
+24.16.0 `configure.py` documents `--v8-lite-mode` as a constrained-environment
+mode that implies no JIT support, so the initial SwiftOS Node.js recipe keeps
+that flag as the accepted jitless profile. This avoids making executable-code
+generation a prerequisite for the first runnable Node package; optional V8 JIT
+enablement remains a future profile decision. Node.js is still blocked on the
+full libuv thread audit before the runtime can be claimed runnable.
+
+- `ports/lang/nodejs/Port.json`: documents `--v8-lite-mode` as the chosen
+  jitless V8 profile while keeping the static/no-bundled-npm/no-corepack recipe
+  shape.
+- `ports/catalog.json`: removes the generic `V8 JIT or jitless policy` blocker
+  from Node.js and keeps `full libuv thread audit` as the remaining runtime
+  blocker.
+- `tests/swport_recipe_test.swift` and `tests/swport_catalog_test.swift`: guard
+  the recipe's V8-lite/static policy and the catalog blocker transition.
+
+**Acceptance.** `make ports-recipe-test`, `make ports-catalog-test`,
+`make docs-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

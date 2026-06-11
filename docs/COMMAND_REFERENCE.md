@@ -969,7 +969,8 @@ diagnostic fixtures than stable application interfaces.
 | `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
-| `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
+| `uvwakeprobe` | `uvwakeprobe` | Exercise C/newlib pthread-to-eventfd async wake over a blocking poll waiter. | `tests/uvwake_test.sh` |
+| `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |
@@ -1317,7 +1318,8 @@ are not the primary operator interface.
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
-| `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
+| `uvwakeprobe` | newlib compat worker-thread `eventfd_write` waking a main-thread blocking `poll`, matching libuv async wake expectations. | Yes, when validating C runtime event-loop wake compatibility. | `tests/uvwake_test.sh` |
+| `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `sigreturn` handler frames, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
 | `socketprobe` | newlib compat `pipe2`, `socket` flags, `accept4`, `getaddrinfo`, socket options, TCP client, and TCP server paths. | Yes, when validating C runtime network compatibility. | `tests/socket_test.sh` |
 | `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |
 | `forkdemo` | `fork`, `waitpid`, inherited cwd/fd state, IPC polling, and moved-handle receive. | Yes, for process and IPC diagnostics. | `tests/boot_test.sh`, `tests/cow_test.sh` |

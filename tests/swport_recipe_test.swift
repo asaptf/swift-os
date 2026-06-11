@@ -53,6 +53,17 @@ private func requireString(_ object: [String: Any], _ key: String, _ expected: S
     }
 }
 
+private func loadJSONObject(_ url: URL, context: String) -> [String: Any] {
+    do {
+        guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            fail("\(context) is not a JSON object")
+        }
+        return object
+    } catch {
+        fail("could not parse \(context): \(error)")
+    }
+}
+
 private func writeJSON(_ object: [String: Any], to url: URL) throws {
     let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
@@ -131,6 +142,24 @@ let nodejsValidate = run(swport, ["recipe", "validate", "lang/nodejs"])
 requireSuccess(nodejsValidate, "validate nodejs recipe")
 guard output(nodejsValidate).contains("recipe: OK nodejs-24.16.0_1") else {
     fail("validate output did not confirm nodejs recipe: \(output(nodejsValidate))")
+}
+let nodejsRecipeObject = loadJSONObject(nodejsRecipe, context: "ports/lang/nodejs/Port.json")
+guard let nodejsBuild = nodejsRecipeObject["build"] as? [String: Any],
+      let nodejsArgs = nodejsBuild["args"] as? [String] else {
+    fail("nodejs recipe does not expose build args")
+}
+guard nodejsArgs.contains("--v8-lite-mode") else {
+    fail("nodejs recipe must keep --v8-lite-mode as the SwiftOS jitless V8 policy")
+}
+guard nodejsArgs.contains("--fully-static") &&
+      nodejsArgs.contains("--without-npm") &&
+      nodejsArgs.contains("--without-corepack") else {
+    fail("nodejs recipe lost static/no-bundled-package-manager policy: \(nodejsArgs)")
+}
+guard let nodejsNotes = nodejsRecipeObject["notes"] as? String,
+      nodejsNotes.contains("jitless") &&
+      nodejsNotes.contains("--v8-lite-mode") else {
+    fail("nodejs recipe notes must document the accepted jitless --v8-lite-mode policy")
 }
 let nodejsManifestURL = temp.appendingPathComponent("nodejs-manifest.json")
 let nodejsManifest = run(swport, ["recipe", "manifest", "lang/nodejs", "--output", nodejsManifestURL.path])

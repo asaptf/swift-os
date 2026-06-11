@@ -69,7 +69,8 @@ source, then follow its Makefile rule and acceptance test.
 | C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
 | C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
-| C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
+| C libuv async wake compatibility | `userland/uvwakeprobe.c` | worker-thread `eventfd_write` waking a main-thread `poll` waiter | `./tests/uvwake_test.sh` |
+| C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
@@ -185,7 +186,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 6 | `lseek` | `fd`, `offset`, `whence` | new offset or negative error |
 | 7 | `tcgetattr` | `fd`, `termios*` | 0 or negative error |
 | 8 | `tcsetattr` | `fd`, `actions`, `termios*` | 0 or negative error |
-| 9 | `sigaction` | `sig`, `handler` | 0 |
+| 9 | `sigaction` | `sig`, `handler`, `restorer` | 0 |
 | 10 | `kill` | `pid`, `sig` | 0, negative error, or termination through signal delivery |
 | 11 | `getpid` | none | process id |
 | 12 | `spawn` | `path`, `argv` | child exit status or negative error |
@@ -248,11 +249,12 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 69 | `kernel_activate` | none | 0 or negative error |
 | 70 | `kernel_confirm` | none | 0 or negative error |
 | 71 | `eventfd` | `initval`, `flags` | fd or negative error |
-| 72 | `pkg_stream_begin` | `desc` | 0 or negative error |
-| 73 | `pkg_stream_write` | `buf`, `len` | bytes written or negative error |
+| 72 | `pkg_stream_begin` | `desc*` | 0 or negative error |
+| 73 | `pkg_stream_write` | `buf`, `count` | 0 or negative error |
 | 74 | `pkg_stream_commit` | none | 0 or negative error |
 | 75 | `pkg_stream_abort` | none | 0 or negative error |
-| 76 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
+| 76 | `sigreturn` | none | restores a kernel-built signal frame |
+| 77 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 
 Notes:
 
@@ -1057,14 +1059,15 @@ SwiftOS signal support is deliberately narrow while the runtime port matures:
 
 - `sigaction` records `SIG_DFL`, `SIG_IGN`, and handler pointers.
 - `signal` and `raise` are provided by the newlib compatibility layer.
+- Current-process custom handlers are delivered on syscall return through a
+  kernel-built user signal frame and the compat `sigreturn` trampoline.
 - `kill(pid, 0)` probes positive PIDs.
 - `kill(pid, SIGTERM)` terminates a child under the default disposition.
 - `waitpid` reports signaled children with the signal number in the low bits.
 
-Process groups, signal masks, blocked-syscall interruption, and userspace
-handler frames are not implemented yet. Custom handlers are remembered for
-source compatibility, but the kernel still treats delivered custom handlers as
-the default fatal action until `sigreturn`/signal-frame support exists.
+Process groups, signal masks, blocked-syscall interruption, remote async custom
+handler delivery, and full libuv-style signal watcher semantics are not
+implemented yet.
 
 ### POSIX-Shaped Event Counters
 
@@ -1396,6 +1399,7 @@ one booting acceptance path:
 | C compat semaphores and rwlocks | `userland/compat/pthread.h`, `userland/compat/semaphore.h`, `userland/compat/stubs.c`, `userland/threadsyncprobe.c` | `make threadsync-test`, `./tests/boot_test.sh` |
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
 | C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
+| C compat libuv async wake | `userland/compat/pthread.h`, `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/uvwakeprobe.c` | `make uvwake-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
