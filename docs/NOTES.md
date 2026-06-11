@@ -3,6 +3,23 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC19 IPv4 route-target preflight (2026-06-11)
+
+- Added a pure `ipv4RouteTarget` helper for outbound IPv4 next-hop selection.
+  Same-subnet destinations now resolve the destination MAC directly; off-link
+  destinations resolve the configured gateway MAC.
+- Wired UDP and TCP active-open socket paths through that helper instead of
+  probing the destination cache first and otherwise always ARPing the gateway.
+  This keeps the existing QEMU/slirp behavior while making direct-on-subnet cloud
+  peers reachable when the DHCP subnet says they are on-link.
+- Kept `/32` cloud addressing explicit: a non-self destination under a
+  `255.255.255.255` mask routes via the gateway, matching Hetzner-style static
+  examples with a point-to-point gateway.
+
+**Acceptance.** `tests/net_test.swift` covers same-subnet, off-link, and `/32`
+route-target decisions, while the live virtio-net and TCP connect smokes prove
+the QEMU/slirp gateway path still works.
+
 ## HC18 SSHD quoted argv preflight (2026-06-11)
 
 - Replaced `/bin/sshd`'s raw ASCII-whitespace remote-exec splitter with a small

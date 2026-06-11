@@ -536,8 +536,9 @@ func socketBind(_ s: Int, port: UInt16) -> Int {
     return 0
 }
 
-/// Send `len` bytes from `src` to (`dstIP`, `dstPort`). Routes via the cached
-/// MAC for the destination, else via the slirp gateway.
+/// Send `len` bytes from `src` to (`dstIP`, `dstPort`). The Ethernet next-hop is
+/// selected by the configured IPv4 subnet: direct for on-link peers, gateway for
+/// off-link peers and /32 cloud-style leases.
 func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, len: Int) -> Int {
     var daif = netLock()
     if !netReady {
@@ -548,16 +549,20 @@ func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, l
         netUnlock(daif)
         return netErrInval
     }
-    let needsResolve = (gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)) == nil
+    let routeIP = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
+                                  gatewayIP: netGatewayIP, dstIP: dstIP)
+    let needsResolve = gNet.arp.lookup(routeIP) == nil
     netUnlock(daif)
     if needsResolve {
-        _ = netResolve(netGatewayIP, timeoutMs: 2000)
+        _ = netResolve(routeIP, timeoutMs: 2000)
     }
     daif = netLock()
     defer { netUnlock(daif) }
     if !netReady { return netErrDown }
     if !socketValidLocked(s) { return netErrInval }
-    let mac = gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)
+    let routeTarget = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
+                                      gatewayIP: netGatewayIP, dstIP: dstIP)
+    let mac = gNet.arp.lookup(routeTarget)
     guard let dmac = mac else { return netErrUnreach }
     if !sockBound[s] {                       // implicit ephemeral bind on first send
         sockPort[s] = allocEphemeralPortLocked(for: s); sockBound[s] = true
@@ -887,11 +892,13 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
         return netErrInval
     }
 
-    // Route: resolve the destination MAC (direct, else via the slirp gateway).
-    let needsResolve = (gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)) == nil
+    // Route: resolve the Ethernet next-hop selected by the configured subnet.
+    let routeIP = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
+                                  gatewayIP: netGatewayIP, dstIP: dstIP)
+    let needsResolve = gNet.arp.lookup(routeIP) == nil
     netUnlock(daif)
     if needsResolve {
-        _ = netResolve(netGatewayIP, timeoutMs: 2000)
+        _ = netResolve(routeIP, timeoutMs: 2000)
     }
     daif = netLock()
     if !netReady {
@@ -906,7 +913,9 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
         netUnlock(daif)
         return netErrInval
     }
-    let mac = gNet.arp.lookup(dstIP) ?? gNet.arp.lookup(netGatewayIP)
+    let routeTarget = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
+                                      gatewayIP: netGatewayIP, dstIP: dstIP)
+    let mac = gNet.arp.lookup(routeTarget)
     guard let dmac = mac else {
         netUnlock(daif)
         return netErrUnreach
