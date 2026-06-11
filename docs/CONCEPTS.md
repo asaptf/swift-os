@@ -21,6 +21,23 @@ Use this guide with:
 - [API Reference](API_REFERENCE.md) for exact ABI details.
 - [Architecture](ARCHITECTURE.md) for the long-form design record.
 
+## Quick Concept Map
+
+Use this map when a term is familiar enough to recognize but not yet clear
+enough to operate.
+
+| Concept | Short meaning | Go deeper | Prove it with |
+| --- | --- | --- | --- |
+| Base image | Immutable root filesystem packed as `build/base.img` | [Base Image](BASE_IMAGE.md) | `make base-image`, `./tests/vfs_disk_test.sh` |
+| tmpfs | RAM-backed writable scratch under `/tmp` | [User Guide](USER_GUIDE.md#filesystem) | `./tests/swift_fileops_test.sh` |
+| Principal and capability mask | Process identity and coarse authority bits | [Security Guide](SECURITY_GUIDE.md) | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
+| Handle rights | Per-descriptor authority on files, sockets, endpoints, and device grants | [API Reference](API_REFERENCE.md), [Capabilities](CAPABILITIES.md) | `./tests/spawn_self_exec_test.sh`, `./tests/ipc_socket_transfer_test.sh` |
+| Package payload and store | Optional read-only `/usr` content and package-store activation | [Package Guide](PACKAGE_GUIDE.md) | `make package-overlay-test`, `make package-store-test` |
+| Network profile | QEMU virtio-net plus `capNet` for socket tools | [Networking Guide](NETWORKING_GUIDE.md) | `./tests/httpd_test.sh`, `./tests/dns_test.sh` |
+| Service readiness | Deterministic serial marker after a service is ready | [Service Guide](SERVICE_GUIDE.md) | Service-specific QEMU test |
+| Update slot | Confirmed or trial artifact selected by SWOSBOOT or UEFI ESP state | [Update And Rollback Guide](UPDATE_GUIDE.md), [Update Store](UPDATE_STORE.md) | Matching `ab_*` or `uefi_k*` test |
+| Evidence bundle | Reproducible logs, artifacts, commands, and hashes for handoff | [Support Guide](SUPPORT_GUIDE.md), [Deployment Guide](DEPLOYMENT_GUIDE.md) | Focused validation plus saved serial log |
+
 ## Product Shape
 
 SwiftOS is currently:
