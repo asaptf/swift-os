@@ -357,7 +357,7 @@
       "summary": "JavaScript server runtime for modern web apps and tooling.",
       "runtimeDependencies": ["ca-certificates", "openssl", "zlib"],
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
-      "blockedBy": ["V8 JIT or jitless policy", "thread runtime", "signal handler frames", "large mmap support"],
+      "blockedBy": ["V8 JIT or jitless policy", "full libuv thread audit", "signal handler frames", "large mmap support"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
       "notes": "Native addons are deferred until dynamic loading policy exists."
     },

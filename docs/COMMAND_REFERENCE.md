@@ -933,6 +933,7 @@ diagnostic fixtures than stable application interfaces.
 | --- | --- | --- | --- |
 | `threadsdemo` | `threadsdemo` | Create EL0 threads and prove futex-backed synchronization. | `tests/threads_test.sh` |
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
+| `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
@@ -1274,6 +1275,7 @@ are not the primary operator interface.
 | `clockprobe` | newlib compat `clock_gettime`, `clock_getres`, realtime clock, monotonic ticks, and `nanosleep` interaction. | Yes, when validating C runtime timing compatibility. | `tests/clock_test.sh` |
 | `mprotectprobe` | newlib compat `mmap`, `mprotect`, executable mappings, and W^X rejection. | Yes, when validating C runtime memory-permission compatibility. | `tests/mprotect_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
+| `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
 | `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |

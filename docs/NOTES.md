@@ -4730,3 +4730,25 @@ and libuv signal watchers remain future work.
 **Acceptance.** `make signal-test`, `make docs-test`, `make eventfd-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM6 — newlib thread synchronization probe (DONE, 2026-06-11)
+
+**Scope.** Extend the C/newlib thread-runtime slice for libuv-shaped runtimes.
+SwiftOS now exposes POSIX-shaped unnamed semaphores and pthread read/write locks
+over the existing futex syscall. This closes a concrete class of Node.js/libuv
+threading primitives while leaving a full upstream libuv thread audit as future
+work.
+
+- `userland/compat/semaphore.h`: adds `sem_t` and POSIX semaphore declarations
+  missing from the bare-metal newlib sysroot.
+- `userland/compat/pthread.h`: enables the newlib reader/writer lock type and
+  prototypes for compat builds.
+- `userland/compat/stubs.c`: implements `sem_init`, `sem_wait`, `sem_trywait`,
+  `sem_timedwait`, `sem_post`, `sem_getvalue`, `pthread_rwlock_*`, and rwlock
+  attrs using atomic words plus `SYS_FUTEX`.
+- `/bin/threadsyncprobe`: proves semaphore gate behavior, timeout reporting,
+  writer exclusion, and concurrent readers under a pthread rwlock.
+
+**Acceptance.** `make threadsync-test`, `make docs-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

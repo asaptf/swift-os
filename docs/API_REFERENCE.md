@@ -63,6 +63,7 @@ source, then follow its Makefile rule and acceptance test.
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
+| C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
 | C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
@@ -1355,6 +1356,7 @@ one booting acceptance path:
 | Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-authority-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | C compat pthreads | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/pthreadprobe.c` | `make pthread-test`, `./tests/boot_test.sh` |
+| C compat semaphores and rwlocks | `userland/compat/pthread.h`, `userland/compat/semaphore.h`, `userland/compat/stubs.c`, `userland/threadsyncprobe.c` | `make threadsync-test`, `./tests/boot_test.sh` |
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
 | C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
