@@ -69,6 +69,7 @@ let zlibRecipe = repo.appendingPathComponent("ports/archivers/zlib/Port.json")
 let bzip2Recipe = repo.appendingPathComponent("ports/archivers/bzip2/Port.json")
 let zstdRecipe = repo.appendingPathComponent("ports/archivers/zstd/Port.json")
 let xzRecipe = repo.appendingPathComponent("ports/archivers/xz/Port.json")
+let libarchiveRecipe = repo.appendingPathComponent("ports/archivers/libarchive/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
@@ -85,6 +86,9 @@ guard FileManager.default.isReadableFile(atPath: zstdRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: xzRecipe.path) else {
     fail("missing ports/archivers/xz/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: libarchiveRecipe.path) else {
+    fail("missing ports/archivers/libarchive/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -592,6 +596,99 @@ guard output(xzRepoInspect).contains("xz-5.8.3_1") else {
     fail("repo fixture catalog did not include xz package: \(output(xzRepoInspect))")
 }
 
+let libarchiveValidate = run(swport, ["recipe", "validate", "archivers/libarchive"])
+requireSuccess(libarchiveValidate, "validate libarchive recipe")
+guard output(libarchiveValidate).contains("recipe: OK libarchive-3.8.7_1") else {
+    fail("validate output did not confirm libarchive recipe: \(output(libarchiveValidate))")
+}
+
+let libarchiveManifestURL = temp.appendingPathComponent("libarchive-manifest.json")
+let libarchiveManifest = run(swport, ["recipe", "manifest", "archivers/libarchive", "--output", libarchiveManifestURL.path])
+requireSuccess(libarchiveManifest, "generate libarchive manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: libarchiveManifestURL)) as? [String: Any] else {
+        fail("generated libarchive manifest is not a JSON object")
+    }
+    requireString(object, "name", "libarchive")
+    requireString(object, "version", "3.8.7")
+    guard let depends = object["depends"] as? [[String: Any]],
+          Set(depends.compactMap { $0["name"] as? String }) == ["bzip2", "xz", "zlib", "zstd"] else {
+        fail("libarchive manifest depends were \(String(describing: object["depends"]))")
+    }
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["libarchive", "bsdtar"] else {
+        fail("libarchive manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/bsdtar",
+        "/usr/include/archive.h",
+        "/usr/include/archive_entry.h",
+        "/usr/lib/libarchive.a",
+        "/usr/lib/pkgconfig/libarchive.pc",
+        "/usr/share/libarchive/swiftos-libarchive.version",
+    ] else {
+        fail("unexpected libarchive manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated libarchive manifest: \(error)")
+}
+
+let libarchiveRoot = temp.appendingPathComponent("libarchive-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/bsdtar", Data("#!/bin/sh\necho bsdtar\n".utf8), 0o755),
+        ("usr/include/archive.h", Data("/* archive */\n".utf8), 0o644),
+        ("usr/include/archive_entry.h", Data("/* archive entry */\n".utf8), 0o644),
+        ("usr/lib/libarchive.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/libarchive.pc", Data("Name: libarchive\nVersion: 3.8.7\n".utf8), 0o644),
+        ("usr/share/libarchive/swiftos-libarchive.version", Data("libarchive 3.8.7 swift-os static-bsdtar-no-external-programs\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = libarchiveRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy libarchive package root: \(error)")
+}
+
+let libarchivePackageURL = temp.appendingPathComponent("libarchive.swpkg")
+let libarchivePackageResult = run(swport, [
+    "recipe", "package", "archivers/libarchive",
+    "--root", libarchiveRoot.path,
+    "--output", libarchivePackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(libarchivePackageResult, "package dummy libarchive root")
+let libarchiveVerify = run(swpkg, ["verify", libarchivePackageURL.path])
+requireSuccess(libarchiveVerify, "verify dummy libarchive package")
+guard output(libarchiveVerify).contains("OK: libarchive-3.8.7_1") else {
+    fail("swpkg verify did not identify libarchive package: \(output(libarchiveVerify))")
+}
+
+let libarchiveRepoRoot = temp.appendingPathComponent("libarchive-repo-root", isDirectory: true)
+let libarchivePubkey = temp.appendingPathComponent("libarchive-repo-root.pub")
+let libarchiveRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "archivers/libarchive",
+    "--root", libarchiveRoot.path,
+    "--output", libarchiveRepoRoot.path,
+    "--pubkey", libarchivePubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(libarchiveRepoFixture, "create libarchive repository fixture")
+let libarchiveCatalog = libarchiveRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let libarchiveRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", libarchiveCatalog.path, "--pubkey", libarchivePubkey.path])
+requireSuccess(libarchiveRepoVerify, "verify libarchive repository fixture")
+let libarchiveRepoInspect = run(pkgrepo, ["inspect", libarchiveCatalog.path])
+requireSuccess(libarchiveRepoInspect, "inspect libarchive repository fixture")
+guard output(libarchiveRepoInspect).contains("libarchive-3.8.7_1") else {
+    fail("repo fixture catalog did not include libarchive package: \(output(libarchiveRepoInspect))")
+}
+
 let caValidate = run(swport, ["recipe", "validate", "security/ca-certificates"])
 requireSuccess(caValidate, "validate ca-certificates recipe")
 guard output(caValidate).contains("recipe: OK ca-certificates-2026.05.14_1") else {
@@ -914,4 +1011,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")

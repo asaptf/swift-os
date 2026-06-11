@@ -82,6 +82,9 @@ guard listText.contains("tier0 zstd packages S archivers/zstd") else {
 guard listText.contains("tier0 xz packages M archivers/xz") else {
     fail("list output did not include packaged xz")
 }
+guard listText.contains("tier0 libarchive packages M archivers/libarchive") else {
+    fail("list output did not include packaged libarchive")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
 }
@@ -117,6 +120,14 @@ let xzInspect = run(tool, ["catalog", "inspect", "xz", catalog.path])
 requireSuccess(xzInspect, "inspect xz")
 guard output(xzInspect).contains("runtimeDependencies: none") else {
     fail("xz inspect output did not show its runtime dependency state")
+}
+let libarchiveInspect = run(tool, ["catalog", "inspect", "libarchive", catalog.path])
+requireSuccess(libarchiveInspect, "inspect libarchive")
+let libarchiveInspectText = output(libarchiveInspect)
+for dependency in ["bzip2", "xz", "zlib", "zstd"] {
+    guard libarchiveInspectText.contains(dependency) else {
+        fail("libarchive inspect output did not show dependency \(dependency): \(libarchiveInspectText)")
+    }
 }
 
 let temp = FileManager.default.temporaryDirectory

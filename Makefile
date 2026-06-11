@@ -367,7 +367,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -891,9 +891,14 @@ examples-verification-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/examples_verification_test.swift -o $(BUILD)/examples_verification_test
 	$(BUILD)/examples_verification_test
 
+page-allocator-refcount-lifecycle-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) tests/page_allocator_refcount_lifecycle_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_refcount_lifecycle_test
+	$(BUILD)/page_allocator_refcount_lifecycle_test
+
 test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
+	$(MAKE) page-allocator-refcount-lifecycle-test
 	$(HOST_SWIFTC) tests/base_image_test.swift kernel/crypto/sha256.swift -o $(BUILD)/base_image_test
 	$(BUILD)/base_image_test $(BASE_IMG)
 	$(HOST_SWIFTC) tests/updatestore_test.swift kernel/fs/swosboot.swift -o $(BUILD)/updatestore_test
@@ -1189,7 +1194,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
@@ -1207,6 +1212,9 @@ ports-zstd-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a por
 ports-xz-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/archivers/xz/Port.json scripts/build-xz.sh
 	./scripts/build-xz.sh
 
+ports-libarchive-repo-fixture: ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports/archivers/libarchive/Port.json scripts/build-libarchive.sh
+	./scripts/build-libarchive.sh
+
 ports-ca-certificates-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/security/ca-certificates/Port.json scripts/build-ca-certificates.sh
 	./scripts/build-ca-certificates.sh
 
@@ -1222,7 +1230,7 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
 
-ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-bzip2.sh scripts/build-zstd.sh scripts/build-xz.sh scripts/build-ca-certificates.sh scripts/build-pcre2.sh scripts/build-tzdata.sh scripts/build-nginx.sh scripts/build-sqlite.sh scripts/build-ports-seed-repo.sh
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-bzip2.sh scripts/build-zstd.sh scripts/build-xz.sh scripts/build-libarchive.sh scripts/build-ca-certificates.sh scripts/build-pcre2.sh scripts/build-tzdata.sh scripts/build-nginx.sh scripts/build-sqlite.sh scripts/build-ports-seed-repo.sh
 	./scripts/build-ports-seed-repo.sh
 
 ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-host.sh
@@ -1440,6 +1448,7 @@ clean:
 		$(BUILD)/bzip2-port-work $(BUILD)/bzip2-port-runtime $(BUILD)/bzip2-root $(BUILD)/bzip2-repo-root $(BUILD)/bzip2-repo-root.pub \
 		$(BUILD)/zstd-port-work $(BUILD)/zstd-port-runtime $(BUILD)/zstd-root $(BUILD)/zstd-repo-root $(BUILD)/zstd-repo-root.pub \
 		$(BUILD)/xz-port-work $(BUILD)/xz-port-runtime $(BUILD)/xz-root $(BUILD)/xz-repo-root $(BUILD)/xz-repo-root.pub \
+		$(BUILD)/libarchive-port-work $(BUILD)/libarchive-port-runtime $(BUILD)/libarchive-root $(BUILD)/libarchive-repo-root $(BUILD)/libarchive-repo-root.pub \
 		$(BUILD)/ca-certificates-root $(BUILD)/ca-certificates-repo-root $(BUILD)/ca-certificates-repo-root.pub \
 		$(BUILD)/pcre2-port-work $(BUILD)/pcre2-port-runtime $(BUILD)/pcre2-root $(BUILD)/pcre2-repo-root $(BUILD)/pcre2-repo-root.pub \
 		$(BUILD)/tzdata-port-work $(BUILD)/tzdata-root $(BUILD)/tzdata-repo-root $(BUILD)/tzdata-repo-root.pub \

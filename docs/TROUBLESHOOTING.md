@@ -560,7 +560,7 @@ Remember: `.swpkg` creation and payload extraction are host-side today. Guest
 install works through the local-file form, `pkg install FILE`, through the
 signed static HTTP repository fixture, `pkg repo set URL && pkg update` or
 `pkg update URL` followed by `pkg install NAME`, and through the static-host
-ports fixture for Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and
+ports fixture for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and
 sqlite.
 Name-based dependency resolution is implemented for signed catalogs. Remove,
 upgrade, rollback, version-constraint solving, public hosted channels, and

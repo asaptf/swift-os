@@ -28,6 +28,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 
 LOG="$(mktemp -t swiftos-ipv6.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-ipv6-pid.XXXXXX)"
@@ -43,8 +46,10 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+[[ -f "$DTB" ]] && qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 # await: block until a literal MARKER appears in the serial log (bounded).
 await() {  # await MARKER [MAXSEC]
@@ -69,15 +74,14 @@ send_line() {
 # Boot QEMU with console driven via FIFO (fd 3). This makes input reactive
 # instead of fixed sleeps, which is the main source of flakes on cold/slow
 # `make test` boots.
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]:-}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -netdev user,id=n0,ipv6=on \
-  -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+qemu_args+=(
+  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -netdev user,id=n0,ipv6=on
+  -device virtio-net-device,netdev=n0
+  -kernel "$KERNEL"
+)
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 

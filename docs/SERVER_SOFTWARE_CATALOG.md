@@ -11,14 +11,14 @@ maintainers planning `swift-os-ports` recipes.
 > package-store boot activation, local `/bin/pkg install FILE`, signed static
 > HTTP repository fixtures, repository configuration, `pkg update`, `pkg search`,
 > `pkg info`, `pkg install NAME`, and name-based dependency resolution. The
-> checked ports seed now covers Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2,
+> checked ports seed now covers Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
 > tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
-> the ten-package seed from a local repository, a static-host layout, and a
+> the eleven-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, remove, upgrade, version-constraint solving, package
 > transaction rollback, and large-package streaming downloads remain roadmap
@@ -65,19 +65,22 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
 | bzip2 binary repository fixture | Cross-build static bzip2 CLI tools, `libbz2.a`, header, pkgconf metadata, and marker, then publish them into a signed local repository fixture | `make ports-bzip2-repo-fixture` |
+| zstd binary repository fixture | Cross-build single-threaded static zstd CLI tools, `libzstd.a`, headers, and pkgconf metadata, then publish them into a signed local repository fixture | `make ports-zstd-repo-fixture` |
+| xz binary repository fixture | Cross-build static xz CLI tools, `liblzma.a`, headers, and pkgconf metadata, then publish them into a signed local repository fixture | `make ports-xz-repo-fixture` |
+| libarchive binary repository fixture | Cross-build static `bsdtar`, `libarchive.a`, headers, and pkgconf metadata against the packaged compression libraries, then publish them into a signed local repository fixture | `make ports-libarchive-repo-fixture` |
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
 | tzdata repository fixture | Compile IANA TZif zoneinfo files with host `zic`, package `/usr/share/zoneinfo`, and publish the signed local repository fixture | `make ports-tzdata-repo-fixture` |
 | nginx binary repository fixture | Cross-build minimal static HTTP-only nginx, then publish it into a signed local repository fixture | `make ports-nginx-repo-fixture` |
 | sqlite binary repository fixture | Cross-build static SQLite, then publish `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata into a signed local repository fixture | `make ports-sqlite-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all ten from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all ten packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all eleven from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all eleven packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 
 The `pkg install` examples later in this catalog are the intended repository
 UX. Today, the implemented repository path has both an explicit fixture form:
@@ -100,6 +103,7 @@ pkg install zlib
 pkg install bzip2
 pkg install zstd
 pkg install xz
+pkg install libarchive
 pkg install ca-certificates
 pkg install pcre2
 /usr/bin/lua -e 'print(21 * 2)'
@@ -113,6 +117,9 @@ cat /tmp/zstd.out
 cat /usr/share/zstd/swiftos-zstd.version
 echo xz-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c
 cat /usr/share/xz/swiftos-xz.version
+/usr/bin/bsdtar --version
+cd /tmp && echo libarchive-ok > libarchive.txt && /usr/bin/bsdtar -cf libarchive.tar libarchive.txt && /usr/bin/bsdtar -tf libarchive.tar
+cat /usr/share/libarchive/swiftos-libarchive.version
 cat /usr/share/certs/swiftos-ca-bundle.version
 echo nginx-lighttpd > /tmp/pcre2.txt
 /usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
@@ -129,6 +136,7 @@ make ports-zlib-repo-fixture
 make ports-bzip2-repo-fixture
 make ports-zstd-repo-fixture
 make ports-xz-repo-fixture
+make ports-libarchive-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -146,6 +154,7 @@ build/swport recipe validate archivers/zlib
 build/swport recipe validate archivers/bzip2
 build/swport recipe validate archivers/zstd
 build/swport recipe validate archivers/xz
+build/swport recipe validate archivers/libarchive
 build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
@@ -155,6 +164,7 @@ build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
 build/swport recipe manifest archivers/zstd --output build/zstd-manifest.json
 build/swport recipe manifest archivers/xz --output build/xz-manifest.json
+build/swport recipe manifest archivers/libarchive --output build/libarchive-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
@@ -189,7 +199,7 @@ Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
 inspection, `build/swport recipe ...` for the checked Lua, zlib, bzip2, zstd,
-xz, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes, and the host package
+xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes, and the host package
 tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
@@ -246,7 +256,7 @@ possible. They should be the first real ports after `pkghello` and `lua`.
 | `zstd` | Modern package/archive compression and backup compression. | facebook/zstd. | S | None. | `base-posix`; `threads` only for parallel mode. | Packaged as single-threaded static zstd/unzstd/zstdcat tools, `libzstd.a`, headers, pkgconf metadata, and marker. gzip/lzma/lz4 support remains disabled until those dependencies are packaged. | Install from the seed repository and pipe a known string through `zstd -q -c \| zstd -q -d -c` in QEMU. |
 | `xz` | `.xz` and `liblzma` support for upstream source tarballs and packages. | Tukaani XZ Utils. | M | None. | `base-posix`. | Packaged from audited upstream release 5.8.3 after the XZ supply-chain incident. Static small CLI and `liblzma.a` are built with NLS, scripts, sandboxing, threading, assembler, and dynamic libraries disabled. | Install from the seed repository and pipe a known string through `xz -q -c \| xz -q -d -c` in QEMU. |
 | `bzip2` | Legacy archive support for many upstream distfiles. | Sourceware bzip2. | S | None. | `base-posix`. | Packaged as static bzip2/bunzip2/bzcat/bzip2recover tools, `libbz2.a`, `bzlib.h`, pkgconf metadata, and marker. | Install from the seed repository and pipe a known string through `bzip2 -c \| bzip2 -dc` in QEMU. |
-| `libarchive` | Unified `tar`, `cpio`, and archive extraction for ports tooling and target admin use. | libarchive/bsdtar. | M | zlib, zstd, xz, bzip2. | `base-posix`; large-file support. | Static build is feasible but pulls many compression libs. Disable formats not needed initially. | `bsdtar -cf test.tar dir && bsdtar -tf test.tar`. |
+| `libarchive` | Unified `tar`, `cpio`, and archive extraction for ports tooling and target admin use. | libarchive/bsdtar. | M | zlib, zstd, xz, bzip2. | `base-posix`; large-file support. | Packaged as static `bsdtar`, `libarchive.a`, public headers, pkgconf metadata, and marker. External program filters are disabled; built-in gzip, bzip2, xz, and zstd filters are available through dependencies. | Install from the seed repository, run `bsdtar --version`, create a small tar archive under `/tmp`, and list it in QEMU. |
 | `curl` | HTTP(S) client for admin workflows, diagnostics, package repo debugging, and many scripts. | curl project. | M | TLS library, zlib optional, ca-certificates. | `base-posix`, `net-client`, `tls-base`. | Prefer static `curl` plus `libcurl.a`. Disable protocols beyond HTTP/HTTPS at first to reduce dependencies. | Start a host HTTP server in QEMU test; run `curl http://server/file` and compare content. |
 | `pcre2` | Regex library needed by nginx, lighttpd, text tools, and scripting runtimes. | PCRE2. | S | None. | `base-posix`; full recursive `pcre2grep` mode waits for the dirent libc surface. | Packaged as static `libpcre2-8.a`, `libpcre2-posix.a`, headers, pkgconf metadata, and `pcre2grep`; JIT is disabled until executable mappings and W^X policy are settled. | Install from the seed repository and run `pcre2grep 'nginx\|lighttpd' /tmp/pcre2.txt` in QEMU. |
 | `busybox-extra` | Temporary collection of admin utilities beyond the base busybox set. | BusyBox. | M | libc. | `base-posix`, `proc-basic`; selected applets may need `net-client`, `term-ui`, or `service`. | Single static binary works well. Applet symlink/hardlink behavior must match swift-os package image rules. | Run `busybox --list`; execute selected applets: `awk`, `sed`, `find`, `tar`, `wget` if enabled. |
@@ -545,8 +555,8 @@ published only to an experimental channel.
 
 ## Key Porting Recommendations
 
-1. Port `patch`, `pkgconf`, and `libarchive` next after the checked
-   `lua`, `zlib`, `bzip2`, `zstd`, `xz`, `ca-certificates`, and `pcre2` packages.
+1. Port `patch` and `pkgconf` next after the checked
+   `lua`, `zlib`, `bzip2`, `zstd`, `xz`, `libarchive`, `ca-certificates`, and `pcre2` packages.
    They test the package system without forcing network, threads, or VM
    semantics.
 2. Make `curl` the first serious network client. It will quickly expose DNS,

@@ -139,14 +139,14 @@
       "portPath": "archivers/libarchive",
       "tier": 0,
       "category": "archives",
-      "status": "planned",
+      "status": "packages",
       "difficulty": "M",
       "upstream": "libarchive/bsdtar",
       "summary": "Unified tar, cpio, and archive extraction for ports tooling and target admin use.",
       "runtimeDependencies": ["bzip2", "xz", "zlib", "zstd"],
       "prerequisiteBundles": ["base-posix"],
-      "smokeTest": "bsdtar -cf test.tar dir && bsdtar -tf test.tar",
-      "notes": "Disable formats not needed initially to keep static build size under control."
+      "smokeTest": "install from the seed repository, run bsdtar --version, create a tiny tar, and list it in QEMU",
+      "notes": "Packaged as static bsdtar, libarchive.a, public headers, pkgconf metadata, and a marker file. The first SwiftOS build links against packaged zlib, bzip2, zstd, and xz roots while disabling bsdcat, bsdcpio, bsdunzip, ACL/xattr, external program filters at runtime, iconv, lz4, lzo2, libb2, OpenSSL, XML backends, and POSIX regex."
     },
     {
       "name": "curl",
