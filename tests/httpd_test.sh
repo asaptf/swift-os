@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # httpd_test.sh — net-e/net-g/net-h2 acceptance: a concurrent static-file HTTP server.
 #
-# Boots with a slirp NIC that hostfwds host TCP 8080 to the guest. /bin/httpd is
+# Boots with a slirp NIC that hostfwds host TCP to guest port 8080. /bin/httpd is
 # a poll() loop multiplexing the listener + all live connections, serving files
-# from the /www docroot on the VFS. The test asserts: two concurrent requests for
-# /index.html both return the page (concurrency, net-e), a request for /hello.txt
-# returns its content (file serving, net-g) with a text/plain Content-Type
-# (net-h2 MIME types), a directory request /sub/ returns a listing containing
-# note.txt (net-h2 directory listing), and a missing path returns 404.
+# from the /www docroot on the VFS. On QEMU builds that accept
+# `hostfwd=tcp:[::1]...`, set HTTPD_IPV6_HOSTFWD=1 to launch `/bin/httpd 6` and
+# drive the AF_INET6 listener with curl -6. Darwin QEMU rejects that hostfwd form,
+# so the default remains the portable IPv4 hostfwd acceptance path.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,10 +17,21 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 HOST_PORT="${HTTPD_HOST_PORT:-$((23000 + ($$ % 20000)))}"
 INDEX_MARK="swift-os httpd"
 HELLO_MARK="hello from the swift-os static file server"
+HTTPD_IPV6_HOSTFWD="${HTTPD_IPV6_HOSTFWD:-}"
+if [[ -z "$HTTPD_IPV6_HOSTFWD" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    HTTPD_IPV6_HOSTFWD=0
+  else
+    HTTPD_IPV6_HOSTFWD=1
+  fi
+fi
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
+fi
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 command -v curl >/dev/null 2>&1 || { echo "FAIL: curl not found" >&2; exit 2; }
 
@@ -44,9 +54,13 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$O1" "$O2" "$OH" "$OHH" "$OD" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+[[ -f "$DTB" ]] && qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
+# await: block until a literal MARKER appears in the serial log (bounded).
+# (Robust pattern from ipv6_*_test.sh to avoid fixed-sleep flakes under ipv6=on.)
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
   while (( n < max * 10 )); do
@@ -73,15 +87,29 @@ send_line() {
   sleep "${HTTPD_SEND_DELAY:-0.08}"
 }
 
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080" \
-  -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+# Boot QEMU driven via FIFO (fd 3) for reactive input.
+netdev_arg="user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080"
+httpd_cmd="/bin/httpd"
+listen_marker="httpd: listening on 8080"
+base_url="http://127.0.0.1:${HOST_PORT}"
+curl_args=(-s -m 5)
+pass_label="IPv4"
+if [[ "$HTTPD_IPV6_HOSTFWD" == "1" ]]; then
+  netdev_arg="user,id=n0,ipv6=on,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080,hostfwd=tcp:[::1]:${HOST_PORT}-:8080"
+  httpd_cmd="/bin/httpd 6"
+  listen_marker="httpd: listening on 8080 (IPv6)"
+  base_url="http://[::1]:${HOST_PORT}"
+  curl_args=(-g -6 -s -m 5)
+  pass_label="IPv6"
+fi
+qemu_args+=(
+  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -netdev "$netdev_arg"
+  -device virtio-net-device,netdev=n0
+  -kernel "$KERNEL"
+)
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
@@ -94,23 +122,23 @@ send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-send_line '/bin/httpd'
+send_line "$httpd_cmd"
 
 listening=0
-await "httpd: listening on 8080" 120 && listening=1
+await "$listen_marker" 120 && listening=1
 code404=""
 if [[ "$listening" -eq 1 ]]; then
   # Two concurrent requests for the index page.
-  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/" > "$O1" 2>/dev/null & p1=$!
-  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/index.html" > "$O2" 2>/dev/null & p2=$!
+  curl "${curl_args[@]}" "${base_url}/" > "$O1" 2>/dev/null & p1=$!
+  curl "${curl_args[@]}" "${base_url}/index.html" > "$O2" 2>/dev/null & p2=$!
   wait "$p1" "$p2" 2>/dev/null || true
   # A non-index file (body + headers, for the net-h2 Content-Type check).
-  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/hello.txt" > "$OH" 2>/dev/null || true
-  curl -s -m 5 -D - -o /dev/null "http://127.0.0.1:${HOST_PORT}/hello.txt" > "$OHH" 2>/dev/null || true
+  curl "${curl_args[@]}" "${base_url}/hello.txt" > "$OH" 2>/dev/null || true
+  curl "${curl_args[@]}" -D - -o /dev/null "${base_url}/hello.txt" > "$OHH" 2>/dev/null || true
   # A directory with no index → generated listing (net-h2).
-  curl -s -m 5 "http://127.0.0.1:${HOST_PORT}/sub/" > "$OD" 2>/dev/null || true
+  curl "${curl_args[@]}" "${base_url}/sub/" > "$OD" 2>/dev/null || true
   # A missing path → 404.
-  code404="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HOST_PORT}/nope" 2>/dev/null || true)"
+  code404="$(curl "${curl_args[@]}" -o /dev/null -w '%{http_code}' "${base_url}/nope" 2>/dev/null || true)"
 fi
 exec 3>&-
 stop_qemu
@@ -118,7 +146,11 @@ QP=""
 
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
-[[ "$listening" -eq 1 ]] || { echo "FAIL: /bin/httpd never reported listening" >&2; ok=0; }
+[[ "$listening" -eq 1 ]] || { echo "FAIL: /bin/httpd never reported listening ($pass_label)" >&2; ok=0; }
+if [[ "$HTTPD_IPV6_HOSTFWD" == "1" ]]; then
+  grep -qF "net: IPv6 link-local configured" <<<"$clean" \
+    || { echo "FAIL: kernel did not configure IPv6 link-local (EUI-64/NDP path with ipv6=on)" >&2; ok=0; }
+fi
 grep -qF "$INDEX_MARK" "$O1" || { echo "FAIL: first request did not get the index page" >&2; ok=0; }
 grep -qF "$INDEX_MARK" "$O2" || { echo "FAIL: second concurrent request did not get the index page" >&2; ok=0; }
 grep -qF "$HELLO_MARK" "$OH" || { echo "FAIL: /hello.txt was not served" >&2; ok=0; }
@@ -131,11 +163,11 @@ served=$(grep -c "httpd: 200" <<<"$clean")
 [[ "$served" -ge 2 ]] || { echo "FAIL: server reported $served 200s, expected >= 2" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/httpd served files (typed) + a directory listing from /www, 404 on miss (net-h2 acceptance)"
+  echo "PASS: /bin/httpd ($pass_label) served files (typed) + a directory listing from /www, 404 on miss"
   exit 0
 fi
-echo "--- serial (httpd region) ---" >&2
-sed -n '/httpd:/,$p' <<<"$clean" | head -20 >&2
+echo "--- serial (httpd + net region) ---" >&2
+grep -iE 'httpd:|net: IPv6|panic|abort|login:|M7' <<<"$clean" | tail -30 >&2 || true
 echo "--- index (O1) ---" >&2; cat "$O1" >&2
 echo "--- hello (OH) ---" >&2; cat "$OH" >&2
 echo "--- hello headers (OHH) ---" >&2; cat "$OHH" >&2

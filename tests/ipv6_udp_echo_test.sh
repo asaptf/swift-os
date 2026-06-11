@@ -18,6 +18,9 @@ MSG="swos-ipv6-udp"
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
+fi
 command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to send the datagram)" >&2; exit 2; }
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -43,8 +46,10 @@ stop_qemu() {
 }
 trap 'stop_qemu; exec 3>&- 2>/dev/null; rm -f "$LOG" "$NCOUT" "$PIDFILE" "$INFIFO"' EXIT
 
-dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
+  -pidfile "$PIDFILE"
+  -global virtio-mmio.force-legacy=false)
+[[ -f "$DTB" ]] && qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 # await: block until a literal MARKER appears in the serial log (bounded).
 await() {  # await MARKER [MAXSEC]
@@ -60,15 +65,14 @@ await() {  # await MARKER [MAXSEC]
 # netdev has ipv6=on (the point of this dedicated test) plus the IPv4 hostfwd
 # path supported by this QEMU build. True nc -6 hostfwd literals are rejected
 # here, so that belongs in a later transport-specific test.
-"$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-  -pidfile "$PIDFILE" \
-  -global virtio-mmio.force-legacy=false \
-  "${dtb_args[@]}" \
-  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-  -device virtio-blk-device,drive=swosbase \
-  -netdev "user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555" \
-  -device virtio-net-device,netdev=n0 \
-  -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
+qemu_args+=(
+  -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
+  -device virtio-blk-device,drive=swosbase
+  -netdev "user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555,hostfwd=udp:[::1]:5555-:5555,hostfwd=udp:[::1]:5556-:5556"
+  -device virtio-net-device,netdev=n0
+  -kernel "$KERNEL"
+)
+"${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
 
