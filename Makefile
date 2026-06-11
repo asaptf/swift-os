@@ -78,6 +78,7 @@ PKG_DEFAULT_REPO_URL ?=
 SSHD_HOST_SEED_FILE ?=
 SSHD_KEX_SEED_FILE ?=
 SSHD_AUTHORIZED_KEYS_FILE ?=
+NET_IPV6_CONFIG_FILE ?=
 SWOS_SERVICES_FILE ?=
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
@@ -411,7 +412,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvbarrier-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -1126,6 +1127,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	# (NDP, RA, EH chains, DAD, malformed packets). QEMU smoke tests verify
 	# link-local/NDP setup; Darwin QEMU currently skips true IPv6 hostfwd echo.
 	./tests/ipv6_smoke_test.sh
+	./tests/net_static_ipv6_test.sh
 	./tests/ipv6_udp_echo_test.sh
 	./tests/ipv6_tcp_echo_test.sh
 	./tests/udp_echo_test.sh
@@ -1323,6 +1325,9 @@ sshd-authorized-keys-test: build $(QEMU_DTB) $(SSHKEY)
 
 sshd-supervision-test: build $(QEMU_DTB) $(SSHKEY)
 	./tests/sshd_supervision_test.sh
+
+net-static-ipv6-test: build $(QEMU_DTB)
+	./tests/net_static_ipv6_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
@@ -1586,13 +1591,14 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi
 	if [ -n "$(SSHD_AUTHORIZED_KEYS_FILE)" ]; then cp "$(SSHD_AUTHORIZED_KEYS_FILE)" $(BASE_ROOT)/etc/ssh/authorized_keys; fi
+	if [ -n "$(NET_IPV6_CONFIG_FILE)" ]; then cp "$(NET_IPV6_CONFIG_FILE)" $(BASE_ROOT)/etc/swos/net-ipv6; fi
 	if [ -n "$(SWOS_SERVICES_FILE)" ]; then cp "$(SWOS_SERVICES_FILE)" $(BASE_ROOT)/etc/swos/services; fi
 	mkdir -p $(BASE_ROOT)/bin
 	mkdir -p $(BASE_ROOT)/etc/pkg

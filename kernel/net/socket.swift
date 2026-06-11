@@ -24,6 +24,8 @@ var netDhcpConfigured = false
 // Our IPv6 address is derived at netInit time from the virtio-net MAC (link-local EUI-64 style).
 var netLocalIPv6: IPv6 = .zero
 var netGatewayIPv6: IPv6 = .zero   // often the router's link-local; learned via RA or static for slirp
+var netIPv6PrefixLen: UInt8 = 64
+var netIPv6StaticConfigured = false
 
 // Standard address families (for vfsSocket domain).
 let AF_INET: Int = 2
@@ -185,7 +187,9 @@ func netInit() {
     netUnlock(daif)
 
     _ = netTryDHCPv4(mac: m)
-    uartPuts("net: IPv6 link-local configured (EUI-64 from MAC)\n")
+    if !netApplyStaticIPv6Config(mac: m) {
+        uartPuts("net: IPv6 link-local configured (EUI-64 from MAC)\n")
+    }
 }
 
 private func netPrintIPv4(_ ip: IPv4) {
@@ -196,6 +200,169 @@ private func netPrintIPv4(_ ip: IPv4) {
     uartPutUInt(UInt64((ip >> 8) & 0xFF))
     uartPutc(0x2E)
     uartPutUInt(UInt64(ip & 0xFF))
+}
+
+private func netPrintHexNibble(_ n: UInt8) {
+    uartPutc(n < 10 ? 0x30 + n : 0x61 + (n - 10))
+}
+
+private func netPrintHex16(_ v: UInt16) {
+    netPrintHexNibble(UInt8((v >> 12) & 0xF))
+    netPrintHexNibble(UInt8((v >> 8) & 0xF))
+    netPrintHexNibble(UInt8((v >> 4) & 0xF))
+    netPrintHexNibble(UInt8(v & 0xF))
+}
+
+private func netPrintIPv6(_ ip: IPv6) {
+    let groups: [UInt16] = [
+        UInt16((ip.hi >> 48) & 0xFFFF),
+        UInt16((ip.hi >> 32) & 0xFFFF),
+        UInt16((ip.hi >> 16) & 0xFFFF),
+        UInt16(ip.hi & 0xFFFF),
+        UInt16((ip.lo >> 48) & 0xFFFF),
+        UInt16((ip.lo >> 32) & 0xFFFF),
+        UInt16((ip.lo >> 16) & 0xFFFF),
+        UInt16(ip.lo & 0xFFFF),
+    ]
+    for i in 0..<groups.count {
+        if i > 0 { uartPutc(0x3A) }
+        netPrintHex16(groups[i])
+    }
+}
+
+private func netIsSpace(_ c: UInt8) -> Bool {
+    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
+}
+
+private func netTrim(_ p: UnsafePointer<UInt8>, _ start: Int, _ end: Int) -> (Int, Int) {
+    var s = start
+    var e = end
+    while s < e && netIsSpace(p[s]) { s += 1 }
+    while e > s && netIsSpace(p[e - 1]) { e -= 1 }
+    return (s, e)
+}
+
+private func netStaticKeyEquals(_ p: UnsafePointer<UInt8>, _ start: Int, _ end: Int,
+                                _ key: StaticString) -> Bool {
+    let len = end - start
+    var ok = true
+    key.withUTF8Buffer { kb in
+        if kb.count != len {
+            ok = false
+            return
+        }
+        var i = 0
+        while i < len {
+            if p[start + i] != kb[i] {
+                ok = false
+                return
+            }
+            i += 1
+        }
+    }
+    return ok
+}
+
+private func netParseStaticIPv6Config(_ p: UnsafePointer<UInt8>, _ len: Int) -> (Bool, IPv6, UInt8, IPv6) {
+    var address: IPv6 = .zero
+    var gateway: IPv6 = .zero
+    var prefixLen: UInt8 = 0
+    var haveAddress = false
+    var haveGateway = false
+    var lineStart = 0
+
+    while lineStart < len {
+        var lineEnd = lineStart
+        while lineEnd < len && p[lineEnd] != 0x0A && p[lineEnd] != 0x0D {
+            lineEnd += 1
+        }
+        var commentEnd = lineStart
+        var contentEnd = lineEnd
+        while commentEnd < lineEnd {
+            if p[commentEnd] == 0x23 { // '#'
+                contentEnd = commentEnd
+                break
+            }
+            commentEnd += 1
+        }
+        let trimmed = netTrim(p, lineStart, contentEnd)
+        if trimmed.0 < trimmed.1 {
+            var eq = -1
+            var i = trimmed.0
+            while i < trimmed.1 {
+                if p[i] == 0x3D { // '='
+                    eq = i
+                    break
+                }
+                i += 1
+            }
+            if eq < 0 { return (false, .zero, 0, .zero) }
+            let key = netTrim(p, trimmed.0, eq)
+            let value = netTrim(p, eq + 1, trimmed.1)
+            if key.0 >= key.1 || value.0 >= value.1 {
+                return (false, .zero, 0, .zero)
+            }
+            if netStaticKeyEquals(p, key.0, key.1, "address") {
+                let parsed = ipv6ParseCIDR(p + value.0, value.1 - value.0)
+                if !parsed.0 || parsed.2 != 64 || parsed.1 == .zero {
+                    return (false, .zero, 0, .zero)
+                }
+                address = parsed.1
+                prefixLen = parsed.2
+                haveAddress = true
+            } else if netStaticKeyEquals(p, key.0, key.1, "gateway") {
+                let parsed = ipv6ParseText(p + value.0, value.1 - value.0)
+                if !parsed.0 || parsed.1 == .zero || !ipv6IsLinkLocal(parsed.1) {
+                    return (false, .zero, 0, .zero)
+                }
+                gateway = parsed.1
+                haveGateway = true
+            } else {
+                return (false, .zero, 0, .zero)
+            }
+        }
+        lineStart = lineEnd + 1
+        while lineStart < len && (p[lineStart] == 0x0A || p[lineStart] == 0x0D) {
+            lineStart += 1
+        }
+    }
+
+    if !haveAddress || !haveGateway { return (false, .zero, 0, .zero) }
+    return (true, address, prefixLen, gateway)
+}
+
+private func netApplyStaticIPv6Config(mac: MAC) -> Bool {
+    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 256) { raw in
+        let n = vfsReadStaticFile("/etc/swos/net-ipv6", into: raw.baseAddress, cap: raw.count)
+        if n == -2 {
+            return false
+        }
+        if n < 0 {
+            uartPuts("net: static IPv6 config read failed; using link-local\n")
+            return false
+        }
+        let parsed = netParseStaticIPv6Config(raw.baseAddress!, n)
+        if !parsed.0 {
+            uartPuts("net: static IPv6 config invalid; using link-local\n")
+            return false
+        }
+        let daif = netLock()
+        netLocalIPv6 = parsed.1
+        netIPv6PrefixLen = parsed.2
+        netGatewayIPv6 = parsed.3
+        netIPv6StaticConfigured = true
+        gNet = NetStack(mac: mac, ip: netLocalIP, ipv6: netLocalIPv6)
+        netUnlock(daif)
+
+        uartPuts("net-hc23 OK: static IPv6 ")
+        netPrintIPv6(parsed.1)
+        uartPuts("/")
+        uartPutUInt(UInt64(parsed.2))
+        uartPuts(" gateway ")
+        netPrintIPv6(parsed.3)
+        uartPuts(" applied\n")
+        return true
+    }
 }
 
 private func netAwaitDHCP(xid: UInt32, messageType: UInt8, timeoutMs: Int) -> DHCPLease {
@@ -585,11 +752,13 @@ func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointe
         netUnlock(daif)
         return netErrInval
     }
-    // Resolve via NDP cache; if missing, send NS and wait a bit.
-    var mac = gNet.ndp.lookup(dstIPv6)
+    let routeIPv6 = ipv6RouteTarget(local: netLocalIPv6, prefixLen: netIPv6PrefixLen,
+                                    gateway: netGatewayIPv6, dst: dstIPv6)
+    // Resolve the selected L2 next-hop via NDP; the IPv6 packet still targets dstIPv6.
+    var mac = gNet.ndp.lookup(routeIPv6)
     if mac == nil {
         // Send NS (solicited-node) and pump for a short time.
-        let nsFrameLen = gNet.buildNS(target: dstIPv6, out: virtioNetTxBuffer())
+        let nsFrameLen = gNet.buildNS(target: routeIPv6, out: virtioNetTxBuffer())
         virtioNetTxSubmit(frameLen: nsFrameLen)
         netUnlock(daif)
         let start = systemTicks
@@ -598,7 +767,7 @@ func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointe
         while systemTicks - start < ticks {
             netPump()
             daif = netLock()
-            if let m = gNet.ndp.lookup(dstIPv6) {
+            if let m = gNet.ndp.lookup(routeIPv6) {
                 mac = m
                 netUnlock(daif)
                 break
@@ -611,7 +780,7 @@ func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointe
     defer { netUnlock(daif) }
     if !netReady { return netErrDown }
     if !socketValidLocked(s) || sockFamily[s] != AF_INET6 { return netErrInval }
-    guard let dmac = mac ?? gNet.ndp.lookup(dstIPv6) else { return netErrUnreach }
+    guard let dmac = mac ?? gNet.ndp.lookup(routeIPv6) else { return netErrUnreach }
     if !sockBound[s] {
         sockPort[s] = allocEphemeralPortLocked(for: s); sockBound[s] = true
     }

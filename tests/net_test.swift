@@ -160,6 +160,37 @@ struct NetTest {
                               gatewayIP: 0xAC1F_0101, dstIP: 0xCB00_7105) == 0xCB00_7105,
               "IPv4 /32 route target still treats self as on-link")
 
+        // --- 9c. IPv6 parser and Hetzner-style next-hop selection ----------
+        let hcloud6Text = Array("2001:db8:0:3df1::1/64".utf8)
+        let hcloud6 = hcloud6Text.withUnsafeBufferPointer { bp in
+            ipv6ParseCIDR(bp.baseAddress!, bp.count)
+        }
+        check(hcloud6.0 && hcloud6.2 == 64, "IPv6 CIDR parser accepts compressed /64")
+        check(hcloud6.1.hi == 0x2001_0DB8_0000_3DF1 && hcloud6.1.lo == 0x0000_0000_0000_0001,
+              "IPv6 CIDR parser expands Hetzner-style address")
+        let gw6Text = Array("fe80::1".utf8)
+        let gw6 = gw6Text.withUnsafeBufferPointer { bp in
+            ipv6ParseText(bp.baseAddress!, bp.count)
+        }
+        check(gw6.0 && gw6.1.hi == 0xFE80_0000_0000_0000 && gw6.1.lo == 1,
+              "IPv6 parser accepts link-local gateway")
+        let same6 = IPv6(hi: 0x2001_0DB8_0000_3DF1, lo: 0x0000_0000_0000_00AA)
+        let off6 = IPv6(hi: 0x2001_0DB8_0000_4444, lo: 0x0000_0000_0000_0001)
+        check(ipv6RouteTarget(local: hcloud6.1, prefixLen: hcloud6.2,
+                              gateway: gw6.1, dst: same6) == same6,
+              "IPv6 route target sends same-/64 destinations directly")
+        check(ipv6RouteTarget(local: hcloud6.1, prefixLen: hcloud6.2,
+                              gateway: gw6.1, dst: off6) == gw6.1,
+              "IPv6 route target sends off-/64 destinations via gateway")
+        check(ipv6RouteTarget(local: hcloud6.1, prefixLen: hcloud6.2,
+                              gateway: gw6.1, dst: gw6.1) == gw6.1,
+              "IPv6 route target keeps link-local gateway direct")
+        let bad6Text = Array("2001:db8:::1".utf8)
+        let bad6 = bad6Text.withUnsafeBufferPointer { bp in
+            ipv6ParseText(bp.baseAddress!, bp.count)
+        }
+        check(!bad6.0, "IPv6 parser rejects invalid triple-colon text")
+
         // --- 10. inbound UDP datagram is reported with payload + src ------
         let pl: [UInt8] = Array("swos-udp".utf8)
         let inLen = craftUDP(inBuf, srcMac: gwMac, srcIP: gwIP, dstMac: ourMac, dstIP: ourIP,

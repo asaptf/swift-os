@@ -130,6 +130,140 @@ func ipv6IsLinkLocal(_ a: IPv6) -> Bool {
     return (a.hi >> 54) == 0x3FA   // 0xFE80 >> 6 == 0x3FA (10 bits)
 }
 
+func ipv6IsMulticast(_ a: IPv6) -> Bool {
+    a.b0 == 0xFF
+}
+
+func ipv6SamePrefix64(_ a: IPv6, _ b: IPv6) -> Bool {
+    a.hi == b.hi
+}
+
+func ipv6RouteTarget(local: IPv6, prefixLen: UInt8, gateway: IPv6, dst: IPv6) -> IPv6 {
+    if gateway == .zero || ipv6IsLinkLocal(dst) || ipv6IsMulticast(dst) {
+        return dst
+    }
+    if prefixLen == 64 && ipv6SamePrefix64(local, dst) {
+        return dst
+    }
+    return gateway
+}
+
+private func ipv6HexValue(_ c: UInt8) -> UInt16? {
+    if c >= 0x30 && c <= 0x39 { return UInt16(c - 0x30) }
+    if c >= 0x61 && c <= 0x66 { return UInt16(c - 0x61 + 10) }
+    if c >= 0x41 && c <= 0x46 { return UInt16(c - 0x41 + 10) }
+    return nil
+}
+
+func ipv6ParseText(_ p: UnsafePointer<UInt8>, _ len: Int) -> (Bool, IPv6) {
+    if len <= 0 { return (false, .zero) }
+    var groups = [UInt16](repeating: 0, count: 8)
+    var groupCount = 0
+    var compressAt = -1
+    var i = 0
+
+    if len >= 2 && p[0] == 0x3A && p[1] == 0x3A { // "::"
+        compressAt = 0
+        i = 2
+    } else if p[0] == 0x3A {
+        return (false, .zero)
+    }
+
+    while i < len {
+        if groupCount >= 8 { return (false, .zero) }
+        if p[i] == 0x3A {
+            if i + 1 < len && p[i + 1] == 0x3A && compressAt < 0 {
+                compressAt = groupCount
+                i += 2
+                continue
+            }
+            return (false, .zero)
+        }
+
+        var value: UInt16 = 0
+        var digits = 0
+        while i < len {
+            guard let h = ipv6HexValue(p[i]) else { break }
+            value = (value << 4) | h
+            digits += 1
+            if digits > 4 { return (false, .zero) }
+            i += 1
+        }
+        if digits == 0 { return (false, .zero) }
+        groups[groupCount] = value
+        groupCount += 1
+
+        if i == len { break }
+        if p[i] != 0x3A { return (false, .zero) }
+        if i + 1 < len && p[i + 1] == 0x3A {
+            if compressAt >= 0 { return (false, .zero) }
+            compressAt = groupCount
+            i += 2
+            continue
+        }
+        i += 1
+        if i == len { return (false, .zero) }
+    }
+
+    if compressAt >= 0 {
+        let zeros = 8 - groupCount
+        if zeros <= 0 { return (false, .zero) }
+        var j = groupCount - 1
+        while j >= compressAt {
+            groups[j + zeros] = groups[j]
+            groups[j] = 0
+            if j == 0 { break }
+            j -= 1
+        }
+        groupCount = 8
+    }
+
+    if groupCount != 8 { return (false, .zero) }
+    var hi: UInt64 = 0
+    var lo: UInt64 = 0
+    var g = 0
+    while g < 4 {
+        hi = (hi << 16) | UInt64(groups[g])
+        g += 1
+    }
+    while g < 8 {
+        lo = (lo << 16) | UInt64(groups[g])
+        g += 1
+    }
+    return (true, IPv6(hi: hi, lo: lo))
+}
+
+func ipv6ParseCIDR(_ p: UnsafePointer<UInt8>, _ len: Int) -> (Bool, IPv6, UInt8) {
+    if len <= 0 { return (false, .zero, 0) }
+    var slash = -1
+    var i = 0
+    while i < len {
+        if p[i] == 0x2F { // '/'
+            if slash >= 0 { return (false, .zero, 0) }
+            slash = i
+        }
+        i += 1
+    }
+    let addrLen = slash >= 0 ? slash : len
+    let parsed = ipv6ParseText(p, addrLen)
+    if !parsed.0 { return (false, .zero, 0) }
+    if slash < 0 { return (true, parsed.1, 128) }
+
+    var prefix: UInt = 0
+    var digits = 0
+    i = slash + 1
+    while i < len {
+        let c = p[i]
+        if c < 0x30 || c > 0x39 { return (false, .zero, 0) }
+        prefix = prefix * 10 + UInt(c - 0x30)
+        if prefix > 128 { return (false, .zero, 0) }
+        digits += 1
+        i += 1
+    }
+    if digits == 0 { return (false, .zero, 0) }
+    return (true, parsed.1, UInt8(prefix))
+}
+
 @inline(__always) func ip6Version(_ p: UnsafeRawPointer) -> UInt8 { b8(p, 0) >> 4 }
 @inline(__always) func ip6TrafficClass(_ p: UnsafeRawPointer) -> UInt8 {
     ((b8(p, 0) & 0x0F) << 4) | (b8(p, 1) >> 4)

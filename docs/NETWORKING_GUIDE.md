@@ -155,6 +155,31 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
   -kernel build/kernel.elf
 ```
 
+### Static Cloud IPv6
+
+For cloud providers that assign IPv4 by DHCP but require a static Primary IPv6
+address, stage `/etc/swos/net-ipv6` at image build time:
+
+```sh
+cat >support/network/net-ipv6 <<'EOF'
+address=2001:db8:0:3df1::1/64
+gateway=fe80::1
+EOF
+make NET_IPV6_CONFIG_FILE=support/network/net-ipv6 base-image
+```
+
+The kernel accepts only an IPv6 `/64` address and a link-local gateway. Missing
+config keeps the default EUI-64 link-local behavior; invalid config is ignored
+with a serial warning. A successful boot logs `net-hc23 OK: static IPv6 ...`.
+This config prepares the dual-stack route/neighbor path; SSHD-over-IPv6 remains
+a separate acceptance step.
+
+Proof:
+
+```sh
+make net-static-ipv6-test
+```
+
 ### SSHD Session Profile
 
 Use this profile to validate host-to-guest SSH reachability through a minimal
@@ -604,6 +629,7 @@ Run the narrowest proof for the path you changed:
 | HTTP zero-copy throughput smoke | `bash ./tests/net_zero_copy_throughput_test.sh` |
 | TCP echo | `./tests/tcp_echo_test.sh` |
 | UDP echo | `./tests/udp_echo_test.sh` |
+| Static cloud IPv6 config | `make net-static-ipv6-test` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |

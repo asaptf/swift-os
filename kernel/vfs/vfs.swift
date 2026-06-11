@@ -3056,6 +3056,59 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
     return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
 }
 
+/// Read a small kernel-owned config file from the mounted VFS namespace.
+/// This bypasses user capability checks and is intended only for boot-time
+/// kernel configuration after `vfsInit()` has mounted the signed base image.
+func vfsReadStaticFile(_ path: StaticString,
+                       into dst: UnsafeMutableRawPointer?,
+                       cap: Int) -> Int {
+    if cap < 0 { return errInvalid }
+    var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
+    path.withUTF8Buffer { b in
+        for i in 0..<b.count { name[i] = b[i] }
+    }
+
+    return name.withUnsafeBufferPointer { bp -> Int in
+        let daif = vfsLock()
+        let node = resolve(bp.baseAddress!)
+        if node < 0 {
+            vfsUnlock(daif)
+            return errNoEntry
+        }
+        if nodes[node].isDir {
+            vfsUnlock(daif)
+            return errIsDir
+        }
+        let len = nodes[node].dataLen
+        if len > cap {
+            vfsUnlock(daif)
+            return errNoSpace
+        }
+        guard let out = dst else {
+            vfsUnlock(daif)
+            return len == 0 ? 0 : errInvalid
+        }
+        if nodes[node].onDisk {
+            if !vfsVerifyNodeContent(node) {
+                vfsUnlock(daif)
+                return errAccess
+            }
+            let image = nodes[node].diskImage
+            let off = nodes[node].diskOffset
+            vfsUnlock(daif)
+            return vfsImageReadRange(image, UInt64(off), out, UInt32(len)) == 0 ? len : errInvalid
+        }
+        let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)
+        var i = 0
+        while i < len {
+            out.storeBytes(of: src![i], toByteOffset: i, as: UInt8.self)
+            i += 1
+        }
+        vfsUnlock(daif)
+        return len
+    }
+}
+
 /// I2a: on-disk extent of a disk-backed, readable regular file open on `fd`, for
 /// file-backed mmap. Returns (ok, diskByteOffset, dataLen); ok is false unless
 /// `fd` is a readable, disk-backed (read-only base image) regular file. Authority
