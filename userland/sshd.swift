@@ -20,9 +20,14 @@ private let maxPayloadLen = 7800
 private let sshBlockSize = 8
 private let maxExecCommandLen = 512
 private let maxExecInputLen = 512
+private let maxExecOutputLen = 1536
 private let maxExecArgs = 8
 private let spawnRightRead: UInt32 = 1 << 0
 private let spawnRightWrite: UInt32 = 1 << 1
+private let oReadOnly: Int32 = 0
+private let oWriteOnly: Int32 = 1
+private let oCreate: Int32 = 0x40
+private let oTrunc: Int32 = 0x80
 
 private let msgDisconnect: UInt8 = 1
 private let msgServiceRequest: UInt8 = 5
@@ -889,23 +894,21 @@ private func runExecCommand(_ command: SSHStringView,
                             _ input: UnsafeRawPointer?,
                             _ inputLen: Int,
                             _ output: UnsafeMutableRawPointer,
-                            _ outputCap: Int) -> (Int, UInt32) {
+                            _ outputCap: Int) -> (Int, UInt32, Bool) {
     guard command.len > 0,
           command.len <= maxExecCommandLen,
           let path = firstExecToken(command),
           execPathIsAllowed(path),
           execArgCount(command) <= maxExecArgs else {
         let n = copyStaticToOutput("sshd: unsupported exec command\n", output, outputCap)
-        return (n, 127)
+        return (n, 127, false)
     }
 
-    var outFds = (Int32(0), Int32(0))
-    let outPipeRc = withUnsafeMutablePointer(to: &outFds) { fp -> Int32 in
-        swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
-    }
-    if outPipeRc != 0 {
-        let n = copyStaticToOutput("sshd: pipe failed\n", output, outputCap)
-        return (n, 126)
+    _ = swiftos_unlink("/tmp/swos-sshd-output")
+    let outFd = swiftos_open("/tmp/swos-sshd-output", oWriteOnly | oCreate | oTrunc)
+    if outFd < 0 {
+        let n = copyStaticToOutput("sshd: output capture failed\n", output, outputCap)
+        return (n, 126, false)
     }
 
     var inFds = (Int32(0), Int32(0))
@@ -913,25 +916,23 @@ private func runExecCommand(_ command: SSHStringView,
         swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
     }
     if inPipeRc != 0 {
-        _ = swiftos_close(outFds.0)
-        _ = swiftos_close(outFds.1)
+        _ = swiftos_close(outFd)
+        _ = swiftos_unlink("/tmp/swos-sshd-output")
         let n = copyStaticToOutput("sshd: pipe failed\n", output, outputCap)
-        return (n, 126)
+        return (n, 126, false)
     }
 
-    let outReadFd = outFds.0
-    let outWriteFd = outFds.1
     let inReadFd = inFds.0
     let inWriteFd = inFds.1
     var status: UInt32 = 126
     if inputLen > 0 {
         guard let input = input, writeExact(inWriteFd, input, inputLen) else {
-            _ = swiftos_close(outReadFd)
-            _ = swiftos_close(outWriteFd)
+            _ = swiftos_close(outFd)
             _ = swiftos_close(inReadFd)
             _ = swiftos_close(inWriteFd)
+            _ = swiftos_unlink("/tmp/swos-sshd-output")
             let n = copyStaticToOutput("sshd: stdin pipe failed\n", output, outputCap)
-            return (n, 126)
+            return (n, 126, false)
         }
     }
     _ = swiftos_close(inWriteFd)
@@ -971,11 +972,11 @@ private func runExecCommand(_ command: SSHStringView,
         hp.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
         hp.storeBytes(of: spawnRightRead, toByteOffset: 8, as: UInt32.self)
         hp.storeBytes(of: UInt32(0), toByteOffset: 12, as: UInt32.self)
-        hp.storeBytes(of: outWriteFd, toByteOffset: 16, as: Int32.self)
+        hp.storeBytes(of: outFd, toByteOffset: 16, as: Int32.self)
         hp.storeBytes(of: Int32(1), toByteOffset: 20, as: Int32.self)
         hp.storeBytes(of: spawnRightWrite, toByteOffset: 24, as: UInt32.self)
         hp.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
-        hp.storeBytes(of: outWriteFd, toByteOffset: 32, as: Int32.self)
+        hp.storeBytes(of: outFd, toByteOffset: 32, as: Int32.self)
         hp.storeBytes(of: Int32(2), toByteOffset: 36, as: Int32.self)
         hp.storeBytes(of: spawnRightWrite, toByteOffset: 40, as: UInt32.self)
         hp.storeBytes(of: UInt32(0), toByteOffset: 44, as: UInt32.self)
@@ -989,16 +990,27 @@ private func runExecCommand(_ command: SSHStringView,
         status = rc >= 0 ? UInt32(rc) : 126
       }}}
 
-    _ = swiftos_close(outWriteFd)
+    _ = swiftos_close(outFd)
     _ = swiftos_close(inReadFd)
+
+    let readFd = swiftos_open("/tmp/swos-sshd-output", oReadOnly)
+    if readFd < 0 {
+        _ = swiftos_unlink("/tmp/swos-sshd-output")
+        let n = copyStaticToOutput("sshd: output readback failed\n", output, outputCap)
+        return (n, 126, false)
+    }
     var used = 0
     while used < outputCap {
-        let r = swiftos_read(outReadFd, output + used, UInt(outputCap - used))
+        let r = swiftos_read(readFd, output + used, UInt(outputCap - used))
         if r <= 0 { break }
         used += Int(r)
     }
-    _ = swiftos_close(outReadFd)
-    return (used, status)
+    let truncated = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Bool in
+        swiftos_read(readFd, extra.baseAddress!, 1) > 0
+    }
+    _ = swiftos_close(readFd)
+    _ = swiftos_unlink("/tmp/swos-sshd-output")
+    return (used, status, truncated)
 }
 
 private func sendExecResult(_ fd: Int32,
@@ -1009,44 +1021,51 @@ private func sendExecResult(_ fd: Int32,
                             _ command: SSHStringView,
                             _ input: UnsafeRawPointer?,
                             _ inputLen: Int) -> Bool {
-    withUnsafeTemporaryAllocation(byteCount: 4096, alignment: 8) { out -> Bool in
+    withUnsafeTemporaryAllocation(byteCount: maxExecOutputLen, alignment: 8) { out -> Bool in
         if inputLen > 0 {
             swiftos_puts("sshd: exec stdin bytes ")
             printUInt(UInt(inputLen))
             swiftos_puts("\n")
         }
         let result = runExecCommand(command, input, inputLen, out.baseAddress!, out.count)
-        var w = SSHWriter(p: packet, cap: cap)
         if result.0 > 0 {
-            guard w.u8(msgChannelData),
-                  w.u32(clientChannel),
-                  w.string(out.baseAddress!, result.0),
-                  sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
-                return false
+            var dataWriter = SSHWriter(p: packet, cap: cap)
+            guard dataWriter.u8(msgChannelData),
+                  dataWriter.u32(clientChannel),
+                  dataWriter.string(out.baseAddress!, result.0),
+                  sendEncryptedChachaPacket(fd, packet, dataWriter.len,
+                                            serverKey, &serverSeq) else {
+                    return false
             }
         }
+        swiftos_puts("sshd: exec output bytes ")
+        printUInt(UInt(result.0))
+        swiftos_puts("\n")
+        if result.2 {
+            swiftos_puts("sshd: exec output truncated\n")
+        }
 
-        w = SSHWriter(p: packet, cap: cap)
-        guard w.u8(msgChannelEof),
-              w.u32(clientChannel),
-              sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+        var eofWriter = SSHWriter(p: packet, cap: cap)
+        guard eofWriter.u8(msgChannelEof),
+              eofWriter.u32(clientChannel),
+              sendEncryptedChachaPacket(fd, packet, eofWriter.len, serverKey, &serverSeq) else {
             return false
         }
 
-        w = SSHWriter(p: packet, cap: cap)
-        guard w.u8(msgChannelRequest),
-              w.u32(clientChannel),
-              writerStringStatic(&w, "exit-status"),
-              w.u8(0),
-              w.u32(result.1),
-              sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+        var statusWriter = SSHWriter(p: packet, cap: cap)
+        guard statusWriter.u8(msgChannelRequest),
+              statusWriter.u32(clientChannel),
+              writerStringStatic(&statusWriter, "exit-status"),
+              statusWriter.u8(0),
+              statusWriter.u32(result.1),
+              sendEncryptedChachaPacket(fd, packet, statusWriter.len, serverKey, &serverSeq) else {
             return false
         }
 
-        w = SSHWriter(p: packet, cap: cap)
-        guard w.u8(msgChannelClose),
-              w.u32(clientChannel),
-              sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+        var closeWriter = SSHWriter(p: packet, cap: cap)
+        guard closeWriter.u8(msgChannelClose),
+              closeWriter.u32(clientChannel),
+              sendEncryptedChachaPacket(fd, packet, closeWriter.len, serverKey, &serverSeq) else {
             return false
         }
 
