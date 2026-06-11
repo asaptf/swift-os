@@ -21,10 +21,24 @@ service-oriented.
 | Userland | Static native SwiftOS programs plus busybox shell compatibility |
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
-| Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the seven-package seed ports repository fixture |
-| AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
+| Networking | virtio-net, TCP/UDP/DNS smoke paths, static HTTP server, LLM serving |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the eleven-package seed ports repository fixture |
+| AI hosting | Local TinyStories inference and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
+
+## Use These Notes By Role
+
+Treat these release notes as the product snapshot for the checked-in tree. They
+summarize what can be demonstrated today, then point to the guide that contains
+the exact command and evidence requirement.
+
+| Role | Read For | Then Verify With |
+| --- | --- | --- |
+| First-time evaluator | Current product shape, supported boot targets, and known limits | [Getting Started](GETTING_STARTED.md) plus `./tests/boot_test.sh` |
+| Release owner | Candidate scope, package/model/update status, and rollback boundaries | [Deployment Guide](DEPLOYMENT_GUIDE.md), [Update And Rollback Guide](UPDATE_GUIDE.md), and the validation matrix below |
+| Application or package developer | Current ABI, static linking, package fixtures, and source-port state | [Developer Guide](DEVELOPER_GUIDE.md), [API Reference](API_REFERENCE.md), and [Package Guide](PACKAGE_GUIDE.md) |
+| Operations or support engineer | User-visible commands, networking/services, evidence, and failure limits | [Operations Guide](OPERATIONS_GUIDE.md), [Troubleshooting](TROUBLESHOOTING.md), and [Support Guide](SUPPORT_GUIDE.md) |
+| Security reviewer | Capability, handle, package, and driver-service guarantees versus gaps | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md), and [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 
 ## Highlights
 
@@ -45,7 +59,7 @@ service-oriented.
 ### User Experience
 
 - Starts `/bin/console-login` on the serial console.
-- Seeds three demo accounts: `root`, `user`, and `guest`.
+- Seeds three accounts: `root`, `user`, and `guest`.
 - Provides a busybox `ash` shell for interactive use.
 - Ships native SwiftOS tools for common workflows: `ls`, `cat`, `echo`, `pwd`,
   `ps`, `top`, `id`, `mkdir`, `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`,
@@ -95,7 +109,8 @@ service-oriented.
   `pkg install libarchive`,
   `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
   `pkg install nginx`, and `pkg install sqlite`, Lua smoke commands,
-  `minigzip`, bzip2, zstd, and xz round trips, `bsdtar` tar create/list smoke, the CA bundle marker, a
+  `minigzip`, bzip2, zstd, and xz round trips, `bsdtar` tar create/list smoke,
+  the CA bundle marker, a
   `pcre2grep` regex match, the tzdata zoneinfo marker, nginx version/marker
   smoke, and a SQLite in-memory query with
   `make package-ports-seed-repo-install-test`.
@@ -117,7 +132,7 @@ service-oriented.
 - Ships `/bin/httpd` for static files under `/www`.
 - Ships `/bin/tcpecho`, `/bin/udpecho`, `/bin/tcpget`, and `/bin/nslookup` for
   network validation.
-- Ships `/bin/tlsget` as a TLS 1.3 client demo path. Production certificate
+- Ships `/bin/tlsget` as a TLS 1.3 client smoke path. Production certificate
   validation is not complete.
 - `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080, so run one at a
   time.
@@ -125,7 +140,7 @@ service-oriented.
 ### AI Hosting
 
 - `/bin/llm` runs a local TinyStories completion from the small `stories260K`
-  demo model.
+  model.
 - `/bin/llmd` serves TinyStories completions over HTTP on TCP 8080.
 - The default server resolves the verified bundle rooted at
   `/models/stories15M`.
@@ -218,12 +233,12 @@ llmd: served
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.
-- TLS client support is a demo path. Treat production trust validation as
+- TLS client support is a smoke path. Treat production trust validation as
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,
   not a throughput target.
 - The deliberately corrupt `/models/stories15M/2` generation is expected in the
-  checked-in demo image. Its manifest signature is valid, but its model payload
+  checked-in model image. Its manifest signature is valid, but its model payload
   hash fails, proving fallback to generation 1.
 - Model-bundle manifests are signed with the development Ed25519 trust root
   staged as `/etc/swos/model-signing.pub`. Production key rotation and

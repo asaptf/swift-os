@@ -35,6 +35,54 @@ focused test output, and host client output for network services.
 There is no persistent log store in the guest. `/tmp` is RAM scratch and is lost
 on reboot. Capture logs on the host when the evidence matters.
 
+## Choose An Observation Set
+
+Collect the smallest set of signals that answers the question. Prefer host-side
+files for reports because guest `/tmp` does not survive reboot.
+
+| Question | Signals to capture | Suggested files | Focused proof |
+| --- | --- | --- | --- |
+| Did the system boot far enough? | Boot markers, absence of forbidden failure markers | `support/boot-test.txt`, `support/serial.log` | `./tests/boot_test.sh` |
+| Which account and authority ran the command? | `id`, login transcript, capability denial line | `support/guest-id.txt`, serial excerpt | `./tests/console_login_test.sh`, `./tests/cap_enforce_test.sh` |
+| What was running and how much memory was visible? | `ps -f`, `top -b -n 2 -d 1` | `support/processes.txt`, `support/top.txt` | `./tests/top_test.sh` |
+| Did a service become ready? | Service-prefixed readiness marker and host-visible check | `support/serial.log`, `support/curl-*.txt` or `support/nc-*.txt` | Service-specific test |
+| Did AI serving verify the right model and respond? | Bundle verification lines, `/health`, `/completion`, `/metrics` | `support/llm-serve-test.txt`, `support/llmd-*.txt` | `./tests/llm_serve_test.sh` |
+| Did networking fail before or after the guest service? | QEMU network profile, `id`, readiness marker, host client output | `support/network-qemu.txt`, `support/curl-*.txt` | Relevant networking test |
+| Did an update slot roll back? | Stage/activate/confirm output, loader slot markers, boot-attempt lines | `support/update-*.txt`, `support/uefi-serial.log` | Matching A/B update test |
+| Did the kernel panic or hang? | First fatal line, register dump, last healthy marker, QEMU command | `support/panic-context.txt`, `support/serial.log` | Reproducer command plus panic context |
+
+## Operator Triage Order
+
+When a SwiftOS run looks unhealthy, collect signals in this order before
+changing the image or rerunning a different profile:
+
+1. Prove the boot path reached the expected boundary: `./tests/boot_test.sh`,
+   `make disk-run`, or the captured QEMU serial log.
+2. Check the last boot health marker reached. If `swift-os login:` is absent,
+   stay in the boot-health section below.
+3. After login, record identity and authority:
+
+   ```sh
+   id
+   ```
+
+4. Record process and resource state:
+
+   ```sh
+   ps -f
+   top -b -n 2 -d 1
+   ```
+
+5. For a service issue, require both a guest readiness marker and a host-visible
+   check such as `curl`, a TCP echo, or `/health`.
+6. For a panic or hang, keep the first fatal line, the previous boot/service
+   markers, the QEMU command, and the exact commit.
+
+This order avoids mixing unrelated evidence. A missing boot marker, a missing
+capability bit, a stopped process, and a host-forwarding failure are different
+classes of problem even when they all look like "the service is down" from the
+outside.
+
 ## Capture Serial Output
 
 For a manual direct boot:
@@ -76,7 +124,7 @@ These markers tell you how far the system got.
 | `[I] platform: M9 OK: hardware discovered from device tree` | Device tree platform discovery succeeded |
 | `M11c: read-only base mounted from disk` | Packed base image was mounted from virtio-blk |
 | `M11d: exec loaded from disk /bin/...` | User program loaded through VFS |
-| `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim demo passed |
+| `reclaim OK: no frame leak across fork/exec/exit/reap` | Process teardown reclaim self-test passed |
 | `swift-os M12c: starting console-login (init)` | Login init was launched |
 | `drvsvc: C5a supervisor starting` | C5a driver-service supervisor smoke started |
 | `drvsvc: C5c device manifest matched` | Registry metadata matched the expected pseudo or virtio-input manifest |

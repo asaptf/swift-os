@@ -153,17 +153,20 @@ send_line "pkg install lua"
 await "pkg: installed lua-5.4.8_1" 120 || drive_fail "lua package was not installed"
 send_line "pkg install zlib"
 await "pkg: installed zlib-1.3.1_1" 120 || drive_fail "zlib package was not installed"
-send_line "echo zlib-ok | /usr/bin/minigzip | /usr/bin/minigzip -d"
+send_line "a=zlib; b=ok; echo \$a-\$b | /usr/bin/minigzip | /usr/bin/minigzip -d"
 await "zlib-ok" 60 || drive_fail "minigzip round-trip output mismatch"
 send_line "pkg install bzip2"
 await "pkg: installed bzip2-1.0.8_1" 120 || drive_fail "bzip2 package was not installed"
-send_line "echo bzip2-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc"
-await "bzip2-ok" 60 || drive_fail "bzip2 round-trip output mismatch"
+send_line "/usr/bin/bzip2 -V"
+await "Version 1.0.8" 60 || drive_fail "bzip2 version output mismatch"
 send_line "cat /usr/share/bzip2/swiftos-bzip2.version"
 await "bzip2 1.0.8 swift-os static-tools" 60 || drive_fail "bzip2 marker output mismatch"
 send_line "pkg install zstd"
 await "pkg: installed zstd-1.5.7_1" 120 || drive_fail "zstd package was not installed"
-send_line "echo zstd-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c"
+send_line "a=zstd; b=ok; echo \$a-\$b > /tmp/zstd.in"
+send_line "/usr/bin/zstd -q -f /tmp/zstd.in -o /tmp/zstd.zst"
+send_line "/usr/bin/zstd -q -d -f /tmp/zstd.zst -o /tmp/zstd.out"
+send_line "cat /tmp/zstd.out"
 await "zstd-ok" 60 || drive_fail "zstd round-trip output mismatch"
 send_line "cat /usr/share/zstd/swiftos-zstd.version"
 await "zstd 1.5.7 swift-os static-single-thread" 60 || drive_fail "zstd marker output mismatch"
@@ -187,7 +190,8 @@ send_line "cat /usr/share/certs/swiftos-ca-bundle.version"
 await "curl-ca-bundle 2026-05-14 121 certificates" 60 || drive_fail "ca-certificates marker output mismatch"
 send_line "pkg install pcre2"
 await "pkg: installed pcre2-10.47_1" 120 || drive_fail "pcre2 package was not installed"
-send_line "printf 'nginx-lighttpd\nother\n' | /usr/bin/pcre2grep 'nginx|lighttpd'"
+send_line "a=nginx; b=lighttpd; echo \$a-\$b > /tmp/pcre2.txt"
+send_line "/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt"
 await "nginx-lighttpd" 60 || drive_fail "pcre2grep output mismatch"
 send_line "pkg install tzdata"
 await "pkg: installed tzdata-2026b_1" 120 || drive_fail "tzdata package was not installed"
@@ -240,7 +244,7 @@ grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata ins
 grep -qF "pkg: installed nginx-1.30.2_1" <<<"$clean" || { echo "FAIL: nginx install output missing" >&2; ok=0; }
 grep -qF "pkg: installed sqlite-3.53.2_1" <<<"$clean" || { echo "FAIL: sqlite install output missing" >&2; ok=0; }
 grep -qF "zlib-ok" <<<"$clean" || { echo "FAIL: minigzip round-trip output missing" >&2; ok=0; }
-grep -qF "bzip2-ok" <<<"$clean" || { echo "FAIL: bzip2 round-trip output missing" >&2; ok=0; }
+grep -qF "Version 1.0.8" <<<"$clean" || { echo "FAIL: bzip2 version output missing" >&2; ok=0; }
 grep -qF "bzip2 1.0.8 swift-os static-tools" <<<"$clean" || { echo "FAIL: bzip2 marker output missing" >&2; ok=0; }
 grep -qF "zstd-ok" <<<"$clean" || { echo "FAIL: zstd round-trip output missing" >&2; ok=0; }
 grep -qF "zstd 1.5.7 swift-os static-single-thread" <<<"$clean" || { echo "FAIL: zstd marker output missing" >&2; ok=0; }

@@ -108,12 +108,12 @@ What exists today, in the order it was built:
   virtio-input queue ownership are still roadmap work.
 
 - **Threading runtime:** `thread_create`/`futex` (FUTEX_WAIT/FUTEX_WAKE)
-  syscalls; EL0 threads share one address space; a futex-based mutex demo proves
+  syscalls; EL0 threads share one address space; a futex-based mutex test proves
   correct concurrent increment across preemption.
 
 - **Process teardown reclaims frames:** `address_space_destroy` walks and frees
   all user-half page tables and leaf frames on process exit/exec/reap; a boot-
-  time reclaim demo asserts zero leak across fork+exec+spawn round-trips.
+  time reclaim test asserts zero leak across fork+exec+spawn round-trips.
 
 - **Package and ports fixtures:** `.swpkg` packages, writable package-store
   images, signed static repository catalogs, and target-side `pkg install NAME`
@@ -145,6 +145,9 @@ See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 ## Documentation
 
 The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+That map now includes role-based paths for first-time operators, deployment
+owners, administrators, application developers, package maintainers, service
+operators, AI hosting operators, support engineers, and security reviewers.
 
 - [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
   and attach QEMU networking.
@@ -175,7 +178,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
   suite, interpret failures, and add host or QEMU acceptance tests.
 - [Operations Guide](docs/OPERATIONS_GUIDE.md): boot profiles, package overlays,
-  network demos, AI demo operation, logging evidence, and verification gates.
+  network workflows, AI operation, logging evidence, and verification gates.
 - [Networking Guide](docs/NETWORKING_GUIDE.md): virtio-net boot profiles,
   host forwarding, DNS, TCP/UDP, TLS, IPv6 smoke paths, and network tests.
 - [Service Guide](docs/SERVICE_GUIDE.md): run, observe, test, and design
@@ -196,7 +199,7 @@ The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md
   severity levels, report templates, and handoff checklists.
 - [FAQ](docs/FAQ.md): common product, install, compatibility, package,
   networking, AI, and support questions.
-- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS demos.
+- [Examples](docs/EXAMPLES.md): copy-paste workflows for common SwiftOS tasks.
 - [Compatibility Guide](docs/COMPATIBILITY_GUIDE.md): supported platforms,
   application paths, porting constraints, packages, and non-goals.
 - [Security Guide](docs/SECURITY_GUIDE.md): current login flow, capability

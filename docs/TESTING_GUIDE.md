@@ -42,6 +42,24 @@ It builds the kernel and key artifacts, runs host-side Swift tests, boots QEMU
 through direct and UEFI paths, exercises networking and package flows, and runs
 the current user-visible command and service checks.
 
+## Choose A Test Scope
+
+Use the narrowest scope that proves the change, then broaden when the change
+touches shared behavior or a release candidate.
+
+| Change | First gate | Broaden when |
+| --- | --- | --- |
+| Documentation only | `git diff --check`, `make docs-test` | Links, commands, or examples depend on changed code |
+| Host-only parser, manifest, or crypto logic | Host Swift unit test for that file | The logic feeds a booting user-visible path |
+| Kernel or userland build rule | `make build` | The artifact is staged into `build/base.img` or booted |
+| Base-image contents or accounts | `make base-image`, then the focused VFS/login test | A release candidate or shared boot path is affected |
+| One guest command | Command-specific QEMU test | Shell, VFS, process, or capability behavior changes broadly |
+| Network service or client | Service-specific network test | Shared socket, virtio-net, DNS, TLS, or polling behavior changes |
+| Package or ports workflow | Matching package/ports make target | Repository metadata, package-store activation, or seed catalog changes |
+| Update-store or kernel-slot workflow | Matching `ab_*` or `uefi_k*` test | Boot selection, rollback, or release-candidate policy changes |
+| Security boundary | Focused capability, handle, mmap, package, or C5 test | The boundary touches syscall, VFS, process, or driver-service internals |
+| Release candidate | `make test` plus the deployment validation matrix | Always |
+
 ## Quick Start
 
 For a clean local confidence pass:
@@ -62,11 +80,11 @@ For documentation-only changes, use:
 
 ```sh
 git diff --check
-make build
-./tests/boot_test.sh
+make docs-test
 ```
 
-Also run a Markdown link/fence check when docs add or move links.
+Run the focused build or QEMU test too when a documentation change describes a
+new or changed executable workflow.
 
 ## Required Host Tools
 
@@ -201,7 +219,7 @@ Run the narrowest test that proves the path you changed.
 | TCP client connect | `./tests/tcp_connect_test.sh` |
 | UDP echo | `./tests/udp_echo_test.sh` |
 | DNS resolver | `./tests/dns_test.sh` |
-| TLS client demo path | `./tests/tls_test.sh` |
+| TLS client smoke path | `./tests/tls_test.sh` |
 | IPv6 smoke | `./tests/ipv6_smoke_test.sh` |
 | LLM local inference | `./tests/llm_run_test.sh` |
 | LLM HTTP serving | `./tests/llm_serve_test.sh` |
@@ -261,7 +279,7 @@ Typical script pattern:
 1. Verify required artifacts.
 2. Start `qemu-system-aarch64`.
 3. Capture serial output to a temp log.
-4. Drive the tty demo and console login when needed.
+4. Drive the TTY smoke prompt and console login when needed.
 5. Run a guest command or service.
 6. Use host tools such as `curl`.
 7. Assert serial markers and host outputs.
@@ -308,7 +326,7 @@ Notes:
   time.
 - Darwin/QEMU host-forwarding behavior can limit some IPv6 end-to-end tests.
   The host `net_test` covers protocol logic more aggressively.
-- TLS support is a demo path; certificate trust policy is not production-ready.
+- TLS support is a smoke path; certificate trust policy is not production-ready.
 
 Use [Networking Guide](NETWORKING_GUIDE.md) for the complete runbook.
 
@@ -452,7 +470,7 @@ Useful questions:
 
 1. Did the artifact exist before QEMU started?
 2. Did the kernel reach the expected boot marker?
-3. Did the tty demo complete?
+3. Did the TTY smoke prompt complete?
 4. Did `swift-os login:` appear?
 5. Did the shell start?
 6. Did the guest command print its readiness marker?

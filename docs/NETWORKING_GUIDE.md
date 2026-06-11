@@ -9,7 +9,7 @@ SwiftOS networking today is real but intentionally small: a QEMU `virt`
 virtio-net device, an in-kernel pure-Swift TCP/IP stack, capability-gated socket
 syscalls, static guest addressing, and a set of native userland network tools.
 It is enough to serve static files, serve local TinyStories completions, run TCP
-and UDP echo demos, resolve DNS, and exercise the TLS 1.3 client path.
+and UDP echo services, resolve DNS, and exercise the TLS 1.3 client path.
 
 Use this guide with:
 
@@ -59,12 +59,41 @@ The resulting QEMU session needs three pieces:
 `make run` does not attach a NIC by default, so manual network sessions use an
 explicit QEMU command.
 
+## Choose A Network Workflow
+
+Start from the traffic direction and service shape. Inbound services need
+`hostfwd`; guest-initiated clients only need a slirp NIC. All socket commands
+need a login context with `capNet`, so the examples below assume `root`.
+
+| Goal | QEMU profile | Guest command | Host action | Proof |
+| --- | --- | --- | --- | --- |
+| Serve static files | HTTP-or-LLM profile | `/bin/httpd` | `curl -fsS http://127.0.0.1:8080/` | `./tests/httpd_test.sh` |
+| Serve local AI completions | HTTP-or-LLM profile | `/bin/llmd` | `curl -fsS -X POST --data "Once upon a time" http://127.0.0.1:8080/completion` | `./tests/llm_serve_test.sh` |
+| Test one TCP request | Echo profile | `/bin/tcpecho` | `printf 'swos tcp\n' | nc -w8 127.0.0.1 5555` | `./tests/tcp_echo_test.sh` |
+| Test one UDP datagram | Echo profile | `/bin/udpecho` | `printf 'swos udp' | nc -u -w2 127.0.0.1 5555` | `./tests/udp_echo_test.sh` |
+| Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
+| Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
+| Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
+| Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
+
+Operator flow:
+
+1. Build `build/kernel.elf`, `build/base.img`, and `build/virt.dtb`.
+2. Boot the smallest QEMU profile that matches the workflow.
+3. Log in as `root`.
+4. Wait for the readiness marker before sending host traffic.
+5. Save the serial log and host command output when debugging.
+6. Run the focused proof before broadening to `make test`.
+
+Do not run `/bin/httpd` and `/bin/llmd` together in the same guest; both bind
+TCP 8080. The echo programs are one-shot and exit after a single request.
+
 ## QEMU Network Profiles
 
-### All-In-One Demo Profile
+### All-In-One Validation Profile
 
-This profile exposes the HTTP and echo demo ports and is the best starting
-point for manual demos:
+This profile exposes the HTTP and echo service ports and is the best starting
+point for manual validation:
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -154,7 +183,7 @@ cannot provide true IPv6 host forwarding.
 
 ## Login And Capability
 
-After boot, complete the tty demo and log in as `root`:
+After boot, complete the interactive TTY smoke prompt and log in as `root`:
 
 ```text
 swift-os login: root
@@ -400,7 +429,7 @@ from the guest:
 ```
 
 Certificate verification is deliberately incomplete in the current branch. Use
-`tlsget` as a runtime and interoperability demo, not as a production trust
+`tlsget` as a runtime smoke and interoperability path, not as a production trust
 decision.
 
 Proof:
@@ -437,7 +466,7 @@ Run the narrowest proof for the path you changed:
 | UDP echo | `./tests/udp_echo_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
-| TLS client demo | `./tests/tls_test.sh` |
+| TLS client smoke | `./tests/tls_test.sh` |
 | IPv6 link-local/NDP | `./tests/ipv6_smoke_test.sh` |
 | IPv6 TCP path | `./tests/ipv6_tcp_echo_test.sh` |
 | IPv6 UDP path | `./tests/ipv6_udp_echo_test.sh` |
@@ -465,16 +494,16 @@ and collect serial evidence with [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md
 
 ## Security And Product Limits
 
-Current limits that matter when exposing a SwiftOS network demo:
+Current limits that matter when exposing a SwiftOS network service:
 
 - `capNet` is coarse. It grants the ability to create sockets generally, not a
   specific port, address, or protocol.
 - There is no target-side firewall command, routing table command, or DHCP
   client workflow yet.
 - TLS certificate verification is not production-ready.
-- `httpd` is an HTTP static-file demo, not a hardened Internet-facing web
+- `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.
-- `/bin/llmd` is a foreground demo service with no service manager or restart
+- `/bin/llmd` is a foreground service with no service manager or restart
   policy yet.
 - The writable filesystem is RAM-backed `/tmp`; no network service state
   persists across reboot unless it is built into the base image or provided by a
@@ -483,7 +512,7 @@ Current limits that matter when exposing a SwiftOS network demo:
   hardening roadmap moves this authority toward restartable userland services.
 
 Use host-only loopback forwarding, such as `hostfwd=tcp:127.0.0.1:8080-:8080`,
-for local demos. Do not expose current demo services directly to an untrusted
+for local validation. Do not expose current services directly to an untrusted
 network.
 
 ## Source Map

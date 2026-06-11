@@ -137,7 +137,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog and ten checked recipes live in this repository under
+The current seed catalog and eleven checked recipes live in this repository under
 `ports/`; the full ports tree should move to `swift-os-ports` once
 cross-building, testing, publishing, and broader package maintenance are ready.
 

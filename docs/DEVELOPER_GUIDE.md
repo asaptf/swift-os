@@ -36,6 +36,20 @@ There are two supported application paths:
 
 Prefer native Embedded Swift for new SwiftOS programs.
 
+## Choose A Development Path
+
+Start by deciding whether you are writing new SwiftOS software, adapting a C
+program, or packaging optional software. Then choose the delivery path and proof
+before adding build rules.
+
+| Goal | Implementation Path | Delivery Path | Start From | Verification |
+| --- | --- | --- | --- | --- |
+| Add a first-party command | Native Embedded Swift bridge | Base image `/bin` | `userland/echo.swift`, `userland/cat.swift`, or `userland/ls.swift` | Focused command test plus `make build base-image` |
+| Add a network service | Native Embedded Swift or C/newlib with `capNet` | Base image until service packaging is needed | `userland/httpd.swift`, `userland/tcpecho.swift`, or `userland/udpecho.swift` | Matching network/service test from [Service Guide](SERVICE_GUIDE.md) |
+| Port a small C utility | C/newlib compatibility path | Base image for core tools, package for optional tools | `userland/newlibtest.c` and [Porting Guide](PORTING_GUIDE.md) | In-QEMU command test and any host unit test for pure logic |
+| Ship optional software | Source port recipe plus `.swpkg` package | Package overlay, package store, signed repository, or seed repository | [Application Cookbook](APPLICATION_COOKBOOK.md) package recipe and [Package Guide](PACKAGE_GUIDE.md) | Matching package workflow test |
+| Extend public app-facing API | Header, syscall bridge, or compatibility shim | Base image with updated headers/tools | [API Reference](API_REFERENCE.md) and source-of-truth headers | API verification map plus focused QEMU behavior test |
+
 Choose the delivery path before wiring the build:
 
 | Delivery path | Use it when | Proof |
@@ -43,7 +57,7 @@ Choose the delivery path before wiring the build:
 | Base image `/bin` | The command is part of the default OS image | `make build base-image` plus a QEMU command test |
 | Local `.swpkg` install | The command is optional but should install inside the guest from a package file | `make package-local-install-test` |
 | Signed repository fixture | The command should be resolved by package name through `/bin/pkg` | `make package-repo-install-test` |
-| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; individual package fixtures such as `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`, `make ports-nginx-repo-fixture`, and `make ports-sqlite-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
+| Source port recipe | The command is maintained as an upstream source port | `make ports-recipe-test`; `make ports-lua-repo-fixture`; `make ports-zlib-repo-fixture`; `make ports-bzip2-repo-fixture`; `make ports-ca-certificates-repo-fixture`; `make ports-pcre2-repo-fixture`; `make ports-tzdata-repo-fixture`; `make ports-nginx-repo-fixture`; `make ports-sqlite-repo-fixture`; `make ports-seed-repo-fixture`; `make package-ports-seed-repo-install-test`; `make ports-static-host-publish`; `make package-static-host-repo-install-test`; `make package-static-host-dns-repo-install-test` |
 
 Packages install under `/usr` today. Keep boot-critical tools in the immutable
 base image, and use package workflows for optional commands and maintainer-side

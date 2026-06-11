@@ -9,6 +9,25 @@ For guest commands, use [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md). For the
 end-to-end package workflow, use
 [PACKAGE_BUILD_AUTOMATION.md](PACKAGE_BUILD_AUTOMATION.md).
 
+## Choose A Host Workflow
+
+Start from the artifact you need to produce or inspect. Prefer the Makefile
+target for normal use; call the underlying tool directly when debugging a
+format, manifest, signature, or fixture.
+
+| Task | Preferred target | Underlying tool or script | Proof |
+| --- | --- | --- | --- |
+| Repack the immutable base image | `make base-image` | `build/basepack` | `./tests/boot_test.sh`, `./tests/vfs_disk_test.sh` |
+| Build direct boot artifacts | `make build base-image build/virt.dtb` | Makefile, Swift compiler, linker | `./tests/boot_test.sh` |
+| Build the UEFI disk image | `make disk base-image` | `build/BOOTAA64.EFI`, `build/kernelboot` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
+| Create or inspect a `.swpkg` | `make package-fixture` | `build/swpkg` | `build/swpkg verify ...`, `make package-overlay-test` |
+| Build a package-store image | `make package-store-fixture` | `build/pkgstore` | `make package-store-test` |
+| Publish a signed repository fixture | `make package-repo-fixture` | `build/pkgrepo` | `make package-repo-install-test` |
+| Validate or package a source port | Port-specific `make ports-*-repo-fixture` target | `build/swport`, `scripts/build-*.sh` | Port fixture target plus seed repository install test |
+| Publish the static-host seed repository | `make ports-static-host-publish` | `scripts/publish-ports-static-host.sh` | `make package-static-host-repo-install-test` |
+| Verify a hosted repository URL | `make ports-hosted-url-verify-test` | `scripts/verify-ports-hosted-url.sh` | Host URL verification plus DNS repository install test |
+| Build AI model artifacts | `make model`, then `make base-image` | `build/quantize`, `build/modelmanifest`, `build/modelsign` | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
+
 ## Quick Map
 
 | Tool or target | Build target | Purpose | Verification |
@@ -36,7 +55,7 @@ end-to-end package workflow, use
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
-| `build/quantize` | `make model` | Quantize TinyStories checkpoints for the AI demo. | `./tests/llm_run_test.sh` |
+| `build/quantize` | `make model` | Quantize TinyStories checkpoints for AI inference. | `./tests/llm_run_test.sh` |
 
 ## Base Image Packer
 
@@ -250,7 +269,7 @@ DNS repository handling.
 
 ## Model Bundle Tools
 
-The model tools support the AI hosting demo and verified model bundle path.
+The model tools support the AI hosting workflow and verified model bundle path.
 Normal users should prefer the Makefile targets, but the tools are useful when
 debugging bundle generation.
 

@@ -37,6 +37,21 @@ Use this guide with:
 - [Service Guide](SERVICE_GUIDE.md) for daemon lifecycle and supervisor limits.
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) for validated candidate handoff.
 
+## Choose A Server Software Evaluation Path
+
+Use this catalog to separate current package evidence from roadmap intent. A
+package is user-visible only when it has a checked package or repository proof;
+priority-tier rows without that proof are planning input for future ports.
+
+| Need | Start With | Evidence To Collect | Support Statement |
+| --- | --- | --- | --- |
+| Confirm whether a checked package works today | Current user-visible package state below | Package-specific fixture target, seed install transcript, and `build/swport catalog inspect NAME ports/catalog.json` when present | Supported as a current fixture only if the proof command exists and passes |
+| Evaluate a new server workload | [Compatibility Guide](COMPATIBILITY_GUIDE.md) workload intake plus the prerequisite bundles in this catalog | Source availability, static AArch64 link plan, required bundles, delivery path, and first QEMU proof | Compatible candidate, porting candidate, or blocked by a named current limit |
+| Add a small library or data package | Tier 0 rows and [Porting Guide](PORTING_GUIDE.md) | Recipe validation, `.swpkg` verification, signed repository fixture, and package-store install path | Candidate until the recipe and package proof are checked in |
+| Add a network daemon | Tier 1 or Tier 2 row plus [Service Guide](SERVICE_GUIDE.md) | Package fixture, capability request, service manifest plan, network smoke, and log markers | Not supported as an operator service until package and service smoke both pass |
+| Plan a runtime such as Python, Node.js, or JVM | Runtime tiers and [Package Management](PACKAGE_MANAGEMENT.md) | Missing ABI list, threading/mmap/filesystem blockers, static-linking strategy, and staged acceptance tests | Roadmap only until the runtime has its own checked package and QEMU smoke |
+| Write product or release notes | [Release Notes](RELEASE_NOTES.md), [Package Guide](PACKAGE_GUIDE.md), and this catalog | Exact command, artifact path, package list, serial log, and unsupported feature list | State current fixtures separately from future package-manager milestones |
+
 ## Current User-Visible Package State
 
 SwiftOS does not yet have a public hosted package repository. These package
@@ -93,9 +108,12 @@ pkg install ca-certificates
 pkg install pcre2
 /usr/bin/lua -e 'print(21 * 2)'
 /usr/bin/minigzip /tmp/zlib.txt
-echo bzip2-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc
+/usr/bin/bzip2 -V
 cat /usr/share/bzip2/swiftos-bzip2.version
-echo zstd-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c
+echo zstd-ok > /tmp/zstd.in
+/usr/bin/zstd -q -f /tmp/zstd.in -o /tmp/zstd.zst
+/usr/bin/zstd -q -d -f /tmp/zstd.zst -o /tmp/zstd.out
+cat /tmp/zstd.out
 cat /usr/share/zstd/swiftos-zstd.version
 echo xz-ok | /usr/bin/xz -q -c | /usr/bin/xz -q -d -c
 cat /usr/share/xz/swiftos-xz.version
@@ -269,7 +287,7 @@ and, later, the network.
 
 ### Tier 2: Web Hosting Core
 
-This tier should produce the first convincing server demo: static site,
+This tier should produce the first convincing server proof path: static site,
 automatic certificate path, reverse proxy path, logs, and a small app behind it.
 
 | Package | Role and why it matters | Likely upstream/project | Difficulty | Runtime dependencies | Syscall/libc/kernel prerequisites | Static-linking concerns | First smoke test |
@@ -308,7 +326,7 @@ the first package manager. Each runtime must be treated as an ABI test suite.
 
 | Package | Role and why it matters | Likely upstream/project | Difficulty | Runtime dependencies | Syscall/libc/kernel prerequisites | Static-linking concerns | First smoke test |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `lua` | Small scripting runtime; ideal first real port and package demo. | Lua. | S | libc, readline optional. | `base-posix`; `term-ui` for interactive REPL. | Static build is simple. Dynamic C modules disabled until loader policy exists. | `lua -e 'print(_VERSION)'`. |
+| `lua` | Small scripting runtime; ideal first real port and package proof point. | Lua. | S | libc, readline optional. | `base-posix`; `term-ui` for interactive REPL. | Static build is simple. Dynamic C modules disabled until loader policy exists. | `lua -e 'print(_VERSION)'`. |
 | `python-minimal` | Automation scripts, admin tooling, many ACME/build utilities, and later app support. | CPython. | XL | libffi optional, openssl, zlib, xz, bzip2, sqlite. | `base-posix`, `proc-basic`, `net-client`, `tls-base`, `db-fs`, `threads`, `mmap-vm`, signals. | Static CPython is possible but extension modules are normally dynamic. Build a curated static module set. | `python3 -c 'import ssl,sqlite3,json; print("ok")'`. |
 | `nodejs` | JavaScript server runtime for modern web apps and tooling. | Node.js. | XL | V8, OpenSSL, zlib, ICU, c-ares or resolver. | `base-posix`, `net-client`, `net-server`, `tls-base`, `threads`, `mmap-vm`, signals, high-resolution timers, event notification. | Static Node is hard but possible in custom builds. V8 JIT needs executable memory; start with JIT policy decision or interpreter/JITless mode. Native addons are deferred without dynamic loading. | `node -e 'require("http").createServer((_,r)=>r.end("ok")).listen(8080)'` and fetch from host. |
 | `openjdk-runtime` | JVM target for Java services and long-horizon project goal. | OpenJDK, with Adoptium as packaging reference. | XL | zlib, libffi optional, font/rendering pieces disabled for headless, ca-certificates. | `base-posix`, `net-client`, `net-server`, `tls-base`, `threads`, `mmap-vm`, signals, atomics, large files, entropy. | Static HotSpot is not the normal distribution model. Expect major build-system and runtime porting. Dynamic class loading is fine at Java level, but native JNI libraries are deferred. | `java -version`; then run a one-file HTTP server or `HelloWorld.class`. |
@@ -378,7 +396,7 @@ Packages:
 - `patch`
 - `pkgconf`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg update
@@ -405,7 +423,7 @@ Packages:
 - `nano`
 - `mc` with reduced features
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install admin-basic
@@ -428,7 +446,7 @@ Packages:
 - `swos-service`
 - `swos-syslogd`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install web-basic
@@ -452,7 +470,7 @@ Packages:
 - `php-cli` before `php-fpm`
 - `python-minimal`
 
-Acceptance demo:
+Acceptance workflow:
 
 ```sh
 pkg install postgresql-server
@@ -475,7 +493,7 @@ Packages:
 - `swift-runtime-minimal`
 - `swift-toolchain` much later
 
-Acceptance demos:
+Acceptance workflows:
 
 ```sh
 node -e 'console.log(process.version)'

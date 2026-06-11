@@ -379,8 +379,9 @@ current real port fixtures. They prove checksum-verified source fetch, static
 AArch64 cross-build or data-only staging, `.swpkg` creation, signed local
 repository publication, and target-side install from a default repository URL.
 The Lua-only smoke remains useful for the interpreter path; the seed repository
-smoke installs Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and
-sqlite and runs the `minigzip`, bzip2, zstd, xz, and `bsdtar` smoke paths, CA bundle marker,
+smoke installs Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
+tzdata, nginx, and sqlite and runs the `minigzip`, bzip2, zstd, xz, and
+`bsdtar` smoke paths, CA bundle marker,
 `pcre2grep` regex match, zoneinfo marker read, nginx version/marker smoke, and
 a SQLite in-memory query in the guest. The static-host smoke serves the same
 seed repository from a deployable web-root layout and repeats that
@@ -453,7 +454,7 @@ Use the smallest test that proves the behavior:
 | Base image contents | Host test that opens `build/base.img` or guest `ls -l` check |
 | Package overlay visibility | `make package-overlay-test` |
 | Guest package install | `make package-local-install-test` or `make package-repo-install-test` |
-| Source port package fixture | `make ports-recipe-test`, the individual package fixture for the port you changed, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
+| Source port package fixture | `make ports-recipe-test`, `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make ports-pcre2-repo-fixture`, `make ports-tzdata-repo-fixture`, `make ports-nginx-repo-fixture`, `make ports-sqlite-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, and `make package-static-host-dns-repo-install-test` |
 
 For a command promoted into the default image, add the test to `make test` when
 the workflow is stable enough for the standard acceptance suite.
@@ -466,9 +467,15 @@ Before merging a new application:
 - The program handles negative `swiftos_*` returns explicitly.
 - Filesystem writes stay under `/tmp` unless the design adds a new writable
   service.
+- The delivery path is explicit: base image `/bin`, package payload, package
+  store, signed repository fixture, or source-port recipe.
 - Networking tools document the required QEMU host forwarding and `capNet`.
+- Filesystem and network authority requirements are documented in the command
+  reference or recipe.
 - Long-running services expose a clear ready marker on serial; see
   [SERVICE_GUIDE.md](SERVICE_GUIDE.md) for the current service contract.
+- Long-running services have a host-visible health check, serial request marker,
+  or documented reason why they do not.
 - Optional software uses `/usr` package paths and records whether it is proven
   by a local install, signed repository install, or source-port repository
   install smoke.
@@ -476,6 +483,42 @@ Before merging a new application:
   rebuild.
 - `make build base-image` passes.
 - A focused test proves the user-visible workflow.
+- [COMMAND_REFERENCE.md](COMMAND_REFERENCE.md) is updated when the command is
+  user-visible in the checked-in image.
+
+## Application Handoff Record
+
+Keep a short record beside substantial new commands or package recipes. This is
+especially useful when the application is a service, needs capabilities, or is
+not part of the default base image.
+
+```text
+Application:
+  name:
+  command path: /bin/... | /usr/bin/... | /usr/sbin/...
+  delivery: base-image | package-overlay | package-store | signed-repository | source-port
+
+Authority:
+  required principal or account:
+  required capabilities: capFsRead | capTmpWrite | capNet | none
+  inherited handles: stdio only | listed below
+  filesystem state: read-only base | /tmp scratch | package payload
+
+Operation:
+  start command:
+  expected ready marker:
+  host-visible check:
+  shutdown behavior:
+
+Validation:
+  focused test:
+  package or repository test:
+  manual guest command:
+  known current limits:
+```
+
+For a simple command, most fields can be one line. For a service, fill in the
+ready marker and host-visible check before treating it as operator-facing.
 
 ## Source Examples
 

@@ -2,7 +2,7 @@
 
 This guide explains how to prepare, validate, hand off, and roll back a
 SwiftOS deployment candidate. It is written for operators, release testers,
-demo owners, embedded/appliance integrators, and application or AI hosting
+reviewers, embedded/appliance integrators, and application or AI hosting
 teams who need repeatable deployment evidence.
 
 SwiftOS does not yet ship a downloadable installer, hosted update service,
@@ -72,9 +72,9 @@ capabilities the workload needs.
 
 | Profile | Use it for | Required artifacts | Minimum proof |
 | --- | --- | --- | --- |
-| Direct serial candidate | Development, demos, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
+| Direct serial candidate | Development, operator walkthroughs, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
 | UEFI/GPT candidate | Firmware handoff, disk layout, primary boot packaging | `swift-os.img`, `base.img` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
-| Application service hosting | `httpd`, echo services, network demos | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
+| Application service hosting | `httpd`, echo services, network tools | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
@@ -159,7 +159,7 @@ SwiftOS image customization is host-side.
 | Need | Current method | Rebuild |
 | --- | --- | --- |
 | Add or change base files | Edit files under `base/` | `make base-image` |
-| Change demo accounts or capabilities | Edit `base/etc/swos/passwd` | `make base-image` |
+| Change seeded accounts or capabilities | Edit `base/etc/swos/passwd` | `make base-image` |
 | Change default web content | Edit `base/www/` | `make base-image` |
 | Add a native SwiftOS program to `/bin` | Add the userland target and stage it into the base image | `make build base-image` |
 | Add package content under `/usr` | Build a `.swpkg`, payload image, or package-store image | Package target plus boot attachment |
@@ -225,7 +225,7 @@ artifacts:
 
 identity:
   accounts source: base/etc/swos/passwd
-  seeded demo passwords changed: yes | no
+  seeded passwords changed: yes | no
   capNet principals: <list>
 
 validation:
@@ -247,6 +247,76 @@ notes:
 
 This manifest is intentionally plain text so it can be pasted into release
 notes, support tickets, or an operator handoff.
+
+## Evidence Bundle Layout
+
+For every candidate that leaves one developer's machine, keep a small evidence
+bundle next to the artifacts. A predictable layout makes review, support, and
+rollback much faster:
+
+```text
+support/deployment-candidate/
+  manifest.txt
+  git-status.txt
+  git-head.txt
+  tools-check.txt
+  artifacts-sha256.txt
+  artifacts-size.txt
+  validation.txt
+  serial.log
+  service-health.txt
+  service-metrics.txt
+  rollback.txt
+```
+
+Create the host-side records before starting manual validation:
+
+```sh
+mkdir -p support/deployment-candidate
+git status --short --branch >support/deployment-candidate/git-status.txt
+git log -1 --oneline >support/deployment-candidate/git-head.txt
+make tools-check >support/deployment-candidate/tools-check.txt 2>&1
+ls -lh build/kernel.elf build/base.img build/virt.dtb \
+  >support/deployment-candidate/artifacts-size.txt
+shasum -a 256 build/kernel.elf build/base.img build/virt.dtb \
+  >support/deployment-candidate/artifacts-sha256.txt
+```
+
+For a UEFI/GPT candidate, add the disk image:
+
+```sh
+ls -lh build/swift-os.img >>support/deployment-candidate/artifacts-size.txt
+shasum -a 256 build/swift-os.img >>support/deployment-candidate/artifacts-sha256.txt
+```
+
+For package or AI candidates, also add the profile-specific package,
+repository, or model artifacts to both files.
+
+Record validation commands exactly as run:
+
+```sh
+./tests/boot_test.sh >support/deployment-candidate/validation.txt 2>&1
+```
+
+For HTTP service candidates, append the host-visible check:
+
+```sh
+curl -fsS http://127.0.0.1:8080/ \
+  >support/deployment-candidate/service-health.txt 2>&1
+```
+
+For AI serving candidates, record the dedicated health and metrics endpoints:
+
+```sh
+curl -fsS http://127.0.0.1:8080/health \
+  >support/deployment-candidate/service-health.txt 2>&1
+curl -fsS http://127.0.0.1:8080/metrics \
+  >support/deployment-candidate/service-metrics.txt 2>&1
+```
+
+Only include `service-health.txt` or `service-metrics.txt` when the selected
+profile exposes that endpoint. For non-networked appliance candidates, the
+serial log and focused validation output are the primary evidence.
 
 ## Profile Runbooks
 

@@ -28,7 +28,7 @@ The base image is the immutable system root:
 
 | Path | Source | Writable In Guest | Purpose |
 | --- | --- | --- | --- |
-| `/bin` | Staged EL0 programs | No | Native Swift tools, demos, services, update commands, package manager, busybox |
+| `/bin` | Staged EL0 programs | No | Native Swift tools, diagnostics, services, update commands, package manager, busybox |
 | `/etc` | `base/etc` plus generated trust roots | No | Login identity store, hostname, package repository trust, model signing trust |
 | `/www` | `base/www` | No | Static content served by `/bin/httpd` |
 | `/models` | `models/` build artifacts | No | Local LLM files and signed serving bundles |
@@ -39,6 +39,30 @@ Changes made inside `/bin`, `/etc`, `/www`, `/models`, or `/packages` in a
 running guest do not persist because those paths are read-only. To make a
 change durable, rebuild `build/base.img`, provide a package payload, or use a
 future persistent storage profile when one exists.
+
+## Choose A Base Image Workflow
+
+Start from the durable content you need to change. The running guest is the
+verification target, but the source of truth is always a host-side input.
+
+| Need | Edit or generate | Rebuild | Focused proof |
+| --- | --- | --- | --- |
+| Change login text, hostname, or identity seed files | `base/etc/*` | `make base-image` | `./tests/console_login_test.sh` for identity, `./tests/boot_test.sh` for general boot |
+| Change static HTTP content | `base/www/` | `make base-image` | `./tests/httpd_test.sh` |
+| Add or update a default `/bin` command | `userland/`, Makefile build rules, base staging rule | `make build base-image` | Command-specific QEMU test plus command reference update |
+| Update package repository trust or defaults | `build/pkgrepo-root.pub`, `PKG_DEFAULT_REPO_URL`, `PKG_DEFAULT_DNS_SERVER` | `make base-image` or custom `BASE_IMG=... base-image` | Matching package repository install test |
+| Update local package-install sample payload | `build/pkghello.swpkg` or package fixture inputs | `make package-fixture`, then `make base-image` | `make package-local-install-test` |
+| Update local inference files | `models/stories260K.bin`, `models/tok512.bin` | `make model`, then `make base-image` | `./tests/llm_run_test.sh` |
+| Update verified serving bundle generations | `models/stories15M-q8.bin`, `models/tokenizer.bin`, generated manifests | `make model`, then `make base-image` | `./tests/llm_serve_test.sh` |
+| Prove image integrity after format or signing changes | `tools/basepack.swift`, signing inputs, VFS mount code | `make base-image` | `build/base_image_test build/base.img`, `./tests/signed_image_test.sh` |
+
+Example static-content change:
+
+```sh
+printf 'hello from SwiftOS\n' > base/www/index.html
+make base-image
+./tests/httpd_test.sh
+```
 
 ## Build And Boot
 
@@ -94,12 +118,12 @@ packs it into `build/base.img` with `build/basepack`.
 | Input | Staged Into | Notes |
 | --- | --- | --- |
 | `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/www`, `/readme.txt`, and `/hello.txt` |
-| `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C demos, services, update tools, package manager, and busybox |
+| `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |
 | `build/pkghello.swpkg` | `/packages/pkghello.swpkg` | Local install fixture |
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |
 | `PKG_DEFAULT_REPO_URL` | `/etc/pkg/repo-url` | Optional default repository URL baked into a custom base image |
 | `PKG_DEFAULT_DNS_SERVER` | `/etc/pkg/dns-server` | Optional DNS server for hosted package-repository tests |
-| `models/stories260K.bin`, `models/tok512.bin` | `/models` | Local `/bin/llm` demo inputs |
+| `models/stories260K.bin`, `models/tok512.bin` | `/models` | Local `/bin/llm` inference inputs |
 | `models/stories15M-q8.bin`, `models/tokenizer.bin` | `/models/stories15M/1` | Verified `/bin/llmd` serving bundle |
 | Deliberately corrupt generation 2 model | `/models/stories15M/2` | Test fixture for verify-and-fall-back behavior |
 | `models/dev-signing.pub` | `/etc/swos/model-signing.pub` | Model manifest trust root |

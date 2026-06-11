@@ -58,6 +58,30 @@ Use this guide with:
   and OS prerequisite bundles.
 - [Porting Guide](PORTING_GUIDE.md) for source-level application porting.
 
+## Choose A Package Automation Workflow
+
+Use the smallest workflow that answers the question in front of the reviewer.
+Package automation is intentionally layered: metadata checks do not need QEMU,
+single-package repository fixtures do not prove hosted deployment, and hosted
+deployment is not accepted until both host-side bytes and target-side `pkg`
+behavior are checked.
+
+| Need | Start With | Host Command | Target Proof | Review Evidence |
+| --- | --- | --- | --- | --- |
+| Check package priorities, dependencies, and blockers | `ports/catalog.json` | `make ports-catalog-test` | Not needed | `build/swport catalog list ports/catalog.json` and `build/swport catalog inspect NAME ports/catalog.json` output |
+| Validate checked recipes without treating them as published packages | `ports/*/*/Port.json` | `make ports-recipe-test` | Not needed | Recipe validation output plus generated manifests for the touched recipes |
+| Build or review one real checked package | The package-specific `make ports-<name>-repo-fixture` target | `make ports-lua-repo-fixture`, `make ports-zlib-repo-fixture`, or the matching package target | Use the seed repository smoke when the package must be installed with the current package set | `build/<name>.swpkg`, `build/swpkg verify build/<name>.swpkg`, and `build/<name>-repo-root/aarch64/current/catalog.signed` |
+| Prove Lua as the smallest real guest package | Lua recipe and signed local repository fixture | `make ports-lua-repo-fixture` | `make package-lua-repo-install-test` | Serial transcript showing repository update, install, `lua -v`, and expression execution |
+| Prove the current eleven-package seed repository | Checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes | `make ports-seed-repo-fixture` | `make package-ports-seed-repo-install-test` | Seed `catalog.signed`, package hashes, and guest install transcript for all eleven packages |
+| Produce a deployable static-host root | The seed repository fixture | `make ports-static-host-publish` | `make package-static-host-repo-install-test` | `build/ports-static-host-root/hosted-repo.json`, `repo-root.pub`, `SHA256SUMS`, and served install transcript |
+| Verify a hosted package URL before advertising it | Uploaded static-host root | `make ports-hosted-url-verify PKG_HOSTED_REPO_URL=http://host.example` | `make package-static-host-dns-repo-install-test` for DNS-resolved guest install | Host verifier output covering `hosted-repo.json`, `SHA256SUMS`, package hashes, and catalog signature |
+| Investigate target-side package-manager behavior | Current `/bin/pkg` commands and fixture repositories | `make package-local-install-test` or `make package-repo-install-test` | The same QEMU test target | Serial transcript showing the exact `pkg` command, success path, or expected rejection |
+
+Do not promote a package or repository by copying a lower-layer proof upward. A
+verified `.swpkg` proves the container; a signed local repository proves catalog
+integrity; a static-host root proves deployable bytes; a DNS-resolved QEMU
+install proves that the current target can consume the hosted shape.
+
 ## Maintainer Quick Start Today
 
 Build and verify the current sample package:

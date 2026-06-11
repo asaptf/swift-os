@@ -847,14 +847,14 @@ struct NetTest {
         let mnh = dualDAD.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 4, out: outBuf, outCap: 2048)
         check(mnh.txLen == 0 && !mnh.gotUDPv6 && !mnh.gotTCPv6, "unknown NH aborts without L4 delivery")
 
-        // --- additional IPv6 edges: RA hopLimit=0 parse and local UDPv6 hop0 delivery ---
+        // --- additional IPv6 edges (parallel coverage): RA hopLimit=0 is parsed (hop captured), hop0 UDPv6 still locally delivered at L4 ---
         var dualE = NetStack(mac: ourMac, ip: ourIP, ipv6: v6src)
         ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         let ra0 = icmp6WriteRA(inBuf + ethHeaderLen + ipv6HeaderLen, hopLimit: 0, src: v6dst, dst: IPv6.allNodesLinkLocal, prefix: pfx, prefixLen: 64)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: IPv6.allNodesLinkLocal, nextHeader: ipProtoICMPv6, payloadLen: ra0)
         let ra0o = dualE.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + ra0, out: outBuf, outCap: 2048)
         check(ra0o.raReceived && ra0o.raHopLimit == 0, "RA hopLimit=0 is parsed with hopLimit captured as 0")
-
+        // hopLimit=0 UDPv6 (local delivery; our sans-IO L4 does not early-drop hop0 for rx to self)
         ethWriteHeader(inBuf, dst: ourMac, src: gwMac, type: ethTypeIPv6)
         ip6WriteHeader(inBuf + ethHeaderLen, src: v6dst, dst: v6src, nextHeader: ipProtoUDP, payloadLen: 8, hopLimit: 0)
         let u6p = inBuf + ethHeaderLen + ipv6HeaderLen
@@ -862,10 +862,10 @@ struct NetTest {
         let c6u = ipv6UpperChecksum(src: v6dst, dst: v6src, nextHeader: ipProtoUDP, upper: u6p, upperLen: 8)
         be16set(u6p, 6, c6u)
         let u6o = dualE.onFrame(inBuf, ethHeaderLen + ipv6HeaderLen + 8, out: outBuf, outCap: 2048)
-        check(u6o.gotUDPv6 && u6o.udpDstPortv6 == 9, "UDPv6 with hopLimit=0 still accepted locally at L4")
+        check(u6o.gotUDPv6 && u6o.udpDstPortv6 == 9, "UDPv6 with hopLimit=0 still accepted locally at L4 (no early drop)")
 
         if failed { exit(1) }
-        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + DAD sim + many roundtrips + RA/UDPv6 hop0 edges)")
+        print("PASS: sans-IO net core (Ethernet/ARP/IPv4/ICMP/UDP/TCP/DNS + full IPv6 + ICMPv6 + NDP + pseudo-header + aggressive negative cases + EH chains + full RA/unsol-NA + NDP cache + malformed v6 + cksum edges + DAD sim + many roundtrips + extra RA/UDPv6 hop0 edges)")
     }
 
     /// Feed one TCP segment into a connection (optional payload).

@@ -4,6 +4,20 @@ This FAQ answers the questions people usually ask before building, testing,
 porting to, or reporting an issue against SwiftOS. It describes the current
 checked-in system, not only the long-term roadmap.
 
+## Quick Decision Table
+
+| I want to... | Start with | Minimum proof |
+| --- | --- | --- |
+| Boot SwiftOS for the first time | [Getting Started](GETTING_STARTED.md) | `./tests/boot_test.sh` |
+| Choose a QEMU, UEFI, graphical, or VirtualBox profile | [Installation Guide](INSTALLATION_GUIDE.md) | Profile-specific test from the guide |
+| Use the serial-console system | [User Guide](USER_GUIDE.md) | `id`, `ls -l /`, `top -b -n 1` |
+| Prepare a release or handoff artifact set | [Deployment Guide](DEPLOYMENT_GUIDE.md) | Deployment manifest plus evidence bundle |
+| Run a network service | [Networking Guide](NETWORKING_GUIDE.md) and [Service Guide](SERVICE_GUIDE.md) | Service test plus host-visible check |
+| Serve TinyStories inference | [AI Hosting Guide](AI_HOSTING_GUIDE.md) | `./tests/llm_run_test.sh` and `./tests/llm_serve_test.sh` |
+| Add a native program | [Developer Guide](DEVELOPER_GUIDE.md) and [Application Cookbook](APPLICATION_COOKBOOK.md) | Focused host or QEMU acceptance test |
+| Package optional software | [Package Guide](PACKAGE_GUIDE.md) | Local, repository, or source-port package test |
+| Diagnose a failure | [Troubleshooting](TROUBLESHOOTING.md) and [Support Guide](SUPPORT_GUIDE.md) | Exact command, revision, and serial/test evidence |
+
 ## Product And Scope
 
 ### What is SwiftOS?
@@ -75,7 +89,8 @@ make build base-image build/virt.dtb
 make run
 ```
 
-Complete the tty demo, then log in as `root` with password `swordfish`.
+Complete the interactive TTY smoke prompt, then log in as `root` with password
+`swordfish`.
 
 See [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -143,7 +158,7 @@ failure-reading workflow.
 
 | Login | Password | Use |
 | --- | --- | --- |
-| `root` | `swordfish` | Full demo authority, including networking |
+| `root` | `swordfish` | Full seeded authority, including networking |
 | `user` | `swordfish` | Filesystem read and tmpfs write without networking |
 | `guest` | `guest` | Spawn-only confinement checks |
 
@@ -157,7 +172,7 @@ handle-right based. Do not assume traditional Unix superuser semantics.
 
 ### Is the default password safe?
 
-No. It is a seeded demo password for the checked-in image. SwiftOS does not yet
+No. It is a seeded password for the checked-in image. SwiftOS does not yet
 ship production password policy, rotation, or account provisioning.
 
 ### What does `capNet` mean?
@@ -272,9 +287,10 @@ make package-static-host-dns-repo-install-test
 ```
 
 The seed test exercises `pkg install lua`, `pkg install zlib`,
-`pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
-`pkg install nginx`, and `pkg install sqlite`; Lua version and expression
-checks; a `minigzip` compression/decompression round trip; the CA bundle
+`pkg install bzip2`, `pkg install zstd`, `pkg install ca-certificates`,
+`pkg install pcre2`, `pkg install tzdata`, `pkg install nginx`, and
+`pkg install sqlite`; Lua version and expression checks; `minigzip` and zstd
+compression/decompression round trips; bzip2 version/marker checks; the CA bundle
 marker; a `pcre2grep` regex match; the tzdata marker; nginx version/marker
 checks; and a SQLite in-memory query. The static-host test serves
 `build/ports-static-host-root` and repeats that install path. The DNS smoke uses
@@ -348,9 +364,9 @@ verification is not complete.
 
 ## AI Hosting
 
-### What AI demo exists today?
+### What AI inference path exists today?
 
-SwiftOS includes TinyStories inference demos:
+SwiftOS includes TinyStories inference workflows:
 
 - `/bin/llm` for local serial-console completions.
 - `/bin/llmd` for HTTP completion serving with health and metrics endpoints.
@@ -368,7 +384,7 @@ verification.
 
 ### Is AI serving fast under QEMU?
 
-It is a correctness and isolation demo under QEMU TCG, not a performance target.
+It is a correctness and isolation proof under QEMU TCG, not a performance target.
 Use metrics from `/bin/llmd` to record actual request timing.
 
 ## Operations And Support
@@ -376,7 +392,7 @@ Use metrics from `/bin/llmd` to record actual request timing.
 ### Where are logs?
 
 The strongest current evidence is the serial log. Some structured log export
-markers and service metrics are available from checked-in demos.
+markers and service metrics are available from checked-in smoke paths.
 
 See [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md) and
 [LOGGING.md](LOGGING.md).

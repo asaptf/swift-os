@@ -10,8 +10,8 @@ make build base-image build/virt.dtb
 make run
 ```
 
-At boot, complete the tty demo, log in as `root` with password `swordfish`, and
-run the guest commands shown below.
+At boot, complete the interactive TTY smoke prompt, log in as `root` with
+password `swordfish`, and run the guest commands shown below.
 
 ## 1. Confirm A Healthy Boot
 
@@ -44,16 +44,16 @@ Verification:
 Guest:
 
 ```sh
-mkdir /tmp/demo
-echo first >/tmp/demo/log.txt
-echo second >>/tmp/demo/log.txt
-cat /tmp/demo/log.txt
-wc /tmp/demo/log.txt
-chmod 600 /tmp/demo/log.txt
-chown 2 /tmp/demo/log.txt
-ls -l /tmp/demo/log.txt
-rm /tmp/demo/log.txt
-rmdir /tmp/demo
+mkdir /tmp/work
+echo first >/tmp/work/log.txt
+echo second >>/tmp/work/log.txt
+cat /tmp/work/log.txt
+wc /tmp/work/log.txt
+chmod 600 /tmp/work/log.txt
+chown 2 /tmp/work/log.txt
+ls -l /tmp/work/log.txt
+rm /tmp/work/log.txt
+rmdir /tmp/work
 ```
 
 This exercises tmpfs creation, append redirection, readback, metadata changes,
@@ -388,7 +388,7 @@ echo static-host-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
-echo bzip2-static-host-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc
+/usr/bin/bzip2 -V
 cat /usr/share/bzip2/swiftos-bzip2.version
 echo zstd-static-host-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -d -c
 cat /usr/share/zstd/swiftos-zstd.version
@@ -432,7 +432,7 @@ make package-static-host-repo-install-test
 make package-static-host-dns-repo-install-test
 ```
 
-## 12. Run The Native Swift LLM Demo
+## 12. Run Local Swift LLM Inference
 
 Host:
 
@@ -519,7 +519,7 @@ Equivalent automated check:
 ./tests/llm_serve_test.sh
 ```
 
-## 14. Exercise The Swift REPL Demos
+## 14. Exercise The Swift REPL Tools
 
 Guest:
 

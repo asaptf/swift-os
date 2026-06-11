@@ -31,6 +31,36 @@ Important environment rules:
 Most examples assume the `root` account from the seeded image because it has
 the full current capability mask.
 
+## Choose A Command
+
+Use this table when you know the task but not the command name yet. Detailed
+syntax, examples, limits, and acceptance coverage remain in the sections below.
+
+| Task | Commands | Required setup | Focused proof |
+| --- | --- | --- | --- |
+| Confirm login and authority | `id` | Any seeded account | `tests/cap_enforce_test.sh` |
+| Inspect files and metadata | `ls`, `cat`, `head`, `wc`, `date` | `capFsRead` for base-image reads | `tests/swift_coreutils_test.sh`, `tests/swift_ls_test.sh`, `tests/swift_headwc_test.sh` |
+| Use tmpfs scratch space | `mkdir`, `touch`, `echo`, `mv`, `rm`, `rmdir`, `chmod`, `chown` | `capTmpWrite` and paths under `/tmp` | `tests/swift_fileops_test.sh`, `tests/swift_chmodown_test.sh` |
+| Inspect processes and resources | `ps`, `top` | Process-inspection authority in the current context | `tests/top_test.sh`, `tests/busybox_test.sh` |
+| Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
+| Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
+| Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
+| Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
+| Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
+| Work with packages | `pkg`, `/usr/bin/pkghello`, `/usr/bin/lua`, `/usr/bin/minigzip`, `/usr/bin/bzip2`, `/usr/bin/pcre2grep`, `/usr/bin/nginx`, `/usr/bin/sqlite3` | Package payload, package-store, or signed repository fixture mounted or installed | Package tests listed in [Package Guide](PACKAGE_GUIDE.md) |
+| Prove driver-service/device-grant behavior | `drvsvcdemo` | C5 test profile or manual direct boot | `make c5-device-authority-test` |
+
+Example: to prove writable scratch space from the guest shell, use only tmpfs
+paths:
+
+```sh
+mkdir /tmp/work
+echo ok >/tmp/work/check.txt
+cat /tmp/work/check.txt
+rm /tmp/work/check.txt
+rmdir /tmp/work
+```
+
 ## Console And Shell
 
 SwiftOS is headless by default. QEMU provides the primary serial console with
@@ -650,7 +680,7 @@ Notes:
 - The default target is `10.0.2.2:443` with host `localhost`.
 - The client sends an HTTPS `GET / HTTP/1.1` request after the handshake.
 - Certificate verification is not complete in this branch. Treat `tlsget` as a
-  TLS runtime demo and interoperability test, not as a production trust
+  TLS runtime smoke path and interoperability test, not as a production trust
   decision.
 
 Acceptance coverage: `tests/tls_test.sh`.
@@ -679,7 +709,7 @@ Notes:
 
 Acceptance coverage: `tests/dns_test.sh`.
 
-## Interactive And Application Demos
+## Interactive And Application Commands
 
 ### `calc`
 
@@ -749,7 +779,7 @@ Acceptance coverage: `tests/kv_test.sh`.
 
 ### `llm`
 
-Run the native Embedded Swift LLM demo.
+Run the native Embedded Swift LLM inference command.
 
 ```text
 llm [prompt] [steps]
@@ -768,7 +798,7 @@ Notes:
 - The default step count is 64.
 - The command reads `/models/stories260K.bin` and `/models/tok512.bin`.
 - Build or fetch the model files with the repository model target before using
-  the demo in a fresh checkout.
+  this command in a fresh checkout.
 
 Acceptance coverage: `tests/llm_run_test.sh`.
 
@@ -1078,7 +1108,7 @@ Notes:
 Acceptance coverage: `tests/package_overlay_test.sh` and
 `tests/pkg_store_boot_test.sh`.
 
-## Bring-up Demo Commands
+## Bring-up Diagnostic Commands
 
 The following programs remain staged in `/bin` because they prove specific
 kernel and userland paths. They are valuable to developers and tests, but they
@@ -1104,7 +1134,7 @@ are not the primary operator interface.
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |
 
-Prefer the commands in the earlier sections for normal use. Use these demo
+Prefer the commands in the earlier sections for normal use. Use these diagnostic
 commands when validating a specific milestone or investigating a regression.
 
 ## Troubleshooting Command Failures

@@ -8,6 +8,23 @@ SwiftOS documentation is split by audience. Start with the guide that matches
 what you are trying to do, then use the reference documents for exact ABI and
 format details.
 
+## Role-Based Paths
+
+Use these paths when you are new to the repository or handing documentation to a
+specific audience.
+
+| Role | Read first | Then prove |
+| --- | --- | --- |
+| First-time operator | [Getting Started](GETTING_STARTED.md), [User Guide](USER_GUIDE.md), [Command Reference](COMMAND_REFERENCE.md) | `./tests/boot_test.sh`, then the command-specific test |
+| Release or deployment owner | [Installation Guide](INSTALLATION_GUIDE.md), [Deployment Guide](DEPLOYMENT_GUIDE.md), [Update And Rollback Guide](UPDATE_GUIDE.md) | Candidate manifest, serial log, rollback artifact, and the matching validation matrix |
+| System administrator | [Administration Guide](ADMINISTRATION_GUIDE.md), [Security Guide](SECURITY_GUIDE.md), [Support Guide](SUPPORT_GUIDE.md) | Account or capability evidence bundle plus `./tests/console_login_test.sh` |
+| Application developer | [Developer Guide](DEVELOPER_GUIDE.md), [Application Cookbook](APPLICATION_COOKBOOK.md), [API Reference](API_REFERENCE.md) | Focused QEMU test, command-reference entry, and application handoff record |
+| Package or port maintainer | [Package Guide](PACKAGE_GUIDE.md), [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md), [Porting Guide](PORTING_GUIDE.md) | Package fixture, repository install smoke, and ports seed verification |
+| Network or service operator | [Networking Guide](NETWORKING_GUIDE.md), [Service Guide](SERVICE_GUIDE.md), [Observability Guide](OBSERVABILITY_GUIDE.md) | Readiness marker, host client output, and the focused network/service test |
+| AI hosting operator | [AI Hosting Guide](AI_HOSTING_GUIDE.md), [Performance And Sizing Guide](PERFORMANCE_GUIDE.md), [Release Notes](RELEASE_NOTES.md) | `/health`, `/completion`, `/metrics`, and `./tests/llm_serve_test.sh` |
+| Support engineer | [Troubleshooting](TROUBLESHOOTING.md), [Support Guide](SUPPORT_GUIDE.md), [Logging Reference](LOGGING.md) | Support bundle, first failure marker, and exact reproduction command |
+| Security reviewer | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md), [Architecture](ARCHITECTURE.md) | Capability/handle test evidence and current-roadmap gap list |
+
 ## Start Here
 
 | Need | Document |
@@ -26,7 +43,7 @@ format details.
 | Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
-| Operate boot profiles, networking demos, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
+| Operate boot profiles, networking workflows, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
 | Run, observe, test, and design SwiftOS services and the C5 driver-service/device-authority smoke | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
@@ -36,7 +53,7 @@ format details.
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
 | Answer common product, install, compatibility, package, networking, AI, and support questions | [FAQ](FAQ.md) |
-| Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
+| Follow copy-paste workflows for common tasks | [Examples](EXAMPLES.md) |
 | Check hardware, application, package, runtime, and network compatibility | [Compatibility Guide](COMPATIBILITY_GUIDE.md) |
 | Understand current login, capabilities, handle rights, and security limits | [Security Guide](SECURITY_GUIDE.md) |
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |
@@ -56,6 +73,22 @@ format details.
 | Plan server package priorities and porting prerequisites | [Server Software Catalog](SERVER_SOFTWARE_CATALOG.md) |
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |
+
+## Package Documentation Map
+
+Use this map when a package task or package failure report is too specific for
+the top-level role paths. The package documents are split on purpose: operator
+workflows, maintainer automation, byte formats, activation state, and signed
+repository metadata each have a different proof path.
+
+| Question | Start With | Reference Detail | Proof |
+| --- | --- | --- | --- |
+| Which package install workflow works today? | [Package Guide](PACKAGE_GUIDE.md) | [Command Reference](COMMAND_REFERENCE.md) for target-side `pkg` syntax | Matching package test from the guide's workflow table |
+| How do I build, review, or publish checked package fixtures? | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) | [Ports Seed Catalog](../ports/README.md) for checked recipes | `make ports-recipe-test`, package-specific fixture target, or seed/static-host test |
+| Why does a `.swpkg` fail verification? | [SWPKG Format](SWPKG_FORMAT.md) | [Host Tool Reference](HOST_TOOL_REFERENCE.md) for `build/swpkg` commands | `make swpkg package-fixture` and `tests/swpkg_tool_test.swift` |
+| Why did package content not mount under `/usr`? | [Package Store Format](PKGSTORE_FORMAT.md) | [Troubleshooting](TROUBLESHOOTING.md) for boot and fixture symptoms | `make package-store-test` or `make package-local-install-test` |
+| Why did `pkg update` or hosted install fail? | [Static Package Repository](PKGREPO_FORMAT.md) | [Host Tool Reference](HOST_TOOL_REFERENCE.md) for `build/pkgrepo` and hosted URL verifier syntax | `make package-repo-install-test`, `make ports-hosted-url-verify-test`, or DNS static-host test |
+| What is planned but not implemented yet? | [Package Management](PACKAGE_MANAGEMENT.md) | [Package Ecosystem Goal](PACKAGE_ECOSYSTEM_GOAL.md) and package roadmap prompts | Roadmap milestone acceptance criteria, not current user commands |
 
 ## Maintainer Planning And Audit Artifacts
 

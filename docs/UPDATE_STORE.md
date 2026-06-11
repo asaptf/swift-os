@@ -26,6 +26,22 @@ service. Artifacts are built and signed on the host. The running OS can courier
 already-signed bytes into an inactive slot and update boot state, but it never
 signs new trusted code.
 
+## Choose An Update-Store Workflow
+
+Pick the update plane first, then collect the state that proves activation,
+confirmation, or rollback behaved as expected.
+
+| Task | Plane | Operator commands | Focused proof | Evidence to keep |
+| --- | --- | --- | --- | --- |
+| Stage and activate a new base image | SWOSBOOT base-image slots | `swos-update`, `swos-activate`, reboot | `./tests/ab_stage_test.sh`, `./tests/ab_activate_test.sh` | Store image, payload image, stage/activate output |
+| Confirm a healthy base-image trial | SWOSBOOT base-image slots | `swos-confirm` after the trial boot | `./tests/ab_confirm_test.sh` | Trial boot serial log and confirm output |
+| Prove base-image rollback | SWOSBOOT base-image slots | Leave a trial unconfirmed or stage a bad image in the test harness | `./tests/ab_rollback_test.sh` | Attempt-count markers and fallback boot log |
+| Prove store durability | SWOSBOOT base-image slots | Let the test harness force FLUSH-backed state writes | `./tests/ab_flush_test.sh` | Manifest sequence/slot state from test output |
+| Stage and activate a kernel slot | UEFI ESP kernel slots | `swos-kstage`, `swos-kactivate`, reboot through UEFI | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh` | ESP disk image, loader log, command output |
+| Confirm the booted kernel slot | UEFI ESP kernel slots | `swos-kconfirm` after UEFI trial boot | `./tests/uefi_kconfirm_test.sh` | `kernel-state` context and confirm output |
+| Prove kernel-slot rollback | UEFI ESP kernel slots | Leave a kernel trial unconfirmed in the test harness | `./tests/uefi_kattempt_test.sh`, `./tests/uefi_krollback_test.sh` | Loader attempt lines and selected slot marker |
+| Debug the on-disk format | SWOSBOOT parser or kernel-state parser | Host tests and targeted inspection | `tests/updatestore_test.swift`, `./tests/uefi_kernel_ab_test.sh` | Serialized manifest or loader state excerpt |
+
 ## Guarantees
 
 - Code integrity comes from signed artifacts: SWOSBASE v3 for base-image slots

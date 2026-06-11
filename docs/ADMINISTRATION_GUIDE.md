@@ -37,6 +37,39 @@ Use this guide with:
 The current product profile is serial-first. There is no SSH server, web admin
 console, target-side user database editor, or service supervisor yet.
 
+## Choose An Administrative Workflow
+
+Start from the administrative object you need to change. Durable changes are
+host-side inputs until a future target-side administration surface lands.
+
+| Task | Source of truth | Rebuild or launch path | Minimum evidence |
+| --- | --- | --- | --- |
+| Add an account or change a password | `base/etc/swos/passwd` | `make base-image` | `./tests/console_login_test.sh` and manual `id` after login |
+| Change displayed user or group names | `base/etc/passwd`, `base/etc/group` | `make base-image` | `./tests/ls_l_test.sh` or a command that prints the expected name |
+| Change the login message or static web content | `base/etc/motd`, `base/www/` | `make base-image` | `./tests/boot_test.sh`; use `./tests/httpd_test.sh` for `/www` |
+| Add a first-party command to the image | `userland/`, Makefile rules, base staging rules | `make build base-image` | Command-specific test plus `./tests/boot_test.sh` |
+| Test software outside the base image | Package payload or package-store fixture | `make package-fixture` or `make package-store-fixture` | `make package-overlay-test` or `make package-store-test` |
+| Launch a network service | Serial shell under a principal with `capNet` | Boot a networking QEMU profile and run the service command | Service readiness marker plus the focused service test |
+| Verify a process or resource issue | Running guest serial shell | `ps`, `top -b -n 2 -d 1`, `id` | Serial log and observability output |
+| Promote an update candidate | Host-built artifact set or checked A/B path | Follow [Update And Rollback Guide](UPDATE_GUIDE.md) | Candidate manifest, validation command output, and rollback artifact |
+
+Example evidence bundle for an account change:
+
+```sh
+git log -1 --oneline
+git diff -- base/etc/swos/passwd base/etc/passwd base/etc/group
+make base-image
+./tests/console_login_test.sh
+```
+
+After booting manually, log in as the changed account and capture:
+
+```sh
+id
+cat /etc/motd
+echo ok >/tmp/admin-check.txt
+```
+
 ## Admin Account Basics
 
 The authoritative identity store is:
@@ -61,9 +94,9 @@ The checked-in accounts are:
 
 | Login | Password | Principal | Session | Caps | Role |
 | --- | --- | ---: | ---: | ---: | --- |
-| `root` | `swordfish` | 1 | 1 | `63` / `0x3f` | Full demo authority except reserved log export |
+| `root` | `swordfish` | 1 | 1 | `63` / `0x3f` | Full seeded authority except reserved log export |
 | `user` | `swordfish` | 2 | 2 | `14` / `0x0e` | Filesystem read and tmpfs write without networking |
-| `guest` | `guest` | 3 | 3 | `2` / `0x02` | Spawn-only confinement demo |
+| `guest` | `guest` | 3 | 3 | `2` / `0x02` | Spawn-only confinement checks |
 
 Compatibility views live in:
 
@@ -98,7 +131,7 @@ Common masks:
 | `6` | Spawn plus filesystem read |
 | `14` | Spawn, filesystem read, tmpfs write |
 | `46` | Spawn, filesystem read, tmpfs write, networking |
-| `63` | Current full demo authority except reserved log export |
+| `63` | Current full seeded authority except reserved log export |
 
 Grant `capConsole` only to the boot/login context or to deliberately privileged
 admin flows. Ordinary service accounts should not need it.
@@ -328,7 +361,7 @@ Common service commands:
 | UDP echo | `/bin/udpecho` | `capNet` |
 | LLM HTTP serving | `/bin/llmd` | `capFsRead`, `capNet` |
 
-Use the seeded `root` account for service demos unless you have created a
+Use the seeded `root` account for service validation unless you have created a
 service-specific account with `capNet`.
 
 Important current limits:
@@ -387,7 +420,7 @@ Current limits:
 - No target-side network configuration command.
 - No persistent network profile store.
 - No firewall or routing administration surface.
-- TLS client trust validation is still a demo path, not production policy.
+- TLS client trust validation is still a smoke path, not production policy.
 
 ## Administrative Verification Matrix
 
@@ -426,7 +459,7 @@ When handing an administrative issue to support, include:
 10. Whether `/tmp`, base image files, package images, or model files were
     involved.
 
-Redact any non-demo passwords, salts, private keys, model keys, or local tokens
+Redact any non-test passwords, salts, private keys, model keys, or local tokens
 before sharing logs.
 
 ## Roadmap Notes
