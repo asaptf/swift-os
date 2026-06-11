@@ -756,9 +756,9 @@ Notes:
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
   key listed in `/etc/ssh/authorized_keys`, opens a `session` channel, and runs
-  a bounded direct `/bin/<tool>` command. It forwards up to 512 bytes of remote
-  stdin into the command's fd 0 and returns up to 4096 bytes of captured
-  stdout/stderr.
+  a bounded direct `/bin/<tool>` or `/usr/bin/<tool>` command. It forwards up
+  to 512 bytes of remote stdin into the command's fd 0 and returns up to 4096
+  bytes of captured stdout/stderr.
 - Use `build/sshkey known-host --host HOST --seed-file
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
   the same seed file `/bin/sshd` loads in the guest. For a deploy-specific
@@ -768,16 +768,22 @@ Notes:
 - It uses a base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the
   checked-in default seed is development-only. It still uses weak temporary KEX
   entropy. The
-  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
-  command parser supports direct single-component `/bin/` executables with
-  whitespace splitting, quote removal, and backslash escaping; redirects,
-  globbing, shell sessions, PTY, scp, sftp, runtime host-key rotation, larger
-  streaming stdin/stdout, and broader key options are not implemented yet.
+  `authorized_keys` parser supports simple `ssh-ed25519` public-key lines plus
+  the safe restriction options `restrict`, `no-pty`, `no-port-forwarding`,
+  `no-agent-forwarding`, and `no-X11-forwarding`. Other options, including
+  forced commands and source restrictions, fail closed until `/bin/sshd` can
+  enforce them. The
+  command parser supports direct single-component `/bin/` and `/usr/bin/`
+  executables with whitespace splitting, quote removal, and backslash escaping;
+  redirects, globbing, shell sessions, PTY, scp, sftp, runtime host-key
+  rotation, larger streaming stdin/stdout, and broader key option enforcement
+  are not implemented yet.
   Output beyond the current 4096-byte cap is truncated and logged on the serial
   console.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,
+`tests/sshd_usr_bin_exec_test.sh`,
 `tests/sshd_host_key_rotation_test.sh`,
 `tests/sshd_authorized_keys_test.sh`.
 
@@ -967,6 +973,8 @@ diagnostic fixtures than stable application interfaces.
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |
+| `mmapreserveprobe` | `mmapreserveprobe` | Exercise C/newlib PROT_NONE reservation and mprotect commit/decommit. | `tests/mmapreserve_test.sh` |
+| `mapfixedprobe` | `mapfixedprobe` | Exercise C/newlib MAP_FIXED reservation, guard-page, and fixed-region JIT behavior. | `tests/mapfixed_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
 | `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
 | `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
@@ -1247,7 +1255,7 @@ Notes:
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and
 `tests/pkg_repo_install_test.sh`; the multi-package ports seed/default-repo
-flow for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite is
+flow for Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite is
 by `tests/pkg_ports_seed_repo_install_test.sh`, and the DNS-resolved
 hosted-style URL flow is covered by
 `tests/pkg_static_host_dns_repo_install_test.sh`.
@@ -1303,6 +1311,8 @@ are not the primary operator interface.
 | `clockprobe` | newlib compat `clock_gettime`, `clock_getres`, realtime clock, monotonic ticks, and `nanosleep` interaction. | Yes, when validating C runtime timing compatibility. | `tests/clock_test.sh` |
 | `mprotectprobe` | newlib compat `mmap`, `mprotect`, executable mappings, and W^X rejection. | Yes, when validating C runtime memory-permission compatibility. | `tests/mprotect_test.sh` |
 | `largemmapprobe` | newlib compat multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse, and zero-fill checks. | Yes, when validating C runtime large-mapping compatibility. | `tests/largemmap_test.sh` |
+| `mmapreserveprobe` | newlib compat `mmap(PROT_NONE)`, `MAP_NORESERVE`, `mprotect` commit/decommit, and reserved-region RW->RX execution. | Yes, when validating C runtime lazy-reservation compatibility. | `tests/mmapreserve_test.sh` |
+| `mapfixedprobe` | newlib compat `MAP_FIXED`, `MAP_FIXED_NOREPLACE`, guard-page recommit, fixed-region replacement, and RW->RX execution. | Yes, when validating C runtime fixed-address mmap compatibility. | `tests/mapfixed_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |

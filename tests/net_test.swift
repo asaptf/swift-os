@@ -144,6 +144,22 @@ struct NetTest {
                                    udpLen: udpHeaderLen + payload.count), "UDP checksum verifies")
         }
 
+        // --- 9b. IPv4 next-hop selection for outbound sockets ----------------
+        let sameSubnetDst: IPv4 = 0x0A00_022A
+        let offLinkDst: IPv4 = 0x0808_0808
+        check(ipv4RouteTarget(localIP: ourIP, subnetMask: 0xFFFF_FF00,
+                              gatewayIP: gwIP, dstIP: sameSubnetDst) == sameSubnetDst,
+              "IPv4 route target ARPs same-subnet destinations directly")
+        check(ipv4RouteTarget(localIP: ourIP, subnetMask: 0xFFFF_FF00,
+                              gatewayIP: gwIP, dstIP: offLinkDst) == gwIP,
+              "IPv4 route target sends off-link destinations via gateway")
+        check(ipv4RouteTarget(localIP: 0xCB00_7105, subnetMask: 0xFFFF_FFFF,
+                              gatewayIP: 0xAC1F_0101, dstIP: offLinkDst) == 0xAC1F_0101,
+              "IPv4 /32 route target sends non-self destinations via gateway")
+        check(ipv4RouteTarget(localIP: 0xCB00_7105, subnetMask: 0xFFFF_FFFF,
+                              gatewayIP: 0xAC1F_0101, dstIP: 0xCB00_7105) == 0xCB00_7105,
+              "IPv4 /32 route target still treats self as on-link")
+
         // --- 10. inbound UDP datagram is reported with payload + src ------
         let pl: [UInt8] = Array("swos-udp".utf8)
         let inLen = craftUDP(inBuf, srcMac: gwMac, srcIP: gwIP, dstMac: ourMac, dstIP: ourIP,

@@ -153,6 +153,7 @@ private func permPageDesc(_ pa: UInt, _ perm: Int32) -> UInt64 {
 // --- mmap/mprotect leaf descriptors (Track B) -------------------------------
 // PROT bitmask (matches userland/lib/swift_user.h / mman.h): the mmap/mprotect
 // surface that JIT runtimes (V8, the JVM) and large Swift apps need.
+let PROT_NONE: Int32  = 0
 let PROT_READ: Int32  = 1
 let PROT_WRITE: Int32 = 2
 let PROT_EXEC: Int32  = 4

@@ -30,9 +30,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$SSH_KEYGEN" -q -t ed25519 -N '' -C swiftos-hc13-deploy-key -f "$ALLOW_KEY" \
+"$SSH_KEYGEN" -q -t ed25519 -N '' -C swiftos-hc21-deploy-key -f "$ALLOW_KEY" \
   || { echo "FAIL: could not generate deploy SSH key" >&2; exit 2; }
-cp "$ALLOW_KEY.pub" "$AUTHORIZED_KEYS"
+{
+  printf 'restrict,no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding '
+  cat "$ALLOW_KEY.pub"
+  printf 'command="/bin/id" '
+  cat "$DENY_KEY.pub"
+} >"$AUTHORIZED_KEYS"
 
 if ! ( cd "$ROOT" && make BASE_IMG="$IMG" BASE_ROOT="$BASE_ROOT" SSHD_AUTHORIZED_KEYS_FILE="$AUTHORIZED_KEYS" base-image ) >"$LOG" 2>&1; then
   echo "FAIL: could not build SSHD authorized_keys base image" >&2
@@ -47,4 +52,4 @@ SSHD_HOST_PORT="$HOST_PORT" \
 "$ROOT/tests/sshd_transport_test.sh" \
   || { echo "FAIL: deploy authorized_keys image did not pass SSHD acceptance" >&2; exit 1; }
 
-echo "PASS: SSHD authorized_keys provisioning accepted the deploy key and rejected the default fixture key"
+echo "PASS: SSHD authorized_keys accepted safe deploy options and rejected an unsupported forced-command key"

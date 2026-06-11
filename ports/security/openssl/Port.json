@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "name": "openssl",
+  "version": "3.5.7",
+  "revision": 1,
+  "category": "security",
+  "summary": "OpenSSL command-line TLS tool for SwiftOS packages",
+  "homepage": "https://openssl-library.org/",
+  "license": ["Apache-2.0"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz",
+    "sha256": "a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "openssl-configure-make",
+    "args": [
+      "BSD-generic64",
+      "--prefix=/usr",
+      "--openssldir=/usr/etc/ssl",
+      "--libdir=lib",
+      "no-shared",
+      "no-dso",
+      "no-module",
+      "no-threads",
+      "no-async",
+      "no-engine",
+      "no-tests",
+      "no-docs",
+      "no-asm",
+      "no-makedepend",
+      "no-secure-memory",
+      "no-afalgeng",
+      "no-devcryptoeng"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib",
+      "LDLIBS": "-Wl,--start-group -lc -lgcc -Wl,--end-group",
+      "RANLIB": "aarch64-elf-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "openssl", "version-marker"]
+  },
+  "package": {
+    "depends": ["ca-certificates"],
+    "provides": ["openssl"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/openssl", "to": "/usr/bin/openssl", "mode": "0755" },
+      { "from": "destdir/usr/share/openssl/swiftos-openssl.version", "to": "/usr/share/openssl/swiftos-openssl.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": []
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/openssl version",
+      "echo openssl-ok | /usr/bin/openssl dgst -sha256",
+      "cat /usr/share/openssl/swiftos-openssl.version"
+    ]
+  },
+  "notes": "Tier-0 TLS dependency. scripts/build-openssl.sh cross-builds OpenSSL 3.5 LTS as a static AArch64 CLI plus a version marker. Static libssl/libcrypto development artifacts are intentionally deferred to an openssl-dev split package so the runtime package stays installable in the current tmpfs-backed bootstrap. The first package disables shared libraries, DSO/modules, threads, async, engines, docs, tests, assembly, secure memory, and Linux/devcrypto engines. Entropy-heavy rand and live TLS chain tests remain follow-up work as the target entropy/time surfaces harden."
+}

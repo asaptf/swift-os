@@ -3,6 +3,60 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC21 SSHD authorized_keys options preflight (2026-06-11)
+
+- Hardened `/bin/sshd` authorized-key matching so key options are no longer
+  silently ignored. A line whose first field is not `ssh-ed25519` must now carry
+  only the supported safe restriction options before the key:
+  `restrict`, `no-pty`, `no-port-forwarding`, `no-agent-forwarding`, and
+  `no-X11-forwarding`.
+- Unsupported or not-yet-enforced options such as `command=`, `from=`,
+  `environment=`, `permitopen=`, and unknown options fail closed for that line.
+  This prevents deploy images from accidentally granting broader access than an
+  operator intended while shell/PTY/forwarding policy is still incomplete.
+- Extended `./tests/sshd_authorized_keys_test.sh` so the custom deploy key is
+  staged with safe restriction options and the denied fixture key is staged with
+  an unsupported forced-command option that must not authenticate.
+
+**Acceptance.** `make sshd-authorized-keys-test` proves that the safe restricted
+deploy key authenticates through host OpenSSH, while the unsupported
+forced-command fixture key is rejected.
+
+## HC20 SSHD package-tool exec preflight (2026-06-11)
+
+- Extended `/bin/sshd`'s bounded direct remote-exec allowlist from
+  single-component `/bin/<tool>` paths to single-component `/bin/<tool>` and
+  `/usr/bin/<tool>` paths. Nested paths, NUL bytes, shell syntax, redirects,
+  globbing, PTY, scp, and sftp remain outside this preflight.
+- This lets deploy candidates run package-installed operational tools from the
+  read-only package overlay over an authenticated SSHD session without widening
+  the boundary to a shell.
+- Added `./tests/sshd_usr_bin_exec_test.sh` and
+  `make sshd-usr-bin-exec-test`, which boot QEMU with the base image plus the
+  `pkghello` payload overlay, pin the SwiftOS host key with host OpenSSH, and
+  run `/usr/bin/pkghello` through `/bin/sshd`.
+
+**Acceptance.** `make sshd-usr-bin-exec-test` proves that boot-autostarted SSHD
+can authenticate the staged root key, execute a package-overlay `/usr/bin`
+tool, and return its stdout over the pinned OpenSSH remote-exec path.
+
+## HC19 IPv4 route-target preflight (2026-06-11)
+
+- Added a pure `ipv4RouteTarget` helper for outbound IPv4 next-hop selection.
+  Same-subnet destinations now resolve the destination MAC directly; off-link
+  destinations resolve the configured gateway MAC.
+- Wired UDP and TCP active-open socket paths through that helper instead of
+  probing the destination cache first and otherwise always ARPing the gateway.
+  This keeps the existing QEMU/slirp behavior while making direct-on-subnet cloud
+  peers reachable when the DHCP subnet says they are on-link.
+- Kept `/32` cloud addressing explicit: a non-self destination under a
+  `255.255.255.255` mask routes via the gateway, matching Hetzner-style static
+  examples with a point-to-point gateway.
+
+**Acceptance.** `tests/net_test.swift` covers same-subnet, off-link, and `/32`
+route-target decisions, while the live virtio-net and TCP connect smokes prove
+the QEMU/slirp gateway path still works.
+
 ## HC18 SSHD quoted argv preflight (2026-06-11)
 
 - Replaced `/bin/sshd`'s raw ASCII-whitespace remote-exec splitter with a small
@@ -395,6 +449,27 @@ a not-yet-configured address. `make build` verifies the DHCP codec under
 Embedded Swift. The focused runtime gate is `./tests/virtio_net_test.sh`, which
 now observes DHCP before the existing ARP/ICMP proof under QEMU/slirp.
 
+## P19 OpenSSL seed package (2026-06-11)
+
+- Added `ports/security/openssl/Port.json` for OpenSSL 3.5.7 LTS as the first
+  checked TLS provider package. It packages the static `openssl` CLI and a
+  marker file; static `libssl`/`libcrypto` development artifacts are deferred
+  to an `openssl-dev` split package so the runtime package stays small enough
+  for the current tmpfs-backed bootstrap installer.
+- Added `scripts/build-openssl.sh`. The script cross-builds with the local
+  newlib sysroot and SwiftOS compat headers, verifies the AArch64 ELF has no
+  unresolved symbols, then publishes both the `.swpkg` and signed local
+  repository fixture.
+- The first static build disables shared libraries, DSO/modules, threads,
+  async, engines, tests, docs, assembly, secure memory, and Linux/devcrypto
+  engines. The QEMU package smoke uses `openssl version` and a deterministic
+  `openssl dgst -sha256` check; entropy-heavy `rand`, certificate-chain, and
+  live TLS client tests remain follow-up work.
+- The ports seed repository now publishes Lua, zlib, bzip2, zstd, xz,
+  libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite.
+  Package seed, static-host, hosted URL, catalog, recipe, and documentation
+  tests were extended to search, install, and run OpenSSL inside QEMU.
+
 ## P18 libarchive seed package (2026-06-11)
 
 - Added `ports/archivers/libarchive/Port.json` for upstream libarchive 3.8.7 as
@@ -623,8 +698,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **`protPageDesc(pa, prot)` in `vm.swift`** builds a 4 KiB leaf from a PROT bitmask
   (READ=1/WRITE=2/EXEC=4) via `memAttrs(userAccess: true, executable: prot&EXEC,
   userReadOnly: !(prot&WRITE))`. W^X (`WRITE|EXEC`) and `PROT_NONE` both return an invalid
-  descriptor (0), which callers treat as `EINVAL` — the W^X guard is intrinsic to the
-  descriptor builder, not just the syscall.
+  descriptor (0). Since NPM8, the process-layer mmap path handles `PROT_NONE` VA-only reservation above
+  this leaf layer; `protPageDesc` still never creates a present-but-inaccessible page.
 - **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
   The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
   the ELF image sits at `0x8000_0000` growing up (busybox ~1.1 MiB, far short of
@@ -660,7 +735,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **W^X is enforced at BOTH ends:** at the syscall boundary (`processMmap`/`processMprotect`
   reject `PROT_WRITE|PROT_EXEC` → EINVAL) and defensively inside `protPageDesc` (a W^X or
   PROT_NONE bitmask yields an invalid descriptor, so even a direct `address_space_*` caller
-  can never install a writable+executable leaf). So a page is never simultaneously W and X.
+  can never install a writable+executable or present-inaccessible leaf). So a page is never
+  simultaneously W and X.
 - **Syscall `mprotect` = 56**; `mprotect` inline in `syscall.h`, bridge `swiftos_mprotect`.
 - **Test — the JIT pattern** (`/bin/mmapdemo`, `tests/mmap_test.sh`): mmap a page RW, write
   `mov w0,#42; ret` (bytes `40 05 80 52  c0 03 5f d6`), `mprotect` RW→RX (must succeed), call
@@ -695,7 +771,9 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 
 - **L4d (2026-06) — log sink indirection + capability hook.** Live `klog` output now routes through a tiny current-sink dispatch in `kernel/log/log.swift`; the default and only implemented sink remains UART, but `klog` no longer embeds the UART renderer inline. Added reserved `capLogExport` in `kernel/security/security.swift` (not granted to the boot/root context by default) plus `klogCanInstallSink(capabilities:)` / `klogCanExportRing(capabilities:)` hook helpers for the future userland log service/export path. Boot asserts both `sink indirection active` and `sink capability hook active`, while preserving the existing live line spelling and L4c wire-format sample. See `docs/LOGGING.md`.
 
-- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (72), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
+- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (76), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
+
+- **FP1 (2026-06) — lower-EL FP/SIMD trap-frame preservation.** Expanded the lower-EL trap frame in `kernel/arch/aarch64/exceptions.S` from the integer register/return-state frame to a full frame that also saves and restores `q0..q31`, `FPCR`, and `FPSR`. `fork()` now copies the full frame so children inherit the interrupted FP state correctly. This fixes nondeterministic Q8 inference when `/bin/llmd` is preempted while the default `sshd` service is also running. Acceptance: `make build`, host `llm_engine_test` / `llm_q8_engine_test`, and `./tests/llm_serve_test.sh` with the default base image all pass; the diagnostic no-service image is no longer needed.
 
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
   pure Swift FDT reader with host coverage, a global `Platform` populated at boot, and driver/PMM use of
@@ -4776,4 +4854,58 @@ catalog blocker is now the narrower lazy mmap reservation policy.
 
 **Acceptance.** `make largemmap-test`, `make docs-test`, `make mprotect-test`,
 `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM8 — anonymous mmap reservation/commit probe (DONE, 2026-06-11)
+
+**Scope.** Add the first lazy anonymous mmap reservation contract needed by
+V8-shaped runtimes. SwiftOS now accepts `mmap(PROT_NONE)` as virtual-address
+reservation without resident frames. `mprotect` inside that reservation commits
+missing pages for readable/writable/executable protections, and
+`mprotect(PROT_NONE)` decommits live pages while preserving the reserved VA.
+W^X remains enforced: RWX is still rejected. This resolved the generic lazy
+reservation blocker and left the narrower MAP_FIXED/guard-page audit for NPM9.
+
+- `kernel/user/process.swift`: adds per-process anonymous VMA tracking copied
+  across fork/thread creation and reset across exec. The process layer owns
+  PROT_NONE reservation/decommit; `kernel/mm/vm.swift` still owns real leaf
+  mapping and W^X enforcement.
+- `userland/compat/sys/mman.h` and `userland/lib/syscall.h`: define
+  `MAP_NORESERVE` for source compatibility. The flag is accepted by the wrapper;
+  the reservation behavior is driven by `PROT_NONE`.
+- `/bin/mmapreserveprobe`: reserves 16 MiB with `PROT_NONE|MAP_NORESERVE`,
+  commits a 1 MiB middle window, verifies zero-fill and writes, decommits and
+  recommits it, proves zero-fill again, then commits a reserved JIT page
+  RW->RX and executes it.
+
+**Acceptance.** `make mmapreserve-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/mmap_test.sh`, `make mprotect-test`,
+`make largemmap-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM9 — fixed-address mmap guard-page probe (DONE, 2026-06-11)
+
+**Scope.** Add the fixed-address anonymous mmap contract needed by V8-style
+reserved arenas. SwiftOS now passes `addr` and `flags` through the C mmap
+wrapper. Without `MAP_FIXED`, `addr` remains only a hint and the descending
+mmap arena chooses the address. With `MAP_FIXED`, the kernel may replace pages
+inside an existing anonymous reservation; `MAP_FIXED_NOREPLACE` fails with
+`EEXIST` when the target overlaps a reservation or live mapping. Arbitrary
+sparse fixed mappings outside an anonymous reservation remain deliberately
+unsupported.
+
+- `kernel/user/process.swift`: accepts fixed-address anonymous mappings inside
+  an existing anonymous VMA, decommits replaced live pages before remapping, and
+  preserves W^X before any destructive replacement.
+- `userland/lib/syscall.h`, `userland/compat/sys/mman.h`, and
+  `userland/compat/stubs.c`: expose `MAP_FIXED` and `MAP_FIXED_NOREPLACE` and
+  pass mmap flags through the SwiftOS syscall ABI.
+- `/bin/mapfixedprobe`: reserves a PROT_NONE arena, fixed-maps an interior RW
+  window, proves `MAP_FIXED_NOREPLACE` overlap rejection, proves MAP_FIXED
+  replacement zero-fill, recommits a guard page, executes a fixed-region RW->RX
+  JIT page, and verifies fixed RWX remains rejected.
+
+**Acceptance.** `make mapfixed-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/mmap_test.sh`, `make mmapreserve-test`,
+`make mprotect-test`, `make largemmap-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

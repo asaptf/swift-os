@@ -50,6 +50,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <syslog.h>
 
 #define W __attribute__((weak))
 
@@ -61,6 +62,16 @@ static long sys3(long n, long a0, long a1, long a2) {
     register long x1 __asm__("x1") = a1;
     register long x2 __asm__("x2") = a2;
     __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory");
+    return x0;
+}
+
+static long sys4(long n, long a0, long a1, long a2, long a3) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory");
     return x0;
 }
 
@@ -228,6 +239,33 @@ W pid_t tcgetpgrp(int fd) { (void)fd; return 1; }
 W int tcsetpgrp(int fd, pid_t pgrp) { (void)fd; (void)pgrp; return 0; }
 // newlib has no getpagesize; libbb/procps.c and coreutils/dd.c reference it.
 W int getpagesize(void) { return 4096; }
+W void openlog(const char *ident, int option, int facility) {
+    (void)ident; (void)option; (void)facility;
+}
+W void vsyslog(int priority, const char *format, va_list ap) {
+    (void)priority; (void)format; (void)ap;
+}
+W void syslog(int priority, const char *format, ...) {
+    (void)priority; (void)format;
+}
+W void closelog(void) {}
+W int setlogmask(int mask) { return mask; }
+
+W int posix_memalign(void **memptr, size_t alignment, size_t size) {
+    if (!memptr || alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        alignment % sizeof(void *) != 0) {
+        return EINVAL;
+    }
+    void *ptr = malloc(size);
+    if (!ptr) { return ENOMEM; }
+    if (((unsigned long)ptr & (alignment - 1)) != 0) {
+        free(ptr);
+        return ENOMEM;
+    }
+    *memptr = ptr;
+    return 0;
+}
+
 // No on-disk mode bits to change: base files are read-only and tmpfs nodes get
 // their mode at creation (kernel/vfs/vfs.swift). busybox mkdir chmod()s the new
 // directory to the requested mode; accepting it as a no-op leaves the kernel's
@@ -506,6 +544,10 @@ W int usleep(useconds_t usec) {
     struct timespec ts = { (time_t)(usec / 1000000UL), (long)((usec % 1000000UL) * 1000UL) };
     return nanosleep(&ts, 0);
 }
+W unsigned int alarm(unsigned int seconds) {
+    (void)seconds;
+    return 0;
+}
 W unsigned int sleep(unsigned int s) {
     struct timespec ts = { (time_t)s, 0 };
     nanosleep(&ts, 0);
@@ -580,8 +622,8 @@ W int statfs(const char *p, void *b) { (void)p; (void)b; errno = ENOSYS; return 
 W int fstatfs(int fd, void *b) { (void)fd; (void)b; errno = ENOSYS; return -1; }
 W int sysinfo(void *info) { (void)info; errno = ENOSYS; return -1; }
 W void *mmap(void *a, size_t l, int p, int f, int fd, long o) {
-    (void)f; (void)fd; (void)o;
-    long r = sys3(SYS_MMAP, (long)a, (long)l, p);
+    (void)fd; (void)o;
+    long r = sys4(SYS_MMAP, (long)a, (long)l, p, f);
     if (r < 0 && r >= -4095) { errno = (int)-r; return (void *)-1; }
     return (void *)r;
 }
@@ -2002,6 +2044,11 @@ W struct hostent *gethostbyname(const char *name) {
     int rc = resolve_ipv4_host(name, 0, &ip);
     if (rc != 0) { h_errno = HOST_NOT_FOUND; return 0; }
     return fill_hostent(name, ip);
+}
+
+W struct servent *getservbyname(const char *name, const char *proto) {
+    (void)name; (void)proto;
+    return 0;
 }
 
 W struct hostent *gethostbyaddr(const void *addr, socklen_t len, int type) {

@@ -2,13 +2,14 @@
 #define _SWIFTOS_SOCKET_H
 #include <stddef.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 typedef unsigned int socklen_t;
 typedef unsigned short sa_family_t;
 struct sockaddr { sa_family_t sa_family; char sa_data[14]; };
 struct sockaddr_storage { sa_family_t ss_family; char __pad[126]; };
 struct linger { int l_onoff; int l_linger; };
 struct cmsghdr { socklen_t cmsg_len; int cmsg_level; int cmsg_type; };
-struct msghdr { void *msg_name; socklen_t msg_namelen; void *msg_iov; int msg_iovlen;
+struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov; int msg_iovlen;
                 void *msg_control; socklen_t msg_controllen; int msg_flags; };
 #define AF_UNSPEC 0
 #define AF_INET   2

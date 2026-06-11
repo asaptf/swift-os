@@ -1,19 +1,21 @@
 // exceptions.S — EL1 exception vector table + entry trampolines.
 //
-// Each lower-EL entry saves a FULL trap frame — x0..x30 plus the EL0 return
-// state SP_EL0/ELR_EL1/SPSR_EL1 — and restores it before `eret`. Saving the
-// return state is what makes exceptions nestable: a handler may unmask IRQs (so
-// syscalls can block and EL0 can be preempted) without a nested EL1 interrupt
-// clobbering the pending return to EL0, because every handler restores its own
-// saved copy.
+// Each lower-EL entry saves a FULL trap frame — x0..x30, the EL0 return state
+// SP_EL0/ELR_EL1/SPSR_EL1, and the EL0 FP/SIMD state q0..q31 + FPCR/FPSR — and
+// restores it before `eret`. Saving the return state is what makes exceptions
+// nestable; saving FP/SIMD is what makes preempted Float-heavy EL0 code (for
+// example /bin/llmd) deterministic while other EL0 services run.
 //
-// Trap frame layout (288 bytes, 16-aligned), offsets:
+// Trap frame layout (816 bytes, 16-aligned), offsets:
 //   0..240  x0..x30 (x0 at 0, x8 at 64, x30 at 240)
 //   248     SP_EL0
 //   256     ELR_EL1
 //   264     SPSR_EL1
+//   288..799 q0..q31 (16 bytes each)
+//   800     FPCR
+//   808     FPSR
 
-.set FRAME_SIZE, 288
+.set FRAME_SIZE, 816
 
 .macro save_frame
     sub     sp, sp, #FRAME_SIZE
@@ -39,9 +41,49 @@
     str     x9,       [sp, #256]
     mrs     x9, spsr_el1
     str     x9,       [sp, #264]
+    stp     q0,  q1,  [sp, #288]
+    stp     q2,  q3,  [sp, #320]
+    stp     q4,  q5,  [sp, #352]
+    stp     q6,  q7,  [sp, #384]
+    stp     q8,  q9,  [sp, #416]
+    stp     q10, q11, [sp, #448]
+    stp     q12, q13, [sp, #480]
+    stp     q14, q15, [sp, #512]
+    stp     q16, q17, [sp, #544]
+    stp     q18, q19, [sp, #576]
+    stp     q20, q21, [sp, #608]
+    stp     q22, q23, [sp, #640]
+    stp     q24, q25, [sp, #672]
+    stp     q26, q27, [sp, #704]
+    stp     q28, q29, [sp, #736]
+    stp     q30, q31, [sp, #768]
+    mrs     x9, fpcr
+    str     x9,       [sp, #800]
+    mrs     x9, fpsr
+    str     x9,       [sp, #808]
 .endm
 
 .macro restore_frame
+    ldp     q0,  q1,  [sp, #288]
+    ldp     q2,  q3,  [sp, #320]
+    ldp     q4,  q5,  [sp, #352]
+    ldp     q6,  q7,  [sp, #384]
+    ldp     q8,  q9,  [sp, #416]
+    ldp     q10, q11, [sp, #448]
+    ldp     q12, q13, [sp, #480]
+    ldp     q14, q15, [sp, #512]
+    ldp     q16, q17, [sp, #544]
+    ldp     q18, q19, [sp, #576]
+    ldp     q20, q21, [sp, #608]
+    ldp     q22, q23, [sp, #640]
+    ldp     q24, q25, [sp, #672]
+    ldp     q26, q27, [sp, #704]
+    ldp     q28, q29, [sp, #736]
+    ldp     q30, q31, [sp, #768]
+    ldr     x9,       [sp, #800]
+    msr     fpcr, x9
+    ldr     x9,       [sp, #808]
+    msr     fpsr, x9
     ldr     x9,       [sp, #248]
     msr     sp_el0, x9
     ldr     x9,       [sp, #256]

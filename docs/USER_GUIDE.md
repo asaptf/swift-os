@@ -470,7 +470,7 @@ These are current implementation boundaries, not necessarily design goals:
   repository fixtures, including name-based dependency resolution. The checked
   ports seed publishes Lua, zlib, bzip2, zstd, xz, libarchive,
   ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local
-  repository, installs all eleven by package name, and runs Lua, `minigzip`,
+  repository, installs all twelve by package name, and runs Lua, `minigzip`,
   bzip2, zstd, xz, `bsdtar`, the CA bundle marker, `pcre2grep`, zoneinfo,
   nginx, and SQLite smoke commands in QEMU. The static-host workflow publishes that
   seed into a deployable web root and proves the same install path from the

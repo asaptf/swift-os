@@ -20,6 +20,19 @@ static unsigned long c_strlen(const char *s) {
     return n;
 }
 
+static int copy_cstr_bounded(char *dst, unsigned long cap, const char *src) {
+    if (!dst || !src || cap == 0) return -22;
+    unsigned long n = 0;
+    while (n < cap && src[n] != 0) {
+        dst[n] = src[n];
+        n += 1;
+    }
+    if (n == 0 || n >= cap) return -22;
+    dst[n] = 0;
+    while (++n < cap) dst[n] = 0;
+    return 0;
+}
+
 int swiftos_ps_refresh(void) {
     ps_count = (int)__syscall3(SYS_PSINFO, (long)ps_entries, SWIFTOS_PS_MAX, 0);
     return ps_count;
@@ -219,6 +232,34 @@ int swiftos_pkg_install(int fd, const char *name, const char *version_revision) 
 
 int swiftos_pkg_info(int index, char *buf, unsigned long cap) {
     return pkg_info(index, buf, cap);
+}
+
+int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
+                             unsigned long payload_size,
+                             const unsigned char *payload_sha256) {
+    if (!payload_sha256) return -22;
+    struct swiftos_pkg_stream_begin_desc desc = {0};
+    int rc = copy_cstr_bounded(desc.name, sizeof(desc.name), name);
+    if (rc != 0) return rc;
+    rc = copy_cstr_bounded(desc.version_revision, sizeof(desc.version_revision), version_revision);
+    if (rc != 0) return rc;
+    desc.payload_size = payload_size;
+    for (unsigned long i = 0; i < sizeof(desc.payload_sha256); i++) {
+        desc.payload_sha256[i] = payload_sha256[i];
+    }
+    return pkg_stream_begin(&desc);
+}
+
+int swiftos_pkg_stream_write(const void *buf, unsigned long count) {
+    return pkg_stream_write(buf, count);
+}
+
+int swiftos_pkg_stream_commit(void) {
+    return pkg_stream_commit();
+}
+
+int swiftos_pkg_stream_abort(void) {
+    return pkg_stream_abort();
 }
 
 int swiftos_exec_shell(const char *path) {
@@ -731,8 +772,9 @@ void swiftos_thread_exit(void) {
 
 // ---- Anonymous mmap / munmap / mprotect (Track B) -------------------------
 // Thin wrappers over the mmap/munmap/mprotect inlines in syscall.h. swiftos_mmap
-// returns the base address, or 0 on failure (Swift has no errno, so a 0 sentinel
-// is simplest; a valid mapping is never at VA 0).
+// returns the base address, or 0 on failure. PROT_NONE reserves VA without
+// resident frames; mprotect commits/decommits pages later. Swift has no errno,
+// so a 0 sentinel is simplest, and a valid mapping is never at VA 0.
 unsigned long swiftos_mmap(unsigned long len, int prot) {
     void *p = mmap(0, len, prot, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     return (p == MAP_FAILED) ? 0 : (unsigned long)p;

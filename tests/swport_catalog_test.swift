@@ -85,6 +85,9 @@ guard listText.contains("tier0 xz packages M archivers/xz") else {
 guard listText.contains("tier0 libarchive packages M archivers/libarchive") else {
     fail("list output did not include packaged libarchive")
 }
+guard listText.contains("tier0 openssl packages L security/openssl") else {
+    fail("list output did not include packaged openssl")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
 }
@@ -135,10 +138,16 @@ for dependency in ["bzip2", "xz", "zlib", "zstd"] {
         fail("libarchive inspect output did not show dependency \(dependency): \(libarchiveInspectText)")
     }
 }
+let opensslInspect = run(tool, ["catalog", "inspect", "openssl", catalog.path])
+requireSuccess(opensslInspect, "inspect openssl")
+let opensslInspectText = output(opensslInspect)
+guard opensslInspectText.contains("runtimeDependencies: ca-certificates") else {
+    fail("openssl inspect output did not show ca-certificates dependency: \(opensslInspectText)")
+}
 let nodeInspect = run(tool, ["catalog", "inspect", "nodejs", catalog.path])
 requireSuccess(nodeInspect, "inspect nodejs")
 let nodeInspectText = output(nodeInspect)
-for blocker in ["V8 JIT or jitless policy", "event notification API", "large mmap support"] {
+for blocker in ["V8 JIT or jitless policy", "full libuv thread audit", "signal handler frames"] {
     guard nodeInspectText.contains(blocker) else {
         fail("nodejs inspect output did not show blocker \(blocker): \(nodeInspectText)")
     }

@@ -35,6 +35,7 @@ Use this guide with:
 | Guest IPv4 | DHCPv4 lease when offered; fallback `10.0.2.15` for QEMU slirp |
 | Host/gateway alias | DHCP router option when offered; fallback `10.0.2.2` |
 | Default DNS | DHCP DNS option when offered; fallback QEMU slirp DNS at `10.0.2.3:53` |
+| IPv4 routing | Outbound sockets ARP same-subnet peers directly and use the configured gateway for off-link or `/32` destinations |
 | DHCP | Minimal boot-time DHCPv4 DISCOVER/OFFER/REQUEST/ACK; no renewal or user command yet |
 | Socket authority | Processes need `capNet`; seeded `root` has it |
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |
@@ -162,11 +163,12 @@ identification strings with an OpenSSH client, negotiates `curve25519-sha256`,
 `ssh-ed25519`, OpenSSH strict KEX, and `chacha20-poly1305@openssh.com`,
 loads its host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, authenticates
 `root` with a key from `/etc/ssh/authorized_keys`, opens a `session` channel,
-executes a bounded direct `/bin/<tool>` command, and forwards small remote
-stdin payloads into fd 0. It currently returns up to 4096 bytes of captured
-stdout/stderr per remote exec and logs when output is truncated. TCP write-side
-backpressure now waits for ACK-driven send-buffer space on blocking socket
-writes; larger streaming stdin/stdout remains a later SSHD milestone.
+executes a bounded direct `/bin/<tool>` or `/usr/bin/<tool>` command, and
+forwards small remote stdin payloads into fd 0. It currently returns up to 4096
+bytes of captured stdout/stderr per remote exec and logs when output is
+truncated. TCP write-side backpressure now waits for ACK-driven send-buffer
+space on blocking socket writes; larger streaming stdin/stdout remains a later
+SSHD milestone.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -466,7 +468,7 @@ the truncation marker. This proves TCP/22 reachability through SSH KEX,
 host-key pinning, encrypted userauth, session channel setup, bounded direct
 remote exec, bounded stdin forwarding, and bounded output capture; PTY, shell
 command parsing, scp, sftp, runtime host-key rotation, real entropy, larger
-streaming, and broader authorized-key options are follow-up work.
+streaming, and broader authorized-key option enforcement are follow-up work.
 
 For deploy-specific image-time keys, generate a host-key seed with
 `build/sshkey seed --out support/keys/ssh_host_ed25519_seed`, create
@@ -643,12 +645,12 @@ Current limits that matter when exposing a SwiftOS network service:
   base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the checked-in
   default seed and authorized key are development-only, and deploy builds should
   provide `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE`. KEX entropy is
-  still weak and temporary. It supports only simple `ssh-ed25519` lines in
-  `/etc/ssh/authorized_keys`, bounded stdout/stdin, and direct
-  single-component `/bin/<tool>` remote exec with whitespace splitting, quote
-  removal, and backslash escaping; PTY, shell command parsing, scp, sftp,
-  runtime host-key rotation, real entropy, larger streaming, and broader
-  authorized-key options are still missing.
+  still weak and temporary. It supports simple `ssh-ed25519` lines plus safe
+  restriction options in `/etc/ssh/authorized_keys`, bounded stdout/stdin, and
+  direct single-component `/bin/<tool>` or `/usr/bin/<tool>` remote exec with
+  whitespace splitting, quote removal, and backslash escaping; PTY, shell
+  command parsing, scp, sftp, runtime host-key rotation, real entropy, larger
+  streaming, and broader authorized-key option enforcement are still missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange and checks a minimal
   `/etc/ssh/known_hosts` trust store, but has no user authentication and no

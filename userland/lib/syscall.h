@@ -78,18 +78,25 @@
 #define SYS_KERNEL_ACTIVATE 69
 #define SYS_KERNEL_CONFIRM 70
 #define SYS_EVENTFD        71
-#define SYS_LOG_READ       72
+#define SYS_PKG_STREAM_BEGIN 72
+#define SYS_PKG_STREAM_WRITE 73
+#define SYS_PKG_STREAM_COMMIT 74
+#define SYS_PKG_STREAM_ABORT 75
+#define SYS_LOG_READ       76
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
 #define PROT_READ  0x1
 #define PROT_WRITE 0x2
 #define PROT_EXEC  0x4
-// mmap flags. Only anonymous private mappings are supported; the flags are
-// accepted for source compatibility but the kernel always maps anonymous RAM.
+// mmap flags. Only anonymous private mappings are supported; fixed mappings are
+// accepted inside an existing anonymous reservation.
 #define MAP_PRIVATE   0x02
+#define MAP_FIXED     0x10
 #define MAP_ANONYMOUS 0x20
 #define MAP_ANON      MAP_ANONYMOUS
+#define MAP_NORESERVE 0x4000
+#define MAP_FIXED_NOREPLACE 0x100000
 #define MAP_FAILED    ((void *)-1)
 
 // Handle rights and C2 spawn-with-handles ABI. Rights match
@@ -148,6 +155,21 @@ static inline long __syscall4(long n, long a0, long a1, long a2, long a3) {
     __asm__ volatile("svc #0"
                      : "+r"(x0)
                      : "r"(x8), "r"(x1), "r"(x2), "r"(x3)
+                     : "memory");
+    return x0;
+}
+
+static inline long __syscall6(long n, long a0, long a1, long a2, long a3, long a4, long a5) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    register long x4 __asm__("x4") = a4;
+    register long x5 __asm__("x5") = a5;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
                      : "memory");
     return x0;
 }
@@ -299,6 +321,29 @@ static inline int pkg_info(int index, char *buf, size_t cap) {
     return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
 }
 
+struct swiftos_pkg_stream_begin_desc {
+    char name[32];
+    char version_revision[16];
+    unsigned long payload_size;
+    unsigned char payload_sha256[32];
+};
+
+static inline int pkg_stream_begin(const struct swiftos_pkg_stream_begin_desc *desc) {
+    return (int)__syscall3(SYS_PKG_STREAM_BEGIN, (long)desc, 0, 0);
+}
+
+static inline int pkg_stream_write(const void *buf, size_t count) {
+    return (int)__syscall3(SYS_PKG_STREAM_WRITE, (long)buf, (long)count, 0);
+}
+
+static inline int pkg_stream_commit(void) {
+    return (int)__syscall3(SYS_PKG_STREAM_COMMIT, 0, 0, 0);
+}
+
+static inline int pkg_stream_abort(void) {
+    return (int)__syscall3(SYS_PKG_STREAM_ABORT, 0, 0, 0);
+}
+
 struct swiftos_device_info {
     unsigned int kind;
     unsigned int bus;
@@ -380,13 +425,14 @@ static inline void *sbrk(long incr) {
     return (void *)__syscall3(SYS_SBRK, incr, 0, 0);
 }
 
-// Anonymous mmap (Track B). Only MAP_ANONYMOUS|MAP_PRIVATE is meaningful; addr,
-// fd, and offset are ignored (the kernel always allocates fresh zero-filled
-// RAM). The raw syscall returns a base VA or a small negative errno; we convert
-// the error range to MAP_FAILED. PROT_WRITE|PROT_EXEC is rejected (W^X).
+// Anonymous mmap (Track B). Only MAP_ANONYMOUS|MAP_PRIVATE|MAP_NORESERVE plus
+// MAP_FIXED/MAP_FIXED_NOREPLACE inside existing anonymous reservations is
+// meaningful; fd and offset are ignored. PROT_NONE reserves VA without resident
+// frames; mprotect or MAP_FIXED commits/decommits pages later. The raw syscall
+// returns a base VA or a small negative errno; we convert the error range to
+// MAP_FAILED. PROT_WRITE|PROT_EXEC is rejected (W^X).
 static inline void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset) {
-    (void)flags; (void)fd; (void)offset;
-    long r = __syscall3(SYS_MMAP, (long)addr, (long)length, prot);
+    long r = __syscall6(SYS_MMAP, (long)addr, (long)length, prot, flags, fd, offset);
     if (r < 0 && r >= -4095) {
         return MAP_FAILED;
     }

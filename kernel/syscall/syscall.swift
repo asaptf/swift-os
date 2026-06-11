@@ -54,7 +54,7 @@ private let sysConfine: UInt = 50      // confine(path) — restrict FS access t
 private let sysEndpointCreate: UInt = 51 // endpoint_create(ends[2]) — IPC endpoint pair (C4a)
 private let sysIpcSend: UInt = 52      // ipc_send(fd, &msg) — bytes + optional handle (C4a)
 private let sysIpcRecv: UInt = 53      // ipc_recv(fd, &msg) -> bytes; installs any handle (C4a)
-private let sysMmap: UInt = 54         // mmap(len, prot) -> base VA — anonymous mmap (Track B)
+private let sysMmap: UInt = 54         // mmap(addr, len, prot, flags) -> base VA — anonymous mmap (Track B)
 private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anonymous pages (Track B)
 private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
 private let sysNanosleep: UInt = 57    // nanosleep(seconds, nanos) — block on the timer tick
@@ -72,7 +72,11 @@ private let sysKernelStage: UInt = 68    // kernel_stage() — copy the active k
 private let sysKernelActivate: UInt = 69 // kernel_activate() — flip the active kernel slot in kernel-state (U1g-5d); needs capConsole
 private let sysKernelConfirm: UInt = 70  // kernel_confirm() — mark the booted ESP kernel slot healthy (U1g-5c); needs capConsole
 private let sysEventfd: UInt = 71         // eventfd(initval, flags) — event notification counter
-private let sysLogRead: UInt = 72         // log_read(buf, cap, max_count) — needs capLogExport
+private let sysPkgStreamBegin: UInt = 72  // pkg_stream_begin(desc) — start streamed package payload install
+private let sysPkgStreamWrite: UInt = 73  // pkg_stream_write(buf, len) — append payload bytes to package store
+private let sysPkgStreamCommit: UInt = 74 // pkg_stream_commit() — verify, publish, and activate streamed package
+private let sysPkgStreamAbort: UInt = 75  // pkg_stream_abort() — discard the active streamed package install
+private let sysLogRead: UInt = 76         // log_read(buf, cap, max_count) — needs capLogExport
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -239,7 +243,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysMmap {
         // Returns a base VA on success or a negative errno (encoded in the UInt,
         // in [-4095, -1]); the userland bridge maps that to MAP_FAILED + errno.
-        frame[0] = processMmap(frame[1], Int32(truncatingIfNeeded: frame[2]))
+        frame[0] = processMmap(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]),
+                               Int32(truncatingIfNeeded: frame[3]))
         return // result is an address, not an errno
     } else if number == sysMmapFile {
         // File-backed read-only mmap (I2a). Like mmap, the result is an address
@@ -250,6 +255,14 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = pkgStoreInstall(fd: Int(bitPattern: frame[0]), nameVA: frame[1], versionVA: frame[2])
     } else if number == sysPkgInfo {
         result = pkgStoreActiveInfo(Int(bitPattern: frame[0]), frame[1], frame[2])
+    } else if number == sysPkgStreamBegin {
+        result = pkgStoreStreamBegin(descVA: frame[0])
+    } else if number == sysPkgStreamWrite {
+        result = pkgStoreStreamWrite(bufVA: frame[0], count: frame[1])
+    } else if number == sysPkgStreamCommit {
+        result = pkgStoreStreamCommit()
+    } else if number == sysPkgStreamAbort {
+        result = pkgStoreStreamAbort()
     } else if number == sysDeviceClaim {
         result = vfsDeviceClaim(name: frame[0], info: frame[1])
     } else if number == sysDeviceInfo {
