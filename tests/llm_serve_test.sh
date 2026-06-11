@@ -17,7 +17,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
-DISK="$ROOT/build/base.img"
+DISK="${LLMD_BASE_IMG:-$ROOT/build/base.img}"
 QEMU="${QEMU:-qemu-system-aarch64}"
 HOST_PORT="${LLMD_HOST_PORT:-$((24000 + ($$ % 20000)))}"
 STORY_MARK="there was a little girl named Lily"
