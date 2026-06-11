@@ -97,6 +97,12 @@ make tools-check
 Embedded Swift flags are toolchain-version-specific. Confirm the current
 Makefile and [NOTES.md](NOTES.md) before changing them.
 
+## Image Build Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SSHD_HOST_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD host-key seed staged into `/etc/ssh/ssh_host_ed25519_seed` during `make base-image` |
+
 ## Board Selection
 
 `BOARD` selects the target board configuration.
@@ -138,7 +144,8 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make swpkg-header-integrity-test` | Verify `.swpkg` rejects tampered header trust fields before verification or payload extraction. |
 | `make pkgstore` | Build the host-side package-store image tool. |
 | `make pkgrepo` | Build the signed static package repository tool. |
-| `make sshkey` | Build the host-side SSH key helper for deriving OpenSSH host-key lines from SwiftOS seed files. |
+| `make sshkey` | Build the host-side SSH key helper for generating SSHD seed files and deriving OpenSSH host-key lines from them. |
+| `make sshd-host-key-rotation-test` | Build a temporary base image with a generated SSHD host-key seed and prove host OpenSSH pins the rotated key. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
 | `make package-store-fixture` | Build and inspect the sample package-store image. |
@@ -219,7 +226,7 @@ inputs are missing or stale.
 | `build/swift-os.img` | `make disk` | UEFI/GPT boot |
 | `build/base-root` | `make base-image` | Staging tree before packing |
 | `build/basepack` | host Swift tool | Packs the base image |
-| `build/sshkey` | host Swift tool | Derives OpenSSH public host keys and known_hosts lines from `/etc/ssh/ssh_host_ed25519_seed` material |
+| `build/sshkey` | host Swift tool | Generates SSHD host-key seed files and derives OpenSSH public host keys and known_hosts lines from `/etc/ssh/ssh_host_ed25519_seed` material |
 | `build/swpkg` | host Swift tool | Creates, verifies, and extracts packages |
 | `build/pkgstore` | host Swift tool | Creates and inspects package-store images |
 | `build/pkghello.swpkg` | `make package-fixture` | Sample package file |
@@ -346,9 +353,13 @@ preflights:
 Replace this material when building a deploy-specific artifact. The checked-in
 SSHD host-key seed and SSH client trust anchor are deterministic test material,
 not per-instance production identity or deploy-specific trust policy.
-Use `build/sshkey pubkey --seed-file base/etc/ssh/ssh_host_ed25519_seed` or
-`build/sshkey known-host --host HOST --seed-file
-base/etc/ssh/ssh_host_ed25519_seed` to publish the matching OpenSSH host key.
+Generate a deploy-specific SSHD seed with `build/sshkey seed --out
+support/keys/ssh_host_ed25519_seed`, then build with `make
+SSHD_HOST_SEED_FILE=support/keys/ssh_host_ed25519_seed base-image` to
+stage it into `/etc/ssh/ssh_host_ed25519_seed`. Use `build/sshkey pubkey
+--seed-file support/keys/ssh_host_ed25519_seed` or `build/sshkey known-host
+--host HOST --seed-file support/keys/ssh_host_ed25519_seed` to publish the
+matching OpenSSH host key.
 
 ### Filesystem
 

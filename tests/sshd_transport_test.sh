@@ -13,17 +13,21 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
-DISK="$ROOT/build/base.img"
+DISK="${SSHD_BASE_IMG:-$ROOT/build/base.img}"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
 SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
 HOST_PORT="${SSHD_HOST_PORT:-$((24000 + ($$ % 20000)))}"
 KEY_ALLOW_SRC="$ROOT/fixtures/ssh/sshd_hc5_ed25519"
 KEY_DENY_SRC="$ROOT/fixtures/ssh/sshd_hc4_ed25519"
-HOST_SEED_SRC="$ROOT/base/etc/ssh/ssh_host_ed25519_seed"
+HOST_SEED_SRC="${SSHD_HOST_SEED_SRC:-$ROOT/base/etc/ssh/ssh_host_ed25519_seed}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
+  if [[ -n "${SSHD_BASE_IMG:-}" ]]; then
+    echo "FAIL: $DISK missing (custom SSHD_BASE_IMG was requested)" >&2
+    exit 2
+  fi
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
 if [[ ! -f "$DTB" ]]; then

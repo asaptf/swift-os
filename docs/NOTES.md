@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC12 SSHD deploy host-key rotation preflight (2026-06-11)
+
+- Added `sshkey seed --out PATH [--force]`, which creates a fresh
+  hex-encoded 32-byte Ed25519 seed in the same format loaded by `/bin/sshd`.
+- Added the `SSHD_HOST_SEED_FILE=PATH` base-image staging override. A deploy
+  build can now generate a per-artifact SSHD host-key seed, stage it as
+  `/etc/ssh/ssh_host_ed25519_seed`, and publish the matching OpenSSH public key
+  or known_hosts line with `build/sshkey`.
+- Added `./tests/sshd_host_key_rotation_test.sh` and
+  `make sshd-host-key-rotation-test`. The test builds a temporary signed base
+  image with a generated seed and reuses the OpenSSH strict-pinning SSHD
+  session proof against the rotated host key.
+
+**Acceptance.** `make sshd-host-key-rotation-test` generates a non-default SSHD
+host-key seed, builds a custom `BASE_IMG` with `SSHD_HOST_SEED_FILE`, boots the
+image under QEMU with TCP/22 forwarded, derives a temporary known_hosts entry
+from the rotated seed, and requires host OpenSSH to authenticate the rotated
+SwiftOS SSHD host key before running `/bin/id` and `/bin/echo`.
+
 ## HC11 SSHD host-key pinning preflight (2026-06-11)
 
 - Added `build/sshkey`, a host-side helper that derives an OpenSSH
@@ -55,7 +74,8 @@ trusted fixture key and requires both `ssh: host key signature verified` and
   carry explicit host-key material.
 - The checked-in seed remains development material for the QEMU preflight. A
   real cloud deployment still needs per-instance host-key provisioning or
-  rotation plus real entropy.
+  rotation plus real entropy. HC12 later added image-time host-key seed
+  provisioning; runtime rotation and real entropy remain follow-up work.
 
 **Acceptance.** `./tests/sshd_transport_test.sh` now requires the guest log to
 include `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed` before it

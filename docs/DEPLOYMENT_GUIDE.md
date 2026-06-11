@@ -421,10 +421,13 @@ Current Hetzner readiness status:
   `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens a `session`
   channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
   and `/bin/echo HC6-OK`. The host helper `build/sshkey` can derive the
-  OpenSSH public host key or a known_hosts line from the base image seed file.
-  The checked proof is `./tests/sshd_transport_test.sh`; it also verifies that
-  host OpenSSH pins the SwiftOS host key through known_hosts and that the older
-  HC4 fixture key is rejected.
+  OpenSSH public host key or a known_hosts line from the base image seed file,
+  and can generate a deploy-specific replacement seed. Build-time provisioning
+  uses `make SSHD_HOST_SEED_FILE=PATH base-image` to stage that seed into the
+  signed image. The checked proofs are `./tests/sshd_transport_test.sh` and
+  `./tests/sshd_host_key_rotation_test.sh`; they verify that host OpenSSH pins
+  the SwiftOS host key through known_hosts, that the older HC4 fixture key is
+  rejected, and that a custom image can boot with a rotated SSHD host key.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
@@ -436,11 +439,11 @@ Current Hetzner readiness status:
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
-  milestones should add per-instance host-key provisioning or rotation, real
-  entropy, broader authorized-key options, shell/PTY behavior,
-  stdin/streaming output, supervision/restart policy, and broader remote
-  commands. Dropbear remains a candidate full server package if the first-party
-  preflight does not grow into the supported daemon.
+  milestones should add runtime host-key rotation, real entropy, broader
+  authorized-key options, shell/PTY behavior, stdin/streaming output,
+  supervision/restart policy, and broader remote commands. Dropbear remains a
+  candidate full server package if the first-party preflight does not grow into
+  the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
@@ -573,6 +576,8 @@ A deployment handoff should include:
 - Exact QEMU command or make target.
 - Serial log from a passing boot.
 - Service logs, readiness markers, and health responses.
+- SSHD public host key or known_hosts line derived from the exact seed staged
+  into the image.
 - `top -b -n 1` output for resource-sensitive candidates.
 - Test command list and pass/fail result.
 - Known limits and skipped tests.

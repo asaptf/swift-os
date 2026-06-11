@@ -31,6 +31,24 @@ private func optionalValue(after flag: String, in args: [String]) -> String? {
     return args[i + 1]
 }
 
+private func hasFlag(_ flag: String, in args: [String]) -> Bool {
+    args.contains(flag)
+}
+
+private func randomBytes(count: Int) throws -> [UInt8] {
+    guard let fh = FileHandle(forReadingAtPath: "/dev/urandom") else {
+        throw SSHKeyError.message("cannot open /dev/urandom")
+    }
+    defer {
+        do { try fh.close() } catch {}
+    }
+    let data = fh.readData(ofLength: count)
+    guard data.count == count else {
+        throw SSHKeyError.message("short read from /dev/urandom")
+    }
+    return Array(data)
+}
+
 private func hexNibble(_ c: UInt8) -> UInt8? {
     if c >= 0x30 && c <= 0x39 { return c - 0x30 }
     if c >= 0x61 && c <= 0x66 { return c - 0x61 + 10 }
@@ -85,6 +103,31 @@ private func readSeed(args: [String]) throws -> [UInt8] {
         throw SSHKeyError.message("cannot read seed file \(path)")
     }
     return try decodeSeedHex(Array(data))
+}
+
+private func hexLine(_ bytes: [UInt8]) -> String {
+    let table = Array("0123456789abcdef".utf8)
+    var out: [UInt8] = []
+    out.reserveCapacity(bytes.count * 2 + 1)
+    for b in bytes {
+        out.append(table[Int(b >> 4)])
+        out.append(table[Int(b & 0x0F)])
+    }
+    out.append(0x0A)
+    return String(decoding: out, as: UTF8.self)
+}
+
+private func writeSeed(args: [String]) throws {
+    let path = try value(after: "--out", in: args)
+    let force = hasFlag("--force", in: args)
+    let fm = FileManager.default
+    if fm.fileExists(atPath: path) && !force {
+        throw SSHKeyError.message("\(path) already exists; pass --force to replace it")
+    }
+    let url = URL(fileURLWithPath: path)
+    try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let line = hexLine(try randomBytes(count: 32))
+    try Data(line.utf8).write(to: url, options: .atomic)
 }
 
 private func putU32BE(_ out: inout [UInt8], _ v: UInt32) {
@@ -146,6 +189,7 @@ private func publicKeyLine(seed: [UInt8], comment: String?) -> String {
 private func usage() -> String {
     """
     usage:
+      sshkey seed --out PATH [--force]
       sshkey pubkey --seed-file PATH [--comment TEXT]
       sshkey pubkey --seed-hex HEX [--comment TEXT]
       sshkey known-host --host HOST --seed-file PATH [--comment TEXT]
@@ -159,6 +203,10 @@ struct SSHKeyTool {
         let args = CommandLine.arguments
         guard args.count >= 3 else { fail(usage()) }
         do {
+            if args[1] == "seed" {
+                try writeSeed(args: args)
+                return
+            }
             let seed = try readSeed(args: args)
             let comment = optionalValue(after: "--comment", in: args)
             switch args[1] {

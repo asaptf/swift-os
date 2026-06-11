@@ -727,17 +727,21 @@ Notes:
   a bounded direct `/bin/<tool>` command.
 - Use `build/sshkey known-host --host HOST --seed-file
   base/etc/ssh/ssh_host_ed25519_seed` to derive the host known_hosts line from
-  the same seed file `/bin/sshd` loads in the guest.
-- It uses a development-only host-key seed from
-  `/etc/ssh/ssh_host_ed25519_seed` and weak temporary KEX entropy. The
+  the same seed file `/bin/sshd` loads in the guest. For a deploy-specific
+  image-time host key, generate a seed with `build/sshkey seed --out PATH` and
+  build with `make SSHD_HOST_SEED_FILE=PATH base-image`.
+- It uses a base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the
+  checked-in default seed is development-only. It still uses weak temporary KEX
+  entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
   command parser supports simple ASCII-whitespace argv splitting for
   single-component `/bin/` executables only; quoting, redirects, globbing,
-  shell sessions, PTY, scp, sftp, per-instance host-key provisioning, and
-  broader key options are not implemented yet.
+  shell sessions, PTY, scp, sftp, runtime host-key rotation, and broader key
+  options are not implemented yet.
 - A successful host command exits 0 and prints the remote command's stdout.
 
-Acceptance coverage: `tests/sshd_transport_test.sh`.
+Acceptance coverage: `tests/sshd_transport_test.sh`,
+`tests/sshd_host_key_rotation_test.sh`.
 
 ### `tcpget`
 
