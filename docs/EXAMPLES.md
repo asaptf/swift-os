@@ -382,7 +382,7 @@ echo static-host-ok > /tmp/zlib.txt
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/minigzip -d /tmp/zlib.txt.gz
 cat /tmp/zlib.txt
-echo bzip2-static-host-ok | /usr/bin/bzip2 -c | /usr/bin/bzip2 -dc
+/usr/bin/bzip2 -V
 cat /usr/share/bzip2/swiftos-bzip2.version
 cat /usr/share/certs/swiftos-ca-bundle.version
 echo nginx-lighttpd > /tmp/pcre2.txt

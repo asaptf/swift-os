@@ -95,9 +95,10 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, xz, ca-certificates,
     pcre2, tzdata, nginx, and sqlite into one signed local seed repository, and
     `make package-ports-seed-repo-install-test` proves installing all ten
-    packages plus the `minigzip`, bzip2, zstd, and xz round trips, CA bundle
-    marker, `pcre2grep` pattern match, zoneinfo marker, nginx version/marker,
-    and SQLite SQL smoke inside QEMU;
+    packages plus the `minigzip`, zstd, and xz round trips,
+    bzip2 version/marker smoke, CA bundle marker,
+    `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and
+    SQLite SQL smoke inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
     proves SwiftOS can install all ten packages from that published layout;

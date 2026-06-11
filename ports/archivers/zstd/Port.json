@@ -64,7 +64,10 @@
   },
   "test": {
     "qemu": [
-      "echo zstd-ok | /usr/bin/zstd -q -c | /usr/bin/zstd -q -dc",
+      "echo zstd-ok > /tmp/zstd.in",
+      "/usr/bin/zstd -q -f /tmp/zstd.in -o /tmp/zstd.zst",
+      "/usr/bin/zstd -q -d -f /tmp/zstd.zst -o /tmp/zstd.out",
+      "cat /tmp/zstd.out",
       "cat /usr/share/zstd/swiftos-zstd.version"
     ]
   },
