@@ -235,6 +235,7 @@ Current process and concurrency tools include:
 | Pipes and redirection | `pipe`, `dup`, `dup2`, `fcntl`, `poll`, `select`, `pselect` |
 | Nonblocking fd helpers | `pipe2`, `socket(... SOCK_NONBLOCK ...)`, `accept4`, and `O_NONBLOCK` pipe read/write |
 | Event notification | `eventfd`, `eventfd_read`, `eventfd_write`, plus `poll`/`select` readiness |
+| Signal lifecycle | `sigaction`, `signal`, `raise`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, and `waitpid` signaled status |
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
 | C pthread facade | `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data through newlib compat |
@@ -395,6 +396,7 @@ Before merging a port:
 | `userland/pthreadprobe.c` | newlib compat pthread create/join, mutexes, condition variables, once, and thread-specific data |
 | `userland/selectprobe.c` | newlib compat select/pselect readiness over poll |
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
+| `userland/signalprobe.c` | newlib compat signal disposition, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |

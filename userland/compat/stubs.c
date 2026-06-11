@@ -63,6 +63,8 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_LSEEK 6
 #define SYS_TCGETATTR 7
 #define SYS_TCSETATTR 8
+#define SYS_SIGACTION 9
+#define SYS_KILL 10
 #define SYS_WAITPID 13
 #define SYS_GETPID 11
 #define SYS_GETDENTS 16
@@ -197,6 +199,7 @@ W pid_t waitpid(pid_t pid, int *status, int options) {
     return (pid_t)sys3(SYS_WAITPID, pid, (long)status, options);
 }
 W pid_t wait(int *status) { return waitpid(-1, status, 0); }
+W int kill(pid_t pid, int sig) { return sysret(sys3(SYS_KILL, pid, sig, 0)); }
 
 // ---- ids / process groups (single-user; we are root) -----------------------
 W uid_t getuid(void) { return 0; }
@@ -2104,7 +2107,10 @@ W int ttyname_r(int fd, char *buf, size_t n) {
 
 // signals: route to our minimal kernel disposition (syscall 9); masks are no-ops.
 #define SWIFTOS_NSIG 64
+static void (*swiftos_signal_handlers[SWIFTOS_NSIG])(int);
 static void (*swiftos_siginfo_handlers[SWIFTOS_NSIG])(int, siginfo_t *, void *);
+static sigset_t swiftos_signal_masks[SWIFTOS_NSIG];
+static int swiftos_signal_flags[SWIFTOS_NSIG];
 
 static void swiftos_siginfo_trampoline(int sig) {
     if (sig > 0 && sig < SWIFTOS_NSIG && swiftos_siginfo_handlers[sig]) {
@@ -2113,18 +2119,45 @@ static void swiftos_siginfo_trampoline(int sig) {
 }
 
 W int sigaction(int sig, const struct sigaction *act, struct sigaction *old) {
-    (void)old;
+    if (sig <= 0 || sig >= SWIFTOS_NSIG) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (old) {
+        memset(old, 0, sizeof(*old));
+        old->sa_handler = swiftos_signal_handlers[sig];
+        old->sa_mask = swiftos_signal_masks[sig];
+        old->sa_flags = swiftos_signal_flags[sig];
+    }
     if (act) {
         void (*handler)(int) = act->sa_handler;
         if ((act->sa_flags & SA_SIGINFO) && sig > 0 && sig < SWIFTOS_NSIG) {
             swiftos_siginfo_handlers[sig] = act->sa_sigaction;
             handler = swiftos_siginfo_trampoline;
+        } else {
+            swiftos_siginfo_handlers[sig] = NULL;
         }
-        sys3(9, sig, (long)handler, 0);
+        swiftos_signal_handlers[sig] = handler;
+        swiftos_signal_masks[sig] = act->sa_mask;
+        swiftos_signal_flags[sig] = act->sa_flags;
+        if (sysret(sys3(SYS_SIGACTION, sig, (long)handler, 0)) < 0) { return -1; }
     }
     return 0;
 }
-W int sigprocmask(int how, const sigset_t *set, sigset_t *old) { (void)how; (void)set; (void)old; return 0; }
+W void (*signal(int sig, void (*handler)(int)))(int) {
+    struct sigaction act;
+    struct sigaction old;
+    memset(&act, 0, sizeof(act));
+    act.sa_handler = handler;
+    if (sigaction(sig, &act, &old) < 0) { return SIG_ERR; }
+    return old.sa_handler;
+}
+W int raise(int sig) { return kill(getpid(), sig); }
+W int sigprocmask(int how, const sigset_t *set, sigset_t *old) {
+    (void)how; (void)set;
+    if (old) { memset(old, 0, sizeof(*old)); }
+    return 0;
+}
 W int sigsuspend(const sigset_t *mask) { (void)mask; errno = EINTR; return -1; }
 
 // fnmatch / glob: minimal pattern matcher; glob is unsupported.

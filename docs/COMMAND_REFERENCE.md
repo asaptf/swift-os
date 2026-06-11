@@ -934,6 +934,7 @@ diagnostic fixtures than stable application interfaces.
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
+| `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
@@ -1274,6 +1275,7 @@ are not the primary operator interface.
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
+| `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
 | `socketprobe` | newlib compat `pipe2`, `socket` flags, `accept4`, `getaddrinfo`, socket options, TCP client, and TCP server paths. | Yes, when validating C runtime network compatibility. | `tests/socket_test.sh` |
 | `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |
 | `forkdemo` | `fork`, `waitpid`, inherited cwd/fd state, IPC polling, and moved-handle receive. | Yes, for process and IPC diagnostics. | `tests/boot_test.sh`, `tests/cow_test.sh` |

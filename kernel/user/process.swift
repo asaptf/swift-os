@@ -664,6 +664,43 @@ private func clearProcessSchedulerSlot(_ slot: Int) {
     pAddressSpaceCpuMask[slot] = 0
 }
 
+private func removeProcessFromRunQueue(_ slot: Int) {
+    if slot < 0 || slot >= maxProc || !pRunQueued[slot] { return }
+    let cpu = pHomeCpu[slot]
+    if !processValidSchedulerCpu(cpu) {
+        uartPuts("panic: invalid EL0 process run queue removal CPU\n")
+        while true {}
+    }
+
+    let idx = Int(cpu)
+    let daif = processRunQueueLock(cpu)
+    var prev = noProcessSlot
+    var cur = processRunQueueHead[idx]
+    while cur != noProcessSlot {
+        if cur == Int32(slot) {
+            let next = pRunNext[slot]
+            if prev == noProcessSlot {
+                processRunQueueHead[idx] = next
+            } else {
+                pRunNext[Int(prev)] = next
+            }
+            if processRunQueueTail[idx] == Int32(slot) {
+                processRunQueueTail[idx] = prev
+            }
+            pRunNext[slot] = noProcessSlot
+            pRunQueued[slot] = false
+            processMirrorRunQueueForCpu(cpu)
+            processRunQueueUnlock(cpu, daif)
+            return
+        }
+        prev = cur
+        cur = pRunNext[Int(cur)]
+    }
+    processRunQueueUnlock(cpu, daif)
+    uartPuts("panic: queued EL0 process missing from run queue\n")
+    while true {}
+}
+
 private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
     if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process dispatch telemetry target\n")
@@ -2898,6 +2935,42 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
         pWait[parent] = wantSlot
         yieldToScheduler()
     }
+}
+
+/// POSIX-shaped kill(pid, sig) subset for process lifecycle control.
+///
+/// Supported now: positive PIDs, signal 0 existence probes, and default/ignored
+/// termination signals. Process groups and userspace handler frames are future
+/// work; custom handlers still behave like the default action in the kernel.
+func processKill(_ pid: Int, _ sig: Int) -> Int {
+    if !signalIsValid(sig) && sig != 0 { return -22 } // EINVAL
+    if pid <= 0 { return -22 } // process groups are not modeled yet
+    let slot = pid - 1
+    if slot < 0 || slot >= maxProc || pState[slot] == pUnused { return -3 } // ESRCH
+    if sig == 0 { return 0 }
+    if signalDisposition(sig) == SIG_IGN { return 0 }
+
+    let me = currentProcessSlot()
+    if slot == me {
+        processTerminateBySignal(sig) // never returns
+    }
+
+    if pState[slot] == pZombie { return 0 }
+    if pState[slot] == pRunning { return -16 } // avoid remote-CPU teardown
+
+    if pRunQueued[slot] {
+        removeProcessFromRunQueue(slot)
+    }
+    vfsProcessCloseAll(slot: slot)
+    futexForgetSlot(slot)
+    pWait[slot] = waitNone
+    pWakeTick[slot] = 0
+    pExit[slot] = 128 + sig
+    pKilled[slot] = true
+    pState[slot] = pZombie
+    pSchedulerQuiesced[slot] = true
+    wakeParent(of: slot)
+    return 0
 }
 
 /// execve(path, argv, envp): replace the current process image and return from

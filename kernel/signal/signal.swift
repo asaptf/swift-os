@@ -10,6 +10,7 @@
 
 let SIGINT: Int = 2
 let SIGPIPE: Int = 13
+let SIGTERM: Int = 15
 let SIGCHLD: Int = 17
 
 let SIG_DFL: UInt = 0
@@ -17,6 +18,10 @@ let SIG_IGN: UInt = 1
 
 private var pendingMask: UInt32 = 0
 private var dispositions = [UInt](repeating: 0, count: 32) // index = signo; SIG_DFL
+
+func signalIsValid(_ sig: Int) -> Bool {
+    sig > 0 && sig < dispositions.count
+}
 
 func signalReset() {
     pendingMask = 0
@@ -26,10 +31,15 @@ func signalReset() {
 /// Record a disposition (SIG_DFL / SIG_IGN / handler address). Returns the old one.
 @discardableResult
 func signalSetDisposition(_ sig: Int, _ handler: UInt) -> UInt {
-    guard sig > 0 && sig < 32 else { return SIG_DFL }
+    guard signalIsValid(sig) else { return SIG_DFL }
     let old = dispositions[sig]
     dispositions[sig] = handler
     return old
+}
+
+func signalDisposition(_ sig: Int) -> UInt {
+    guard signalIsValid(sig) else { return SIG_DFL }
+    return dispositions[sig]
 }
 
 /// True if any signal is pending for the foreground process.
@@ -39,8 +49,20 @@ func signalHasPending() -> Bool {
 
 /// Mark a signal pending for the foreground process (called from IRQ context).
 func signalRaise(_ sig: Int) {
-    guard sig > 0 && sig < 32 else { return }
+    guard signalIsValid(sig) else { return }
     pendingMask |= (UInt32(1) << UInt32(sig))
+}
+
+private func signalDeliverPending(_ sig: Int) {
+    let bit = UInt32(1) << UInt32(sig)
+    if (pendingMask & bit) == 0 { return }
+    pendingMask &= ~bit
+    let disp = dispositions[sig]
+    if disp == SIG_IGN {
+        return
+    }
+    // SIG_DFL (and, for now, any custom handler) terminates the process.
+    processTerminateBySignal(sig) // never returns
 }
 
 /// Deliver pending signals to the running foreground process. Must be called
@@ -51,14 +73,7 @@ func signalDeliverToForeground() {
         return
     }
 
-    let intBit = UInt32(1) << UInt32(SIGINT)
-    if (pendingMask & intBit) != 0 {
-        pendingMask &= ~intBit
-        let disp = dispositions[SIGINT]
-        if disp == SIG_IGN {
-            return
-        }
-        // SIG_DFL (and, for now, any custom handler) → terminate the process.
-        processTerminateBySignal(SIGINT) // never returns
-    }
+    signalDeliverPending(SIGINT)
+    signalDeliverPending(SIGTERM)
+    signalDeliverPending(SIGPIPE)
 }

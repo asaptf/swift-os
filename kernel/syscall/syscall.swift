@@ -105,13 +105,15 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysTcSetAttr {
         result = syscallTcSetAttr(termios: frame[2])
     } else if number == sysSigaction {
-        signalSetDisposition(Int(bitPattern: frame[0]), frame[1])
-        result = 0
+        let sig = Int(bitPattern: frame[0])
+        if signalIsValid(sig) {
+            signalSetDisposition(sig, frame[1])
+            result = 0
+        } else {
+            result = -22
+        }
     } else if number == sysKill {
-        // Single foreground process model: deliver to ourselves immediately.
-        signalRaise(Int(bitPattern: frame[1]))
-        signalDeliverToForeground() // may not return (fatal default action)
-        result = 0
+        result = processKill(Int(bitPattern: frame[0]), Int(bitPattern: frame[1]))
     } else if number == sysGetpid {
         result = processCurrentPid()
     } else if number == sysFork {

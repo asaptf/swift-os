@@ -4685,3 +4685,28 @@ compatibility.
 **Acceptance.** `make eventfd-test`, `make docs-test`, `make select-test`,
 `make socket-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM5 — newlib signal lifecycle probe (DONE, 2026-06-11)
+
+**Scope.** Add the first pid-targeted signal lifecycle slice required by the
+Node.js/npm/pm2 track. SwiftOS now supports positive-PID `kill(pid, 0)` probes,
+default/ignored signal dispositions through `sigaction`, `signal`, and `raise`,
+and `kill(child, SIGTERM)` termination with `waitpid` reporting signaled status.
+This is still source compatibility, not a complete POSIX signal subsystem:
+process groups, blocked-syscall interruption, masks, userspace signal frames,
+and libuv signal watchers remain future work.
+
+- `kernel/user/process.swift`: adds pid-aware process termination for nonrunning
+  targets and safely removes ready targets from the EL0 run queue before
+  zombifying them.
+- `kernel/signal/signal.swift`: tracks SIGTERM alongside SIGINT/SIGPIPE and
+  exposes disposition lookup for process lifecycle control.
+- `userland/compat/stubs.c`: maps `kill`, `signal`, `raise`, and `sigaction`
+  onto the SwiftOS syscall ABI with POSIX-style `errno` behavior.
+- `/bin/signalprobe`: proves `kill(getpid(), 0)`, missing-pid `ESRCH`,
+  SIGTERM ignore/restore old dispositions, child SIGTERM termination, and
+  `waitpid` signaled status.
+
+**Acceptance.** `make signal-test`, `make docs-test`, `make eventfd-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
