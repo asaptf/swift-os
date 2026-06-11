@@ -465,10 +465,11 @@ modern algorithms, boot SwiftOS with a slirp NIC, log in as `root`, and run:
 
 The current client preflight connects outbound, exchanges SSH identification
 strings, completes `curve25519-sha256`, verifies the server's `ssh-ed25519`
-host-key signature over the exchange hash, handles OpenSSH strict KEX, derives
+host-key signature over the exchange hash, matches the host key against
+`/etc/ssh/known_hosts`, handles OpenSSH strict KEX, derives
 `chacha20-poly1305@openssh.com` keys, and completes one encrypted
-`ssh-userauth` service request/accept. It does not yet implement known_hosts
-trust policy, user authentication, session/exec channels, PTY, scp, or sftp.
+`ssh-userauth` service request/accept. It does not yet implement user
+authentication, session/exec channels, PTY, scp, or sftp.
 
 Proof:
 
@@ -594,7 +595,7 @@ The user-visible end-to-end paths are the shell tests above.
 | Host `curl` cannot connect | Missing or mismatched `hostfwd`, service not ready, or host port conflict | Wait for the service readiness marker; confirm the hostfwd rule; choose another host port |
 | TCP or UDP echo works once then stops | Echo programs are one-shot | Start `/bin/tcpecho` or `/bin/udpecho` again |
 | `/bin/tcpget` cannot reach host | Host listener not running or wrong port | Start the host listener first and connect to `10.0.2.2:<port>` |
-| `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; run `./tests/ssh_transport_test.sh` |
+| `/bin/ssh` fails before preauth | Host `sshd` is not listening, algorithms are unsupported, `/etc/ssh/known_hosts` does not trust the host key, or the base image is stale | Start an OpenSSH server with `curve25519-sha256`, `ssh-ed25519`, and `chacha20-poly1305@openssh.com`; rebuild `base-image`; check for `ssh: host key matched /etc/ssh/known_hosts`; run `./tests/ssh_transport_test.sh` |
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
 | SSH exits before stdout | Missing fixture key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, unsupported command syntax, or a protocol regression | Use `fixtures/ssh/sshd_hc5_ed25519`, rebuild `base-image`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
@@ -620,8 +621,9 @@ Current limits that matter when exposing a SwiftOS network service:
   provisioning, real entropy, and broader authorized-key options are still
   missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
-  the server's host-key signature for the current exchange but has no known_hosts
-  trust store, no user authentication, and no session/exec or file-copy modes.
+  the server's host-key signature for the current exchange and checks a minimal
+  `/etc/ssh/known_hosts` trust store, but has no user authentication and no
+  session/exec or file-copy modes.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
   server.

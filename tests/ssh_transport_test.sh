@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # ssh_transport_test.sh — SSH client transport acceptance.
 #
-# Boots a guest with virtio-net, starts a temporary host OpenSSH server on a
-# high loopback port, then runs guest /bin/ssh to 10.0.2.2:<port>. The client
-# must complete identification, curve25519-sha256 KEX, ssh-ed25519 host-key
-# signature verification, strict-KEX sequence reset, chacha20-poly1305 key
-# setup, and one encrypted ssh-userauth service request.
+# Boots a guest with virtio-net, first starts a temporary host OpenSSH server
+# with an untrusted Ed25519 host key, then restarts it with a trusted fixture
+# host key and runs guest /bin/ssh to 10.0.2.2:<port>. The client must reject
+# the untrusted key, then complete identification, curve25519-sha256 KEX,
+# ssh-ed25519 host-key signature verification, known_hosts trust pinning,
+# strict-KEX sequence reset, chacha20-poly1305 key setup, and one encrypted
+# ssh-userauth service request.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,6 +16,8 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 PORT="${SSH_CLIENT_HOST_PORT:-$((26000 + ($$ % 20000)))}"
+HOST_KEY_SRC="$ROOT/fixtures/ssh/ssh_client_host_ed25519"
+HOST_KEY_DENY_SRC="$ROOT/fixtures/ssh/sshd_hc4_ed25519"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -24,8 +28,9 @@ if [[ ! -f "$DTB" ]]; then
 fi
 SSHD="${SSHD:-$(command -v sshd 2>/dev/null || true)}"
 [[ -n "$SSHD" ]] || { echo "FAIL: sshd not found (needed for the host OpenSSH server)" >&2; exit 2; }
-command -v ssh-keygen >/dev/null 2>&1 || { echo "FAIL: ssh-keygen not found" >&2; exit 2; }
 command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to wait for host sshd)" >&2; exit 2; }
+[[ -f "$HOST_KEY_SRC" ]] || { echo "FAIL: fixture host key missing: $HOST_KEY_SRC" >&2; exit 2; }
+[[ -f "$HOST_KEY_DENY_SRC" ]] || { echo "FAIL: fixture host key missing: $HOST_KEY_DENY_SRC" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-ssh-client.XXXXXX)"
 SSHD_LOG="$(mktemp -t swiftos-ssh-client-sshd.XXXXXX)"
@@ -37,7 +42,7 @@ QP=""
 SSHD_PID=""
 
 stop_all() {
-  [[ -n "$SSHD_PID" ]] && { kill "$SSHD_PID" 2>/dev/null || true; sleep 0.2; kill -9 "$SSHD_PID" 2>/dev/null || true; }
+  stop_host_sshd
   if [[ -f "$PIDFILE" ]]; then
     local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
     [[ -n "$pid" ]] && { kill "$pid" 2>/dev/null || true; sleep 0.2; kill -9 "$pid" 2>/dev/null || true; }
@@ -85,9 +90,17 @@ wait_host_port() {
   return 1
 }
 
-ssh-keygen -q -t ed25519 -N '' -f "$HOSTDIR/host_ed25519" >/dev/null \
-  || { echo "FAIL: could not generate temporary host key" >&2; exit 2; }
-cat >"$HOSTDIR/sshd_config" <<EOF
+stop_host_sshd() {
+  [[ -n "$SSHD_PID" ]] && { kill "$SSHD_PID" 2>/dev/null || true; sleep 0.2; kill -9 "$SSHD_PID" 2>/dev/null || true; }
+  SSHD_PID=""
+}
+
+start_host_sshd() {
+  local key_src="$1"
+  stop_host_sshd
+  cp "$key_src" "$HOSTDIR/host_ed25519"
+  chmod 600 "$HOSTDIR/host_ed25519"
+  cat >"$HOSTDIR/sshd_config" <<EOF
 Port $PORT
 ListenAddress 127.0.0.1
 HostKey $HOSTDIR/host_ed25519
@@ -102,13 +115,16 @@ LogLevel DEBUG3
 StrictModes no
 UsePAM no
 EOF
-chmod 600 "$HOSTDIR/sshd_config" "$HOSTDIR/host_ed25519"
-"$SSHD" -t -f "$HOSTDIR/sshd_config" \
-  || { echo "FAIL: temporary sshd_config did not validate" >&2; exit 2; }
-"$SSHD" -D -e -f "$HOSTDIR/sshd_config" >"$SSHD_LOG" 2>&1 &
-SSHD_PID=$!
-disown "$SSHD_PID" 2>/dev/null || true
-wait_host_port || drive_fail "host sshd did not listen on 127.0.0.1:$PORT"
+  chmod 600 "$HOSTDIR/sshd_config"
+  "$SSHD" -t -f "$HOSTDIR/sshd_config" \
+    || { echo "FAIL: temporary sshd_config did not validate" >&2; exit 2; }
+  "$SSHD" -D -e -f "$HOSTDIR/sshd_config" >>"$SSHD_LOG" 2>&1 &
+  SSHD_PID=$!
+  disown "$SSHD_PID" 2>/dev/null || true
+  wait_host_port || drive_fail "host sshd did not listen on 127.0.0.1:$PORT"
+}
+
+start_host_sshd "$HOST_KEY_DENY_SRC"
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
@@ -136,6 +152,10 @@ await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 send_line "/bin/ssh 10.0.2.2 $PORT"
+await "ssh: known_hosts host key mismatch" 120 || drive_fail "guest ssh did not reject an untrusted host key"
+stop_host_sshd
+start_host_sshd "$HOST_KEY_SRC"
+send_line "/bin/ssh 10.0.2.2 $PORT"
 await "ssh: transport ready (preauth)" 120 || true
 exec 3>&-
 stop_all
@@ -149,6 +169,10 @@ grep -qF "ssh: server SSH-2.0-OpenSSH" <<<"$clean" \
   || { echo "FAIL: guest ssh did not receive an OpenSSH server banner" >&2; ok=0; }
 grep -qF "ssh: host key signature verified" <<<"$clean" \
   || { echo "FAIL: guest ssh did not verify the Ed25519 host-key signature" >&2; ok=0; }
+grep -qF "ssh: known_hosts host key mismatch" <<<"$clean" \
+  || { echo "FAIL: guest ssh did not reject the untrusted host key" >&2; ok=0; }
+grep -qF "ssh: host key matched /etc/ssh/known_hosts" <<<"$clean" \
+  || { echo "FAIL: guest ssh did not match the host key in known_hosts" >&2; ok=0; }
 grep -qF "ssh: strict KEX sequence reset" <<<"$clean" \
   || { echo "FAIL: guest ssh did not detect strict KEX" >&2; ok=0; }
 grep -qF "ssh: negotiated curve25519-sha256 ssh-ed25519 chacha20-poly1305@openssh.com" <<<"$clean" \
@@ -161,7 +185,7 @@ grep -qF "Server listening on 127.0.0.1 port $PORT" "$SSHD_LOG" \
   || { echo "FAIL: host sshd log did not show the expected listener" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/ssh completed outbound OpenSSH transport/KEX preauth against host sshd"
+  echo "PASS: /bin/ssh rejected an untrusted host key, then completed outbound OpenSSH transport/KEX preauth"
   exit 0
 fi
 echo "--- serial (ssh client region) ---" >&2

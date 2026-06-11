@@ -662,12 +662,14 @@ Notes:
 - This command opens an outbound TCP stream, exchanges SSH identification
   strings with a normal OpenSSH server, sends client KEXINIT, completes
   `curve25519-sha256`, verifies the server's `ssh-ed25519` host-key signature
-  over the exchange hash, handles OpenSSH strict KEX, derives
+  over the exchange hash, matches the host key against `/etc/ssh/known_hosts`,
+  handles OpenSSH strict KEX, derives
   `chacha20-poly1305@openssh.com` keys, and performs one encrypted
   `ssh-userauth` service request/accept exchange.
-- This is a pre-auth transport proof only. It does not implement known_hosts
-  trust policy, user authentication, remote exec/session channels, PTY, scp, or
-  sftp yet, and its KEX randomness is development-only.
+- This is a pre-auth transport proof only. Its known_hosts parser supports
+  simple `ssh-ed25519` entries for bare IPv4 hosts or `[IPv4]:port` patterns.
+  It does not implement user authentication, remote exec/session channels, PTY,
+  scp, or sftp yet, and its KEX randomness is development-only.
 - A successful run exits 0 after printing `ssh: transport ready (preauth)`.
 
 Acceptance coverage: `tests/ssh_transport_test.sh`.

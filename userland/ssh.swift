@@ -4,9 +4,9 @@
 // This is not a full interactive SSH client yet. It proves the outbound client
 // path needed for cloud bring-up: TCP connect, SSH identification, KEXINIT,
 // curve25519-sha256, ssh-ed25519 host-key signature verification,
-// chacha20-poly1305 keys, and an encrypted ssh-userauth service request.
-// Host trust pinning, user authentication, exec/session channels, PTY, scp/sftp,
-// known_hosts, and real entropy are separate milestones.
+// known_hosts pinning, chacha20-poly1305 keys, and an encrypted ssh-userauth
+// service request. User authentication, exec/session channels, PTY, scp/sftp,
+// and real entropy are separate milestones.
 
 private let defaultIP: UInt32 = 0x0A00_0202     // 10.0.2.2 (QEMU slirp host)
 private let defaultPort: UInt16 = 22
@@ -312,6 +312,246 @@ private func stringEquals(_ view: SSHStringView, _ s: StaticString) -> Bool {
     s.withUTF8Buffer { sb -> Bool in
         if view.len != sb.count { return false }
         return bytesEqual(view.p, sb.baseAddress!, view.len)
+    }
+}
+
+private func rawEquals(_ lhs: UnsafeRawPointer, _ lhsLen: Int,
+                       _ rhs: UnsafeRawPointer, _ rhsLen: Int) -> Bool {
+    lhsLen == rhsLen && bytesEqual(lhs, rhs, lhsLen)
+}
+
+private func isKnownHostSpace(_ c: UInt8) -> Bool {
+    c == 0x20 || c == 0x09 || c == 0x0D
+}
+
+private func base64Value(_ c: UInt8) -> Int {
+    if c >= 0x41 && c <= 0x5A { return Int(c - 0x41) }
+    if c >= 0x61 && c <= 0x7A { return Int(c - 0x61) + 26 }
+    if c >= 0x30 && c <= 0x39 { return Int(c - 0x30) + 52 }
+    if c == 0x2B { return 62 }
+    if c == 0x2F { return 63 }
+    return -1
+}
+
+private func decodeBase64(_ src: UnsafeRawPointer, _ len: Int,
+                          _ out: UnsafeMutableRawPointer, _ cap: Int) -> Int {
+    var bits = 0
+    var acc: UInt32 = 0
+    var outLen = 0
+    var sawPad = false
+    var i = 0
+    while i < len {
+        let c = src.load(fromByteOffset: i, as: UInt8.self)
+        if c == 0x3D {
+            sawPad = true
+            i += 1
+            continue
+        }
+        let v = base64Value(c)
+        if v < 0 || sawPad { return -1 }
+        acc = (acc << 6) | UInt32(v)
+        bits += 6
+        if bits >= 8 {
+            bits -= 8
+            if outLen >= cap { return -1 }
+            out.storeBytes(of: UInt8((acc >> UInt32(bits)) & 0xFF),
+                           toByteOffset: outLen,
+                           as: UInt8.self)
+            outLen += 1
+        }
+        i += 1
+    }
+    return outLen
+}
+
+private func nextKnownHostToken(_ p: UnsafeRawPointer,
+                                _ lineEnd: Int,
+                                _ off: inout Int) -> SSHStringView? {
+    while off < lineEnd && isKnownHostSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    if off >= lineEnd { return nil }
+    let start = off
+    while off < lineEnd && !isKnownHostSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+        off += 1
+    }
+    return SSHStringView(p: p + start, len: off - start)
+}
+
+private func writeByte(_ c: UInt8,
+                       _ out: UnsafeMutableRawPointer,
+                       _ off: inout Int,
+                       _ cap: Int) -> Bool {
+    if off >= cap { return false }
+    out.storeBytes(of: c, toByteOffset: off, as: UInt8.self)
+    off += 1
+    return true
+}
+
+private func writeDecimal(_ value: UInt,
+                          _ out: UnsafeMutableRawPointer,
+                          _ off: inout Int,
+                          _ cap: Int) -> Bool {
+    var divisor: UInt = 10000
+    var started = false
+    while divisor > 0 {
+        let digit = (value / divisor) % 10
+        if digit != 0 || started || divisor == 1 {
+            if !writeByte(UInt8(0x30 + digit), out, &off, cap) { return false }
+            started = true
+        }
+        divisor /= 10
+    }
+    return true
+}
+
+private func writeIPv4(_ ip: UInt32,
+                       _ out: UnsafeMutableRawPointer,
+                       _ cap: Int) -> Int {
+    var off = 0
+    let o0 = UInt((ip >> 24) & 0xFF)
+    let o1 = UInt((ip >> 16) & 0xFF)
+    let o2 = UInt((ip >> 8) & 0xFF)
+    let o3 = UInt(ip & 0xFF)
+    guard writeDecimal(o0, out, &off, cap),
+          writeByte(0x2E, out, &off, cap),
+          writeDecimal(o1, out, &off, cap),
+          writeByte(0x2E, out, &off, cap),
+          writeDecimal(o2, out, &off, cap),
+          writeByte(0x2E, out, &off, cap),
+          writeDecimal(o3, out, &off, cap) else {
+        return -1
+    }
+    return off
+}
+
+private func hostPatternMatchesEndpoint(_ pattern: SSHStringView,
+                                        _ ip: UInt32,
+                                        _ port: UInt16) -> Bool {
+    withUnsafeTemporaryAllocation(byteCount: 32, alignment: 1) { ipBuf -> Bool in
+        let ipLen = writeIPv4(ip, ipBuf.baseAddress!, ipBuf.count)
+        if ipLen <= 0 { return false }
+        if rawEquals(pattern.p, pattern.len, ipBuf.baseAddress!, ipLen) {
+            return true
+        }
+        return withUnsafeTemporaryAllocation(byteCount: 48, alignment: 1) { bracket -> Bool in
+            var off = 0
+            guard writeByte(0x5B, bracket.baseAddress!, &off, bracket.count) else { return false }
+            copyBytes(bracket.baseAddress!, off, ipBuf.baseAddress!, ipLen)
+            off += ipLen
+            guard writeByte(0x5D, bracket.baseAddress!, &off, bracket.count),
+                  writeByte(0x3A, bracket.baseAddress!, &off, bracket.count),
+                  writeDecimal(UInt(port), bracket.baseAddress!, &off, bracket.count) else {
+                return false
+            }
+            return rawEquals(pattern.p, pattern.len, bracket.baseAddress!, off)
+        }
+    }
+}
+
+private func hostFieldMatchesEndpoint(_ field: SSHStringView,
+                                      _ ip: UInt32,
+                                      _ port: UInt16) -> Bool {
+    var start = 0
+    while start < field.len {
+        var end = start
+        while end < field.len && field.p.load(fromByteOffset: end, as: UInt8.self) != 0x2C {
+            end += 1
+        }
+        if end > start {
+            let pattern = SSHStringView(p: field.p + start, len: end - start)
+            if hostPatternMatchesEndpoint(pattern, ip, port) { return true }
+        }
+        if end == field.len { break }
+        start = end + 1
+    }
+    return false
+}
+
+private func knownHostsBufferTrusts(_ hostKey: SSHStringView,
+                                    _ ip: UInt32,
+                                    _ port: UInt16,
+                                    _ p: UnsafeRawPointer,
+                                    _ len: Int) -> Int {
+    var lineStart = 0
+    while lineStart < len {
+        var lineEnd = lineStart
+        while lineEnd < len && p.load(fromByteOffset: lineEnd, as: UInt8.self) != 0x0A {
+            lineEnd += 1
+        }
+
+        var off = lineStart
+        while off < lineEnd && isKnownHostSpace(p.load(fromByteOffset: off, as: UInt8.self)) {
+            off += 1
+        }
+        if off < lineEnd && p.load(fromByteOffset: off, as: UInt8.self) != 0x23,
+           let hosts = nextKnownHostToken(p, lineEnd, &off),
+           let keyType = nextKnownHostToken(p, lineEnd, &off),
+           let keyData = nextKnownHostToken(p, lineEnd, &off),
+           hostFieldMatchesEndpoint(hosts, ip, port) {
+            if !stringEquals(keyType, "ssh-ed25519") { return -1 }
+            let matched = withUnsafeTemporaryAllocation(byteCount: 256, alignment: 8) { decoded -> Bool in
+                let decodedLen = decodeBase64(keyData.p, keyData.len,
+                                              decoded.baseAddress!,
+                                              decoded.count)
+                return decodedLen == hostKey.len &&
+                       bytesEqual(decoded.baseAddress!, hostKey.p, hostKey.len)
+            }
+            return matched ? 1 : -1
+        }
+
+        lineStart = lineEnd + 1
+    }
+    return 0
+}
+
+private func knownHostKeyMatches(_ hostKey: SSHStringView,
+                                 _ ip: UInt32,
+                                 _ port: UInt16) -> Bool {
+    guard ed25519PublicKeyFromBlob(hostKey) != nil else { return false }
+    let fd = swiftos_open("/etc/ssh/known_hosts", 0)
+    guard fd >= 0 else {
+        swiftos_puts("ssh: known_hosts missing /etc/ssh/known_hosts\n")
+        return false
+    }
+    defer { _ = swiftos_close(fd) }
+
+    return withUnsafeTemporaryAllocation(byteCount: 4096, alignment: 8) { raw -> Bool in
+        var used = 0
+        while used < raw.count {
+            let r = swiftos_read(fd, raw.baseAddress! + used, UInt(raw.count - used))
+            if r < 0 {
+                swiftos_puts("ssh: known_hosts read failed\n")
+                return false
+            }
+            if r == 0 { break }
+            used += Int(r)
+        }
+        if used == raw.count {
+            let extraRead = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Int in
+                swiftos_read(fd, extra.baseAddress!, 1)
+            }
+            if extraRead < 0 {
+                swiftos_puts("ssh: known_hosts read failed\n")
+                return false
+            }
+            if extraRead > 0 {
+                swiftos_puts("ssh: known_hosts too large\n")
+                return false
+            }
+        }
+
+        let result = knownHostsBufferTrusts(hostKey, ip, port, raw.baseAddress!, used)
+        if result > 0 {
+            swiftos_puts("ssh: host key matched /etc/ssh/known_hosts\n")
+            return true
+        }
+        if result < 0 {
+            swiftos_puts("ssh: known_hosts host key mismatch\n")
+            return false
+        }
+        swiftos_puts("ssh: known_hosts entry not found /etc/ssh/known_hosts\n")
+        return false
     }
 }
 
@@ -664,7 +904,7 @@ private func sendDisconnect(_ fd: Int32, _ packet: UnsafeMutableRawPointer, _ ca
     return sendEncryptedChachaPacket(fd, packet, w.len, key, &seq)
 }
 
-private func runTransport(_ fd: Int32) -> Bool {
+private func runTransport(_ fd: Int32, targetIP: UInt32, targetPort: UInt16) -> Bool {
     guard writeBanner(fd) else {
         swiftos_puts("ssh: banner write failed\n")
         return false
@@ -787,6 +1027,9 @@ private func runTransport(_ fd: Int32) -> Bool {
             return false
         }
         swiftos_puts("ssh: host key signature verified\n")
+        guard knownHostKeyMatches(hostKey, targetIP, targetPort) else {
+            return false
+        }
 
         let newKeysLen = readPlainPacket(fd, packet.baseAddress!, packet.count, &serverSeq)
         guard newKeysLen == 1 && packet.baseAddress!.load(fromByteOffset: 0, as: UInt8.self) == msgNewKeys else {
@@ -856,7 +1099,7 @@ func main(_ argc: Int32,
     printUInt(UInt(target.1))
     swiftos_puts("\n")
 
-    let ok = runTransport(fd)
+    let ok = runTransport(fd, targetIP: target.0, targetPort: target.1)
     _ = swiftos_close(fd)
     return ok ? 0 : 1
 }

@@ -338,11 +338,12 @@ preflights:
 | Path | Source | Purpose |
 | --- | --- | --- |
 | `/etc/ssh/authorized_keys` | `base/etc/ssh/authorized_keys` | Public keys accepted by the current `/bin/sshd` preflight for `root` |
+| `/etc/ssh/known_hosts` | `base/etc/ssh/known_hosts` | Public host keys trusted by the current `/bin/ssh` preflight |
 | `/etc/ssh/ssh_host_ed25519_seed` | `base/etc/ssh/ssh_host_ed25519_seed` | Hex-encoded 32-byte development seed used to derive the SSHD Ed25519 host key |
 
 Replace this material when building a deploy-specific artifact. The checked-in
-host-key seed is deterministic test material, not a per-instance production
-identity.
+SSHD host-key seed and SSH client trust anchor are deterministic test material,
+not per-instance production identity or deploy-specific trust policy.
 
 ### Filesystem
 

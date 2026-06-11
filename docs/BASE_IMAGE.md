@@ -117,7 +117,7 @@ packs it into `build/base.img` with `build/basepack`.
 
 | Input | Staged Into | Notes |
 | --- | --- | --- |
-| `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
+| `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/known_hosts`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
 | `BASE_EXEC_ELFS` in `Makefile` | `/bin` | Native Swift utilities, C diagnostic programs, services, update tools, package manager, and busybox |
 | `build/pkghello.swpkg` | `/packages/pkghello.swpkg` | Local install fixture |
 | `build/pkgrepo-root.pub` | `/etc/pkg/repo-root.pub` | Package repository trust root |

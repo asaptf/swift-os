@@ -3,6 +3,30 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC10 SSH client known_hosts preflight (2026-06-11)
+
+- Added a minimal file-backed trust store for `/bin/ssh` at
+  `/etc/ssh/known_hosts`. The client now verifies the server's Ed25519
+  signature over the exchange hash and then requires the received host-key blob
+  to match a trusted `ssh-ed25519` entry for the target IP before proceeding to
+  NEWKEYS.
+- The current parser supports simple known_hosts lines with a bare IPv4 host or
+  `[IPv4]:port` pattern, optional comma-separated host patterns, the
+  `ssh-ed25519` key type, and a base64 OpenSSH public-key blob. Missing files,
+  oversized files, malformed matching entries, or host-key mismatches fail
+  closed.
+- Added a dedicated host OpenSSH fixture key at
+  `fixtures/ssh/ssh_client_host_ed25519(.pub)` and staged its public key in the
+  base image's `/etc/ssh/known_hosts` for the QEMU slirp host alias
+  `10.0.2.2`.
+
+**Acceptance.** `./tests/ssh_transport_test.sh` first starts host OpenSSH with
+an untrusted Ed25519 host key and requires
+`ssh: known_hosts host key mismatch`, then restarts host OpenSSH with the
+trusted fixture key and requires both `ssh: host key signature verified` and
+`ssh: host key matched /etc/ssh/known_hosts` before completing the encrypted
+`ssh-userauth` service request/accept.
+
 ## HC9 SSHD file-backed host key seed preflight (2026-06-11)
 
 - Moved the SSHD Ed25519 host-key seed out of `/bin/sshd` and into the signed

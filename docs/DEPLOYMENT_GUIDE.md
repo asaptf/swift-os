@@ -425,8 +425,9 @@ Current Hetzner readiness status:
   key is rejected.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
-  `ssh-ed25519` host-key signature over the exchange hash, handles strict KEX,
-  derives `chacha20-poly1305@openssh.com` keys, and completes one encrypted
+  `ssh-ed25519` host-key signature over the exchange hash, matches the host key
+  against `/etc/ssh/known_hosts`, handles strict KEX, derives
+  `chacha20-poly1305@openssh.com` keys, and completes one encrypted
   `ssh-userauth` service request/accept. The checked proof is
   `./tests/ssh_transport_test.sh`.
 
@@ -438,8 +439,9 @@ Not deploy-complete yet:
   stdin/streaming output, supervision/restart policy, and broader remote
   commands. Dropbear remains a candidate full server package if the first-party
   preflight does not grow into the supported daemon.
-- `/bin/ssh` is not a full SSH client yet. It has no known_hosts trust store,
-  user authentication, session/exec channels, PTY, scp, or sftp.
+- `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
+  `known_hosts` trust store, but no user authentication, session/exec channels,
+  PTY, scp, or sftp.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and
   service supervision remain follow-up work.
 
