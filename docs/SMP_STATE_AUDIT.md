@@ -20,9 +20,9 @@ manifest entries left behind after globals move or disappear.
 | Secondary mailbox/stacks | Fixed 64-byte per-CPU mailbox slots are initialized in `.data`; fixed secondary stacks live in static storage and are used only for the S1 early-online path. | CPU0 publishes release metadata with release/acquire ordering plus `sev`/PSCI. Secondary CPUs may run early per-CPU init and heartbeat only; scheduler, PMM allocation, VFS, drivers, and EL0 work remain S2+ guarded. |
 | Runtime heap/PMM | S4c protects the small-object bump heap cursor/limit/init state with an IRQ-save C spinlock and boot-time boundary checks. S4a protects PMM allocation/free/refcount entry points with an IRQ-save coarse spinlock, adds atomic last-ref release, host concurrent PageAllocator stress, and a bounded SGI-delivered secondary PMM stress. | The allocator strategy is still a minimal non-freeing bump heap; this only makes the shared cursor safe. Add a real small-object allocator later if profiles need reclaim or lower fragmentation. |
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
-| Scheduler/process/futex/timer | Global current process/thread and wait queues. | Replace `current*` with per-CPU state; protect process table and wake queues with a small lock protocol. |
-| VFS/handles/pipes/endpoints/devices/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/eventfd/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. C5b keeps the opaque device registry under the same VFS lock and ties each claimed device to an open-description lifetime; C5c-C5f store discovered virtio-input metadata in that registry while keeping MMIO/IRQ/DMA authority bits clear and device-grant rights metadata-only. S4d protects package-store activation/append tables, active payload publication, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. |
-| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. S4e protects the in-kernel network/socket engine (`gNet`, DHCP IPv4 lease state, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
+| Scheduler/process/futex/timer | Global current process/thread and wait queues, plus process-owned mmap/signal-frame state and per-signal restorer metadata. | Replace `current*` with per-CPU state; protect process table, signal delivery metadata, and wake queues with a small lock protocol. |
+| VFS/handles/pipes/endpoints/devices/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/eventfd/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. C5b keeps the opaque device registry under the same VFS lock and ties each claimed device to an open-description lifetime; C5c-C5f store discovered virtio-input metadata in that registry while keeping MMIO/IRQ/DMA authority bits clear and device-grant rights metadata-only. S4d protects package-store activation/append tables, active payload publication, streamed install scratch state, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. |
+| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. S4e protects the in-kernel network/socket engine (`gNet`, DHCP/static IPv4/IPv6 lease state, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
 ## Machine-Checked Manifest
@@ -146,6 +146,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/net/socket.swift:netLockWord`
 - `kernel/net/socket.swift:netGatewayIPv6`
 - `kernel/net/socket.swift:netLocalIPv6`
+- `kernel/net/socket.swift:netIPv6PrefixLen`
+- `kernel/net/socket.swift:netIPv6StaticConfigured`
 - `kernel/net/socket.swift:netReady`
 - `kernel/net/socket.swift:sockAccepted`
 - `kernel/net/socket.swift:sockBound`
@@ -176,6 +178,22 @@ manifest entries left behind after globals move or disappear.
 - `kernel/pkg/store.swift:pkgStoreLockContentionCount`
 - `kernel/pkg/store.swift:pkgStoreLockWord`
 - `kernel/pkg/store.swift:pkgStoreMutationInProgress`
+- `kernel/pkg/store.swift:pkgStreamActive`
+- `kernel/pkg/store.swift:pkgStreamDataOffset`
+- `kernel/pkg/store.swift:pkgStreamFirstByteCount`
+- `kernel/pkg/store.swift:pkgStreamFirstBytes`
+- `kernel/pkg/store.swift:pkgStreamGeneration`
+- `kernel/pkg/store.swift:pkgStreamName`
+- `kernel/pkg/store.swift:pkgStreamNameLen`
+- `kernel/pkg/store.swift:pkgStreamNextOffset`
+- `kernel/pkg/store.swift:pkgStreamOwnerPid`
+- `kernel/pkg/store.swift:pkgStreamPayloadHash`
+- `kernel/pkg/store.swift:pkgStreamPayloadSize`
+- `kernel/pkg/store.swift:pkgStreamRecordOffset`
+- `kernel/pkg/store.swift:pkgStreamSHA`
+- `kernel/pkg/store.swift:pkgStreamVersion`
+- `kernel/pkg/store.swift:pkgStreamVersionLen`
+- `kernel/pkg/store.swift:pkgStreamWritten`
 - `kernel/runtime/heap.c:__stack_chk_guard`
 - `kernel/runtime/heap.c:heap_cursor`
 - `kernel/runtime/heap.c:heap_initialized`
@@ -196,6 +214,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/sched/scheduler.swift:threadCount`
 - `kernel/signal/signal.swift:dispositions`
 - `kernel/signal/signal.swift:pendingMask`
+- `kernel/signal/signal.swift:restorers`
 - `kernel/smp/percpu.swift:smpCpuState`
 - `kernel/smp/percpu.swift:smpIpiLastSourceCpu`
 - `kernel/smp/percpu.swift:smpIpiProbeDeliveredMaskStorage`
@@ -290,6 +309,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:lastS5fRunAnySecondaryCpuMask`
 - `kernel/user/process.swift:lastS5fRunAnyTelemetryValid`
 - `kernel/user/process.swift:lastReapedKilled`
+- `kernel/user/process.swift:pAnonVmas`
 - `kernel/user/process.swift:pBrk`
 - `kernel/user/process.swift:pCpuTicks`
 - `kernel/user/process.swift:pDispatchCount`
@@ -323,6 +343,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pSchedulerQuiesced`
 - `kernel/user/process.swift:pResPages`
 - `kernel/user/process.swift:pSecurity`
+- `kernel/user/process.swift:pSignalFrameActive`
+- `kernel/user/process.swift:pSignalFrameSP`
 - `kernel/user/process.swift:pStartTick`
 - `kernel/user/process.swift:pState`
 - `kernel/user/process.swift:pTtbr0`
@@ -384,16 +406,18 @@ manifest entries left behind after globals move or disappear.
   CPU0 plus active secondary scheduler CPUs while keeping migration, work
   stealing, and concurrent mmap/brk mutation in one shared address space out of
   scope.
-- The file-backed mmap VMA table and demand-fault counters added by the LLM I2
-  path are process-owned today, but still live in global arrays and must be
-  protected before a single address space can fault concurrently on multiple
-  CPUs.
-- Package-store activation/append state is now protected by the S4d lock
-  boundary. Target-side installs are still serialized through one writer gate;
-  package-management service work should keep that single-writer contract unless
-  a later milestone adds a transactional store journal.
+- The file-backed and anonymous mmap VMA tables, signal-frame metadata, and
+  demand-fault counters are process-owned today, but still live in global arrays
+  and must be protected before a single address space can fault or deliver
+  signals concurrently on multiple CPUs.
+- Package-store activation/append and streamed install state are now protected
+  by the S4d lock boundary. Target-side installs are still serialized through
+  one writer gate; package-management service work should keep that
+  single-writer contract unless a later milestone adds a transactional store
+  journal.
 - The in-kernel network/socket engine is now protected by the S4e lock boundary,
-  and S4f keeps a dedicated `-smp 4` resource-stress test in `make test`.
+  including DHCP/static IPv4 and IPv6 configuration state, and S4f keeps a
+  dedicated `-smp 4` resource-stress test in `make test`.
   Device/service migration is still future work: before interrupts or network
   service work move away from CPU 0, the virtio driver/service boundary needs a
   reviewed ownership model rather than only a coarse in-kernel lock.
