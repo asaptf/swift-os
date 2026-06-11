@@ -5255,3 +5255,27 @@ delivery, and the broader `full libuv thread audit` blocker.
 **Acceptance.** `make uvsignal-test`, `make docs-test`,
 `make ports-catalog-test`, `make signal-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM17 — libuv pthread_atfork probe (DONE, 2026-06-11)
+
+**Scope.** Cover the `pthread_atfork` prepare/parent/child callback ordering
+that Node's vendored libuv uses to reinitialize process-global state after
+`fork`. SwiftOS still exposes its own POSIX-like syscall surface rather than a
+Linux ABI, but the C/newlib compat layer now keeps a small process-local
+atfork registry and routes `fork`/the current `vfork` alias through the same
+handler path. This closes one concrete libuv process primitive while the
+catalog keeps the broader `full libuv thread audit` blocker.
+
+- `userland/compat/stubs.c`: replaces the old no-op `pthread_atfork` with a
+  bounded handler registry, reverse-order `prepare` callbacks,
+  registration-order `parent`/`child` callbacks, parent cleanup on failed
+  `fork`, and child-side compat lock reset before child callbacks.
+- `/bin/uvatforkprobe`: proves two-handler ordering, parent/child memory
+  isolation after fork, and a pipe report from the child back to the parent.
+- `make uvatfork-test`: boots QEMU, logs in, runs the probe, and asserts the
+  atfork ordering markers.
+
+**Acceptance.** `make uvatfork-test`, `make docs-test`,
+`make ports-catalog-test`, `make signal-test`, `./tests/cow_test.sh`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
