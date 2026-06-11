@@ -769,11 +769,12 @@ Notes:
   checked-in default seed is development-only. It still uses weak temporary KEX
   entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
-  command parser supports simple ASCII-whitespace argv splitting for
-  single-component `/bin/` executables only; quoting, redirects, globbing,
-  shell sessions, PTY, scp, sftp, runtime host-key rotation, larger streaming
-  stdin/stdout, and broader key options are not implemented yet. Output beyond
-  the current 4096-byte cap is truncated and logged on the serial console.
+  command parser supports direct single-component `/bin/` executables with
+  whitespace splitting, quote removal, and backslash escaping; redirects,
+  globbing, shell sessions, PTY, scp, sftp, runtime host-key rotation, larger
+  streaming stdin/stdout, and broader key options are not implemented yet.
+  Output beyond the current 4096-byte cap is truncated and logged on the serial
+  console.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,
@@ -959,11 +960,13 @@ diagnostic fixtures than stable application interfaces.
 | --- | --- | --- | --- |
 | `threadsdemo` | `threadsdemo` | Create EL0 threads and prove futex-backed synchronization. | `tests/threads_test.sh` |
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
+| `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
+| `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
 | `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
 | `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
@@ -1299,7 +1302,9 @@ are not the primary operator interface.
 | `newlibtest` | newlib `printf`, `malloc`, `fopen`, and file I/O over the SwiftOS syscall port. | Yes, when validating C compatibility. | `tests/boot_test.sh` |
 | `clockprobe` | newlib compat `clock_gettime`, `clock_getres`, realtime clock, monotonic ticks, and `nanosleep` interaction. | Yes, when validating C runtime timing compatibility. | `tests/clock_test.sh` |
 | `mprotectprobe` | newlib compat `mmap`, `mprotect`, executable mappings, and W^X rejection. | Yes, when validating C runtime memory-permission compatibility. | `tests/mprotect_test.sh` |
+| `largemmapprobe` | newlib compat multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse, and zero-fill checks. | Yes, when validating C runtime large-mapping compatibility. | `tests/largemmap_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
+| `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
 | `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |

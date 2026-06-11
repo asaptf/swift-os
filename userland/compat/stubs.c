@@ -13,6 +13,12 @@
 #ifndef _UNIX98_THREAD_MUTEX_ATTRIBUTES
 #define _UNIX98_THREAD_MUTEX_ATTRIBUTES 1
 #endif
+#ifndef _POSIX_READER_WRITER_LOCKS
+#define _POSIX_READER_WRITER_LOCKS 1
+#endif
+#ifndef _POSIX_SEMAPHORES
+#define _POSIX_SEMAPHORES 1
+#endif
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -43,6 +49,7 @@
 #include <net/if.h>
 #include <signal.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define W __attribute__((weak))
 
@@ -616,6 +623,9 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_FUTEX_WAKE 1
 #define COMPAT_MUTEX_STATIC ((unsigned int)0xFFFFFFFFu)
 #define COMPAT_COND_STATIC ((unsigned int)0xFFFFFFFFu)
+#define COMPAT_RWLOCK_STATIC ((unsigned int)0xFFFFFFFFu)
+#define COMPAT_RWLOCK_WRITER ((unsigned int)0x80000000u)
+#define COMPAT_RWLOCK_READER_MASK ((unsigned int)0x7FFFFFFFu)
 #define COMPAT_PTHREAD_MAX_THREADS 16
 #define COMPAT_PTHREAD_MAX_KEYS 32
 #define COMPAT_PTHREAD_TID_MAX 32
@@ -709,6 +719,28 @@ static void cond_lazy_init(pthread_cond_t *cond) {
         __atomic_compare_exchange_n(word, &expected, 0, 0,
                                     __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
     }
+}
+
+static void rwlock_lazy_init(pthread_rwlock_t *rwlock) {
+    unsigned int *word = (unsigned int *)rwlock;
+    if (atomic_load_u32(word) == COMPAT_RWLOCK_STATIC) {
+        unsigned int expected = COMPAT_RWLOCK_STATIC;
+        __atomic_compare_exchange_n(word, &expected, 0, 0,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    }
+}
+
+static int compat_abstime_expired(const struct timespec *abstime) {
+    if (!abstime) { return 0; }
+    struct timespec now;
+    if (clock_gettime(CLOCK_REALTIME, &now) != 0) { return 0; }
+    return now.tv_sec > abstime->tv_sec ||
+           (now.tv_sec == abstime->tv_sec && now.tv_nsec >= abstime->tv_nsec);
+}
+
+static void compat_short_sleep(void) {
+    struct timespec ts = { 0, 1000000 };
+    (void)nanosleep(&ts, 0);
 }
 
 static struct compat_pthread_record *pthread_find_locked(pthread_t tid) {
@@ -962,6 +994,116 @@ W int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
     return pthread_mutex_lock(mutex);
 }
 
+W int pthread_rwlockattr_init(pthread_rwlockattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    attr->is_initialized = 1;
+    return 0;
+}
+W int pthread_rwlockattr_destroy(pthread_rwlockattr_t *attr) {
+    if (!attr) { return EINVAL; }
+    memset(attr, 0, sizeof(*attr));
+    return 0;
+}
+W int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *attr, int *pshared) {
+    if (!attr || !pshared) { return EINVAL; }
+    *pshared = 0;
+    return 0;
+}
+W int pthread_rwlockattr_setpshared(pthread_rwlockattr_t *attr, int pshared) {
+    if (!attr || pshared != 0) { return EINVAL; }
+    return 0;
+}
+W int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr) {
+    (void)attr;
+    if (!rwlock) { return EINVAL; }
+    atomic_store_u32((unsigned int *)rwlock, 0);
+    return 0;
+}
+W int pthread_rwlock_destroy(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    atomic_store_u32((unsigned int *)rwlock, COMPAT_RWLOCK_STATIC);
+    return 0;
+}
+W int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    rwlock_lazy_init(rwlock);
+    unsigned int *word = (unsigned int *)rwlock;
+    for (;;) {
+        unsigned int state = atomic_load_u32(word);
+        if ((state & COMPAT_RWLOCK_WRITER) != 0) { return EBUSY; }
+        if ((state & COMPAT_RWLOCK_READER_MASK) == COMPAT_RWLOCK_READER_MASK) { return EAGAIN; }
+        if (atomic_cas_u32(word, state, state + 1) == state) { return 0; }
+    }
+}
+W int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    rwlock_lazy_init(rwlock);
+    unsigned int *word = (unsigned int *)rwlock;
+    for (;;) {
+        unsigned int state = atomic_load_u32(word);
+        if ((state & COMPAT_RWLOCK_WRITER) == 0 &&
+            (state & COMPAT_RWLOCK_READER_MASK) != COMPAT_RWLOCK_READER_MASK &&
+            atomic_cas_u32(word, state, state + 1) == state) {
+            return 0;
+        }
+        (void)futex_raw(word, COMPAT_FUTEX_WAIT, state);
+    }
+}
+W int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    rwlock_lazy_init(rwlock);
+    return atomic_cas_u32((unsigned int *)rwlock, 0, COMPAT_RWLOCK_WRITER) == 0 ? 0 : EBUSY;
+}
+W int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    rwlock_lazy_init(rwlock);
+    unsigned int *word = (unsigned int *)rwlock;
+    for (;;) {
+        if (atomic_cas_u32(word, 0, COMPAT_RWLOCK_WRITER) == 0) { return 0; }
+        unsigned int state = atomic_load_u32(word);
+        (void)futex_raw(word, COMPAT_FUTEX_WAIT, state);
+    }
+}
+W int pthread_rwlock_timedrdlock(pthread_rwlock_t *rwlock, const struct timespec *abstime) {
+    for (;;) {
+        int r = pthread_rwlock_tryrdlock(rwlock);
+        if (r != EBUSY) { return r; }
+        if (compat_abstime_expired(abstime)) { return ETIMEDOUT; }
+        compat_short_sleep();
+    }
+}
+W int pthread_rwlock_timedwrlock(pthread_rwlock_t *rwlock, const struct timespec *abstime) {
+    for (;;) {
+        int r = pthread_rwlock_trywrlock(rwlock);
+        if (r != EBUSY) { return r; }
+        if (compat_abstime_expired(abstime)) { return ETIMEDOUT; }
+        compat_short_sleep();
+    }
+}
+W int pthread_rwlock_unlock(pthread_rwlock_t *rwlock) {
+    if (!rwlock) { return EINVAL; }
+    rwlock_lazy_init(rwlock);
+    unsigned int *word = (unsigned int *)rwlock;
+    for (;;) {
+        unsigned int state = atomic_load_u32(word);
+        if (state == COMPAT_RWLOCK_WRITER) {
+            if (atomic_cas_u32(word, COMPAT_RWLOCK_WRITER, 0) == COMPAT_RWLOCK_WRITER) {
+                (void)futex_raw(word, COMPAT_FUTEX_WAKE, UINT_MAX);
+                return 0;
+            }
+        } else if ((state & COMPAT_RWLOCK_READER_MASK) != 0 &&
+                   (state & COMPAT_RWLOCK_WRITER) == 0) {
+            if (atomic_cas_u32(word, state, state - 1) == state) {
+                if (state == 1) { (void)futex_raw(word, COMPAT_FUTEX_WAKE, UINT_MAX); }
+                return 0;
+            }
+        } else {
+            return EPERM;
+        }
+    }
+}
+
 W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
                      void *(*start_routine)(void *), void *arg) {
     if (!pthread || !start_routine) { return EINVAL; }
@@ -1190,6 +1332,61 @@ W void _pthread_cleanup_push_defer(struct _pthread_cleanup_context *context,
 }
 W void _pthread_cleanup_pop_restore(struct _pthread_cleanup_context *context, int execute) {
     _pthread_cleanup_pop(context, execute);
+}
+
+W int sem_init(sem_t *sem, int pshared, unsigned int value) {
+    if (!sem) { errno = EINVAL; return -1; }
+    if (pshared != 0 || value > (unsigned int)SEM_VALUE_MAX) { errno = EINVAL; return -1; }
+    atomic_store_u32(&sem->value, value);
+    return 0;
+}
+W int sem_destroy(sem_t *sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    atomic_store_u32(&sem->value, 0);
+    return 0;
+}
+W int sem_trywait(sem_t *sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    for (;;) {
+        unsigned int value = atomic_load_u32(&sem->value);
+        if (value == 0) { errno = EAGAIN; return -1; }
+        if (atomic_cas_u32(&sem->value, value, value - 1) == value) { return 0; }
+    }
+}
+W int sem_wait(sem_t *sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    for (;;) {
+        unsigned int value = atomic_load_u32(&sem->value);
+        if (value != 0 && atomic_cas_u32(&sem->value, value, value - 1) == value) {
+            return 0;
+        }
+        (void)futex_raw(&sem->value, COMPAT_FUTEX_WAIT, 0);
+    }
+}
+W int sem_timedwait(sem_t *sem, const struct timespec *abstime) {
+    if (!sem || !abstime) { errno = EINVAL; return -1; }
+    for (;;) {
+        if (sem_trywait(sem) == 0) { return 0; }
+        if (errno != EAGAIN) { return -1; }
+        if (compat_abstime_expired(abstime)) { errno = ETIMEDOUT; return -1; }
+        compat_short_sleep();
+    }
+}
+W int sem_post(sem_t *sem) {
+    if (!sem) { errno = EINVAL; return -1; }
+    for (;;) {
+        unsigned int value = atomic_load_u32(&sem->value);
+        if (value >= (unsigned int)SEM_VALUE_MAX) { errno = EOVERFLOW; return -1; }
+        if (atomic_cas_u32(&sem->value, value, value + 1) == value) {
+            (void)futex_raw(&sem->value, COMPAT_FUTEX_WAKE, 1);
+            return 0;
+        }
+    }
+}
+W int sem_getvalue(sem_t *sem, int *sval) {
+    if (!sem || !sval) { errno = EINVAL; return -1; }
+    *sval = (int)atomic_load_u32(&sem->value);
+    return 0;
 }
 
 W ssize_t readv(int fd, const struct iovec *iov, int iovcnt) {

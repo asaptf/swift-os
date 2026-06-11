@@ -9,6 +9,9 @@
 #ifndef _UNIX98_THREAD_MUTEX_ATTRIBUTES
 #define _UNIX98_THREAD_MUTEX_ATTRIBUTES 1
 #endif
+#ifndef _POSIX_READER_WRITER_LOCKS
+#define _POSIX_READER_WRITER_LOCKS 1
+#endif
 
 #include_next <pthread.h>
 

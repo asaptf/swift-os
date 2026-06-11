@@ -239,6 +239,7 @@ Current process and concurrency tools include:
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
 | C pthread facade | `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data through newlib compat |
+| C thread sync facade | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*` through newlib compat |
 | Memory mapping | `mmap`, `mmap_file`, `munmap`, `mprotect` |
 | Runtime clocks | `clock_gettime`, `clock_getres`, `nanosleep` through newlib compat |
 
@@ -394,12 +395,14 @@ Before merging a port:
 | `userland/udpecho.swift` | UDP server |
 | `userland/threadsdemo.swift` | Threads, atomics, futex |
 | `userland/pthreadprobe.c` | newlib compat pthread create/join, mutexes, condition variables, once, and thread-specific data |
+| `userland/threadsyncprobe.c` | newlib compat POSIX semaphores and pthread read/write locks |
 | `userland/selectprobe.c` | newlib compat select/pselect readiness over poll |
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
 | `userland/signalprobe.c` | newlib compat signal disposition, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |
+| `userland/largemmapprobe.c` | newlib compat multi-MiB mmap, partial mprotect, and munmap reuse |
 | `userland/llmd.swift` | File-backed mmap, model bundles, TCP serving |
 | `userland/spawndemo.c` | Spawn and explicit handle inheritance |
 | `userland/c4b_sockxfer.c` | IPC endpoint handle transfer |
