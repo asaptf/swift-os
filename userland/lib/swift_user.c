@@ -230,6 +230,38 @@ long swiftos_random(void *buf, unsigned long count) {
     return __syscall3(SYS_RANDOM, (long)buf, (long)count, 0);
 }
 
+struct swiftos_netinfo_record {
+    unsigned int flags;        // off 0
+    unsigned int ipv4;         // off 4
+    unsigned int gateway4;     // off 8
+    unsigned int dns4;         // off 12
+    unsigned int mask4;        // off 16
+    unsigned char ipv6[16];    // off 20, network order
+    unsigned char gateway6[16];// off 36, network order
+    unsigned int prefix6;      // off 52
+};
+
+static struct swiftos_netinfo_record g_netinfo;
+
+int swiftos_netinfo_refresh(void) {
+    return (int)__syscall3(SYS_NETINFO, (long)&g_netinfo, sizeof(g_netinfo), 0);
+}
+
+unsigned int swiftos_net_flags(void) { return g_netinfo.flags; }
+unsigned int swiftos_net_ipv4(void) { return g_netinfo.ipv4; }
+unsigned int swiftos_net_gateway4(void) { return g_netinfo.gateway4; }
+unsigned int swiftos_net_dns4(void) { return g_netinfo.dns4; }
+unsigned int swiftos_net_mask4(void) { return g_netinfo.mask4; }
+unsigned int swiftos_net_ipv6_prefix_len(void) { return g_netinfo.prefix6; }
+
+unsigned char swiftos_net_ipv6_byte(unsigned int index) {
+    return index < 16 ? g_netinfo.ipv6[index] : 0;
+}
+
+unsigned char swiftos_net_gateway6_byte(unsigned int index) {
+    return index < 16 ? g_netinfo.gateway6[index] : 0;
+}
+
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision) {
     return pkg_install(fd, name, version_revision);
 }

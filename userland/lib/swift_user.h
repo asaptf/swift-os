@@ -82,6 +82,23 @@ long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
 // Runtime entropy from the kernel RNG source. Returns bytes written, or a
 // negative errno-style value when no source is attached.
 long swiftos_random(void *buf, unsigned long count);
+
+// Network status snapshot (SYS_NETINFO). Flags:
+//   bit 0 ready, bit 1 DHCPv4 lease, bit 2 static IPv6 config, bit 3 IPv6 gateway.
+#define SWIFTOS_NETINFO_READY   (1u << 0)
+#define SWIFTOS_NETINFO_DHCP4   (1u << 1)
+#define SWIFTOS_NETINFO_STATIC6 (1u << 2)
+#define SWIFTOS_NETINFO_GW6     (1u << 3)
+int swiftos_netinfo_refresh(void);
+unsigned int swiftos_net_flags(void);
+unsigned int swiftos_net_ipv4(void);
+unsigned int swiftos_net_gateway4(void);
+unsigned int swiftos_net_dns4(void);
+unsigned int swiftos_net_mask4(void);
+unsigned int swiftos_net_ipv6_prefix_len(void);
+unsigned char swiftos_net_ipv6_byte(unsigned int index);
+unsigned char swiftos_net_gateway6_byte(unsigned int index);
+
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
 int  swiftos_pkg_files(const char *name, char *buf, unsigned long cap);

@@ -27,6 +27,12 @@ var netGatewayIPv6: IPv6 = .zero   // often the router's link-local; learned via
 var netIPv6PrefixLen: UInt8 = 64
 var netIPv6StaticConfigured = false
 
+private let netInfoSnapshotSize: UInt = 56
+private let netInfoFlagReady: UInt32 = 1 << 0
+private let netInfoFlagDHCP4: UInt32 = 1 << 1
+private let netInfoFlagStatic6: UInt32 = 1 << 2
+private let netInfoFlagGateway6: UInt32 = 1 << 3
+
 // Standard address families (for vfsSocket domain).
 let AF_INET: Int = 2
 let AF_INET6: Int = 10
@@ -228,6 +234,52 @@ private func netPrintIPv6(_ ip: IPv6) {
         if i > 0 { uartPutc(0x3A) }
         netPrintHex16(groups[i])
     }
+}
+
+private func netInfoStoreIPv6(_ out: UnsafeMutableRawPointer, _ off: Int, _ ip: IPv6) {
+    ipv6Set(out, off, ip)
+}
+
+/// Copy a stable, fixed-size network status record into user memory.
+///
+/// Layout, all integers native little-endian unless otherwise noted:
+///   u32 flags, ipv4, gateway4, dns4, mask4; u8 ipv6[16], gateway6[16]; u32 prefix6
+/// IPv4 values are host-order addresses, matching the rest of the swift-os user ABI.
+/// IPv6 bytes are in network order.
+func netInfoSnapshot(buffer: UInt, capacity: UInt) -> Int {
+    if capacity < netInfoSnapshotSize { return netErrInval }
+    if (processCurrentCaps() & capNet) == 0 { return -1 }
+    guard let dst8 = userWritableBuffer(buffer, netInfoSnapshotSize) else { return netErrInval }
+    let dst = UnsafeMutableRawPointer(dst8)
+
+    let daif = netLock()
+    let ready = netReady
+    let dhcp4 = netDhcpConfigured
+    let static6 = netIPv6StaticConfigured
+    let local4 = netLocalIP
+    let gateway4 = netGatewayIP
+    let dns4 = netDnsIP
+    let mask4 = netSubnetMask
+    let local6 = netLocalIPv6
+    let gateway6 = netGatewayIPv6
+    let prefix6 = netIPv6PrefixLen
+    netUnlock(daif)
+
+    var flags: UInt32 = 0
+    if ready { flags |= netInfoFlagReady }
+    if dhcp4 { flags |= netInfoFlagDHCP4 }
+    if static6 { flags |= netInfoFlagStatic6 }
+    if gateway6 != .zero { flags |= netInfoFlagGateway6 }
+
+    dst.storeBytes(of: flags, toByteOffset: 0, as: UInt32.self)
+    dst.storeBytes(of: local4, toByteOffset: 4, as: UInt32.self)
+    dst.storeBytes(of: gateway4, toByteOffset: 8, as: UInt32.self)
+    dst.storeBytes(of: dns4, toByteOffset: 12, as: UInt32.self)
+    dst.storeBytes(of: mask4, toByteOffset: 16, as: UInt32.self)
+    netInfoStoreIPv6(dst, 20, local6)
+    netInfoStoreIPv6(dst, 36, gateway6)
+    dst.storeBytes(of: UInt32(prefix6), toByteOffset: 52, as: UInt32.self)
+    return 0
 }
 
 private func netIsSpace(_ c: UInt8) -> Bool {
