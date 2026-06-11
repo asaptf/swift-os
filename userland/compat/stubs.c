@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -94,6 +95,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_MUNMAP 55
 #define SYS_MPROTECT 56
 #define SYS_NANOSLEEP 57
+#define SYS_EVENTFD 71
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -132,6 +134,17 @@ static long sysret_long(long r) {
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0x40000
 #endif
+#ifndef EFD_SEMAPHORE
+#define EFD_SEMAPHORE 1
+#endif
+#ifndef EFD_NONBLOCK
+#define EFD_NONBLOCK O_NONBLOCK
+#endif
+#ifndef EFD_CLOEXEC
+#define EFD_CLOEXEC O_CLOEXEC
+#endif
+
+typedef uint64_t eventfd_t;
 
 // newlib's fcntl (sysfcntl.o) is a hard ENOSYS stub that never reaches a syscall
 // stub, so override the symbol here (strong, pulled before libc). The busybox
@@ -565,6 +578,35 @@ W void *mmap(void *a, size_t l, int p, int f, int fd, long o) {
 W int munmap(void *a, size_t l) { return sysret(sys3(SYS_MUNMAP, (long)a, (long)l, 0)); }
 W int mprotect(void *a, size_t l, int p) { return sysret(sys3(SYS_MPROTECT, (long)a, (long)l, p)); }
 W int poll(void *fds, unsigned long n, int timeout) { return sysret(sys3(SYS_POLL, (long)fds, (long)n, timeout)); }
+
+// ---- event notification ---------------------------------------------------
+#define COMPAT_K_EVENT_SEMAPHORE 1
+#define COMPAT_K_O_CLOEXEC 0x200
+
+W int eventfd(unsigned int initval, int flags) {
+    const int known = EFD_SEMAPHORE | EFD_NONBLOCK | EFD_CLOEXEC;
+    if ((flags & ~known) != 0) { errno = EINVAL; return -1; }
+    int kflags = 0;
+    if (flags & EFD_SEMAPHORE) { kflags |= COMPAT_K_EVENT_SEMAPHORE; }
+    if (flags & EFD_NONBLOCK) { kflags |= O_NONBLOCK; }
+    if (flags & EFD_CLOEXEC) { kflags |= COMPAT_K_O_CLOEXEC; }
+    return sysret(sys3(SYS_EVENTFD, initval, kflags, 0));
+}
+
+W int eventfd_read(int fd, eventfd_t *value) {
+    if (!value) { errno = EFAULT; return -1; }
+    ssize_t n = read(fd, value, sizeof(*value));
+    if (n == (ssize_t)sizeof(*value)) { return 0; }
+    if (n >= 0) { errno = EINVAL; }
+    return -1;
+}
+
+W int eventfd_write(int fd, eventfd_t value) {
+    ssize_t n = write(fd, &value, sizeof(value));
+    if (n == (ssize_t)sizeof(value)) { return 0; }
+    if (n >= 0) { errno = EINVAL; }
+    return -1;
+}
 
 // ---- pthread facade over thread_create + futex ----------------------------
 #define COMPAT_FUTEX_WAIT 0

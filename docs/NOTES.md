@@ -4642,3 +4642,24 @@ errors to `-1` plus `errno`.
 **Acceptance.** `make socket-test`, `make docs-test`, `make select-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM4 — newlib eventfd facade probe (DONE, 2026-06-11)
+
+**Scope.** Add an event notification primitive for libuv-shaped runtimes on the
+Node.js/npm/pm2 track. SwiftOS exposes its own `eventfd` syscall (71), backed by
+a fixed VFS event-counter table and ordinary typed handles. The C compatibility
+layer provides POSIX-shaped `eventfd`, `eventfd_read`, `eventfd_write`, and
+`sys/eventfd.h`; this is source compatibility, not Linux syscall ABI
+compatibility.
+
+- `kernel/vfs/handle.swift`: adds `.event` as a typed handle kind.
+- `kernel/vfs/vfs.swift`: adds event counters, blocking/nonblocking 8-byte
+  read/write semantics, `EFD_SEMAPHORE`, `EFD_CLOEXEC`, fstat shape, and
+  `poll` readiness. `select` inherits readiness through the existing newlib
+  facade.
+- `/bin/eventfdprobe`: proves flags, empty nonblocking `EAGAIN`, counter
+  poll/read behavior, semaphore reads, and select readiness.
+
+**Acceptance.** `make eventfd-test`, `make docs-test`, `make select-test`,
+`make socket-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
