@@ -69,6 +69,8 @@ PKGREPO_SEED_HEX := 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d
 PORTS_SEED_REPO_ROOT := $(BUILD)/ports-seed-repo-root
 PORTS_SEED_REPO_PUB := $(BUILD)/ports-seed-repo-root.pub
 PORTS_STATIC_HOST_ROOT := $(BUILD)/ports-static-host-root
+PORT_RECIPE_FILES := $(shell find ports -name Port.json | sort)
+PORT_BUILD_SCRIPTS := $(shell find scripts -name 'build-*.sh' | sort)
 PORTS_STATIC_HOST_BASE_URL ?=
 PKG_HOSTED_REPO_URL ?=
 PKG_DEFAULT_DNS_SERVER ?=
@@ -1409,7 +1411,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/security/openssl/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json ports/lang/nodejs/Port.json ports/lang/npm/Port.json ports/sysutils/pm2/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json $(PORT_RECIPE_FILES)
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
@@ -1448,7 +1450,7 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
 
-ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/security/openssl/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json scripts/build-lua.sh scripts/build-zlib.sh scripts/build-bzip2.sh scripts/build-zstd.sh scripts/build-xz.sh scripts/build-libarchive.sh scripts/build-ca-certificates.sh scripts/build-openssl.sh scripts/build-pcre2.sh scripts/build-tzdata.sh scripts/build-nginx.sh scripts/build-sqlite.sh scripts/build-ports-seed-repo.sh
+ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/catalog.json $(PORT_RECIPE_FILES) $(PORT_BUILD_SCRIPTS)
 	./scripts/build-ports-seed-repo.sh
 
 ports-static-host-publish: ports-seed-repo-fixture scripts/publish-ports-static-host.sh

@@ -15,14 +15,19 @@ maintainers planning `swift-os-ports` recipes.
 > tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
+> `swport catalog packaged` is the machine-readable source for the seed
+> repository package set, so entries with `status: "packages"` are published
+> without duplicating the list in repository scripts.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
 > the twelve-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, remove, upgrade, version-constraint solving, package
-> transaction rollback, and large-package streaming downloads remain roadmap
-> work.
+> transaction rollback, and remove/upgrade lifecycle work remain roadmap work.
+> Repository package installs stream package payloads into the package store, so
+> the target no longer needs to cache full `.swpkg` blobs in tmpfs before
+> activation.
 
 Use this guide with:
 

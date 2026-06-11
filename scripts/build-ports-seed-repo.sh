@@ -18,34 +18,34 @@ fail() {
 }
 
 [[ -x "$ROOT/build/pkgrepo" ]] || fail "missing build/pkgrepo; run make pkgrepo"
+[[ -x "$ROOT/build/swport" ]] || fail "missing build/swport; run make swport"
 
-"$ROOT/scripts/build-lua.sh"
-"$ROOT/scripts/build-zlib.sh"
-"$ROOT/scripts/build-bzip2.sh"
-"$ROOT/scripts/build-zstd.sh"
-"$ROOT/scripts/build-xz.sh"
-"$ROOT/scripts/build-libarchive.sh"
-"$ROOT/scripts/build-ca-certificates.sh"
-"$ROOT/scripts/build-openssl.sh"
-"$ROOT/scripts/build-pcre2.sh"
-"$ROOT/scripts/build-tzdata.sh"
-"$ROOT/scripts/build-nginx.sh"
-"$ROOT/scripts/build-sqlite.sh"
+package_args=()
+packaged_count=0
+while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    packaged_count=$((packaged_count + 1))
+    name="${entry%% *}"
+    port_path="${entry#* }"
+    [[ -n "$name" && "$port_path" != "$entry" ]] ||
+        fail "invalid packaged catalog entry: $entry"
+
+    build_script="$ROOT/scripts/build-$name.sh"
+    [[ -x "$build_script" ]] ||
+        fail "missing build script for packaged port $name ($port_path): $build_script"
+
+    "$build_script"
+
+    package="$ROOT/build/$name.swpkg"
+    [[ -f "$package" ]] ||
+        fail "build script for $name did not produce $package"
+    package_args+=(--package "$package")
+done < <("$ROOT/build/swport" catalog packaged "$ROOT/ports/catalog.json")
+[[ "$packaged_count" -gt 0 ]] || fail "catalog has no packages with status=packages"
 
 rm -rf "$REPO_ROOT" "$REPO_PUB"
 "$ROOT/build/pkgrepo" create \
-    --package "$ROOT/build/lua.swpkg" \
-    --package "$ROOT/build/zlib.swpkg" \
-    --package "$ROOT/build/bzip2.swpkg" \
-    --package "$ROOT/build/zstd.swpkg" \
-    --package "$ROOT/build/xz.swpkg" \
-    --package "$ROOT/build/libarchive.swpkg" \
-    --package "$ROOT/build/ca-certificates.swpkg" \
-    --package "$ROOT/build/openssl.swpkg" \
-    --package "$ROOT/build/pcre2.swpkg" \
-    --package "$ROOT/build/tzdata.swpkg" \
-    --package "$ROOT/build/nginx.swpkg" \
-    --package "$ROOT/build/sqlite.swpkg" \
+    "${package_args[@]}" \
     --output "$REPO_ROOT" \
     --seed-hex "$SEED_HEX" \
     --generation 1

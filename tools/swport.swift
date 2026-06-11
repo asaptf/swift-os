@@ -120,6 +120,7 @@ private func usage() -> String {
       swport catalog validate [catalog.json]
       swport catalog list [catalog.json]
       swport catalog inspect <name> [catalog.json]
+      swport catalog packaged [catalog.json]
       swport recipe validate <port|Port.json> [--catalog catalog.json]
       swport recipe manifest <port|Port.json> [--output manifest.json] [--catalog catalog.json]
       swport recipe fetch <port|Port.json> [--cache dir]
@@ -709,6 +710,12 @@ private func inspect(_ catalog: Catalog, name: String) throws {
     print("smokeTest: \(entry.smokeTest)")
 }
 
+private func packaged(_ catalog: Catalog) {
+    for entry in catalog.packages where entry.status == "packages" {
+        print("\(entry.name) \(entry.portPath)")
+    }
+}
+
 private func validateRecipeCommand(_ spec: String, args: [String]) throws {
     let catalogPath = try optionValue("--catalog", in: args, default: defaultCatalogPath)
     let (recipe, path) = try loadAndValidateRecipe(spec, catalogPath: catalogPath)
@@ -850,6 +857,9 @@ struct SwportTool {
                     guard args.count >= 4 else { throw ToolError.message("missing package name") }
                     let path = args.count >= 5 ? args[4] : defaultCatalogPath
                     try inspect(try loadAndValidate(path), name: args[3])
+                case "packaged":
+                    let path = args.count >= 4 ? args[3] : defaultCatalogPath
+                    packaged(try loadAndValidate(path))
                 default:
                     throw ToolError.message(usage())
                 }

@@ -268,8 +268,9 @@ pkg install pkghello
 /usr/bin/pkghello
 ```
 
-Dependency solving, remove, upgrade, rollback, public hosted channels, and
-large-package streaming downloads are not implemented yet.
+Version-constraint solving, remove, upgrade, rollback, and public hosted
+channels are not implemented yet. Repository installs stream package payloads
+directly into the package store.
 
 ## Update Store Operations
 
@@ -679,10 +680,11 @@ Current limits that matter during operation:
 
 - No persistent writable filesystem.
 - No remove, upgrade, rollback, public hosted package channel, version-constraint
-  solver, or streaming large-package install path yet.
+  solver yet.
   Local `pkg install FILE` and signed `pkg repo set`/`pkg update [URL]`/
   `pkg install NAME` exist for `.swpkg` fixtures, including name-based
-  dependency resolution.
+  dependency resolution and streamed repository package installs into the
+  package store.
 - No dynamic linker or Linux ABI.
 - No graphical desktop shell.
 - No production password policy or password rotation workflow.
