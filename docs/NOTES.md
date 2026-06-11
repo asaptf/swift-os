@@ -3,6 +3,32 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC14 SSHD opt-in restart supervision preflight (2026-06-11)
+
+- Extended `/bin/swos-init` with opt-in supervised service tokens while keeping
+  the default `/etc/swos/services` token `sshd` behavior unchanged. Plain
+  `sshd` still starts the daemon and then hands the serial console to
+  `/bin/console-login`; `sshd-supervised` and `sshd-once` keep `swos-init`
+  alive as a tiny `waitpid()` restart loop for deploy preflights.
+- Added deterministic supervisor markers:
+  `swos-init: supervision active` and
+  `swos-init: service sshd-once pid ... exited status ...; restarting`.
+  `/bin/sshd` also supports one-shot mode through `--once`/`-1` and through the
+  `/tmp/swos-sshd-once` scratch marker created by the `sshd-once` service token.
+- Added `SWOS_SERVICES_FILE=PATH` for custom base-image staging of
+  `/etc/swos/services`, so tests and deploy candidates can select a service
+  manifest without editing the checked-in default base tree.
+- Added `./tests/sshd_supervision_test.sh` and `make sshd-supervision-test`.
+  The test builds a temporary base image with `sshd-once`, boots QEMU with
+  TCP/22 forwarded, runs a host OpenSSH `/bin/id` command, requires `swos-init`
+  to observe and restart the exited daemon, then runs a second host OpenSSH
+  `/bin/echo HC14-RESTART` command through the restarted SSHD.
+
+**Acceptance.** `make sshd-supervision-test` proves that opt-in `swos-init`
+supervision restarts `sshd-once`, that the restarted daemon listens again on
+TCP/22, and that strict host OpenSSH pinning plus publickey auth still complete
+before and after the restart.
+
 ## HC13 SSHD deploy authorized_keys provisioning preflight (2026-06-11)
 
 - Added the `SSHD_AUTHORIZED_KEYS_FILE=PATH` base-image staging override. A

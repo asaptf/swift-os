@@ -97,11 +97,12 @@ Do not present the current system as having:
 - Production health-driven update channels beyond the checked A/B validation
   paths.
 - A production bare-metal certification matrix.
-- A service supervisor that starts, restarts, and orders services.
+- A production service supervisor with dependency ordering and health policy.
 - Production secret provisioning or password rotation.
 
 Those are roadmap items. Current candidates are explicit immutable artifact
-sets with manual service launch where a service is needed.
+sets with manual service launch or the narrow `/bin/swos-init` boot allowlist
+where a service is needed.
 
 ## Build A Candidate
 
@@ -425,12 +426,16 @@ Current Hetzner readiness status:
   and can generate a deploy-specific replacement seed. Build-time provisioning
   uses the `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE` make variables
   with `make base-image` to stage deploy-specific host identity and login keys
-  into the signed image. The checked proofs are `./tests/sshd_transport_test.sh`,
-  `./tests/sshd_host_key_rotation_test.sh`, and
-  `./tests/sshd_authorized_keys_test.sh`; they verify that host OpenSSH pins the
+  into the signed image. `SWOS_SERVICES_FILE` can replace
+  `/etc/swos/services` for a custom candidate; the `sshd-supervised` and
+  `sshd-once` tokens exercise the current opt-in restart loop. The checked
+  proofs are `./tests/sshd_transport_test.sh`,
+  `./tests/sshd_host_key_rotation_test.sh`,
+  `./tests/sshd_authorized_keys_test.sh`, and
+  `./tests/sshd_supervision_test.sh`; they verify that host OpenSSH pins the
   SwiftOS host key through known_hosts, that stale fixture keys are rejected,
-  and that custom images can boot with rotated SSHD host-key and authorized-key
-  material.
+  that custom images can boot with rotated SSHD host-key and authorized-key
+  material, and that opt-in `swos-init` supervision restarts `sshd-once`.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
@@ -444,14 +449,14 @@ Not deploy-complete yet:
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
   milestones should add runtime host-key rotation, real entropy, broader
   authorized-key options, shell/PTY behavior, stdin/streaming output,
-  supervision/restart policy, and broader remote commands. Dropbear remains a
+  production service policy, and broader remote commands. Dropbear remains a
   candidate full server package if the first-party preflight does not grow into
   the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and
-  service supervision remain follow-up work.
+  a general service manager remain follow-up work.
 
 Provider references to re-check before a real cloud run:
 

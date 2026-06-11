@@ -3,13 +3,32 @@
 //
 // This is deliberately not a full service manager. It reads immutable
 // /etc/swos/services, starts a small allowlisted set of boot services with
-// fork+exec, then replaces itself with /bin/console-login. Long-running child
-// services inherit the boot principal/capabilities and keep logging to serial.
+// fork+exec, then replaces itself with /bin/console-login. Opt-in supervised
+// service tokens keep swos-init alive as a restart loop for deploy preflights.
+// Long-running child services inherit the boot principal/capabilities and keep
+// logging to serial.
 
 #include "lib/fs.h"
 #include "lib/syscall.h"
 
 int puts_raw(const char *s);
+
+#define MAX_SUPERVISED_SERVICES 4
+#define SSHD_ONCE_MARKER "/tmp/swos-sshd-once"
+
+enum service_kind {
+    SERVICE_SSHD = 1,
+    SERVICE_SSHD_ONCE = 2,
+};
+
+struct supervised_service {
+    enum service_kind kind;
+    int pid;
+};
+
+static struct supervised_service supervised[MAX_SUPERVISED_SERVICES];
+static int supervised_count = 0;
+static int supervision_requested = 0;
 
 static int streq(const char *a, const char *b) {
     while (*a && *b && *a == *b) {
@@ -41,11 +60,35 @@ static void print_uint(unsigned int v) {
     }
 }
 
-static void start_sshd(void) {
+static const char *service_name(enum service_kind kind) {
+    if (kind == SERVICE_SSHD_ONCE) {
+        return "sshd-once";
+    }
+    return "sshd";
+}
+
+static void prepare_sshd_mode(enum service_kind kind) {
+    if (kind != SERVICE_SSHD_ONCE) {
+        return;
+    }
+
+    int fd = open(SSHD_ONCE_MARKER, O_WRONLY | O_CREAT);
+    if (fd < 0) {
+        puts_raw("swos-init: could not create sshd-once marker\n");
+        return;
+    }
+    (void)write(fd, "1\n", 2);
+    close(fd);
+}
+
+static int start_service(enum service_kind kind) {
+    prepare_sshd_mode(kind);
     int pid = fork();
     if (pid < 0) {
-        puts_raw("swos-init: fork failed for sshd\n");
-        return;
+        puts_raw("swos-init: fork failed for ");
+        puts_raw(service_name(kind));
+        puts_raw("\n");
+        return -1;
     }
     if (pid == 0) {
         char *argv[] = { "sshd", 0 };
@@ -53,14 +96,40 @@ static void start_sshd(void) {
         puts_raw("swos-init: exec /bin/sshd failed\n");
         _exit(127);
     }
-    puts_raw("swos-init: started sshd pid ");
+    puts_raw("swos-init: started ");
+    puts_raw(service_name(kind));
+    puts_raw(" pid ");
     print_uint((unsigned int)pid);
     puts_raw("\n");
+    return pid;
+}
+
+static void start_sshd(void) {
+    (void)start_service(SERVICE_SSHD);
+}
+
+static void add_supervised_service(enum service_kind kind) {
+    if (supervised_count >= MAX_SUPERVISED_SERVICES) {
+        puts_raw("swos-init: too many supervised services\n");
+        return;
+    }
+    int pid = start_service(kind);
+    if (pid < 0) {
+        return;
+    }
+    supervised[supervised_count].kind = kind;
+    supervised[supervised_count].pid = pid;
+    supervised_count += 1;
+    supervision_requested = 1;
 }
 
 static void run_service_token(char *tok) {
     if (streq(tok, "sshd") || streq(tok, "/bin/sshd")) {
         start_sshd();
+    } else if (streq(tok, "sshd-supervised")) {
+        add_supervised_service(SERVICE_SSHD);
+    } else if (streq(tok, "sshd-once")) {
+        add_supervised_service(SERVICE_SSHD_ONCE);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);
@@ -113,9 +182,47 @@ static void start_configured_services(void) {
     }
 }
 
+static int restart_supervised_pid(int pid, int status) {
+    int i;
+    for (i = 0; i < supervised_count; i += 1) {
+        if (supervised[i].pid == pid) {
+            puts_raw("swos-init: service ");
+            puts_raw(service_name(supervised[i].kind));
+            puts_raw(" pid ");
+            print_uint((unsigned int)pid);
+            puts_raw(" exited status ");
+            print_uint((unsigned int)status);
+            puts_raw("; restarting\n");
+            supervised[i].pid = start_service(supervised[i].kind);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int supervise_services_forever(void) {
+    puts_raw("swos-init: supervision active\n");
+    while (1) {
+        int status = 0;
+        int pid = waitpid(-1, &status, 0);
+        if (pid < 0) {
+            puts_raw("swos-init: supervision waitpid failed\n");
+            return 1;
+        }
+        if (!restart_supervised_pid(pid, status)) {
+            puts_raw("swos-init: child pid ");
+            print_uint((unsigned int)pid);
+            puts_raw(" exited outside service table\n");
+        }
+    }
+}
+
 int main(void) {
     puts_raw("swos-init: starting configured services\n");
     start_configured_services();
+    if (supervision_requested) {
+        return supervise_services_forever();
+    }
     puts_raw("swos-init: handoff to console-login\n");
     char *argv[] = { "console-login", 0 };
     execve("/bin/console-login", argv, 0);

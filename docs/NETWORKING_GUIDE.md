@@ -81,6 +81,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
 | Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd` | `./tests/ssh_transport_test.sh` |
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
+| Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
 Operator flow:
@@ -406,7 +407,10 @@ Proof:
 
 Boot with host TCP 2222 forwarded to guest TCP 22. The default base image starts
 `/bin/sshd` through `/bin/swos-init` because `/etc/swos/services` contains
-`sshd`. For a manual debug run or a custom port, log in as `root` and start:
+`sshd`. Custom images can stage a different service manifest with
+`SWOS_SERVICES_FILE=PATH`; `sshd-supervised` restarts a normal SSHD child and
+`sshd-once` is the restart acceptance token used by `make sshd-supervision-test`.
+For a manual debug run or a custom port, log in as `root` and start:
 
 ```sh
 /bin/sshd

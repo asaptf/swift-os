@@ -5,7 +5,7 @@
 // and pre-login path that Hetzner-style remote access needs next: TCP/22, SSH
 // identification, curve25519-sha256, ssh-ed25519 host authentication,
 // chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
-// command. PTY, shells, scp/sftp, service supervision, and real entropy are
+// command. PTY, shells, scp/sftp, a full service manager, and real entropy are
 // separate milestones.
 
 private let defaultPort: UInt16 = 22
@@ -66,17 +66,54 @@ private func parsePort(_ p: UnsafePointer<CChar>) -> UInt16? {
     return sawDigit ? UInt16(value) : nil
 }
 
-private func chosenPort(_ argc: Int32,
-                        _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> UInt16 {
-    guard argc >= 2, let av = argv else { return defaultPort }
-    if let a1 = av[1] {
-        if a1[0] == 0x2D, a1[1] == 0x70, a1[2] == 0, argc >= 3, let a2 = av[2],
-           let p = parsePort(a2) {
-            return p
-        }
-        if let p = parsePort(a1) { return p }
+private func isOnceArg(_ p: UnsafePointer<CChar>) -> Bool {
+    (p[0] == 0x2D && p[1] == 0x2D && p[2] == 0x6F && p[3] == 0x6E &&
+     p[4] == 0x63 && p[5] == 0x65 && p[6] == 0) ||
+    (p[0] == 0x2D && p[1] == 0x31 && p[2] == 0)
+}
+
+private func isSshdOnceName(_ p: UnsafePointer<CChar>) -> Bool {
+    p[0] == 0x73 && p[1] == 0x73 && p[2] == 0x68 && p[3] == 0x64 &&
+    p[4] == 0x2D && p[5] == 0x6F && p[6] == 0x6E && p[7] == 0x63 &&
+    p[8] == 0x65 && p[9] == 0
+}
+
+private func fileRequestsOnceMode() -> Bool {
+    let fd = swiftos_open("/tmp/swos-sshd-once", 0)
+    if fd < 0 { return false }
+    _ = swiftos_close(fd)
+    return true
+}
+
+private struct SSHDConfig {
+    var port: UInt16 = defaultPort
+    var once: Bool = false
+}
+
+private func parseConfig(_ argc: Int32,
+                         _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> SSHDConfig {
+    var cfg = SSHDConfig()
+    guard let av = argv else { return cfg }
+    if let name = av[0], isSshdOnceName(name) {
+        cfg.once = true
     }
-    return defaultPort
+    if argc < 2 { return cfg }
+    var i: Int32 = 1
+    while i < argc {
+        if let arg = av[Int(i)] {
+            if isOnceArg(arg) {
+                cfg.once = true
+            } else if arg[0] == 0x2D, arg[1] == 0x70, arg[2] == 0,
+                      i + 1 < argc, let next = av[Int(i + 1)] {
+                if let p = parsePort(next) { cfg.port = p }
+                i += 1
+            } else if let p = parsePort(arg) {
+                cfg.port = p
+            }
+        }
+        i += 1
+    }
+    return cfg
 }
 
 private func getU32BE(_ p: UnsafeRawPointer, _ off: Int) -> UInt32 {
@@ -1424,7 +1461,11 @@ func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
-    let port = chosenPort(argc, argv)
+    var config = parseConfig(argc, argv)
+    if fileRequestsOnceMode() {
+        config.once = true
+    }
+    let port = config.port
     let lfd = swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("sshd: socket failed\n"); return 1 }
     if swiftos_bind(lfd, port) != 0 {
@@ -1440,6 +1481,9 @@ func main(_ argc: Int32,
     swiftos_puts("sshd: listening on ")
     printUInt(UInt(port))
     swiftos_puts(" (session exec preflight)\n")
+    if config.once {
+        swiftos_puts("sshd: once mode enabled\n")
+    }
 
     while true {
         let cfd = swiftos_accept(lfd)
@@ -1450,5 +1494,10 @@ func main(_ argc: Int32,
         }
         serveOne(cfd)
         _ = swiftos_close(cfd)
+        if config.once {
+            swiftos_puts("sshd: once mode complete; exiting\n")
+            _ = swiftos_close(lfd)
+            return 0
+        }
     }
 }

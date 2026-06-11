@@ -57,7 +57,7 @@ touches shared behavior or a release candidate.
 | Kernel or userland build rule | `make build` | The artifact is staged into `build/base.img` or booted |
 | Base-image contents or accounts | `make base-image`, then the focused VFS/login test | A release candidate or shared boot path is affected |
 | One guest command | Command-specific QEMU test | Shell, VFS, process, or capability behavior changes broadly |
-| Network service or client | Service-specific network test | Shared socket, virtio-net, DNS, TLS, or polling behavior changes |
+| Network service or client | Service-specific network test, such as `make sshd-supervision-test` for SSHD restart behavior | Shared socket, virtio-net, DNS, TLS, or polling behavior changes |
 | Package or ports workflow | Matching package/ports make target | Repository metadata, package-store activation, or seed catalog changes |
 | Update-store or kernel-slot workflow | Matching `ab_*` or `uefi_k*` test | Boot selection, rollback, or release-candidate policy changes |
 | Security boundary | Focused capability, handle, mmap, package, or C5 test | The boundary touches syscall, VFS, process, or driver-service internals |
