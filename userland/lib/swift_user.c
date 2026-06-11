@@ -226,6 +226,18 @@ long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count) {
     return log_read(buf, cap, max_count);
 }
 
+int swiftos_log_stats(unsigned long *capacity, unsigned long *available,
+                      unsigned long *total_written, unsigned long *overwritten) {
+    struct swiftos_log_stats stats;
+    int rc = log_stats(&stats, sizeof(stats));
+    if (rc != 0) return rc;
+    if (capacity) *capacity = stats.capacity;
+    if (available) *available = stats.available;
+    if (total_written) *total_written = stats.total_written;
+    if (overwritten) *overwritten = stats.overwritten;
+    return 0;
+}
+
 long swiftos_random(void *buf, unsigned long count) {
     return __syscall3(SYS_RANDOM, (long)buf, (long)count, 0);
 }

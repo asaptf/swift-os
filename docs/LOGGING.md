@@ -9,9 +9,10 @@ grow. It is the detailed companion to the operator-focused
 
 SwiftOS logging is still serial-first. The current system provides human-readable
 UART log lines, a fixed in-memory kernel ring, a panic tail dump, runtime
-filtering, compact structured payloads, and a boot-time serialization sample for
-future export. It does not yet provide a persistent guest log store, `/dev/klog`,
-remote log shipping, or a production log daemon.
+filtering, compact structured payloads, a boot-time serialization sample, and
+local capability-gated userland tail/stats export. It does not yet provide a
+persistent guest log store, `/dev/klog`, remote log shipping, or a production
+log daemon.
 
 Use this guide with:
 
@@ -31,13 +32,13 @@ Use this guide with:
 | --- | --- | --- |
 | Live log sink | UART serial output through the current sink dispatch | `./tests/boot_test.sh` |
 | Log format | `[tick] [level] source: message` plus optional detail in dumps | `./tests/boot_test.sh` |
-| Ring buffer | Fixed 256-entry in-memory ring of accepted records | `kernel/log/log.swift` |
+| Ring buffer | Fixed 256-entry in-memory ring of accepted records plus local stats | `kernel/log/log.swift` |
 | Panic handling | `kpanic` records a panic entry and dumps a recent ring tail | panic path and boot assertions |
 | Filtering | Global minimum level plus exact-source overrides | `./tests/boot_test.sh` |
 | Structured detail | Optional `UInt64` detail payload | `detail=...` boot markers |
 | Context | Ring records can carry `pid` and `principal` | `pid=... principal=...` dump/export lines |
 | Export sample | Allocation-free key=value serializer for ring tail | `LOG-EXPORT-BEGIN` block |
-| Userland export | `SYS_LOG_READ` plus `/bin/logtail`, gated by `capLogExport` | `./tests/log_export_test.sh` |
+| Userland export | `SYS_LOG_READ` / `SYS_LOG_STATS` plus `/bin/logtail`, gated by `capLogExport` | `./tests/log_export_test.sh` |
 | Capability hook | `capLogExport` gates ring export and future sink authority | security docs and boot marker |
 
 The live UART path remains the primary user-visible logging path. The ring and
@@ -213,9 +214,11 @@ Optional fields appear only when present:
 tick=23 level=I source=psinfo msg="process snapshot" detail=4 pid=1 principal=1
 ```
 
-The same record shape is now exposed to userland through `SYS_LOG_READ` (77)
-and `/bin/logtail` when the caller holds `capLogExport`. It remains a local
-diagnostic format, not a remote collector protocol.
+The same record shape is exposed to userland through `SYS_LOG_READ` (77) and
+`/bin/logtail` when the caller holds `capLogExport`. `SYS_LOG_STATS` (82)
+exposes the same ring's `capacity`, `available`, `total_written`, and
+`overwritten` counters through `/bin/logtail --stats`. These remain local
+diagnostic surfaces, not a remote collector protocol.
 
 ## Capability Boundary
 
@@ -241,11 +244,12 @@ Target command:
 
 ```sh
 logtail [max-records]
+logtail --stats
 ```
 
-Without `capLogExport`, `logtail` returns a permission-denied diagnostic. The
-focused acceptance test exercises both denial and a deliberately granted
-context via `/bin/logtail-probe`.
+Without `capLogExport`, both `logtail` modes return a permission-denied
+diagnostic. The focused acceptance test exercises denial and a deliberately
+granted context via `/bin/logtail-probe`.
 
 ## Panic Behavior
 
@@ -345,6 +349,7 @@ The implemented logging arc is:
 | L4c | Done | Allocation-free key=value ring serializer |
 | L4d | Done | Log sink indirection and `capLogExport` hook |
 | L5a | Done | Capability-gated userland log tail export |
+| L5b | Done | Capability-gated ring stats export |
 
 Future work:
 

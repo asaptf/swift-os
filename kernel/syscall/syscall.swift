@@ -82,10 +82,12 @@ private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local fu
 private let sysPkgFiles: UInt = 79        // pkg_files(name, buf, cap) — list active package payload files
 private let sysRandom: UInt = 80          // random(buf, cap) — runtime entropy from virtio-rng
 private let sysPkgRemove: UInt = 81       // pkg_remove(name) — deactivate package on next boot
+private let sysLogStats: UInt = 82        // log_stats(buf, cap) — needs capLogExport
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
 private let termiosLflagOffset = 12
+private let logStatsSize = 32
 
 func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     let result: Int
@@ -303,6 +305,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
     } else if number == sysLogRead {
         result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
+    } else if number == sysLogStats {
+        result = syscallLogStats(buffer: frame[0], capacity: frame[1])
     } else if number == sysSocketpair {
         result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
     } else if number == sysRandom {
@@ -340,6 +344,18 @@ private func syscallLogRead(buffer ptr: UInt, capacity cap: UInt, maxCount: UInt
     if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return -22 }
     guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
     return logFormatRecentTail(Int(maxCount), into: dst, capacity: Int(cap))
+}
+
+private func syscallLogStats(buffer ptr: UInt, capacity cap: UInt) -> Int {
+    if !klogCanExportRing(capabilities: processCurrentCaps()) { return -1 } // EPERM
+    if cap < UInt(logStatsSize) { return -22 }
+    guard let dst = userWritableBuffer(ptr, UInt(logStatsSize)) else { return -22 }
+    let raw = UnsafeMutableRawPointer(dst)
+    raw.storeBytes(of: logRingStatsCapacity(), toByteOffset: 0, as: UInt64.self)
+    raw.storeBytes(of: logRingStatsAvailable(), toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: logRingStatsTotalWritten(), toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: logRingStatsOverwritten(), toByteOffset: 24, as: UInt64.self)
+    return 0
 }
 
 private func syscallRandom(buffer ptr: UInt, capacity cap: UInt) -> Int {

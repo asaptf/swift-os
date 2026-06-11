@@ -90,7 +90,7 @@ The capability bits are:
 | 3 | `capTmpWrite` | May create, write, rename, unlink, chmod, and chown tmpfs nodes |
 | 4 | `capProcessInspect` | Process-inspection authority bit in the identity model |
 | 5 | `capNet` | May create sockets and resolve names |
-| 6 | `capLogExport` | May export the local kernel log ring with `logtail` |
+| 6 | `capLogExport` | May export local kernel log ring records and stats with `logtail` |
 
 Capabilities are not Unix uid 0. They are explicit process authority bits. File
 handles also carry per-handle rights; see [API_REFERENCE.md](API_REFERENCE.md)
@@ -187,7 +187,7 @@ Common native Swift tools:
 | `calc` | Interactive expression REPL over Swift heap and ARC |
 | `kv` | In-memory key-value REPL |
 | `llm`, `llmd` | Native Swift TinyStories inference client and HTTP serving daemon |
-| `logtail` | Capability-gated local kernel log ring export |
+| `logtail` | Capability-gated local kernel log ring records and stats |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
 | `swos-update`, `swos-activate`, `swos-confirm` | Checked base-image A/B update-store commands |
 | `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Checked UEFI ESP kernel-slot commands |

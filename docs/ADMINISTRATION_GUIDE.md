@@ -121,7 +121,7 @@ you want to grant.
 | 3 | 8 | `0x08` | `capTmpWrite` | May write and mutate tmpfs nodes |
 | 4 | 16 | `0x10` | `capProcessInspect` | Process-inspection authority bit |
 | 5 | 32 | `0x20` | `capNet` | May create sockets and resolve names |
-| 6 | 64 | `0x40` | `capLogExport` | May export the local kernel log ring with `logtail` |
+| 6 | 64 | `0x40` | `capLogExport` | May export local kernel log ring records and stats with `logtail` |
 
 Common masks:
 

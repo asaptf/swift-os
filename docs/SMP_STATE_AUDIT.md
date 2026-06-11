@@ -119,6 +119,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/log/log.swift:ring`
 - `kernel/log/log.swift:ringFull`
 - `kernel/log/log.swift:ringNext`
+- `kernel/log/log.swift:ringTotalWritten`
 - `kernel/log/log.swift:sourceMinCount`
 - `kernel/log/log.swift:sourceMins`
 - `kernel/main.swift:c2SpawnExplicitPassed`
