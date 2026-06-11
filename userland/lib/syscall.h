@@ -82,6 +82,7 @@
 #define SYS_PKG_STREAM_WRITE 73
 #define SYS_PKG_STREAM_COMMIT 74
 #define SYS_PKG_STREAM_ABORT 75
+#define SYS_SIGRETURN      76
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

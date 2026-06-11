@@ -76,6 +76,7 @@ private let sysPkgStreamBegin: UInt = 72  // pkg_stream_begin(desc) — start st
 private let sysPkgStreamWrite: UInt = 73  // pkg_stream_write(buf, len) — append payload bytes to package store
 private let sysPkgStreamCommit: UInt = 74 // pkg_stream_commit() — verify, publish, and activate streamed package
 private let sysPkgStreamAbort: UInt = 75  // pkg_stream_abort() — discard the active streamed package install
+private let sysSigreturn: UInt = 76       // sigreturn() — restore a kernel-built user signal frame
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -111,11 +112,14 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysSigaction {
         let sig = Int(bitPattern: frame[0])
         if signalIsValid(sig) {
-            signalSetDisposition(sig, frame[1])
+            signalSetDisposition(sig, frame[1], frame[2])
             result = 0
         } else {
             result = -22
         }
+    } else if number == sysSigreturn {
+        processSignalReturn(frame)
+        return
     } else if number == sysKill {
         result = processKill(Int(bitPattern: frame[0]), Int(bitPattern: frame[1]))
     } else if number == sysGetpid {
@@ -293,6 +297,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     }
 
     frame[0] = UInt(bitPattern: result)
+    signalDeliverToCurrentFrame(frame)
 }
 
 private func syscallTcGetAttr(termios ptr: UInt) -> Int {

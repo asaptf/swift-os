@@ -88,6 +88,7 @@ ok=1
 for marker in \
   "signalprobe: kill self probe OK" \
   "signalprobe: sigaction ignore/old OK" \
+  "signalprobe: custom handler frame OK" \
   "signalprobe: child SIGTERM status OK" \
   "SIGNALPROBE-OK"; do
   if grep -qF "$marker" <<<"$clean"; then
