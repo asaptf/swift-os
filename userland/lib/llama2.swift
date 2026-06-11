@@ -504,7 +504,18 @@ final class QLlama2: LlamaModel {
             if scale == 0 {
                 for i in 0..<gs { qg[i] = 0 }
             } else {
-                for i in 0..<gs { qg[i] = Int8((xg[i] / scale).rounded()) }
+                for i in 0..<gs {
+                    let qf = (xg[i] / scale).rounded()
+                    if qf != qf {
+                        qg[i] = 0
+                    } else if qf >= 127.0 {
+                        qg[i] = 127
+                    } else if qf <= -127.0 {
+                        qg[i] = -127
+                    } else {
+                        qg[i] = Int8(Int(qf))
+                    }
+                }
             }
         }
     }
