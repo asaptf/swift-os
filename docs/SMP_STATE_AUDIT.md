@@ -22,7 +22,7 @@ manifest entries left behind after globals move or disappear.
 | SMP per-CPU scaffold | Fixed per-CPU state exists, but CPU0 is the only initialized entry in S0. S3b/S3c add separate fixed IPI and TLB shootdown probe counters so the 64-byte per-CPU scheduler slot stays stable. S3d routes VM invalidation through active CPU masks without adding new mutable globals. | Reuse the fixed storage for S1 secondary init; protect or atomically update shared readers before multi-CPU scheduling. Keep IPI/TLB counters atomic and side-effect-free until later S3 work opens real secondary address-space activation. |
 | Scheduler/process/futex/timer | Global current process/thread, wait queues, per-process signal-frame metadata, per-signal restorer metadata, and per-process mapping metadata, including file-backed and anonymous mmap VMA tables. | Replace `current*` with per-CPU state; protect process table, wake queues, signal delivery/return state, restorer metadata, and mapping metadata with a small lock protocol before broad concurrent faults or shared-address-space mmap mutation. |
 | VFS/handles/pipes/endpoints/devices/package store | Shared fixed tables. S4b protects VFS node/fd/open-description/pipe/endpoint/eventfd/cwd/confinement tables with one IRQ-save lock, adds borrowed open-description lifetimes for long operations, and checks ref/accounting balance at boot and after demos. C5b keeps the opaque device registry under the same VFS lock and ties each claimed device to an open-description lifetime; C5c-C5f store discovered virtio-input metadata in that registry while keeping MMIO/IRQ/DMA authority bits clear and device-grant rights metadata-only. S4d protects package-store activation/append tables, active payload publication, streaming install scratch state, and record offsets with a short IRQ-save lock plus a writer gate for target-side installs. | Keep secondary EL0 disabled until scheduler/process state is ready; do not hold the VFS lock across peer waits. |
-| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. S4e protects the in-kernel network/socket engine (`gNet`, DHCP-published/static IPv4 config, static/RA-published IPv6 config, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
+| Networking/virtio/TTY/framebuffer/logging | Driver and service globals owned by CPU 0 today. P3b gives each virtio-blk device its own queue state while keeping polled access single-threaded. HC25 adds one polled virtio-rng queue for runtime entropy, also CPU0-owned. S4e protects the in-kernel network/socket engine (`gNet`, DHCP-published/static IPv4 config, static/RA-published IPv6 config, DNS scratch, socket/TCP tables, RX datagram rings, and the virtio-net poll/TX/RX boundary) with a short IRQ-save lock and boot-time balance checks. | Do not hold the network lock across blocking waits. Longer term move at least one driver or the network stack toward a service boundary before broad multi-CPU service work. |
 | Boot/demo flags | One-shot boot acceptance state. | Keep primary-only; do not let them influence S1 design. |
 
 ## Machine-Checked Manifest
@@ -107,6 +107,12 @@ manifest entries left behind after globals move or disappear.
 - `kernel/drivers/virtio_net.swift:txStaged`
 - `kernel/drivers/virtio_net.swift:txState`
 - `kernel/drivers/virtio_net.swift:txq`
+- `kernel/drivers/virtio_rng.swift:rngAvailIdx`
+- `kernel/drivers/virtio_rng.swift:rngDataBase`
+- `kernel/drivers/virtio_rng.swift:rngLastUsed`
+- `kernel/drivers/virtio_rng.swift:rngMmio`
+- `kernel/drivers/virtio_rng.swift:rngQn`
+- `kernel/drivers/virtio_rng.swift:rngRingBase`
 - `kernel/fs/updatestore.swift:updateStoreActiveSlot`
 - `kernel/log/log.swift:currentLogSink`
 - `kernel/log/log.swift:minLogLevel`
