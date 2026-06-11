@@ -992,7 +992,7 @@ diagnostic fixtures than stable application interfaces.
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |
-| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, or `pkg list` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, and list active package records. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
+| `pkg` | `pkg repo set URL`, `pkg repo show`, `pkg update [URL]`, `pkg search TEXT`, `pkg info NAME`, `pkg install FILE\|NAME`, `pkg list`, or `pkg files NAME` | Install local `.swpkg` files, install by name from signed HTTP repository fixtures or DNS-resolved HTTP repository URLs, list active package records, and list files in an installed package. | `tests/pkg_local_install_test.sh`, `tests/pkg_repo_install_test.sh`, `tests/pkg_ports_seed_repo_install_test.sh`, `tests/pkg_static_host_dns_repo_install_test.sh` |
 | `swos-confirm` | `swos-confirm` | Mark the booted A/B update-store slot confirmed healthy. | `tests/ab_confirm_test.sh` |
 | `swos-activate` | `swos-activate` | Promote the inactive A/B update-store slot for the next boot. | `tests/ab_activate_test.sh` |
 | `swos-update` | `swos-update` | Stage the attached signed SWOSBASE payload disk into the inactive A/B slot. | `tests/ab_stage_test.sh` |
@@ -1177,8 +1177,8 @@ Notes:
 ### `pkg`
 
 Install a local SwiftOS package file, update/search/inspect the signed HTTP
-repository fixture, install a package by name from that fixture, or list active
-package-store records.
+repository fixture, install a package by name from that fixture, list active
+package-store records, or list files in an installed package.
 
 ```text
 pkg repo set URL
@@ -1189,6 +1189,7 @@ pkg info NAME
 pkg install FILE
 pkg install NAME
 pkg list
+pkg files NAME
 ```
 
 Example local install fixture:
@@ -1197,6 +1198,7 @@ Example local install fixture:
 pkg list
 pkg install /packages/pkghello.swpkg
 pkg list
+pkg files pkghello
 /usr/bin/pkghello
 ```
 
@@ -1206,6 +1208,7 @@ Expected output includes:
 no packages installed
 pkg: installed pkghello-1.0.0_1
 pkghello-1.0.0_1
+/usr/bin/pkghello
 pkghello: hello from package overlay
 ```
 
@@ -1220,6 +1223,8 @@ pkg search pkghello
 pkg info pkghello
 pkg install pkghello
 pkg list
+pkg files pkgdep
+pkg files pkghello
 /usr/bin/pkghello
 ```
 
@@ -1237,6 +1242,8 @@ pkg: installed pkgdep-1.0.0_1
 pkg: installed pkghello-1.0.0_1
 pkgdep-1.0.0_1
 pkghello-1.0.0_1
+/usr/bin/pkgdep
+/usr/bin/pkghello
 pkghello: hello from package overlay
 ```
 
@@ -1261,7 +1268,8 @@ Notes:
 - The guest must be booted with a writable package-store image for install to
   succeed.
 - `pkg list` reports the package records currently visible through the active
-  package store.
+  package store. `pkg files NAME` reports newline-separated absolute file paths
+  from the named active package payload.
 - See [PACKAGE_GUIDE.md](PACKAGE_GUIDE.md) for the complete runbook.
 
 Acceptance coverage: `tests/pkg_local_install_test.sh` and

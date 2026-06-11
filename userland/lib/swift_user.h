@@ -81,6 +81,7 @@ int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned lo
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int  swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
 int  swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                               unsigned long payload_size,
                               const unsigned char *payload_sha256);

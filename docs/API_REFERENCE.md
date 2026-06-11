@@ -258,6 +258,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 76 | `sigreturn` | none | restores a kernel-built signal frame |
 | 77 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 | 78 | `socketpair` | `fds*`, `flags` | 0 or negative error |
+| 79 | `pkg_files` | `name`, `buf`, `cap` | bytes needed or negative error |
 
 Notes:
 
@@ -353,9 +354,10 @@ confine-only: a process cannot widen the root after confinement.
 
 ## Package Store API
 
-The target-side package manager uses two public syscalls for the mutable package
-store. These are low-level APIs for trusted system tools. Most applications
-should invoke `/bin/pkg` instead of calling them directly.
+The target-side package manager uses public package-store syscalls for mutable
+store operations and active package inspection. These are low-level APIs for
+trusted system tools. Most applications should invoke `/bin/pkg` instead of
+calling them directly.
 
 Related file formats:
 
@@ -371,6 +373,7 @@ Related file formats:
 ```c
 int pkg_install(int fd, const char *name, const char *version_revision);
 int pkg_info(int index, char *buf, size_t cap);
+int pkg_files(const char *name, char *buf, size_t cap);
 
 struct swiftos_pkg_stream_begin_desc {
     char name[32];
@@ -434,6 +437,12 @@ int main(void) {
 `name-version_revision` string to `buf` and returns the number of payload bytes
 that would be written, excluding the trailing NUL. A missing index returns `-2`.
 
+`pkg_files` enumerates the file paths in an active package payload. `name` is a
+package name, `buf` receives newline-separated absolute paths, and the return
+value is the byte count needed for the complete list. A missing active package
+returns `-2`. Passing `cap == 0` is allowed and reports the required size without
+writing `buf`.
+
 Example:
 
 ```c
@@ -456,6 +465,7 @@ Embedded Swift tools:
 ```c
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
 int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                              unsigned long payload_size,
                              const unsigned char *payload_sha256);
@@ -1236,6 +1246,7 @@ int swiftos_chown(const char *path, unsigned int owner);
 ```c
 int swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int swiftos_pkg_info(int index, char *buf, unsigned long cap);
+int swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
 int swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                              unsigned long payload_size,
                              const unsigned char *payload_sha256);

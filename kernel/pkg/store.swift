@@ -13,12 +13,17 @@ private let pkgStoreActivationEntrySize = 80
 private let pkgStoreInstallChunkSize = 4096
 private let swpkgHeaderSize = 128
 private let pkgStreamBeginDescSize = 88
+private let pkgFilesPackedHeaderSize = 64
+private let pkgFilesPackedEntrySize = 40
+private let pkgFilesPackedEntrySizeSigned = 72
+private let pkgFilesMaxPath = 1024
 
 private let pkgRecordKindPayload: UInt32 = 1
 private let pkgRecordKindActivation: UInt32 = 2
 private let pkgRecordKindActivePointer: UInt32 = 3
 private let pkgRecordMagicString: StaticString = "SWPSREC1"
 private let pkgActivationMagicString: StaticString = "SWPACT01"
+private let pkgPackedMagicString: StaticString = "SWOSBASE"
 
 private struct PackageStorePayload {
     var inUse = false
@@ -1266,4 +1271,158 @@ func pkgStoreActiveInfo(_ activeIndex: Int, _ outVA: UInt, _ cap: UInt) -> Int {
         }
         return Int(written)
     }
+}
+
+private func pkgNameMatches(_ header: UnsafePointer<UInt8>,
+                            _ name: UnsafePointer<UInt8>,
+                            _ nameLen: Int) -> Bool {
+    if nameLen <= 0 || nameLen > 31 { return false }
+    var i = 0
+    while i < nameLen {
+        if header[80 + i] != name[i] { return false }
+        i += 1
+    }
+    return header[80 + nameLen] == 0
+}
+
+private func pkgActivePayloadForName(_ name: UnsafePointer<UInt8>,
+                                     _ nameLen: Int) -> (offset: UInt64, size: UInt64)? {
+    let daif = pkgStoreLock()
+    let count = pkgActivePayloadCountValue
+    pkgStoreUnlock(daif)
+
+    var active = 0
+    while active < count {
+        var payloadOffset: UInt64 = 0
+        var payloadSize: UInt64 = 0
+        let locked = pkgStoreLock()
+        let pidx = active >= 0 && active < pkgActivePayloadCountValue ? pkgActivePayloadIndex[active] : -1
+        if pidx >= 0 && pidx < pkgStoreMaxPayloads {
+            let payload = pkgPayloads[pidx]
+            if payload.inUse && payload.active && payload.offset >= UInt64(pkgStoreRecordHeaderSize) {
+                payloadOffset = payload.offset
+                payloadSize = payload.size
+            }
+        }
+        pkgStoreUnlock(locked)
+
+        if payloadOffset != 0 {
+            var record = [UInt8](repeating: 0, count: pkgStoreRecordHeaderSize)
+            let rc = record.withUnsafeMutableBytes { raw in
+                virtioBlkReadPackageStoreRange(payloadOffset - UInt64(pkgStoreRecordHeaderSize),
+                                               raw.baseAddress, UInt32(pkgStoreRecordHeaderSize))
+            }
+            if rc == 0 {
+                let matched = record.withUnsafeBufferPointer { bp in
+                    pkgNameMatches(bp.baseAddress!, name, nameLen)
+                }
+                if matched { return (payloadOffset, payloadSize) }
+            }
+        }
+        active += 1
+    }
+    return nil
+}
+
+private func pkgReadPackedPayloadHeader(payloadOffset: UInt64, payloadSize: UInt64)
+    -> (ok: Bool, entryCount: Int, entrySize: Int, entriesOffset: UInt64,
+        stringsOffset: UInt64, stringsSize: UInt64) {
+    if payloadSize < UInt64(pkgFilesPackedHeaderSize) { return (false, 0, 0, 0, 0, 0) }
+    var hdr = [UInt8](repeating: 0, count: pkgFilesPackedHeaderSize)
+    let rc = hdr.withUnsafeMutableBytes { raw in
+        virtioBlkReadPackageStoreRange(payloadOffset, raw.baseAddress,
+                                       UInt32(pkgFilesPackedHeaderSize))
+    }
+    if rc != 0 { return (false, 0, 0, 0, 0, 0) }
+    return hdr.withUnsafeBufferPointer { bp in
+        let h = bp.baseAddress!
+        if !pkgBytesEqual(h, 0, pkgPackedMagicString) { return (false, 0, 0, 0, 0, 0) }
+        let version = pkgLe32(h, 8)
+        if version != 2 && version != 3 { return (false, 0, 0, 0, 0, 0) }
+        let expectedEntrySize = version == 3 ? pkgFilesPackedEntrySizeSigned : pkgFilesPackedEntrySize
+        if pkgLe32(h, 12) != UInt32(pkgFilesPackedHeaderSize) ||
+           pkgLe32(h, 16) != UInt32(expectedEntrySize) {
+            return (false, 0, 0, 0, 0, 0)
+        }
+        let entryCount = Int(pkgLe32(h, 20))
+        let entriesOffset = pkgLe64(h, 24)
+        let stringsOffset = pkgLe64(h, 32)
+        let stringsSize = pkgLe64(h, 40)
+        let dataOffset = pkgLe64(h, 48)
+        let dataSize = pkgLe64(h, 56)
+        if entryCount <= 0 || entryCount > 8192 { return (false, 0, 0, 0, 0, 0) }
+        let entriesSize = UInt64(entryCount * expectedEntrySize)
+        let (entriesEnd, entriesOverflow) = entriesOffset.addingReportingOverflow(entriesSize)
+        let (stringsEnd, stringsOverflow) = stringsOffset.addingReportingOverflow(stringsSize)
+        let (dataEnd, dataOverflow) = dataOffset.addingReportingOverflow(dataSize)
+        if entriesOverflow || stringsOverflow || dataOverflow { return (false, 0, 0, 0, 0, 0) }
+        if entriesEnd > payloadSize || stringsEnd > payloadSize || dataEnd > payloadSize {
+            return (false, 0, 0, 0, 0, 0)
+        }
+        return (true, entryCount, expectedEntrySize, entriesOffset, stringsOffset, stringsSize)
+    }
+}
+
+func pkgStoreActiveFiles(nameVA: UInt, outVA: UInt, cap: UInt) -> Int {
+    guard let name = userCString(nameVA, maxLen: 32) else { return -22 }
+    var nameLen = 0
+    while nameLen < 32 && name[nameLen] != 0 { nameLen += 1 }
+    if nameLen == 0 || nameLen > 31 { return -22 }
+    guard let payload = pkgActivePayloadForName(name, nameLen) else { return -2 }
+    let header = pkgReadPackedPayloadHeader(payloadOffset: payload.offset, payloadSize: payload.size)
+    if !header.ok { return -22 }
+
+    let out: UnsafeMutablePointer<UInt8>?
+    if cap == 0 {
+        out = nil
+    } else {
+        guard let writable = userWritableBuffer(outVA, cap) else { return -22 }
+        out = writable
+    }
+
+    var needed: UInt = 0
+    func emit(_ ch: UInt8) {
+        if let out, needed < cap {
+            out[Int(needed)] = ch
+        }
+        needed += 1
+    }
+
+    var ok = true
+    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: header.entrySize) { entry in
+        var i = 0
+        while i < header.entryCount && ok {
+            let entryOffset = header.entriesOffset + UInt64(i * header.entrySize)
+            if virtioBlkReadPackageStoreRange(payload.offset + entryOffset,
+                                              entry.baseAddress, UInt32(header.entrySize)) != 0 {
+                ok = false
+                break
+            }
+            let e = entry.baseAddress!
+            let pathOff = UInt64(pkgLe32(e, 0))
+            let pathLen = Int(pkgLe32(e, 4))
+            let kind = pkgLe32(e, 8)
+            if kind == 2 && pathLen > 0 && pathLen <= pkgFilesMaxPath &&
+               pathOff + UInt64(pathLen) <= header.stringsSize {
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: pathLen) { path in
+                    let pathStart = payload.offset + header.stringsOffset + pathOff
+                    if virtioBlkReadPackageStoreRange(pathStart, path.baseAddress,
+                                                      UInt32(pathLen)) != 0 {
+                        ok = false
+                        return
+                    }
+                    if path.baseAddress![0] != 0x2F { emit(0x2F) }
+                    var p = 0
+                    while p < pathLen {
+                        emit(path.baseAddress![p])
+                        p += 1
+                    }
+                    emit(0x0A)
+                }
+            }
+            i += 1
+        }
+    }
+    if !ok { return -22 }
+    return Int(needed)
 }

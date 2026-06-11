@@ -85,6 +85,7 @@
 #define SYS_SIGRETURN      76
 #define SYS_LOG_READ       77
 #define SYS_SOCKETPAIR     78
+#define SYS_PKG_FILES      79
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -321,6 +322,10 @@ static inline int pkg_install(int fd, const char *name, const char *version_revi
 
 static inline int pkg_info(int index, char *buf, size_t cap) {
     return (int)__syscall3(SYS_PKG_INFO, index, (long)buf, (long)cap);
+}
+
+static inline int pkg_files(const char *name, char *buf, size_t cap) {
+    return (int)__syscall3(SYS_PKG_FILES, (long)name, (long)buf, (long)cap);
 }
 
 struct swiftos_pkg_stream_begin_desc {

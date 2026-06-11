@@ -79,6 +79,7 @@ private let sysPkgStreamAbort: UInt = 75  // pkg_stream_abort() — discard the 
 private let sysSigreturn: UInt = 76       // sigreturn() — restore a kernel-built user signal frame
 private let sysLogRead: UInt = 77         // log_read(buf, cap, max_count) — needs capLogExport
 private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local full-duplex fd pair
+private let sysPkgFiles: UInt = 79        // pkg_files(name, buf, cap) — list active package payload files
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -260,6 +261,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = pkgStoreInstall(fd: Int(bitPattern: frame[0]), nameVA: frame[1], versionVA: frame[2])
     } else if number == sysPkgInfo {
         result = pkgStoreActiveInfo(Int(bitPattern: frame[0]), frame[1], frame[2])
+    } else if number == sysPkgFiles {
+        result = pkgStoreActiveFiles(nameVA: frame[0], outVA: frame[1], cap: frame[2])
     } else if number == sysPkgStreamBegin {
         result = pkgStoreStreamBegin(descVA: frame[0])
     } else if number == sysPkgStreamWrite {
