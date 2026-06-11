@@ -403,6 +403,7 @@ Before merging a port:
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |
 | `userland/largemmapprobe.c` | newlib compat multi-MiB mmap, partial mprotect, and munmap reuse |
+| `userland/mmapreserveprobe.c` | newlib compat PROT_NONE reservation, mprotect commit/decommit, and reserved JIT path |
 | `userland/llmd.swift` | File-backed mmap, model bundles, TCP serving |
 | `userland/spawndemo.c` | Spawn and explicit handle inheritance |
 | `userland/c4b_sockxfer.c` | IPC endpoint handle transfer |

@@ -727,8 +727,9 @@ void swiftos_thread_exit(void) {
 
 // ---- Anonymous mmap / munmap / mprotect (Track B) -------------------------
 // Thin wrappers over the mmap/munmap/mprotect inlines in syscall.h. swiftos_mmap
-// returns the base address, or 0 on failure (Swift has no errno, so a 0 sentinel
-// is simplest; a valid mapping is never at VA 0).
+// returns the base address, or 0 on failure. PROT_NONE reserves VA without
+// resident frames; mprotect commits/decommits pages later. Swift has no errno,
+// so a 0 sentinel is simplest, and a valid mapping is never at VA 0.
 unsigned long swiftos_mmap(unsigned long len, int prot) {
     void *p = mmap(0, len, prot, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     return (p == MAP_FAILED) ? 0 : (unsigned long)p;

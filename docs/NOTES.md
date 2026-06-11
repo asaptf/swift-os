@@ -658,8 +658,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **`protPageDesc(pa, prot)` in `vm.swift`** builds a 4 KiB leaf from a PROT bitmask
   (READ=1/WRITE=2/EXEC=4) via `memAttrs(userAccess: true, executable: prot&EXEC,
   userReadOnly: !(prot&WRITE))`. W^X (`WRITE|EXEC`) and `PROT_NONE` both return an invalid
-  descriptor (0), which callers treat as `EINVAL` — the W^X guard is intrinsic to the
-  descriptor builder, not just the syscall.
+  descriptor (0). Since NPM8, `processMmap(PROT_NONE)` handles VA-only reservation above
+  this leaf layer; `protPageDesc` still never creates a present-but-inaccessible page.
 - **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
   The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
   the ELF image sits at `0x8000_0000` growing up (busybox ~1.1 MiB, far short of
@@ -695,7 +695,8 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **W^X is enforced at BOTH ends:** at the syscall boundary (`processMmap`/`processMprotect`
   reject `PROT_WRITE|PROT_EXEC` → EINVAL) and defensively inside `protPageDesc` (a W^X or
   PROT_NONE bitmask yields an invalid descriptor, so even a direct `address_space_*` caller
-  can never install a writable+executable leaf). So a page is never simultaneously W and X.
+  can never install a writable+executable or present-inaccessible leaf). So a page is never
+  simultaneously W and X.
 - **Syscall `mprotect` = 56**; `mprotect` inline in `syscall.h`, bridge `swiftos_mprotect`.
 - **Test — the JIT pattern** (`/bin/mmapdemo`, `tests/mmap_test.sh`): mmap a page RW, write
   `mov w0,#42; ret` (bytes `40 05 80 52  c0 03 5f d6`), `mprotect` RW→RX (must succeed), call
@@ -4809,4 +4810,32 @@ catalog blocker is now the narrower lazy mmap reservation policy.
 
 **Acceptance.** `make largemmap-test`, `make docs-test`, `make mprotect-test`,
 `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM8 — anonymous mmap reservation/commit probe (DONE, 2026-06-11)
+
+**Scope.** Add the first lazy anonymous mmap reservation contract needed by
+V8-shaped runtimes. SwiftOS now accepts `mmap(PROT_NONE)` as virtual-address
+reservation without resident frames. `mprotect` inside that reservation commits
+missing pages for readable/writable/executable protections, and
+`mprotect(PROT_NONE)` decommits live pages while preserving the reserved VA.
+W^X remains enforced: RWX is still rejected. This resolves the generic lazy
+reservation blocker; the Node.js catalog now tracks the narrower
+MAP_FIXED/guard-page mmap audit that must happen against the actual V8 build.
+
+- `kernel/user/process.swift`: adds per-process anonymous VMA tracking copied
+  across fork/thread creation and reset across exec. The process layer owns
+  PROT_NONE reservation/decommit; `kernel/mm/vm.swift` still owns real leaf
+  mapping and W^X enforcement.
+- `userland/compat/sys/mman.h` and `userland/lib/syscall.h`: define
+  `MAP_NORESERVE` for source compatibility. The flag is accepted by the wrapper;
+  the reservation behavior is driven by `PROT_NONE`.
+- `/bin/mmapreserveprobe`: reserves 16 MiB with `PROT_NONE|MAP_NORESERVE`,
+  commits a 1 MiB middle window, verifies zero-fill and writes, decommits and
+  recommits it, proves zero-fill again, then commits a reserved JIT page
+  RW->RX and executes it.
+
+**Acceptance.** `make mmapreserve-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/mmap_test.sh`, `make mprotect-test`,
+`make largemmap-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
