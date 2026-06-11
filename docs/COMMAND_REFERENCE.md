@@ -42,7 +42,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Inspect files and metadata | `ls`, `cat`, `head`, `wc`, `date` | `capFsRead` for base-image reads | `tests/swift_coreutils_test.sh`, `tests/swift_ls_test.sh`, `tests/swift_headwc_test.sh` |
 | Use tmpfs scratch space | `mkdir`, `touch`, `echo`, `mv`, `rm`, `rmdir`, `chmod`, `chown` | `capTmpWrite` and paths under `/tmp` | `tests/swift_fileops_test.sh`, `tests/swift_chmodown_test.sh` |
 | Inspect processes and resources | `ps`, `top` | Process-inspection authority in the current context | `tests/top_test.sh`, `tests/busybox_test.sh` |
-| Inspect kernel logs | `logtail` | `capLogExport` in the current context | `tests/log_export_test.sh` |
+| Inspect kernel logs | `logtail`, `logtail --stats` | `capLogExport` in the current context | `tests/log_export_test.sh` |
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet`; attach virtio-rng for runtime entropy proof | `tests/ssh_transport_test.sh`, `tests/ssh_runtime_entropy_test.sh` |
@@ -214,6 +214,7 @@ Print a serialized tail of the in-memory kernel log ring.
 
 ```text
 logtail [max-records]
+logtail --stats
 ```
 
 Examples:
@@ -221,6 +222,7 @@ Examples:
 ```sh
 logtail
 logtail 8
+logtail --stats
 ```
 
 Notes:
@@ -229,6 +231,8 @@ Notes:
   default.
 - Output is newline-separated key=value records such as
   `tick=N level=I source=tag msg="text"`.
+- `--stats` prints ring `capacity`, `available`, `total`, and `overwritten`
+  counters for diagnosing truncated support captures.
 - This is a local diagnostic command, not a persistent log store or remote
   collector.
 
@@ -1373,7 +1377,7 @@ are not the primary operator interface.
 | `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
 | `deviceauthdemo` | C5g negative device discovery and claim checks for restricted principals. | Yes, but run it as `guest` or prefer the make target. | `make device-authority-cap-test` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
-| `logtail-probe` | Capability-gate probe for `SYS_LOG_READ`: denied without `capLogExport`, then reads after an explicit admin-context grant. | Yes, for log export acceptance only. | `tests/log_export_test.sh` |
+| `logtail-probe` | Capability-gate probe for `SYS_LOG_READ` and `SYS_LOG_STATS`: denied without `capLogExport`, then reads after an explicit admin-context grant. | Yes, for log export acceptance only. | `tests/log_export_test.sh` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |

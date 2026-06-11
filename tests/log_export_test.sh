@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# log_export_test.sh — L5a acceptance: userland log tail export is gated by
-# capLogExport and produces the stable key=value ring serialization when granted.
+# log_export_test.sh — L5 acceptance: userland log tail export/stats are gated
+# by capLogExport and produce stable local diagnostics when granted.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,10 +89,15 @@ send_line '/bin/logtail 8'
 await "logtail: permission denied (need capLogExport)" 60 ||
   drive_fail "logtail was not denied before capLogExport"
 
+send_line '/bin/logtail --stats'
+await "logtail: stats permission denied (need capLogExport)" 60 ||
+  drive_fail "logtail stats were not denied before capLogExport"
+
 send_line '/bin/logtail-probe'
 await "LOGTAIL-PROBE-DENIED" 60 || drive_fail "probe did not observe initial denial"
 await "LOGTAIL-PROBE-GRANTED bytes=" 60 || drive_fail "probe did not read after capLogExport"
 await "LOGTAIL-PROBE-RECORD-SHAPE" 60 || drive_fail "probe did not validate record shape"
+await "LOGTAIL-PROBE-STATS capacity=256" 60 || drive_fail "probe did not validate log ring stats"
 await "LOGTAIL-PROBE-BEGIN" 60 || drive_fail "probe did not print exported log begin marker"
 await "LOGTAIL-PROBE-END" 60 || drive_fail "probe did not print exported log end marker"
 
@@ -109,19 +114,23 @@ clean="$(sed 's/\r//' "$LOG")"
 ok=1
 grep -qF "logtail: permission denied (need capLogExport)" <<<"$clean" ||
   { echo "FAIL: missing denial marker" >&2; ok=0; }
+grep -qF "logtail: stats permission denied (need capLogExport)" <<<"$clean" ||
+  { echo "FAIL: missing stats denial marker" >&2; ok=0; }
 grep -qF "LOGTAIL-PROBE-DENIED" <<<"$clean" ||
   { echo "FAIL: missing probe denial marker" >&2; ok=0; }
 grep -qF "LOGTAIL-PROBE-GRANTED bytes=" <<<"$clean" ||
   { echo "FAIL: missing probe granted marker" >&2; ok=0; }
 grep -qF "LOGTAIL-PROBE-RECORD-SHAPE" <<<"$clean" ||
   { echo "FAIL: missing record shape marker" >&2; ok=0; }
+grep -qF "LOGTAIL-PROBE-STATS capacity=256" <<<"$clean" ||
+  { echo "FAIL: missing stats marker" >&2; ok=0; }
 grep -Eq 'tick=[0-9]+ level=[A-Z] source=[^ ]+ msg="' <<<"$clean" ||
   { echo "FAIL: exported log did not contain key=value records" >&2; ok=0; }
 grep -qxF "LOGTAIL-SHELL-ALIVE" <<<"$clean" ||
   { echo "FAIL: shell did not survive log export" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: userland log tail export is capLogExport-gated and serializes ring records"
+  echo "PASS: userland log export and stats are capLogExport-gated"
   exit 0
 fi
 echo "--- serial (log export region) ---" >&2

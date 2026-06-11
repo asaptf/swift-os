@@ -264,6 +264,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 79 | `pkg_files` | `name`, `buf`, `cap` | bytes needed or negative error |
 | 80 | `random` | `buf`, `cap` | bytes written or negative error |
 | 81 | `pkg_remove` | `name` | 0 or negative error |
+| 82 | `log_stats` | `buf`, `cap` | 0 or negative error |
 
 Notes:
 
@@ -729,8 +730,8 @@ process-launch behavior is documented by the syscall table and the handle
 inheritance rules below; do not treat `capSpawn` as Linux-style execute
 permission.
 
-`capLogExport` gates `log_read` / `/bin/logtail`. The default seeded accounts do
-not include this bit.
+`capLogExport` gates `log_read`, `log_stats`, and `/bin/logtail`. The default
+seeded accounts do not include this bit.
 
 ### Seeded Principals
 
@@ -1288,7 +1289,12 @@ int swiftos_kernel_confirm(void);
 
 ```c
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
+int  swiftos_log_stats(unsigned long *capacity, unsigned long *available,
+                       unsigned long *total_written, unsigned long *overwritten);
 ```
+
+The raw `log_stats` syscall writes a 32-byte record:
+`capacity:u64`, `available:u64`, `total_written:u64`, `overwritten:u64`.
 
 ### Runtime Entropy
 

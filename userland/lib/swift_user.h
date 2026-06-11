@@ -79,6 +79,10 @@ int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned lo
 // Export a serialized tail of the kernel log ring. Returns bytes written, or a
 // negative errno-style value. Needs capLogExport.
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
+// Export in-memory log ring stats. Returns 0 or a negative errno-style value.
+// Needs capLogExport.
+int  swiftos_log_stats(unsigned long *capacity, unsigned long *available,
+                       unsigned long *total_written, unsigned long *overwritten);
 // Runtime entropy from the kernel RNG source. Returns bytes written, or a
 // negative errno-style value when no source is attached.
 long swiftos_random(void *buf, unsigned long count);

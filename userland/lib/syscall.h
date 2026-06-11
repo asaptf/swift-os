@@ -88,6 +88,7 @@
 #define SYS_PKG_FILES      79
 #define SYS_RANDOM         80
 #define SYS_PKG_REMOVE     81
+#define SYS_LOG_STATS      82
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -138,6 +139,13 @@
 
 typedef unsigned long size_t;
 typedef long ssize_t;
+
+struct swiftos_log_stats {
+    unsigned long capacity;
+    unsigned long available;
+    unsigned long total_written;
+    unsigned long overwritten;
+};
 
 static inline long __syscall3(long n, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = n;
@@ -431,6 +439,12 @@ static inline int kernel_confirm(void) {
 // written, or a negative errno-style value. Privileged: needs CAP_LOG_EXPORT.
 static inline long log_read(void *buf, size_t cap, size_t max_count) {
     return __syscall3(SYS_LOG_READ, (long)buf, (long)cap, (long)max_count);
+}
+
+// Export in-memory log ring statistics. Layout is struct swiftos_log_stats.
+// Privileged: needs CAP_LOG_EXPORT.
+static inline int log_stats(struct swiftos_log_stats *out, size_t cap) {
+    return (int)__syscall3(SYS_LOG_STATS, (long)out, (long)cap, 0);
 }
 
 // Grow the process heap by `incr` bytes; returns the previous break, or (void*)-1.

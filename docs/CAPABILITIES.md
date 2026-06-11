@@ -111,9 +111,9 @@ bits. Authorization is a bitmask test against the **running process's** word:
 - the namespace-mutating syscalls check `caps & capTmpWrite`;
 - `vfsSocket` / `vfsResolve` check `caps & capNet`;
 - `processLogin` is gated on `caps & capConsole`.
-- `SYS_LOG_READ` / `logtail` checks `caps & capLogExport`; the same bit remains
-  reserved for future sink installation, and no seeded account receives it by
-  default.
+- `SYS_LOG_READ` / `SYS_LOG_STATS` / `logtail` checks `caps & capLogExport`;
+  the same bit remains reserved for future sink installation, and no seeded
+  account receives it by default.
 
 Authority no longer flows only by ambient inheritance. `fork` still copies the
 parent's handle table as the compatibility path, but `spawn(path)` starts with

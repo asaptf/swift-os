@@ -175,7 +175,7 @@ The capability constants are defined in `kernel/security/security.swift`.
 | 3 | `capTmpWrite` | `0x08` | Allows tmpfs writes and namespace mutations |
 | 4 | `capProcessInspect` | `0x10` | Identity-model process-inspection authority bit |
 | 5 | `capNet` | `0x20` | Allows sockets and DNS resolver use |
-| 6 | `capLogExport` | `0x40` | Allows `SYS_LOG_READ` / `logtail` ring export; reserved for future sink installation |
+| 6 | `capLogExport` | `0x40` | Allows `SYS_LOG_READ` / `SYS_LOG_STATS` / `logtail` ring export; reserved for future sink installation |
 
 Check the current process:
 

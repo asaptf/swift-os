@@ -24,6 +24,7 @@
 // entries. This is the stable shape future log export can consume.
 // L4 (sink slice) routes live records through a tiny current-sink dispatch and
 // adds capability hook helpers for future userland log export/sink install.
+// L5b publishes ring stats for capability-gated local diagnostics.
 //
 // The design favours:
 // - value types + StaticString (no allocation, valid for the life of the image);
@@ -64,6 +65,7 @@ private var ring: [LogEntry] = .init(
 )
 private var ringNext = 0     // next write index
 private var ringFull = false // set once we have wrapped at least once
+private var ringTotalWritten: UInt64 = 0 // accepted records stored since boot
 
 // L2: global minimum level. Messages with level < minLogLevel are dropped
 // (both from UART and from the ring) unless they are .panic.
@@ -129,8 +131,13 @@ private func ringStore(_ entry: LogEntry) {
     // L3: ring now carries the optional detail; stored verbatim (0 = none).
     // L4: process/security context is already captured by the caller.
     ring[ringNext] = entry
+    ringTotalWritten &+= 1
     ringNext = (ringNext + 1) % ringCapacity
     if ringNext == 0 { ringFull = true }
+}
+
+private func ringAvailableCount() -> Int {
+    ringFull ? ringCapacity : ringNext
 }
 
 private func klogAccepts(_ level: LogLevel, _ source: StaticString) -> Bool {
@@ -190,6 +197,23 @@ func klogCanInstallSink(capabilities caps: UInt64) -> Bool {
     (caps & capLogExport) != 0
 }
 
+func logRingStatsCapacity() -> UInt64 {
+    UInt64(ringCapacity)
+}
+
+func logRingStatsAvailable() -> UInt64 {
+    UInt64(ringAvailableCount())
+}
+
+func logRingStatsTotalWritten() -> UInt64 {
+    ringTotalWritten
+}
+
+func logRingStatsOverwritten() -> UInt64 {
+    let available = logRingStatsAvailable()
+    return ringTotalWritten > available ? ringTotalWritten - available : 0
+}
+
 /// Dump the most recent `maxCount` entries (or all available) to the UART.
 /// Entries are printed oldest-to-newest within the window.
 /// Safe to call from panic paths, IRQ-masked code, etc. (only uses uartPuts).
@@ -197,7 +221,7 @@ func logDumpRecent(_ maxCount: Int = 32) {
     var n = maxCount
     if n <= 0 { return }
 
-    let available = ringFull ? ringCapacity : ringNext
+    let available = ringAvailableCount()
     if available == 0 {
         uartPuts("log: ring empty\n")
         return
@@ -341,7 +365,7 @@ func logFormatRecentTail(_ maxCount: Int, into buffer: UnsafeMutablePointer<UInt
                          capacity: Int) -> Int {
     if capacity <= 0 || maxCount <= 0 { return 0 }
 
-    let available = ringFull ? ringCapacity : ringNext
+    let available = ringAvailableCount()
     if available == 0 { return 0 }
 
     var count = maxCount

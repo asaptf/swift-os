@@ -25,7 +25,7 @@ focused test output, and host client output for network services.
 | Boot milestones | Kernel UART and `klog` lines | QEMU serial output | `./tests/boot_test.sh` |
 | Structured kernel ring tail | `kernel/log/log.swift` | Ring dump in serial boot log | `./tests/boot_test.sh` |
 | Log export serialization sample | `logFormatRecentTail` | `LOG-EXPORT-BEGIN` block in boot log | `./tests/boot_test.sh` |
-| Userland log export | `/bin/logtail` over `SYS_LOG_READ` | Guest command output with `capLogExport` | `./tests/log_export_test.sh` |
+| Userland log export/stats | `/bin/logtail` over `SYS_LOG_READ` / `SYS_LOG_STATS` | Guest command output with `capLogExport` | `./tests/log_export_test.sh` |
 | Process snapshot | `/bin/ps` | Guest command output | `tests/busybox_test.sh`, `tests/disk_exec_test.sh` |
 | System/process statistics | `/bin/top` | Guest command output | `./tests/top_test.sh` |
 | Service readiness | Service-prefixed serial markers | QEMU serial output | service-specific tests |
@@ -208,11 +208,13 @@ userland tooling runs. The supported local target-side command is:
 
 ```sh
 logtail [max-records]
+logtail --stats
 ```
 
-`logtail` uses `SYS_LOG_READ` and requires `capLogExport`. No seeded account
-receives that bit by default, so the command normally reports permission denied
-unless an admin/supervisor context explicitly delegates it.
+`logtail` uses `SYS_LOG_READ` for records and `SYS_LOG_STATS` for ring counters.
+Both modes require `capLogExport`. No seeded account receives that bit by
+default, so the command normally reports permission denied unless an
+admin/supervisor context explicitly delegates it.
 
 ## Process And System Inspection
 
@@ -383,7 +385,7 @@ curl -v http://127.0.0.1:8080/metrics >support/llmd-metrics.txt 2>&1
 - There is no persistent guest log store.
 - There is no supported `/dev/klog` or sysctl interface to dump the log ring.
 - There is no remote log service or collector protocol yet.
-- Kernel log export is local and capability-gated through `/bin/logtail`.
+- Kernel log export/stats are local and capability-gated through `/bin/logtail`.
 - `capLogExport` is supported for local export but not seeded by default.
 - Most historical boot banners still use direct UART output, not structured
   `klog` records.

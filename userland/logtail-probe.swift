@@ -45,6 +45,17 @@ func main(_ argc: Int32,
             swiftos_puts("LOGTAIL-PROBE-FAIL expected denial before capLogExport\n")
             return 1
         }
+
+        var deniedCapacity: UInt = 0
+        var deniedAvailable: UInt = 0
+        var deniedTotal: UInt = 0
+        var deniedOverwritten: UInt = 0
+        let deniedStats = swiftos_log_stats(&deniedCapacity, &deniedAvailable,
+                                            &deniedTotal, &deniedOverwritten)
+        if deniedStats != -1 {
+            swiftos_puts("LOGTAIL-PROBE-FAIL expected stats denial before capLogExport\n")
+            return 1
+        }
         swiftos_puts("LOGTAIL-PROBE-DENIED\n")
 
         var principal: UInt32 = 0
@@ -82,9 +93,33 @@ func main(_ argc: Int32,
             return 1
         }
 
+        var capacity: UInt = 0
+        var available: UInt = 0
+        var totalWritten: UInt = 0
+        var overwritten: UInt = 0
+        let statsRC = swiftos_log_stats(&capacity, &available, &totalWritten, &overwritten)
+        if statsRC != 0 {
+            swiftos_puts("LOGTAIL-PROBE-FAIL stats-read\n")
+            return 1
+        }
+        if capacity != 256 || available == 0 || available > capacity ||
+            totalWritten < available || overwritten > totalWritten {
+            swiftos_puts("LOGTAIL-PROBE-FAIL stats-shape\n")
+            return 1
+        }
+
         swiftos_puts("LOGTAIL-PROBE-GRANTED bytes=")
         putUInt(UInt64(n))
         swiftos_puts("\nLOGTAIL-PROBE-RECORD-SHAPE\n")
+        swiftos_puts("LOGTAIL-PROBE-STATS capacity=")
+        putUInt(UInt64(capacity))
+        swiftos_puts(" available=")
+        putUInt(UInt64(available))
+        swiftos_puts(" total=")
+        putUInt(UInt64(totalWritten))
+        swiftos_puts(" overwritten=")
+        putUInt(UInt64(overwritten))
+        swiftos_puts("\n")
         swiftos_puts("LOGTAIL-PROBE-BEGIN\n")
         _ = swiftos_write(1, UnsafeRawPointer(base), UInt(n))
         swiftos_puts("LOGTAIL-PROBE-END\n")
