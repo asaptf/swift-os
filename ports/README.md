@@ -6,12 +6,16 @@ dependency names, OS prerequisite bundles, blockers, and smoke tests, while the
 checked recipes prove the package format and repository flow against real
 artifacts.
 
-This is not a full ports tree yet. The checked-in recipes are `lang/lua`,
+This is not a full ports tree yet. The checked-in package recipes are `lang/lua`,
 `archivers/zlib`, `archivers/bzip2`, `archivers/zstd`, `archivers/xz`,
 `archivers/libarchive`, `security/ca-certificates`, `devel/pcre2`,
 `sysutils/tzdata`, `www/nginx`, and `databases/sqlite`, with validation,
 manifest generation, checksum-verified distfile fetching, `.swpkg` creation
 from clean staged roots, and signed static repository fixture generation.
+Heavy runtime intake recipes for `lang/nodejs`, `lang/npm`, and `sysutils/pm2`
+are checked as scaffolded, blocked ports: their distfiles and package manifests
+are machine-readable, but cross-build, package, and QEMU smoke targets wait on
+the recorded runtime, event, service, and storage blockers.
 `make ports-lua-repo-fixture` cross-builds real AArch64 static Lua against the
 local newlib sysroot and packages the runtime interpreter.
 `make ports-zlib-repo-fixture` cross-builds static zlib, headers, pkgconf
@@ -59,6 +63,9 @@ hardened inside `swift-os`.
 | tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
 | SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
+| Node.js | `ports/lang/nodejs/Port.json` | Scaffolded static runtime intake with V8/libuv blockers recorded |
+| npm | `ports/lang/npm/Port.json` | Scaffolded JavaScript package-manager intake tied to Node.js |
+| PM2 | `ports/sysutils/pm2/Port.json` | Scaffolded Node.js process-manager intake tied to service policy |
 
 `make ports-seed-repo-fixture` publishes all eleven packages into one signed local
 repository. `make ports-static-host-publish` turns that seed into a deployable
@@ -91,6 +98,9 @@ build/swport recipe validate archivers/zstd
 build/swport recipe validate archivers/xz
 build/swport recipe validate archivers/libarchive
 build/swport recipe validate databases/sqlite
+build/swport recipe validate lang/nodejs
+build/swport recipe validate lang/npm
+build/swport recipe validate sysutils/pm2
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
@@ -102,14 +112,19 @@ build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest lang/nodejs --output build/nodejs-manifest.json
+build/swport recipe manifest lang/npm --output build/npm-manifest.json
+build/swport recipe manifest sysutils/pm2 --output build/pm2-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and sqlite cross-build targets require
-`sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib` if the generated
-sysroot is not present.
+The Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and sqlite cross-build
+targets require `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib`
+if the generated sysroot is not present. Node.js, npm, and PM2 are scaffolded
+intake recipes only until their blockers move from catalog notes into build
+scripts and QEMU smoke tests.
 
 ## Catalog Rules
 

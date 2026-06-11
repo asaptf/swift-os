@@ -1211,7 +1211,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json ports/lang/nodejs/Port.json ports/lang/npm/Port.json ports/sysutils/pm2/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh

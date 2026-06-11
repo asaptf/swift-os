@@ -94,6 +94,12 @@ guard listText.contains("tier3 sqlite packages S databases/sqlite") else {
 guard listText.contains("tier4 nodejs blocked XL lang/nodejs") else {
     fail("list output did not include blocked nodejs")
 }
+guard listText.contains("tier4 npm blocked XL lang/npm") else {
+    fail("list output did not include blocked npm")
+}
+guard listText.contains("tier4 pm2 blocked L sysutils/pm2") else {
+    fail("list output did not include blocked pm2")
+}
 
 let inspect = run(tool, ["catalog", "inspect", "nginx", catalog.path])
 requireSuccess(inspect, "inspect nginx")
@@ -127,6 +133,27 @@ let libarchiveInspectText = output(libarchiveInspect)
 for dependency in ["bzip2", "xz", "zlib", "zstd"] {
     guard libarchiveInspectText.contains(dependency) else {
         fail("libarchive inspect output did not show dependency \(dependency): \(libarchiveInspectText)")
+    }
+}
+let nodeInspect = run(tool, ["catalog", "inspect", "nodejs", catalog.path])
+requireSuccess(nodeInspect, "inspect nodejs")
+let nodeInspectText = output(nodeInspect)
+for blocker in ["V8 JIT or jitless policy", "event notification API", "large mmap support"] {
+    guard nodeInspectText.contains(blocker) else {
+        fail("nodejs inspect output did not show blocker \(blocker): \(nodeInspectText)")
+    }
+}
+let npmInspect = run(tool, ["catalog", "inspect", "npm", catalog.path])
+requireSuccess(npmInspect, "inspect npm")
+guard output(npmInspect).contains("runtimeDependencies: nodejs") else {
+    fail("npm inspect output did not show nodejs dependency")
+}
+let pm2Inspect = run(tool, ["catalog", "inspect", "pm2", catalog.path])
+requireSuccess(pm2Inspect, "inspect pm2")
+let pm2InspectText = output(pm2Inspect)
+for dependency in ["nodejs", "npm"] {
+    guard pm2InspectText.contains(dependency) else {
+        fail("pm2 inspect output did not show dependency \(dependency): \(pm2InspectText)")
     }
 }
 

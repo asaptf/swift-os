@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "pm2",
+  "version": "7.0.1",
+  "revision": 1,
+  "category": "sysutils",
+  "summary": "Node.js process manager for SwiftOS services",
+  "homepage": "https://pm2.keymetrics.io/",
+  "license": ["AGPL-3.0"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://registry.npmjs.org/pm2/-/pm2-7.0.1.tgz",
+    "sha256": "e668a26657a9a95ee0d903c6acfaf62995b5a219ac3a673773eded08b4465e5b"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "npm-pack-stage",
+    "args": ["pack", "pm2@7.0.1"],
+    "env": {
+      "NODE": "${PORTS_ROOT}/nodejs/usr/bin/node",
+      "NPM": "${PORTS_ROOT}/npm/usr/bin/npm",
+      "NPM_CONFIG_CACHE": "${BUILD_ROOT}/npm-cache",
+      "NPM_CONFIG_PREFIX": "/usr"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "pm2-tree", "bin-shims"]
+  },
+  "package": {
+    "depends": ["nodejs", "npm"],
+    "provides": ["pm2", "pm2-runtime"],
+    "conflicts": [],
+    "files": [
+      { "type": "tree", "from": "destdir/usr/lib/node_modules/pm2", "to": "/usr/lib/node_modules/pm2", "mode": "0644" },
+      { "from": "destdir/usr/bin/pm2", "to": "/usr/bin/pm2", "mode": "0755" },
+      { "from": "destdir/usr/bin/pm2-dev", "to": "/usr/bin/pm2-dev", "mode": "0755" },
+      { "from": "destdir/usr/bin/pm2-docker", "to": "/usr/bin/pm2-docker", "mode": "0755" },
+      { "from": "destdir/usr/bin/pm2-runtime", "to": "/usr/bin/pm2-runtime", "mode": "0755" }
+    ],
+    "capabilities": {
+      "default": ["capFsRead", "capTmpWrite"],
+      "services": ["process-manager", "tcp-server"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/pm2 --version",
+      "/usr/bin/pm2-runtime --version"
+    ]
+  },
+  "notes": "Scaffold only. The first PM2 proof should run in no-daemon or pm2-runtime mode against a tiny Node HTTP app before enabling daemon persistence, startup generation, log rotation, file watching, cluster mode, or full signal-driven lifecycle management."
+}

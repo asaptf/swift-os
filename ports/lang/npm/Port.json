@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "npm",
+  "version": "11.16.0",
+  "revision": 1,
+  "category": "lang",
+  "summary": "JavaScript package manager for SwiftOS Node.js",
+  "homepage": "https://docs.npmjs.com/",
+  "license": ["Artistic-2.0"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://registry.npmjs.org/npm/-/npm-11.16.0.tgz",
+    "sha256": "30fc15697c771002878665c29f49dddde9aa8667fa5719854b2f52d3cd19230b"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "npm-pack-stage",
+    "args": ["pack", "npm@11.16.0"],
+    "env": {
+      "NODE": "${PORTS_ROOT}/nodejs/usr/bin/node",
+      "NPM_CONFIG_CACHE": "${BUILD_ROOT}/npm-cache",
+      "NPM_CONFIG_PREFIX": "/usr"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "npm-tree", "bin-shims"]
+  },
+  "package": {
+    "depends": ["nodejs"],
+    "provides": ["npm", "npx"],
+    "conflicts": [],
+    "files": [
+      { "type": "tree", "from": "destdir/usr/lib/node_modules/npm", "to": "/usr/lib/node_modules/npm", "mode": "0644" },
+      { "from": "destdir/usr/bin/npm", "to": "/usr/bin/npm", "mode": "0755" },
+      { "from": "destdir/usr/bin/npx", "to": "/usr/bin/npx", "mode": "0755" }
+    ],
+    "capabilities": {
+      "default": ["capFsRead", "capTmpWrite"],
+      "services": ["https-client"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/npm --version",
+      "/usr/bin/npx --version"
+    ]
+  },
+  "notes": "Scaffold only. Runtime package installation must use /tmp or a future package-store/global-prefix policy rather than mutating the immutable root. The initial package should prove npm --version before enabling registry installs, audit, scripts, node-gyp, or native addon workflows."
+}
