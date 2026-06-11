@@ -402,6 +402,7 @@ Before merging a port:
 | `userland/selectprobe.c` | newlib compat select/pselect readiness over poll |
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
 | `userland/uvwakeprobe.c` | newlib compat libuv-style pthread-to-eventfd wake over blocking poll |
+| `userland/uvmutexprobe.c` | newlib compat error-check and recursive mutex types for libuv's Unix mutex wrappers |
 | `userland/uvbarrierprobe.c` | newlib compat reusable pthread barriers for libuv's native barrier path |
 | `userland/uvcondprobe.c` | newlib compat monotonic timed condition waits for libuv's Unix thread layer |
 | `userland/uvsocketpairprobe.c` | newlib compat full-duplex AF_UNIX socketpair for libuv local streams |

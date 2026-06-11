@@ -681,6 +681,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_PTHREAD_MAX_THREADS 16
 #define COMPAT_PTHREAD_MAX_KEYS 32
 #define COMPAT_PTHREAD_MAX_ATFORK 16
+#define COMPAT_PTHREAD_MAX_MUTEXES 32
 #define COMPAT_PTHREAD_MAX_BARRIERS 16
 #define COMPAT_PTHREAD_MAX_CONDS 32
 #define COMPAT_PTHREAD_TID_MAX 32
@@ -739,6 +740,14 @@ struct compat_pthread_atfork_handler {
     void (*child)(void);
 };
 
+struct compat_pthread_mutex_record {
+    unsigned int used;
+    pthread_mutex_t *mutex;
+    int type;
+    unsigned int owner;
+    unsigned int recursion;
+};
+
 struct compat_pthread_record {
     unsigned int used;
     unsigned int tid;
@@ -769,6 +778,7 @@ struct compat_pthread_cond_record {
 
 static struct compat_pthread_record pthread_records[COMPAT_PTHREAD_MAX_THREADS];
 static struct compat_pthread_atfork_handler pthread_atfork_handlers[COMPAT_PTHREAD_MAX_ATFORK];
+static struct compat_pthread_mutex_record pthread_mutex_records[COMPAT_PTHREAD_MAX_MUTEXES];
 static struct compat_pthread_barrier_record pthread_barriers[COMPAT_PTHREAD_MAX_BARRIERS];
 static struct compat_pthread_cond_record pthread_cond_records[COMPAT_PTHREAD_MAX_CONDS];
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
@@ -809,6 +819,18 @@ static void rwlock_lazy_init(pthread_rwlock_t *rwlock) {
     }
 }
 
+static int pthread_mutex_type_is_valid(int type) {
+    return type == PTHREAD_MUTEX_NORMAL ||
+           type == PTHREAD_MUTEX_DEFAULT ||
+           type == PTHREAD_MUTEX_ERRORCHECK ||
+           type == PTHREAD_MUTEX_RECURSIVE;
+}
+
+static int pthread_mutex_type_needs_record(int type) {
+    return type == PTHREAD_MUTEX_ERRORCHECK ||
+           type == PTHREAD_MUTEX_RECURSIVE;
+}
+
 static int compat_abstime_expired_clock(const struct timespec *abstime, clockid_t clock_id) {
     if (!abstime) { return 0; }
     struct timespec now;
@@ -841,6 +863,20 @@ static struct compat_pthread_barrier_record *pthread_barrier_find_locked(const p
     if (id == 0 || id > COMPAT_PTHREAD_MAX_BARRIERS) { return 0; }
     struct compat_pthread_barrier_record *rec = &pthread_barriers[id - 1];
     return rec->used ? rec : 0;
+}
+
+static struct compat_pthread_mutex_record *pthread_mutex_find_locked(const pthread_mutex_t *mutex) {
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_MUTEXES; i++) {
+        if (pthread_mutex_records[i].used && pthread_mutex_records[i].mutex == mutex) {
+            return &pthread_mutex_records[i];
+        }
+    }
+    return 0;
+}
+
+static void pthread_mutex_record_clear_locked(pthread_mutex_t *mutex) {
+    struct compat_pthread_mutex_record *rec = pthread_mutex_find_locked(mutex);
+    if (rec) { memset(rec, 0, sizeof(*rec)); }
 }
 
 static void pthread_cond_record_set(pthread_cond_t *cond, clockid_t clock_id) {
@@ -1072,35 +1108,147 @@ W int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *kind) {
 }
 W int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int kind) {
     if (!attr) { return EINVAL; }
-    if (kind != PTHREAD_MUTEX_NORMAL && kind != PTHREAD_MUTEX_DEFAULT) { return EINVAL; }
+    if (!pthread_mutex_type_is_valid(kind)) { return EINVAL; }
     attr->type = kind;
     return 0;
 }
 W int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr) {
-    (void)attr;
     if (!mutex) { return EINVAL; }
+    int type = PTHREAD_MUTEX_NORMAL;
+    if (attr) {
+        int r = pthread_mutexattr_gettype(attr, &type);
+        if (r != 0) { return r; }
+    }
+    if (!pthread_mutex_type_is_valid(type)) { return EINVAL; }
+
+    futex_lock_word(&pthread_global_lock);
+    pthread_mutex_record_clear_locked(mutex);
+    if (pthread_mutex_type_needs_record(type)) {
+        struct compat_pthread_mutex_record *rec = 0;
+        for (int i = 0; i < COMPAT_PTHREAD_MAX_MUTEXES; i++) {
+            if (!pthread_mutex_records[i].used) {
+                rec = &pthread_mutex_records[i];
+                break;
+            }
+        }
+        if (!rec) {
+            futex_unlock_word(&pthread_global_lock);
+            return ENOMEM;
+        }
+        memset(rec, 0, sizeof(*rec));
+        rec->used = 1;
+        rec->mutex = mutex;
+        rec->type = type;
+    }
     atomic_store_u32((unsigned int *)mutex, 0);
+    futex_unlock_word(&pthread_global_lock);
     return 0;
 }
 W int pthread_mutex_destroy(pthread_mutex_t *mutex) {
     if (!mutex) { return EINVAL; }
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_mutex_record *rec = pthread_mutex_find_locked(mutex);
+    if (rec && rec->owner != 0) {
+        futex_unlock_word(&pthread_global_lock);
+        return EBUSY;
+    }
+    if (rec) { memset(rec, 0, sizeof(*rec)); }
     atomic_store_u32((unsigned int *)mutex, COMPAT_MUTEX_STATIC);
+    futex_unlock_word(&pthread_global_lock);
     return 0;
 }
 W int pthread_mutex_lock(pthread_mutex_t *mutex) {
     if (!mutex) { return EINVAL; }
     mutex_lazy_init(mutex);
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_mutex_record *rec = pthread_mutex_find_locked(mutex);
+    if (rec) {
+        if (rec->owner == (unsigned int)self && rec->recursion > 0) {
+            if (rec->type == PTHREAD_MUTEX_RECURSIVE) {
+                if (rec->recursion == UINT_MAX) {
+                    futex_unlock_word(&pthread_global_lock);
+                    return EAGAIN;
+                }
+                rec->recursion++;
+                futex_unlock_word(&pthread_global_lock);
+                return 0;
+            }
+            futex_unlock_word(&pthread_global_lock);
+            return EDEADLK;
+        }
+        futex_unlock_word(&pthread_global_lock);
+        futex_lock_word((unsigned int *)mutex);
+        futex_lock_word(&pthread_global_lock);
+        rec = pthread_mutex_find_locked(mutex);
+        if (rec) {
+            rec->owner = (unsigned int)self;
+            rec->recursion = 1;
+        }
+        futex_unlock_word(&pthread_global_lock);
+        return 0;
+    }
+    futex_unlock_word(&pthread_global_lock);
     futex_lock_word((unsigned int *)mutex);
     return 0;
 }
 W int pthread_mutex_trylock(pthread_mutex_t *mutex) {
     if (!mutex) { return EINVAL; }
     mutex_lazy_init(mutex);
-    return atomic_cas_u32((unsigned int *)mutex, 0, 1) == 0 ? 0 : EBUSY;
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_mutex_record *rec = pthread_mutex_find_locked(mutex);
+    if (rec && rec->owner == (unsigned int)self && rec->recursion > 0) {
+        if (rec->type == PTHREAD_MUTEX_RECURSIVE) {
+            if (rec->recursion == UINT_MAX) {
+                futex_unlock_word(&pthread_global_lock);
+                return EAGAIN;
+            }
+            rec->recursion++;
+            futex_unlock_word(&pthread_global_lock);
+            return 0;
+        }
+        futex_unlock_word(&pthread_global_lock);
+        return EBUSY;
+    }
+    futex_unlock_word(&pthread_global_lock);
+
+    if (atomic_cas_u32((unsigned int *)mutex, 0, 1) != 0) { return EBUSY; }
+
+    futex_lock_word(&pthread_global_lock);
+    rec = pthread_mutex_find_locked(mutex);
+    if (rec) {
+        rec->owner = (unsigned int)self;
+        rec->recursion = 1;
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return 0;
 }
 W int pthread_mutex_unlock(pthread_mutex_t *mutex) {
     if (!mutex) { return EINVAL; }
     mutex_lazy_init(mutex);
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_mutex_record *rec = pthread_mutex_find_locked(mutex);
+    if (rec) {
+        if (rec->owner != (unsigned int)self || rec->recursion == 0) {
+            futex_unlock_word(&pthread_global_lock);
+            return EPERM;
+        }
+        if (rec->type == PTHREAD_MUTEX_RECURSIVE && rec->recursion > 1) {
+            rec->recursion--;
+            futex_unlock_word(&pthread_global_lock);
+            return 0;
+        }
+        rec->owner = 0;
+        rec->recursion = 0;
+        futex_unlock_word(&pthread_global_lock);
+        unsigned int old = atomic_swap_u32((unsigned int *)mutex, 0);
+        if (old == 0) { return EPERM; }
+        if (old == 2) { (void)futex_raw((unsigned int *)mutex, COMPAT_FUTEX_WAKE, 1); }
+        return 0;
+    }
+    futex_unlock_word(&pthread_global_lock);
     unsigned int old = atomic_swap_u32((unsigned int *)mutex, 0);
     if (old == 0) { return EPERM; }
     if (old == 2) { (void)futex_raw((unsigned int *)mutex, COMPAT_FUTEX_WAKE, 1); }

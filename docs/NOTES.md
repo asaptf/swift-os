@@ -5260,3 +5260,31 @@ catalog keeps the broader `full libuv thread audit` blocker.
 `make ports-catalog-test`, `make signal-test`, `./tests/cow_test.sh`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM18 — libuv mutex type probe (DONE, 2026-06-11)
+
+**Scope.** Cover the mutex attribute types used by Node's vendored libuv
+1.52.1 Unix thread wrappers. `uv_mutex_init()` uses
+`PTHREAD_MUTEX_ERRORCHECK` when available, and `uv_mutex_init_recursive()`
+requires `PTHREAD_MUTEX_RECURSIVE`; SwiftOS previously accepted only normal
+and default mutex types. The C/newlib compat layer now keeps a small
+process-local mutex metadata table keyed by `pthread_mutex_t *`, preserving
+the existing 32-bit futex word while adding owner tracking for error-check
+mutexes and recursion depth for recursive mutexes. This closes one concrete
+libuv thread primitive while the catalog keeps the broader `full libuv thread
+audit` blocker.
+
+- `userland/compat/stubs.c`: accepts `PTHREAD_MUTEX_ERRORCHECK` and
+  `PTHREAD_MUTEX_RECURSIVE`, records typed mutex metadata out of band,
+  returns `EDEADLK` for same-thread relock of error-check mutexes, returns
+  `EPERM` for foreign unlocks, and maintains recursive lock depth.
+- `/bin/uvmutexprobe`: proves invalid type rejection, error-check lock
+  behavior, cross-thread unlock rejection, recursive lock/trylock depth, and
+  post-release cross-thread acquisition.
+- `make uvmutex-test`: boots QEMU, logs in, runs the probe, and asserts the
+  libuv mutex-type markers.
+
+**Acceptance.** `make uvmutex-test`, `make docs-test`,
+`make ports-catalog-test`, `make pthread-test`, `make threadsync-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
