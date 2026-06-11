@@ -67,6 +67,21 @@ long status = spawn_handles("/bin/argvdemo", argv, handles, 4);
 The child receives fd 3 with read and metadata rights only. It does not inherit
 the parent's other open files or sockets through `spawn`.
 
+## Choose An Authority Review
+
+Use the narrowest authority review that matches the change or support question.
+This document explains the model; the linked guides explain the operator or API
+workflow around it.
+
+| Question | Start With | Evidence |
+| --- | --- | --- |
+| Did login assign the expected identity and capabilities? | [Security Guide](SECURITY_GUIDE.md) account and login sections | `./tests/console_login_test.sh` plus `id` output |
+| Can a process read or mutate the intended files only? | Product contract table above, then [Administration Guide](ADMINISTRATION_GUIDE.md) for account changes | `./tests/cap_enforce_test.sh`, focused filesystem command test, and file mode/capability evidence |
+| Did a network service receive only network authority? | `capNet` row above, then [Networking Guide](NETWORKING_GUIDE.md) and [Service Guide](SERVICE_GUIDE.md) | Service-specific network test and principal/capability output |
+| Is child authority explicit rather than inherited ambiently? | `spawn_handles` example above and [API Reference](API_REFERENCE.md) process creation section | `./tests/spawn_self_exec_test.sh` and handle-rights output from the child |
+| Did IPC move a handle without duplicating authority? | C4 IPC section below and [API Reference](API_REFERENCE.md) IPC endpoints section | `./tests/ipc_socket_transfer_test.sh` |
+| Is a driver-service grant still metadata-only? | C5 rows below and [Service Guide](SERVICE_GUIDE.md) driver-service smoke | `make c5-test` and serial lines showing MMIO/IRQ/DMA authority is withheld |
+
 ---
 
 ## 0. Where we are today (the honest baseline)
