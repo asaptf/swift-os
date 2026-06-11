@@ -88,8 +88,14 @@ guard listText.contains("tier0 libarchive packages M archivers/libarchive") else
 guard listText.contains("tier0 openssl packages L security/openssl") else {
     fail("list output did not include packaged openssl")
 }
+guard listText.contains("tier0 curl planned M net/curl") else {
+    fail("list output did not include planned curl")
+}
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
+}
+guard listText.contains("tier2 acme-sh planned M security/acme-sh") else {
+    fail("list output did not include planned acme-sh")
 }
 guard listText.contains("tier3 sqlite packages S databases/sqlite") else {
     fail("list output did not include packaged sqlite")
@@ -180,6 +186,22 @@ requireSuccess(opensslInspect, "inspect openssl")
 let opensslInspectText = output(opensslInspect)
 guard opensslInspectText.contains("runtimeDependencies: ca-certificates") else {
     fail("openssl inspect output did not show ca-certificates dependency: \(opensslInspectText)")
+}
+let curlInspect = run(tool, ["catalog", "inspect", "curl", catalog.path])
+requireSuccess(curlInspect, "inspect curl")
+let curlInspectText = output(curlInspect)
+for dependency in ["ca-certificates", "openssl", "zlib"] {
+    guard curlInspectText.contains(dependency) else {
+        fail("curl inspect output did not show dependency \(dependency): \(curlInspectText)")
+    }
+}
+let acmeInspect = run(tool, ["catalog", "inspect", "acme-sh", catalog.path])
+requireSuccess(acmeInspect, "inspect acme-sh")
+let acmeInspectText = output(acmeInspect)
+for dependency in ["ca-certificates", "curl", "oksh", "openssl"] {
+    guard acmeInspectText.contains(dependency) else {
+        fail("acme-sh inspect output did not show dependency \(dependency): \(acmeInspectText)")
+    }
 }
 let nodeInspect = run(tool, ["catalog", "inspect", "nodejs", catalog.path])
 requireSuccess(nodeInspect, "inspect nodejs")

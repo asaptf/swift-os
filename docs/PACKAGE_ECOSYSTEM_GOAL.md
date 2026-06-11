@@ -69,8 +69,9 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`,
     `ports/archivers/xz/Port.json`, `ports/archivers/libarchive/Port.json`,
     `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`,
-    `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and
-    `ports/databases/sqlite/Port.json` are the checked recipe scaffolds;
+    `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`,
+    `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` are
+    the checked packaged recipe scaffolds;
   - `build/swport catalog validate/list/inspect/packaged` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
     provide host-side checks;
@@ -121,6 +122,15 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     from the runtime and records service/signal/persistence blockers;
   - `make ports-catalog-test` and `make ports-recipe-test` validate these intake
     records without claiming the runtime is built yet.
+- The first HTTPS-hosting intake is now tracked as scaffolded, planned ports:
+  - `ports/net/curl/Port.json` pins upstream curl 8.20.0, records the
+    minimal HTTP/HTTPS-only static libcurl policy, and declares the
+    ca-certificates/OpenSSL/zlib dependency chain;
+  - `ports/security/acme-sh/Port.json` pins upstream acme.sh 3.1.3 and
+    records the HTTP-01 path that depends on curl, oksh, OpenSSL, and
+    ca-certificates;
+  - `make ports-catalog-test` and `make ports-recipe-test` validate these
+    intake records without promoting them into the published seed repository.
 - Repository package installs stream payload bytes directly into the package
   store and no longer cache full `.swpkg` blobs in `/tmp`.
 - Public production binary repository publishing, target-side HTTPS transport,
@@ -150,9 +160,10 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog and twelve checked recipes live in this repository under
-`ports/`; the full ports tree should move to `swift-os-ports` once
-cross-building, testing, publishing, and broader package maintenance are ready.
+The current seed catalog, twelve packaged recipes, and five scaffolded intake
+recipes live in this repository under `ports/`; the full ports tree should move
+to `swift-os-ports` once cross-building, testing, publishing, and broader
+package maintenance are ready.
 
 Outputs:
 

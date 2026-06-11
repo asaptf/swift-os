@@ -240,7 +240,7 @@ Current process and concurrency tools include:
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
 | C pthread facade | `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data through newlib compat |
-| C thread sync facade | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*` through newlib compat |
+| C thread sync facade | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*`, and `pthread_barrier_*` through newlib compat |
 | Memory mapping | `mmap`, `mmap_file`, `munmap`, `mprotect` |
 | Runtime clocks | `clock_gettime`, `clock_getres`, `nanosleep` through newlib compat |
 
@@ -400,6 +400,7 @@ Before merging a port:
 | `userland/selectprobe.c` | newlib compat select/pselect readiness over poll |
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
 | `userland/uvwakeprobe.c` | newlib compat libuv-style pthread-to-eventfd wake over blocking poll |
+| `userland/uvbarrierprobe.c` | newlib compat reusable pthread barriers for libuv's native barrier path |
 | `userland/signalprobe.c` | newlib compat signal disposition, current-process handler frames, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |

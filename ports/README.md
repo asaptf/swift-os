@@ -12,10 +12,15 @@ This is not a full ports tree yet. The checked-in package recipes are `lang/lua`
 `sysutils/tzdata`, `www/nginx`, and `databases/sqlite`, with validation,
 manifest generation, checksum-verified distfile fetching, `.swpkg` creation
 from clean staged roots, and signed static repository fixture generation.
-Heavy runtime intake recipes for `lang/nodejs`, `lang/npm`, and `sysutils/pm2`
-are checked as scaffolded, blocked ports: their distfiles and package manifests
-are machine-readable, but cross-build, package, and QEMU smoke targets wait on
-the recorded runtime, event, service, and storage blockers.
+Network and HTTPS-hosting intake recipes for `net/curl` and
+`security/acme-sh` are checked as scaffolded, planned ports: their upstream
+distfiles, dependencies, and package manifests are machine-readable, but
+cross-build, package, and QEMU smoke targets wait on dedicated build scripts,
+`oksh`, and HTTP/ACME fixtures. Heavy runtime intake recipes for `lang/nodejs`,
+`lang/npm`, and `sysutils/pm2` are checked as scaffolded, blocked ports: their
+distfiles and package manifests are machine-readable, but cross-build, package,
+and QEMU smoke targets wait on the recorded runtime, event, service, and
+storage blockers.
 `make ports-lua-repo-fixture` cross-builds real AArch64 static Lua against the
 local newlib sysroot and packages the runtime interpreter.
 `make ports-zlib-repo-fixture` cross-builds static zlib, headers, pkgconf
@@ -67,6 +72,8 @@ hardened inside `swift-os`.
 | tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
 | SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
+| curl | `ports/net/curl/Port.json` | Scaffolded static HTTP/HTTPS client and libcurl intake |
+| acme.sh | `ports/security/acme-sh/Port.json` | Scaffolded ACME client intake for HTTP-01 hosting |
 | Node.js | `ports/lang/nodejs/Port.json` | Scaffolded static runtime intake with V8/libuv blockers recorded |
 | npm | `ports/lang/npm/Port.json` | Scaffolded JavaScript package-manager intake tied to Node.js |
 | PM2 | `ports/sysutils/pm2/Port.json` | Scaffolded Node.js process-manager intake tied to service policy |
@@ -105,6 +112,8 @@ build/swport recipe validate archivers/xz
 build/swport recipe validate archivers/libarchive
 build/swport recipe validate security/openssl
 build/swport recipe validate databases/sqlite
+build/swport recipe validate net/curl
+build/swport recipe validate security/acme-sh
 build/swport recipe validate lang/nodejs
 build/swport recipe validate lang/npm
 build/swport recipe validate sysutils/pm2
@@ -120,6 +129,8 @@ build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest net/curl --output build/curl-manifest.json
+build/swport recipe manifest security/acme-sh --output build/acme-sh-manifest.json
 build/swport recipe manifest lang/nodejs --output build/nodejs-manifest.json
 build/swport recipe manifest lang/npm --output build/npm-manifest.json
 build/swport recipe manifest sysutils/pm2 --output build/pm2-manifest.json
@@ -130,9 +141,9 @@ build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lu
 
 The Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite cross-build
 targets require `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib`
-if the generated sysroot is not present. Node.js, npm, and PM2 are scaffolded
-intake recipes only until their blockers move from catalog notes into build
-scripts and QEMU smoke tests.
+if the generated sysroot is not present. curl, acme.sh, Node.js, npm, and PM2
+are scaffolded intake recipes only until their blockers move from catalog notes
+into build scripts and QEMU smoke tests.
 
 ## Catalog Rules
 

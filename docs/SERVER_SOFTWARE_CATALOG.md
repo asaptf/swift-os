@@ -71,6 +71,7 @@ paths are available in the current tree:
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
 | Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked intake recipe paths | Validate the curl/acme.sh and Node.js/npm/PM2 source pins, dependency metadata, and generated package manifests without publishing them as seed packages yet | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
@@ -170,6 +171,9 @@ build/swport recipe validate security/ca-certificates
 build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
+build/swport recipe validate databases/sqlite
+build/swport recipe validate net/curl
+build/swport recipe validate security/acme-sh
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
@@ -180,6 +184,9 @@ build/swport recipe manifest security/ca-certificates --output build/ca-certific
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
+build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest net/curl --output build/curl-manifest.json
+build/swport recipe manifest security/acme-sh --output build/acme-sh-manifest.json
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
@@ -210,8 +217,8 @@ Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
 inspection, `build/swport recipe ...` for the checked Lua, zlib, bzip2, zstd,
-xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes, and the host package
-tooling for package construction.
+xz, libarchive, ca-certificates, pcre2, tzdata, nginx, sqlite, curl, and
+acme.sh recipes, and the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
 download signed binary packages, verify them, activate them atomically, and run
@@ -248,7 +255,7 @@ lists everywhere. Each row still calls out package-specific extras where needed.
 | `pty` | Pseudo-terminal allocation, session/process-group concepts, signal delivery for interactive programs, and window-size propagation. |
 | `db-fs` | `fsync`, `fdatasync`, file locks, durable rename, pread/pwrite, directory sync if available, large files, monotonic time, and clear ENOSPC behavior. |
 | `mmap-vm` | `mmap`, `munmap`, `mprotect`, page permissions, executable mappings if JIT is enabled, multi-MiB mappings covered by `largemmapprobe`, PROT_NONE reservation/commit/decommit covered by `mmapreserveprobe`, fixed-address guard-page flows covered by `mapfixedprobe`, address-space layout control, and signal/trap reporting. |
-| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, POSIX semaphores, read/write locks, atomics, blocking wakeups, and scheduler behavior under many sleeping threads; the current C facade is covered by `pthreadprobe` and `threadsyncprobe`. |
+| `threads` | pthread-like threads, thread-local storage, mutexes, condition variables, POSIX semaphores, read/write locks, barriers, atomics, blocking wakeups, and scheduler behavior under many sleeping threads; the current C facade is covered by `pthreadprobe`, `threadsyncprobe`, and `uvbarrierprobe`. |
 | `service` | First-party service supervisor, service manifests, log routing, restart policy, persistent config/data directories, system users/groups or an equivalent capability model. |
 | `procfs-like` | A documented way to inspect process, memory, fd, network, and system metrics. It does not have to be Linux `/proc`, but tools need a stable API. |
 
