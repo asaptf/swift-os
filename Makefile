@@ -261,6 +261,7 @@ USER_FSDEMO_ELF := $(BUILD)/fsdemo.elf
 USER_BRKDEMO_ELF := $(BUILD)/brkdemo.elf
 USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
 USER_CLOCKPROBE_ELF := $(BUILD)/clockprobe.elf
+USER_MPROTECTPROBE_ELF := $(BUILD)/mprotectprobe.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
@@ -359,6 +360,7 @@ BASE_EXEC_ELFS := \
 	$(USER_BRKDEMO_ELF) \
 	$(USER_NEWLIBTEST_ELF) \
 	$(USER_CLOCKPROBE_ELF) \
+	$(USER_MPROTECTPROBE_ELF) \
 	$(USER_COPROC_ELF) \
 	$(USER_FORKDEMO_ELF) \
 	$(USER_EXECDEMO_ELF) \
@@ -370,7 +372,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -800,6 +802,12 @@ $(BUILD)/n_clockprobe.o: userland/clockprobe.c userland/compat/time.h Makefile |
 $(USER_CLOCKPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_clockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_clockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_mprotectprobe.o: userland/mprotectprobe.c userland/compat/sys/mman.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_MPROTECTPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_mprotectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_mprotectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 # The userland ELFs are no longer embedded (M11d): they ship in the packed base
 # image (see the $(BASE_IMG) rule) and the kernel loads them from disk.
 
@@ -1011,6 +1019,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
 	./tests/clock_test.sh
+	./tests/mprotect_test.sh
 	./tests/sleep_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
@@ -1056,6 +1065,9 @@ smp-test: build base-image
 
 clock-test: build $(QEMU_DTB) base-image
 	./tests/clock_test.sh
+
+mprotect-test: build $(QEMU_DTB) base-image
+	./tests/mprotect_test.sh
 
 smp-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
@@ -1406,6 +1418,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_BRKDEMO_ELF) $(BASE_ROOT)/bin/brkdemo
 	cp $(USER_NEWLIBTEST_ELF) $(BASE_ROOT)/bin/newlibtest
 	cp $(USER_CLOCKPROBE_ELF) $(BASE_ROOT)/bin/clockprobe
+	cp $(USER_MPROTECTPROBE_ELF) $(BASE_ROOT)/bin/mprotectprobe
 	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc
 	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo
 	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo

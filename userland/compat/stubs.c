@@ -77,6 +77,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_SYSINFO 46
 #define SYS_MMAP 54
 #define SYS_MUNMAP 55
+#define SYS_MPROTECT 56
 #define SYS_NANOSLEEP 57
 
 static int sysret(long r) {
@@ -524,6 +525,7 @@ W void *mmap(void *a, size_t l, int p, int f, int fd, long o) {
     return (void *)r;
 }
 W int munmap(void *a, size_t l) { return sysret(sys3(SYS_MUNMAP, (long)a, (long)l, 0)); }
+W int mprotect(void *a, size_t l, int p) { return sysret(sys3(SYS_MPROTECT, (long)a, (long)l, p)); }
 W int poll(void *fds, unsigned long n, int timeout) { return sysret(sys3(SYS_POLL, (long)fds, (long)n, timeout)); }
 
 W ssize_t readv(int fd, const struct iovec *iov, int iovcnt) {

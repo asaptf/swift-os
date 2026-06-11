@@ -390,6 +390,7 @@ Before merging a port:
 | `userland/threadsdemo.swift` | Threads, atomics, futex |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
+| `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |
 | `userland/llmd.swift` | File-backed mmap, model bundles, TCP serving |
 | `userland/spawndemo.c` | Spawn and explicit handle inheritance |
 | `userland/c4b_sockxfer.c` | IPC endpoint handle transfer |
