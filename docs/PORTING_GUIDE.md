@@ -237,6 +237,7 @@ Current process and concurrency tools include:
 | Local full-duplex pairs | `socketpair(AF_UNIX, SOCK_STREAM)` with `SOCK_NONBLOCK`/`SOCK_CLOEXEC`, bidirectional IO, and poll readiness |
 | Event notification | `eventfd`, `eventfd_read`, `eventfd_write`, plus `poll`/`select` readiness |
 | Async event-loop wake | A worker thread can `eventfd_write` while the main thread blocks in `poll` |
+| Timed condition waits | `pthread_cond_timedwait` supports realtime and libuv-style `CLOCK_MONOTONIC` deadlines |
 | Signal lifecycle | `sigaction`, `signal`, `raise`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, and `waitpid` signaled status |
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
@@ -402,6 +403,7 @@ Before merging a port:
 | `userland/eventfdprobe.c` | newlib compat eventfd counter semantics and poll/select readiness |
 | `userland/uvwakeprobe.c` | newlib compat libuv-style pthread-to-eventfd wake over blocking poll |
 | `userland/uvbarrierprobe.c` | newlib compat reusable pthread barriers for libuv's native barrier path |
+| `userland/uvcondprobe.c` | newlib compat monotonic timed condition waits for libuv's Unix thread layer |
 | `userland/uvsocketpairprobe.c` | newlib compat full-duplex AF_UNIX socketpair for libuv local streams |
 | `userland/signalprobe.c` | newlib compat signal disposition, current-process handler frames, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |

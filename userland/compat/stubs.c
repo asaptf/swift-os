@@ -680,6 +680,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_PTHREAD_MAX_THREADS 16
 #define COMPAT_PTHREAD_MAX_KEYS 32
 #define COMPAT_PTHREAD_MAX_BARRIERS 16
+#define COMPAT_PTHREAD_MAX_CONDS 32
 #define COMPAT_PTHREAD_TID_MAX 32
 #define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
 
@@ -752,8 +753,15 @@ struct compat_pthread_barrier_record {
     unsigned int generation;
 };
 
+struct compat_pthread_cond_record {
+    unsigned int used;
+    pthread_cond_t *cond;
+    clockid_t clock;
+};
+
 static struct compat_pthread_record pthread_records[COMPAT_PTHREAD_MAX_THREADS];
 static struct compat_pthread_barrier_record pthread_barriers[COMPAT_PTHREAD_MAX_BARRIERS];
+static struct compat_pthread_cond_record pthread_cond_records[COMPAT_PTHREAD_MAX_CONDS];
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
 static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
 static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
@@ -791,12 +799,16 @@ static void rwlock_lazy_init(pthread_rwlock_t *rwlock) {
     }
 }
 
-static int compat_abstime_expired(const struct timespec *abstime) {
+static int compat_abstime_expired_clock(const struct timespec *abstime, clockid_t clock_id) {
     if (!abstime) { return 0; }
     struct timespec now;
-    if (clock_gettime(CLOCK_REALTIME, &now) != 0) { return 0; }
+    if (clock_gettime(clock_id, &now) != 0) { return 0; }
     return now.tv_sec > abstime->tv_sec ||
            (now.tv_sec == abstime->tv_sec && now.tv_nsec >= abstime->tv_nsec);
+}
+
+static int compat_abstime_expired(const struct timespec *abstime) {
+    return compat_abstime_expired_clock(abstime, CLOCK_REALTIME);
 }
 
 static void compat_short_sleep(void) {
@@ -819,6 +831,50 @@ static struct compat_pthread_barrier_record *pthread_barrier_find_locked(const p
     if (id == 0 || id > COMPAT_PTHREAD_MAX_BARRIERS) { return 0; }
     struct compat_pthread_barrier_record *rec = &pthread_barriers[id - 1];
     return rec->used ? rec : 0;
+}
+
+static void pthread_cond_record_set(pthread_cond_t *cond, clockid_t clock_id) {
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_CONDS; i++) {
+        if (pthread_cond_records[i].used && pthread_cond_records[i].cond == cond) {
+            pthread_cond_records[i].clock = clock_id;
+            futex_unlock_word(&pthread_global_lock);
+            return;
+        }
+    }
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_CONDS; i++) {
+        if (!pthread_cond_records[i].used) {
+            pthread_cond_records[i].used = 1;
+            pthread_cond_records[i].cond = cond;
+            pthread_cond_records[i].clock = clock_id;
+            break;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
+}
+
+static clockid_t pthread_cond_record_clock(pthread_cond_t *cond) {
+    clockid_t clock_id = CLOCK_REALTIME;
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_CONDS; i++) {
+        if (pthread_cond_records[i].used && pthread_cond_records[i].cond == cond) {
+            clock_id = pthread_cond_records[i].clock;
+            break;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return clock_id;
+}
+
+static void pthread_cond_record_clear(pthread_cond_t *cond) {
+    futex_lock_word(&pthread_global_lock);
+    for (int i = 0; i < COMPAT_PTHREAD_MAX_CONDS; i++) {
+        if (pthread_cond_records[i].used && pthread_cond_records[i].cond == cond) {
+            memset(&pthread_cond_records[i], 0, sizeof(pthread_cond_records[i]));
+            break;
+        }
+    }
+    futex_unlock_word(&pthread_global_lock);
 }
 
 static void pthread_record_clear_locked(struct compat_pthread_record *rec) {
@@ -1029,13 +1085,16 @@ W int pthread_condattr_setpshared(pthread_condattr_t *attr, int pshared) {
     return 0;
 }
 W int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr) {
-    (void)attr;
     if (!cond) { return EINVAL; }
+    clockid_t clock_id = attr ? attr->clock : CLOCK_REALTIME;
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) { return EINVAL; }
     atomic_store_u32((unsigned int *)cond, 0);
+    pthread_cond_record_set(cond, clock_id);
     return 0;
 }
 W int pthread_cond_destroy(pthread_cond_t *cond) {
     if (!cond) { return EINVAL; }
+    pthread_cond_record_clear(cond);
     atomic_store_u32((unsigned int *)cond, COMPAT_COND_STATIC);
     return 0;
 }
@@ -1061,6 +1120,30 @@ W int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex) {
     if (r != 0) { return r; }
     (void)futex_raw((unsigned int *)cond, COMPAT_FUTEX_WAIT, seq);
     return pthread_mutex_lock(mutex);
+}
+W int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
+                             const struct timespec *abstime) {
+    if (!cond || !mutex || !abstime) { return EINVAL; }
+    if (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000L) { return EINVAL; }
+    cond_lazy_init(cond);
+    unsigned int *word = (unsigned int *)cond;
+    unsigned int seq = atomic_load_u32(word);
+    clockid_t clock_id = pthread_cond_record_clock(cond);
+    int r = pthread_mutex_unlock(mutex);
+    if (r != 0) { return r; }
+    int result = 0;
+    for (;;) {
+        if (atomic_load_u32(word) != seq) {
+            break;
+        }
+        if (compat_abstime_expired_clock(abstime, clock_id)) {
+            result = ETIMEDOUT;
+            break;
+        }
+        compat_short_sleep();
+    }
+    r = pthread_mutex_lock(mutex);
+    return r != 0 ? r : result;
 }
 
 W int pthread_rwlockattr_init(pthread_rwlockattr_t *attr) {

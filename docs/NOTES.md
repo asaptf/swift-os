@@ -5084,7 +5084,7 @@ read/write readiness through `poll`, and reports peer close through
 while the catalog keeps the broader `full libuv thread audit` blocker.
 
 - `kernel/vfs/vfs.swift` and `kernel/syscall/syscall.swift`: add SwiftOS
-  syscall 77 and a full-duplex pipe-pair description that participates in the
+  syscall 78 and a full-duplex pipe-pair description that participates in the
   existing fd rights, `read`, `write`, `poll`, `fcntl`, close, and S4b VFS
   accounting paths.
 - `userland/compat/stubs.c`: implements `socketpair(AF_UNIX, SOCK_STREAM, 0,
@@ -5098,4 +5098,31 @@ while the catalog keeps the broader `full libuv thread audit` blocker.
 
 **Acceptance.** `make uvsocketpair-test`, `make docs-test`,
 `make ports-catalog-test`, `make socket-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM15 — libuv timed condition wait probe (DONE, 2026-06-11)
+
+**Scope.** Cover the `pthread_cond_timedwait` path used by Node's vendored
+libuv 1.52.1 in `deps/uv/src/unix/thread.c`. libuv initializes Unix condition
+variables with `pthread_condattr_setclock(CLOCK_MONOTONIC)` and then passes
+monotonic absolute deadlines to `pthread_cond_timedwait`; SwiftOS previously
+accepted the condattr clock but did not provide the timed wait implementation.
+The C/newlib compat layer now records process-local condvar clock attributes
+out-of-band and supports realtime plus monotonic timed waits over the existing
+mutex, condition-sequence, and `nanosleep` primitives. This closes one concrete
+libuv thread primitive while the catalog keeps the broader `full libuv thread
+audit` blocker.
+
+- `userland/compat/stubs.c`: implements `pthread_cond_timedwait`, preserves
+  condattr clock selection despite newlib's 32-bit `pthread_cond_t`, returns
+  `ETIMEDOUT` for expired absolute deadlines, and reacquires the mutex before
+  returning.
+- `/bin/uvcondprobe`: proves a libuv-style `CLOCK_MONOTONIC` timeout and a
+  worker-thread signal that wakes the waiter before its deadline.
+- `make uvcond-test`: boots QEMU, logs in, runs the probe, and asserts the
+  timed-condition markers.
+
+**Acceptance.** `make uvcond-test`, `make docs-test`,
+`make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
