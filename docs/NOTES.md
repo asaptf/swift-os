@@ -4769,3 +4769,26 @@ work.
 **Acceptance.** `make threadsync-test`, `make docs-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM7 — newlib large mmap probe (DONE, 2026-06-11)
+
+**Scope.** Add an executable C/newlib proof for the large-mapping slice needed
+by Node.js/V8-shaped runtimes before the heavier lazy-reservation design work.
+SwiftOS already has an eager anonymous `mmap` arena; this milestone proves a
+multi-MiB mapping can be zero-filled, touched across every page, partially
+`mprotect`ed, partially unmapped, and reused without corrupting the remaining
+live range. It does not claim V8-style overcommit/reserve semantics; the Node.js
+catalog blocker is now the narrower lazy mmap reservation policy.
+
+- `/bin/largemmapprobe`: maps 8 MiB through newlib `mmap`, verifies zero-fill
+  and strided write/read across every page, flips one page RW->RX->RW with
+  `mprotect`, unmaps the bottom 4 MiB, verifies the next 1 MiB mapping lands in
+  the freed bottom half, and confirms the still-live upper half retained data.
+- `make largemmap-test`: boots QEMU, logs in, runs the probe, and asserts the
+  large-mmap markers.
+- Port metadata now records the remaining Node.js memory blocker as lazy mmap
+  reservation policy rather than generic large mmap support.
+
+**Acceptance.** `make largemmap-test`, `make docs-test`, `make mprotect-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

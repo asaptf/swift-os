@@ -61,6 +61,7 @@ source, then follow its Makefile rule and acceptance test.
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
+| C large mmap compatibility | `userland/largemmapprobe.c` | multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse through newlib compat | `make largemmap-test` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
 | C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
@@ -1363,6 +1364,7 @@ one booting acceptance path:
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |
+| C compat large mmap | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/largemmapprobe.c` | `make largemmap-test`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
