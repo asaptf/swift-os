@@ -202,8 +202,9 @@ static int compat_apply_fd_flags(int fd, int set_nonblock, int set_cloexec) {
 }
 
 // ---- process ---------------------------------------------------------------
-W pid_t fork(void) { return (pid_t)sys3(SYS_FORK, 0, 0, 0); }
-W pid_t vfork(void) { return (pid_t)sys3(SYS_FORK, 0, 0, 0); }
+static pid_t compat_fork_with_atfork(void);
+W pid_t fork(void) { return compat_fork_with_atfork(); }
+W pid_t vfork(void) { return compat_fork_with_atfork(); }
 W int execve(const char *path, char *const argv[], char *const envp[]) {
     return (int)sys3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
 }
@@ -679,6 +680,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_RWLOCK_READER_MASK ((unsigned int)0x7FFFFFFFu)
 #define COMPAT_PTHREAD_MAX_THREADS 16
 #define COMPAT_PTHREAD_MAX_KEYS 32
+#define COMPAT_PTHREAD_MAX_ATFORK 16
 #define COMPAT_PTHREAD_MAX_BARRIERS 16
 #define COMPAT_PTHREAD_MAX_CONDS 32
 #define COMPAT_PTHREAD_TID_MAX 32
@@ -731,6 +733,12 @@ static void futex_unlock_word(unsigned int *word) {
 
 static unsigned int pthread_global_lock;
 
+struct compat_pthread_atfork_handler {
+    void (*prepare)(void);
+    void (*parent)(void);
+    void (*child)(void);
+};
+
 struct compat_pthread_record {
     unsigned int used;
     unsigned int tid;
@@ -760,12 +768,14 @@ struct compat_pthread_cond_record {
 };
 
 static struct compat_pthread_record pthread_records[COMPAT_PTHREAD_MAX_THREADS];
+static struct compat_pthread_atfork_handler pthread_atfork_handlers[COMPAT_PTHREAD_MAX_ATFORK];
 static struct compat_pthread_barrier_record pthread_barriers[COMPAT_PTHREAD_MAX_BARRIERS];
 static struct compat_pthread_cond_record pthread_cond_records[COMPAT_PTHREAD_MAX_CONDS];
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
 static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
 static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
 static int pthread_concurrency_level;
+static int pthread_atfork_handler_count;
 
 static pthread_t pthread_current_tid(void) {
     long r = sys3(SYS_GETPID, 0, 0, 0);
@@ -920,8 +930,49 @@ static void pthread_trampoline(unsigned long arg) {
 }
 
 W int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void)) {
-    (void)prepare; (void)parent; (void)child;
+    futex_lock_word(&pthread_global_lock);
+    if (pthread_atfork_handler_count >= COMPAT_PTHREAD_MAX_ATFORK) {
+        futex_unlock_word(&pthread_global_lock);
+        return ENOMEM;
+    }
+    pthread_atfork_handlers[pthread_atfork_handler_count].prepare = prepare;
+    pthread_atfork_handlers[pthread_atfork_handler_count].parent = parent;
+    pthread_atfork_handlers[pthread_atfork_handler_count].child = child;
+    pthread_atfork_handler_count++;
+    futex_unlock_word(&pthread_global_lock);
     return 0;
+}
+
+static pid_t compat_fork_with_atfork(void) {
+    struct compat_pthread_atfork_handler handlers[COMPAT_PTHREAD_MAX_ATFORK];
+    int count;
+
+    futex_lock_word(&pthread_global_lock);
+    count = pthread_atfork_handler_count;
+    memcpy(handlers, pthread_atfork_handlers, sizeof(handlers[0]) * (size_t)count);
+    futex_unlock_word(&pthread_global_lock);
+
+    for (int i = count - 1; i >= 0; i--) {
+        if (handlers[i].prepare) { handlers[i].prepare(); }
+    }
+
+    long r = sys3(SYS_FORK, 0, 0, 0);
+    if (r == 0) {
+        pthread_global_lock = 0;
+        for (int i = 0; i < count; i++) {
+            if (handlers[i].child) { handlers[i].child(); }
+        }
+        return 0;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (handlers[i].parent) { handlers[i].parent(); }
+    }
+    if (r < 0) {
+        errno = (int)-r;
+        return -1;
+    }
+    return (pid_t)r;
 }
 
 W int pthread_attr_init(pthread_attr_t *attr) {

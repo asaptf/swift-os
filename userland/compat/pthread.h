@@ -25,4 +25,6 @@
 #define PTHREAD_PROCESS_PRIVATE 0
 #endif
 
+int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void));
+
 #endif
