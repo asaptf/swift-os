@@ -68,8 +68,8 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `ports/lang/lua/Port.json`, `ports/archivers/zlib/Port.json`,
     `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`,
     `ports/archivers/xz/Port.json`, `ports/archivers/libarchive/Port.json`,
-    `ports/security/ca-certificates/Port.json`, `ports/devel/pcre2/Port.json`,
-    `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and
+    `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`,
+    `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and
     `ports/databases/sqlite/Port.json` are the checked recipe scaffolds;
   - `build/swport catalog validate/list/inspect` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
@@ -82,7 +82,8 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     tools and `liblzma.a`, `scripts/build-libarchive.sh` cross-builds static
     `bsdtar` plus `libarchive.a` against the checked compression libraries,
     `scripts/build-ca-certificates.sh` packages the pinned Mozilla CA bundle as
-    data, and `scripts/build-pcre2.sh` cross-builds static PCRE2 libraries plus
+    data, `scripts/build-openssl.sh` cross-builds the static OpenSSL CLI,
+    and `scripts/build-pcre2.sh` cross-builds static PCRE2 libraries plus
     `pcre2grep`;
   - `scripts/build-tzdata.sh` compiles IANA TZif zoneinfo with host `zic`,
     `scripts/build-nginx.sh` cross-builds a minimal static HTTP-only nginx
@@ -95,19 +96,19 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make package-lua-repo-install-test` proves `pkg install lua`, `lua -v`,
     and a small Lua expression inside QEMU;
   - `make ports-seed-repo-fixture` publishes Lua, zlib, bzip2, zstd, xz,
-    libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite into one
+    libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite into one
     signed local seed repository, and `make package-ports-seed-repo-install-test`
-    proves installing all eleven packages plus the `minigzip`, bzip2, zstd, and
-    xz round trips, `bsdtar` tar create/list smoke, CA bundle marker, `pcre2grep`
-    pattern match, zoneinfo marker, nginx version/marker, and SQLite SQL smoke
+    proves installing all twelve packages plus the `minigzip`, bzip2, zstd, and
+    xz round trips, `bsdtar` tar create/list smoke, CA bundle marker, OpenSSL
+    version/digest smoke, `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and SQLite SQL smoke
     inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install all eleven packages from that published layout;
+    proves SwiftOS can install all twelve packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
-    install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
+    install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
     tzdata, nginx, and sqlite from a DNS-resolved HTTP repository URL.
 - The Node.js application-hosting intake is now tracked as scaffolded, blocked
   ports:
@@ -147,7 +148,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog and eleven checked recipes live in this repository under
+The current seed catalog and twelve checked recipes live in this repository under
 `ports/`; the full ports tree should move to `swift-os-ports` once
 cross-building, testing, publishing, and broader package maintenance are ready.
 
