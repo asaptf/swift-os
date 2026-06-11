@@ -1563,13 +1563,36 @@ private func files(_ name: String) -> Int32 {
     return ok ? 0 : 1
 }
 
+private func removePackage(_ name: String) -> Int32 {
+    if installedPackageVersion(name) == nil {
+        put("pkg: package not installed\n")
+        return 1
+    }
+    var cname = Array(name.utf8CString)
+    let rc = cname.withUnsafeMutableBufferPointer { bp in
+        swiftos_pkg_remove(bp.baseAddress!)
+    }
+    if rc == -2 {
+        put("pkg: package not installed\n")
+        return 1
+    }
+    if rc != 0 {
+        put("pkg: remove failed\n")
+        return 1
+    }
+    put("pkg: deactivated ")
+    putString(name)
+    put(" (effective after reboot)\n")
+    return 0
+}
+
 @_cdecl("main")
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     guard let argv = argv, argc >= 2, let cmdp = argv[1] else {
-        put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list | pkg files NAME\n")
+        put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg remove NAME | pkg list | pkg files NAME\n")
         return 1
     }
     let cmd = cString(cmdp)
@@ -1626,6 +1649,13 @@ func main(_ argc: Int32,
         }
         return files(cString(namep))
     }
+    if cmd == "remove" {
+        guard argc >= 3, let namep = argv[2] else {
+            put("usage: pkg remove NAME\n")
+            return 1
+        }
+        return removePackage(cString(namep))
+    }
     if cmd == "install" {
         guard argc >= 3, let argp = argv[2] else {
             put("usage: pkg install FILE|NAME\n")
@@ -1637,6 +1667,6 @@ func main(_ argc: Int32,
         }
         return installFromRepository(arg)
     }
-    put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg list | pkg files NAME\n")
+    put("usage: pkg repo set URL|show | pkg update [URL] | pkg search TEXT | pkg info NAME | pkg install FILE|NAME | pkg remove NAME | pkg list | pkg files NAME\n")
     return 1
 }

@@ -799,6 +799,160 @@ private func pkgActivateInstalledPayload(generation: UInt64,
     return 0
 }
 
+private func pkgAppendActivationForHashes(generation: UInt64,
+                                          h0s: [UInt64], h1s: [UInt64],
+                                          h2s: [UInt64], h3s: [UInt64],
+                                          count: Int,
+                                          name: UnsafePointer<UInt8>, nameLen: Int,
+                                          version: UnsafePointer<UInt8>, versionLen: Int)
+    -> (rc: Int, activationOffset: UInt64, activationSize: UInt64) {
+    if count < 0 || count > pkgStoreMaxPayloads { return (-22, 0, 0) }
+    var activation = [UInt8](repeating: 0,
+                             count: pkgStoreActivationHeaderSize + count * pkgStoreActivationEntrySize)
+    let actOk = activation.withUnsafeMutableBufferPointer { bp -> Bool in
+        let a = bp.baseAddress!
+        pkgActivationMagicString.withUTF8Buffer { m in
+            var i = 0
+            while i < 8 { a[i] = m[i]; i += 1 }
+        }
+        pkgPutLe32(a, 8, 1)
+        pkgPutLe32(a, 12, UInt32(count))
+        var entry = 0
+        while entry < count {
+            let off = pkgStoreActivationHeaderSize + entry * pkgStoreActivationEntrySize
+            pkgPutLe64(a, off, h0s[entry])
+            pkgPutLe64(a, off + 8, h1s[entry])
+            pkgPutLe64(a, off + 16, h2s[entry])
+            pkgPutLe64(a, off + 24, h3s[entry])
+            let namesOk = pkgCopyStaticPadded(a, off + 32, 32, "active") &&
+                          pkgCopyStaticPadded(a, off + 64, 16, "0")
+            if !namesOk { return false }
+            entry += 1
+        }
+        return true
+    }
+    if !actOk { return (-22, 0, 0) }
+    var activationHash = [UInt8](repeating: 0, count: 32)
+    activation.withUnsafeBytes { raw in
+        activationHash.withUnsafeMutableBufferPointer { hp in
+            sha256(raw.baseAddress!, activation.count, hp.baseAddress!)
+        }
+    }
+    let activationRecord = activation.withUnsafeBytes { raw in
+        activationHash.withUnsafeBufferPointer { hp in
+            pkgAppendRecord(kind: pkgRecordKindActivation, generation: generation,
+                            dataPtr: raw.baseAddress, dataSize: UInt64(activation.count),
+                            dataHash: hp.baseAddress!,
+                            name: name, nameLen: nameLen,
+                            version: version, versionLen: versionLen)
+        }
+    }
+    if activationRecord.rc != 0 { return (activationRecord.rc, 0, 0) }
+
+    var emptyHash = [UInt8](repeating: 0, count: 32)
+    emptyHash.withUnsafeMutableBufferPointer { hp in
+        sha256(UnsafeRawPointer(bitPattern: 1)!, 0, hp.baseAddress!)
+    }
+    let activeName: StaticString = "active"
+    let activeVersion: StaticString = "0"
+    let activeRecord = emptyHash.withUnsafeBufferPointer { hp in
+        activeName.withUTF8Buffer { an in
+            activeVersion.withUTF8Buffer { av in
+                pkgAppendRecord(kind: pkgRecordKindActivePointer, generation: generation,
+                                dataPtr: nil, dataSize: 0, dataHash: hp.baseAddress!,
+                                name: an.baseAddress!, nameLen: an.count,
+                                version: av.baseAddress!, versionLen: av.count)
+            }
+        }
+    }
+    if activeRecord.rc != 0 { return (activeRecord.rc, 0, 0) }
+    return (0, activationRecord.dataOffset, UInt64(activation.count))
+}
+
+func pkgStoreRemove(nameVA: UInt) -> Int {
+    if processCurrentPrincipal() != 1 { return -13 }
+    if !virtioBlkPackageStoreAvailable() { return -2 }
+    guard let name = userCString(nameVA, maxLen: 32) else { return -22 }
+    var nameLen = 0
+    while nameLen < 32 && name[nameLen] != 0 { nameLen += 1 }
+    if nameLen == 0 || nameLen > 31 { return -22 }
+    if !pkgStoreBeginMutation() { return -11 }
+    defer { pkgStoreEndMutation() }
+
+    var allOffsets = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var allH0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var allH1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var allH2s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var allH3s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var allCount = 0
+    let activeDaif = pkgStoreLock()
+    var activeIndex = 0
+    while activeIndex < pkgActivePayloadCountValue && allCount < pkgStoreMaxPayloads {
+        let pidx = pkgActivePayloadIndex[activeIndex]
+        if pidx >= 0 && pidx < pkgStoreMaxPayloads {
+            let p = pkgPayloads[pidx]
+            if p.inUse && p.active && p.offset >= UInt64(pkgStoreRecordHeaderSize) {
+                allOffsets[allCount] = p.offset
+                allH0s[allCount] = p.h0
+                allH1s[allCount] = p.h1
+                allH2s[allCount] = p.h2
+                allH3s[allCount] = p.h3
+                allCount += 1
+            }
+        }
+        activeIndex += 1
+    }
+    pkgStoreUnlock(activeDaif)
+    if allCount == 0 { return -2 }
+
+    var keepH0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var keepH1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var keepH2s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var keepH3s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
+    var keepCount = 0
+    var found = false
+    var i = 0
+    while i < allCount {
+        var record = [UInt8](repeating: 0, count: pkgStoreRecordHeaderSize)
+        let rc = record.withUnsafeMutableBytes { raw in
+            virtioBlkReadPackageStoreRange(allOffsets[i] - UInt64(pkgStoreRecordHeaderSize),
+                                           raw.baseAddress, UInt32(pkgStoreRecordHeaderSize))
+        }
+        if rc != 0 { return Int(rc) }
+        let matched = record.withUnsafeBufferPointer { bp in
+            pkgNameMatches(bp.baseAddress!, name, nameLen)
+        }
+        if matched {
+            found = true
+        } else {
+            keepH0s[keepCount] = allH0s[i]
+            keepH1s[keepCount] = allH1s[i]
+            keepH2s[keepCount] = allH2s[i]
+            keepH3s[keepCount] = allH3s[i]
+            keepCount += 1
+        }
+        i += 1
+    }
+    if !found { return -2 }
+
+    let generation = pkgStoreNextGeneration()
+    let removedVersion: StaticString = "removed"
+    let append = removedVersion.withUTF8Buffer { rbp in
+        pkgAppendActivationForHashes(generation: generation,
+                                     h0s: keepH0s, h1s: keepH1s,
+                                     h2s: keepH2s, h3s: keepH3s,
+                                     count: keepCount,
+                                     name: name, nameLen: nameLen,
+                                     version: rbp.baseAddress!, versionLen: rbp.count)
+    }
+    if append.rc != 0 { return append.rc }
+    if !pkgEnsureActivation(generation, append.activationOffset, append.activationSize) {
+        return -28
+    }
+    klog(.info, "pkg", "P4: package deactivated for next boot", generation)
+    return 0
+}
+
 func pkgStoreInit() {
     withUnsafeMutablePointer(to: &pkgStoreLockWord) { word in
         smpAtomicStore(word, 0)

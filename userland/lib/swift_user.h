@@ -85,6 +85,7 @@ long swiftos_random(void *buf, unsigned long count);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
 int  swiftos_pkg_files(const char *name, char *buf, unsigned long cap);
+int  swiftos_pkg_remove(const char *name);
 int  swiftos_pkg_stream_begin(const char *name, const char *version_revision,
                               unsigned long payload_size,
                               const unsigned char *payload_sha256);
