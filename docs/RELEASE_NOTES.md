@@ -26,6 +26,20 @@ service-oriented.
 | AI hosting | Local TinyStories inference and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
+## Use These Notes By Role
+
+Treat these release notes as the product snapshot for the checked-in tree. They
+summarize what can be demonstrated today, then point to the guide that contains
+the exact command and evidence requirement.
+
+| Role | Read For | Then Verify With |
+| --- | --- | --- |
+| First-time evaluator | Current product shape, supported boot targets, and known limits | [Getting Started](GETTING_STARTED.md) plus `./tests/boot_test.sh` |
+| Release owner | Candidate scope, package/model/update status, and rollback boundaries | [Deployment Guide](DEPLOYMENT_GUIDE.md), [Update And Rollback Guide](UPDATE_GUIDE.md), and the validation matrix below |
+| Application or package developer | Current ABI, static linking, package fixtures, and source-port state | [Developer Guide](DEVELOPER_GUIDE.md), [API Reference](API_REFERENCE.md), and [Package Guide](PACKAGE_GUIDE.md) |
+| Operations or support engineer | User-visible commands, networking/services, evidence, and failure limits | [Operations Guide](OPERATIONS_GUIDE.md), [Troubleshooting](TROUBLESHOOTING.md), and [Support Guide](SUPPORT_GUIDE.md) |
+| Security reviewer | Capability, handle, package, and driver-service guarantees versus gaps | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md), and [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
+
 ## Highlights
 
 ### Boot And Platform

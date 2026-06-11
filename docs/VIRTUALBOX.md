@@ -30,6 +30,19 @@ Observed VirtualBox ARM devices differ from QEMU `virt`: RAM starts at
 uses VirtualBox HAL defaults. The remaining open problem is firmware boot
 selection, not the QEMU disk image itself.
 
+## Choose A VirtualBox Evidence Path
+
+Use VirtualBox evidence only for firmware-adjacent investigation. QEMU+AAVMF is
+still the reference UEFI path, so every useful VirtualBox report should separate
+disk/loader correctness from VirtualBox firmware behavior.
+
+| Need | Run First | Evidence To Keep | What It Proves |
+| --- | --- | --- | --- |
+| Check whether the host can run the helper | `./run_in_virtual_box.sh --check` | Tool paths and reported VirtualBox version | Host prerequisites are present or the missing dependency is known |
+| Prove the SwiftOS disk and loader before opening VirtualBox | `make BOARD=virtualbox disk-run` | QEMU+AAVMF serial log with `UEFI:` lines | The board-specific disk image can boot on the reference firmware path |
+| Try the best-effort VirtualBox VM path | `./run_in_virtual_box.sh`, then boot the VM with serial raw-file capture enabled | Serial raw file, screenshot, `VBox.log`, VirtualBox version, VM settings, and `build/swift-os.vdi` hash | Whether the VirtualBox firmware launched `\EFI\BOOT\BOOTAA64.EFI` and how far handoff progressed |
+| Report a silent or firmware-setup-only boot | Re-run the QEMU reference check, then capture the failed VirtualBox boot | QEMU reference log plus the full VirtualBox evidence bundle | The disk is healthy and the remaining blocker is likely VirtualBox firmware, NVRAM, storage controller, or board HAL behavior |
+
 ## Quick Path
 
 Run the helper:

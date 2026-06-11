@@ -8,6 +8,22 @@ legacy-compatible Unix. Its guiding value is *efficient, reliable minimalism*: i
 isolation, and testable correctness over broad compatibility, and it pursues minimalism by **removing legacy**
 rather than emulating it.
 
+## Product Implications
+
+Use the philosophy as a decision filter before promising support, accepting a
+porting requirement, or changing the default image. The product promise is a
+small, explicit, testable OS profile; claims should point to the guide and proof
+that make the claim concrete.
+
+| Question | SwiftOS stance | Read next | Proof to cite |
+| --- | --- | --- | --- |
+| Can this workload run unchanged from Linux? | No; rebuild from source against the SwiftOS ABI or port it deliberately | [Compatibility Guide](COMPATIBILITY_GUIDE.md), [Porting Guide](PORTING_GUIDE.md) | Workload intake plus focused QEMU or package test |
+| Should this become default system software? | Only if it belongs in the immutable base image and justifies boot, memory, security, and maintenance cost | [Base Image](BASE_IMAGE.md), [Deployment Guide](DEPLOYMENT_GUIDE.md) | Base-image hash, boot log, and focused command/service test |
+| Should optional software be packaged instead? | Yes; optional programs should use `.swpkg`, package-store, signed repository, or ports recipes | [Package Guide](PACKAGE_GUIDE.md), [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) | Package fixture, repository install smoke, or ports seed proof |
+| Does a feature need ambient root authority? | Prefer explicit capabilities, handle rights, and scoped delegation | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md) | Capability/handle test evidence and support bundle |
+| Is broader compatibility worth added legacy surface? | Only when the compatibility layer is narrow, isolated, useful, and tested | [API Reference](API_REFERENCE.md), [Application Cookbook](APPLICATION_COOKBOOK.md) | API verification map plus source-port or app test |
+| Is a future profile ready to advertise? | Advertise only checked behavior; label roadmap work as roadmap work | [Release Notes](RELEASE_NOTES.md), [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) | Release validation matrix and current known-limits list |
+
 ## Core priorities
 
 Priorities are ordered. When they conflict, the earlier priority wins unless the maintainer explicitly
