@@ -58,6 +58,7 @@ source, then follow its Makefile rule and acceptance test.
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
 | Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-authority-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
+| Network status preflight | `userland/netinfo.swift` | `netinfo`, `swiftos_netinfo_refresh`, `swiftos_net_*` | `make netinfo-test` |
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
@@ -265,6 +266,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 80 | `random` | `buf`, `cap` | bytes written or negative error |
 | 81 | `pkg_remove` | `name` | 0 or negative error |
 | 82 | `log_stats` | `buf`, `cap` | 0 or negative error |
+| 83 | `netinfo` | `buffer`, `capacity` | 0 or negative error |
 
 Notes:
 
@@ -278,6 +280,8 @@ Notes:
 - `fcntl` command numbers match the active newlib `<fcntl.h>` used by the
   sysroot. The kernel handles the subset needed by shell redirection and status
   flags.
+- `netinfo` is a read-only network status snapshot for deploy preflight tools.
+  It is still gated by `capNet`.
 
 ## Filesystem API
 
@@ -1227,6 +1231,36 @@ struct swiftos_procstat {
 The native Swift bridge wraps these layouts through `swiftos_ps_*`,
 `swiftos_sys_*`, and `swiftos_top_*` accessors.
 
+## Network Status Layout
+
+`netinfo(buffer, capacity)` writes a fixed 56-byte network status record for
+deploy preflight tools. The syscall is read-only but requires `capNet`.
+
+```c
+struct swiftos_netinfo {
+    unsigned int flags;       // offset 0: ready, DHCPv4, static IPv6, IPv6 gateway
+    unsigned int ipv4;        // offset 4, host-order IPv4
+    unsigned int gateway4;    // offset 8, host-order IPv4
+    unsigned int dns4;        // offset 12, host-order IPv4
+    unsigned int mask4;       // offset 16, host-order IPv4 mask
+    unsigned char ipv6[16];   // offset 20, network order
+    unsigned char gateway6[16]; // offset 36, network order
+    unsigned int prefix6;     // offset 52
+};
+```
+
+Flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `SWIFTOS_NETINFO_READY` | virtio-net is attached and initialized |
+| `SWIFTOS_NETINFO_DHCP4` | IPv4 came from DHCP |
+| `SWIFTOS_NETINFO_STATIC6` | IPv6 came from `/etc/swos/net-ipv6` |
+| `SWIFTOS_NETINFO_GW6` | `gateway6` is populated |
+
+Native Swift userland should prefer `swiftos_netinfo_refresh()` and the
+`swiftos_net_*` accessors instead of depending on raw offsets directly.
+
 ## Native Swift Bridge Index
 
 Declared in `userland/lib/swift_user.h`.
@@ -1406,9 +1440,21 @@ int swiftos_connect(int fd, unsigned int ip, unsigned short port);
 long swiftos_poll(void *fds, unsigned long nfds, long timeout_ms);
 unsigned int swiftos_resolve(const char *name, unsigned int server_ip,
                              unsigned short server_port);
+
+int swiftos_netinfo_refresh(void);
+unsigned int swiftos_net_flags(void);
+unsigned int swiftos_net_ipv4(void);
+unsigned int swiftos_net_gateway4(void);
+unsigned int swiftos_net_dns4(void);
+unsigned int swiftos_net_mask4(void);
+unsigned int swiftos_net_ipv6_prefix_len(void);
+unsigned char swiftos_net_ipv6_byte(unsigned int index);
+unsigned char swiftos_net_gateway6_byte(unsigned int index);
 ```
 
 IPv4 addresses are host order. IPv6 addresses are 16 bytes in network order.
+The `swiftos_net_*` accessors read the cached `SYS_NETINFO` snapshot refreshed
+by `swiftos_netinfo_refresh()`.
 
 ### Threads And Atomics
 
@@ -1487,7 +1533,7 @@ one booting acceptance path:
 | C compat large mmap | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/largemmapprobe.c` | `make largemmap-test`, `./tests/boot_test.sh` |
 | C compat mmap reservation | `kernel/user/process.swift`, `userland/compat/sys/mman.h`, `userland/mmapreserveprobe.c` | `make mmapreserve-test`, `./tests/boot_test.sh` |
 | C compat fixed mmap | `kernel/user/process.swift`, `userland/compat/sys/mman.h`, `userland/mapfixedprobe.c` | `make mapfixed-test`, `./tests/boot_test.sh` |
-| Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
+| Networking bridge | `kernel/net/*`, `userland/netinfo.swift`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `make netinfo-test`, `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Log export | `kernel/log/log.swift`, `kernel/syscall/syscall.swift`, `userland/logtail.swift`, `userland/lib/swift_user.h` | `make log-export-test` |
 | Runtime entropy | `kernel/drivers/virtio_rng.swift`, `kernel/syscall/syscall.swift`, `userland/lib/swift_user.h`, `userland/ssh.swift`, `userland/sshd.swift` | `make ssh-runtime-entropy-test`, `make sshd-runtime-entropy-test` |

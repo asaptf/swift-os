@@ -324,6 +324,7 @@ USER_HEAD_ELF := $(BUILD)/head.elf
 USER_TOUCH_ELF := $(BUILD)/touch.elf
 USER_WC_ELF := $(BUILD)/wc.elf
 USER_TOP_ELF := $(BUILD)/top.elf
+USER_NETINFO_ELF := $(BUILD)/netinfo.elf
 USER_UDPECHO_ELF := $(BUILD)/udpecho.elf
 USER_TCPECHO_ELF := $(BUILD)/tcpecho.elf
 USER_THREADSDEMO_ELF := $(BUILD)/threadsdemo.elf
@@ -350,6 +351,7 @@ BASE_EXEC_ELFS := \
 	$(USER_TOUCH_ELF) \
 	$(USER_WC_ELF) \
 	$(USER_TOP_ELF) \
+	$(USER_NETINFO_ELF) \
 	$(USER_UDPECHO_ELF) \
 	$(USER_TCPECHO_ELF) \
 	$(USER_THREADSDEMO_ELF) \
@@ -427,6 +429,7 @@ BASE_EXEC_ELFS := \
 build: $(KERNEL_ELF)
 .PHONY: ssh-runtime-entropy-test
 .PHONY: sshd-ipv6-listener-test
+.PHONY: netinfo-test
 
 $(QEMU_DTB): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -m 256M -nographic
@@ -680,6 +683,9 @@ $(BUILD)/user_wc.o: userland/wc.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_top.o: userland/top.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/top.swift -o $@
 
+$(BUILD)/user_netinfo.o: userland/netinfo.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netinfo.swift -o $@
+
 $(USER_HELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_hello.o -o $@
 
@@ -831,6 +837,9 @@ $(USER_WC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_wc
 
 $(USER_TOP_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_top.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_top.o -o $@
+
+$(USER_NETINFO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netinfo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netinfo.o -o $@
 
 $(USER_UDPECHO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_udpecho.o -o $@
@@ -1166,6 +1175,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/tty_test.sh
 	./tests/virtio_blk_test.sh
 	./tests/virtio_net_test.sh
+	./tests/netinfo_test.sh
 	# IPv6 (net-ipv6 slice): host net_test covers the protocol core aggressively
 	# (NDP, RA, EH chains, DAD, malformed packets). QEMU smoke tests verify
 	# link-local/NDP setup; Darwin QEMU currently skips true IPv6 hostfwd echo.
@@ -1397,6 +1407,9 @@ sshd-ipv6-listener-test: build $(QEMU_DTB) $(SSHKEY)
 
 sshd-runtime-entropy-test: build $(QEMU_DTB) base-image $(SSHKEY)
 	./tests/sshd_runtime_entropy_test.sh
+
+netinfo-test: build $(QEMU_DTB) base-image
+	./tests/netinfo_test.sh
 
 net-static-ipv6-test: build $(QEMU_DTB)
 	./tests/net_static_ipv6_test.sh
@@ -1765,6 +1778,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_TOUCH_ELF) $(BASE_ROOT)/bin/touch
 	cp $(USER_WC_ELF) $(BASE_ROOT)/bin/wc
 	cp $(USER_TOP_ELF) $(BASE_ROOT)/bin/top
+	cp $(USER_NETINFO_ELF) $(BASE_ROOT)/bin/netinfo
 	cp $(USER_UDPECHO_ELF) $(BASE_ROOT)/bin/udpecho
 	cp $(USER_TCPECHO_ELF) $(BASE_ROOT)/bin/tcpecho
 	cp $(USER_THREADSDEMO_ELF) $(BASE_ROOT)/bin/threadsdemo

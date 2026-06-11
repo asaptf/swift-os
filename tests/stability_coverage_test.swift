@@ -134,6 +134,7 @@ private let fullGateGroups = [
         needles: [
             "tests/net_test.swift",
             "./tests/ipv6_smoke_test.sh",
+            "./tests/netinfo_test.sh",
             "./tests/udp_echo_test.sh",
             "./tests/tcp_echo_test.sh",
             "./tests/httpd_test.sh",

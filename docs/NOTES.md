@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC27 network status deploy preflight (2026-06-11)
+
+- Added `SYS_NETINFO` (83), a fixed 56-byte read-only network status snapshot
+  gated by `capNet`. It reports virtio-net readiness, IPv4 address, gateway,
+  DNS, mask, DHCP/fallback source, IPv6 address, prefix, static/link-local
+  source, and IPv6 gateway status.
+- Added native bridge accessors in `swift_user.{h,c}` and `/bin/netinfo`, which
+  prints a stable deploy-preflight transcript from inside the guest.
+- Added `./tests/netinfo_test.sh` and `make netinfo-test`; the focused gate boots
+  QEMU with virtio-net/slirp, logs in as `root`, runs `/bin/netinfo`, and asserts
+  the in-guest network status lines.
+- This is observability for deploy readiness, not a routing/firewall/config
+  control plane.
+
+**Acceptance.** `make netinfo-test` proves that the base image contains
+`/bin/netinfo` and that the guest reports ready virtio-net state, QEMU slirp
+IPv4 `10.0.2.15/24`, gateway `10.0.2.2`, DNS `10.0.2.3`, IPv6 prefix status,
+and the `netinfo: HC27 OK` marker.
+
 ## HC26 SSH client runtime entropy preflight (2026-06-11)
 
 - `/bin/ssh` now uses `SYS_RANDOM` for its SSH_MSG_KEXINIT cookie and

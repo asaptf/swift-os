@@ -47,6 +47,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet`; attach virtio-rng for runtime entropy proof | `tests/ssh_transport_test.sh`, `tests/ssh_runtime_entropy_test.sh` |
 | Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh` |
+| Inspect network status | `netinfo` | QEMU virtio-net and `capNet` | `tests/netinfo_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
 | Validate update slots | `swos-update`, `swos-activate`, `swos-confirm`, `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Matching A/B update-store or UEFI ESP test profile | Update tests listed in [Update And Rollback Guide](UPDATE_GUIDE.md) |
@@ -515,6 +516,43 @@ Networking commands require a QEMU virtio-net device and `capNet`. The examples
 below assume the standard slirp setup from [GETTING_STARTED.md](GETTING_STARTED.md).
 For complete QEMU profiles, host-forwarding rules, and network test coverage,
 see [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
+
+### `netinfo`
+
+Print the guest's current network status snapshot.
+
+```text
+netinfo
+```
+
+Examples in the guest:
+
+```sh
+/bin/netinfo
+```
+
+Typical QEMU slirp output:
+
+```text
+netinfo: ready yes
+netinfo: ipv4 10.0.2.15/24 source dhcp
+netinfo: gateway4 10.0.2.2
+netinfo: dns4 10.0.2.3
+netinfo: ipv6 fe80:0000:0000:0000:... prefix 64 source link-local
+netinfo: gateway6 none
+netinfo: HC27 OK
+```
+
+Notes:
+
+- The command uses `SYS_NETINFO`, which is read-only but still requires
+  `capNet`.
+- IPv4 source is `dhcp` when the lease completed and `fallback` when the QEMU
+  slirp defaults are in use.
+- IPv6 source is `static` when `/etc/swos/net-ipv6` was staged at image build
+  time, otherwise `link-local`.
+
+Acceptance coverage: `tests/netinfo_test.sh`, `make netinfo-test`.
 
 ### `httpd`
 

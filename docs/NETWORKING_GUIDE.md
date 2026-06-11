@@ -37,6 +37,7 @@ Use this guide with:
 | Default DNS | DHCP DNS option when offered; fallback QEMU slirp DNS at `10.0.2.3:53` |
 | IPv4 routing | Outbound sockets ARP same-subnet peers directly and use the configured gateway for off-link or `/32` destinations |
 | DHCP | Minimal boot-time DHCPv4 DISCOVER/OFFER/REQUEST/ACK; no renewal or user command yet |
+| Target-side status | `/bin/netinfo` reports link readiness, IPv4/gateway/DNS/mask, IPv6 address/prefix, and IPv6 gateway status |
 | Socket authority | Processes need `capNet`; seeded `root` has it |
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |
 | Outbound guest access | Guest clients connect to `10.0.2.2` for host services |
@@ -80,6 +81,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Test one UDP datagram | Echo profile | `/bin/udpecho` | `printf 'swos udp' | nc -u -w2 127.0.0.1 5555` | `./tests/udp_echo_test.sh` |
 | Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
+| Inspect guest network status | Outbound-only profile | `/bin/netinfo` | None | `make netinfo-test` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
 | Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd`; attach virtio-rng for runtime entropy proof | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
@@ -272,6 +274,7 @@ network traffic is sent.
 | `/bin/tcpecho` | Host to guest | TCP 5555 | TCP hostfwd to 5555 | `./tests/tcp_echo_test.sh` |
 | `/bin/udpecho` | Host to guest | UDP 5555 | UDP hostfwd to 5555 | `./tests/udp_echo_test.sh` |
 | `/bin/sshd` | Host to guest | TCP 22 | TCP hostfwd to 22 | `./tests/sshd_transport_test.sh` |
+| `/bin/netinfo` | Guest diagnostic | none | Slirp NIC | `./tests/netinfo_test.sh` |
 | `/bin/tcpget` | Guest to host | Client-chosen | Host TCP listener | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | Guest to DNS | UDP client | Slirp DNS or host responder | `./tests/dns_test.sh` |
 | `/bin/tlsget` | Guest to host | TCP client | Host TLS 1.3 server | `./tests/tls_test.sh` |
@@ -303,6 +306,35 @@ and the ICMP probe completed.
 
 If a DHCP server does not answer, the boot path logs the fallback and keeps the
 old slirp constants so local QEMU validation remains usable.
+
+### Inspect Guest Network Status
+
+Run `/bin/netinfo` after logging in with `capNet` to capture the in-guest
+network state for deploy preflights:
+
+```sh
+/bin/netinfo
+```
+
+Expected QEMU slirp output includes:
+
+```text
+netinfo: ready yes
+netinfo: ipv4 10.0.2.15/24 source dhcp
+netinfo: gateway4 10.0.2.2
+netinfo: dns4 10.0.2.3
+netinfo: HC27 OK
+```
+
+The IPv4 source may be `fallback` when DHCP is absent. IPv6 reports either the
+default link-local address or the static `/etc/swos/net-ipv6` address staged
+with `NET_IPV6_CONFIG_FILE`.
+
+Proof:
+
+```sh
+make netinfo-test
+```
 
 ### Serve Static Files
 
@@ -682,8 +714,9 @@ Current limits that matter when exposing a SwiftOS network service:
 
 - `capNet` is coarse. It grants the ability to create sockets generally, not a
   specific port, address, or protocol.
-- There is no target-side firewall command, routing table command, or network
-  configuration command yet. DHCPv4 is boot-time only and does not renew leases.
+- `/bin/netinfo` exposes a read-only status snapshot, but there is no
+  target-side firewall command, routing table command, or network configuration
+  command yet. DHCPv4 is boot-time only and does not renew leases.
 - `/bin/sshd` is a session/exec preflight, not a full login daemon. It uses a
   base-image host-key seed from `/etc/ssh/ssh_host_ed25519_seed`; the checked-in
   default seed and authorized key are development-only, and deploy builds should

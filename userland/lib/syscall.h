@@ -89,6 +89,7 @@
 #define SYS_RANDOM         80
 #define SYS_PKG_REMOVE     81
 #define SYS_LOG_STATS      82
+#define SYS_NETINFO        83
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

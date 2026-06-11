@@ -83,6 +83,7 @@ private let sysPkgFiles: UInt = 79        // pkg_files(name, buf, cap) — list 
 private let sysRandom: UInt = 80          // random(buf, cap) — runtime entropy from virtio-rng
 private let sysPkgRemove: UInt = 81       // pkg_remove(name) — deactivate package on next boot
 private let sysLogStats: UInt = 82        // log_stats(buf, cap) — needs capLogExport
+private let sysNetInfo: UInt = 83         // netinfo(buffer, cap) — network status snapshot
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -269,6 +270,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = pkgStoreActiveFiles(nameVA: frame[0], outVA: frame[1], cap: frame[2])
     } else if number == sysPkgRemove {
         result = pkgStoreRemove(nameVA: frame[0])
+    } else if number == sysNetInfo {
+        result = netInfoSnapshot(buffer: frame[0], capacity: frame[1])
     } else if number == sysPkgStreamBegin {
         result = pkgStoreStreamBegin(descVA: frame[0])
     } else if number == sysPkgStreamWrite {

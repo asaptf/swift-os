@@ -422,6 +422,11 @@ Current Hetzner readiness status:
   IPv6 examples use `fe80::1` as the gateway. `make net-static-ipv6-test`
   proves that a staged image config is applied at boot and that off-/64 IPv6
   sends choose the configured gateway as the NDP next hop.
+- The base image includes `/bin/netinfo` for guest-side deploy preflight. It
+  reads `SYS_NETINFO` and reports link readiness, IPv4 address/prefix/source,
+  IPv4 gateway, DNS server, IPv6 address/prefix/source, and IPv6 gateway
+  status. `make netinfo-test` boots the normal virtio-net profile and proves
+  the status output under QEMU slirp.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
@@ -487,8 +492,10 @@ Not deploy-complete yet:
   PTY, scp, or sftp.
 - Primary IPv6 can be staged as static image config and SSHD can be started as
   an AF_INET6 listener, but cloud metadata ingestion, automatic
-  refresh/reconfigure, firewall policy, provider-routed SSHD-over-IPv6
-  acceptance, and a general service manager remain follow-up work.
+  refresh/reconfigure, firewall policy, routing/configuration commands beyond
+  the read-only `/bin/netinfo` status snapshot, provider-routed
+  SSHD-over-IPv6 acceptance, and a general service manager remain follow-up
+  work.
 
 Provider references to re-check before a real cloud run:
 
