@@ -108,6 +108,25 @@ local `.swpkg` payload to a writable package-store disk and live-mount it.
 Use the ports seed repository path when you want to prove the first multi-package
 hosted-style workflow.
 
+## Choose A Package Workflow
+
+Pick the narrowest workflow that proves the behavior you care about:
+
+| Need | Use this workflow | Guest-facing behavior | Minimum proof |
+| --- | --- | --- | --- |
+| Show one package payload under `/usr` | Direct read-only payload overlay | `/usr/bin/pkghello` is present at boot | `make package-overlay-test` |
+| Validate package-store boot activation | Preseeded package-store image | Active package generation mounts at boot | `make package-store-test` |
+| Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello` | `make package-local-install-test` |
+| Prove signed repository install | Signed HTTP fixture | `pkg update`, `pkg search`, `pkg info`, and `pkg install pkghello` work by name | `make package-repo-install-test` |
+| Prove one real source port | Lua repository fixture | Guest installs `lua` and runs `lua -e 'print(21 * 2)'` | `make package-lua-repo-install-test` |
+| Prove the current seed repository | Ports seed repository fixture | Guest installs Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite | `make package-ports-seed-repo-install-test` |
+| Prove a deployable static web root | Static-host publish root | The seed repository is served from `build/ports-static-host-root` | `make ports-static-host-publish`, then `make package-static-host-repo-install-test` |
+| Prove hosted-style URL and DNS resolution | Hosted URL verifier plus DNS-resolved guest install | `/bin/pkg` installs from an HTTP repository hostname | `make ports-hosted-url-verify-test`, then `make package-static-host-dns-repo-install-test` |
+
+Do not use these fixtures to claim public production channels, package removal,
+upgrade, rollback, target-side HTTPS transport, or version-constraint solving.
+Those remain package-roadmap items.
+
 ## Quick Start
 
 Build the kernel, base image, DTB, host package tools, and sample package:

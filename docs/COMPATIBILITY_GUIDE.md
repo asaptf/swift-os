@@ -29,7 +29,7 @@ runtime state around explicit capabilities and `/tmp` scratch storage.
 | Shell | Busybox `ash` for login and bring-up compatibility |
 | Filesystem writes | `/tmp` tmpfs only |
 | Installed software | Immutable base image plus read-only package overlays and package-store activations |
-| Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP demos, TLS client demo |
+| Networking | virtio-net, IPv4/IPv6 smoke, TCP, UDP, DNS, HTTP service smoke, TLS client smoke |
 | Driver-service model | C5 supervisor, opaque device handle, and virtio-input discovery metadata smoke over endpoint IPC |
 | Packages | Host-built `.swpkg`, read-only payload overlays, package-store activation, signed repository install, static-host ports fixture, and hosted-style HTTP repository URL smoke |
 | Containers | No Docker/OCI compatibility |
@@ -58,6 +58,44 @@ This keeps the trusted core small and makes compatibility testable. It also
 means many Unix-like source programs can be ported, while Linux binary
 compatibility is not a goal.
 
+## Workload Compatibility Intake
+
+Before starting a port, record the workload shape and the first proof you expect
+to run. This keeps compatibility discussions grounded in current SwiftOS
+behavior instead of assumptions from Linux, containers, or desktop operating
+systems.
+
+| Question | Compatible answer today | Evidence to collect |
+| --- | --- | --- |
+| Is the source available? | Yes, or the program is already written for SwiftOS | Upstream URL or local source path |
+| What language/runtime is required? | Embedded Swift, small C/newlib port, or source-built static runtime | Build command and toolchain requirement |
+| Can it link statically for AArch64? | Yes | Link command or current static-port blocker |
+| Does it need dynamic loading or plugins? | No, or the design can remove them | List of disabled dynamic features |
+| What files are installed? | Read-only base image files or `/usr` package payload files | Install manifest or package path list |
+| What runtime state is written? | `/tmp` scratch only in the current product contract | State directory plan and reboot expectation |
+| Does it need networking? | Works with `capNet` and QEMU virtio-net profiles | Guest command, host forwarding, and focused network test |
+| Does it need durable databases or queues? | Not as a current guest storage guarantee | Design note for future storage work |
+| Does it need Linux `/proc`, `/sys`, ioctls, signals, or process groups? | No, or the dependency is removed or shimmed | Missing ABI list and proposed shim/test |
+| Does it need device or driver access? | Only current metadata-only C5 device-grant smoke | C5 evidence or roadmap gap |
+| How will it be delivered? | Base image, package overlay, package store, signed repository, or ports recipe | Matching package/build test |
+| What proves success? | A focused QEMU test or host unit test plus user-facing docs | Test command and expected marker |
+
+Minimal intake record:
+
+```text
+Workload:
+  name:
+  source:
+  language/runtime:
+  delivery path: base-image | package-overlay | package-store | signed-repository | ports recipe
+  required capabilities: capFsRead | capTmpWrite | capNet | none
+  installed files:
+  runtime state:
+  unsupported assumptions:
+  first proof:
+  current status: compatible | porting candidate | blocked by current limit
+```
+
 ## Hardware And Platform Compatibility
 
 ### Supported Now
@@ -66,7 +104,7 @@ compatibility is not a goal.
 | --- | --- | --- |
 | QEMU `virt`, direct `-kernel` | Primary | Used by most development and acceptance tests |
 | QEMU `virt`, UEFI/AAVMF disk | Primary boot path | Uses `build/swift-os.img` plus read-only base image |
-| QEMU `virt`, virtio-net | Supported for network tests | Required for `httpd`, `llmd`, echo tools, DNS, TLS demos |
+| QEMU `virt`, virtio-net | Supported for network tests | Required for `httpd`, `llmd`, echo tools, DNS, and TLS smoke paths |
 | QEMU `virt`, `-smp 4` | Acceptance-tested hardening profile | Covers CPU bring-up, per-CPU telemetry, and gated S5f run-any EL0 placement |
 | QEMU `virt`, framebuffer/input | Smoke-tested | Used by graphical and busybox `vi` smoke paths |
 | VirtualBox ARM | Best effort | Board profile exists; see [VIRTUALBOX.md](VIRTUALBOX.md) |
@@ -195,7 +233,7 @@ The current AI-serving proof path is native Swift:
 /bin/llmd
 ```
 
-`/bin/llm` keeps the small fp32 `stories260K` console demo. `/bin/llmd`
+`/bin/llm` keeps the small fp32 `stories260K` console inference path. `/bin/llmd`
 defaults to the signed verified Q8_0 `stories15M` bundle under
 `/models/stories15M` and can be started with explicit
 `llmd [model.bin] [tokenizer.bin]` paths for supported checkpoint formats
@@ -267,8 +305,8 @@ Current user-visible network tools:
 | `/bin/tcpecho` | TCP 5555 | One-shot TCP echo server |
 | `/bin/udpecho` | UDP 5555 | One-shot UDP echo server |
 | `/bin/tcpget` | TCP client | Guest-to-host TCP active open |
-| `/bin/nslookup` | UDP DNS | A and AAAA lookup demo |
-| `/bin/tlsget` | TLS client | TLS 1.3 runtime demo |
+| `/bin/nslookup` | UDP DNS | A and AAAA lookup smoke |
+| `/bin/tlsget` | TLS client | TLS 1.3 runtime smoke |
 
 Example host forwarding for HTTP-style services:
 
@@ -316,7 +354,7 @@ Seeded accounts:
 
 | Account | Principal | Capability mask | Compatibility meaning |
 | --- | ---: | ---: | --- |
-| `root` | 1 | `0x3f` | Full demo authority; not a Unix superuser contract |
+| `root` | 1 | `0x3f` | Full seeded authority; not a Unix superuser contract |
 | `user` | 2 | `0x0e` | Spawn, filesystem read, tmpfs write |
 | `guest` | 3 | `0x02` | Spawn-only restricted account |
 

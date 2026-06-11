@@ -16,8 +16,52 @@ A default SwiftOS boot gives you:
 - Native Embedded Swift userland tools such as `ls`, `cat`, `ps`, `top`, `id`,
   `calc`, `kv`, `httpd`, `udpecho`, and `tcpecho`.
 - Package fixtures for local `.swpkg` install, signed repository install, and
-  the seven-package ports seed repository fixture.
+  the ten-package ports seed repository fixture.
 - A POSIX-like syscall ABI that is intentionally not the Linux ABI.
+
+## First Ten Minutes Checklist
+
+Use this path when you only need to prove that a checkout is healthy:
+
+1. Build the direct-boot artifacts:
+
+   ```sh
+   make build base-image build/virt.dtb
+   ```
+
+2. Boot the serial profile:
+
+   ```sh
+   make run
+   ```
+
+3. Complete the early TTY prompt, then log in:
+
+   ```text
+   swift-os login: root
+   Password: swordfish
+   ```
+
+4. In the guest, verify identity, filesystem, scratch space, and process
+   inspection:
+
+   ```sh
+   id
+   ls -l /
+   cat /etc/motd
+   mkdir /tmp/work
+   echo ok >/tmp/work/first.txt
+   cat /tmp/work/first.txt
+   top -b -n 1
+   ```
+
+5. On the host, run the automated boot proof:
+
+   ```sh
+   ./tests/boot_test.sh
+   ```
+
+For task-specific next steps, use the decision table in [FAQ.md](FAQ.md).
 
 ## Host Requirements
 
@@ -138,11 +182,11 @@ cat /hello.txt
 Create scratch data in tmpfs:
 
 ```sh
-mkdir /tmp/demo
-echo hello >/tmp/demo/message.txt
-cat /tmp/demo/message.txt
-rm /tmp/demo/message.txt
-rmdir /tmp/demo
+mkdir /tmp/work
+echo hello >/tmp/work/message.txt
+cat /tmp/work/message.txt
+rm /tmp/work/message.txt
+rmdir /tmp/work
 ```
 
 Inspect processes:

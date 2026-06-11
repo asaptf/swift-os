@@ -15,12 +15,43 @@ provided by QEMU `-nographic`.
 The boot flow is:
 
 1. Kernel initializes hardware, memory, scheduler, VFS, security, and userland.
-2. The early tty demo may ask for one input line and then a Ctrl-C.
+2. The early TTY smoke prompt may ask for one input line and then a Ctrl-C.
 3. `/bin/console-login` starts as init.
 4. After authentication, the configured shell is executed.
 5. When the shell exits, `console-login` is started again for the next session.
 
 There is no graphical desktop shell in the current product profile.
+
+## Choose A Console Task
+
+After login, start from the task you need to perform. The seeded `root` account
+can exercise every current workflow; `user` and `guest` are useful for
+capability checks.
+
+| Task | Run first | Then use |
+| --- | --- | --- |
+| Confirm the boot is healthy | `id`, `cat /etc/motd`, `ps`, `top -b -n 2 -d 1` | [Process Inspection](#process-inspection), [Observability Guide](OBSERVABILITY_GUIDE.md) |
+| Inspect the immutable base image | `ls -l /`, `ls -l /bin`, `cat /readme.txt` | [Filesystem](#filesystem), [Base Image](BASE_IMAGE.md) |
+| Use writable scratch space | `mkdir /tmp/work`, `echo ok >/tmp/work/check.txt`, `cat /tmp/work/check.txt` | [Filesystem](#filesystem) |
+| Compare account authority | `id`, then retry a file or network command under another login | [Accounts And Capabilities](#accounts-and-capabilities), [Security Guide](SECURITY_GUIDE.md) |
+| Serve static files | `/bin/httpd` after booting with TCP 8080 forwarding | [HTTP Server](#http-server), [Service Guide](SERVICE_GUIDE.md) |
+| Serve local AI completions | `/bin/llmd` after booting with TCP 8080 forwarding | [AI Inference Server](#ai-inference-server), [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
+| Test TCP or UDP networking | `/bin/tcpecho`, `/bin/udpecho`, `/bin/tcpget`, or `/bin/nslookup` | [Networking](#networking), [Networking Guide](NETWORKING_GUIDE.md) |
+| Run runtime smoke programs | `/bin/threadsdemo` or `/bin/mmapdemo` | [Runtime Smoke Programs](#runtime-smoke-programs) |
+| Validate update commands | `swos-update`, `swos-activate`, `swos-confirm`, or the `swos-k*` commands only in the matching profile | [Update Commands](#update-commands), [Update And Rollback Guide](UPDATE_GUIDE.md) |
+
+First five guest commands for a new session:
+
+```sh
+id
+cat /etc/motd
+ls -l /
+echo hello >/tmp/hello.txt
+cat /tmp/hello.txt
+```
+
+Those commands prove the login context, base-image read path, directory
+metadata, tmpfs write path, and tmpfs readback without requiring networking.
 
 ## Accounts And Capabilities
 
@@ -111,10 +142,10 @@ rmdir /tmp/work
 Change tmpfs metadata:
 
 ```sh
-echo abc >/tmp/mode-demo
-chmod 600 /tmp/mode-demo
-chown 2 /tmp/mode-demo
-ls -l /tmp/mode-demo
+echo abc >/tmp/mode-sample
+chmod 600 /tmp/mode-sample
+chown 2 /tmp/mode-sample
+ls -l /tmp/mode-sample
 ```
 
 Writes to the base image fail by design:
@@ -127,7 +158,7 @@ Use `/tmp` for runtime scratch state.
 
 ## Programs In `/bin`
 
-The base image stages native Swift programs, C demos, and busybox. The C5
+The base image stages native Swift programs, C diagnostic programs, and busybox. The C5
 service smoke is available as `/bin/drvsvcdemo`; it starts and restarts the
 driver-service worker `/bin/drvinputd` over endpoint IPC, then transfers an
 opaque input-device handle to prove device ownership can move to a restartable
@@ -154,11 +185,11 @@ Common native Swift tools:
 | `head`, `wc`, `touch`, `date` | Core utility coverage |
 | `calc` | Interactive expression REPL over Swift heap and ARC |
 | `kv` | In-memory key-value REPL |
-| `llm`, `llmd` | Native Swift TinyStories inference demo and HTTP serving daemon |
+| `llm`, `llmd` | Native Swift TinyStories inference client and HTTP serving daemon |
 | `udpecho`, `tcpecho`, `tcpget`, `tlsget`, `nslookup`, `httpd` | Network tools |
 | `swos-update`, `swos-activate`, `swos-confirm` | Checked base-image A/B update-store commands |
 | `swos-kstage`, `swos-kactivate`, `swos-kconfirm` | Checked UEFI ESP kernel-slot commands |
-| `threadsdemo`, `mmapdemo` | Runtime and VM demos |
+| `threadsdemo`, `mmapdemo` | Runtime and VM smoke programs |
 
 Busybox is staged as `/bin/busybox` and is used for the login shell. It is a
 legacy bring-up and compatibility tool, not the long-term application model.
@@ -336,17 +367,17 @@ Resolve through an explicit server and port:
 /bin/nslookup test.swos 10.0.2.2 5354
 ```
 
-### TLS Demo
+### TLS Runtime Smoke
 
 `/bin/tlsget` contains the current userland TLS client groundwork. Certificate
 verification is deliberately incomplete in the current branch; use it as a TLS
-runtime demo, not as a production trust decision.
+runtime smoke path, not as a production trust decision.
 
-## Runtime Demos
+## Runtime Smoke Programs
 
 ### Threads
 
-Run the EL0 thread/futex demo:
+Run the EL0 thread/futex smoke program:
 
 ```sh
 /bin/threadsdemo
@@ -357,15 +388,15 @@ to prove correct shared counter updates.
 
 ### mmap And W^X
 
-Run the anonymous mmap, mprotect, and W^X demo:
+Run the anonymous mmap, mprotect, and W^X smoke program:
 
 ```sh
 /bin/mmapdemo
 ```
 
-The demo maps zero-filled RAM, writes and reads across a page boundary, switches
-a page from RW to RX for a small JIT-style call, and confirms RWX mappings are
-rejected.
+The program maps zero-filled RAM, writes and reads across a page boundary,
+switches a page from RW to RX for a small JIT-style call, and confirms RWX
+mappings are rejected.
 
 ## Update Commands
 

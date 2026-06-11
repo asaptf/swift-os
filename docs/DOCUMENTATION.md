@@ -8,6 +8,23 @@ SwiftOS documentation is split by audience. Start with the guide that matches
 what you are trying to do, then use the reference documents for exact ABI and
 format details.
 
+## Role-Based Paths
+
+Use these paths when you are new to the repository or handing documentation to a
+specific audience.
+
+| Role | Read first | Then prove |
+| --- | --- | --- |
+| First-time operator | [Getting Started](GETTING_STARTED.md), [User Guide](USER_GUIDE.md), [Command Reference](COMMAND_REFERENCE.md) | `./tests/boot_test.sh`, then the command-specific test |
+| Release or deployment owner | [Installation Guide](INSTALLATION_GUIDE.md), [Deployment Guide](DEPLOYMENT_GUIDE.md), [Update And Rollback Guide](UPDATE_GUIDE.md) | Candidate manifest, serial log, rollback artifact, and the matching validation matrix |
+| System administrator | [Administration Guide](ADMINISTRATION_GUIDE.md), [Security Guide](SECURITY_GUIDE.md), [Support Guide](SUPPORT_GUIDE.md) | Account or capability evidence bundle plus `./tests/console_login_test.sh` |
+| Application developer | [Developer Guide](DEVELOPER_GUIDE.md), [Application Cookbook](APPLICATION_COOKBOOK.md), [API Reference](API_REFERENCE.md) | Focused QEMU test, command-reference entry, and application handoff record |
+| Package or port maintainer | [Package Guide](PACKAGE_GUIDE.md), [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md), [Porting Guide](PORTING_GUIDE.md) | Package fixture, repository install smoke, and ports seed verification |
+| Network or service operator | [Networking Guide](NETWORKING_GUIDE.md), [Service Guide](SERVICE_GUIDE.md), [Observability Guide](OBSERVABILITY_GUIDE.md) | Readiness marker, host client output, and the focused network/service test |
+| AI hosting operator | [AI Hosting Guide](AI_HOSTING_GUIDE.md), [Performance And Sizing Guide](PERFORMANCE_GUIDE.md), [Release Notes](RELEASE_NOTES.md) | `/health`, `/completion`, `/metrics`, and `./tests/llm_serve_test.sh` |
+| Support engineer | [Troubleshooting](TROUBLESHOOTING.md), [Support Guide](SUPPORT_GUIDE.md), [Logging Reference](LOGGING.md) | Support bundle, first failure marker, and exact reproduction command |
+| Security reviewer | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md), [Architecture](ARCHITECTURE.md) | Capability/handle test evidence and current-roadmap gap list |
+
 ## Start Here
 
 | Need | Document |
@@ -26,7 +43,7 @@ format details.
 | Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
-| Operate boot profiles, networking demos, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
+| Operate boot profiles, networking workflows, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
 | Run and verify virtio-net, host forwarding, DNS, TCP, UDP, TLS, and IPv6 paths | [Networking Guide](NETWORKING_GUIDE.md) |
 | Run, observe, test, and design SwiftOS services and the C5 driver-service/device-authority smoke | [Service Guide](SERVICE_GUIDE.md) |
 | Host TinyStories inference with model bundles, health checks, and metrics | [AI Hosting Guide](AI_HOSTING_GUIDE.md) |
@@ -36,7 +53,7 @@ format details.
 | Diagnose build, boot, login, filesystem, network, package, and test failures | [Troubleshooting](TROUBLESHOOTING.md) |
 | Collect logs, evidence, severity, and report details for support handoff | [Support Guide](SUPPORT_GUIDE.md) |
 | Answer common product, install, compatibility, package, networking, AI, and support questions | [FAQ](FAQ.md) |
-| Follow copy-paste workflows for common demos | [Examples](EXAMPLES.md) |
+| Follow copy-paste workflows for common tasks | [Examples](EXAMPLES.md) |
 | Check hardware, application, package, runtime, and network compatibility | [Compatibility Guide](COMPATIBILITY_GUIDE.md) |
 | Understand current login, capabilities, handle rights, and security limits | [Security Guide](SECURITY_GUIDE.md) |
 | Write native SwiftOS user programs | [Developer Guide](DEVELOPER_GUIDE.md) |

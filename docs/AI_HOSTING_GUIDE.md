@@ -2,7 +2,7 @@
 
 This guide explains the current AI hosting surface in SwiftOS: local TinyStories
 inference, HTTP model serving, verified model bundles, health and metrics, and
-the operational limits that matter when demonstrating or extending the system.
+the operational limits that matter when validating or extending the system.
 
 Use it with:
 
@@ -34,6 +34,22 @@ also links the verified bundle parser in
 The current engine is a CPU TinyStories proof of application and AI hosting. It
 is not a general ONNX, GGUF, PyTorch, or GPU runtime.
 
+## Choose An AI Workflow
+
+Pick the smallest workflow that proves the question you are asking:
+
+| Need | Use this path | What it proves | Minimum proof |
+| --- | --- | --- | --- |
+| Verify local model files and the inference core | `/bin/llm` | The small fp32 TinyStories model and tokenizer can mmap, tokenize, generate, and return to the shell | `./tests/llm_run_test.sh` |
+| Verify HTTP serving | Default `/bin/llmd` | The Q8_0 serving model binds TCP 8080, answers `/completion`, and exposes `/health` plus `/metrics` | `./tests/llm_serve_test.sh` |
+| Verify signed immutable bundles | Default `/bin/llmd` with `/models/stories15M` | Ed25519 manifest verification, payload SHA-256 checks, corrupt-generation rejection, and fallback to the newest valid generation | `./tests/llm_serve_test.sh`, `build/llm_bundle_test` |
+| Experiment with raw model paths | `/bin/llmd /models/stories260K.bin /models/tok512.bin` | The server can load explicit model/tokenizer paths for development | Manual run plus serial startup markers |
+| Prepare a deployment candidate | AI hosting profile in [Deployment Guide](DEPLOYMENT_GUIDE.md) | Model artifacts, base image hash, health responses, metrics, and rollback evidence are captured together | Deployment evidence bundle plus focused AI tests |
+
+Use the verified bundle path for any handoff or release candidate. Raw model
+overrides are development tools and do not prove manifest signature or payload
+hash enforcement.
+
 ## Artifact Map
 
 | Artifact | Built by | Staged as | Used by |
@@ -43,7 +59,7 @@ is not a general ONNX, GGUF, PyTorch, or GPU runtime.
 | `models/stories15M.bin` | `make model` | Host source only | Quantized into `stories15M-q8.bin` |
 | `models/stories15M-q8.bin` | `make model` | `/models/stories15M/1/model.bin` | Default `/bin/llmd` |
 | `models/tokenizer.bin` | `make model` | `/models/stories15M/1/tokenizer.bin` | Default `/bin/llmd` |
-| `models/dev-signing.seed` | `make base-image` | Host signing seed, gitignored | Signs demo manifests |
+| `models/dev-signing.seed` | `make base-image` | Host signing seed, gitignored | Signs development manifests |
 | `models/dev-signing.pub` | `make base-image` | `/etc/swos/model-signing.pub` | Guest trust root |
 | `build/base.img` | `make base-image` | Read-only base image | Guest model storage |
 
@@ -297,7 +313,7 @@ Supported model families today:
 
 | Format | Use | Notes |
 | --- | --- | --- |
-| llama2.c fp32 checkpoint | `/bin/llm`, raw `llmd` experiments | Small `stories260K` demo path |
+| llama2.c fp32 checkpoint | `/bin/llm`, raw `llmd` experiments | Small `stories260K` inference path |
 | llama2.c version 2 Q8_0 checkpoint | Default `/bin/llmd` | Groupwise int8 quantized path |
 
 Unsupported today:
@@ -358,7 +374,7 @@ Limits to account for:
 - Production certificate stores and long-running TLS service policy are future
   work.
 
-For demos, keep host forwarding loopback-only unless you deliberately place a
+For validation, keep host forwarding loopback-only unless you deliberately place a
 separate trusted front end in front of QEMU.
 
 ## Performance Notes
@@ -415,7 +431,7 @@ separate expected slowness from functional failure:
 ```
 
 More failure patterns are documented in
-[Troubleshooting](TROUBLESHOOTING.md#llm-demo-problems).
+[Troubleshooting](TROUBLESHOOTING.md#llm-inference-problems).
 
 ## Evidence Checklist
 

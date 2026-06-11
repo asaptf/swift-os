@@ -42,6 +42,21 @@ Use this guide with:
 The live UART path remains the primary user-visible logging path. The ring and
 serializer are current internal foundations, not stable external APIs.
 
+## Choose Logging Evidence
+
+Start from the question you need the log to answer. Capture host-side files
+because SwiftOS does not persist guest logs across reboot.
+
+| Question | Capture | Expected markers | Proof |
+| --- | --- | --- | --- |
+| Did logging initialize during boot? | `support/boot-test.txt` or `support/serial.log` | `L0 kernel logger active`, `log: recent` | `./tests/boot_test.sh` |
+| Did filtering suppress the right records? | Boot test output | `level filtering active`, `source filtering active`, and absence of the forbidden filtered line | `./tests/boot_test.sh` |
+| Did structured detail and context survive into the ring? | Ring-tail dump or export sample | `detail=...`, optional `pid=... principal=...` | `./tests/boot_test.sh` |
+| Did export serialization run? | `LOG-EXPORT-BEGIN` block | `source=log_export msg="tail serialization ready"` | `./tests/boot_test.sh` |
+| Did a service become ready or fail? | Serial log plus host client output | Service-prefixed readiness or first failure marker | Service-specific test |
+| Did a panic include enough context? | `support/panic-context.txt` | First `panic` line plus preceding markers and ring tail | Reproducer command plus panic excerpt |
+| Did a future log-export authority change stay constrained? | Security test output and boot markers | `sink capability hook active`; no seeded production export command | Security guide proof plus `./tests/boot_test.sh` |
+
 ## Capture Logs
 
 For a direct QEMU boot:
@@ -204,7 +219,7 @@ log-export service.
 ## Capability Boundary
 
 `capLogExport` is reserved as the future authority for exporting the kernel log
-ring or installing a non-UART log sink. It is not granted to the default demo
+ring or installing a non-UART log sink. It is not granted to the default service
 authority today.
 
 Current hook helpers:

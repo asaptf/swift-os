@@ -1026,7 +1026,7 @@ Acceptance:
 
 ## First Public UX Target
 
-The first public package demo should be:
+The first public package proof should be:
 
 ```sh
 pkg update
@@ -1065,6 +1065,6 @@ Unless changed by the maintainer, start with these defaults:
 - binary repository URL: static HTTP with signed metadata;
 - signature algorithm: Ed25519;
 - hash algorithm: SHA-256;
-- first real demo package: `lua`;
+- first real package proof: `lua`;
 - no maintainer scripts in v1;
 - no direct mutation of root or `/usr`.

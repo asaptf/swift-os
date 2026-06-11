@@ -214,7 +214,7 @@ Use these reference programs:
 | `userland/udpecho.swift` | UDP socket and peer handling |
 | `userland/tcpget.swift` | Simple TCP client |
 | `userland/nslookup.swift` | DNS resolver use |
-| `userland/tlsget.swift` | TLS 1.3 demo client path |
+| `userland/tlsget.swift` | TLS 1.3 smoke client path |
 
 Current limits:
 
@@ -272,6 +272,8 @@ build/swpkg inspect build/lua.swpkg
 build/pkgrepo inspect build/lua-repo-root/aarch64/current/catalog.signed
 make package-lua-repo-install-test
 make ports-zlib-repo-fixture
+make ports-bzip2-repo-fixture
+make ports-zstd-repo-fixture
 make ports-ca-certificates-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
@@ -285,13 +287,13 @@ make ports-hosted-url-verify-test
 make package-static-host-dns-repo-install-test
 ```
 
-The checked Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite
-recipes are the reference shapes today. Together they prove static AArch64
-builds or data-only staging, signed local repository fixtures, guest
-`pkg install` by package name, Lua runtime checks, `minigzip` and zstd
-compression/decompression smokes, bzip2 version/marker checks, CA and zoneinfo marker reads, a `pcre2grep`
-regex match, nginx version/marker checks, a SQLite in-memory query, and
-static-host publication from `build/ports-static-host-root`. The hosted URL
+The checked Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx,
+and sqlite recipes are the reference shapes today. Together they prove static
+AArch64 builds or data-only staging, signed local repository fixtures, guest
+`pkg install` by package name, Lua runtime checks, `minigzip`, zstd, and xz
+compression/decompression smokes, bzip2 version/marker checks, CA and zoneinfo
+marker reads, a `pcre2grep` regex match, nginx version/marker checks, a SQLite
+in-memory query, and static-host publication from `build/ports-static-host-root`. The hosted URL
 smoke also proves the target package manager can use a DNS-resolved HTTP
 repository hostname for the same ten-package seed.
 

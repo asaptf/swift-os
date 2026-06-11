@@ -36,10 +36,38 @@ markers.
 | Port exposure | QEMU `hostfwd` from host ports to guest ports |
 | Persistence | Rebuild the base image or attach package overlays for installed files |
 
-This is enough for product demos, acceptance tests, and early application
+This is enough for product validation, acceptance tests, and early application
 hosting experiments. The roadmap moves toward explicit handle-based service
 launch, restart policy, package service manifests, and restartable driver and
 network services.
+
+## Choose A Service Workflow
+
+Pick the workflow by the service lifecycle question, then collect the evidence
+that proves the service behaved as expected.
+
+| Goal | Start here | Guest action | Host action | Evidence |
+| --- | --- | --- | --- | --- |
+| Serve static files | Network launch profile with TCP 8080 | `/bin/httpd` | `curl -fsS http://127.0.0.1:8080/` | `httpd: listening on 8080` and `./tests/httpd_test.sh` |
+| Serve local AI completions | Network launch profile with TCP 8080 | `/bin/llmd` | POST to `/completion` and read `/metrics` | `llmd: serving on 8080` and `./tests/llm_serve_test.sh` |
+| Test one inbound TCP request | Network launch profile with TCP 5555 | `/bin/tcpecho` | `printf 'hello tcp\n' | nc -w8 127.0.0.1 5555` | Byte-count marker and `./tests/tcp_echo_test.sh` |
+| Test one inbound UDP datagram | Network launch profile with UDP 5555 | `/bin/udpecho` | `printf 'hello udp' | nc -u -w2 127.0.0.1 5555` | Sender marker and `./tests/udp_echo_test.sh` |
+| Prove driver-service restart shape | Direct QEMU test profile | `/bin/drvsvcdemo` | None for manual run | C5 OK markers and `make c5-device-authority-test` |
+| Debug a startup failure | Same profile as the service | Rerun the command under `root` | Capture host client output if a port is involved | First failure marker, QEMU command, and serial log |
+| Add a new service | Source under `userland/` or a package payload | Stable readiness marker and documented command | Focused host test drives the service | Command Reference entry, guide section, and focused test |
+
+Example static HTTP evidence package:
+
+```sh
+make build base-image build/virt.dtb
+./tests/httpd_test.sh
+```
+
+For a manual run, save the QEMU serial log and the host request output:
+
+```sh
+curl -v http://127.0.0.1:8080/ >curl-httpd.txt 2>&1
+```
 
 ## Service Catalog
 
@@ -51,13 +79,13 @@ network services.
 | `/bin/udpecho` | One-shot UDP echo server | UDP 5555 | `udpecho: listening on 5555` | `./tests/udp_echo_test.sh` |
 | `/bin/tcpget` | Guest-to-host TCP client | Client-chosen | Request output | `./tests/tcp_connect_test.sh` |
 | `/bin/nslookup` | DNS client | UDP client | Query output | `./tests/dns_test.sh` |
-| `/bin/tlsget` | TLS client demo | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
+| `/bin/tlsget` | TLS runtime smoke client | TCP client | Handshake/output markers | `./tests/tls_test.sh` |
 | `/bin/drvsvcdemo` | C5 driver-service/device-authority smoke | n/a | `C5a OK: restartable driver service recovered over IPC`; C5e gate also expects `C5e OK: device authority withheld until explicit handoff` | `make c5-device-authority-test` |
 
 `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080. Run one of them at a
 time.
 
-The echo servers are intentionally one-shot demos: they serve one request and
+The echo servers are intentionally one-shot services: they serve one request and
 exit. Start them again for another request. `httpd` and `llmd` are long-running
 servers that keep accepting connections.
 
@@ -66,7 +94,7 @@ servers that keep accepting connections.
 C5a proves the service shape that future userland drivers need, C5b adds an
 opaque transferable device handle, and C5c/C5d/C5e match that handle against a
 discovered QEMU virtio-input transport and surface its metadata when one is
-attached. The demo supervisor
+attached. The supervisor smoke
 starts `/bin/drvinputd` with only endpoint file descriptors, exchanges a pseudo
 input event, transfers the opaque device handle, proves the grant moves and
 stays busy while the service owns it, stops the service, starts a fresh
@@ -306,11 +334,11 @@ Run:
 
 SwiftOS uses QEMU slirp's resolver by default when booted with user networking.
 
-### TLS Demo
+### TLS Runtime Smoke
 
 `/bin/tlsget` exercises the native TLS 1.3 record and handshake path. Treat it
-as a demo and test target, not a production HTTPS client: production trust-store
-and certificate policy work is still future work.
+as a runtime smoke and test target, not a production HTTPS client: production
+trust-store and certificate policy work is still future work.
 
 ## Operational Evidence
 
@@ -362,7 +390,7 @@ predictable behavior.
 | State | Keep writable runtime state under `/tmp` unless the design adds a new storage service |
 | Files | Close file descriptors on every error path |
 | TCP serving | Use `poll` for multi-connection long-running services |
-| One-shot demos | State clearly when a command handles only one request and exits |
+| One-shot services | State clearly when a command handles only one request and exits |
 | Health | For HTTP services, provide `/health` when practical |
 | Metrics | For HTTP services, provide `/metrics` when useful and cheap |
 | Ports | Document guest ports and host forwarding examples |

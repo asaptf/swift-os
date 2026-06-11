@@ -21,9 +21,9 @@ service-oriented.
 | Userland | Static native SwiftOS programs plus busybox shell compatibility |
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
-| Networking | virtio-net, TCP/UDP/DNS demos, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the seven-package seed ports repository fixture |
-| AI hosting | Local TinyStories demo and HTTP serving daemon with verified model bundles |
+| Networking | virtio-net, TCP/UDP/DNS smoke paths, static HTTP server, LLM serving |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the ten-package seed ports repository fixture |
+| AI hosting | Local TinyStories inference and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
 ## Highlights
@@ -45,7 +45,7 @@ service-oriented.
 ### User Experience
 
 - Starts `/bin/console-login` on the serial console.
-- Seeds three demo accounts: `root`, `user`, and `guest`.
+- Seeds three accounts: `root`, `user`, and `guest`.
 - Provides a busybox `ash` shell for interactive use.
 - Ships native SwiftOS tools for common workflows: `ls`, `cat`, `echo`, `pwd`,
   `ps`, `top`, `id`, `mkdir`, `rmdir`, `rm`, `mv`, `chmod`, `chown`, `head`,
@@ -117,7 +117,7 @@ service-oriented.
 - Ships `/bin/httpd` for static files under `/www`.
 - Ships `/bin/tcpecho`, `/bin/udpecho`, `/bin/tcpget`, and `/bin/nslookup` for
   network validation.
-- Ships `/bin/tlsget` as a TLS 1.3 client demo path. Production certificate
+- Ships `/bin/tlsget` as a TLS 1.3 client smoke path. Production certificate
   validation is not complete.
 - `/bin/httpd` and `/bin/llmd` both bind guest TCP port 8080, so run one at a
   time.
@@ -125,7 +125,7 @@ service-oriented.
 ### AI Hosting
 
 - `/bin/llm` runs a local TinyStories completion from the small `stories260K`
-  demo model.
+  model.
 - `/bin/llmd` serves TinyStories completions over HTTP on TCP 8080.
 - The default server resolves the verified bundle rooted at
   `/models/stories15M`.
@@ -218,12 +218,12 @@ llmd: served
 - SMP foundations, per-CPU utilization telemetry, and restricted S5 placement
   stress gates exist, but broad multi-core EL0 scheduling is not the default
   product contract yet.
-- TLS client support is a demo path. Treat production trust validation as
+- TLS client support is a smoke path. Treat production trust validation as
   incomplete.
 - LLM inference under QEMU TCG is a correctness and integration demonstration,
   not a throughput target.
 - The deliberately corrupt `/models/stories15M/2` generation is expected in the
-  checked-in demo image. Its manifest signature is valid, but its model payload
+  checked-in model image. Its manifest signature is valid, but its model payload
   hash fails, proving fallback to generation 1.
 - Model-bundle manifests are signed with the development Ed25519 trust root
   staged as `/etc/swos/model-signing.pub`. Production key rotation and
