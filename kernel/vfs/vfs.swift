@@ -100,6 +100,7 @@ private var mountedPackageStorePayloads = 0
 
 private let pipeReadEnd = 0
 private let pipeWriteEnd = 1
+private let pipeDuplexEnd = 2
 
 private struct OpenDescription {
     var inUse = false
@@ -110,6 +111,7 @@ private struct OpenDescription {
     var dirCursor = 0
     var flags = 0
     var pipe = -1
+    var writePipe = -1
     var pipeEnd = pipeReadEnd
 }
 
@@ -1084,14 +1086,12 @@ private func releaseDescription(_ d: Int) {
 
     let desc = openDescriptions[d]
     if desc.kind == .socket { socketClose(desc.node) }
-    if desc.kind == .pipe && desc.pipe >= 0 && desc.pipe < maxPipes && pipes[desc.pipe].inUse {
-        if desc.pipeEnd == pipeReadEnd {
-            if pipes[desc.pipe].readRefs > 0 { pipes[desc.pipe].readRefs -= 1 }
+    if desc.kind == .pipe {
+        if desc.pipeEnd == pipeDuplexEnd {
+            releasePipeRef(desc.pipe, read: true)
+            releasePipeRef(desc.writePipe, read: false)
         } else {
-            if pipes[desc.pipe].writeRefs > 0 { pipes[desc.pipe].writeRefs -= 1 }
-        }
-        if pipes[desc.pipe].readRefs == 0 && pipes[desc.pipe].writeRefs == 0 {
-            pipes[desc.pipe] = Pipe()
+            releasePipeRef(desc.pipe, read: desc.pipeEnd == pipeReadEnd)
         }
     }
     if desc.kind == .endpoint && desc.node >= 0 && desc.node < maxEndpoints && endpoints[desc.node].inUse {
@@ -1380,6 +1380,18 @@ private func pipePop(_ p: Int) -> UInt8 {
     return byte
 }
 
+private func releasePipeRef(_ p: Int, read: Bool) {
+    if p < 0 || p >= maxPipes || !pipes[p].inUse { return }
+    if read {
+        if pipes[p].readRefs > 0 { pipes[p].readRefs -= 1 }
+    } else {
+        if pipes[p].writeRefs > 0 { pipes[p].writeRefs -= 1 }
+    }
+    if pipes[p].readRefs == 0 && pipes[p].writeRefs == 0 {
+        pipes[p] = Pipe()
+    }
+}
+
 private func allocPipe() -> Int {
     for i in 0..<maxPipes where !pipes[i].inUse {
         guard let buf = swiftos_kernel_alloc(UInt(pipeCap), 16) else { return -1 }
@@ -1442,7 +1454,12 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                                 if desc.kind == .pipe {
                                     let p = desc.pipe
                                     if p < 0 || p >= maxPipes || !pipes[p].inUse { return false }
-                                    if desc.pipeEnd == pipeReadEnd {
+                                    if desc.pipeEnd == pipeDuplexEnd {
+                                        pipeReadRefs[p] += 1
+                                        let wp = desc.writePipe
+                                        if wp < 0 || wp >= maxPipes || !pipes[wp].inUse { return false }
+                                        pipeWriteRefs[wp] += 1
+                                    } else if desc.pipeEnd == pipeReadEnd {
                                         pipeReadRefs[p] += 1
                                     } else {
                                         pipeWriteRefs[p] += 1
@@ -1879,7 +1896,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     }
 
     if entry.kind == .pipe {
-        let p = file.pipe
+        let p = file.pipeEnd == pipeDuplexEnd ? file.writePipe : file.pipe
         var written = 0
         enable_irq()
         while written < Int(count) {
@@ -2119,6 +2136,78 @@ func vfsPipe(fdsVA: UInt) -> Int {
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
+    return 0
+}
+
+private let socketpairFlagNonblock = 1
+private let socketpairFlagCloexec = 2
+
+func vfsSocketpair(fdsVA: UInt, flags: Int) -> Int {
+    guard let out = userWritableBuffer(fdsVA, 8) else { return errInvalid }
+    if (flags & ~(socketpairFlagNonblock | socketpairFlagCloexec)) != 0 {
+        return errInvalid
+    }
+
+    let proc = currentVFSProcess()
+    var fd0 = -1
+    var fd1 = -1
+    var p01 = -1
+    var p10 = -1
+    var d0 = -1
+    var d1 = -1
+
+    func fail(_ code: Int) -> Int {
+        if d0 >= 0 && d0 < maxOpenDescriptions { openDescriptions[d0] = OpenDescription() }
+        if d1 >= 0 && d1 < maxOpenDescriptions { openDescriptions[d1] = OpenDescription() }
+        if p01 >= 0 && p01 < maxPipes { pipes[p01] = Pipe() }
+        if p10 >= 0 && p10 < maxPipes { pipes[p10] = Pipe() }
+        if fd0 >= 0 { setFDEntry(proc, fd0, HandleEntry()) }
+        if fd1 >= 0 { setFDEntry(proc, fd1, HandleEntry()) }
+        return code
+    }
+
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    fd0 = allocFDInProcess(proc, from: 0)
+    if fd0 == -1 { return errNoSpace }
+    setFDEntry(proc, fd0, HandleEntry(inUse: true, object: -1))
+    fd1 = allocFDInProcess(proc, from: 0)
+    if fd1 == -1 { return fail(errNoSpace) }
+    setFDEntry(proc, fd1, HandleEntry(inUse: true, object: -1))
+
+    p01 = allocPipe()
+    if p01 == -1 { return fail(errNoMem) }
+    p10 = allocPipe()
+    if p10 == -1 { return fail(errNoMem) }
+    d0 = allocDescription()
+    if d0 == -1 { return fail(errNoSpace) }
+    d1 = allocDescription()
+    if d1 == -1 { return fail(errNoSpace) }
+
+    let statusFlags = (flags & socketpairFlagNonblock) != 0 ? oNonblock : 0
+    openDescriptions[d0].kind = .pipe
+    openDescriptions[d0].pipe = p10
+    openDescriptions[d0].writePipe = p01
+    openDescriptions[d0].pipeEnd = pipeDuplexEnd
+    openDescriptions[d0].flags = statusFlags
+
+    openDescriptions[d1].kind = .pipe
+    openDescriptions[d1].pipe = p01
+    openDescriptions[d1].writePipe = p10
+    openDescriptions[d1].pipeEnd = pipeDuplexEnd
+    openDescriptions[d1].flags = statusFlags
+
+    installDescription(proc, fd0, d0, rights: posixRights(read: true, write: true))
+    installDescription(proc, fd1, d1, rights: posixRights(read: true, write: true))
+    if (flags & socketpairFlagCloexec) != 0 {
+        handles[fdIndex(proc, fd0)].cloexec = true
+        handles[fdIndex(proc, fd1)].cloexec = true
+    }
+
+    let raw = UnsafeMutableRawPointer(out)
+    raw.storeBytes(of: Int32(fd0), toByteOffset: 0, as: Int32.self)
+    raw.storeBytes(of: Int32(fd1), toByteOffset: 4, as: Int32.self)
     return 0
 }
 
@@ -2710,12 +2799,20 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
     }
     if kind == .pipe {
         let p = desc.pipe
+        let wp = desc.pipeEnd == pipeDuplexEnd ? desc.writePipe : desc.pipe
+        if p < 0 || p >= maxPipes || !pipes[p].inUse { return pollNval }
+        if wp < 0 || wp >= maxPipes || !pipes[wp].inUse { return pollNval }
         if (events & pollIn) != 0 && rights.contains(.read) {
             if pipeCount(p) > 0 || pipes[p].writeRefs == 0 { revents |= pollIn }
         }
         if (events & pollOut) != 0 && rights.contains(.write) {
-            if pipes[p].readRefs == 0 { revents |= pollErr }
-            else if pipeSpace(p) > 0 { revents |= pollOut }
+            if pipes[wp].readRefs == 0 { revents |= pollErr }
+            else if pipeSpace(wp) > 0 { revents |= pollOut }
+        }
+        if desc.pipeEnd == pipeDuplexEnd {
+            if pipes[p].writeRefs == 0 { revents |= pollHup }
+            if pipes[wp].readRefs == 0 { revents |= pollErr }
+            return revents
         }
         if desc.pipeEnd == pipeReadEnd && pipes[p].writeRefs == 0 { revents |= pollHup }
         if desc.pipeEnd == pipeWriteEnd && pipes[p].readRefs == 0 { revents |= pollErr }

@@ -76,6 +76,9 @@ int  swiftos_kernel_activate(void);
 int  swiftos_kernel_confirm(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+// Export a serialized tail of the kernel log ring. Returns bytes written, or a
+// negative errno-style value. Needs capLogExport.
+long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
 int  swiftos_pkg_install(int fd, const char *name, const char *version_revision);
 int  swiftos_pkg_info(int index, char *buf, unsigned long cap);
 int  swiftos_pkg_stream_begin(const char *name, const char *version_revision,

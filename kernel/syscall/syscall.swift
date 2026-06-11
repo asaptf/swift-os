@@ -77,6 +77,8 @@ private let sysPkgStreamWrite: UInt = 73  // pkg_stream_write(buf, len) — appe
 private let sysPkgStreamCommit: UInt = 74 // pkg_stream_commit() — verify, publish, and activate streamed package
 private let sysPkgStreamAbort: UInt = 75  // pkg_stream_abort() — discard the active streamed package install
 private let sysSigreturn: UInt = 76       // sigreturn() — restore a kernel-built user signal frame
+private let sysLogRead: UInt = 77         // log_read(buf, cap, max_count) — needs capLogExport
+private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local full-duplex fd pair
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -292,6 +294,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = espActivateOtherKernel() // U1g-5d: capConsole-gated kernel-slot flip via kernel-state
     } else if number == sysKernelConfirm {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
+    } else if number == sysLogRead {
+        result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
+    } else if number == sysSocketpair {
+        result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
     } else {
         result = -38 // ENOSYS
     }
@@ -317,4 +323,12 @@ private func syscallTcSetAttr(termios ptr: UInt) -> Int {
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
     ttySetLflag(lflag)
     return 0
+}
+
+private func syscallLogRead(buffer ptr: UInt, capacity cap: UInt, maxCount: UInt) -> Int {
+    if !klogCanExportRing(capabilities: processCurrentCaps()) { return -1 } // EPERM
+    if cap == 0 || maxCount == 0 { return 0 }
+    if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return -22 }
+    guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
+    return logFormatRecentTail(Int(maxCount), into: dst, capacity: Int(cap))
 }

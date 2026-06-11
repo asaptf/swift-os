@@ -50,8 +50,8 @@ private let kernelLoadOffset: UInt = 0x80000 // kernel links/loads at ramBase + 
 private let trapFrameSPIndex = 31
 private let trapFrameELRIndex = 32
 private let trapFrameSPSRIndex = 33
-private let trapFrameWords = 36
-private let trapFrameBytes = trapFrameWords * 8
+private let trapFrameBytes = 816
+private let trapFrameWords = trapFrameBytes / 8
 private let signalFrameMagic: UInt = 0x5349_4746_5241_4D45 // "SIGFRAME"
 private let signalFrameHeaderWords = 2
 private let signalFrameWords = signalFrameHeaderWords + trapFrameWords
@@ -2825,7 +2825,8 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     if kstack == 0 { address_space_destroy(childTtbr0); return -12 }
     let kstackTop = kstack + UInt(kernelStackPages) * PageAllocator.pageSize
 
-    // Copy the parent's 288-byte trap frame to the top of the child kstack.
+    // Copy the parent's full lower-EL trap frame, including FP/SIMD state, to
+    // the top of the child kstack.
     let childFrameAddr = kstackTop - UInt(trapFrameBytes)
     let childFrame = UnsafeMutablePointer<UInt>(bitPattern: childFrameAddr)!
     for i in 0..<trapFrameWords { childFrame[i] = frame[i] }

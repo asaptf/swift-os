@@ -120,6 +120,7 @@ static long sys4(long n, long a0, long a1, long a2, long a3) {
 #define SYS_NANOSLEEP 57
 #define SYS_EVENTFD 71
 #define SYS_SIGRETURN 76
+#define SYS_SOCKETPAIR 78
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -2079,7 +2080,27 @@ W int getpeername(int fd, struct sockaddr *addr, socklen_t *len) {
     return getsockname(fd, addr, len);
 }
 W int shutdown(int a, int b) { (void)a; (void)b; return 0; }
-W int socketpair(int a, int b, int c, int d[2]) { (void)a; (void)b; (void)c; (void)d; errno = ENOSYS; return -1; }
+W int socketpair(int domain, int type, int protocol, int fds[2]) {
+    if (!fds) { errno = EFAULT; return -1; }
+    int base = socket_type_base(type);
+    if (domain != AF_UNIX) { errno = EAFNOSUPPORT; return -1; }
+    if (base != SOCK_STREAM) { errno = EPROTONOSUPPORT; return -1; }
+    if (protocol != 0) { errno = EPROTONOSUPPORT; return -1; }
+
+    enum {
+        SWOS_SOCKETPAIR_NONBLOCK = 1,
+        SWOS_SOCKETPAIR_CLOEXEC = 2,
+    };
+    int flags = 0;
+    if (type & SOCK_NONBLOCK) { flags |= SWOS_SOCKETPAIR_NONBLOCK; }
+    if (type & SOCK_CLOEXEC) { flags |= SWOS_SOCKETPAIR_CLOEXEC; }
+    int r = sysret(sys3(SYS_SOCKETPAIR, (long)fds, flags, 0));
+    if (r == 0) {
+        socket_meta_set(fds[0], domain, base, protocol);
+        socket_meta_set(fds[1], domain, base, protocol);
+    }
+    return r;
+}
 W int h_errno;
 
 static int c_isdigit(char c) { return c >= '0' && c <= '9'; }

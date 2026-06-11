@@ -42,6 +42,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Inspect files and metadata | `ls`, `cat`, `head`, `wc`, `date` | `capFsRead` for base-image reads | `tests/swift_coreutils_test.sh`, `tests/swift_ls_test.sh`, `tests/swift_headwc_test.sh` |
 | Use tmpfs scratch space | `mkdir`, `touch`, `echo`, `mv`, `rm`, `rmdir`, `chmod`, `chown` | `capTmpWrite` and paths under `/tmp` | `tests/swift_fileops_test.sh`, `tests/swift_chmodown_test.sh` |
 | Inspect processes and resources | `ps`, `top` | Process-inspection authority in the current context | `tests/top_test.sh`, `tests/busybox_test.sh` |
+| Inspect kernel logs | `logtail` | `capLogExport` in the current context | `tests/log_export_test.sh` |
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet` | `tests/ssh_transport_test.sh` |
@@ -206,6 +207,32 @@ Notes:
 - Without filesystem read authority, the numeric principal is still printed.
 
 Acceptance coverage: `tests/busybox_test.sh`, `tests/cap_enforce_test.sh`.
+
+### `logtail`
+
+Print a serialized tail of the in-memory kernel log ring.
+
+```text
+logtail [max-records]
+```
+
+Examples:
+
+```sh
+logtail
+logtail 8
+```
+
+Notes:
+
+- The caller must hold `capLogExport`; seeded accounts do not receive it by
+  default.
+- Output is newline-separated key=value records such as
+  `tick=N level=I source=tag msg="text"`.
+- This is a local diagnostic command, not a persistent log store or remote
+  collector.
+
+Acceptance coverage: `tests/log_export_test.sh`.
 
 ### `ps`
 
@@ -951,6 +978,7 @@ diagnostic fixtures than stable application interfaces.
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
 | `uvbarrierprobe` | `uvbarrierprobe` | Exercise C/newlib pthread barriers used by libuv's native barrier path. | `tests/uvbarrier_test.sh` |
+| `uvsocketpairprobe` | `uvsocketpairprobe` | Exercise C/newlib `AF_UNIX` socketpair behavior used by libuv local streams. | `tests/uvsocketpair_test.sh` |
 | `uvwakeprobe` | `uvwakeprobe` | Exercise C/newlib pthread-to-eventfd async wake over a blocking poll waiter. | `tests/uvwake_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
@@ -1301,6 +1329,7 @@ are not the primary operator interface.
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
 | `uvbarrierprobe` | newlib compat reusable `pthread_barrier_*` phases, matching libuv's native barrier branch. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvbarrier_test.sh` |
+| `uvsocketpairprobe` | newlib compat full-duplex `AF_UNIX` `socketpair`, matching libuv local stream/process pipe expectations. | Yes, when validating C runtime libuv local stream compatibility. | `tests/uvsocketpair_test.sh` |
 | `uvwakeprobe` | newlib compat worker-thread `eventfd_write` waking a main-thread blocking `poll`, matching libuv async wake expectations. | Yes, when validating C runtime event-loop wake compatibility. | `tests/uvwake_test.sh` |
 | `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `sigreturn` handler frames, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
 | `socketprobe` | newlib compat `pipe2`, `socket` flags, `accept4`, `getaddrinfo`, socket options, TCP client, and TCP server paths. | Yes, when validating C runtime network compatibility. | `tests/socket_test.sh` |
@@ -1310,6 +1339,7 @@ are not the primary operator interface.
 | `fdopsdemo` | `dup`, `dup2`, shared offsets, pipes, `poll`, rename, unlink, mkdir, and rmdir. | Yes, for fd/VFS diagnostics. | `tests/boot_test.sh` |
 | `securitydemo` | Invalid pointer, bad fd, readonly, directory, and syscall abuse rejection. | Yes, for syscall hardening diagnostics. | `tests/boot_test.sh` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
+| `logtail-probe` | Capability-gate probe for `SYS_LOG_READ`: denied without `capLogExport`, then reads after an explicit admin-context grant. | Yes, for log export acceptance only. | `tests/log_export_test.sh` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |

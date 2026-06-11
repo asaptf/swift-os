@@ -101,7 +101,7 @@ let capFsRead: UInt64         = 1 << 2
 let capTmpWrite: UInt64       = 1 << 3
 let capProcessInspect: UInt64 = 1 << 4
 let capNet: UInt64            = 1 << 5
-let capLogExport: UInt64      = 1 << 6   // reserved; not boot-granted by default
+let capLogExport: UInt64      = 1 << 6   // log export; not boot-granted by default
 ```
 
 Every process carries a `(principal, session, caps)` triple. `caps` is a single 64-bit word of permission
@@ -111,8 +111,9 @@ bits. Authorization is a bitmask test against the **running process's** word:
 - the namespace-mutating syscalls check `caps & capTmpWrite`;
 - `vfsSocket` / `vfsResolve` check `caps & capNet`;
 - `processLogin` is gated on `caps & capConsole`.
-- the logging subsystem reserves `capLogExport` for future ring export / sink installation hooks, but
-  no current process receives that bit by default.
+- `SYS_LOG_READ` / `logtail` checks `caps & capLogExport`; the same bit remains
+  reserved for future sink installation, and no seeded account receives it by
+  default.
 
 Authority no longer flows only by ambient inheritance. `fork` still copies the
 parent's handle table as the compatibility path, but `spawn(path)` starts with
