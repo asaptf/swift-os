@@ -408,6 +408,9 @@ Current Hetzner readiness status:
   the existing ARP/ICMP probe runs.
 - If DHCP does not answer, the QEMU/slirp fallback remains
   `10.0.2.15` / `10.0.2.2` / `10.0.2.3`, preserving local network tests.
+- Outbound IPv4 sockets select their Ethernet next hop from the configured
+  subnet mask: same-subnet peers are ARPed directly, while off-link destinations
+  and `/32` cloud-style leases use the configured gateway.
 - This matches Hetzner's documented Primary IPv4 model, where cloud servers get
   their Primary IPv4 via DHCP. Their static examples use `/32` IPv4 addressing
   with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.

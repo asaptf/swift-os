@@ -35,6 +35,7 @@ Use this guide with:
 | Guest IPv4 | DHCPv4 lease when offered; fallback `10.0.2.15` for QEMU slirp |
 | Host/gateway alias | DHCP router option when offered; fallback `10.0.2.2` |
 | Default DNS | DHCP DNS option when offered; fallback QEMU slirp DNS at `10.0.2.3:53` |
+| IPv4 routing | Outbound sockets ARP same-subnet peers directly and use the configured gateway for off-link or `/32` destinations |
 | DHCP | Minimal boot-time DHCPv4 DISCOVER/OFFER/REQUEST/ACK; no renewal or user command yet |
 | Socket authority | Processes need `capNet`; seeded `root` has it |
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |

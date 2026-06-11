@@ -15,6 +15,17 @@ let ipProtoUDP: UInt8 = 17
 @inline(__always) func ipSrc(_ p: UnsafeRawPointer) -> IPv4 { be32(p, 12) }
 @inline(__always) func ipDst(_ p: UnsafeRawPointer) -> IPv4 { be32(p, 16) }
 
+/// Return the IPv4 address whose MAC should be resolved for an outbound packet.
+/// On-link destinations are ARPed directly; off-link destinations go through the
+/// configured gateway. A /32 mask therefore routes every non-self destination via
+/// the gateway, matching point-to-point cloud IPv4 setups.
+func ipv4RouteTarget(localIP: IPv4, subnetMask: IPv4, gatewayIP: IPv4, dstIP: IPv4) -> IPv4 {
+    if subnetMask != 0 && ((dstIP & subnetMask) == (localIP & subnetMask)) {
+        return dstIP
+    }
+    return gatewayIP != 0 ? gatewayIP : dstIP
+}
+
 /// True if the header is well-formed and its checksum verifies (sums to 0).
 func ipValidChecksum(_ p: UnsafeRawPointer) -> Bool {
     let ihl = ipHeaderLenBytes(p)
