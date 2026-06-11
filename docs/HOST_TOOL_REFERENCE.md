@@ -40,7 +40,7 @@ format, manifest, signature, or fixture.
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
-| `build/swport` | `make swport` | Validate/list/inspect the ports catalog and validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and `databases/sqlite` recipes. | `make ports-catalog-test`, `make ports-recipe-test` |
+| `build/swport` | `make swport` | Validate/list/inspect the ports catalog; validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and `databases/sqlite` recipes; and validate/manifest the `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` intake scaffolds. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
 | `scripts/build-bzip2.sh` | `make ports-bzip2-repo-fixture` | Cross-build static bzip2 CLI tools, `libbz2.a`, header, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-bzip2-repo-fixture` |
@@ -194,7 +194,9 @@ inside QEMU.
 
 `swport` implements the checked ports catalog and recipe subcommands for the
 current eleven-package seed: Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
-tzdata, nginx, and sqlite.
+tzdata, nginx, and sqlite. It also validates the blocked Node.js/npm/PM2 intake
+recipes at `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and
+`ports/sysutils/pm2/Port.json`.
 The tool validates catalog metadata, validates recipes, emits `.swpkg`
 manifests, verifies source checksums, packages clean staged roots, and publishes
 signed local repository fixtures through `swpkg` and `pkgrepo`. The Makefile
@@ -234,6 +236,9 @@ build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
 build/swport recipe validate databases/sqlite
+build/swport recipe validate lang/nodejs
+build/swport recipe validate lang/npm
+build/swport recipe validate sysutils/pm2
 build/swport recipe manifest lang/lua --output build/lua-manifest.json
 build/swport recipe manifest archivers/zlib --output build/zlib-manifest.json
 build/swport recipe manifest archivers/bzip2 --output build/bzip2-manifest.json
@@ -245,6 +250,9 @@ build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
 build/swport recipe manifest databases/sqlite --output build/sqlite-manifest.json
+build/swport recipe manifest lang/nodejs --output build/nodejs-manifest.json
+build/swport recipe manifest lang/npm --output build/npm-manifest.json
+build/swport recipe manifest sysutils/pm2 --output build/pm2-manifest.json
 build/swport recipe fetch lang/lua --cache build/swport-distfiles
 build/swport recipe package lang/lua --root <staged-root> --output build/lua.swpkg
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
@@ -284,8 +292,9 @@ Use `make ports-catalog-test` before changing `ports/catalog.json`, and
 `ports/archivers/zstd/Port.json`, `ports/archivers/xz/Port.json`,
 `ports/archivers/libarchive/Port.json`, `ports/security/ca-certificates/Port.json`,
 `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`,
-`ports/www/nginx/Port.json`, `ports/databases/sqlite/Port.json`, or recipe
-handling. Use the package-specific fixture targets (`make ports-lua-repo-fixture`,
+`ports/www/nginx/Port.json`, `ports/databases/sqlite/Port.json`,
+`ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`,
+`ports/sysutils/pm2/Port.json`, or recipe handling. Use the package-specific fixture targets (`make ports-lua-repo-fixture`,
 `make ports-zlib-repo-fixture`, `make ports-bzip2-repo-fixture`,
 `make ports-zstd-repo-fixture`, `make ports-xz-repo-fixture`,
 `make ports-libarchive-repo-fixture`, `make ports-ca-certificates-repo-fixture`,

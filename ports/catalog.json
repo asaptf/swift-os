@@ -362,6 +362,36 @@
       "notes": "Native addons are deferred until dynamic loading policy exists."
     },
     {
+      "name": "npm",
+      "portPath": "lang/npm",
+      "tier": 4,
+      "category": "runtime-package-manager",
+      "status": "blocked",
+      "difficulty": "XL",
+      "upstream": "npm CLI",
+      "summary": "JavaScript package manager for the SwiftOS Node.js runtime.",
+      "runtimeDependencies": ["nodejs"],
+      "prerequisiteBundles": ["base-posix", "proc-basic", "net-client", "tls-base"],
+      "blockedBy": ["nodejs runtime port", "writable global-prefix policy", "registry HTTPS transport policy", "node-gyp/native addon policy"],
+      "smokeTest": "npm --version, then install a pure-JS package into /tmp/npm-prefix",
+      "notes": "Package npm separately from nodejs so the immutable root, /tmp cache, registry access, and native-addon decisions stay explicit."
+    },
+    {
+      "name": "pm2",
+      "portPath": "sysutils/pm2",
+      "tier": 4,
+      "category": "service",
+      "status": "blocked",
+      "difficulty": "L",
+      "upstream": "PM2",
+      "summary": "Node.js process manager for SwiftOS-hosted services.",
+      "runtimeDependencies": ["nodejs", "npm"],
+      "prerequisiteBundles": ["base-posix", "proc-basic", "net-server", "service", "threads"],
+      "blockedBy": ["nodejs runtime port", "signal delivery", "service supervisor contract", "persistent PM2 state policy"],
+      "smokeTest": "pm2-runtime start /tmp/app.js --no-daemon and fetch the app from the host",
+      "notes": "Start with pm2-runtime/no-daemon against one app. Cluster mode, startup generation, file watching, and durable process lists wait for service and storage policy."
+    },
+    {
       "name": "openjdk-runtime",
       "portPath": "java/openjdk-runtime",
       "tier": 4,

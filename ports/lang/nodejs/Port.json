@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "name": "nodejs",
+  "version": "24.16.0",
+  "revision": 1,
+  "category": "lang",
+  "summary": "JavaScript server runtime for SwiftOS",
+  "homepage": "https://nodejs.org/",
+  "license": ["MIT"],
+  "maturity": "scaffolded",
+  "source": {
+    "url": "https://nodejs.org/download/release/v24.16.0/node-v24.16.0.tar.gz",
+    "sha256": "f511d32e3876cb54fa6ddccaa8dd46649ae6ebe9e499c57531c5ca56e7ad4548"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "node-configure-make",
+    "args": [
+      "--dest-cpu=arm64",
+      "--dest-os=swiftos",
+      "--cross-compiling",
+      "--fully-static",
+      "--without-dtrace",
+      "--without-etw",
+      "--without-npm",
+      "--without-corepack",
+      "--v8-lite-mode"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CXX": "aarch64-elf-g++",
+      "LINK": "aarch64-elf-g++",
+      "PKG_CONFIG_PATH": "${PORTS_ROOT}/openssl/usr/lib/pkgconfig:${PORTS_ROOT}/zlib/usr/lib/pkgconfig",
+      "SWOS_CFLAGS": "-ffreestanding -Os -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "SWOS_LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "node", "porting-notes"]
+  },
+  "package": {
+    "depends": ["ca-certificates", "openssl", "zlib"],
+    "provides": ["node", "nodejs"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/node", "to": "/usr/bin/node", "mode": "0755" }
+    ],
+    "capabilities": {
+      "default": ["capFsRead", "capTmpWrite"],
+      "services": ["tcp-client", "tcp-server"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/node -e 'console.log(process.version)'",
+      "/usr/bin/node -e 'require(\"http\").createServer((_, r) => r.end(\"ok\")).listen(8080)'"
+    ]
+  },
+  "notes": "Scaffold only. The first SwiftOS Node.js port should be static, source-built, and likely start with a jitless or V8-lite configuration until the executable-memory policy is settled. Native addons, dlopen, corepack, and bundled npm are deliberately deferred; npm is tracked as its own package so package-manager behavior remains explicit."
+}

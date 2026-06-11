@@ -75,6 +75,18 @@ let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
 let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
 let sqliteRecipe = repo.appendingPathComponent("ports/databases/sqlite/Port.json")
+let nodejsRecipe = repo.appendingPathComponent("ports/lang/nodejs/Port.json")
+let npmRecipe = repo.appendingPathComponent("ports/lang/npm/Port.json")
+let pm2Recipe = repo.appendingPathComponent("ports/sysutils/pm2/Port.json")
+guard FileManager.default.isReadableFile(atPath: nodejsRecipe.path) else {
+    fail("missing ports/lang/nodejs/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: npmRecipe.path) else {
+    fail("missing ports/lang/npm/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: pm2Recipe.path) else {
+    fail("missing ports/sysutils/pm2/Port.json")
+}
 guard FileManager.default.isReadableFile(atPath: tzdataRecipe.path) else {
     fail("missing ports/sysutils/tzdata/Port.json")
 }
@@ -109,6 +121,90 @@ let validate = run(swport, ["recipe", "validate", "lang/lua"])
 requireSuccess(validate, "validate lua recipe")
 guard output(validate).contains("recipe: OK lua-5.4.8_1") else {
     fail("validate output did not confirm lua recipe: \(output(validate))")
+}
+
+let nodejsValidate = run(swport, ["recipe", "validate", "lang/nodejs"])
+requireSuccess(nodejsValidate, "validate nodejs recipe")
+guard output(nodejsValidate).contains("recipe: OK nodejs-24.16.0_1") else {
+    fail("validate output did not confirm nodejs recipe: \(output(nodejsValidate))")
+}
+let nodejsManifestURL = temp.appendingPathComponent("nodejs-manifest.json")
+let nodejsManifest = run(swport, ["recipe", "manifest", "lang/nodejs", "--output", nodejsManifestURL.path])
+requireSuccess(nodejsManifest, "generate nodejs manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: nodejsManifestURL)) as? [String: Any] else {
+        fail("generated nodejs manifest is not a JSON object")
+    }
+    requireString(object, "name", "nodejs")
+    requireString(object, "version", "24.16.0")
+    guard let depends = object["depends"] as? [[String: Any]],
+          Set(depends.compactMap { $0["name"] as? String }) == ["ca-certificates", "openssl", "zlib"] else {
+        fail("nodejs manifest dependencies were \(String(describing: object["depends"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == ["/usr/bin/node"] else {
+        fail("unexpected nodejs manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated nodejs manifest: \(error)")
+}
+
+let npmValidate = run(swport, ["recipe", "validate", "lang/npm"])
+requireSuccess(npmValidate, "validate npm recipe")
+guard output(npmValidate).contains("recipe: OK npm-11.16.0_1") else {
+    fail("validate output did not confirm npm recipe: \(output(npmValidate))")
+}
+let npmManifestURL = temp.appendingPathComponent("npm-manifest.json")
+let npmManifest = run(swport, ["recipe", "manifest", "lang/npm", "--output", npmManifestURL.path])
+requireSuccess(npmManifest, "generate npm manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: npmManifestURL)) as? [String: Any] else {
+        fail("generated npm manifest is not a JSON object")
+    }
+    requireString(object, "name", "npm")
+    requireString(object, "version", "11.16.0")
+    guard let depends = object["depends"] as? [[String: Any]],
+          Set(depends.compactMap { $0["name"] as? String }) == ["nodejs"] else {
+        fail("npm manifest dependencies were \(String(describing: object["depends"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == ["/usr/bin/npm", "/usr/bin/npx", "/usr/lib/node_modules/npm"] else {
+        fail("unexpected npm manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated npm manifest: \(error)")
+}
+
+let pm2Validate = run(swport, ["recipe", "validate", "sysutils/pm2"])
+requireSuccess(pm2Validate, "validate pm2 recipe")
+guard output(pm2Validate).contains("recipe: OK pm2-7.0.1_1") else {
+    fail("validate output did not confirm pm2 recipe: \(output(pm2Validate))")
+}
+let pm2ManifestURL = temp.appendingPathComponent("pm2-manifest.json")
+let pm2Manifest = run(swport, ["recipe", "manifest", "sysutils/pm2", "--output", pm2ManifestURL.path])
+requireSuccess(pm2Manifest, "generate pm2 manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: pm2ManifestURL)) as? [String: Any] else {
+        fail("generated pm2 manifest is not a JSON object")
+    }
+    requireString(object, "name", "pm2")
+    requireString(object, "version", "7.0.1")
+    guard let depends = object["depends"] as? [[String: Any]],
+          Set(depends.compactMap { $0["name"] as? String }) == ["nodejs", "npm"] else {
+        fail("pm2 manifest dependencies were \(String(describing: object["depends"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/pm2",
+        "/usr/bin/pm2-dev",
+        "/usr/bin/pm2-docker",
+        "/usr/bin/pm2-runtime",
+        "/usr/lib/node_modules/pm2",
+    ] else {
+        fail("unexpected pm2 manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated pm2 manifest: \(error)")
 }
 
 let manifestURL = temp.appendingPathComponent("manifest.json")
@@ -1011,4 +1107,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates nodejs/npm/pm2 intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")

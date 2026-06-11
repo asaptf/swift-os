@@ -195,6 +195,7 @@ USER_SWIFT_FLAGS := \
 SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
 NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
+NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -isystem userland/compat -isystem $(SYSROOT)/include -c
 NEWLIB_LDFLAGS := -nostartfiles -nostdlib -static -T userland/user_newlib.ld -Wl,-z,max-page-size=4096 -L $(SYSROOT)/lib
 NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 # Garbage-collect unused sections; entry is _start from the boot stub.
@@ -263,6 +264,8 @@ USER_SELFEXECDEMO_ELF := $(BUILD)/selfexecdemo.elf
 USER_FSDEMO_ELF := $(BUILD)/fsdemo.elf
 USER_BRKDEMO_ELF := $(BUILD)/brkdemo.elf
 USER_NEWLIBTEST_ELF := $(BUILD)/newlibtest.elf
+USER_CLOCKPROBE_ELF := $(BUILD)/clockprobe.elf
+USER_MPROTECTPROBE_ELF := $(BUILD)/mprotectprobe.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
 USER_EXECDEMO_ELF := $(BUILD)/execdemo.elf
@@ -365,6 +368,8 @@ BASE_EXEC_ELFS := \
 	$(USER_FSDEMO_ELF) \
 	$(USER_BRKDEMO_ELF) \
 	$(USER_NEWLIBTEST_ELF) \
+	$(USER_CLOCKPROBE_ELF) \
+	$(USER_MPROTECTPROBE_ELF) \
 	$(USER_COPROC_ELF) \
 	$(USER_FORKDEMO_ELF) \
 	$(USER_EXECDEMO_ELF) \
@@ -376,7 +381,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test clock-test mprotect-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -817,6 +822,21 @@ $(BUILD)/n_newlibtest.o: userland/newlibtest.c Makefile | $(BUILD)/.dir
 $(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_compat_stubs.o: userland/compat/stubs.c userland/compat/time.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(BUILD)/n_clockprobe.o: userland/clockprobe.c userland/compat/time.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_CLOCKPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_clockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_clockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+$(BUILD)/n_mprotectprobe.o: userland/mprotectprobe.c userland/compat/sys/mman.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_MPROTECTPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_mprotectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_mprotectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 # The userland ELFs are no longer embedded (M11d): they ship in the packed base
 # image (see the $(BASE_IMG) rule) and the kernel loads them from disk.
 
@@ -1035,6 +1055,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/swift_chmodown_test.sh
 	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
+	./tests/clock_test.sh
+	./tests/mprotect_test.sh
 	./tests/sleep_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
@@ -1077,6 +1099,12 @@ qemu-virt-hardware-map-test: | $(BUILD)/.dir
 
 smp-test: build base-image
 	./tests/smp_boot_test.sh
+
+clock-test: build $(QEMU_DTB) base-image
+	./tests/clock_test.sh
+
+mprotect-test: build $(QEMU_DTB) base-image
+	./tests/mprotect_test.sh
 
 smp-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
@@ -1260,7 +1288,7 @@ ports-catalog-test: $(SWPORT) $(SWPORT_CATALOG_TEST) ports/catalog.json
 $(SWPORT_RECIPE_TEST): tests/swport_recipe_test.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/swport_recipe_test.swift -o $@
 
-ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json
+ports-recipe-test: $(SWPORT) $(SWPKG) $(PKGREPO) $(SWPORT_RECIPE_TEST) ports/catalog.json ports/lang/lua/Port.json ports/archivers/zlib/Port.json ports/archivers/bzip2/Port.json ports/archivers/zstd/Port.json ports/archivers/xz/Port.json ports/archivers/libarchive/Port.json ports/security/ca-certificates/Port.json ports/devel/pcre2/Port.json ports/sysutils/tzdata/Port.json ports/www/nginx/Port.json ports/databases/sqlite/Port.json ports/lang/nodejs/Port.json ports/lang/npm/Port.json ports/sysutils/pm2/Port.json
 	$(SWPORT_RECIPE_TEST)
 
 ports-lua-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/lang/lua/Port.json scripts/build-lua.sh
@@ -1441,6 +1469,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_FSDEMO_ELF) $(BASE_ROOT)/bin/fsdemo
 	cp $(USER_BRKDEMO_ELF) $(BASE_ROOT)/bin/brkdemo
 	cp $(USER_NEWLIBTEST_ELF) $(BASE_ROOT)/bin/newlibtest
+	cp $(USER_CLOCKPROBE_ELF) $(BASE_ROOT)/bin/clockprobe
+	cp $(USER_MPROTECTPROBE_ELF) $(BASE_ROOT)/bin/mprotectprobe
 	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc
 	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo
 	cp $(USER_EXECDEMO_ELF) $(BASE_ROOT)/bin/execdemo
