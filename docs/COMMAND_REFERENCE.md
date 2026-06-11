@@ -1124,6 +1124,7 @@ are not the primary operator interface.
 | `fsdemo` | `getcwd`, `getdents`, `stat`, `chdir`, tmpfs I/O, and confinement checks. | Yes, for filesystem ABI diagnostics. | `tests/boot_test.sh` |
 | `brkdemo` | `sbrk` heap growth across page boundaries. | Yes, for allocator bring-up diagnostics. | `tests/boot_test.sh` |
 | `newlibtest` | newlib `printf`, `malloc`, `fopen`, and file I/O over the SwiftOS syscall port. | Yes, when validating C compatibility. | `tests/boot_test.sh` |
+| `clockprobe` | newlib compat `clock_gettime`, `clock_getres`, realtime clock, monotonic ticks, and `nanosleep` interaction. | Yes, when validating C runtime timing compatibility. | `tests/clock_test.sh` |
 | `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |
 | `forkdemo` | `fork`, `waitpid`, inherited cwd/fd state, IPC polling, and moved-handle receive. | Yes, for process and IPC diagnostics. | `tests/boot_test.sh`, `tests/cow_test.sh` |
 | `execdemo` | `execve` replacement of the current process image. | Yes, for exec diagnostics. | `tests/boot_test.sh` |

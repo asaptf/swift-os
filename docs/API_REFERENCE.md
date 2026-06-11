@@ -62,6 +62,7 @@ source, then follow its Makefile rule and acceptance test.
 | Anonymous and file-backed memory maps | `userland/mmapdemo.swift`, `userland/llm.swift`, `userland/llmd.swift` | `swiftos_mmap`, `swiftos_mmap_file`, `swiftos_mprotect`, W^X rules | `./tests/mmap_test.sh`, `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
+| C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | A/B update store operations | `userland/swos-confirm.swift`, `userland/swos-activate.swift`, `userland/swos-update.swift` | `update_confirm`, `update_activate`, `update_stage`, `swiftos_update_*` | `./tests/ab_confirm_test.sh`, `./tests/ab_activate_test.sh`, `./tests/ab_stage_test.sh` |
 | Kernel slot staging, activation, and health confirmation | `userland/swos-kstage.swift`, `userland/swos-kactivate.swift`, `userland/swos-kconfirm.swift` | `kernel_stage`, `kernel_activate`, `kernel_confirm`, `swiftos_kernel_*` | `./tests/uefi_kstage_test.sh`, `./tests/uefi_kactivate_test.sh`, `./tests/uefi_kconfirm_test.sh` |
@@ -1270,10 +1271,17 @@ emulation. Important files:
 | `userland/compat/netinet/in.h` | IPv4/IPv6 address structures |
 | `userland/compat/netdb.h` | name-resolution declarations |
 | `userland/compat/poll.h` | `pollfd` and event constants |
+| `userland/compat/time.h` | realtime and monotonic clock declarations |
 | `userland/compat/termios.h` | terminal compatibility declarations |
 
 Expect some POSIX calls to be no-ops or `ENOSYS` stubs until a port needs real
 behavior and tests are added.
+
+`clock_gettime` supports `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`,
+`CLOCK_MONOTONIC`, `CLOCK_MONOTONIC_RAW`, `CLOCK_MONOTONIC_COARSE`, and
+`CLOCK_BOOTTIME`. Realtime is backed by `SYS_TIME` and the QEMU PL031 RTC;
+monotonic clocks are backed by `SYS_SYSINFO` uptime ticks and timer Hz. CPU-time
+and alarm clocks are not implemented and fail with `EINVAL`.
 
 ## API Verification Map
 
@@ -1289,6 +1297,7 @@ one booting acceptance path:
 | IPC endpoint transfer | `kernel/vfs/handle.swift`, `kernel/vfs/vfs.swift`, `userland/lib/syscall.h` | `./tests/ipc_socket_transfer_test.sh`, `./tests/boot_test.sh` |
 | Device discovery and grants | `kernel/vfs/vfs.swift`, `userland/lib/syscall.h`, `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `make c5-device-authority-test` |
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
+| C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |

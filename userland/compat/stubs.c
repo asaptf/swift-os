@@ -65,6 +65,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_FTRUNCATE 33
 #define SYS_FCNTL 34
 #define SYS_CHOWN 36
+#define SYS_TIME 37
 #define SYS_SOCKET 38
 #define SYS_BIND 39
 #define SYS_SENDTO 40
@@ -73,6 +74,7 @@ static long sys3(long n, long a0, long a1, long a2) {
 #define SYS_ACCEPT 43
 #define SYS_CONNECT 44
 #define SYS_RESOLVE 45
+#define SYS_SYSINFO 46
 #define SYS_MMAP 54
 #define SYS_MUNMAP 55
 #define SYS_NANOSLEEP 57
@@ -343,6 +345,91 @@ W int uname(struct utsname *u) {
     return 0;
 }
 W int clearenv(void) { if (environ) environ[0] = 0; return 0; }
+struct swiftos_sysinfo_legacy {
+    unsigned long uptime_ticks;
+    unsigned long idle_ticks;
+    unsigned long mem_total;
+    unsigned long mem_free;
+    unsigned long kernel_image;
+    unsigned long kernel_heap;
+    unsigned int hz;
+    unsigned int proc_total;
+    unsigned int proc_running;
+    unsigned int reserved;
+};
+
+static int swiftos_monotonic_timespec(struct timespec *tp, unsigned int *hz_out) {
+    struct swiftos_sysinfo_legacy info;
+    memset(&info, 0, sizeof(info));
+    long r = sys3(SYS_SYSINFO, (long)&info, sizeof(info), 0);
+    if (r < 0) { return sysret(r); }
+    if (info.hz == 0) { errno = EIO; return -1; }
+    if (hz_out) { *hz_out = info.hz; }
+    if (tp) {
+        unsigned long ticks = info.uptime_ticks;
+        unsigned long hz = info.hz;
+        tp->tv_sec = (time_t)(ticks / hz);
+        tp->tv_nsec = (long)(((ticks % hz) * 1000000000UL) / hz);
+    }
+    return 0;
+}
+
+static int swiftos_realtime_timespec(struct timespec *tp) {
+    long sec = sys3(SYS_TIME, 0, 0, 0);
+    if (tp) {
+        tp->tv_sec = (time_t)sec;
+        tp->tv_nsec = 0;
+    }
+    return 0;
+}
+
+W int clock_gettime(clockid_t clock_id, struct timespec *tp) {
+    if (!tp) { errno = EFAULT; return -1; }
+    switch (clock_id) {
+    case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
+        return swiftos_realtime_timespec(tp);
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME:
+        return swiftos_monotonic_timespec(tp, 0);
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
+
+W int clock_getres(clockid_t clock_id, struct timespec *res) {
+    switch (clock_id) {
+    case CLOCK_REALTIME:
+    case CLOCK_REALTIME_COARSE:
+        if (res) { res->tv_sec = 1; res->tv_nsec = 0; }
+        return 0;
+    case CLOCK_MONOTONIC:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_BOOTTIME: {
+        unsigned int hz = 0;
+        if (swiftos_monotonic_timespec(0, &hz) < 0) { return -1; }
+        if (res) {
+            if (hz <= 1) {
+                res->tv_sec = 1;
+                res->tv_nsec = 0;
+            } else {
+                res->tv_sec = 0;
+                res->tv_nsec = (long)(1000000000UL / hz);
+                if (res->tv_nsec == 0) { res->tv_nsec = 1; }
+            }
+        }
+        return 0;
+    }
+    default:
+        errno = EINVAL;
+        return -1;
+    }
+}
+
 // Real blocking sleep over SYS_NANOSLEEP: the kernel parks us until the
 // requested time elapses (resolution = one timer tick). The kernel never
 // returns early (blocked syscalls aren't signal-interrupted yet), so there is

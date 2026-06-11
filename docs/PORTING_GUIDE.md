@@ -235,6 +235,7 @@ Current process and concurrency tools include:
 | Threads | `thread_create` |
 | Wait/wake primitive | `futex` |
 | Memory mapping | `mmap`, `mmap_file`, `munmap`, `mprotect` |
+| Runtime clocks | `clock_gettime`, `clock_getres`, `nanosleep` through newlib compat |
 
 Guidance:
 
@@ -388,6 +389,7 @@ Before merging a port:
 | `userland/udpecho.swift` | UDP server |
 | `userland/threadsdemo.swift` | Threads, atomics, futex |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
+| `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
 | `userland/llmd.swift` | File-backed mmap, model bundles, TCP serving |
 | `userland/spawndemo.c` | Spawn and explicit handle inheritance |
 | `userland/c4b_sockxfer.c` | IPC endpoint handle transfer |
