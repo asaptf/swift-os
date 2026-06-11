@@ -37,6 +37,21 @@ Use this guide with:
 - [Service Guide](SERVICE_GUIDE.md) for daemon lifecycle and supervisor limits.
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) for validated candidate handoff.
 
+## Choose A Server Software Evaluation Path
+
+Use this catalog to separate current package evidence from roadmap intent. A
+package is user-visible only when it has a checked package or repository proof;
+priority-tier rows without that proof are planning input for future ports.
+
+| Need | Start With | Evidence To Collect | Support Statement |
+| --- | --- | --- | --- |
+| Confirm whether a checked package works today | Current user-visible package state below | Package-specific fixture target, seed install transcript, and `build/swport catalog inspect NAME ports/catalog.json` when present | Supported as a current fixture only if the proof command exists and passes |
+| Evaluate a new server workload | [Compatibility Guide](COMPATIBILITY_GUIDE.md) workload intake plus the prerequisite bundles in this catalog | Source availability, static AArch64 link plan, required bundles, delivery path, and first QEMU proof | Compatible candidate, porting candidate, or blocked by a named current limit |
+| Add a small library or data package | Tier 0 rows and [Porting Guide](PORTING_GUIDE.md) | Recipe validation, `.swpkg` verification, signed repository fixture, and package-store install path | Candidate until the recipe and package proof are checked in |
+| Add a network daemon | Tier 1 or Tier 2 row plus [Service Guide](SERVICE_GUIDE.md) | Package fixture, capability request, service manifest plan, network smoke, and log markers | Not supported as an operator service until package and service smoke both pass |
+| Plan a runtime such as Python, Node.js, or JVM | Runtime tiers and [Package Management](PACKAGE_MANAGEMENT.md) | Missing ABI list, threading/mmap/filesystem blockers, static-linking strategy, and staged acceptance tests | Roadmap only until the runtime has its own checked package and QEMU smoke |
+| Write product or release notes | [Release Notes](RELEASE_NOTES.md), [Package Guide](PACKAGE_GUIDE.md), and this catalog | Exact command, artifact path, package list, serial log, and unsupported feature list | State current fixtures separately from future package-manager milestones |
+
 ## Current User-Visible Package State
 
 SwiftOS does not yet have a public hosted package repository. These package
