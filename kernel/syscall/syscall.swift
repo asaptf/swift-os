@@ -54,7 +54,7 @@ private let sysConfine: UInt = 50      // confine(path) — restrict FS access t
 private let sysEndpointCreate: UInt = 51 // endpoint_create(ends[2]) — IPC endpoint pair (C4a)
 private let sysIpcSend: UInt = 52      // ipc_send(fd, &msg) — bytes + optional handle (C4a)
 private let sysIpcRecv: UInt = 53      // ipc_recv(fd, &msg) -> bytes; installs any handle (C4a)
-private let sysMmap: UInt = 54         // mmap(len, prot) -> base VA — anonymous mmap (Track B)
+private let sysMmap: UInt = 54         // mmap(addr, len, prot, flags) -> base VA — anonymous mmap (Track B)
 private let sysMunmap: UInt = 55       // munmap(addr, len) — unmap+free anonymous pages (Track B)
 private let sysMprotect: UInt = 56     // mprotect(addr, len, prot) — change prot, W^X (Track B)
 private let sysNanosleep: UInt = 57    // nanosleep(seconds, nanos) — block on the timer tick
@@ -238,7 +238,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysMmap {
         // Returns a base VA on success or a negative errno (encoded in the UInt,
         // in [-4095, -1]); the userland bridge maps that to MAP_FAILED + errno.
-        frame[0] = processMmap(frame[1], Int32(truncatingIfNeeded: frame[2]))
+        frame[0] = processMmap(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]),
+                               Int32(truncatingIfNeeded: frame[3]))
         return // result is an address, not an errno
     } else if number == sysMmapFile {
         // File-backed read-only mmap (I2a). Like mmap, the result is an address

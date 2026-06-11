@@ -63,6 +63,7 @@ source, then follow its Makefile rule and acceptance test.
 | C mmap and executable-memory permissions | `userland/mprotectprobe.c` | `mmap`, `mprotect`, `munmap`, W^X rules through newlib compat | `./tests/mprotect_test.sh` |
 | C large mmap compatibility | `userland/largemmapprobe.c` | multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse through newlib compat | `make largemmap-test` |
 | C lazy mmap reservation compatibility | `userland/mmapreserveprobe.c` | `mmap(PROT_NONE)`, `MAP_NORESERVE`, `mprotect` commit/decommit, reserved-region JIT path | `make mmapreserve-test` |
+| C fixed mmap compatibility | `userland/mapfixedprobe.c` | `MAP_FIXED`, `MAP_FIXED_NOREPLACE`, guard-page recommit, fixed-region JIT path | `make mapfixed-test` |
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
 | C thread-sync compatibility | `userland/threadsyncprobe.c` | `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, `pthread_rwlock_*` | `./tests/threadsync_test.sh` |
@@ -829,20 +830,28 @@ Flags accepted by the POSIX-shaped wrapper:
 | Name | Value |
 | --- | ---: |
 | `MAP_PRIVATE` | `0x02` |
+| `MAP_FIXED` | `0x10` |
 | `MAP_ANONYMOUS` | `0x20` |
 | `MAP_ANON` | `MAP_ANONYMOUS` |
 | `MAP_NORESERVE` | `0x4000` |
+| `MAP_FIXED_NOREPLACE` | `0x100000` |
 | `MAP_FAILED` | `(void *)-1` |
 
 Current behavior:
 
 - Only anonymous private mappings are supported.
-- `addr`, `fd`, and `offset` are ignored by the wrapper.
+- Without `MAP_FIXED`, `addr` is treated as a hint and ignored; `fd` and
+  `offset` are ignored for anonymous mappings.
+- `MAP_FIXED` may replace pages inside an existing anonymous reservation.
+- `MAP_FIXED_NOREPLACE` returns `EEXIST` when the target overlaps an existing
+  anonymous reservation or live mapping.
 - `PROT_NONE` reserves virtual address space without resident frames.
 - Non-`PROT_NONE` `mmap` allocates fresh zero-filled pages eagerly.
 - `mprotect` inside an anonymous reservation commits missing pages for
   `PROT_READ`, `PROT_WRITE`, or `PROT_EXEC`, and `mprotect(PROT_NONE)`
   decommits live pages while preserving the reservation.
+- `MAP_FIXED(PROT_NONE)` decommits live pages in the fixed range while
+  preserving the surrounding reservation.
 - `PROT_WRITE | PROT_EXEC` is rejected.
 - The JIT pattern is RW mapping, write code, then `mprotect` to RX.
 
@@ -1373,6 +1382,7 @@ one booting acceptance path:
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |
 | C compat large mmap | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/largemmapprobe.c` | `make largemmap-test`, `./tests/boot_test.sh` |
 | C compat mmap reservation | `kernel/user/process.swift`, `userland/compat/sys/mman.h`, `userland/mmapreserveprobe.c` | `make mmapreserve-test`, `./tests/boot_test.sh` |
+| C compat fixed mmap | `kernel/user/process.swift`, `userland/compat/sys/mman.h`, `userland/mapfixedprobe.c` | `make mapfixed-test`, `./tests/boot_test.sh` |
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |

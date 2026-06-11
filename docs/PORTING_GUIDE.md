@@ -404,6 +404,7 @@ Before merging a port:
 | `userland/mprotectprobe.c` | newlib compat mmap, mprotect, executable memory, W^X |
 | `userland/largemmapprobe.c` | newlib compat multi-MiB mmap, partial mprotect, and munmap reuse |
 | `userland/mmapreserveprobe.c` | newlib compat PROT_NONE reservation, mprotect commit/decommit, and reserved JIT path |
+| `userland/mapfixedprobe.c` | newlib compat MAP_FIXED, MAP_FIXED_NOREPLACE, guard-page recommit, and fixed JIT path |
 | `userland/llmd.swift` | File-backed mmap, model bundles, TCP serving |
 | `userland/spawndemo.c` | Spawn and explicit handle inheritance |
 | `userland/c4b_sockxfer.c` | IPC endpoint handle transfer |

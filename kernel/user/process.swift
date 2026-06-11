@@ -161,6 +161,16 @@ private func anonVmaContains(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
     }
     return false
 }
+private func anonVmaOverlaps(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
+    let end = addr + pages * PageAllocator.pageSize
+    for i in 0..<maxAnonVmas {
+        let v = pAnonVmas[slot * maxAnonVmas + i]
+        if !v.active { continue }
+        let vEnd = v.base + v.pages * PageAllocator.pageSize
+        if addr < vEnd && end > v.base { return true }
+    }
+    return false
+}
 private func anonVmasDeactivateOverlap(_ slot: Int, _ addr: UInt, _ pages: UInt) {
     let end = addr + pages * PageAllocator.pageSize
     for i in 0..<maxAnonVmas {
@@ -3371,12 +3381,30 @@ private func roundUpPages(_ len: UInt) -> UInt {
     return ((len + mask) & ~mask) / PageAllocator.pageSize
 }
 
-/// mmap(NULL, len, prot, MAP_ANONYMOUS|MAP_PRIVATE): reserve `len` (rounded up to
-/// whole pages) in the descending mmap arena and return its base VA. A PROT_NONE
-/// mapping reserves VA only (no resident frames); other valid mappings eagerly
-/// allocate fresh, zero-filled memory. PROT_WRITE|PROT_EXEC is rejected with
-/// EINVAL. Errors are returned as a negative errno encoded in the UInt result.
-func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
+private let MAP_FIXED: Int32 = 0x10
+private let MAP_FIXED_NOREPLACE: Int32 = 0x100000
+
+private func mappedPageCount(_ ttbr0: UInt, _ addr: UInt, _ pages: UInt) -> Int {
+    var live = 0
+    var i: UInt = 0
+    while i < pages {
+        if address_space_translate(ttbr0, addr + i * PageAllocator.pageSize) != 0 { live += 1 }
+        i += 1
+    }
+    return live
+}
+
+/// mmap(addr, len, prot, flags): reserve `len` (rounded up to whole pages) in
+/// the anonymous mmap arena and return its base VA. Without MAP_FIXED, SwiftOS
+/// ignores addr as a hint and carves a fresh descending region. MAP_FIXED can
+/// replace pages only inside an existing anonymous reservation; this is enough
+/// for V8-style reserve-PROT_NONE, fixed-commit, guard-page flows without
+/// introducing arbitrary sparse user mappings yet. MAP_FIXED_NOREPLACE reports
+/// EEXIST when the target overlaps an existing reservation or live mapping.
+/// PROT_NONE reserves VA only; other valid mappings allocate zero-filled memory.
+/// PROT_WRITE|PROT_EXEC is rejected with EINVAL. Errors are returned as a
+/// negative errno encoded in the UInt result.
+func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
     let me = currentProcessSlot()
     guard me >= 0 else { return err(-22) } // EINVAL
@@ -3386,6 +3414,41 @@ func processMmap(_ len: UInt, _ prot: Int32) -> UInt {
 
     let pages = roundUpPages(len)
     let bytes = pages * PageAllocator.pageSize
+
+    let fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0
+    if fixed {
+        if addr == 0 || (addr & (PageAllocator.pageSize - 1)) != 0 { return err(-22) }
+        if addr < userMmapFloor || addr >= userMmapTop { return err(-22) }
+        if addr > userMmapTop - bytes { return err(-22) }
+        if prot != PROT_NONE && (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return err(-22) }
+
+        if (flags & MAP_FIXED_NOREPLACE) != 0 {
+            if anonVmaOverlaps(me, addr, pages) || mappedPageCount(pTtbr0[me], addr, pages) > 0 {
+                return err(-17) // EEXIST
+            }
+            return err(-22) // SwiftOS does not create sparse fixed reservations yet.
+        }
+
+        if !anonVmaContains(me, addr, pages) { return err(-22) }
+        let live = mappedPageCount(pTtbr0[me], addr, pages)
+        let unmapRc = addressSpaceMunmapForActiveCpuMask(pTtbr0[me],
+                                                         addr,
+                                                         pages,
+                                                         processAddressSpaceActiveCpuMaskForSlot(me))
+        if unmapRc != 0 { return err(Int(unmapRc)) }
+        pResPages[me] -= live
+        if prot == PROT_NONE { return addr }
+
+        let mapRc = addressSpaceMmapForActiveCpuMask(pTtbr0[me],
+                                                     addr,
+                                                     pages,
+                                                     prot,
+                                                     processAddressSpaceActiveCpuMaskForSlot(me))
+        if mapRc != 0 { return err(Int(mapRc)) }
+        pResPages[me] += Int(pages)
+        return addr
+    }
+
     // Carve the region just below the cursor, growing down. Guard against
     // underflow and against running into the stack region.
     if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
