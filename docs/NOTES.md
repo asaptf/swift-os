@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC26 SSH client runtime entropy preflight (2026-06-11)
+
+- `/bin/ssh` now uses `SYS_RANDOM` for its SSH_MSG_KEXINIT cookie and
+  Curve25519 client ephemeral scalar when the VM exposes virtio-rng. Without
+  virtio-rng it keeps the existing development fallback so non-rng QEMU profiles
+  remain reproducible.
+- Hardened `./tests/ssh_transport_test.sh` with optional QEMU extra arguments
+  and runtime-entropy assertions, then added
+  `./tests/ssh_runtime_entropy_test.sh` and `make ssh-runtime-entropy-test`.
+  The new focused gate reuses the full outbound OpenSSH transport proof with a
+  QEMU `virtio-rng-device`.
+
+**Acceptance.** `make ssh-runtime-entropy-test` proves that the guest brings up
+`virtio-rng`, `/bin/ssh` consumes `SYS_RANDOM` runtime entropy for KEX, rejects
+an untrusted host key, pins the trusted OpenSSH host key through
+`/etc/ssh/known_hosts`, completes strict-KEX
+`curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com`, and finishes
+the encrypted `ssh-userauth` service-request preauth exchange.
+
 ## HC25 SSHD runtime entropy preflight (2026-06-11)
 
 - Added a minimal modern virtio-rng MMIO driver for QEMU/cloud VM entropy

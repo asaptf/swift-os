@@ -75,7 +75,7 @@ capabilities the workload needs.
 | Direct serial candidate | Development, operator walkthroughs, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
 | UEFI/GPT candidate | Firmware handoff, disk layout, primary boot packaging | `swift-os.img`, `base.img` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Application service hosting | `httpd`, echo services, network tools | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
-| Cloud readiness preflight | DHCPv4, SSH client transport, SSHD remote-command, SSHD runtime entropy, and opt-in service restart readiness before provider-specific cloud work | Direct or UEFI artifacts plus virtio-net, optional virtio-rng, SSH seed files, and optional `/etc/swos/services` | `./tests/virtio_net_test.sh`, `./tests/ssh_transport_test.sh`, `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_supervision_test.sh` |
+| Cloud readiness preflight | DHCPv4, SSH client transport, SSH client runtime entropy, SSHD remote-command, SSHD runtime entropy, and opt-in service restart readiness before provider-specific cloud work | Direct or UEFI artifacts plus virtio-net, optional virtio-rng, SSH seed files, and optional `/etc/swos/services` | `./tests/virtio_net_test.sh`, `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh`, `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_supervision_test.sh` |
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
@@ -468,8 +468,10 @@ Current Hetzner readiness status:
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
   against `/etc/ssh/known_hosts`, handles strict KEX, derives
   `chacha20-poly1305@openssh.com` keys, and completes one encrypted
-  `ssh-userauth` service request/accept. The checked proof is
-  `./tests/ssh_transport_test.sh`.
+  `ssh-userauth` service request/accept. Its KEX cookie and Curve25519 client
+  ephemeral scalar use `SYS_RANDOM` runtime entropy when virtio-rng is
+  attached. The checked proofs are `./tests/ssh_transport_test.sh` and
+  `./tests/ssh_runtime_entropy_test.sh`.
 
 Not deploy-complete yet:
 
@@ -593,7 +595,7 @@ Run the narrow gate for the chosen profile before broader validation.
 | DNS resolver | `./tests/dns_test.sh` |
 | TLS runtime path | `./tests/tls_test.sh` |
 | DHCP/virtio-net cloud readiness | `./tests/virtio_net_test.sh` |
-| SSH client transport preflight | `./tests/ssh_transport_test.sh` |
+| SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | SSHD remote-command, runtime entropy, and key provisioning preflight | `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_authorized_keys_test.sh`, `./tests/sshd_host_key_rotation_test.sh`, `./tests/sshd_supervision_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store | `make package-store-test` |

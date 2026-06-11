@@ -135,8 +135,13 @@ qemu_args+=(
   -device virtio-blk-device,drive=swosbase
   -netdev user,id=n0
   -device virtio-net-device,netdev=n0
-  -kernel "$KERNEL"
 )
+if [[ -n "${SSH_CLIENT_EXTRA_QEMU_ARGS:-}" ]]; then
+  # Space-split only: callers pass QEMU options without embedded whitespace.
+  # shellcheck disable=SC2206
+  qemu_args+=(${SSH_CLIENT_EXTRA_QEMU_ARGS})
+fi
+qemu_args+=(-kernel "$KERNEL")
 
 "${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
@@ -173,6 +178,14 @@ grep -qF "ssh: known_hosts host key mismatch" <<<"$clean" \
   || { echo "FAIL: guest ssh did not reject the untrusted host key" >&2; ok=0; }
 grep -qF "ssh: host key matched /etc/ssh/known_hosts" <<<"$clean" \
   || { echo "FAIL: guest ssh did not match the host key in known_hosts" >&2; ok=0; }
+if [[ -n "${SSH_CLIENT_EXPECT_RUNTIME_ENTROPY:-}" ]]; then
+  grep -qF "virtio-rng: runtime entropy ready" <<<"$clean" \
+    || { echo "FAIL: guest did not bring up virtio-rng" >&2; ok=0; }
+  grep -qF "ssh: loaded runtime entropy from SYS_RANDOM" <<<"$clean" \
+    || { echo "FAIL: guest ssh did not load runtime entropy" >&2; ok=0; }
+  grep -qF "ssh: kex random context seeded runtime" <<<"$clean" \
+    || { echo "FAIL: guest ssh did not mark KEX as runtime-seeded" >&2; ok=0; }
+fi
 grep -qF "ssh: strict KEX sequence reset" <<<"$clean" \
   || { echo "FAIL: guest ssh did not detect strict KEX" >&2; ok=0; }
 grep -qF "ssh: negotiated curve25519-sha256 ssh-ed25519 chacha20-poly1305@openssh.com" <<<"$clean" \

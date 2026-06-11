@@ -45,7 +45,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Inspect kernel logs | `logtail` | `capLogExport` in the current context | `tests/log_export_test.sh` |
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
-| Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet` | `tests/ssh_transport_test.sh` |
+| Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet`; attach virtio-rng for runtime entropy proof | `tests/ssh_transport_test.sh`, `tests/ssh_runtime_entropy_test.sh` |
 | Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
@@ -697,10 +697,13 @@ Notes:
 - This is a pre-auth transport proof only. Its known_hosts parser supports
   simple `ssh-ed25519` entries for bare IPv4 hosts or `[IPv4]:port` patterns.
   It does not implement user authentication, remote exec/session channels, PTY,
-  scp, or sftp yet, and its KEX randomness is development-only.
+  scp, or sftp yet. Its KEX cookie and Curve25519 client ephemeral scalar use
+  `SYS_RANDOM` when virtio-rng is attached, with a development fallback for
+  non-rng QEMU profiles.
 - A successful run exits 0 after printing `ssh: transport ready (preauth)`.
 
-Acceptance coverage: `tests/ssh_transport_test.sh`.
+Acceptance coverage: `tests/ssh_transport_test.sh`,
+`tests/ssh_runtime_entropy_test.sh`.
 
 ### `sshd`
 

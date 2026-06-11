@@ -6,7 +6,7 @@
 // curve25519-sha256, ssh-ed25519 host-key signature verification,
 // known_hosts pinning, chacha20-poly1305 keys, and an encrypted ssh-userauth
 // service request. User authentication, exec/session channels, PTY, scp/sftp,
-// and real entropy are separate milestones.
+// and file copy are separate milestones.
 
 private let defaultIP: UInt32 = 0x0A00_0202     // 10.0.2.2 (QEMU slirp host)
 private let defaultPort: UInt16 = 22
@@ -204,6 +204,22 @@ private func fillPseudoRandom(_ p: UnsafeMutableRawPointer, _ len: Int, _ domain
         p.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
         i += 1
     }
+}
+
+private func fillRuntimeRandom(_ p: UnsafeMutableRawPointer, _ len: Int) -> Bool {
+    var off = 0
+    while off < len {
+        let r = swiftos_random(p + off, UInt(len - off))
+        if r <= 0 { return false }
+        off += Int(r)
+    }
+    return true
+}
+
+private func fillKexRandom(_ p: UnsafeMutableRawPointer, _ len: Int, _ domain: UInt64) -> Bool {
+    if fillRuntimeRandom(p, len) { return true }
+    fillPseudoRandom(p, len, domain)
+    return false
 }
 
 private struct SSHWriter {
@@ -692,10 +708,14 @@ private func readPlainPacket(_ fd: Int32, _ payload: UnsafeMutableRawPointer,
     }
 }
 
-private func buildKexInit(_ out: UnsafeMutableRawPointer, _ cap: Int) -> Int {
+private func buildKexInit(_ out: UnsafeMutableRawPointer,
+                          _ cap: Int,
+                          _ runtimeEntropyUsed: inout Bool) -> Int {
     var w = SSHWriter(p: out, cap: cap)
     guard w.u8(msgKexInit) else { return -1 }
-    fillPseudoRandom(out + w.len, 16, 0x5353485f434b4558)
+    if fillKexRandom(out + w.len, 16, 0x5353485f434b4558) {
+        runtimeEntropyUsed = true
+    }
     w.len += 16
 
     guard writerStringStatic(&w, "curve25519-sha256,kex-strict-c-v00@openssh.com"),
@@ -927,7 +947,10 @@ private func runTransport(_ fd: Int32, targetIP: UInt32, targetPort: UInt16) -> 
 
         var clientSeq: UInt32 = 0
         var serverSeq: UInt32 = 0
-        let clientKexLen = buildKexInit(clientKex.baseAddress!, clientKex.count)
+        var runtimeEntropyUsed = false
+        let clientKexLen = buildKexInit(clientKex.baseAddress!,
+                                        clientKex.count,
+                                        &runtimeEntropyUsed)
         guard clientKexLen > 0,
               sendPlainPacket(fd, clientKex.baseAddress!, clientKexLen, &clientSeq) else {
             swiftos_puts("ssh: could not send KEXINIT\n")
@@ -946,7 +969,15 @@ private func runTransport(_ fd: Int32, targetIP: UInt32, targetPort: UInt16) -> 
         var clientPriv = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
         var clientPub = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
         withUnsafeMutableBytes(of: &clientPriv) { cp in
-            fillPseudoRandom(cp.baseAddress!, 32, 0x5353485f434c4945)
+            if fillKexRandom(cp.baseAddress!, 32, 0x5353485f434c4945) {
+                runtimeEntropyUsed = true
+            }
+        }
+        if runtimeEntropyUsed {
+            swiftos_puts("ssh: loaded runtime entropy from SYS_RANDOM\n")
+            swiftos_puts("ssh: kex random context seeded runtime\n")
+        } else {
+            swiftos_puts("ssh: kex random context unseeded\n")
         }
         var basePoint = (UInt64(9), UInt64(0), UInt64(0), UInt64(0))
         withUnsafeBytes(of: &clientPriv) { sk in

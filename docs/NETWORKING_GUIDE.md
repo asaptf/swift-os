@@ -41,7 +41,7 @@ Use this guide with:
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |
 | Outbound guest access | Guest clients connect to `10.0.2.2` for host services |
 | IPv6 | Link-local/NDP and IPv6 socket smoke paths exist; hostfwd varies by host |
-| Runtime entropy | `SYS_RANDOM` is backed by virtio-rng when the VM attaches a `virtio-rng-device`; SSHD uses it for KEX |
+| Runtime entropy | `SYS_RANDOM` is backed by virtio-rng when the VM attaches a `virtio-rng-device`; `/bin/ssh` and `/bin/sshd` use it for KEX |
 | TLS | `/bin/tlsget` proves the TLS 1.3 runtime path; production certificate verification is not complete |
 
 The current implementation lives in the trusted core. The virtio-net driver and
@@ -81,7 +81,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Connect from guest to host | Outbound-only profile | `/bin/tcpget 10.0.2.2 5555` | `printf 'srv-reply\n' | nc -l 5555` | `./tests/tcp_connect_test.sh` |
 | Resolve DNS | Outbound-only profile | `/bin/nslookup example.com` | None for default slirp DNS | `./tests/dns_test.sh` |
 | Exercise TLS runtime path | Outbound-only profile | `/bin/tlsget 10.0.2.2 44310 localhost` | Start the host TLS 1.3 test server | `./tests/tls_test.sh` |
-| Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd` | `./tests/ssh_transport_test.sh` |
+| Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd`; attach virtio-rng for runtime entropy proof | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
 | Exercise SSHD IPv6 listener | SSHD IPv6 profile | Custom `/etc/swos/services` containing `sshd6`; manual `/bin/sshd -6` | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available | `make sshd-ipv6-listener-test` |
 | Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
@@ -536,13 +536,15 @@ strings, completes `curve25519-sha256`, verifies the server's `ssh-ed25519`
 host-key signature over the exchange hash, matches the host key against
 `/etc/ssh/known_hosts`, handles OpenSSH strict KEX, derives
 `chacha20-poly1305@openssh.com` keys, and completes one encrypted
-`ssh-userauth` service request/accept. It does not yet implement user
-authentication, session/exec channels, PTY, scp, or sftp.
+`ssh-userauth` service request/accept. Its KEX cookie and Curve25519 client
+ephemeral scalar use `SYS_RANDOM` when virtio-rng is attached. It does not yet
+implement user authentication, session/exec channels, PTY, scp, or sftp.
 
 Proof:
 
 ```sh
 ./tests/ssh_transport_test.sh
+./tests/ssh_runtime_entropy_test.sh
 ```
 
 ### Connect From Guest To Host
@@ -643,7 +645,7 @@ Run the narrowest proof for the path you changed:
 | Static cloud IPv6 config | `make net-static-ipv6-test` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
 | SSHD IPv6 listener preflight | `make sshd-ipv6-listener-test` |
-| SSH client transport preflight | `./tests/ssh_transport_test.sh` |
+| SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
 | TLS client smoke | `./tests/tls_test.sh` |
@@ -698,7 +700,8 @@ Current limits that matter when exposing a SwiftOS network service:
   broader authorized-key option enforcement are still missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange and checks a minimal
-  `/etc/ssh/known_hosts` trust store, but has no user authentication and no
+  `/etc/ssh/known_hosts` trust store. It uses `SYS_RANDOM` runtime entropy for
+  KEX when virtio-rng is attached, but has no user authentication and no
   session/exec or file-copy modes.
 - TLS certificate verification is not production-ready.
 - `httpd` is an HTTP static-file service, not a hardened Internet-facing web
