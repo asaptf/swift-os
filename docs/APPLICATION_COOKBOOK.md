@@ -374,12 +374,12 @@ solving are not current behavior.
 
 ### Recipe: Build And Install Source Ports
 
-Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite are the
+Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite are the
 current real port fixtures. They prove checksum-verified source fetch, static
 AArch64 cross-build or data-only staging, `.swpkg` creation, signed local
 repository publication, and target-side install from a default repository URL.
 The Lua-only smoke remains useful for the interpreter path; the seed repository
-smoke installs Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
+smoke installs Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
 tzdata, nginx, and sqlite and runs the `minigzip`, bzip2, zstd, xz, and
 `bsdtar` smoke paths, CA bundle marker,
 `pcre2grep` regex match, zoneinfo marker read, nginx version/marker smoke, and

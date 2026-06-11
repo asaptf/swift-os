@@ -111,14 +111,14 @@
       "portPath": "security/openssl",
       "tier": 0,
       "category": "tls",
-      "status": "planned",
+      "status": "packages",
       "difficulty": "L",
       "upstream": "OpenSSL",
-      "summary": "TLS library and command-line tool for HTTPS, certs, curl, nginx, OpenSSH, and tests.",
+      "summary": "Command-line TLS tool for HTTPS, certs, curl, nginx, OpenSSH, and tests.",
       "runtimeDependencies": ["ca-certificates"],
       "prerequisiteBundles": ["base-posix", "tls-base"],
-      "smokeTest": "openssl rand 16 and verify a local certificate chain",
-      "notes": "Provider/module model must be handled without dynamic loading or with providers built in."
+      "smokeTest": "install from the seed repository, run openssl version, and hash a known string with openssl dgst -sha256 in QEMU",
+      "notes": "Packaged as OpenSSL 3.5 LTS with the static openssl CLI and a version marker. Static libssl/libcrypto development artifacts are deferred to an openssl-dev split package so the runtime package stays installable in the current tmpfs-backed bootstrap. Shared libraries, DSO/modules, threads, async, engines, docs, tests, assembly, secure memory, and Linux/devcrypto engines are disabled for the first package."
     },
     {
       "name": "pcre2",

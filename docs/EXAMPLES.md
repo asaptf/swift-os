@@ -341,7 +341,7 @@ make package-repo-install-test
 
 ## 11. Install Source-Built Packages From A Static-Host Fixture
 
-The current ports fixture cross-builds Lua, zlib, bzip2, zstd, xz, libarchive, pcre2, nginx, and
+The current ports fixture cross-builds Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and
 sqlite, packages ca-certificates and tzdata, publishes them into one signed seed
 repository, copies that repository into a static-hostable web root, and proves
 that the guest can install from the hosted layout.
@@ -416,7 +416,7 @@ Expected signals:
 - `pkg install lua`, `pkg install zlib`, `pkg install bzip2`,
   `pkg install zstd`, `pkg install xz`, `pkg install libarchive`,
   `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
-  `pkg install nginx`, and `pkg install sqlite` activate all eleven packages.
+  `pkg install nginx`, and `pkg install sqlite` activate all twelve packages.
 - Lua evaluates the expression and prints `42`; `minigzip` round-trips
   `/tmp/zlib.txt` and prints `static-host-ok` after decompression; bzip2
   round-trips `bzip2-static-host-ok`; zstd and xz round-trip their marker

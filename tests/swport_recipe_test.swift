@@ -71,6 +71,7 @@ let zstdRecipe = repo.appendingPathComponent("ports/archivers/zstd/Port.json")
 let xzRecipe = repo.appendingPathComponent("ports/archivers/xz/Port.json")
 let libarchiveRecipe = repo.appendingPathComponent("ports/archivers/libarchive/Port.json")
 let caRecipe = repo.appendingPathComponent("ports/security/ca-certificates/Port.json")
+let opensslRecipe = repo.appendingPathComponent("ports/security/openssl/Port.json")
 let pcre2Recipe = repo.appendingPathComponent("ports/devel/pcre2/Port.json")
 let tzdataRecipe = repo.appendingPathComponent("ports/sysutils/tzdata/Port.json")
 let nginxRecipe = repo.appendingPathComponent("ports/www/nginx/Port.json")
@@ -101,6 +102,9 @@ guard FileManager.default.isReadableFile(atPath: xzRecipe.path) else {
 }
 guard FileManager.default.isReadableFile(atPath: libarchiveRecipe.path) else {
     fail("missing ports/archivers/libarchive/Port.json")
+}
+guard FileManager.default.isReadableFile(atPath: opensslRecipe.path) else {
+    fail("missing ports/security/openssl/Port.json")
 }
 guard FileManager.default.isReadableFile(atPath: nginxRecipe.path) else {
     fail("missing ports/www/nginx/Port.json")
@@ -869,6 +873,91 @@ guard output(caRepoInspect).contains("ca-certificates-2026.05.14_1") else {
     fail("repo fixture catalog did not include ca-certificates package: \(output(caRepoInspect))")
 }
 
+let opensslValidate = run(swport, ["recipe", "validate", "security/openssl"])
+requireSuccess(opensslValidate, "validate openssl recipe")
+guard output(opensslValidate).contains("recipe: OK openssl-3.5.7_1") else {
+    fail("validate output did not confirm openssl recipe: \(output(opensslValidate))")
+}
+
+let opensslManifestURL = temp.appendingPathComponent("openssl-manifest.json")
+let opensslManifest = run(swport, ["recipe", "manifest", "security/openssl", "--output", opensslManifestURL.path])
+requireSuccess(opensslManifest, "generate openssl manifest")
+do {
+    guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: opensslManifestURL)) as? [String: Any] else {
+        fail("generated openssl manifest is not a JSON object")
+    }
+    requireString(object, "name", "openssl")
+    requireString(object, "version", "3.5.7")
+    guard let depends = object["depends"] as? [[String: Any]],
+          Set(depends.compactMap { $0["name"] as? String }) == ["ca-certificates"] else {
+        fail("openssl manifest depends were \(String(describing: object["depends"]))")
+    }
+    guard let provides = object["provides"] as? [String],
+          Set(provides) == ["openssl"] else {
+        fail("openssl manifest provides were \(String(describing: object["provides"]))")
+    }
+    let filePaths = Set((object["files"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String })
+    guard filePaths == [
+        "/usr/bin/openssl",
+        "/usr/share/openssl/swiftos-openssl.version",
+    ] else {
+        fail("unexpected openssl manifest files: \(filePaths.sorted())")
+    }
+} catch {
+    fail("could not parse generated openssl manifest: \(error)")
+}
+
+let opensslRoot = temp.appendingPathComponent("openssl-root", isDirectory: true)
+do {
+    let files: [(String, Data, Int)] = [
+        ("usr/bin/openssl", Data("#!/bin/sh\necho OpenSSL 3.5.7\n".utf8), 0o755),
+        ("usr/share/openssl/swiftos-openssl.version", Data("openssl 3.5.7 swift-os static-no-dso-no-modules\n".utf8), 0o644),
+    ]
+    for (path, data, mode) in files {
+        let url = opensslRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy openssl package root: \(error)")
+}
+
+let opensslPackageURL = temp.appendingPathComponent("openssl.swpkg")
+let opensslPackageResult = run(swport, [
+    "recipe", "package", "security/openssl",
+    "--root", opensslRoot.path,
+    "--output", opensslPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(opensslPackageResult, "package dummy openssl root")
+let opensslVerify = run(swpkg, ["verify", opensslPackageURL.path])
+requireSuccess(opensslVerify, "verify dummy openssl package")
+guard output(opensslVerify).contains("OK: openssl-3.5.7_1") else {
+    fail("swpkg verify did not identify openssl package: \(output(opensslVerify))")
+}
+
+let opensslRepoRoot = temp.appendingPathComponent("openssl-repo-root", isDirectory: true)
+let opensslPubkey = temp.appendingPathComponent("openssl-repo-root.pub")
+let opensslRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "security/openssl",
+    "--root", opensslRoot.path,
+    "--output", opensslRepoRoot.path,
+    "--pubkey", opensslPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(opensslRepoFixture, "create openssl repository fixture")
+let opensslCatalog = opensslRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let opensslRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", opensslCatalog.path, "--pubkey", opensslPubkey.path])
+requireSuccess(opensslRepoVerify, "verify openssl repository fixture")
+let opensslRepoInspect = run(pkgrepo, ["inspect", opensslCatalog.path])
+requireSuccess(opensslRepoInspect, "inspect openssl repository fixture")
+guard output(opensslRepoInspect).contains("openssl-3.5.7_1") else {
+    fail("repo fixture catalog did not include openssl package: \(output(opensslRepoInspect))")
+}
+
 let pcre2Validate = run(swport, ["recipe", "validate", "devel/pcre2"])
 requireSuccess(pcre2Validate, "validate pcre2 recipe")
 guard output(pcre2Validate).contains("recipe: OK pcre2-10.47_1") else {
@@ -1107,4 +1196,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates nodejs/npm/pm2 intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates nodejs/npm/pm2 intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, openssl, pcre2, tzdata, nginx, and sqlite recipe fixtures")

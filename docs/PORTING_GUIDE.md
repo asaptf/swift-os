@@ -296,7 +296,7 @@ make ports-hosted-url-verify-test
 make package-static-host-dns-repo-install-test
 ```
 
-The checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
+The checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
 tzdata, nginx, and sqlite recipes are the reference shapes today. Together they
 prove static AArch64 builds or data-only staging, signed local repository
 fixtures, guest `pkg install` by package name, Lua runtime checks, `minigzip`,
@@ -305,7 +305,7 @@ create/list smoke, CA and zoneinfo marker reads, a `pcre2grep` regex match,
 nginx version/marker checks, a SQLite in-memory query, and static-host
 publication from `build/ports-static-host-root`. The hosted URL
 smoke also proves the target package manager can use a DNS-resolved HTTP
-repository hostname for the same eleven-package seed.
+repository hostname for the same twelve-package seed.
 
 Before publishing a package recipe, record:
 

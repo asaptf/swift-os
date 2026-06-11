@@ -11,14 +11,14 @@ maintainers planning `swift-os-ports` recipes.
 > package-store boot activation, local `/bin/pkg install FILE`, signed static
 > HTTP repository fixtures, repository configuration, `pkg update`, `pkg search`,
 > `pkg info`, `pkg install NAME`, and name-based dependency resolution. The
-> checked ports seed now covers Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2,
+> checked ports seed now covers Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
 > tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
-> the eleven-package seed from a local repository, a static-host layout, and a
+> the twelve-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, remove, upgrade, version-constraint solving, package
 > transaction rollback, and large-package streaming downloads remain roadmap
@@ -65,7 +65,7 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
@@ -74,13 +74,14 @@ paths are available in the current tree:
 | xz binary repository fixture | Cross-build static xz CLI tools, `liblzma.a`, headers, and pkgconf metadata, then publish them into a signed local repository fixture | `make ports-xz-repo-fixture` |
 | libarchive binary repository fixture | Cross-build static `bsdtar`, `libarchive.a`, headers, and pkgconf metadata against the packaged compression libraries, then publish them into a signed local repository fixture | `make ports-libarchive-repo-fixture` |
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
+| OpenSSL binary repository fixture | Cross-build the static OpenSSL CLI and version marker, then publish it into a signed local repository fixture | `make ports-openssl-repo-fixture` |
 | pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
 | tzdata repository fixture | Compile IANA TZif zoneinfo files with host `zic`, package `/usr/share/zoneinfo`, and publish the signed local repository fixture | `make ports-tzdata-repo-fixture` |
 | nginx binary repository fixture | Cross-build minimal static HTTP-only nginx, then publish it into a signed local repository fixture | `make ports-nginx-repo-fixture` |
 | sqlite binary repository fixture | Cross-build static SQLite, then publish `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata into a signed local repository fixture | `make ports-sqlite-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all eleven from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all eleven packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all twelve from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all twelve packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 | First-party SSH client transport preflight | Base `/bin/ssh` connects outbound to a host OpenSSH server, reports an OpenSSH banner, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com`, verifies the Ed25519 host-key signature for the exchange, matches the host key against `/etc/ssh/known_hosts`, handles strict KEX, and completes an encrypted `ssh-userauth` service request/accept before authentication | `make ssh-transport-test` |
 | First-party SSHD session/exec preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-session`, loads its Ed25519 host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, lets host OpenSSH pin the derived host key through known_hosts, supports deploy-specific image-time host-key and authorized-key staging, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com` transport setup, rejects stale fixture keys, authenticates `root` with an `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens session channels, and executes `/bin/id` plus `/bin/echo HC6-OK` | `make sshd-transport-test`, `make sshd-host-key-rotation-test`, `make sshd-authorized-keys-test` |
 
@@ -123,6 +124,9 @@ cat /usr/share/xz/swiftos-xz.version
 cd /tmp && echo libarchive-ok > libarchive.txt && /usr/bin/bsdtar -cf libarchive.tar libarchive.txt && /usr/bin/bsdtar -tf libarchive.tar
 cat /usr/share/libarchive/swiftos-libarchive.version
 cat /usr/share/certs/swiftos-ca-bundle.version
+/usr/bin/openssl version
+echo openssl-ok | /usr/bin/openssl dgst -sha256
+cat /usr/share/openssl/swiftos-openssl.version
 echo nginx-lighttpd > /tmp/pcre2.txt
 /usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
 ```
@@ -299,7 +303,7 @@ automatic certificate path, reverse proxy path, logs, and a small app behind it.
 | `caddy` | Modern web server with automatic HTTPS; attractive long-term UX. | Caddy. | Blocked until Go runtime/toolchain target works. | Go runtime, ca-certificates. | `base-posix`, `net-server`, `tls-base`, `service`, `threads`; Go target support. | Go can produce static binaries, but only after the Go runtime knows swift-os syscalls, netpoll, DNS, time, and threads. | `caddy validate`; serve static file with local CA or HTTP-only mode first. |
 | `acme-sh` | Shell-based ACME client; likely easiest Let's Encrypt path before Go/Python clients. | acme.sh. | M | shell, curl or wget, openssl tool, ca-certificates. | `base-posix`, `proc-basic`, `net-client`, `tls-base`, reliable clock, file permissions. | Script package, not a static binary. Requires a capable POSIX shell and external tools. | Use Pebble/Boulder test ACME server; complete HTTP-01 challenge against local web root. |
 | `lego` | ACME client and library written in Go; cleaner single-binary future option. | go-acme/lego. | Blocked until Go runtime/toolchain target works. | Go runtime, ca-certificates. | `base-posix`, `net-client`, `tls-base`, DNS resolver, reliable clock. | Static after Go support. DNS provider plugins may pull many dependencies. | Against Pebble: request staging cert via HTTP-01 using a temporary webroot. |
-| `openssl` | TLS library and command-line tool for HTTPS, certs, curl, nginx, OpenSSH, and tests. | OpenSSL. | L | ca-certificates for verification. | `base-posix`, `tls-base`, entropy, time. | Static library is common but large. Provider/module model in newer OpenSSL must be handled without dynamic loading, or providers must be built in. | `openssl rand 16`; verify a local certificate chain; run `s_client` later. |
+| `openssl` | TLS command-line tool for HTTPS, certs, curl, nginx, OpenSSH, and tests. | OpenSSL. | L | ca-certificates for verification. | `base-posix`, `tls-base`, entropy, time. | Current runtime package is OpenSSL 3.5 LTS with the static CLI and no DSO/modules/threads/engines. Headers and static libraries move to a later `openssl-dev` split package. Entropy-heavy and live TLS chain tests remain follow-up work. | `openssl version`; hash a known string with `openssl dgst -sha256`; run `s_client` later. |
 | `libressl` | Smaller TLS alternative, useful if OpenSSL provider model is awkward. | LibreSSL. | M | ca-certificates. | `base-posix`, `tls-base`, entropy, time. | Static builds are usually simpler than OpenSSL. Compatibility with nginx/curl/OpenSSH must be tested. | `openssl version` from LibreSSL tool; verify a local certificate chain. |
 | `pcre2` | Regex library needed by nginx, many text tools, and scripting runtimes. | PCRE2. | S | libc. | `base-posix`; `mmap-vm` only if JIT enabled. | Static is simple. Disable JIT until executable mappings and W^X policy are clear. | Run `pcre2grep` or a small test binary against known patterns. |
 | `fcgiwrap` | CGI/FastCGI bridge for simple web apps and admin endpoints. | fcgiwrap or spawn-fcgi ecosystem. | L | libc, web server. | `base-posix`, `proc-basic`, `net-server` or Unix sockets when available, `service`. | Static possible. Depends on process spawning and socket passing choices. | nginx/lighttpd calls a fixture CGI script returning `200 ok`. |

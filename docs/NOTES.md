@@ -412,6 +412,27 @@ a not-yet-configured address. `make build` verifies the DHCP codec under
 Embedded Swift. The focused runtime gate is `./tests/virtio_net_test.sh`, which
 now observes DHCP before the existing ARP/ICMP proof under QEMU/slirp.
 
+## P19 OpenSSL seed package (2026-06-11)
+
+- Added `ports/security/openssl/Port.json` for OpenSSL 3.5.7 LTS as the first
+  checked TLS provider package. It packages the static `openssl` CLI and a
+  marker file; static `libssl`/`libcrypto` development artifacts are deferred
+  to an `openssl-dev` split package so the runtime package stays small enough
+  for the current tmpfs-backed bootstrap installer.
+- Added `scripts/build-openssl.sh`. The script cross-builds with the local
+  newlib sysroot and SwiftOS compat headers, verifies the AArch64 ELF has no
+  unresolved symbols, then publishes both the `.swpkg` and signed local
+  repository fixture.
+- The first static build disables shared libraries, DSO/modules, threads,
+  async, engines, tests, docs, assembly, secure memory, and Linux/devcrypto
+  engines. The QEMU package smoke uses `openssl version` and a deterministic
+  `openssl dgst -sha256` check; entropy-heavy `rand`, certificate-chain, and
+  live TLS client tests remain follow-up work.
+- The ports seed repository now publishes Lua, zlib, bzip2, zstd, xz,
+  libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite.
+  Package seed, static-host, hosted URL, catalog, recipe, and documentation
+  tests were extended to search, install, and run OpenSSL inside QEMU.
+
 ## P18 libarchive seed package (2026-06-11)
 
 - Added `ports/archivers/libarchive/Port.json` for upstream libarchive 3.8.7 as
