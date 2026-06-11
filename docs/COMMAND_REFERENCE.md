@@ -947,6 +947,7 @@ diagnostic fixtures than stable application interfaces.
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |
 | `mmapreserveprobe` | `mmapreserveprobe` | Exercise C/newlib PROT_NONE reservation and mprotect commit/decommit. | `tests/mmapreserve_test.sh` |
+| `mapfixedprobe` | `mapfixedprobe` | Exercise C/newlib MAP_FIXED reservation, guard-page, and fixed-region JIT behavior. | `tests/mapfixed_test.sh` |
 | `sleepprobe` | `sleepprobe` | Probe nanosleep timing and timer wakeups. | `tests/sleep_test.sh` |
 | `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
 | `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
@@ -1284,6 +1285,7 @@ are not the primary operator interface.
 | `mprotectprobe` | newlib compat `mmap`, `mprotect`, executable mappings, and W^X rejection. | Yes, when validating C runtime memory-permission compatibility. | `tests/mprotect_test.sh` |
 | `largemmapprobe` | newlib compat multi-MiB `mmap`, partial `mprotect`, bottom-region `munmap` reuse, and zero-fill checks. | Yes, when validating C runtime large-mapping compatibility. | `tests/largemmap_test.sh` |
 | `mmapreserveprobe` | newlib compat `mmap(PROT_NONE)`, `MAP_NORESERVE`, `mprotect` commit/decommit, and reserved-region RW->RX execution. | Yes, when validating C runtime lazy-reservation compatibility. | `tests/mmapreserve_test.sh` |
+| `mapfixedprobe` | newlib compat `MAP_FIXED`, `MAP_FIXED_NOREPLACE`, guard-page recommit, fixed-region replacement, and RW->RX execution. | Yes, when validating C runtime fixed-address mmap compatibility. | `tests/mapfixed_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |

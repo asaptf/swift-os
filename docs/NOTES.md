@@ -698,7 +698,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 - **`protPageDesc(pa, prot)` in `vm.swift`** builds a 4 KiB leaf from a PROT bitmask
   (READ=1/WRITE=2/EXEC=4) via `memAttrs(userAccess: true, executable: prot&EXEC,
   userReadOnly: !(prot&WRITE))`. W^X (`WRITE|EXEC`) and `PROT_NONE` both return an invalid
-  descriptor (0). Since NPM8, `processMmap(PROT_NONE)` handles VA-only reservation above
+  descriptor (0). Since NPM8, the process-layer mmap path handles `PROT_NONE` VA-only reservation above
   this leaf layer; `protPageDesc` still never creates a present-but-inaccessible page.
 - **mmap VA arena — chosen base `0x9800_0000`, growing DOWN (floor `0x9000_0000`).**
   The valid user window is `[0x8000_0000, 0xB000_0000)` (`user_access.swift`). Within it:
@@ -4859,9 +4859,8 @@ V8-shaped runtimes. SwiftOS now accepts `mmap(PROT_NONE)` as virtual-address
 reservation without resident frames. `mprotect` inside that reservation commits
 missing pages for readable/writable/executable protections, and
 `mprotect(PROT_NONE)` decommits live pages while preserving the reserved VA.
-W^X remains enforced: RWX is still rejected. This resolves the generic lazy
-reservation blocker; the Node.js catalog now tracks the narrower
-MAP_FIXED/guard-page mmap audit that must happen against the actual V8 build.
+W^X remains enforced: RWX is still rejected. This resolved the generic lazy
+reservation blocker and left the narrower MAP_FIXED/guard-page audit for NPM9.
 
 - `kernel/user/process.swift`: adds per-process anonymous VMA tracking copied
   across fork/thread creation and reset across exec. The process layer owns
@@ -4878,4 +4877,31 @@ MAP_FIXED/guard-page mmap audit that must happen against the actual V8 build.
 **Acceptance.** `make mmapreserve-test`, `make docs-test`,
 `make ports-catalog-test`, `./tests/mmap_test.sh`, `make mprotect-test`,
 `make largemmap-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM9 — fixed-address mmap guard-page probe (DONE, 2026-06-11)
+
+**Scope.** Add the fixed-address anonymous mmap contract needed by V8-style
+reserved arenas. SwiftOS now passes `addr` and `flags` through the C mmap
+wrapper. Without `MAP_FIXED`, `addr` remains only a hint and the descending
+mmap arena chooses the address. With `MAP_FIXED`, the kernel may replace pages
+inside an existing anonymous reservation; `MAP_FIXED_NOREPLACE` fails with
+`EEXIST` when the target overlaps a reservation or live mapping. Arbitrary
+sparse fixed mappings outside an anonymous reservation remain deliberately
+unsupported.
+
+- `kernel/user/process.swift`: accepts fixed-address anonymous mappings inside
+  an existing anonymous VMA, decommits replaced live pages before remapping, and
+  preserves W^X before any destructive replacement.
+- `userland/lib/syscall.h`, `userland/compat/sys/mman.h`, and
+  `userland/compat/stubs.c`: expose `MAP_FIXED` and `MAP_FIXED_NOREPLACE` and
+  pass mmap flags through the SwiftOS syscall ABI.
+- `/bin/mapfixedprobe`: reserves a PROT_NONE arena, fixed-maps an interior RW
+  window, proves `MAP_FIXED_NOREPLACE` overlap rejection, proves MAP_FIXED
+  replacement zero-fill, recommits a guard page, executes a fixed-region RW->RX
+  JIT page, and verifies fixed RWX remains rejected.
+
+**Acceptance.** `make mapfixed-test`, `make docs-test`,
+`make ports-catalog-test`, `./tests/mmap_test.sh`, `make mmapreserve-test`,
+`make mprotect-test`, `make largemmap-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

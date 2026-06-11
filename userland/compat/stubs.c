@@ -65,6 +65,16 @@ static long sys3(long n, long a0, long a1, long a2) {
     return x0;
 }
 
+static long sys4(long n, long a0, long a1, long a2, long a3) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory");
+    return x0;
+}
+
 #define SYS_READ 2
 #define SYS_WRITE 3
 #define SYS_EXIT 5
@@ -612,8 +622,8 @@ W int statfs(const char *p, void *b) { (void)p; (void)b; errno = ENOSYS; return 
 W int fstatfs(int fd, void *b) { (void)fd; (void)b; errno = ENOSYS; return -1; }
 W int sysinfo(void *info) { (void)info; errno = ENOSYS; return -1; }
 W void *mmap(void *a, size_t l, int p, int f, int fd, long o) {
-    (void)f; (void)fd; (void)o;
-    long r = sys3(SYS_MMAP, (long)a, (long)l, p);
+    (void)fd; (void)o;
+    long r = sys4(SYS_MMAP, (long)a, (long)l, p, f);
     if (r < 0 && r >= -4095) { errno = (int)-r; return (void *)-1; }
     return (void *)r;
 }
