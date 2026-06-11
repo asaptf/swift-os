@@ -4957,3 +4957,26 @@ audit blocker.
 `make ports-catalog-test`, `make eventfd-test`, `make threadsync-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM12 — Node.js V8 lite-mode jitless policy (DONE, 2026-06-11)
+
+**Scope.** Settle the first SwiftOS V8 policy for Node.js. The pinned Node
+24.16.0 `configure.py` documents `--v8-lite-mode` as a constrained-environment
+mode that implies no JIT support, so the initial SwiftOS Node.js recipe keeps
+that flag as the accepted jitless profile. This avoids making executable-code
+generation a prerequisite for the first runnable Node package; optional V8 JIT
+enablement remains a future profile decision. Node.js is still blocked on the
+full libuv thread audit before the runtime can be claimed runnable.
+
+- `ports/lang/nodejs/Port.json`: documents `--v8-lite-mode` as the chosen
+  jitless V8 profile while keeping the static/no-bundled-npm/no-corepack recipe
+  shape.
+- `ports/catalog.json`: removes the generic `V8 JIT or jitless policy` blocker
+  from Node.js and keeps `full libuv thread audit` as the remaining runtime
+  blocker.
+- `tests/swport_recipe_test.swift` and `tests/swport_catalog_test.swift`: guard
+  the recipe's V8-lite/static policy and the catalog blocker transition.
+
+**Acceptance.** `make ports-recipe-test`, `make ports-catalog-test`,
+`make docs-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
