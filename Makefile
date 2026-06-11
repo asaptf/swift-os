@@ -269,6 +269,7 @@ USER_CLOCKPROBE_ELF := $(BUILD)/clockprobe.elf
 USER_MPROTECTPROBE_ELF := $(BUILD)/mprotectprobe.elf
 USER_PTHREADPROBE_ELF := $(BUILD)/pthreadprobe.elf
 USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
+USER_EVENTFDPROBE_ELF := $(BUILD)/eventfdprobe.elf
 USER_SOCKETPROBE_ELF := $(BUILD)/socketprobe.elf
 USER_COPROC_ELF := $(BUILD)/coproc.elf
 USER_FORKDEMO_ELF := $(BUILD)/forkdemo.elf
@@ -380,6 +381,7 @@ BASE_EXEC_ELFS := \
 	$(USER_MPROTECTPROBE_ELF) \
 	$(USER_PTHREADPROBE_ELF) \
 	$(USER_SELECTPROBE_ELF) \
+	$(USER_EVENTFDPROBE_ELF) \
 	$(USER_SOCKETPROBE_ELF) \
 	$(USER_COPROC_ELF) \
 	$(USER_FORKDEMO_ELF) \
@@ -392,7 +394,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test pthread-test select-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test pthread-test select-test eventfd-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-host-key-rotation-test sshd-authorized-keys-test sshd-supervision-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 build: $(KERNEL_ELF)
 
 $(QEMU_DTB): | $(BUILD)/.dir
@@ -845,7 +847,7 @@ $(BUILD)/n_newlibtest.o: userland/newlibtest.c Makefile | $(BUILD)/.dir
 $(USER_NEWLIBTEST_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_newlibtest.o $(BUILD)/n_syscalls.o $(NEWLIB_LIBS) -o $@
 
-$(BUILD)/n_compat_stubs.o: userland/compat/stubs.c userland/compat/pthread.h userland/compat/sys/mman.h userland/compat/sys/socket.h userland/compat/time.h userland/compat/unistd.h Makefile | $(BUILD)/.dir
+$(BUILD)/n_compat_stubs.o: userland/compat/stubs.c userland/compat/pthread.h userland/compat/sys/eventfd.h userland/compat/sys/mman.h userland/compat/sys/socket.h userland/compat/time.h userland/compat/unistd.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
 $(BUILD)/n_clockprobe.o: userland/clockprobe.c userland/compat/time.h Makefile | $(BUILD)/.dir
@@ -871,6 +873,12 @@ $(BUILD)/n_selectprobe.o: userland/selectprobe.c Makefile | $(BUILD)/.dir
 
 $(USER_SELECTPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_selectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_selectprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+$(BUILD)/n_eventfdprobe.o: userland/eventfdprobe.c userland/compat/sys/eventfd.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_EVENTFDPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_eventfdprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_eventfdprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
 $(BUILD)/n_socketprobe.o: userland/socketprobe.c userland/compat/sys/socket.h userland/compat/unistd.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
@@ -1156,6 +1164,9 @@ pthread-test: build $(QEMU_DTB) base-image
 
 select-test: build $(QEMU_DTB) base-image
 	./tests/select_test.sh
+
+eventfd-test: build $(QEMU_DTB) base-image
+	./tests/eventfd_test.sh
 
 socket-test: build $(QEMU_DTB) base-image
 	./tests/socket_test.sh
@@ -1531,6 +1542,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_MPROTECTPROBE_ELF) $(BASE_ROOT)/bin/mprotectprobe
 	cp $(USER_PTHREADPROBE_ELF) $(BASE_ROOT)/bin/pthreadprobe
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
+	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_SOCKETPROBE_ELF) $(BASE_ROOT)/bin/socketprobe
 	cp $(USER_COPROC_ELF) $(BASE_ROOT)/bin/coproc
 	cp $(USER_FORKDEMO_ELF) $(BASE_ROOT)/bin/forkdemo

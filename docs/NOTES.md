@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC16 SSHD bounded output capture preflight (2026-06-11)
+
+- Moved `/bin/sshd` remote exec stdout/stderr capture off the old pipe and into
+  a temporary tmpfs file at `/tmp/swos-sshd-output`. The daemon now runs the
+  child synchronously, then reads back at most 1536 bytes for the SSH channel
+  response. This avoids child-side pipe backpressure while keeping the current
+  bounded preflight behavior and stays within the current TCP send-buffer
+  limits for one SSH channel-data response plus close/status control packets.
+- Added deterministic serial markers `sshd: exec output bytes N` and
+  `sshd: exec output truncated` so deploy runs can distinguish short output
+  from capped output.
+- Hardened `./tests/sshd_transport_test.sh` with a long-output remote command:
+  host OpenSSH runs `/bin/cat /models/tok512.bin`, expects exactly 1536 bytes
+  back, and requires the truncation marker. The test still covers denied keys,
+  host-key pinning, `/bin/id`, `/bin/echo`, and stdin-fed `/bin/cat`.
+
+**Acceptance.** `make sshd-transport-test` proves that boot-autostarted SSHD
+can execute a command that writes more than the old pipe capacity, return a
+bounded 1536-byte SSH channel response, and log truncation without wedging the
+session.
+
 ## HC15 SSHD bounded stdin exec preflight (2026-06-11)
 
 - Extended `/bin/sshd` session exec handling to read post-`exec`
@@ -632,7 +653,7 @@ large Swift apps need. Built on the `kernel/mm/vm.swift` seams (`walkToL3`, `lin
 
 - **L4d (2026-06) — log sink indirection + capability hook.** Live `klog` output now routes through a tiny current-sink dispatch in `kernel/log/log.swift`; the default and only implemented sink remains UART, but `klog` no longer embeds the UART renderer inline. Added reserved `capLogExport` in `kernel/security/security.swift` (not granted to the boot/root context by default) plus `klogCanInstallSink(capabilities:)` / `klogCanExportRing(capabilities:)` hook helpers for the future userland log service/export path. Boot asserts both `sink indirection active` and `sink capability hook active`, while preserving the existing live line spelling and L4c wire-format sample. See `docs/LOGGING.md`.
 
-- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (71), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
+- **L5a (2026-06) — capability-gated userland log tail export.** Added `SYS_LOG_READ` (72), which copies the allocation-free `logFormatRecentTail` output into a user buffer only when the caller holds `capLogExport`; callers without the bit receive `EPERM`. The native Swift bridge now exposes `swiftos_log_read`, `/bin/logtail [max-records]` prints the local key=value ring tail, and `/bin/logtail-probe` is an acceptance helper that proves denial under the seeded root mask (`0x3f`) and success after an explicit admin-context `SYS_LOGIN` grant of `capLogExport`. `make log-export-test` boots QEMU, verifies the denial, verifies exported `tick=/level=/source=/msg=` records after the grant, and confirms the shell survives.
 
 - **M9 (2026-06-04) — DONE.** HAL + runtime hardware discovery from a flattened device tree. Added a
   pure Swift FDT reader with host coverage, a global `Platform` populated at boot, and driver/PMM use of
@@ -4622,4 +4643,25 @@ errors to `-1` plus `errno`.
 
 **Acceptance.** `make socket-test`, `make docs-test`, `make select-test`,
 `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM4 — newlib eventfd facade probe (DONE, 2026-06-11)
+
+**Scope.** Add an event notification primitive for libuv-shaped runtimes on the
+Node.js/npm/pm2 track. SwiftOS exposes its own `eventfd` syscall (71), backed by
+a fixed VFS event-counter table and ordinary typed handles. The C compatibility
+layer provides POSIX-shaped `eventfd`, `eventfd_read`, `eventfd_write`, and
+`sys/eventfd.h`; this is source compatibility, not Linux syscall ABI
+compatibility.
+
+- `kernel/vfs/handle.swift`: adds `.event` as a typed handle kind.
+- `kernel/vfs/vfs.swift`: adds event counters, blocking/nonblocking 8-byte
+  read/write semantics, `EFD_SEMAPHORE`, `EFD_CLOEXEC`, fstat shape, and
+  `poll` readiness. `select` inherits readiness through the existing newlib
+  facade.
+- `/bin/eventfdprobe`: proves flags, empty nonblocking `EAGAIN`, counter
+  poll/read behavior, semaphore reads, and select readiness.
+
+**Acceptance.** `make eventfd-test`, `make docs-test`, `make select-test`,
+`make socket-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

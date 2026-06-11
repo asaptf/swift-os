@@ -77,8 +77,10 @@ struct HandleTest {
               "HandleKind.pipe != .file")
         check(HandleKind.endpoint.rawValue != HandleKind.socket.rawValue,
               "HandleKind.endpoint != .socket")
-        check(HandleKind.device.rawValue != HandleKind.endpoint.rawValue,
-              "HandleKind.device != .endpoint")
+        check(HandleKind.event.rawValue != HandleKind.endpoint.rawValue,
+              "HandleKind.event != .endpoint")
+        check(HandleKind.device.rawValue != HandleKind.event.rawValue,
+              "HandleKind.device != .event")
 
         // ---- 6. C2 handle inheritance selector ------------------------------
         check(handleInheritanceCopiesFD(.all, fd: 0), ".all copies fd 0")
@@ -128,7 +130,14 @@ struct HandleTest {
         check(recvEndpoint.rights == [.read, .transfer],
               "recv endpoint carries read+transfer rights")
 
-        // ---- 10. C5 device handle vocabulary --------------------------------
+        // ---- 10. Event notification handle vocabulary -----------------------
+        let event = HandleEntry(inUse: true, kind: .event, object: 13,
+                                rights: [.read, .write, .duplicate, .getattr, .setattr])
+        check(event.kind == .event, "eventfd is an event handle")
+        check(event.rights.contains(.read) && event.rights.contains(.write),
+              "eventfd carries read+write rights")
+
+        // ---- 11. C5 device handle vocabulary --------------------------------
         let device = HandleEntry(inUse: true, kind: .device, object: 13,
                                  rights: deviceMetadataGrantRights())
         check(device.kind == .device, "device grant is a device handle")

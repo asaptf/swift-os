@@ -77,7 +77,8 @@
 #define SYS_KERNEL_STAGE 68
 #define SYS_KERNEL_ACTIVATE 69
 #define SYS_KERNEL_CONFIRM 70
-#define SYS_LOG_READ 71
+#define SYS_EVENTFD        71
+#define SYS_LOG_READ       72
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

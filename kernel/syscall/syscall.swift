@@ -71,7 +71,8 @@ private let sysUpdateStage: UInt = 67    // update_stage() — copy the payload 
 private let sysKernelStage: UInt = 68    // kernel_stage() — copy the active kernel slot image into the inactive ESP slot (U1g-4c); needs capConsole
 private let sysKernelActivate: UInt = 69 // kernel_activate() — flip the active kernel slot in kernel-state (U1g-5d); needs capConsole
 private let sysKernelConfirm: UInt = 70  // kernel_confirm() — mark the booted ESP kernel slot healthy (U1g-5c); needs capConsole
-private let sysLogRead: UInt = 71        // log_read(buf, cap, max_count) — needs capLogExport
+private let sysEventfd: UInt = 71         // eventfd(initval, flags) — event notification counter
+private let sysLogRead: UInt = 72         // log_read(buf, cap, max_count) — needs capLogExport
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -259,6 +260,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processMprotect(frame[0], frame[1], Int32(truncatingIfNeeded: frame[2]))
     } else if number == sysNanosleep {
         result = processNanosleep(seconds: frame[0], nanos: frame[1])
+    } else if number == sysEventfd {
+        result = vfsEventfd(initval: frame[0], flags: frame[1])
     } else if number == sysUpdateConfirm {
         result = updateStoreConfirm() // U1c: capConsole-gated A/B health-confirm
     } else if number == sysUpdateActivate {

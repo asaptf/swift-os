@@ -64,6 +64,7 @@ source, then follow its Makefile rule and acceptance test.
 | Threads, futexes, and atomics | `userland/threadsdemo.swift` | `swiftos_thread_create`, `swiftos_futex`, `swiftos_atomic_*` | `./tests/threads_test.sh` |
 | C pthread compatibility | `userland/pthreadprobe.c` | `pthread_create`, `pthread_join`, mutexes, condition variables, once, thread-specific data | `./tests/pthread_test.sh` |
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
+| C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
 | Package install and package store | `userland/pkg.swift`, `userland/pkghello.swift` | `pkg_install`, `pkg_info`, `/bin/pkg` repository workflow | `make package-local-install-test`, `make package-repo-install-test`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
@@ -241,7 +242,8 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 68 | `kernel_stage` | none | 0 or negative error |
 | 69 | `kernel_activate` | none | 0 or negative error |
 | 70 | `kernel_confirm` | none | 0 or negative error |
-| 71 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
+| 71 | `eventfd` | `initval`, `flags` | fd or negative error |
+| 72 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 
 Notes:
 
@@ -1021,6 +1023,21 @@ available through the newlib compatibility headers, and pipe read/write honor
 
 Unsupported options return conventional errors where possible.
 
+### POSIX-Shaped Event Counters
+
+`userland/compat/sys/eventfd.h` exposes a small event-counter facade for
+ported event loops:
+
+- `eventfd(initval, EFD_NONBLOCK | EFD_CLOEXEC | EFD_SEMAPHORE)`
+- `eventfd_read(fd, eventfd_t*)`
+- `eventfd_write(fd, eventfd_t)`
+
+The backing syscall is SwiftOS `eventfd` number 71, not a Linux ABI entry. Reads
+and writes transfer one 64-bit little-endian counter value. Nonblocking empty
+reads return `EAGAIN`; `EFD_SEMAPHORE` reads decrement by one and return 1.
+`poll(POLLIN)` and `select` report readability when the counter is nonzero, and
+`POLLIN` clears after the counter is drained.
+
 ## Process And System Stats Layouts
 
 ### `psinfo`
@@ -1333,6 +1350,7 @@ one booting acceptance path:
 | Threads and futexes | `kernel/sched/futex.swift`, `userland/lib/swift_user.h` | `./tests/threads_test.sh`, `./tests/boot_test.sh` |
 | C compat pthreads | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/pthreadprobe.c` | `make pthread-test`, `./tests/boot_test.sh` |
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
+| C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |
 | C compat mmap and mprotect | `userland/compat/sys/mman.h`, `userland/compat/stubs.c`, `userland/mprotectprobe.c` | `make mprotect-test`, `./tests/boot_test.sh` |
