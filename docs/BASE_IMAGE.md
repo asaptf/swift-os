@@ -120,7 +120,7 @@ packs it into `build/base.img` with `build/basepack`.
 | --- | --- | --- |
 | `base/` | `/` | Static seed files such as `/etc/motd`, `/etc/hostname`, `/etc/swos/passwd`, `/etc/ssh/authorized_keys`, `/etc/ssh/known_hosts`, `/etc/ssh/ssh_host_ed25519_seed`, `/www`, `/readme.txt`, and `/hello.txt` |
 | `SSHD_HOST_SEED_FILE` | `/etc/ssh/ssh_host_ed25519_seed` | Optional deploy-specific replacement for the checked-in SSHD development host-key seed |
-| `SSHD_KEX_SEED_FILE` | `/etc/ssh/ssh_kex_seed` | Optional deploy-specific KEX mix seed; runtime entropy remains a separate SSHD milestone |
+| `SSHD_KEX_SEED_FILE` | `/etc/ssh/ssh_kex_seed` | Optional deploy-specific KEX mix seed; runtime entropy is provided by `SYS_RANDOM` when the VM attaches virtio-rng |
 | `SSHD_AUTHORIZED_KEYS_FILE` | `/etc/ssh/authorized_keys` | Optional deploy-specific replacement for the checked-in SSHD development authorized key |
 | `NET_IPV6_CONFIG_FILE` | `/etc/swos/net-ipv6` | Optional static IPv6 `/64` address plus link-local gateway for cloud images |
 | `SWOS_SERVICES_FILE` | `/etc/swos/services` | Optional replacement boot service manifest for custom images and service supervision tests |

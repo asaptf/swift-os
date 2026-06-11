@@ -75,7 +75,7 @@ capabilities the workload needs.
 | Direct serial candidate | Development, operator walkthroughs, fast validation | `kernel.elf`, `base.img`, `virt.dtb` | `./tests/boot_test.sh` |
 | UEFI/GPT candidate | Firmware handoff, disk layout, primary boot packaging | `swift-os.img`, `base.img` | `UEFI_BOOT=disk ./tests/uefi_boot_test.sh` |
 | Application service hosting | `httpd`, echo services, network tools | Direct or UEFI artifacts plus virtio-net | Service-specific network test |
-| Cloud readiness preflight | DHCPv4, SSH client transport, SSHD remote-command, and opt-in service restart readiness before provider-specific cloud work | Direct or UEFI artifacts plus virtio-net, SSH seed files, and optional `/etc/swos/services` | `./tests/virtio_net_test.sh`, `./tests/ssh_transport_test.sh`, `./tests/sshd_transport_test.sh`, `./tests/sshd_supervision_test.sh` |
+| Cloud readiness preflight | DHCPv4, SSH client transport, SSHD remote-command, SSHD runtime entropy, and opt-in service restart readiness before provider-specific cloud work | Direct or UEFI artifacts plus virtio-net, optional virtio-rng, SSH seed files, and optional `/etc/swos/services` | `./tests/virtio_net_test.sh`, `./tests/ssh_transport_test.sh`, `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_supervision_test.sh` |
 | AI hosting | Local or HTTP TinyStories inference | Base image with model bundle and optional NIC | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
 | Package payload candidate | Read-only package content under `/usr` | Base artifacts plus payload image | `make package-overlay-test` |
 | Package-store candidate | Active package generation boot | Base artifacts plus package-store image | `make package-store-test` |
@@ -443,14 +443,15 @@ Current Hetzner readiness status:
   seed. Build-time provisioning uses the `SSHD_HOST_SEED_FILE`,
   `SSHD_KEX_SEED_FILE`, and `SSHD_AUTHORIZED_KEYS_FILE` make variables with
   `make base-image` to stage deploy-specific host identity, image-time KEX seed
-  material, and login keys into the signed image. The KEX seed is only a
-  per-image hardening input; runtime entropy is still follow-up work.
+  material, and login keys into the signed image. Runtime KEX entropy is read
+  through `SYS_RANDOM` when the VM exposes virtio-rng.
   `SWOS_SERVICES_FILE` can replace
   `/etc/swos/services` for a custom candidate; the `sshd6` token starts
   `/bin/sshd -6` as an AF_INET6 TCP/22 listener, while `sshd-supervised` and
   `sshd-once` exercise the current opt-in restart loop. The checked
   proofs are `./tests/sshd_transport_test.sh`,
   `./tests/sshd_host_key_rotation_test.sh`,
+  `./tests/sshd_runtime_entropy_test.sh`,
   `./tests/sshd_kex_seed_test.sh`,
   `./tests/sshd_authorized_keys_test.sh`,
   `./tests/sshd_ipv6_listener_test.sh`, and
@@ -473,7 +474,7 @@ Current Hetzner readiness status:
 Not deploy-complete yet:
 
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
-  milestones should add runtime host-key rotation, runtime entropy, broader
+  milestones should add runtime host-key rotation, broader
   authorized-key option enforcement, shell/PTY behavior, larger stdin/output
   streaming, production service policy, and broader remote commands beyond
   bounded direct `/bin/<tool>` or `/usr/bin/<tool>` exec. Dropbear remains a
@@ -593,7 +594,7 @@ Run the narrow gate for the chosen profile before broader validation.
 | TLS runtime path | `./tests/tls_test.sh` |
 | DHCP/virtio-net cloud readiness | `./tests/virtio_net_test.sh` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh` |
-| SSHD remote-command and key provisioning preflight | `./tests/sshd_transport_test.sh`, `./tests/sshd_authorized_keys_test.sh`, `./tests/sshd_host_key_rotation_test.sh`, `./tests/sshd_supervision_test.sh` |
+| SSHD remote-command, runtime entropy, and key provisioning preflight | `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_authorized_keys_test.sh`, `./tests/sshd_host_key_rotation_test.sh`, `./tests/sshd_supervision_test.sh` |
 | Package overlay | `make package-overlay-test` |
 | Package store | `make package-store-test` |
 | Local package install plumbing | `make package-local-install-test` |

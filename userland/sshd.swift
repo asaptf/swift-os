@@ -5,8 +5,8 @@
 // and pre-login path that Hetzner-style remote access needs next: TCP/22, SSH
 // identification, curve25519-sha256, ssh-ed25519 host authentication,
 // chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
-// command. PTY, shells, scp/sftp, a full service manager, and runtime entropy
-// are separate milestones.
+// command. Runtime entropy is used when the VM exposes SYS_RANDOM; PTY, shells,
+// scp/sftp, and a full service manager are separate milestones.
 
 private let defaultPort: UInt16 = 22
 private let pollIn: Int16 = 0x001
@@ -276,6 +276,46 @@ private func fillPseudoRandom(_ p: UnsafeMutableRawPointer,
         p.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
         i += 1
     }
+}
+
+private func mixSeedIntoRandom(_ p: UnsafeMutableRawPointer,
+                               _ len: Int,
+                               _ domain: UInt64,
+                               _ sessionID: UInt64,
+                               _ seedMix: UInt64) {
+    if seedMix == 0 { return }
+    var x = seedMix ^ domain ^ (sessionID &* 0xE703_7ED1_A0B4_28DB)
+    var i = 0
+    while i < len {
+        x = x &* 6364136223846793005 &+ 1442695040888963407
+        let z = mix64(x)
+        let old = p.load(fromByteOffset: i, as: UInt8.self)
+        p.storeBytes(of: old ^ UInt8((z >> 32) & 0xFF), toByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+}
+
+private func fillRuntimeRandom(_ p: UnsafeMutableRawPointer, _ len: Int) -> Bool {
+    var off = 0
+    while off < len {
+        let r = swiftos_random(p + off, UInt(len - off))
+        if r <= 0 { return false }
+        off += Int(r)
+    }
+    return true
+}
+
+private func fillKexRandom(_ p: UnsafeMutableRawPointer,
+                           _ len: Int,
+                           _ domain: UInt64,
+                           _ sessionID: UInt64,
+                           _ seedMix: UInt64) -> Bool {
+    if fillRuntimeRandom(p, len) {
+        mixSeedIntoRandom(p, len, domain, sessionID, seedMix)
+        return true
+    }
+    fillPseudoRandom(p, len, domain, sessionID, seedMix)
+    return false
 }
 
 private func hexNibble(_ c: UInt8) -> UInt8? {
@@ -853,10 +893,13 @@ private func readPlainPacket(_ fd: Int32, _ payload: UnsafeMutableRawPointer,
 private func buildKexInit(_ out: UnsafeMutableRawPointer,
                           _ cap: Int,
                           _ sessionID: UInt64,
-                          _ seedMix: UInt64) -> Int {
+                          _ seedMix: UInt64,
+                          _ runtimeEntropyUsed: inout Bool) -> Int {
     var w = SSHWriter(p: out, cap: cap)
     guard w.u8(20) else { return -1 } // SSH_MSG_KEXINIT
-    fillPseudoRandom(out + w.len, 16, 0x4b4558494e495431, sessionID, seedMix)
+    if fillKexRandom(out + w.len, 16, 0x4b4558494e495431, sessionID, seedMix) {
+        runtimeEntropyUsed = true
+    }
     w.len += 16
 
     guard writerStringStatic(&w, "curve25519-sha256,curve25519-sha256@libssh.org,kex-strict-s-v00@openssh.com"),
@@ -1709,13 +1752,15 @@ private func serveOne(_ fd: Int32) {
                 foldSeed32(ks.baseAddress!)
             }
         }
+        var runtimeEntropyUsed = false
 
         let clientKexLen = readPlainPacket(fd, clientKex.baseAddress!, clientKex.count, &clientSeq)
         guard clientKexLen > 0 && clientKex.baseAddress!.load(fromByteOffset: 0, as: UInt8.self) == 20 else {
             swiftos_puts("sshd: expected client KEXINIT\n")
             return
         }
-        let serverKexLen = buildKexInit(serverKex.baseAddress!, serverKex.count, kexSessionID, kexSeedMix)
+        let serverKexLen = buildKexInit(serverKex.baseAddress!, serverKex.count,
+                                        kexSessionID, kexSeedMix, &runtimeEntropyUsed)
         guard serverKexLen > 0,
               sendPlainPacket(fd, serverKex.baseAddress!, serverKexLen, &serverSeq) else {
             swiftos_puts("sshd: could not send KEXINIT\n")
@@ -1755,15 +1800,22 @@ private func serveOne(_ fd: Int32) {
             readHostKeySeed(hs.baseAddress!)
         }
         guard hostSeedOK else { return }
+        withUnsafeMutableBytes(of: &serverPriv) { sp in
+            if fillKexRandom(sp.baseAddress!, 32, 0x535348445f4b4558, kexSessionID, kexSeedMix) {
+                runtimeEntropyUsed = true
+            }
+        }
+        if runtimeEntropyUsed {
+            swiftos_puts("sshd: loaded runtime entropy from SYS_RANDOM\n")
+        }
         swiftos_puts("sshd: kex random context session ")
         printUInt(UInt(kexSessionID))
-        if kexSeedState > 0 {
+        if runtimeEntropyUsed {
+            swiftos_puts(" seeded runtime\n")
+        } else if kexSeedState > 0 {
             swiftos_puts(" seeded\n")
         } else {
             swiftos_puts(" unseeded\n")
-        }
-        withUnsafeMutableBytes(of: &serverPriv) { sp in
-            fillPseudoRandom(sp.baseAddress!, 32, 0x535348445f4b4558, kexSessionID, kexSeedMix)
         }
         var basePoint = (
             UInt64(9), UInt64(0), UInt64(0), UInt64(0)

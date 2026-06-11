@@ -47,25 +47,33 @@ private func parseIPv4(_ p: UnsafePointer<CChar>) -> UInt32? {
     return (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
 }
 
-// Fill `buf` with `n` pseudo-random bytes. There is NO kernel entropy source on
-// swift-os yet (see arc4random_buf in swift_user.c), so we mix the few varying
-// quantities we have — wall-clock seconds, pid, and a stack address — through a
-// splitmix64 PRNG. This is NOT cryptographically strong; it is acceptable here
-// only because the TLS client already provides no authentication (cert checks
-// are deferred) and the demo server is local. A real client needs getrandom(2).
+// Fill `buf` with runtime entropy when the VM provides it. Test profiles without
+// virtio-rng keep the old development fallback, which is acceptable here only
+// because certificate checks are still deferred and the demo server is local.
 private func fillRandom(_ buf: UnsafeMutableRawPointer, _ n: Int) {
+    var off = 0
+    while off < n {
+        let r = swiftos_random(buf + off, UInt(n - off))
+        if r <= 0 { break }
+        off += Int(r)
+    }
+    if off == n { return }
+
     var probe: UInt64 = 0
     var x = UInt64(swiftos_time())
         ^ (UInt64(bitPattern: Int64(swiftos_getpid())) &* 0x9E37_79B9_7F4A_7C15)
         ^ withUnsafeMutablePointer(to: &probe) { UInt64(UInt(bitPattern: $0)) }
+        ^ UInt64(off)
     if x == 0 { x = 0x9E37_79B9_7F4A_7C15 }
-    for i in 0..<n {
+    var i = off
+    while i < n {
         x = x &* 6364136223846793005 &+ 1442695040888963407
         var z = x
         z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
         z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         z = z ^ (z >> 31)
         buf.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
+        i += 1
     }
 }
 

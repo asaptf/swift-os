@@ -86,6 +86,7 @@
 #define SYS_LOG_READ       77
 #define SYS_SOCKETPAIR     78
 #define SYS_PKG_FILES      79
+#define SYS_RANDOM         80
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

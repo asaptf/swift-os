@@ -3,6 +3,31 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC25 SSHD runtime entropy preflight (2026-06-11)
+
+- Added a minimal modern virtio-rng MMIO driver for QEMU/cloud VM entropy
+  devices. It scans the device-tree-discovered virtio-mmio window for device id
+  4, negotiates `VIRTIO_F_VERSION_1`, and serves small synchronous reads from a
+  polled request virtqueue.
+- Added syscall `SYS_RANDOM` (80) and the `swiftos_random` userland bridge. The
+  bridge feeds `arc4random_buf` when a runtime source is attached, while keeping
+  the deterministic fallback for test profiles without virtio-rng.
+- `/bin/sshd` now uses `SYS_RANDOM` for its SSH_MSG_KEXINIT cookie and
+  Curve25519 server ephemeral scalar, mixing the optional image-time
+  `/etc/ssh/ssh_kex_seed` when present. With runtime entropy it logs
+  `sshd: loaded runtime entropy from SYS_RANDOM` and marks the KEX context
+  `seeded runtime`; without virtio-rng it keeps the existing development
+  fallback.
+- Added `./tests/sshd_runtime_entropy_test.sh` and
+  `make sshd-runtime-entropy-test`. The test reuses the full host OpenSSH
+  remote-command acceptance path with a QEMU `virtio-rng-device`.
+
+**Acceptance.** `make sshd-runtime-entropy-test` proves that the guest brings up
+`virtio-rng`, `/bin/sshd` consumes `SYS_RANDOM` runtime entropy for KEX, host
+OpenSSH still pins the SwiftOS host key through known_hosts, and authenticated
+remote `/bin/id`, `/bin/echo`, quoted argv, stdin-fed `/bin/cat`, and bounded
+long-output exec all complete.
+
 ## HC24 SSHD IPv6 listener preflight (2026-06-11)
 
 - Added `-6` / `--ipv6` mode to `/bin/sshd`, selecting the existing AF_INET6
@@ -3037,7 +3062,7 @@ path (busybox, the newlib port). This is the answer to the session's "what runti
   it into `/bin/calc` only (`SWIFT_UNICODE_DATA` in the Makefile), and `--gc-sections` trims its
   825 KiB to just the referenced tables (final ELF ~160 KiB). `Dictionary`/`Set` also need
   `arc4random_buf` (hash seed) — added a deterministic fill to the bridge (reproducible; the seed
-  only randomises hash-table iteration order, and we have no entropy source).
+  only randomises hash-table iteration order, and at that point we had no entropy source).
 - **FP at EL0 is fine** (not relied upon): `boot.S` sets `CPACR_EL1.FPEN=0b11`, which permits FP/SIMD
   at EL0 too, so scalar FP would not trap. The calculator core stays Int64 anyway so acceptance does
   not hinge on soft-float/compiler-rt; floating point is recorded as available for a future app.

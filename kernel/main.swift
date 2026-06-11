@@ -954,6 +954,9 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klog(.info, "smp", "S4a OK: PMM lock boundary ready", UInt64(pmmS4aLockAcquireCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    if virtioRngInit() {
+        uartPuts("virtio-rng: runtime entropy ready\n")
+    }
     pkgStoreInit()      // P3: read active package-store generation, if present
     if !pkgStoreS4dReadinessSelfTest() {
         uartPuts("panic: S4d package-store lock boundary self-test failed\n")

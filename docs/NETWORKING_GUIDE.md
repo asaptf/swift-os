@@ -41,6 +41,7 @@ Use this guide with:
 | Inbound host access | QEMU `hostfwd` from host ports to guest ports |
 | Outbound guest access | Guest clients connect to `10.0.2.2` for host services |
 | IPv6 | Link-local/NDP and IPv6 socket smoke paths exist; hostfwd varies by host |
+| Runtime entropy | `SYS_RANDOM` is backed by virtio-rng when the VM attaches a `virtio-rng-device`; SSHD uses it for KEX |
 | TLS | `/bin/tlsget` proves the TLS 1.3 runtime path; production certificate verification is not complete |
 
 The current implementation lives in the trusted core. The virtio-net driver and
@@ -499,7 +500,7 @@ then reads a capped long output from `/bin/cat /models/tok512.bin` and requires
 the truncation marker. This proves TCP/22 reachability through SSH KEX,
 host-key pinning, encrypted userauth, session channel setup, bounded direct
 remote exec, bounded stdin forwarding, and bounded output capture; PTY, shell
-command parsing, scp, sftp, runtime host-key rotation, runtime entropy, larger
+command parsing, scp, sftp, runtime host-key rotation, larger
 streaming, and broader authorized-key option enforcement are follow-up work.
 
 For deploy-specific image-time keys, generate a host-key seed with
@@ -509,13 +510,15 @@ generate `support/keys/ssh_kex_seed`, then build with `make base-image` while
 setting `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
 `SSHD_AUTHORIZED_KEYS_FILE`. Derive the host known_hosts line from the exact
 staged host-key seed. The KEX seed is an image-time hardening input; it does
-not replace a runtime entropy source.
+not replace the runtime entropy source provided by `SYS_RANDOM` on virtio-rng
+VM profiles.
 
 Proof:
 
 ```sh
 ./tests/sshd_transport_test.sh
 make sshd-ipv6-listener-test
+make sshd-runtime-entropy-test
 make sshd-kex-seed-test
 ```
 
@@ -684,14 +687,15 @@ Current limits that matter when exposing a SwiftOS network service:
   default seed and authorized key are development-only, and deploy builds should
   provide `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
   `SSHD_AUTHORIZED_KEYS_FILE`. The KEX seed is mixed with a per-session counter,
-  but runtime entropy is still missing. It can bind IPv4 by default or AF_INET6
-  with `-6`/`sshd6`; provider-routed SSHD-over-IPv6 still needs a real cloud
+  and SSHD uses `SYS_RANDOM` runtime entropy when virtio-rng is attached. It can
+  bind IPv4 by default or AF_INET6 with `-6`/`sshd6`; provider-routed
+  SSHD-over-IPv6 still needs a real cloud
   acceptance run. It supports simple `ssh-ed25519` lines plus safe restriction
   options in `/etc/ssh/authorized_keys`, bounded stdout/stdin, and
   direct single-component `/bin/<tool>` or `/usr/bin/<tool>` remote exec with
   whitespace splitting, quote removal, and backslash escaping; PTY, shell
-  command parsing, scp, sftp, runtime host-key rotation, runtime entropy, larger
-  streaming, and broader authorized-key option enforcement are still missing.
+  command parsing, scp, sftp, runtime host-key rotation, larger streaming, and
+  broader authorized-key option enforcement are still missing.
 - `/bin/ssh` is a client transport preflight, not a full SSH client. It verifies
   the server's host-key signature for the current exchange and checks a minimal
   `/etc/ssh/known_hosts` trust store, but has no user authentication and no

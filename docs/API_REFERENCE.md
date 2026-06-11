@@ -259,6 +259,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 77 | `log_read` | `buf`, `cap`, `max_count` | bytes written or negative error |
 | 78 | `socketpair` | `fds*`, `flags` | 0 or negative error |
 | 79 | `pkg_files` | `name`, `buf`, `cap` | bytes needed or negative error |
+| 80 | `random` | `buf`, `cap` | bytes written or negative error |
 
 Notes:
 
@@ -1272,6 +1273,12 @@ int swiftos_kernel_confirm(void);
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);
 ```
 
+### Runtime Entropy
+
+```c
+long swiftos_random(void *buf, unsigned long count);
+```
+
 ### Security And Process
 
 ```c
@@ -1457,6 +1464,7 @@ one booting acceptance path:
 | Networking bridge | `kernel/net/*`, `userland/lib/swift_user.h`, `userland/compat/sys/socket.h` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/dns_test.sh`, `./tests/boot_test.sh` |
 | Package syscalls | `kernel/pkg/store.swift`, `userland/pkg.swift`, `userland/lib/syscall.h` | `make package-local-install-test`, `make package-repo-install-test`, `make package-lua-repo-install-test`, `make ports-recipe-test`, `make ports-bzip2-repo-fixture`, `make ports-ca-certificates-repo-fixture`, `make package-ports-seed-repo-install-test`, `make package-static-host-repo-install-test`, `make package-static-host-dns-repo-install-test` |
 | Log export | `kernel/log/log.swift`, `kernel/syscall/syscall.swift`, `userland/logtail.swift`, `userland/lib/swift_user.h` | `make log-export-test` |
+| Runtime entropy | `kernel/drivers/virtio_rng.swift`, `kernel/syscall/syscall.swift`, `userland/lib/swift_user.h`, `userland/sshd.swift` | `make sshd-runtime-entropy-test` |
 | Native Swift bridge helpers | `userland/lib/swift_user.h`, `userland/lib/swift_user.c` | `./tests/swift_coreutils_test.sh`, `./tests/swift_headwc_test.sh`, `./tests/swift_date_test.sh` |
 
 Documentation must move with the code. If a syscall number, structure layout,

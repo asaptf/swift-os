@@ -80,6 +80,7 @@ private let sysSigreturn: UInt = 76       // sigreturn() — restore a kernel-bu
 private let sysLogRead: UInt = 77         // log_read(buf, cap, max_count) — needs capLogExport
 private let sysSocketpair: UInt = 78      // socketpair(fds, flags) — local full-duplex fd pair
 private let sysPkgFiles: UInt = 79        // pkg_files(name, buf, cap) — list active package payload files
+private let sysRandom: UInt = 80          // random(buf, cap) — runtime entropy from virtio-rng
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -301,6 +302,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
     } else if number == sysSocketpair {
         result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
+    } else if number == sysRandom {
+        result = syscallRandom(buffer: frame[0], capacity: frame[1])
     } else {
         result = -38 // ENOSYS
     }
@@ -334,4 +337,11 @@ private func syscallLogRead(buffer ptr: UInt, capacity cap: UInt, maxCount: UInt
     if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return -22 }
     guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
     return logFormatRecentTail(Int(maxCount), into: dst, capacity: Int(cap))
+}
+
+private func syscallRandom(buffer ptr: UInt, capacity cap: UInt) -> Int {
+    if cap == 0 { return 0 }
+    if cap > UInt(Int.max) { return -22 }
+    guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
+    return virtioRngRead(dst, Int(cap))
 }

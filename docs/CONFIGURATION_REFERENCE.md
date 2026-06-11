@@ -102,7 +102,7 @@ Makefile and [NOTES.md](NOTES.md) before changing them.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SSHD_HOST_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD host-key seed staged into `/etc/ssh/ssh_host_ed25519_seed` during `make base-image` |
-| `SSHD_KEX_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD KEX mix seed staged into `/etc/ssh/ssh_kex_seed` during `make base-image`; this is image-time hardening, not runtime entropy |
+| `SSHD_KEX_SEED_FILE` | empty | Optional hex-encoded 32-byte SSHD KEX mix seed staged into `/etc/ssh/ssh_kex_seed` during `make base-image`; runtime entropy comes from `SYS_RANDOM` when virtio-rng is attached |
 | `SSHD_AUTHORIZED_KEYS_FILE` | empty | Optional SSHD authorized_keys file staged into `/etc/ssh/authorized_keys` during `make base-image` |
 | `NET_IPV6_CONFIG_FILE` | empty | Optional static IPv6 config staged into `/etc/swos/net-ipv6` during `make base-image`; accepts `address=<ipv6>/64` and `gateway=fe80::1` lines |
 | `SWOS_SERVICES_FILE` | empty | Optional boot service manifest staged into `/etc/swos/services` during `make base-image` |
@@ -154,6 +154,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make sshd-authorized-keys-test` | Build a temporary base image with a generated SSHD authorized key and prove OpenSSH accepts it while rejecting the default fixture key. |
 | `make sshd-supervision-test` | Build a temporary base image with `sshd-once` and prove `swos-init` restarts SSHD between two host OpenSSH commands. |
 | `make sshd-ipv6-listener-test` | Build a temporary base image with `sshd6` and prove `/bin/sshd -6` autostarts as an AF_INET6 listener under `ipv6=on`. |
+| `make sshd-runtime-entropy-test` | Attach QEMU virtio-rng and prove SSHD marks KEX as runtime-seeded while completing OpenSSH remote exec. |
 | `make net-static-ipv6-test` | Build a temporary base image with Hetzner-style static IPv6 config and prove the kernel applies it at boot. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
