@@ -3,6 +3,34 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC4 SSHD publickey session/exec preflight (2026-06-11)
+
+- Extended `/bin/sshd` past transport-only KEX into a minimal authenticated SSH
+  session path. It now reads encrypted client packets, accepts the dev
+  `ssh-ed25519` public key for `root`, verifies the RFC 4252 publickey
+  signature over the SSH session identifier and userauth request, opens an RFC
+  4254 `session` channel, handles `exec`, and sends channel stdout plus
+  `exit-status`.
+- The only supported command for this slice is direct `/bin/echo ...`. The
+  daemon runs it through `spawn_handles` with stdout/stderr connected to a
+  pipe, then returns the child's output as SSH channel data. This proves the SSH
+  protocol path and the guest process/FD path without introducing shell parsing,
+  PTY allocation, or scp/sftp yet.
+- Added the HC4 OpenSSH fixture key at `fixtures/ssh/sshd_hc4_ed25519(.pub)` and
+  staged the matching development public key in `/etc/ssh/authorized_keys` in
+  the base image. The current daemon still compares the embedded raw dev key;
+  persisted host keys, real entropy, and real authorized-key loading remain
+  follow-up work.
+- Added Swift userland bridges for `pipe` and raw `spawn_handles` so native
+  tools can inherit explicit file handles when launching children.
+
+**Acceptance.** `./tests/sshd_transport_test.sh` boots QEMU with host TCP
+forwarding to guest TCP/22, starts `/bin/sshd`, and drives it with host
+OpenSSH using the fixture key. The host command
+`ssh ... root@127.0.0.1 /bin/echo HC4-OK` must exit 0 and print `HC4-OK`; the
+guest log must show publickey auth, session channel open, and
+`sshd: session exec completed status 0`.
+
 ## HC3 SSHD KEX transport preflight (2026-06-11)
 
 - Extended `/bin/sshd` from an identification-only probe into a real SSH

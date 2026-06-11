@@ -1,23 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
-// sshd.swift — SSH server transport preflight for swift-os.
+// sshd.swift — SSH server session preflight for swift-os.
 //
 // This is still not a complete SSH login daemon. It proves the modern transport
-// path that Hetzner-style remote access needs next: TCP/22, SSH identification,
-// KEXINIT negotiation, curve25519-sha256 key exchange, ssh-ed25519 host-key
-// signature, NEWKEYS, and an encrypted pre-auth disconnect. User auth, PTY,
-// session channels, scp/sftp, service supervision, and real host-key storage are
-// separate milestones.
+// and pre-login path that Hetzner-style remote access needs next: TCP/22, SSH
+// identification, curve25519-sha256, ssh-ed25519 host authentication,
+// chacha20-poly1305, Ed25519 publickey user auth, and one direct session/exec
+// command. PTY, shells, scp/sftp, service supervision, real entropy, and real
+// host/user key storage are separate milestones.
 
 private let defaultPort: UInt16 = 22
 private let pollIn: Int16 = 0x001
-private let serverVersion: StaticString = "SSH-2.0-swift-os_sshd-kex"
-private let serverBanner: StaticString = "SSH-2.0-swift-os_sshd-kex\r\n"
+private let serverVersion: StaticString = "SSH-2.0-swift-os_sshd-session"
+private let serverBanner: StaticString = "SSH-2.0-swift-os_sshd-session\r\n"
 private let disconnectText: StaticString =
-    "swift-os sshd kex preflight: userauth/session not enabled yet"
+    "swift-os sshd session preflight: unsupported request"
 
 private let maxPacketLen = 8192
 private let maxPayloadLen = 7800
 private let sshBlockSize = 8
+private let spawnRightWrite: UInt32 = 1 << 1
+
+private let msgDisconnect: UInt8 = 1
+private let msgServiceRequest: UInt8 = 5
+private let msgServiceAccept: UInt8 = 6
+private let msgUserauthRequest: UInt8 = 50
+private let msgUserauthFailure: UInt8 = 51
+private let msgUserauthSuccess: UInt8 = 52
+private let msgUserauthPkOk: UInt8 = 60
+private let msgGlobalRequest: UInt8 = 80
+private let msgRequestSuccess: UInt8 = 81
+private let msgRequestFailure: UInt8 = 82
+private let msgChannelOpen: UInt8 = 90
+private let msgChannelOpenConfirmation: UInt8 = 91
+private let msgChannelOpenFailure: UInt8 = 92
+private let msgChannelData: UInt8 = 94
+private let msgChannelEof: UInt8 = 96
+private let msgChannelClose: UInt8 = 97
+private let msgChannelRequest: UInt8 = 98
+private let msgChannelSuccess: UInt8 = 99
+private let msgChannelFailure: UInt8 = 100
 
 private func writeStr(_ fd: Int32, _ s: StaticString) {
     s.withUTF8Buffer { _ = swiftos_write(fd, $0.baseAddress, UInt($0.count)) }
@@ -208,12 +229,98 @@ private struct SSHWriter {
     }
 }
 
+private struct SSHStringView {
+    let p: UnsafeRawPointer
+    let len: Int
+}
+
+private struct SSHReader {
+    let p: UnsafeRawPointer
+    let len: Int
+    var off: Int = 0
+
+    var remaining: Int { len - off }
+
+    mutating func u8() -> UInt8? {
+        if off + 1 > len { return nil }
+        let v = p.load(fromByteOffset: off, as: UInt8.self)
+        off += 1
+        return v
+    }
+
+    mutating func bool() -> Bool? {
+        guard let v = u8() else { return nil }
+        return v != 0
+    }
+
+    mutating func u32() -> UInt32? {
+        if off + 4 > len { return nil }
+        let v = getU32BE(p, off)
+        off += 4
+        return v
+    }
+
+    mutating func string() -> SSHStringView? {
+        guard let n32 = u32() else { return nil }
+        let n = Int(n32)
+        if off + n > len { return nil }
+        let view = SSHStringView(p: p + off, len: n)
+        off += n
+        return view
+    }
+}
+
 private func writerStatic(_ w: inout SSHWriter, _ s: StaticString) -> Bool {
     s.withUTF8Buffer { w.bytes($0.baseAddress!, $0.count) }
 }
 
 private func writerStringStatic(_ w: inout SSHWriter, _ s: StaticString) -> Bool {
     s.withUTF8Buffer { w.string($0.baseAddress!, $0.count) }
+}
+
+private func bytesEqual(_ lhs: UnsafeRawPointer, _ rhs: UnsafeRawPointer, _ n: Int) -> Bool {
+    var diff: UInt8 = 0
+    var i = 0
+    while i < n {
+        diff |= lhs.load(fromByteOffset: i, as: UInt8.self) ^
+                rhs.load(fromByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+    return diff == 0
+}
+
+private func stringEquals(_ view: SSHStringView, _ s: StaticString) -> Bool {
+    s.withUTF8Buffer { sb -> Bool in
+        if view.len != sb.count { return false }
+        return bytesEqual(view.p, sb.baseAddress!, view.len)
+    }
+}
+
+private func writeAuthorizedPubKey(_ out32: UnsafeMutableRawPointer) {
+    // Dev-only HC4 key, matching fixtures/ssh/sshd_hc4_ed25519.pub.
+    let words: (UInt64, UInt64, UInt64, UInt64) = (
+        0x50c5_99ad_a66e_f4d0,
+        0x4c9e_e4b8_6471_ad64,
+        0x5675_3e2f_75df_5859,
+        0xc940_0cca_0c37_3565
+    )
+    withUnsafeBytes(of: words) { raw in copyBytes(out32, 0, raw.baseAddress!, 32) }
+}
+
+private func authorizedKeyBlobMatches(_ blob: SSHStringView) -> Bool {
+    var r = SSHReader(p: blob.p, len: blob.len)
+    guard let alg = r.string(),
+          stringEquals(alg, "ssh-ed25519"),
+          let key = r.string(),
+          key.len == 32,
+          r.remaining == 0 else {
+        return false
+    }
+    var expected = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
+    return withUnsafeMutableBytes(of: &expected) { eb -> Bool in
+        writeAuthorizedPubKey(eb.baseAddress!)
+        return bytesEqual(key.p, eb.baseAddress!, 32)
+    }
 }
 
 private func makePlainPacket(_ payload: UnsafeRawPointer, _ payloadLen: Int,
@@ -434,9 +541,446 @@ private func sendEncryptedChachaPacket(_ fd: Int32,
     }
 }
 
+private func readEncryptedChachaPacket(_ fd: Int32,
+                                       _ payload: UnsafeMutableRawPointer, _ cap: Int,
+                                       _ key64: UnsafeRawPointer,
+                                       _ seq: inout UInt32) -> Int {
+    withUnsafeTemporaryAllocation(byteCount: maxPacketLen + 20, alignment: 8) { enc -> Int in
+        withUnsafeTemporaryAllocation(byteCount: maxPacketLen, alignment: 8) { plain -> Int in
+            guard let encBase = enc.baseAddress, let plainBase = plain.baseAddress else { return -1 }
+            if !readExact(fd, encBase, 4) { return -1 }
+
+            var nonce = (UInt64(0), UInt32(0))
+            withUnsafeMutableBytes(of: &nonce) { nb in
+                nonceForSeq(seq, nb.baseAddress!)
+                chacha20Encrypt(key: key64 + 32, counter: 0, nonce: nb.baseAddress!,
+                                input: encBase, output: plainBase, len: 4)
+            }
+            let packetLen = Int(getU32BE(plainBase, 0))
+            if packetLen < 5 || packetLen > maxPacketLen || (packetLen % sshBlockSize) != 0 {
+                return -1
+            }
+            if !readExact(fd, encBase + 4, packetLen + 16) { return -1 }
+
+            var tagOK = false
+            withUnsafeMutableBytes(of: &nonce) { nb in
+                var polyKey = (
+                    UInt64(0), UInt64(0), UInt64(0), UInt64(0),
+                    UInt64(0), UInt64(0), UInt64(0), UInt64(0)
+                )
+                withUnsafeMutableBytes(of: &polyKey) { pk in
+                    withUnsafeTemporaryAllocation(byteCount: 16, alignment: 8) { tag in
+                        chacha20Block(key: key64, counter: 0, nonce: nb.baseAddress!,
+                                      out: pk.baseAddress!)
+                        poly1305Mac(key: pk.baseAddress!, msg: encBase, len: 4 + packetLen,
+                                     tagOut: tag.baseAddress!)
+                        tagOK = bytesEqual(tag.baseAddress!, encBase + 4 + packetLen, 16)
+                    }
+                }
+                if tagOK {
+                    chacha20Encrypt(key: key64, counter: 1, nonce: nb.baseAddress!,
+                                    input: encBase + 4, output: plainBase, len: packetLen)
+                }
+            }
+            if !tagOK { return -1 }
+            let padLen = Int(plainBase.load(fromByteOffset: 0, as: UInt8.self))
+            let payloadLen = packetLen - padLen - 1
+            if padLen < 4 || payloadLen < 1 || payloadLen > cap { return -1 }
+            copyBytes(payload, 0, plainBase + 1, payloadLen)
+            seq &+= 1
+            return payloadLen
+        }
+    }
+}
+
+private func commandEchoArgument(_ command: SSHStringView) -> SSHStringView? {
+    func matchPrefix(_ s: StaticString) -> Int? {
+        s.withUTF8Buffer { sb -> Int? in
+            if command.len < sb.count { return nil }
+            var i = 0
+            while i < sb.count {
+                if command.p.load(fromByteOffset: i, as: UInt8.self) != sb[i] { return nil }
+                i += 1
+            }
+            if command.len > sb.count &&
+                command.p.load(fromByteOffset: sb.count, as: UInt8.self) != 0x20 {
+                return nil
+            }
+            return sb.count
+        }
+    }
+
+    guard var off = matchPrefix("/bin/echo") ?? matchPrefix("echo") else { return nil }
+    while off < command.len &&
+        command.p.load(fromByteOffset: off, as: UInt8.self) == 0x20 {
+        off += 1
+    }
+    return SSHStringView(p: command.p + off, len: command.len - off)
+}
+
+private func writeCStringStatic(_ out: UnsafeMutableRawPointer, _ s: StaticString) -> Int {
+    s.withUTF8Buffer { sb -> Int in
+        copyBytes(out, 0, sb.baseAddress!, sb.count)
+        out.storeBytes(of: UInt8(0), toByteOffset: sb.count, as: UInt8.self)
+        return sb.count + 1
+    }
+}
+
+private func runExecCommand(_ command: SSHStringView,
+                            _ output: UnsafeMutableRawPointer,
+                            _ outputCap: Int) -> (Int, UInt32) {
+    guard let arg = commandEchoArgument(command) else {
+        let msg: StaticString = "sshd: unsupported exec command\n"
+        let n = msg.withUTF8Buffer { mb -> Int in
+            let count = min(mb.count, outputCap)
+            copyBytes(output, 0, mb.baseAddress!, count)
+            return count
+        }
+        return (n, 127)
+    }
+
+    var fds = (Int32(0), Int32(0))
+    let pipeRc = withUnsafeMutablePointer(to: &fds) { fp -> Int32 in
+        swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
+    }
+    if pipeRc != 0 {
+        let msg: StaticString = "sshd: pipe failed\n"
+        let n = msg.withUTF8Buffer { mb -> Int in
+            let count = min(mb.count, outputCap)
+            copyBytes(output, 0, mb.baseAddress!, count)
+            return count
+        }
+        return (n, 126)
+    }
+
+    let readFd = fds.0
+    let writeFd = fds.1
+    var status: UInt32 = 126
+
+    withUnsafeTemporaryAllocation(byteCount: 10, alignment: 1) { pathRaw in
+      withUnsafeTemporaryAllocation(byteCount: 5, alignment: 1) { argv0Raw in
+      withUnsafeTemporaryAllocation(byteCount: arg.len + 1, alignment: 1) { argRaw in
+      withUnsafeTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: 3) { argv in
+      withUnsafeTemporaryAllocation(byteCount: 32, alignment: 4) { handles in
+        _ = writeCStringStatic(pathRaw.baseAddress!, "/bin/echo")
+        _ = writeCStringStatic(argv0Raw.baseAddress!, "echo")
+        if arg.len > 0 {
+            copyBytes(argRaw.baseAddress!, 0, arg.p, arg.len)
+        }
+        argRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: arg.len, as: UInt8.self)
+
+        argv[0] = pathRaw.baseAddress!.assumingMemoryBound(to: CChar.self)
+        if arg.len > 0 {
+            argv[1] = argRaw.baseAddress!.assumingMemoryBound(to: CChar.self)
+            argv[2] = nil
+        } else {
+            argv[1] = nil
+            argv[2] = nil
+        }
+
+        let hp = handles.baseAddress!
+        hp.storeBytes(of: writeFd, toByteOffset: 0, as: Int32.self)
+        hp.storeBytes(of: Int32(1), toByteOffset: 4, as: Int32.self)
+        hp.storeBytes(of: spawnRightWrite, toByteOffset: 8, as: UInt32.self)
+        hp.storeBytes(of: UInt32(0), toByteOffset: 12, as: UInt32.self)
+        hp.storeBytes(of: writeFd, toByteOffset: 16, as: Int32.self)
+        hp.storeBytes(of: Int32(2), toByteOffset: 20, as: Int32.self)
+        hp.storeBytes(of: spawnRightWrite, toByteOffset: 24, as: UInt32.self)
+        hp.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
+
+        let rc = swiftos_spawn_handles_raw(
+            pathRaw.baseAddress!.assumingMemoryBound(to: CChar.self),
+            UnsafeMutableRawPointer(argv.baseAddress!),
+            handles.baseAddress!,
+            2
+        )
+        status = rc >= 0 ? UInt32(rc) : 126
+      }}}}}
+
+    _ = swiftos_close(writeFd)
+    var used = 0
+    while used < outputCap {
+        let r = swiftos_read(readFd, output + used, UInt(outputCap - used))
+        if r <= 0 { break }
+        used += Int(r)
+    }
+    _ = swiftos_close(readFd)
+    return (used, status)
+}
+
+private func signatureView(_ sigBlob: SSHStringView) -> SSHStringView? {
+    var r = SSHReader(p: sigBlob.p, len: sigBlob.len)
+    guard let alg = r.string(),
+          stringEquals(alg, "ssh-ed25519"),
+          let sig = r.string(),
+          sig.len == 64,
+          r.remaining == 0 else {
+        return nil
+    }
+    return sig
+}
+
+private func verifyUserauthSignature(sessionId: UnsafeRawPointer,
+                                     requestPayload: UnsafeRawPointer,
+                                     signedLen: Int,
+                                     sigBlob: SSHStringView) -> Bool {
+    guard let sig = signatureView(sigBlob) else { return false }
+    var pub = (UInt64(0), UInt64(0), UInt64(0), UInt64(0))
+    return withUnsafeMutableBytes(of: &pub) { pb -> Bool in
+        writeAuthorizedPubKey(pb.baseAddress!)
+        return withUnsafeTemporaryAllocation(byteCount: 4 + 32 + signedLen, alignment: 8) { raw -> Bool in
+            var w = SSHWriter(p: raw.baseAddress!, cap: raw.count)
+            guard w.string(sessionId, 32),
+                  w.bytes(requestPayload, signedLen) else {
+                return false
+            }
+            return ed25519Verify(message: raw.baseAddress!, w.len,
+                                 signature: sig.p,
+                                 publicKey: pb.baseAddress!)
+        }
+    }
+}
+
+private func sendUserauthFailure(_ fd: Int32, _ packet: UnsafeMutableRawPointer, _ cap: Int,
+                                 _ key: UnsafeRawPointer, _ seq: inout UInt32) -> Bool {
+    var w = SSHWriter(p: packet, cap: cap)
+    guard w.u8(msgUserauthFailure),
+          writerStringStatic(&w, "publickey"),
+          w.u8(0) else {
+        return false
+    }
+    return sendEncryptedChachaPacket(fd, packet, w.len, key, &seq)
+}
+
+private func sendChannelRequestResult(_ fd: Int32, _ packet: UnsafeMutableRawPointer, _ cap: Int,
+                                      _ key: UnsafeRawPointer, _ seq: inout UInt32,
+                                      _ recipient: UInt32, _ ok: Bool) -> Bool {
+    var w = SSHWriter(p: packet, cap: cap)
+    guard w.u8(ok ? msgChannelSuccess : msgChannelFailure),
+          w.u32(recipient) else {
+        return false
+    }
+    return sendEncryptedChachaPacket(fd, packet, w.len, key, &seq)
+}
+
+private func sendGlobalRequestResult(_ fd: Int32, _ packet: UnsafeMutableRawPointer, _ cap: Int,
+                                     _ key: UnsafeRawPointer, _ seq: inout UInt32,
+                                     _ ok: Bool) -> Bool {
+    var w = SSHWriter(p: packet, cap: cap)
+    guard w.u8(ok ? msgRequestSuccess : msgRequestFailure) else { return false }
+    return sendEncryptedChachaPacket(fd, packet, w.len, key, &seq)
+}
+
+private func handleSSHSession(_ fd: Int32,
+                              _ packet: UnsafeMutableRawPointer, _ cap: Int,
+                              _ clientKey: UnsafeRawPointer, _ serverKey: UnsafeRawPointer,
+                              _ sessionId: UnsafeRawPointer,
+                              _ clientSeq: inout UInt32, _ serverSeq: inout UInt32) -> Bool {
+    var n = readEncryptedChachaPacket(fd, packet, cap, clientKey, &clientSeq)
+    guard n > 0 else { swiftos_puts("sshd: encrypted service read failed\n"); return false }
+    var r = SSHReader(p: packet, len: n)
+    guard r.u8() == msgServiceRequest,
+          let service = r.string(),
+          stringEquals(service, "ssh-userauth") else {
+        swiftos_puts("sshd: expected ssh-userauth service\n")
+        return false
+    }
+
+    var w = SSHWriter(p: packet, cap: cap)
+    guard w.u8(msgServiceAccept),
+          writerStringStatic(&w, "ssh-userauth"),
+          sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+        swiftos_puts("sshd: service accept failed\n")
+        return false
+    }
+
+    var authed = false
+    var attempts = 0
+    while !authed && attempts < 8 {
+        attempts += 1
+        n = readEncryptedChachaPacket(fd, packet, cap, clientKey, &clientSeq)
+        guard n > 0 else { swiftos_puts("sshd: encrypted auth read failed\n"); return false }
+        r = SSHReader(p: packet, len: n)
+        guard r.u8() == msgUserauthRequest,
+              let user = r.string(),
+              let authService = r.string(),
+              let method = r.string(),
+              stringEquals(user, "root"),
+              stringEquals(authService, "ssh-connection"),
+              stringEquals(method, "publickey"),
+              let signed = r.bool(),
+              let alg = r.string(),
+              stringEquals(alg, "ssh-ed25519"),
+              let keyBlob = r.string(),
+              authorizedKeyBlobMatches(keyBlob) else {
+            if !sendUserauthFailure(fd, packet, cap, serverKey, &serverSeq) { return false }
+            continue
+        }
+
+        let signedLen = r.off
+        if !signed {
+            w = SSHWriter(p: packet, cap: cap)
+            guard w.u8(msgUserauthPkOk),
+                  writerStringStatic(&w, "ssh-ed25519"),
+                  w.string(keyBlob.p, keyBlob.len),
+                  sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                return false
+            }
+            continue
+        }
+
+        guard let sigBlob = r.string(),
+              r.remaining == 0,
+              verifyUserauthSignature(sessionId: sessionId,
+                                      requestPayload: packet,
+                                      signedLen: signedLen,
+                                      sigBlob: sigBlob) else {
+            if !sendUserauthFailure(fd, packet, cap, serverKey, &serverSeq) { return false }
+            continue
+        }
+
+        w = SSHWriter(p: packet, cap: cap)
+        guard w.u8(msgUserauthSuccess),
+              sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+            return false
+        }
+        authed = true
+        swiftos_puts("sshd: publickey auth accepted for root\n")
+    }
+    if !authed { return false }
+
+    var clientChannel: UInt32 = 0
+    let serverChannel: UInt32 = 0
+    var channelOpen = false
+    var loops = 0
+    while loops < 24 {
+        loops += 1
+        n = readEncryptedChachaPacket(fd, packet, cap, clientKey, &clientSeq)
+        guard n > 0 else { swiftos_puts("sshd: encrypted channel read failed\n"); return false }
+        r = SSHReader(p: packet, len: n)
+        guard let msg = r.u8() else { return false }
+        if msg == msgGlobalRequest {
+            guard let name = r.string(), let wantReply = r.bool() else { return false }
+            if wantReply {
+                let ok = stringEquals(name, "no-more-sessions@openssh.com")
+                if !sendGlobalRequestResult(fd, packet, cap, serverKey, &serverSeq, ok) {
+                    return false
+                }
+            }
+        } else if msg == msgChannelOpen {
+            guard let ctype = r.string(),
+                  let sender = r.u32(),
+                  let _ = r.u32(),
+                  let _ = r.u32() else {
+                return false
+            }
+            if stringEquals(ctype, "session") {
+                clientChannel = sender
+                channelOpen = true
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgChannelOpenConfirmation),
+                      w.u32(clientChannel),
+                      w.u32(serverChannel),
+                      w.u32(65536),
+                      w.u32(32768),
+                      sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                    return false
+                }
+                swiftos_puts("sshd: session channel opened\n")
+            } else {
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgChannelOpenFailure),
+                      w.u32(sender),
+                      w.u32(1),
+                      writerStringStatic(&w, "channel type not supported"),
+                      w.u32(0),
+                      sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                    return false
+                }
+            }
+        } else if msg == msgChannelRequest {
+            guard channelOpen,
+                  let recipient = r.u32(),
+                  recipient == serverChannel,
+                  let req = r.string(),
+                  let wantReply = r.bool() else {
+                return false
+            }
+            if stringEquals(req, "env") {
+                if wantReply &&
+                    !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                              clientChannel, false) {
+                    return false
+                }
+                continue
+            }
+            guard stringEquals(req, "exec"),
+                  let command = r.string() else {
+                if wantReply &&
+                    !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                              clientChannel, false) {
+                    return false
+                }
+                continue
+            }
+            if wantReply &&
+                !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                          clientChannel, true) {
+                return false
+            }
+
+            return withUnsafeTemporaryAllocation(byteCount: 4096, alignment: 8) { out -> Bool in
+                let result = runExecCommand(command, out.baseAddress!, out.count)
+                if result.0 > 0 {
+                    w = SSHWriter(p: packet, cap: cap)
+                    guard w.u8(msgChannelData),
+                          w.u32(clientChannel),
+                          w.string(out.baseAddress!, result.0),
+                          sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                        return false
+                    }
+                }
+
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgChannelEof),
+                      w.u32(clientChannel),
+                      sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                    return false
+                }
+
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgChannelRequest),
+                      w.u32(clientChannel),
+                      writerStringStatic(&w, "exit-status"),
+                      w.u8(0),
+                      w.u32(result.1),
+                      sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                    return false
+                }
+
+                w = SSHWriter(p: packet, cap: cap)
+                guard w.u8(msgChannelClose),
+                      w.u32(clientChannel),
+                      sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
+                    return false
+                }
+
+                swiftos_puts("sshd: session exec completed status ")
+                printUInt(UInt(result.1))
+                swiftos_puts("\n")
+                return true
+            }
+        } else if msg == msgChannelClose {
+            return true
+        }
+    }
+    swiftos_puts("sshd: session loop exhausted\n")
+    return false
+}
+
 private func buildDisconnectPayload(_ out: UnsafeMutableRawPointer, _ cap: Int) -> Int {
     var w = SSHWriter(p: out, cap: cap)
-    guard w.u8(1),
+    guard w.u8(msgDisconnect),
           w.u32(11) else { return -1 } // SSH_DISCONNECT_BY_APPLICATION
     let ok = disconnectText.withUTF8Buffer { desc -> Bool in
         w.string(desc.baseAddress!, desc.count) && w.u32(0)
@@ -452,7 +996,8 @@ private func serveOne(_ fd: Int32) {
       withUnsafeTemporaryAllocation(byteCount: maxPayloadLen, alignment: 8) { packet in
       withUnsafeTemporaryAllocation(byteCount: 256, alignment: 8) { hostKey in
       withUnsafeTemporaryAllocation(byteCount: 128, alignment: 8) { sigBlob in
-      withUnsafeTemporaryAllocation(byteCount: 64, alignment: 8) { keyOut in
+      withUnsafeTemporaryAllocation(byteCount: 64, alignment: 8) { clientKey in
+      withUnsafeTemporaryAllocation(byteCount: 64, alignment: 8) { serverKey in
         let clientVersionLen = readClientBanner(fd, line)
         guard clientVersionLen > 0 && isSSHBanner(UnsafePointer(line.baseAddress!), clientVersionLen) else {
             swiftos_puts("sshd: invalid client banner\n")
@@ -607,25 +1152,37 @@ private func serveOne(_ fd: Int32) {
         clientSeq = 0
         serverSeq = 0
 
-        let keyOK = withUnsafeBytes(of: &shared) { sh in
+        let clientKeyOK = withUnsafeBytes(of: &shared) { sh in
             withUnsafeBytes(of: &exchangeHash) { hh in
-                deriveSSHKey(keyOut.baseAddress!, 64, 0x44, sh.baseAddress!, hh.baseAddress!)
+                deriveSSHKey(clientKey.baseAddress!, 64, 0x43, sh.baseAddress!, hh.baseAddress!)
             }
         }
-        guard keyOK else {
+        let serverKeyOK = withUnsafeBytes(of: &shared) { sh in
+            withUnsafeBytes(of: &exchangeHash) { hh in
+                deriveSSHKey(serverKey.baseAddress!, 64, 0x44, sh.baseAddress!, hh.baseAddress!)
+            }
+        }
+        guard clientKeyOK && serverKeyOK else {
             swiftos_puts("sshd: key derivation failed\n")
             return
         }
-        let discLen = buildDisconnectPayload(packet.baseAddress!, packet.count)
-        guard discLen > 0,
-              sendEncryptedChachaPacket(fd, packet.baseAddress!, discLen,
-                                        keyOut.baseAddress!, &serverSeq) else {
-            swiftos_puts("sshd: encrypted disconnect failed\n")
+
+        let sessionOK = withUnsafeBytes(of: &exchangeHash) { hh in
+            handleSSHSession(fd, packet.baseAddress!, packet.count,
+                             clientKey.baseAddress!, serverKey.baseAddress!,
+                             hh.baseAddress!, &clientSeq, &serverSeq)
+        }
+        if !sessionOK {
+            let discLen = buildDisconnectPayload(packet.baseAddress!, packet.count)
+            if discLen > 0 {
+                _ = sendEncryptedChachaPacket(fd, packet.baseAddress!, discLen,
+                                              serverKey.baseAddress!, &serverSeq)
+            }
+            swiftos_puts("sshd: session failed\n")
             return
         }
-        _ = clientSeq
-        swiftos_puts("sshd: kex complete; sent encrypted preauth disconnect\n")
-      }}}}}}}
+        swiftos_puts("sshd: session complete\n")
+      }}}}}}}}
     }
 
 @_cdecl("main")
@@ -648,7 +1205,7 @@ func main(_ argc: Int32,
     }
     swiftos_puts("sshd: listening on ")
     printUInt(UInt(port))
-    swiftos_puts(" (transport kex preflight)\n")
+    swiftos_puts(" (session exec preflight)\n")
 
     while true {
         let cfd = swiftos_accept(lfd)

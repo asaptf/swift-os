@@ -412,21 +412,21 @@ Current Hetzner readiness status:
   with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
-- The base image includes `/bin/sshd` as an SSHD transport preflight. It binds
-  guest TCP/22, exchanges SSH identification strings with a normal OpenSSH
-  client, completes `curve25519-sha256` KEX with an `ssh-ed25519` development
-  host key and `chacha20-poly1305@openssh.com`, then returns an encrypted
-  pre-auth SSH disconnect reason. The checked proof is
+- The base image includes `/bin/sshd` as an SSHD session/exec preflight. It
+  binds guest TCP/22, exchanges SSH identification strings with a normal
+  OpenSSH client, completes `curve25519-sha256` KEX with an `ssh-ed25519`
+  development host key and `chacha20-poly1305@openssh.com`, authenticates
+  `root` with the HC4 development Ed25519 key, opens a `session` channel, and
+  executes one direct `/bin/echo ...` command. The checked proof is
   `./tests/sshd_transport_test.sh`.
 
 Not deploy-complete yet:
 
-- `/bin/sshd` is not a login-capable SSH daemon yet. The next remote-login
-  milestone should be server-first: persisted host keys, real entropy,
-  key-based login, PTY/TTY behavior, service launch, and a QEMU host-to-guest
-  SSH acceptance test that runs a command through the authenticated session.
-  Dropbear remains the likely full server package if the first-party preflight
-  does not grow into the supported daemon.
+- `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
+  milestones should add persisted host keys, real entropy, authorized-key
+  loading from `/etc/ssh/authorized_keys`, shell/PTY behavior, service launch,
+  and broader remote commands. Dropbear remains a candidate full server package
+  if the first-party preflight does not grow into the supported daemon.
 - SSH client support is also desired for admin and deploy workflows, but it
   should not replace the server-first remote-login proof.
 - IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and

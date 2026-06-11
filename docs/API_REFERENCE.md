@@ -744,6 +744,19 @@ char *const argv[] = { "argvdemo", "inheritcheck", 0 };
 long rc = spawn_handles("/bin/argvdemo", argv, handles, 4);
 ```
 
+Native Embedded Swift code can call the same kernel operation through the raw
+bridge when it needs explicit handle inheritance:
+
+```c
+long swiftos_spawn_handles_raw(const char *path, void *argv,
+                               const void *handles,
+                               unsigned long handle_count);
+```
+
+`argv` points at a null-terminated pointer vector. `handles` points at records
+with the same 16-byte layout as `struct swiftos_spawn_handle`; this raw shape
+keeps the bridge easy to construct from Swift temporary allocations.
+
 ## IPC Endpoints
 
 Endpoint pairs are created with:
@@ -1093,6 +1106,7 @@ void swiftos_puts(const char *s);
 long swiftos_write(int fd, const void *buf, unsigned long count);
 long swiftos_read(int fd, void *buf, unsigned long count);
 int swiftos_close(int fd);
+int swiftos_pipe(int fds[2]);
 ```
 
 ### Filesystem

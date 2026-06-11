@@ -46,6 +46,9 @@ void swiftos_nanosleep(unsigned long sec, unsigned long nsec);
 int  swiftos_open(const char *path, int flags);
 long swiftos_read(int fd, void *buf, unsigned long count);
 int  swiftos_close(int fd);
+int  swiftos_pipe(int fds[2]);
+long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
+                               unsigned long handle_count);
 // Read directory entries (kernel dirent layout) into buf; returns bytes used.
 long swiftos_getdents(int fd, void *buf, unsigned long count);
 // Stat a path. Fills the provided fields (any may be NULL). Returns 0 on success.

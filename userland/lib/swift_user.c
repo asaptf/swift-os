@@ -132,6 +132,16 @@ int swiftos_close(int fd) {
     return close(fd);
 }
 
+int swiftos_pipe(int fds[2]) {
+    return (int)__syscall3(SYS_PIPE, (long)fds, 0, 0);
+}
+
+long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
+                               unsigned long handle_count) {
+    return __syscall4(SYS_SPAWN_HANDLES, (long)path, (long)argv, (long)handles,
+                      (long)handle_count);
+}
+
 long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }
