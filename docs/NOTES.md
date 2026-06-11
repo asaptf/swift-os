@@ -3,6 +3,24 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC18 SSHD quoted argv preflight (2026-06-11)
+
+- Replaced `/bin/sshd`'s raw ASCII-whitespace remote-exec splitter with a small
+  direct-exec argv parser. It removes single and double quotes, supports
+  backslash escaping, preserves empty quoted arguments, and still requires the
+  executable path to be a single-component `/bin/<tool>`.
+- Kept the boundary deliberately below shell semantics: no expansion, globbing,
+  redirects, pipelines, environment assignment, PTY, or shell startup. Those
+  bytes are either ordinary argv bytes or remain unsupported future login work.
+- Hardened `./tests/sshd_transport_test.sh` with a host OpenSSH command that
+  sends quoted words, a single-quoted phrase, a backslash escape, and an empty
+  argument through `/bin/echo`, requiring exact stdout.
+
+**Acceptance.** `make sshd-transport-test` proves that authenticated host
+OpenSSH remote exec now preserves quoted argv grouping while retaining SSHD
+host-key pinning, denied-key rejection, stdin forwarding, bounded long output,
+and exit-status reporting.
+
 ## HC17 TCP write backpressure preflight (2026-06-11)
 
 - Added TCP send-space readiness helpers so socket poll/write paths can observe
@@ -244,6 +262,8 @@ the encrypted `ssh-userauth` service request/accept, and print
   long-output streaming beyond the current bounded pipe read. It is enough to
   support remote checks such as `/bin/id` and simple argument passing such as
   `/bin/echo HC6-OK`.
+- HC18 later added quote removal and backslash escaping for direct-exec argv
+  while still intentionally avoiding shell semantics.
 
 **Acceptance.** `./tests/sshd_transport_test.sh` now keeps the HC5 negative-key
 check, then authenticates with the HC5 key and executes both `/bin/id` and

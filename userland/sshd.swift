@@ -830,20 +830,7 @@ private func readEncryptedChachaPacket(_ fd: Int32,
 }
 
 private func isExecSpace(_ c: UInt8) -> Bool {
-    c == 0x20 || c == 0x09 || c == 0x0D
-}
-
-private func firstExecToken(_ command: SSHStringView) -> SSHStringView? {
-    var off = 0
-    while off < command.len && isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
-        off += 1
-    }
-    if off >= command.len { return nil }
-    let start = off
-    while off < command.len && !isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
-        off += 1
-    }
-    return SSHStringView(p: command.p + start, len: off - start)
+    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D
 }
 
 private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
@@ -864,20 +851,101 @@ private func execPathIsAllowed(_ path: SSHStringView) -> Bool {
     }
 }
 
-private func execArgCount(_ command: SSHStringView) -> Int {
-    var off = 0
-    var count = 0
-    while off < command.len {
-        while off < command.len && isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
-            off += 1
+private func cStringLen(_ p: UnsafePointer<CChar>) -> Int {
+    var n = 0
+    while p[n] != 0 { n += 1 }
+    return n
+}
+
+private func execCPathIsAllowed(_ path: UnsafePointer<CChar>) -> Bool {
+    execPathIsAllowed(SSHStringView(p: UnsafeRawPointer(path), len: cStringLen(path)))
+}
+
+private func parseExecArgv(_ command: SSHStringView,
+                           _ raw: UnsafeMutableRawPointer,
+                           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Int {
+    var inOff = 0
+    var outOff = 0
+    var argc = 0
+
+    while true {
+        while inOff < command.len &&
+            isExecSpace(command.p.load(fromByteOffset: inOff, as: UInt8.self)) {
+            inOff += 1
         }
-        if off >= command.len { break }
-        count += 1
-        while off < command.len && !isExecSpace(command.p.load(fromByteOffset: off, as: UInt8.self)) {
-            off += 1
+        if inOff >= command.len { break }
+        if argc >= maxExecArgs { return -1 }
+
+        argv[argc] = (raw + outOff).assumingMemoryBound(to: CChar.self)
+        argc += 1
+
+        while inOff < command.len {
+            var c = command.p.load(fromByteOffset: inOff, as: UInt8.self)
+            if c == 0 { return -1 }
+            if isExecSpace(c) { break }
+
+            if c == 0x27 { // single quote: copy bytes literally until the next quote.
+                inOff += 1
+                var closed = false
+                while inOff < command.len {
+                    c = command.p.load(fromByteOffset: inOff, as: UInt8.self)
+                    if c == 0 { return -1 }
+                    if c == 0x27 {
+                        inOff += 1
+                        closed = true
+                        break
+                    }
+                    raw.storeBytes(of: c, toByteOffset: outOff, as: UInt8.self)
+                    outOff += 1
+                    inOff += 1
+                }
+                if !closed { return -1 }
+                continue
+            }
+
+            if c == 0x22 { // double quote: copy bytes, with backslash escaping.
+                inOff += 1
+                var closed = false
+                while inOff < command.len {
+                    c = command.p.load(fromByteOffset: inOff, as: UInt8.self)
+                    if c == 0 { return -1 }
+                    if c == 0x22 {
+                        inOff += 1
+                        closed = true
+                        break
+                    }
+                    if c == 0x5C {
+                        inOff += 1
+                        if inOff >= command.len { return -1 }
+                        c = command.p.load(fromByteOffset: inOff, as: UInt8.self)
+                        if c == 0 { return -1 }
+                    }
+                    raw.storeBytes(of: c, toByteOffset: outOff, as: UInt8.self)
+                    outOff += 1
+                    inOff += 1
+                }
+                if !closed { return -1 }
+                continue
+            }
+
+            if c == 0x5C {
+                inOff += 1
+                if inOff >= command.len { return -1 }
+                c = command.p.load(fromByteOffset: inOff, as: UInt8.self)
+                if c == 0 { return -1 }
+            }
+
+            raw.storeBytes(of: c, toByteOffset: outOff, as: UInt8.self)
+            outOff += 1
+            inOff += 1
         }
+
+        raw.storeBytes(of: UInt8(0), toByteOffset: outOff, as: UInt8.self)
+        outOff += 1
     }
-    return count
+
+    argv[argc] = nil
+    return argc
 }
 
 private func copyStaticToOutput(_ s: StaticString,
@@ -895,78 +963,55 @@ private func runExecCommand(_ command: SSHStringView,
                             _ inputLen: Int,
                             _ output: UnsafeMutableRawPointer,
                             _ outputCap: Int) -> (Int, UInt32, Bool) {
-    guard command.len > 0,
-          command.len <= maxExecCommandLen,
-          let path = firstExecToken(command),
-          execPathIsAllowed(path),
-          execArgCount(command) <= maxExecArgs else {
+    guard command.len > 0, command.len <= maxExecCommandLen else {
         let n = copyStaticToOutput("sshd: unsupported exec command\n", output, outputCap)
         return (n, 127, false)
     }
 
-    _ = swiftos_unlink("/tmp/swos-sshd-output")
-    let outFd = swiftos_open("/tmp/swos-sshd-output", oWriteOnly | oCreate | oTrunc)
-    if outFd < 0 {
-        let n = copyStaticToOutput("sshd: output capture failed\n", output, outputCap)
-        return (n, 126, false)
-    }
+    return withUnsafeTemporaryAllocation(byteCount: command.len + 1, alignment: 1) { commandRaw -> (Int, UInt32, Bool) in
+      withUnsafeTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: maxExecArgs + 1) { argv -> (Int, UInt32, Bool) in
+        let argc = parseExecArgv(command, commandRaw.baseAddress!, argv.baseAddress!)
+        guard argc > 0,
+              let path = argv[0],
+              execCPathIsAllowed(path) else {
+            let n = copyStaticToOutput("sshd: unsupported exec command\n", output, outputCap)
+            return (n, 127, false)
+        }
 
-    var inFds = (Int32(0), Int32(0))
-    let inPipeRc = withUnsafeMutablePointer(to: &inFds) { fp -> Int32 in
-        swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
-    }
-    if inPipeRc != 0 {
-        _ = swiftos_close(outFd)
         _ = swiftos_unlink("/tmp/swos-sshd-output")
-        let n = copyStaticToOutput("sshd: pipe failed\n", output, outputCap)
-        return (n, 126, false)
-    }
-
-    let inReadFd = inFds.0
-    let inWriteFd = inFds.1
-    var status: UInt32 = 126
-    if inputLen > 0 {
-        guard let input = input, writeExact(inWriteFd, input, inputLen) else {
-            _ = swiftos_close(outFd)
-            _ = swiftos_close(inReadFd)
-            _ = swiftos_close(inWriteFd)
-            _ = swiftos_unlink("/tmp/swos-sshd-output")
-            let n = copyStaticToOutput("sshd: stdin pipe failed\n", output, outputCap)
+        let outFd = swiftos_open("/tmp/swos-sshd-output", oWriteOnly | oCreate | oTrunc)
+        if outFd < 0 {
+            let n = copyStaticToOutput("sshd: output capture failed\n", output, outputCap)
             return (n, 126, false)
         }
-    }
-    _ = swiftos_close(inWriteFd)
 
-    withUnsafeTemporaryAllocation(byteCount: command.len + 1, alignment: 1) { commandRaw in
-      withUnsafeTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: maxExecArgs + 1) { argv in
-      withUnsafeTemporaryAllocation(byteCount: 48, alignment: 4) { handles in
-        copyBytes(commandRaw.baseAddress!, 0, command.p, command.len)
-        commandRaw.baseAddress!.storeBytes(of: UInt8(0),
-                                           toByteOffset: command.len,
-                                           as: UInt8.self)
+        var inFds = (Int32(0), Int32(0))
+        let inPipeRc = withUnsafeMutablePointer(to: &inFds) { fp -> Int32 in
+            swiftos_pipe(UnsafeMutableRawPointer(fp).assumingMemoryBound(to: Int32.self))
+        }
+        if inPipeRc != 0 {
+            _ = swiftos_close(outFd)
+            _ = swiftos_unlink("/tmp/swos-sshd-output")
+            let n = copyStaticToOutput("sshd: pipe failed\n", output, outputCap)
+            return (n, 126, false)
+        }
 
-        var off = 0
-        var argc = 0
-        while off < command.len && argc < maxExecArgs {
-            while off < command.len &&
-                isExecSpace(commandRaw.baseAddress!.load(fromByteOffset: off, as: UInt8.self)) {
-                commandRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: off, as: UInt8.self)
-                off += 1
-            }
-            if off >= command.len { break }
-            argv[argc] = (commandRaw.baseAddress! + off).assumingMemoryBound(to: CChar.self)
-            argc += 1
-            while off < command.len &&
-                !isExecSpace(commandRaw.baseAddress!.load(fromByteOffset: off, as: UInt8.self)) {
-                off += 1
-            }
-            if off < command.len {
-                commandRaw.baseAddress!.storeBytes(of: UInt8(0), toByteOffset: off, as: UInt8.self)
-                off += 1
+        let inReadFd = inFds.0
+        let inWriteFd = inFds.1
+        var status: UInt32 = 126
+        if inputLen > 0 {
+            guard let input = input, writeExact(inWriteFd, input, inputLen) else {
+                _ = swiftos_close(outFd)
+                _ = swiftos_close(inReadFd)
+                _ = swiftos_close(inWriteFd)
+                _ = swiftos_unlink("/tmp/swos-sshd-output")
+                let n = copyStaticToOutput("sshd: stdin pipe failed\n", output, outputCap)
+                return (n, 126, false)
             }
         }
-        argv[argc] = nil
+        _ = swiftos_close(inWriteFd)
 
+        withUnsafeTemporaryAllocation(byteCount: 48, alignment: 4) { handles in
         let hp = handles.baseAddress!
         hp.storeBytes(of: inReadFd, toByteOffset: 0, as: Int32.self)
         hp.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
@@ -988,29 +1033,31 @@ private func runExecCommand(_ command: SSHStringView,
             3
         )
         status = rc >= 0 ? UInt32(rc) : 126
-      }}}
+        }
 
-    _ = swiftos_close(outFd)
-    _ = swiftos_close(inReadFd)
+        _ = swiftos_close(outFd)
+        _ = swiftos_close(inReadFd)
 
-    let readFd = swiftos_open("/tmp/swos-sshd-output", oReadOnly)
-    if readFd < 0 {
+        let readFd = swiftos_open("/tmp/swos-sshd-output", oReadOnly)
+        if readFd < 0 {
+            _ = swiftos_unlink("/tmp/swos-sshd-output")
+            let n = copyStaticToOutput("sshd: output readback failed\n", output, outputCap)
+            return (n, 126, false)
+        }
+        var used = 0
+        while used < outputCap {
+            let r = swiftos_read(readFd, output + used, UInt(outputCap - used))
+            if r <= 0 { break }
+            used += Int(r)
+        }
+        let truncated = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Bool in
+            swiftos_read(readFd, extra.baseAddress!, 1) > 0
+        }
+        _ = swiftos_close(readFd)
         _ = swiftos_unlink("/tmp/swos-sshd-output")
-        let n = copyStaticToOutput("sshd: output readback failed\n", output, outputCap)
-        return (n, 126, false)
+        return (used, status, truncated)
+      }
     }
-    var used = 0
-    while used < outputCap {
-        let r = swiftos_read(readFd, output + used, UInt(outputCap - used))
-        if r <= 0 { break }
-        used += Int(r)
-    }
-    let truncated = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { extra -> Bool in
-        swiftos_read(readFd, extra.baseAddress!, 1) > 0
-    }
-    _ = swiftos_close(readFd)
-    _ = swiftos_unlink("/tmp/swos-sshd-output")
-    return (used, status, truncated)
 }
 
 private func sendExecResult(_ fd: Int32,

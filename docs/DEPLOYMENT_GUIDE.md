@@ -423,9 +423,11 @@ Current Hetzner readiness status:
   channel, and executes bounded direct `/bin/<tool>` commands such as `/bin/id`
   and `/bin/echo HC6-OK`; bounded remote stdin is forwarded into fd 0 for tools
   such as `/bin/cat`, and bounded stdout/stderr capture returns up to 4096
-  bytes. The host helper `build/sshkey` can derive the OpenSSH public host key
-  or a known_hosts line from the base image seed file, and can generate a
-  deploy-specific replacement seed. Build-time provisioning uses the
+  bytes. The direct exec parser supports whitespace splitting, quote removal,
+  and backslash escaping for argv, but it is still not a shell. The host helper
+  `build/sshkey` can derive the OpenSSH public host key or a known_hosts line
+  from the base image seed file, and can generate a deploy-specific replacement
+  seed. Build-time provisioning uses the
   `SSHD_HOST_SEED_FILE` and `SSHD_AUTHORIZED_KEYS_FILE` make variables with
   `make base-image` to stage deploy-specific host identity and login keys into
   the signed image. `SWOS_SERVICES_FILE` can replace
@@ -437,9 +439,9 @@ Current Hetzner readiness status:
   `./tests/sshd_supervision_test.sh`; they verify that host OpenSSH pins the
   SwiftOS host key through known_hosts, that stale fixture keys are rejected,
   that custom images can boot with rotated SSHD host-key and authorized-key
-  material, that bounded stdin reaches remote `/bin/cat`, that long output is
-  capped and logged without pipe backpressure, and that opt-in `swos-init`
-  supervision restarts `sshd-once`.
+  material, that quoted argv reaches remote `/bin/echo`, that bounded stdin
+  reaches remote `/bin/cat`, that long output is capped and logged without pipe
+  backpressure, and that opt-in `swos-init` supervision restarts `sshd-once`.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
@@ -453,9 +455,9 @@ Not deploy-complete yet:
 - `/bin/sshd` is not a full login-capable SSH daemon yet. The next remote-login
   milestones should add runtime host-key rotation, real entropy, broader
   authorized-key options, shell/PTY behavior, larger stdin/output streaming,
-  production service policy, and broader remote commands. Dropbear remains a
-  candidate full server package if the first-party preflight does not grow into
-  the supported daemon.
+  production service policy, and broader remote commands beyond bounded direct
+  `/bin/<tool>` exec. Dropbear remains a candidate full server package if the
+  first-party preflight does not grow into the supported daemon.
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.

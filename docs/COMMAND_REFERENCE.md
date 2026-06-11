@@ -742,11 +742,12 @@ Notes:
   checked-in default seed is development-only. It still uses weak temporary KEX
   entropy. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines. The
-  command parser supports simple ASCII-whitespace argv splitting for
-  single-component `/bin/` executables only; quoting, redirects, globbing,
-  shell sessions, PTY, scp, sftp, runtime host-key rotation, larger streaming
-  stdin/stdout, and broader key options are not implemented yet. Output beyond
-  the current 4096-byte cap is truncated and logged on the serial console.
+  command parser supports direct single-component `/bin/` executables with
+  whitespace splitting, quote removal, and backslash escaping; redirects,
+  globbing, shell sessions, PTY, scp, sftp, runtime host-key rotation, larger
+  streaming stdin/stdout, and broader key options are not implemented yet.
+  Output beyond the current 4096-byte cap is truncated and logged on the serial
+  console.
 - A successful host command exits 0 and prints the remote command's stdout.
 
 Acceptance coverage: `tests/sshd_transport_test.sh`,
