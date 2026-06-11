@@ -414,6 +414,12 @@ Current Hetzner readiness status:
 - This matches Hetzner's documented Primary IPv4 model, where cloud servers get
   their Primary IPv4 via DHCP. Their static examples use `/32` IPv4 addressing
   with gateway `172.31.1.1`, and IPv6 is a separate manual/cloud-init path.
+- For static Primary IPv6 preflight, stage `/etc/swos/net-ipv6` with
+  `NET_IPV6_CONFIG_FILE=PATH` when building the base image. The file accepts
+  `address=<ipv6>/64` and `gateway=<link-local-ipv6>`; Hetzner's documented
+  IPv6 examples use `fe80::1` as the gateway. `make net-static-ipv6-test`
+  proves that a staged image config is applied at boot and that off-/64 IPv6
+  sends choose the configured gateway as the NDP next hop.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
@@ -471,8 +477,9 @@ Not deploy-complete yet:
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
-- IPv6 Primary IP configuration, cloud metadata ingestion, firewall policy, and
-  a general service manager remain follow-up work.
+- Primary IPv6 can be staged as static image config, but cloud metadata
+  ingestion, automatic refresh/reconfigure, firewall policy, SSHD-over-IPv6
+  acceptance, and a general service manager remain follow-up work.
 
 Provider references to re-check before a real cloud run:
 
@@ -604,6 +611,8 @@ A deployment handoff should include:
   into the image.
 - SSHD KEX seed source, if `SSHD_KEX_SEED_FILE` was used.
 - SSHD authorized_keys source and the public-key fingerprint expected to log in.
+- Static IPv6 config source and expected `net-hc23 OK` boot marker, if
+  `NET_IPV6_CONFIG_FILE` was used.
 - `top -b -n 1` output for resource-sensitive candidates.
 - Test command list and pass/fail result.
 - Known limits and skipped tests.

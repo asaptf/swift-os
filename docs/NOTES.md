@@ -3,6 +3,26 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC23 Hetzner static IPv6 config preflight (2026-06-11)
+
+- Added a boot-time `/etc/swos/net-ipv6` parser for static cloud IPv6
+  configuration. The accepted format is intentionally narrow:
+  `address=<ipv6>/64` plus `gateway=<link-local-ipv6>`, with comments and
+  whitespace allowed.
+- Added `NET_IPV6_CONFIG_FILE=PATH` base-image staging so deploy candidates can
+  bake provider-assigned Primary IPv6 material into the signed image.
+- Added an IPv6 text/CIDR parser and `/64` route-target helper. Outbound IPv6
+  UDP now resolves the configured gateway via NDP for off-/64 destinations while
+  preserving direct resolution for same-/64, link-local, and multicast targets.
+- This is a Hetzner deploy preflight, not cloud metadata ingestion and not yet
+  SSHD-over-IPv6 acceptance. Missing config keeps the existing link-local
+  behavior; invalid config logs a serial warning and fails closed to link-local.
+
+**Acceptance.** `make net-static-ipv6-test` builds a temporary signed base image
+with Hetzner-style static IPv6 config, boots it under QEMU virtio-net with IPv6
+enabled, and requires the `net-hc23 OK` serial marker proving the kernel applied
+the staged `/64` address and link-local gateway.
+
 ## HC22 SSHD KEX seed preflight (2026-06-11)
 
 - Added a daemon-local SSHD KEX session counter and mixed it into the
