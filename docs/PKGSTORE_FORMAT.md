@@ -32,9 +32,11 @@ virtio-blk disk that contains package payload generations.
 
 The active package generation layers package payloads beside the base image.
 Package files are read-only after activation. `/bin/pkg files NAME` can inspect
-the file paths in an active package payload. The current store does not provide
-remove, rollback, garbage collection, version solving, or history commands; those
-are package-manager roadmap items.
+the file paths in an active package payload. `/bin/pkg remove NAME` appends a
+new activation generation without that package; because the current VFS does not
+live-unmount payloads, the removal becomes visible after rebooting with the same
+package-store image. Rollback, garbage collection, version solving, and history
+commands remain package-manager roadmap items.
 
 ## Current Capabilities
 
@@ -48,9 +50,10 @@ are package-manager roadmap items.
 | List active package records in the guest | `pkg list` |
 | Inspect an active installed package | `pkg info NAME` |
 | List files in an active package payload | `pkg files NAME` |
+| Deactivate an installed package on the next boot | `pkg remove NAME` |
 | Install by name from signed repository fixtures into a writable store | `make package-repo-install-test` and seed repository tests |
 | Store-level signatures or encryption | Not implemented |
-| Remove, rollback, garbage collection, package history | Not implemented |
+| Rollback, garbage collection, package history | Not implemented |
 
 ## Quick Start
 

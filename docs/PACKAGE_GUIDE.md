@@ -9,11 +9,12 @@ SwiftOS packages follow the system's immutable-image model. A package is built
 on the host, verified on the host, and exposed to the guest as read-only package
 content under `/usr`. The current target-side package manager supports local
 file install, `pkg install FILE`, into a writable package-store disk, `pkg list`,
-`pkg info NAME`, and `pkg files NAME` for active package inspection, plus a
-signed static HTTP repository fixture with `pkg repo set`, `pkg update [URL]`, and
+`pkg info NAME`, `pkg files NAME` for active package inspection, and
+`pkg remove NAME` as a next-boot package deactivation, plus a signed static
+HTTP repository fixture with `pkg repo set`, `pkg update [URL]`, and
 `pkg install NAME`. Repository installs resolve dependencies by package name.
-Public production channels, version-constraint solving, remove, upgrade, and
-rollback are staged work, not current behavior. The ports workflow can
+Public production channels, version-constraint solving, live unmount, upgrade,
+and rollback are staged work, not current behavior. The ports workflow can
 cross-build static AArch64 Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite packages
 on the host, package the pinned CA certificate bundle and IANA time zone data,
 publish them into signed local repository fixtures, install Lua by package name
@@ -53,6 +54,7 @@ Use this guide with:
 | Target-side `/bin/pkg list` | Implemented for the active package-store records |
 | Target-side `/bin/pkg info NAME` | Implemented for verified catalog entries and active installed package metadata |
 | Target-side `/bin/pkg files NAME` | Implemented for active package payload file lists and proven by `make package-local-install-test` and `make package-repo-install-test` |
+| Target-side `/bin/pkg remove NAME` | Implemented as a next-boot package-store deactivation and proven by `make package-remove-test` |
 | Host static repository tool | Implemented as `build/pkgrepo` |
 | Signed static HTTP repository fixture | Implemented as `build/pkgrepo-root` and proven by `make package-repo-fixture` |
 | Target-side `pkg repo set`, `pkg update [URL]`, `search`, `info`, and `install NAME` | Implemented for the signed HTTP fixture and proven by `make package-repo-install-test` |
@@ -122,15 +124,16 @@ Pick the narrowest workflow that proves the behavior you care about:
 | Show one package payload under `/usr` | Direct read-only payload overlay | `/usr/bin/pkghello` is present at boot | `make package-overlay-test` |
 | Validate package-store boot activation | Preseeded package-store image | Active package generation mounts at boot | `make package-store-test` |
 | Prove target-side local install | Writable package-store plus local `.swpkg` | `pkg install /packages/pkghello.swpkg` activates `/usr/bin/pkghello`; `pkg info pkghello` reports the installed version; `pkg files pkghello` lists the payload | `make package-local-install-test` |
+| Prove target-side package removal | Writable package-store plus local `.swpkg` | `pkg remove pkghello` writes a new activation generation; after reboot, `pkg list` is empty and `pkg files pkghello` is rejected | `make package-remove-test` |
 | Prove signed repository install | Signed HTTP fixture | `pkg update`, `pkg search`, `pkg info`, `pkg install pkghello`, and `pkg files pkghello` work by name | `make package-repo-install-test` |
 | Prove one real source port | Lua repository fixture | Guest installs `lua` and runs `lua -e 'print(21 * 2)'` | `make package-lua-repo-install-test` |
 | Prove the current seed repository | Ports seed repository fixture | Guest installs Lua, zlib, bzip2, zstd, xz, ca-certificates, pcre2, tzdata, nginx, and sqlite | `make package-ports-seed-repo-install-test` |
 | Prove a deployable static web root | Static-host publish root | The seed repository is served from `build/ports-static-host-root` | `make ports-static-host-publish`, then `make package-static-host-repo-install-test` |
 | Prove hosted-style URL and DNS resolution | Hosted URL verifier plus DNS-resolved guest install | `/bin/pkg` installs from an HTTP repository hostname | `make ports-hosted-url-verify-test`, then `make package-static-host-dns-repo-install-test` |
 
-Do not use these fixtures to claim public production channels, package removal,
-upgrade, rollback, target-side HTTPS transport, or version-constraint solving.
-Those remain package-roadmap items.
+Do not use these fixtures to claim public production channels, live package
+unmount, upgrade, rollback, target-side HTTPS transport, or version-constraint
+solving. Those remain package-roadmap items.
 
 ## Quick Start
 
@@ -745,6 +748,7 @@ The QEMU tests are:
 | `pkg install NAME` says the package is not found | The catalog has not been updated in this boot, the URL is wrong, or the fixture lacks that package | Run `pkg update http://10.0.2.2:<port>/good/aarch64/current` in the acceptance fixture, or the matching `/aarch64/current` URL when serving `build/pkgrepo-root` directly |
 | `pkg: package SHA-256 mismatch` | The downloaded package blob does not match the signed catalog entry | Rebuild the repository fixture with `make package-repo-fixture` and rerun `make package-repo-install-test` |
 | `pkg: bad URL` for a hosted repository | The target-side URL is not `http://...`, the hostname is malformed, or DNS resolution failed | Use `http://host/aarch64/current`; for QEMU DNS tests set `/etc/pkg/dns-server` through `PKG_DEFAULT_DNS_SERVER=10.0.2.2:<port>` |
+| `pkg remove NAME` succeeds but files remain visible | The current VFS does not live-unmount package payloads | Reboot with the same writable package-store image; `make package-remove-test` verifies the next boot sees the package deactivated |
 | `make ports-hosted-url-verify` cannot fetch files | The hosted root is incomplete, the URL points at the wrong level, or hashes changed after publishing | Upload the whole `build/ports-static-host-root` directory and verify either the web root URL or its `/aarch64/current` URL |
 | `make ports-lua-repo-fixture` cannot find newlib | The generated cross sysroot is missing | Run `make newlib`, then rerun `make ports-lua-repo-fixture` |
 | `pkg install lua` fails in the guest | The Lua repository was not served, `pkg update` did not cache its catalog, or the writable Lua package-store image is missing | Rebuild with `make ports-lua-repo-fixture package-lua-install-fixture`, then run `make package-lua-repo-install-test` |
@@ -762,6 +766,8 @@ Current limits that matter for package use:
 - Package content is read-only in the guest.
 - The current target-side write paths are local `.swpkg` install and signed
   repository install into a writable package-store disk.
+- `pkg remove NAME` records a next-boot deactivation generation. It does not
+  live-unmount package files from the current VFS namespace yet.
 - The Lua/zlib/bzip2/zstd/ca-certificates/pcre2/tzdata/nginx/sqlite port fixtures and
   static-host publish path prove
   source/data packaging, signed repository publication, target-side repository
@@ -772,7 +778,7 @@ Current limits that matter for package use:
   repository metadata used to find and hash package blobs; package SHA-256
   checks prove the downloaded blob matches the catalog.
 - Public hosted channels, package-level publisher signatures, version-constraint
-  solving, remove, upgrade, and rollback commands are future milestones.
+  solving, live unmount, upgrade, and rollback commands are future milestones.
 - Target-side repository transport is HTTP-only for now. Host-side publishing
   checks can verify HTTP or HTTPS URLs, but `/bin/pkg` currently relies on
   signed catalogs and package hashes for authenticity rather than TLS.

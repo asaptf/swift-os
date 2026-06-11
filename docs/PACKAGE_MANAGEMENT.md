@@ -7,7 +7,8 @@ Design for binary package installation on SwiftOS.
 > static HTTP repository install are implemented. `pkg repo set`,
 > `pkg update [URL]`, `pkg search`, `pkg info`, `pkg install NAME`, and
 > `pkg files NAME` work against signed fixture catalogs and active package
-> payloads. `pkg info NAME` can also inspect active installed package metadata
+> payloads, and `pkg remove NAME` records a next-boot package deactivation.
+> `pkg info NAME` can also inspect active installed package metadata
 > when no catalog entry is available. Repository installs include name-based
 > dependency resolution and reject expired catalogs, incompatible catalog entries,
 > missing packages, and package
@@ -20,9 +21,9 @@ Design for binary package installation on SwiftOS.
 > that published layout. `/bin/pkg` accepts DNS hostnames in HTTP repository
 > URLs, `make ports-hosted-url-verify` checks a deployed static-host URL from
 > the host, and `make package-static-host-dns-repo-install-test` proves
-> target-side install through a DNS-resolved hosted-style URL. Rollback, remove,
-> upgrade, public production channels, target-side HTTPS transport,
-> and version-constraint solving are still staged work. Repository package
+> target-side install through a DNS-resolved hosted-style URL. Rollback, live
+> package unmount, upgrade, public production channels, target-side HTTPS
+> transport, and version-constraint solving are still staged work. Repository package
 > installs stream payload bytes directly into the package store instead of
 > caching full `.swpkg` blobs in tmpfs.
 > The package work should continue to follow the project rule: one milestone at
@@ -385,9 +386,11 @@ activation: a `SWPKGST1` block image contains payload records, activation
 records, and an active pointer. The kernel mounts payload images referenced by
 the active generation. The local install path adds the first target-side append
 path for local `.swpkg` files and live activation; `pkg info NAME` and
-`pkg files NAME` inspect active package metadata and payload file paths. Later
-lifecycle work will broaden that into remove, rollback, history, upgrade, and
-garbage collection.
+`pkg files NAME` inspect active package metadata and payload file paths.
+`pkg remove NAME` appends a new activation without the package and takes effect
+after reboot because package payloads are not live-unmounted yet. Later
+lifecycle work will broaden that into live remove, rollback, history, upgrade,
+and garbage collection.
 
 Activation manifest:
 
@@ -864,13 +867,17 @@ Implemented local target-side install:
   verified catalog entry is available.
 - `/bin/pkg files NAME` reports newline-separated absolute file paths from an
   active package payload.
+- `/bin/pkg remove NAME` writes a next-boot activation generation without the
+  named package.
 - `tests/pkg_local_install_test.sh` installs `/packages/pkghello.swpkg` and
   runs `/usr/bin/pkghello` without rebooting; it also checks `pkg info` and
   `pkg files`.
+- `tests/pkg_remove_test.sh` installs `/packages/pkghello.swpkg`, removes it,
+  reboots with the same package-store image, and proves the package is inactive.
 
 Remaining local lifecycle work:
 
-- `pkg remove NAME`.
+- Live unmount for `pkg remove NAME`.
 - `pkg rollback [generation]`.
 - Stronger user-facing diagnostics for failed local installs.
 
@@ -885,8 +892,10 @@ pkg list
 
 Acceptance:
 
-- QEMU test installs a local package, runs it, removes it, proves it is gone,
-  then rolls back to the previous active generation.
+- QEMU test installs a local package, runs it, removes it, reboots with the same
+  store, and proves it is gone.
+- Later acceptance extends this with live unmount and rollback to the previous
+  active generation.
 
 ### Repository Catalogs and Network Fetch
 

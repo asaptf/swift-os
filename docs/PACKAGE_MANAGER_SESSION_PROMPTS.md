@@ -6,10 +6,10 @@ maintainer explicitly asks for a larger unstable branch.
 
 P1, P2, P3a boot activation, and the narrow P3b/P4-local install path are
 already implemented in the current tree. `/bin/pkg install FILE`, `pkg list`,
-`pkg info NAME`, and `pkg files NAME` work for the local `pkghello.swpkg`
-smoke test. The next implementation prompt is Prompt 4b if you want to finish
-local remove/rollback/history, or Prompt 5 if you intentionally want to start
-repository download work first.
+`pkg info NAME`, `pkg files NAME`, and next-boot `pkg remove NAME` work for the
+local `pkghello.swpkg` smoke tests. The next implementation prompt is Prompt 4b
+if you want to finish local live remove/rollback/history, or Prompt 5 if you
+intentionally want to start repository download work first.
 
 ## Prompt 1: P1 Host-Only `.swpkg` Format (Historical)
 
@@ -106,13 +106,14 @@ Acceptance:
 ```text
 Read AGENTS.md and docs/PACKAGE_MANAGEMENT.md. Start from the P3 package-store
 state where `/bin/pkg install FILE`, `pkg list`, `pkg info NAME`, and
-`pkg files NAME` already work for `pkghello.swpkg`.
+`pkg files NAME` already work for `pkghello.swpkg`, and `pkg remove NAME`
+already records a next-boot activation without the package.
 
 Implement the remaining local package-manager milestone only. Do not implement
 remote repository catalogs yet.
 
 Required commands:
-- `pkg remove <name>`
+- live `pkg remove <name>` where the current boot no longer exposes removed payload files
 - `pkg history`
 - `pkg rollback [generation]`
 
@@ -120,13 +121,14 @@ Requirements:
 - keep output concise and scriptable;
 - preserve the existing local install/list flow;
 - add installed package metadata enough for history;
-- make remove a new activation generation without the package;
+- extend remove beyond the current next-boot deactivation by adding safe live
+  unmount or VFS remount semantics;
 - make rollback select an older activation generation;
 - reject ABI, architecture, or static-linkage mismatches with focused tests;
 - produce clear exit codes for usage, not found, ABI mismatch, verification
   failure, and store failure;
 - add QEMU tests that install `pkghello`, run it, list it, remove it, prove it is
-  gone, and roll back.
+  gone in the current boot, and roll back.
 
 Acceptance:
 - `make test` passes;

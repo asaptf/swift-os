@@ -133,8 +133,12 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     intake records without promoting them into the published seed repository.
 - Repository package installs stream payload bytes directly into the package
   store and no longer cache full `.swpkg` blobs in `/tmp`.
+- `pkg remove NAME` writes a new package-store activation without the named
+  package; `make package-remove-test` proves the removal after rebooting with
+  the same writable package-store image. Live VFS unmount for the current boot
+  is still future work.
 - Public production binary repository publishing, target-side HTTPS transport,
-  version-constraint solving, remove, upgrade, rollback, broad source-port
+  version-constraint solving, live package unmount, upgrade, rollback, broad source-port
   coverage, and package publication remain future work.
 
 ## Workstreams
@@ -153,7 +157,8 @@ Milestones:
 2. Package-store boot activation: persistent package store and boot activation
    generations. (DONE)
 3. Local target-side install: `/bin/pkg install FILE` and `pkg list`. (DONE)
-4. Complete local package lifecycle: files, remove, rollback, and diagnostics.
+4. Complete local package lifecycle: files and next-boot remove are implemented;
+   live unmount, rollback, and diagnostics remain future work.
 5. Signed repository catalogs and network fetch: configured repository URLs,
    name-based dependency installation, and signed static HTTP repository
    fixtures are implemented; public hosted channels remain future work.
