@@ -74,6 +74,22 @@ specific audience.
 | Review the current hardening roadmap | [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) |
 | Review detailed milestone history | [Notes](NOTES.md) |
 
+## Package Documentation Map
+
+Use this map when a package task or package failure report is too specific for
+the top-level role paths. The package documents are split on purpose: operator
+workflows, maintainer automation, byte formats, activation state, and signed
+repository metadata each have a different proof path.
+
+| Question | Start With | Reference Detail | Proof |
+| --- | --- | --- | --- |
+| Which package install workflow works today? | [Package Guide](PACKAGE_GUIDE.md) | [Command Reference](COMMAND_REFERENCE.md) for target-side `pkg` syntax | Matching package test from the guide's workflow table |
+| How do I build, review, or publish checked package fixtures? | [Package Build Automation Guide](PACKAGE_BUILD_AUTOMATION.md) | [Ports Seed Catalog](../ports/README.md) for checked recipes | `make ports-recipe-test`, package-specific fixture target, or seed/static-host test |
+| Why does a `.swpkg` fail verification? | [SWPKG Format](SWPKG_FORMAT.md) | [Host Tool Reference](HOST_TOOL_REFERENCE.md) for `build/swpkg` commands | `make swpkg package-fixture` and `tests/swpkg_tool_test.swift` |
+| Why did package content not mount under `/usr`? | [Package Store Format](PKGSTORE_FORMAT.md) | [Troubleshooting](TROUBLESHOOTING.md) for boot and fixture symptoms | `make package-store-test` or `make package-local-install-test` |
+| Why did `pkg update` or hosted install fail? | [Static Package Repository](PKGREPO_FORMAT.md) | [Host Tool Reference](HOST_TOOL_REFERENCE.md) for `build/pkgrepo` and hosted URL verifier syntax | `make package-repo-install-test`, `make ports-hosted-url-verify-test`, or DNS static-host test |
+| What is planned but not implemented yet? | [Package Management](PACKAGE_MANAGEMENT.md) | [Package Ecosystem Goal](PACKAGE_ECOSYSTEM_GOAL.md) and package roadmap prompts | Roadmap milestone acceptance criteria, not current user commands |
+
 ## Maintainer Planning And Audit Artifacts
 
 These files are useful for maintainers and reviewers. They are not the primary
