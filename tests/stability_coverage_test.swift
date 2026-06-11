@@ -175,6 +175,7 @@ for group in fullGateGroups {
 require(c5Body, "c5-driver-service-test", "c5 aggregate")
 require(c5Body, "c5-device-authority-test", "c5 aggregate")
 require(c5Body, "c5-device-rights-test", "c5 aggregate")
+require(c5Body, "device-authority-cap-test", "c5 aggregate")
 require(s5Body, "s5-run-any-placement-test", "s5 aggregate")
 require(makefile, "qemu-virt-hardware-map-test:", "Makefile focused hardware map")
 require(makefile, "page-allocator-refcount-lifecycle-test:", "Makefile focused page allocator lifecycle")
@@ -182,6 +183,8 @@ require(makefile, "tests/page_allocator_refcount_lifecycle_test.swift", "Makefil
 require(makefile, "smp-resource-stress-test:", "Makefile focused resource stress")
 require(makefile, "s4-resource-stress-test:", "Makefile focused resource stress")
 require(makefile, "c5-device-authority-test:", "Makefile focused device authority")
+require(makefile, "device-authority-cap-test:", "Makefile focused device authority capability")
+require(makefile, "tests/device_authority_cap_test.sh", "Makefile focused device authority capability")
 require(makefile, "swpkg-header-integrity-test:", "Makefile focused package integrity")
 
 for doc in [testingGuide, configReference] {
@@ -194,9 +197,12 @@ for doc in [testingGuide, configReference] {
 }
 require(testingGuide, "Full-gate coverage guard", "testing guide")
 require(testingGuide, "C5 driver-service/device-authority readiness", "testing guide")
+require(testingGuide, "make device-authority-cap-test", "testing guide")
 require(configReference, "`make stability-coverage-test`", "configuration reference")
 require(roadmap, "C5 aggregate readiness gate", "roadmap")
+require(roadmap, "C5g", "roadmap")
 require(notes, "Full-gate coverage hardening", "notes")
+require(notes, "C5g", "notes")
 
 if ok {
     print("PASS: stability coverage guard found required memory, hardware, security, network, update, package, C5, and SMP gates")

@@ -91,6 +91,7 @@ guarantee from roadmap language.
 | Ownership and modes are visible | Run `chmod`, `chown`, and `ls -l` on a `/tmp` file | Mode and owner metadata change on tmpfs only | `./tests/ls_l_test.sh`, `./tests/swift_chmodown_test.sh` |
 | Explicit handle inheritance is attenuated | Run the spawn demo path or acceptance test | Child receives only listed handles and requested rights | `./tests/spawn_self_exec_test.sh` |
 | IPC handle transfer moves ownership | Run the socket-transfer acceptance test | Sender fd is cleared and receiver gets the transferred handle | `./tests/ipc_socket_transfer_test.sh` |
+| Device authority minting is capability-gated | Log in as `guest`, then run `/bin/deviceauthdemo` | Discovery and claim both fail with access denied | `make device-authority-cap-test` |
 | Device grants stay metadata-only | Run the C5 device-authority gate | Discovery metadata is visible, hardware authority bits stay clear, and grant rights do not expand | `make c5-device-authority-test` |
 | W^X memory policy is enforced | Run `/bin/mmapdemo` or the acceptance test | RW mapping can become RX, but RWX is rejected | `./tests/mmap_test.sh` |
 | Package content remains read-only and verified | Install or mount package fixtures, then run the package smoke | Payloads execute from read-only `/usr` paths and repository metadata is verified | `make package-overlay-test`, `make package-repo-install-test` |
