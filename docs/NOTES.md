@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC16 SSHD bounded output capture preflight (2026-06-11)
+
+- Moved `/bin/sshd` remote exec stdout/stderr capture off the old pipe and into
+  a temporary tmpfs file at `/tmp/swos-sshd-output`. The daemon now runs the
+  child synchronously, then reads back at most 1536 bytes for the SSH channel
+  response. This avoids child-side pipe backpressure while keeping the current
+  bounded preflight behavior and stays within the current TCP send-buffer
+  limits for one SSH channel-data response plus close/status control packets.
+- Added deterministic serial markers `sshd: exec output bytes N` and
+  `sshd: exec output truncated` so deploy runs can distinguish short output
+  from capped output.
+- Hardened `./tests/sshd_transport_test.sh` with a long-output remote command:
+  host OpenSSH runs `/bin/cat /models/tok512.bin`, expects exactly 1536 bytes
+  back, and requires the truncation marker. The test still covers denied keys,
+  host-key pinning, `/bin/id`, `/bin/echo`, and stdin-fed `/bin/cat`.
+
+**Acceptance.** `make sshd-transport-test` proves that boot-autostarted SSHD
+can execute a command that writes more than the old pipe capacity, return a
+bounded 1536-byte SSH channel response, and log truncation without wedging the
+session.
+
 ## HC15 SSHD bounded stdin exec preflight (2026-06-11)
 
 - Extended `/bin/sshd` session exec handling to read post-`exec`

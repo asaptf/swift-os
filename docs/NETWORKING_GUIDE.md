@@ -163,7 +163,8 @@ identification strings with an OpenSSH client, negotiates `curve25519-sha256`,
 loads its host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, authenticates
 `root` with a key from `/etc/ssh/authorized_keys`, opens a `session` channel,
 executes a bounded direct `/bin/<tool>` command, and forwards small remote
-stdin payloads into fd 0.
+stdin payloads into fd 0. It currently returns up to 1536 bytes of captured
+stdout/stderr per remote exec and logs when output is truncated.
 
 ```sh
 qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
@@ -456,11 +457,13 @@ proves that the old HC4 key is rejected, the HC5 key is loaded from
 `/etc/ssh/ssh_host_ed25519_seed`, the host OpenSSH client pins the derived
 SwiftOS host key through known_hosts, `/bin/id` runs as root, and `/bin/echo
 HC6-OK` receives an argv argument. It also pipes a small host payload into
-remote `/bin/cat` and requires exact stdout. This proves TCP/22 reachability
-through SSH KEX, host-key pinning, encrypted userauth, session channel setup,
-bounded direct remote exec, and bounded stdin forwarding; PTY, shell command
-parsing, scp, sftp, runtime host-key rotation, real entropy, larger streaming,
-and broader authorized-key options are follow-up work.
+remote `/bin/cat` and requires exact stdout, then reads a capped long output
+from `/bin/cat /models/tok512.bin` and requires the truncation marker. This
+proves TCP/22 reachability through SSH KEX, host-key pinning, encrypted
+userauth, session channel setup, bounded direct remote exec, bounded stdin
+forwarding, and bounded output capture; PTY, shell command parsing, scp, sftp,
+runtime host-key rotation, real entropy, larger streaming, and broader
+authorized-key options are follow-up work.
 
 For deploy-specific image-time keys, generate a host-key seed with
 `build/sshkey seed --out support/keys/ssh_host_ed25519_seed`, create
