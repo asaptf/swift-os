@@ -2641,9 +2641,20 @@ W void (*signal(int sig, void (*handler)(int)))(int) {
 }
 W int raise(int sig) { return kill(getpid(), sig); }
 W int sigprocmask(int how, const sigset_t *set, sigset_t *old) {
-    (void)how; (void)set;
+    if (set && how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) {
+        errno = EINVAL;
+        return -1;
+    }
     if (old) { memset(old, 0, sizeof(*old)); }
     return 0;
+}
+W int pthread_sigmask(int how, const sigset_t *set, sigset_t *old) {
+    int saved_errno = errno;
+    if (sigprocmask(how, set, old) == 0) {
+        errno = saved_errno;
+        return 0;
+    }
+    return errno ? errno : EINVAL;
 }
 W int sigsuspend(const sigset_t *mask) { (void)mask; errno = EINTR; return -1; }
 

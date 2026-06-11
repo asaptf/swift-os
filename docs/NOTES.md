@@ -5211,3 +5211,28 @@ audit` blocker.
 `make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM16 — libuv signal watcher self-pipe probe (DONE, 2026-06-11)
+
+**Scope.** Cover the setup and dispatch shape used by Node's vendored libuv
+1.52.1 signal watcher on Unix. SwiftOS already supports `sigaction`, `raise`,
+current-process handler frames, and default `SIGTERM` termination. The C/newlib
+compat layer now also exposes a `pthread_sigmask` facade over the existing
+no-op `sigprocmask` mask surface, and the new probe exercises the libuv-style
+path where a signal handler writes a compact message into a nonblocking pipe
+that the event loop polls. This closes one concrete signal-watcher primitive
+while the catalog keeps full signal-mask enforcement, remote async handler
+delivery, and the broader `full libuv thread audit` blocker.
+
+- `userland/compat/stubs.c`: adds `pthread_sigmask` with pthread-style error
+  returns and validates `sigprocmask` operations when a new mask is supplied.
+- `/bin/uvsignalprobe`: proves `pthread_sigmask(SIG_SETMASK, ...)`, a
+  libuv-shaped signal lock pipe, `sigaction(SIGTERM, SA_RESTART)`, handler
+  writes into a nonblocking signal pipe, `poll(POLLIN)`, message drain, and
+  disposition restoration.
+- `make uvsignal-test`: boots QEMU, logs in, runs the probe, and asserts the
+  signal-watcher markers.
+
+**Acceptance.** `make uvsignal-test`, `make docs-test`,
+`make ports-catalog-test`, `make signal-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

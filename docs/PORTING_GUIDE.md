@@ -405,6 +405,7 @@ Before merging a port:
 | `userland/uvbarrierprobe.c` | newlib compat reusable pthread barriers for libuv's native barrier path |
 | `userland/uvcondprobe.c` | newlib compat monotonic timed condition waits for libuv's Unix thread layer |
 | `userland/uvsocketpairprobe.c` | newlib compat full-duplex AF_UNIX socketpair for libuv local streams |
+| `userland/uvsignalprobe.c` | newlib compat pthread signal-mask facade and handler self-pipe wake for libuv signal watchers |
 | `userland/signalprobe.c` | newlib compat signal disposition, current-process handler frames, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |
