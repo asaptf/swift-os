@@ -5470,3 +5470,25 @@ blocker.
 `make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM22 — libuv thread stack probe (DONE, 2026-06-12)
+
+**Scope.** Cover the stack-size path used by Node's vendored libuv 1.52.1
+`uv_thread_create_ex` implementation. That path calculates a usable thread
+stack from `getrlimit(RLIMIT_STACK)`, `getpagesize()`, libuv's 8192-byte floor,
+`PTHREAD_STACK_MIN`, and `pthread_attr_setstacksize` before creating a pthread.
+SwiftOS already exposed the underlying pieces; this milestone ties them to the
+libuv audit with a dedicated C/newlib probe and makes `getpagesize()` explicit
+in the compat `<unistd.h>` header.
+
+- `/bin/uvthreadstackprobe`: proves the libuv-shaped stack limit/page-size
+  calculation, pthread attr bounds, a rounded requested-stack thread, and an
+  `RLIMIT_STACK`-sized thread.
+- `make uvthreadstack-test`: boots QEMU, logs in, runs the probe, and asserts
+  the stack-sizing markers.
+- Catalog and command/API docs now list `uvthreadstackprobe` alongside the other
+  Node/libuv compatibility probes.
+
+**Acceptance.** `make uvthreadstack-test`, `make docs-test`,
+`make ports-catalog-test`, `make pthread-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

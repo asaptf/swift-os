@@ -75,6 +75,7 @@ source, then follow its Makefile rule and acceptance test.
 | C libuv rwlock compatibility | `userland/uvrwlockprobe.c` | `pthread_rwlock_*` reader/writer semantics used by libuv rwlock wrappers | `./tests/uvrwlock_test.sh` |
 | C libuv mutex-type compatibility | `userland/uvmutexprobe.c` | `PTHREAD_MUTEX_ERRORCHECK` and `PTHREAD_MUTEX_RECURSIVE` semantics used by libuv mutex init paths | `./tests/uvmutex_test.sh` |
 | C libuv thread-name compatibility | `userland/uvthreadnameprobe.c` | `pthread_setname_np` and `pthread_getname_np` semantics used by libuv thread naming helpers | `./tests/uvthreadname_test.sh` |
+| C libuv thread-stack compatibility | `userland/uvthreadstackprobe.c` | `getrlimit(RLIMIT_STACK)`, `getpagesize`, and `pthread_attr_setstacksize` behavior used by `uv_thread_create_ex` | `./tests/uvthreadstack_test.sh` |
 | C libuv barrier compatibility | `userland/uvbarrierprobe.c` | reusable `pthread_barrier_*` phases for libuv's native barrier path | `./tests/uvbarrier_test.sh` |
 | C libuv timed condition compatibility | `userland/uvcondprobe.c` | `pthread_cond_timedwait` with `CLOCK_MONOTONIC` timeout and signal wake paths | `./tests/uvcond_test.sh` |
 | C libuv socketpair compatibility | `userland/uvsocketpairprobe.c` | `AF_UNIX` full-duplex `socketpair` with flags and poll readiness | `./tests/uvsocketpair_test.sh` |
@@ -1529,6 +1530,7 @@ one booting acceptance path:
 | C compat libuv rwlock | `userland/compat/pthread.h`, `userland/compat/semaphore.h`, `userland/compat/stubs.c`, `userland/uvrwlockprobe.c` | `make uvrwlock-test`, `./tests/boot_test.sh` |
 | C compat libuv mutex types | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvmutexprobe.c` | `make uvmutex-test`, `./tests/boot_test.sh` |
 | C compat libuv thread names | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvthreadnameprobe.c` | `make uvthreadname-test`, `./tests/boot_test.sh` |
+| C compat libuv thread stacks | `userland/compat/pthread.h`, `userland/compat/sys/resource.h`, `userland/compat/unistd.h`, `userland/compat/stubs.c`, `userland/uvthreadstackprobe.c` | `make uvthreadstack-test`, `./tests/boot_test.sh` |
 | C compat libuv barrier | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvbarrierprobe.c` | `make uvbarrier-test`, `./tests/boot_test.sh` |
 | C compat libuv timed condition wait | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvcondprobe.c` | `make uvcond-test`, `./tests/boot_test.sh` |
 | C compat libuv socketpair | `kernel/vfs/vfs.swift`, `kernel/syscall/syscall.swift`, `userland/compat/sys/socket.h`, `userland/compat/stubs.c`, `userland/uvsocketpairprobe.c` | `make uvsocketpair-test`, `./tests/boot_test.sh` |

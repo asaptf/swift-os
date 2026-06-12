@@ -1049,6 +1049,7 @@ diagnostic fixtures than stable application interfaces.
 | `uvrwlockprobe` | `uvrwlockprobe` | Exercise C/newlib pthread read/write locks used by libuv's Unix rwlock wrappers. | `tests/uvrwlock_test.sh` |
 | `uvmutexprobe` | `uvmutexprobe` | Exercise C/newlib mutex types used by libuv's Unix mutex wrappers. | `tests/uvmutex_test.sh` |
 | `uvthreadnameprobe` | `uvthreadnameprobe` | Exercise C/newlib thread names used by libuv's Unix thread helpers. | `tests/uvthreadname_test.sh` |
+| `uvthreadstackprobe` | `uvthreadstackprobe` | Exercise C/newlib thread stack sizing used by libuv's `uv_thread_create_ex` path. | `tests/uvthreadstack_test.sh` |
 | `uvbarrierprobe` | `uvbarrierprobe` | Exercise C/newlib pthread barriers used by libuv's native barrier path. | `tests/uvbarrier_test.sh` |
 | `uvcondprobe` | `uvcondprobe` | Exercise C/newlib timed condition waits used by libuv's Unix thread layer. | `tests/uvcond_test.sh` |
 | `uvsocketpairprobe` | `uvsocketpairprobe` | Exercise C/newlib `AF_UNIX` socketpair behavior used by libuv local streams. | `tests/uvsocketpair_test.sh` |
@@ -1428,6 +1429,7 @@ are not the primary operator interface.
 | `uvrwlockprobe` | newlib compat pthread read/write lock init, writer exclusion, concurrent readers, and blocked-writer wake behavior, matching libuv's Unix rwlock wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvrwlock_test.sh` |
 | `uvmutexprobe` | newlib compat `PTHREAD_MUTEX_ERRORCHECK` and `PTHREAD_MUTEX_RECURSIVE`, matching libuv's Unix mutex wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvmutex_test.sh` |
 | `uvthreadnameprobe` | newlib compat `pthread_setname_np` and `pthread_getname_np`, matching libuv's Unix thread naming helpers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvthreadname_test.sh` |
+| `uvthreadstackprobe` | newlib compat `getrlimit(RLIMIT_STACK)`, `getpagesize`, and `pthread_attr_setstacksize`, matching libuv's `uv_thread_create_ex` stack sizing path. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvthreadstack_test.sh` |
 | `uvbarrierprobe` | newlib compat reusable `pthread_barrier_*` phases, matching libuv's native barrier branch. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvbarrier_test.sh` |
 | `uvcondprobe` | newlib compat `pthread_cond_timedwait` with `CLOCK_MONOTONIC` timeout and signal wake, matching libuv's Unix timed condition waits. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvcond_test.sh` |
 | `uvsocketpairprobe` | newlib compat full-duplex `AF_UNIX` `socketpair`, matching libuv local stream/process pipe expectations. | Yes, when validating C runtime libuv local stream compatibility. | `tests/uvsocketpair_test.sh` |

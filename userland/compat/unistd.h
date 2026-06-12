@@ -3,6 +3,7 @@
 
 #include_next <unistd.h>
 
+int getpagesize(void);
 int pipe2(int fds[2], int flags);
 
 #endif
