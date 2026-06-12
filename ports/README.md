@@ -9,14 +9,15 @@ artifacts.
 This is not a full ports tree yet. The checked-in package recipes are `lang/lua`,
 `archivers/zlib`, `archivers/bzip2`, `archivers/zstd`, `archivers/xz`,
 `archivers/libarchive`, `security/ca-certificates`, `security/openssl`, `devel/pcre2`,
-`sysutils/tzdata`, `www/nginx`, and `databases/sqlite`, with validation,
+`sysutils/tzdata`, `net/curl`, `www/nginx`, and `databases/sqlite`, with validation,
 manifest generation, checksum-verified distfile fetching, `.swpkg` creation
 from clean staged roots, and signed static repository fixture generation.
-Network and HTTPS-hosting intake recipes for `net/curl` and
-`security/acme-sh` are checked as scaffolded, planned ports: their upstream
-distfiles, dependencies, and package manifests are machine-readable, but
-cross-build, package, and QEMU smoke targets wait on dedicated build scripts,
-`oksh`, and HTTP/ACME fixtures. Heavy runtime intake recipes for `lang/nodejs`,
+The `net/curl` recipe is packaged as a first HTTP-only static client; HTTPS/TLS
+waits on an `openssl-dev` split and certificate-chain smoke. The
+`security/acme-sh` recipe remains scaffolded: its upstream distfile,
+dependencies, and package manifest are machine-readable, but package and QEMU
+smoke targets wait on `oksh`, TLS-enabled curl, and HTTP/ACME fixtures.
+Heavy runtime intake recipes for `lang/nodejs`,
 `lang/npm`, and `sysutils/pm2` are checked as scaffolded, blocked ports: their
 distfiles and package manifests are machine-readable, but cross-build, package,
 and QEMU smoke targets wait on the recorded runtime, event, service, and
@@ -43,6 +44,8 @@ will carry headers and static libraries later. `make ports-pcre2-repo-fixture`
 cross-builds static PCRE2 libraries, headers, pkgconf metadata, and
 `pcre2grep`. `make ports-tzdata-repo-fixture` compiles portable IANA TZif
 zoneinfo files and packages the `/usr/share/zoneinfo` tree.
+`make ports-curl-repo-fixture` cross-builds an HTTP-only static `curl` CLI,
+`libcurl.a`, headers, and pkgconf metadata.
 `make ports-nginx-repo-fixture` cross-builds a minimal static HTTP-only nginx
 package. `make ports-sqlite-repo-fixture` cross-builds static SQLite,
 `libsqlite3.a`, headers, pkgconf metadata, and the `sqlite3` CLI.
@@ -72,7 +75,7 @@ hardened inside `swift-os`.
 | tzdata | `ports/sysutils/tzdata/Port.json` | IANA TZif zoneinfo tree compiled with host `zic` |
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
 | SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
-| curl | `ports/net/curl/Port.json` | Scaffolded static HTTP/HTTPS client and libcurl intake |
+| curl | `ports/net/curl/Port.json` | Static HTTP-only curl CLI, `libcurl.a`, headers, and pkgconf metadata |
 | acme.sh | `ports/security/acme-sh/Port.json` | Scaffolded ACME client intake for HTTP-01 hosting |
 | Node.js | `ports/lang/nodejs/Port.json` | Scaffolded static runtime intake with V8/libuv blockers recorded |
 | npm | `ports/lang/npm/Port.json` | Scaffolded JavaScript package-manager intake tied to Node.js |
@@ -99,6 +102,7 @@ make ports-ca-certificates-repo-fixture
 make ports-openssl-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
+make ports-curl-repo-fixture
 make ports-nginx-repo-fixture
 make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
@@ -139,11 +143,11 @@ build/swport recipe package lang/lua --root <staged-root> --output build/lua.swp
 build/swport recipe repo-fixture lang/lua --root <staged-root> --output build/lua-repo-root
 ```
 
-The Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, nginx, and sqlite cross-build
+The Lua, zlib, bzip2, zstd, xz, libarchive, OpenSSL, pcre2, curl, nginx, and sqlite cross-build
 targets require `sysroot/aarch64-elf/lib/libc.a`; create it with `make newlib`
-if the generated sysroot is not present. curl, acme.sh, Node.js, npm, and PM2
-are scaffolded intake recipes only until their blockers move from catalog notes
-into build scripts and QEMU smoke tests.
+if the generated sysroot is not present. acme.sh, Node.js, npm, and PM2 are
+scaffolded intake recipes only until their blockers move from catalog notes into
+build scripts and QEMU smoke tests.
 
 ## Catalog Rules
 

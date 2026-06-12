@@ -69,8 +69,9 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     `ports/archivers/bzip2/Port.json`, `ports/archivers/zstd/Port.json`,
     `ports/archivers/xz/Port.json`, `ports/archivers/libarchive/Port.json`,
     `ports/security/ca-certificates/Port.json`, `ports/security/openssl/Port.json`,
-    `ports/devel/pcre2/Port.json`, `ports/sysutils/tzdata/Port.json`,
-    `ports/www/nginx/Port.json`, and `ports/databases/sqlite/Port.json` are
+    `ports/devel/pcre2/Port.json`, `ports/net/curl/Port.json`,
+    `ports/sysutils/tzdata/Port.json`, `ports/www/nginx/Port.json`, and
+    `ports/databases/sqlite/Port.json` are
     the checked packaged recipe scaffolds;
   - `build/swport catalog validate/list/inspect/packaged` and
     `build/swport recipe validate/manifest/fetch/package/repo-fixture`
@@ -84,8 +85,9 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     `bsdtar` plus `libarchive.a` against the checked compression libraries,
     `scripts/build-ca-certificates.sh` packages the pinned Mozilla CA bundle as
     data, `scripts/build-openssl.sh` cross-builds the static OpenSSL CLI,
-    and `scripts/build-pcre2.sh` cross-builds static PCRE2 libraries plus
-    `pcre2grep`;
+    `scripts/build-pcre2.sh` cross-builds static PCRE2 libraries plus
+    `pcre2grep`, and `scripts/build-curl.sh` cross-builds an HTTP-only static
+    curl CLI plus `libcurl.a`;
   - `scripts/build-tzdata.sh` compiles IANA TZif zoneinfo with host `zic`,
     `scripts/build-nginx.sh` cross-builds a minimal static HTTP-only nginx
     package with the local SwiftOS crossbuild overlay, and
@@ -99,18 +101,18 @@ pkg install nginx acme-client postgresql node openjdk swift mc
   - `make ports-seed-repo-fixture` publishes the catalog entries marked
     `status: "packages"` into one signed local seed repository, and
     `make package-ports-seed-repo-install-test`
-    proves installing all twelve packages plus the `minigzip`, bzip2, zstd, and
+    proves installing all thirteen packages plus the `minigzip`, bzip2, zstd, and
     xz round trips, `bsdtar` tar create/list smoke, CA bundle marker, OpenSSL
-    version/digest smoke, `pcre2grep` pattern match, zoneinfo marker, nginx version/marker, and SQLite SQL smoke
+    version/digest smoke, `pcre2grep` pattern match, curl HTTP fetch, zoneinfo marker, nginx version/marker, and SQLite SQL smoke
     inside QEMU;
   - `make ports-static-host-publish` emits a deployable static-host root for
     the seed repository, and `make package-static-host-repo-install-test`
-    proves SwiftOS can install all twelve packages from that published layout;
+    proves SwiftOS can install all thirteen packages from that published layout;
   - `make ports-hosted-url-verify-test` proves the host-side verifier can check
     a served static-host root;
   - `make package-static-host-dns-repo-install-test` proves `/bin/pkg` can
     install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
-    tzdata, nginx, and sqlite from a DNS-resolved HTTP repository URL.
+    curl, tzdata, nginx, and sqlite from a DNS-resolved HTTP repository URL.
 - The Node.js application-hosting intake is now tracked as scaffolded, blocked
   ports:
   - `ports/lang/nodejs/Port.json` pins the current LTS source tarball, records
@@ -122,15 +124,15 @@ pkg install nginx acme-client postgresql node openjdk swift mc
     from the runtime and records service/signal/persistence blockers;
   - `make ports-catalog-test` and `make ports-recipe-test` validate these intake
     records without claiming the runtime is built yet.
-- The first HTTPS-hosting intake is now tracked as scaffolded, planned ports:
-  - `ports/net/curl/Port.json` pins upstream curl 8.20.0, records the
-    minimal HTTP/HTTPS-only static libcurl policy, and declares the
-    ca-certificates/OpenSSL/zlib dependency chain;
+- The first HTTPS-hosting intake is now partially packaged:
+  - `ports/net/curl/Port.json` pins upstream curl 8.20.0 and is packaged as the
+    first HTTP-only static curl/libcurl client; HTTPS/TLS waits on an
+    `openssl-dev` split package and certificate-chain smoke;
   - `ports/security/acme-sh/Port.json` pins upstream acme.sh 3.1.3 and
     records the HTTP-01 path that depends on curl, oksh, OpenSSL, and
     ca-certificates;
-  - `make ports-catalog-test` and `make ports-recipe-test` validate these
-    intake records without promoting them into the published seed repository.
+  - `make ports-catalog-test` and `make ports-recipe-test` validate the ACME
+    intake record without claiming ACME itself is built yet.
 - Repository package installs stream payload bytes directly into the package
   store and no longer cache full `.swpkg` blobs in `/tmp`.
 - `pkg remove NAME` writes a new package-store activation without the named
@@ -165,7 +167,7 @@ Milestones:
 
 ### 2. Ports Catalog
 
-The current seed catalog, twelve packaged recipes, and five scaffolded intake
+The current seed catalog, thirteen packaged recipes, and four scaffolded intake
 recipes live in this repository under `ports/`; the full ports tree should move
 to `swift-os-ports` once cross-building, testing, publishing, and broader
 package maintenance are ready.

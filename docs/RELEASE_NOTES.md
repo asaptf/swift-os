@@ -22,7 +22,7 @@ service-oriented.
 | ABI | SwiftOS POSIX-like syscall surface, not the Linux ABI |
 | Security | Principal/session/capability context plus per-handle rights |
 | Networking | virtio-net, TCP/UDP/DNS smoke paths, static HTTP server, LLM serving |
-| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the twelve-package seed ports repository fixture |
+| Packages | Host-built `.swpkg` artifacts, read-only package payload overlays, package-store activation, local and signed-repository installs, plus the thirteen-package seed ports repository fixture |
 | AI hosting | Local TinyStories inference and HTTP serving daemon with verified model bundles |
 | Driver services | C5a supervisor/service smoke, C5b opaque device-handle handoff, and C5c-C5f virtio-input discovery metadata, withheld-authority matching, and metadata-only grant rights over endpoint IPC; real MMIO/IRQ/DMA driver handoff remains next |
 
@@ -94,7 +94,7 @@ the exact command and evidence requirement.
   name, and `pkg install NAME`; the QEMU acceptance path rejects expired
   catalogs, incompatible catalogs, and package SHA-256 mismatches.
 - Provides maintainer-side ports scaffolding: `ports/catalog.json`, checked
-  Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite recipes,
+  Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite recipes,
   `swport catalog validate/list/inspect`, and `swport recipe` commands for
   `validate`, `manifest`, `fetch`, `package`, and `repo-fixture`.
 - Cross-builds real static AArch64 `lua` and `luac` binaries against the local
@@ -103,21 +103,21 @@ the exact command and evidence requirement.
 - Installs real Lua from the signed local repository fixture inside QEMU and
   runs `lua -v` plus a small expression smoke with
   `make package-lua-repo-install-test`.
-- Publishes Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite
+- Publishes Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite
   into one signed local seed
   repository and verifies `pkg install lua`, `pkg install zlib`,
   `pkg install bzip2`, `pkg install zstd`, `pkg install xz`,
   `pkg install libarchive`,
-  `pkg install ca-certificates`, `pkg install pcre2`, `pkg install tzdata`,
-  `pkg install nginx`, and `pkg install sqlite`, Lua smoke commands,
+  `pkg install ca-certificates`, `pkg install openssl`, `pkg install pcre2`, `pkg install tzdata`,
+  `pkg install curl`, `pkg install nginx`, and `pkg install sqlite`, Lua smoke commands,
   `minigzip`, bzip2, zstd, and xz round trips, `bsdtar` tar create/list smoke,
-  the CA bundle marker, a
-  `pcre2grep` regex match, the tzdata zoneinfo marker, nginx version/marker
+  the CA bundle marker, OpenSSL version/digest/marker checks, a
+  `pcre2grep` regex match, curl HTTP fetch, the tzdata zoneinfo marker, nginx version/marker
   smoke, and a SQLite in-memory query with
   `make package-ports-seed-repo-install-test`.
 - Publishes that seed into a static-hostable web root with `hosted-repo.json`,
   `repo-root.pub`, and SHA-256 sidecar checks, then verifies Lua, zlib, bzip2,
-  zstd, xz, libarchive, ca-certificates, pcre2, tzdata, nginx, and sqlite install from that
+  zstd, xz, libarchive, ca-certificates, pcre2, curl, tzdata, nginx, and sqlite install from that
   hosted layout with `make package-static-host-repo-install-test`.
 - Verifies hosted static-root URLs from the host and proves target-side install
   from a DNS-resolved HTTP repository hostname with
@@ -217,7 +217,7 @@ llmd: served
   the current product surface.
 - Package payloads are read-only once active. Local target-side package install
   and signed repository fixture install with name-based dependencies exist. The
-  checked seed repository can install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
+  checked seed repository can install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl,
   tzdata, nginx, and sqlite in QEMU, publish the same seed into a
   static-hostable web root, verify hosted static-root URLs, and install from
   target-side DNS-resolved HTTP repository URLs. Public production channels,

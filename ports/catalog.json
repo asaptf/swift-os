@@ -153,14 +153,14 @@
       "portPath": "net/curl",
       "tier": 0,
       "category": "networking",
-      "status": "planned",
+      "status": "packages",
       "difficulty": "M",
       "upstream": "curl",
-      "summary": "HTTP(S) client for admin workflows, diagnostics, package repo debugging, and scripts.",
-      "runtimeDependencies": ["ca-certificates", "openssl", "zlib"],
-      "prerequisiteBundles": ["base-posix", "net-client", "tls-base"],
+      "summary": "HTTP client for admin workflows, diagnostics, package repo debugging, and scripts.",
+      "runtimeDependencies": [],
+      "prerequisiteBundles": ["base-posix", "net-client"],
       "smokeTest": "start a host HTTP server in QEMU, run curl http://server/file, and compare content",
-      "notes": "Prefer HTTP/HTTPS only at first; disable unused protocols."
+      "notes": "Packaged as a static HTTP-only curl CLI plus libcurl.a, public headers, pkgconf metadata, and a version marker. HTTPS/TLS waits for an openssl-dev split package and certificate-chain smoke."
     },
     {
       "name": "lua",

@@ -270,7 +270,18 @@ guard let curlBuild = curlRecipeObject["build"] as? [String: Any],
       let curlArgs = curlBuild["args"] as? [String] else {
     fail("curl recipe does not expose build args")
 }
-for disabled in ["--disable-ftp", "--disable-smtp", "--disable-tftp", "--disable-threaded-resolver"] {
+for disabled in [
+    "--without-ssl",
+    "--without-zlib",
+    "--disable-ftp",
+    "--disable-smtp",
+    "--disable-tftp",
+    "--disable-ipfs",
+    "--disable-websockets",
+    "--disable-docs",
+    "--disable-threaded-resolver",
+    "--disable-ipv6",
+] {
     guard curlArgs.contains(disabled) else {
         fail("curl recipe lost intentionally minimal protocol/runtime flag \(disabled): \(curlArgs)")
     }
@@ -281,7 +292,7 @@ requireSuccess(curlManifest, "generate curl manifest")
 let curlManifestObject = loadJSONObject(curlManifestURL, context: "generated curl manifest")
 requireString(curlManifestObject, "name", "curl")
 requireString(curlManifestObject, "version", "8.20.0")
-guard dependencySet(curlManifestObject) == ["ca-certificates", "openssl", "zlib"] else {
+guard dependencySet(curlManifestObject).isEmpty else {
     fail("curl manifest dependencies were \(String(describing: curlManifestObject["depends"]))")
 }
 guard stringSet(curlManifestObject, "provides") == ["curl", "libcurl"] else {
@@ -307,6 +318,75 @@ guard curlFilePaths == [
     "/usr/share/curl/swiftos-curl.version",
 ] else {
     fail("unexpected curl manifest files: \(curlFilePaths.sorted())")
+}
+
+let curlRoot = temp.appendingPathComponent("curl-root", isDirectory: true)
+do {
+    var files: [(String, Data, Int)] = [
+        ("usr/bin/curl", Data("#!/bin/sh\necho curl 8.20.0\n".utf8), 0o755),
+        ("usr/lib/libcurl.a", Data("!<arch>\n".utf8), 0o644),
+        ("usr/lib/pkgconfig/libcurl.pc", Data("Name: libcurl\nVersion: 8.20.0\n".utf8), 0o644),
+        ("usr/share/curl/swiftos-curl.version", Data("curl 8.20.0 swift-os static-http-no-tls\n".utf8), 0o644),
+    ]
+    for header in [
+        "curl.h",
+        "curlver.h",
+        "easy.h",
+        "header.h",
+        "mprintf.h",
+        "multi.h",
+        "options.h",
+        "stdcheaders.h",
+        "system.h",
+        "typecheck-gcc.h",
+        "urlapi.h",
+        "websockets.h",
+    ] {
+        files.append(("usr/include/curl/\(header)", Data("/* \(header) */\n".utf8), 0o644))
+    }
+    for (path, data, mode) in files {
+        let url = curlRoot.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    }
+} catch {
+    fail("could not stage dummy curl package root: \(error)")
+}
+
+let curlPackageURL = temp.appendingPathComponent("curl.swpkg")
+let curlPackageResult = run(swport, [
+    "recipe", "package", "net/curl",
+    "--root", curlRoot.path,
+    "--output", curlPackageURL.path,
+    "--swpkg", swpkg.path,
+])
+requireSuccess(curlPackageResult, "package dummy curl root")
+let curlVerify = run(swpkg, ["verify", curlPackageURL.path])
+requireSuccess(curlVerify, "verify dummy curl package")
+guard output(curlVerify).contains("OK: curl-8.20.0_1") else {
+    fail("swpkg verify did not identify curl package: \(output(curlVerify))")
+}
+
+let curlRepoRoot = temp.appendingPathComponent("curl-repo-root", isDirectory: true)
+let curlPubkey = temp.appendingPathComponent("curl-repo-root.pub")
+let curlRepoFixture = run(swport, [
+    "recipe", "repo-fixture", "net/curl",
+    "--root", curlRoot.path,
+    "--output", curlRepoRoot.path,
+    "--pubkey", curlPubkey.path,
+    "--swpkg", swpkg.path,
+    "--pkgrepo", pkgrepo.path,
+])
+requireSuccess(curlRepoFixture, "create curl repository fixture")
+let curlCatalog = curlRepoRoot.appendingPathComponent("aarch64/current/catalog.signed")
+let curlRepoVerify = run(pkgrepo, ["verify", "--catalog-signed", curlCatalog.path, "--pubkey", curlPubkey.path])
+requireSuccess(curlRepoVerify, "verify curl repository fixture")
+let curlRepoInspect = run(pkgrepo, ["inspect", curlCatalog.path])
+requireSuccess(curlRepoInspect, "inspect curl repository fixture")
+guard output(curlRepoInspect).contains("curl-8.20.0_1") else {
+    fail("repo fixture catalog did not include curl package: \(output(curlRepoInspect))")
 }
 
 let acmeValidate = run(swport, ["recipe", "validate", "security/acme-sh"])
@@ -1320,4 +1400,4 @@ guard output(sqliteRepoInspect).contains("sqlite-3.53.2_1") else {
     fail("repo fixture catalog did not include sqlite package: \(output(sqliteRepoInspect))")
 }
 
-print("PASS: swport validates nodejs/npm/pm2/curl/acme-sh intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, openssl, pcre2, tzdata, nginx, and sqlite recipe fixtures")
+print("PASS: swport validates nodejs/npm/pm2/acme-sh intake manifests and validates, packages, and publishes lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, openssl, pcre2, tzdata, curl, nginx, and sqlite recipe fixtures")

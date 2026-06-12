@@ -88,8 +88,8 @@ guard listText.contains("tier0 libarchive packages M archivers/libarchive") else
 guard listText.contains("tier0 openssl packages L security/openssl") else {
     fail("list output did not include packaged openssl")
 }
-guard listText.contains("tier0 curl planned M net/curl") else {
-    fail("list output did not include planned curl")
+guard listText.contains("tier0 curl packages M net/curl") else {
+    fail("list output did not include packaged curl")
 }
 guard listText.contains("tier0 pcre2 packages S devel/pcre2") else {
     fail("list output did not include packaged pcre2")
@@ -190,10 +190,11 @@ guard opensslInspectText.contains("runtimeDependencies: ca-certificates") else {
 let curlInspect = run(tool, ["catalog", "inspect", "curl", catalog.path])
 requireSuccess(curlInspect, "inspect curl")
 let curlInspectText = output(curlInspect)
-for dependency in ["ca-certificates", "openssl", "zlib"] {
-    guard curlInspectText.contains(dependency) else {
-        fail("curl inspect output did not show dependency \(dependency): \(curlInspectText)")
-    }
+guard curlInspectText.contains("runtimeDependencies: none") else {
+    fail("curl inspect output did not show its HTTP-only runtime dependency state: \(curlInspectText)")
+}
+guard curlInspectText.contains("prerequisiteBundles: base-posix,net-client") else {
+    fail("curl inspect output did not show its HTTP-only prerequisite bundle state: \(curlInspectText)")
 }
 let acmeInspect = run(tool, ["catalog", "inspect", "acme-sh", catalog.path])
 requireSuccess(acmeInspect, "inspect acme-sh")

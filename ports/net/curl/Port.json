@@ -4,10 +4,10 @@
   "version": "8.20.0",
   "revision": 1,
   "category": "net",
-  "summary": "HTTP and HTTPS client for SwiftOS administration and scripts",
+  "summary": "HTTP client for SwiftOS administration and package repository diagnostics",
   "homepage": "https://curl.se/",
   "license": ["curl"],
-  "maturity": "scaffolded",
+  "maturity": "packages",
   "source": {
     "url": "https://curl.se/download/curl-8.20.0.tar.xz",
     "sha256": "63fe2dc148ba0ceae89922ef838f7e5c946272c2e78b7c59fab4b79d3ce2b896"
@@ -27,8 +27,8 @@
       "--prefix=/usr",
       "--disable-shared",
       "--enable-static",
-      "--with-openssl",
-      "--with-ca-bundle=/usr/etc/ssl/cert.pem",
+      "--without-ssl",
+      "--without-zlib",
       "--without-libpsl",
       "--without-libidn2",
       "--without-brotli",
@@ -53,17 +53,20 @@
       "--disable-smtp",
       "--disable-telnet",
       "--disable-tftp",
+      "--disable-ipfs",
+      "--disable-websockets",
       "--disable-manual",
-      "--disable-threaded-resolver"
+      "--disable-docs",
+      "--disable-threaded-resolver",
+      "--disable-ipv6"
     ],
     "env": {
       "AR": "aarch64-elf-ar",
       "CC": "aarch64-elf-gcc",
-      "CPPFLAGS": "-isystem ${PORTS_ROOT}/openssl/usr/include -isystem ${PORTS_ROOT}/zlib/usr/include -isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CPPFLAGS": "-isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
       "CFLAGS": "-ffreestanding -Os",
-      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${PORTS_ROOT}/openssl/usr/lib -L${PORTS_ROOT}/zlib/usr/lib -L${SYSROOT}/lib",
-      "LIBS": "-Wl,--start-group -lssl -lcrypto -lz -lc -lgcc -Wl,--end-group",
-      "PKG_CONFIG_PATH": "${PORTS_ROOT}/openssl/usr/lib/pkgconfig:${PORTS_ROOT}/zlib/usr/lib/pkgconfig",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib",
+      "LIBS": "-Wl,--start-group -lc -lgcc -Wl,--end-group",
       "RANLIB": "aarch64-elf-ranlib"
     }
   },
@@ -72,7 +75,7 @@
     "command": ["make", "install", "stage-version-marker"]
   },
   "package": {
-    "depends": ["ca-certificates", "openssl", "zlib"],
+    "depends": [],
     "provides": ["curl", "libcurl"],
     "conflicts": [],
     "files": [
@@ -95,7 +98,7 @@
     ],
     "capabilities": {
       "default": [],
-      "services": ["dns", "tcp-client", "tls-client"]
+      "services": ["dns", "tcp-client"]
     }
   },
   "test": {
@@ -104,5 +107,5 @@
       "/usr/bin/curl -fsS http://10.0.2.2:18080/curl-fixture.txt"
     ]
   },
-  "notes": "Scaffold only. The first SwiftOS curl package should be source-built and statically linked against the packaged OpenSSL and zlib roots, with the CLI and libcurl.a shipped together because static application ports need development artifacts. The initial protocol surface is HTTP/HTTPS only: FTP, mail, SMB, RTSP, TFTP, MQTT, HTTP/2, HTTP/3, IDN, brotli, zstd, GSSAPI, libpsl, and threaded resolver support are deliberately disabled until the dependency and runtime surfaces are reviewed. A package build script and QEMU HTTP/HTTPS smoke are the next promotion step before changing the catalog status to packages."
+  "notes": "First packaged curl is source-built as a static HTTP-only client plus libcurl.a and public headers. HTTPS/TLS is deliberately deferred until the OpenSSL headers/static libraries move into an openssl-dev split package and the target TLS/time/entropy smoke can validate certificate chains. FTP, mail, SMB, RTSP, TFTP, MQTT, IPFS, WebSockets, HTTP/2, HTTP/3, IDN, brotli, zstd, zlib compression, GSSAPI, libpsl, threaded resolver support, and IPv6 are disabled for the first package."
 }

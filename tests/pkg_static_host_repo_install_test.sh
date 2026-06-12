@@ -30,6 +30,7 @@ rm -f "$BASE"
 ( cd "$REPO_DIR" && shasum -a 256 -c SHA256SUMS ) >/dev/null 2>&1 || {
   echo "FAIL: static host SHA256SUMS verification failed" >&2; exit 2;
 }
+printf 'curl-static-host-ok\n' > "$REPO_DIR/curl-fixture.txt"
 command -v "$PYTHON" >/dev/null 2>&1 || { echo "FAIL: $PYTHON not found" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-pkg-static-host.XXXXXX)"
@@ -123,7 +124,7 @@ if manifest.get("kind") != "swift-os-static-host-repository":
     raise SystemExit("wrong manifest kind")
 if manifest.get("catalog") != "aarch64/current/catalog.signed":
     raise SystemExit("wrong catalog path")
-if not {"lua", "zlib", "bzip2", "zstd", "xz", "libarchive", "ca-certificates", "openssl", "pcre2", "tzdata", "nginx", "sqlite"}.issubset(names):
+if not {"lua", "zlib", "bzip2", "zstd", "xz", "libarchive", "ca-certificates", "openssl", "pcre2", "curl", "tzdata", "nginx", "sqlite"}.issubset(names):
     raise SystemExit(f"missing package names: {names}")
 PY
 
@@ -172,6 +173,8 @@ send_line "pkg search openssl"
 await "openssl-3.5.7_1" 60 || drive_fail "pkg search did not find openssl"
 send_line "pkg search pcre2"
 await "pcre2-10.47_1" 60 || drive_fail "pkg search did not find pcre2"
+send_line "pkg search curl"
+await "curl-8.20.0_1" 60 || drive_fail "pkg search did not find curl"
 send_line "pkg search sqlite"
 await "sqlite-3.53.2_1" 60 || drive_fail "pkg search did not find sqlite"
 send_line "pkg install lua"
@@ -228,6 +231,14 @@ await "pkg: installed pcre2-10.47_1" 120 || drive_fail "pcre2 package was not in
 send_line "a=nginx; b=lighttpd; echo \$a-\$b > /tmp/pcre2.txt"
 send_line "/usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt"
 await "nginx-lighttpd" 60 || drive_fail "pcre2grep output mismatch"
+send_line "pkg install curl"
+await "pkg: installed curl-8.20.0_1" 120 || drive_fail "curl package was not installed"
+send_line "/usr/bin/curl --version"
+await "curl 8.20.0" 60 || drive_fail "curl version command did not run"
+send_line "/usr/bin/curl -fsS http://10.0.2.2:$PORT/curl-fixture.txt"
+await "curl-static-host-ok" 60 || drive_fail "curl HTTP fetch output mismatch"
+send_line "cat /usr/share/curl/swiftos-curl.version"
+await "curl 8.20.0 swift-os static-http-no-tls" 60 || drive_fail "curl marker output mismatch"
 send_line "pkg install tzdata"
 await "pkg: installed tzdata-2026b_1" 120 || drive_fail "tzdata package was not installed"
 send_line "cat /usr/share/zoneinfo/swiftos-tzdata.version"
@@ -266,6 +277,7 @@ grep -qF "pkg: installed libarchive-3.8.7_1" <<<"$clean" || { echo "FAIL: libarc
 grep -qF "pkg: installed ca-certificates-2026.05.14_1" <<<"$clean" || { echo "FAIL: ca-certificates install output missing" >&2; ok=0; }
 grep -qF "pkg: installed openssl-3.5.7_1" <<<"$clean" || { echo "FAIL: openssl install output missing" >&2; ok=0; }
 grep -qF "pkg: installed pcre2-10.47_1" <<<"$clean" || { echo "FAIL: pcre2 install output missing" >&2; ok=0; }
+grep -qF "pkg: installed curl-8.20.0_1" <<<"$clean" || { echo "FAIL: curl install output missing" >&2; ok=0; }
 grep -qF "pkg: installed tzdata-2026b_1" <<<"$clean" || { echo "FAIL: tzdata install output missing" >&2; ok=0; }
 grep -qF "pkg: installed nginx-1.30.2_1" <<<"$clean" || { echo "FAIL: nginx install output missing" >&2; ok=0; }
 grep -qF "pkg: installed sqlite-3.53.2_1" <<<"$clean" || { echo "FAIL: sqlite install output missing" >&2; ok=0; }
@@ -284,6 +296,9 @@ grep -qF "OpenSSL 3.5.7" <<<"$clean" || { echo "FAIL: openssl version output mis
 grep -qF "8242fdfcccac66e8f0890e9daa101acdda2415ed2e53d97f6d22bceb4ca2d150" <<<"$clean" || { echo "FAIL: openssl digest output missing" >&2; ok=0; }
 grep -qF "openssl 3.5.7 swift-os static-no-dso-no-modules" <<<"$clean" || { echo "FAIL: openssl marker output missing" >&2; ok=0; }
 grep -qF "nginx-lighttpd" <<<"$clean" || { echo "FAIL: pcre2grep output missing" >&2; ok=0; }
+grep -qF "curl 8.20.0" <<<"$clean" || { echo "FAIL: curl version output missing" >&2; ok=0; }
+grep -qF "curl-static-host-ok" <<<"$clean" || { echo "FAIL: curl HTTP fetch output missing" >&2; ok=0; }
+grep -qF "curl 8.20.0 swift-os static-http-no-tls" <<<"$clean" || { echo "FAIL: curl marker output missing" >&2; ok=0; }
 grep -qF "iana-tzdata 2026b 598 compiled-zone-files" <<<"$clean" || { echo "FAIL: tzdata marker output missing" >&2; ok=0; }
 grep -qF "America/Vancouver" <<<"$clean" || { echo "FAIL: zone1970 output missing" >&2; ok=0; }
 grep -qF "nginx version: nginx/1.30.2" <<<"$clean" || { echo "FAIL: nginx version output missing" >&2; ok=0; }
@@ -294,9 +309,10 @@ grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during static host r
 grep -qF "GET /hosted-repo.json" "$HTTPLOG" || { echo "FAIL: hosted manifest request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/catalog.signed" "$HTTPLOG" || { echo "FAIL: catalog request missing" >&2; ok=0; }
 grep -qF "GET /aarch64/current/packages/" "$HTTPLOG" || { echo "FAIL: package request missing" >&2; ok=0; }
+grep -qF "GET /curl-fixture.txt" "$HTTPLOG" || { echo "FAIL: curl fixture request missing" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite from the static-host published repository"
+  echo "PASS: /bin/pkg installed Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite from the static-host published repository"
   exit 0
 fi
 

@@ -12,7 +12,7 @@ maintainers planning `swift-os-ports` recipes.
 > HTTP repository fixtures, repository configuration, `pkg update`, `pkg search`,
 > `pkg info`, `pkg install NAME`, and name-based dependency resolution. The
 > checked ports seed now covers Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2,
-> tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
+> curl, tzdata, a minimal static HTTP-only nginx package, and SQLite. `swport` validates the catalog and
 > recipes, generates manifests, verifies source checksums, creates `.swpkg`
 > artifacts from staged roots, and publishes signed local repository fixtures.
 > `swport catalog packaged` is the machine-readable source for the seed
@@ -21,7 +21,7 @@ maintainers planning `swift-os-ports` recipes.
 > `make package-ports-seed-repo-install-test`,
 > `make package-static-host-repo-install-test`, and
 > `make package-static-host-dns-repo-install-test` prove that SwiftOS can install
-> the twelve-package seed from a local repository, a static-host layout, and a
+> the thirteen-package seed from a local repository, a static-host layout, and a
 > DNS-resolved HTTP repository URL. Public production domains/channels,
 > target-side HTTPS, live package unmount, upgrade, version-constraint solving,
 > package transaction rollback, and broader lifecycle work remain roadmap work.
@@ -70,8 +70,8 @@ paths are available in the current tree:
 | Local guest install | Run `pkg install /packages/pkghello.swpkg`, then execute `/usr/bin/pkghello` | `make package-local-install-test` |
 | Signed HTTP repository fixture | Run `pkg repo set URL`, `pkg update`, `pkg install pkghello`, then execute `/usr/bin/pkghello` | `make package-repo-install-test` |
 | Ports seed catalog | Validate the first server package priorities, dependencies, and blockers | `make ports-catalog-test` |
-| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
-| Checked intake recipe paths | Validate the curl/acme.sh and Node.js/npm/PM2 source pins, dependency metadata, and generated package manifests without publishing them as seed packages yet | `make ports-recipe-test` |
+| Checked recipe repository paths | Validate the Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite recipes and prove their staged-root package flow can feed `swpkg create`/`verify` and a signed `pkgrepo` fixture | `make ports-recipe-test` |
+| Checked intake recipe paths | Validate the acme.sh and Node.js/npm/PM2 source pins, dependency metadata, and generated package manifests without publishing them as seed packages yet | `make ports-recipe-test` |
 | Lua binary repository fixture | Cross-build real static AArch64 Lua and publish the runtime interpreter into a signed local repository fixture | `make ports-lua-repo-fixture` |
 | Lua target repository install | Install Lua from the signed local repository fixture and run it in QEMU | `make package-lua-repo-install-test` |
 | zlib binary repository fixture | Cross-build real static zlib, headers, pkgconf metadata, and `minigzip`, then publish them into a signed local repository fixture | `make ports-zlib-repo-fixture` |
@@ -82,12 +82,13 @@ paths are available in the current tree:
 | ca-certificates repository fixture | Package the pinned CA bundle and publish it into a signed local repository fixture | `make ports-ca-certificates-repo-fixture` |
 | OpenSSL binary repository fixture | Cross-build the static OpenSSL CLI and version marker, then publish it into a signed local repository fixture | `make ports-openssl-repo-fixture` |
 | pcre2 binary repository fixture | Cross-build real static PCRE2, headers, pkgconf metadata, and `pcre2grep`, then publish them into a signed local repository fixture | `make ports-pcre2-repo-fixture` |
+| curl binary repository fixture | Cross-build HTTP-only static curl, headers, libcurl, pkgconf metadata, and marker, then publish them into a signed local repository fixture | `make ports-curl-repo-fixture` |
 | tzdata repository fixture | Compile IANA TZif zoneinfo files with host `zic`, package `/usr/share/zoneinfo`, and publish the signed local repository fixture | `make ports-tzdata-repo-fixture` |
 | nginx binary repository fixture | Cross-build minimal static HTTP-only nginx, then publish it into a signed local repository fixture | `make ports-nginx-repo-fixture` |
 | sqlite binary repository fixture | Cross-build static SQLite, then publish `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata into a signed local repository fixture | `make ports-sqlite-repo-fixture` |
-| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite into one signed local repository and install all twelve from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
-| Static-host publish root | Publish the seed repository into a deployable web root and install all twelve packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
-| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
+| Ports seed repository fixture | Publish Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite into one signed local repository and install all thirteen from SwiftOS using a default repository URL | `make package-ports-seed-repo-install-test` |
+| Static-host publish root | Publish the seed repository into a deployable web root and install all thirteen packages from SwiftOS using that hosted layout | `make package-static-host-repo-install-test` |
+| DNS hosted repository smoke | Install Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, curl, tzdata, nginx, and sqlite from SwiftOS using a hostname repository URL resolved through DNS | `make package-static-host-dns-repo-install-test` |
 | First-party network status preflight | Base `/bin/netinfo` reports virtio-net readiness, IPv4 address/prefix/source, gateway, DNS, IPv6 address/prefix/source, and IPv6 gateway status from the guest | `make netinfo-test` |
 | First-party SSH client transport preflight | Base `/bin/ssh` connects outbound to a host OpenSSH server, reports an OpenSSH banner, uses virtio-rng-backed `SYS_RANDOM` for KEX when available, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com`, verifies the Ed25519 host-key signature for the exchange, matches the host key against `/etc/ssh/known_hosts`, handles strict KEX, and completes an encrypted `ssh-userauth` service request/accept before authentication | `make ssh-transport-test`, `make ssh-runtime-entropy-test` |
 | First-party SSHD session/exec preflight | Base `/bin/sshd` accepts a normal OpenSSH client on guest TCP/22, reports `swift-os_sshd-session`, loads its Ed25519 host-key seed from `/etc/ssh/ssh_host_ed25519_seed`, lets host OpenSSH pin the derived host key through known_hosts, supports deploy-specific image-time host-key, KEX seed, authorized-key staging, and virtio-rng-backed runtime KEX entropy, completes `curve25519-sha256`/`ssh-ed25519`/`chacha20-poly1305@openssh.com` transport setup, rejects stale fixture keys, authenticates `root` with an `ssh-ed25519` key loaded from `/etc/ssh/authorized_keys`, opens session channels, and executes `/bin/id` plus `/bin/echo HC6-OK` | `make sshd-transport-test`, `make sshd-runtime-entropy-test`, `make sshd-host-key-rotation-test`, `make sshd-kex-seed-test`, `make sshd-authorized-keys-test` |
@@ -116,7 +117,12 @@ pkg install zstd
 pkg install xz
 pkg install libarchive
 pkg install ca-certificates
+pkg install openssl
 pkg install pcre2
+pkg install curl
+pkg install tzdata
+pkg install nginx
+pkg install sqlite
 /usr/bin/lua -e 'print(21 * 2)'
 /usr/bin/minigzip /tmp/zlib.txt
 /usr/bin/bzip2 -V
@@ -137,6 +143,13 @@ echo openssl-ok | /usr/bin/openssl dgst -sha256
 cat /usr/share/openssl/swiftos-openssl.version
 echo nginx-lighttpd > /tmp/pcre2.txt
 /usr/bin/pcre2grep 'nginx|lighttpd' /tmp/pcre2.txt
+/usr/bin/curl --version
+/usr/bin/curl -fsS http://10.0.2.2:<port>/curl-fixture.txt
+cat /usr/share/curl/swiftos-curl.version
+cat /usr/share/zoneinfo/UTC
+/usr/sbin/nginx -v
+cat /usr/share/nginx/html/index.html
+/usr/bin/sqlite3 :memory: 'select 6 * 7;'
 ```
 
 The package priority data in this document is mirrored into the checked
@@ -152,9 +165,12 @@ make ports-zstd-repo-fixture
 make ports-xz-repo-fixture
 make ports-libarchive-repo-fixture
 make ports-ca-certificates-repo-fixture
+make ports-openssl-repo-fixture
 make ports-pcre2-repo-fixture
 make ports-tzdata-repo-fixture
+make ports-curl-repo-fixture
 make ports-nginx-repo-fixture
+make ports-sqlite-repo-fixture
 make ports-seed-repo-fixture
 make ports-static-host-publish
 make ports-hosted-url-verify-test
@@ -170,6 +186,7 @@ build/swport recipe validate archivers/zstd
 build/swport recipe validate archivers/xz
 build/swport recipe validate archivers/libarchive
 build/swport recipe validate security/ca-certificates
+build/swport recipe validate security/openssl
 build/swport recipe validate devel/pcre2
 build/swport recipe validate sysutils/tzdata
 build/swport recipe validate www/nginx
@@ -183,6 +200,7 @@ build/swport recipe manifest archivers/zstd --output build/zstd-manifest.json
 build/swport recipe manifest archivers/xz --output build/xz-manifest.json
 build/swport recipe manifest archivers/libarchive --output build/libarchive-manifest.json
 build/swport recipe manifest security/ca-certificates --output build/ca-certificates-manifest.json
+build/swport recipe manifest security/openssl --output build/openssl-manifest.json
 build/swport recipe manifest devel/pcre2 --output build/pcre2-manifest.json
 build/swport recipe manifest sysutils/tzdata --output build/tzdata-manifest.json
 build/swport recipe manifest www/nginx --output build/nginx-manifest.json
@@ -219,7 +237,7 @@ Those commands describe the intended public repository experience. Today, use
 the signed repository fixtures for repository smoke tests, `pkg install FILE`
 for local `.swpkg` smoke tests, `build/swport catalog ...` for package priority
 inspection, `build/swport recipe ...` for the checked Lua, zlib, bzip2, zstd,
-xz, libarchive, ca-certificates, pcre2, tzdata, nginx, sqlite, curl, and
+xz, libarchive, ca-certificates, pcre2, curl, tzdata, nginx, sqlite, and
 acme.sh recipes, and the host package tooling for package construction.
 
 The hard work belongs in `swift-os-ports` and CI. The target machine should only
@@ -277,7 +295,7 @@ possible. They should be the first real ports after `pkghello` and `lua`.
 | `xz` | `.xz` and `liblzma` support for upstream source tarballs and packages. | Tukaani XZ Utils. | M | None. | `base-posix`. | Packaged from audited upstream release 5.8.3 after the XZ supply-chain incident. Static small CLI and `liblzma.a` are built with NLS, scripts, sandboxing, threading, assembler, and dynamic libraries disabled. | Install from the seed repository and pipe a known string through `xz -q -c \| xz -q -d -c` in QEMU. |
 | `bzip2` | Legacy archive support for many upstream distfiles. | Sourceware bzip2. | S | None. | `base-posix`. | Packaged as static bzip2/bunzip2/bzcat/bzip2recover tools, `libbz2.a`, `bzlib.h`, pkgconf metadata, and marker. | Install from the seed repository and pipe a known string through `bzip2 -c \| bzip2 -dc` in QEMU. |
 | `libarchive` | Unified `tar`, `cpio`, and archive extraction for ports tooling and target admin use. | libarchive/bsdtar. | M | zlib, zstd, xz, bzip2. | `base-posix`; large-file support. | Packaged as static `bsdtar`, `libarchive.a`, public headers, pkgconf metadata, and marker. External program filters are disabled; built-in gzip, bzip2, xz, and zstd filters are available through dependencies. | Install from the seed repository, run `bsdtar --version`, create a small tar archive under `/tmp`, and list it in QEMU. |
-| `curl` | HTTP(S) client for admin workflows, diagnostics, package repo debugging, and many scripts. | curl project. | M | TLS library, zlib optional, ca-certificates. | `base-posix`, `net-client`, `tls-base`. | Prefer static `curl` plus `libcurl.a`. Disable protocols beyond HTTP/HTTPS at first to reduce dependencies. | Start a host HTTP server in QEMU test; run `curl http://server/file` and compare content. |
+| `curl` | HTTP client for admin workflows, diagnostics, package repo debugging, and many scripts. | curl project. | M | None for the first HTTP-only package; TLS library, zlib, and ca-certificates return with HTTPS. | `base-posix`, `net-client`. | Packaged as static HTTP-only `curl` plus `libcurl.a`, public headers, pkgconf metadata, and marker. HTTPS/TLS waits for an `openssl-dev` split package and certificate-chain smoke. | Start a host HTTP server in QEMU test; run `curl http://server/file` and compare content. |
 | `pcre2` | Regex library needed by nginx, lighttpd, text tools, and scripting runtimes. | PCRE2. | S | None. | `base-posix`; full recursive `pcre2grep` mode waits for the dirent libc surface. | Packaged as static `libpcre2-8.a`, `libpcre2-posix.a`, headers, pkgconf metadata, and `pcre2grep`; JIT is disabled until executable mappings and W^X policy are settled. | Install from the seed repository and run `pcre2grep 'nginx\|lighttpd' /tmp/pcre2.txt` in QEMU. |
 | `busybox-extra` | Temporary collection of admin utilities beyond the base busybox set. | BusyBox. | M | libc. | `base-posix`, `proc-basic`; selected applets may need `net-client`, `term-ui`, or `service`. | Single static binary works well. Applet symlink/hardlink behavior must match swift-os package image rules. | Run `busybox --list`; execute selected applets: `awk`, `sed`, `find`, `tar`, `wget` if enabled. |
 | `pkg-tools` | Host and target helper tools for inspecting `.swpkg`, catalogs, signatures, and repo state. | swift-os first-party. | S | libc, crypto library if signatures are external. | `base-posix`; `net-client` for remote inspection later. | Keep parsers small and static. Avoid pulling large JSON/TLS stacks into base unless already accepted. | `pkg inspect sample.swpkg` prints deterministic manifest fields. |
