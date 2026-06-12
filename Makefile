@@ -286,6 +286,8 @@ USER_UVMUTEXPROBE_ELF := $(BUILD)/uvmutexprobe.elf
 USER_UVTHREADNAMEPROBE_ELF := $(BUILD)/uvthreadnameprobe.elf
 USER_UVTHREADSTACKPROBE_ELF := $(BUILD)/uvthreadstackprobe.elf
 USER_UVKEYONCEPROBE_ELF := $(BUILD)/uvkeyonceprobe.elf
+USER_UVENVPROBE_ELF := $(BUILD)/uvenvprobe.elf
+USER_ENVCHILD_ELF := $(BUILD)/envchild.elf
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -419,6 +421,8 @@ BASE_EXEC_ELFS := \
 	$(USER_UVTHREADNAMEPROBE_ELF) \
 	$(USER_UVTHREADSTACKPROBE_ELF) \
 	$(USER_UVKEYONCEPROBE_ELF) \
+	$(USER_UVENVPROBE_ELF) \
+	$(USER_ENVCHILD_ELF) \
 	$(USER_UVBARRIERPROBE_ELF) \
 	$(USER_UVCONDPROBE_ELF) \
 	$(USER_UVSOCKETPAIRPROBE_ELF) \
@@ -443,6 +447,7 @@ BASE_EXEC_ELFS := \
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
+.PHONY: uvenv-test
 build: $(KERNEL_ELF)
 .PHONY: ssh-runtime-entropy-test
 .PHONY: sshd-ipv6-listener-test
@@ -1012,6 +1017,18 @@ $(BUILD)/n_uvkeyonceprobe.o: userland/uvkeyonceprobe.c userland/compat/pthread.h
 $(USER_UVKEYONCEPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvkeyonceprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvkeyonceprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_uvenvprobe.o: userland/uvenvprobe.c userland/compat/unistd.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_UVENVPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvenvprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvenvprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+$(BUILD)/n_envchild.o: userland/envchild.c Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_ENVCHILD_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_envchild.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_envchild.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_uvbarrierprobe.o: userland/uvbarrierprobe.c userland/compat/pthread.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -1384,6 +1401,9 @@ uvthreadstack-test: build $(QEMU_DTB) base-image
 
 uvkeyonce-test: build $(QEMU_DTB) base-image
 	./tests/uvkeyonce_test.sh
+
+uvenv-test: build $(QEMU_DTB) base-image
+	./tests/uvenv_test.sh
 
 uvbarrier-test: build $(QEMU_DTB) base-image
 	./tests/uvbarrier_test.sh
@@ -1836,6 +1856,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_UVTHREADNAMEPROBE_ELF) $(BASE_ROOT)/bin/uvthreadnameprobe
 	cp $(USER_UVTHREADSTACKPROBE_ELF) $(BASE_ROOT)/bin/uvthreadstackprobe
 	cp $(USER_UVKEYONCEPROBE_ELF) $(BASE_ROOT)/bin/uvkeyonceprobe
+	cp $(USER_UVENVPROBE_ELF) $(BASE_ROOT)/bin/uvenvprobe
+	cp $(USER_ENVCHILD_ELF) $(BASE_ROOT)/bin/envchild
 	cp $(USER_UVBARRIERPROBE_ELF) $(BASE_ROOT)/bin/uvbarrierprobe
 	cp $(USER_UVCONDPROBE_ELF) $(BASE_ROOT)/bin/uvcondprobe
 	cp $(USER_UVSOCKETPAIRPROBE_ELF) $(BASE_ROOT)/bin/uvsocketpairprobe

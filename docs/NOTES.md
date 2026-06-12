@@ -5536,3 +5536,30 @@ wrappers so the Node runtime audit can retire another thread-layer gap.
 `make ports-catalog-test`, `make pthread-test`, `make uvthreadstack-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM25 - execve envp and libuv environment handoff probe (DONE, 2026-06-12)
+
+Node, npm, and PM2 all rely on `process.env` plus custom child-process
+environment handoff. Libuv's Unix spawn path can override `environ` in the child
+before `execvp`, and newlib's `getenv`/`setenv`/`unsetenv` must see the same
+environment vector that `execve` placed on the new process stack. SwiftOS
+previously accepted an `envp` argument at the syscall boundary but did not copy
+it into the replacement image.
+
+- `execve(path, argv, envp)` now packs both argv and envp from the caller and
+  builds both vectors on the new user stack.
+- The newlib crt0 now initializes global `environ` from the incoming `envp`
+  before calling `main`, so libc environment helpers operate on the inherited
+  environment.
+- `execvpe` now passes its explicit environment through SwiftOS path search
+  instead of falling back to the ambient `environ`.
+- `/bin/uvenvprobe` plus `/bin/envchild` prove parent
+  `getenv`/`setenv`/`unsetenv`, libuv-style `environ` override before `execvp`,
+  child-side `main(..., envp)`/`environ` agreement, and parent environment
+  preservation after the child exits.
+- Catalog and command/API docs now list `uvenvprobe` as the Node/npm/PM2
+  environment handoff bridge.
+
+**Acceptance.** `make uvenv-test`, `make docs-test`,
+`make ports-catalog-test`, `make uvspawn-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

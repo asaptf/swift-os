@@ -408,6 +408,7 @@ Before merging a port:
 | `userland/uvthreadnameprobe.c` | newlib compat thread names for libuv's Unix thread helpers |
 | `userland/uvthreadstackprobe.c` | newlib compat thread stack sizing for libuv's `uv_thread_create_ex` path |
 | `userland/uvkeyonceprobe.c` | newlib compat thread-local keys, once guards, identity, join, and detach for libuv's Unix thread layer |
+| `userland/uvenvprobe.c`, `userland/envchild.c` | newlib compat environment mutation plus `execve` envp propagation for libuv child-process setup |
 | `userland/uvbarrierprobe.c` | newlib compat reusable pthread barriers for libuv's native barrier path |
 | `userland/uvcondprobe.c` | newlib compat monotonic timed condition waits for libuv's Unix thread layer |
 | `userland/uvsocketpairprobe.c` | newlib compat full-duplex AF_UNIX socketpair for libuv local streams |

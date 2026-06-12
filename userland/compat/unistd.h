@@ -5,5 +5,6 @@
 
 int getpagesize(void);
 int pipe2(int fds[2], int flags);
+int execvpe(const char *file, char *const argv[], char *const envp[]);
 
 #endif

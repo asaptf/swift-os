@@ -277,7 +277,6 @@ static inline int waitpid(int pid, int *status, int options) {
 }
 
 static inline int execve(const char *path, char *const argv[], char *const envp[]) {
-    (void)envp;
     return (int)__syscall3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
 }
 

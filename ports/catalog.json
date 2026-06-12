@@ -359,7 +359,7 @@
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
       "blockedBy": ["full libuv thread audit"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
-      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, POSIX semaphores used by libuv's Unix semaphore wrappers, read/write locks used by libuv's Unix rwlock wrappers, error-check and recursive mutex types used by libuv's Unix mutex wrappers, thread-name helpers used by libuv's Unix thread layer, thread stack sizing used by libuv's uv_thread_create_ex path, thread-local keys, once guards, thread identity, join, and detach used by libuv's Unix thread layer, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, pthread_atfork child reinitialization, the fork/execvp process-spawn handshake used by libuv's Unix uv_spawn path, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
+      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, POSIX semaphores used by libuv's Unix semaphore wrappers, read/write locks used by libuv's Unix rwlock wrappers, error-check and recursive mutex types used by libuv's Unix mutex wrappers, thread-name helpers used by libuv's Unix thread layer, thread stack sizing used by libuv's uv_thread_create_ex path, thread-local keys, once guards, thread identity, join, and detach used by libuv's Unix thread layer, environment mutation plus libuv-style child environment handoff through execvp, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, pthread_atfork child reinitialization, the fork/execvp process-spawn handshake used by libuv's Unix uv_spawn path, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
     },
     {
       "name": "npm",
@@ -374,7 +374,7 @@
       "prerequisiteBundles": ["base-posix", "proc-basic", "net-client", "tls-base"],
       "blockedBy": ["nodejs runtime port", "writable global-prefix policy", "registry HTTPS transport policy", "node-gyp/native addon policy"],
       "smokeTest": "npm --version, then install a pure-JS package into /tmp/npm-prefix",
-      "notes": "Package npm separately from nodejs so the immutable root, /tmp cache, registry access, child-process install-script behavior, and native-addon decisions stay explicit. The libuv-shaped fork/execvp spawn path is covered by uvspawnprobe; the full npm smoke still waits for the Node.js runtime port."
+      "notes": "Package npm separately from nodejs so the immutable root, /tmp cache, registry access, child-process install-script behavior, and native-addon decisions stay explicit. The libuv-shaped fork/execvp spawn path is covered by uvspawnprobe and install-script environment handoff is covered by uvenvprobe; the full npm smoke still waits for the Node.js runtime port."
     },
     {
       "name": "pm2",
@@ -389,7 +389,7 @@
       "prerequisiteBundles": ["base-posix", "proc-basic", "net-server", "service", "threads"],
       "blockedBy": ["nodejs runtime port", "full signal watcher support", "service supervisor contract", "persistent PM2 state policy"],
       "smokeTest": "pm2-runtime start /tmp/app.js --no-daemon and fetch the app from the host",
-      "notes": "Start with pm2-runtime/no-daemon against one app. The libuv signal watcher self-pipe shape is covered by uvsignalprobe and the libuv-shaped child-process spawn path is covered by uvspawnprobe, but full PM2 lifecycle handling still waits for Node.js plus service and storage policy. Cluster mode, startup generation, file watching, and durable process lists remain deferred."
+      "notes": "Start with pm2-runtime/no-daemon against one app. The libuv signal watcher self-pipe shape is covered by uvsignalprobe, the libuv-shaped child-process spawn path is covered by uvspawnprobe, and per-app environment handoff is covered by uvenvprobe, but full PM2 lifecycle handling still waits for Node.js plus service and storage policy. Cluster mode, startup generation, file watching, and durable process lists remain deferred."
     },
     {
       "name": "openjdk-runtime",

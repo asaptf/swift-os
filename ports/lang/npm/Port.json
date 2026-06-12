@@ -52,5 +52,5 @@
       "/usr/bin/npx --version"
     ]
   },
-  "notes": "Scaffold only. Runtime package installation must use /tmp or a future package-store/global-prefix policy rather than mutating the immutable root. The initial package should prove npm --version before enabling registry installs, audit, scripts, node-gyp, or native addon workflows."
+  "notes": "Scaffold only. Runtime package installation must use /tmp or a future package-store/global-prefix policy rather than mutating the immutable root. Install-script child environment handoff is covered by uvenvprobe. The initial package should prove npm --version before enabling registry installs, audit, scripts, node-gyp, or native addon workflows."
 }

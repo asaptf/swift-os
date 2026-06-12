@@ -221,7 +221,15 @@ W int execvp(const char *file, char *const argv[]) {
     return -1;
 }
 W int execvpe(const char *file, char *const argv[], char *const envp[]) {
-    (void)envp; return execvp(file, argv);
+    if (strchr(file, '/')) { return execve(file, argv, envp); }
+    char buf[128];
+    // Try /bin/<file> then /<file>, matching execvp's SwiftOS search path.
+    buf[0] = '/'; buf[1] = 'b'; buf[2] = 'i'; buf[3] = 'n'; buf[4] = '/';
+    size_t n = strlen(file);
+    if (n < sizeof(buf) - 6) { memcpy(buf + 5, file, n + 1); execve(buf, argv, envp); }
+    buf[0] = '/'; if (n < sizeof(buf) - 2) { memcpy(buf + 1, file, n + 1); execve(buf, argv, envp); }
+    errno = ENOENT;
+    return -1;
 }
 W pid_t waitpid(pid_t pid, int *status, int options) {
     return (pid_t)sys3(SYS_WAITPID, pid, (long)status, options);

@@ -55,5 +55,5 @@
       "/usr/bin/pm2-runtime --version"
     ]
   },
-  "notes": "Scaffold only. The first PM2 proof should run in no-daemon or pm2-runtime mode against a tiny Node HTTP app before enabling daemon persistence, startup generation, log rotation, file watching, cluster mode, or full signal-driven lifecycle management."
+  "notes": "Scaffold only. Per-app child environment handoff is covered by uvenvprobe. The first PM2 proof should run in no-daemon or pm2-runtime mode against a tiny Node HTTP app before enabling daemon persistence, startup generation, log rotation, file watching, cluster mode, or full signal-driven lifecycle management."
 }

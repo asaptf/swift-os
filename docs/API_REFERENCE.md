@@ -77,6 +77,7 @@ source, then follow its Makefile rule and acceptance test.
 | C libuv thread-name compatibility | `userland/uvthreadnameprobe.c` | `pthread_setname_np` and `pthread_getname_np` semantics used by libuv thread naming helpers | `./tests/uvthreadname_test.sh` |
 | C libuv thread-stack compatibility | `userland/uvthreadstackprobe.c` | `getrlimit(RLIMIT_STACK)`, `getpagesize`, and `pthread_attr_setstacksize` behavior used by `uv_thread_create_ex` | `./tests/uvthreadstack_test.sh` |
 | C libuv key/once compatibility | `userland/uvkeyonceprobe.c` | `pthread_once`, thread-local keys, `pthread_self`/`pthread_equal`, join, and detach behavior used by libuv's Unix thread layer | `./tests/uvkeyonce_test.sh` |
+| C libuv environment compatibility | `userland/uvenvprobe.c`, `userland/envchild.c` | `getenv`/`setenv`/`unsetenv`, `execve` envp propagation, and libuv-style `environ` override before `execvp` | `./tests/uvenv_test.sh` |
 | C libuv barrier compatibility | `userland/uvbarrierprobe.c` | reusable `pthread_barrier_*` phases for libuv's native barrier path | `./tests/uvbarrier_test.sh` |
 | C libuv timed condition compatibility | `userland/uvcondprobe.c` | `pthread_cond_timedwait` with `CLOCK_MONOTONIC` timeout and signal wake paths | `./tests/uvcond_test.sh` |
 | C libuv socketpair compatibility | `userland/uvsocketpairprobe.c` | `AF_UNIX` full-duplex `socketpair` with flags and poll readiness | `./tests/uvsocketpair_test.sh` |
@@ -211,7 +212,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 18 | `getcwd` | `buf`, `size` | length or negative error |
 | 19 | `sbrk` | `incr` | previous break, or `(void *)-1` through wrappers |
 | 20 | `fork` | none | child pid in parent, 0 in child, or negative error |
-| 21 | `execve` | `path`, `argv`, `envp` | no return on success, negative error |
+| 21 | `execve` | `path`, `argv`, `envp` | no return on success; copies argv/envp to the new stack; negative error |
 | 22 | `psinfo` | `buffer`, `capacity` | total process count or negative error |
 | 23 | `dup` | `fd` | new fd or negative error |
 | 24 | `dup2` | `oldfd`, `newfd` | new fd or negative error |
@@ -1534,6 +1535,7 @@ one booting acceptance path:
 | C compat libuv thread names | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvthreadnameprobe.c` | `make uvthreadname-test`, `./tests/boot_test.sh` |
 | C compat libuv thread stacks | `userland/compat/pthread.h`, `userland/compat/sys/resource.h`, `userland/compat/unistd.h`, `userland/compat/stubs.c`, `userland/uvthreadstackprobe.c` | `make uvthreadstack-test`, `./tests/boot_test.sh` |
 | C compat libuv key/once/thread identity | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvkeyonceprobe.c` | `make uvkeyonce-test`, `./tests/boot_test.sh` |
+| C compat libuv environment handoff | `kernel/user/ustack.swift`, `kernel/user/process.swift`, `kernel/syscall/syscall.swift`, `userland/lib/crt0_newlib.S`, `userland/compat/stubs.c`, `userland/uvenvprobe.c`, `userland/envchild.c` | `make uvenv-test`, `./tests/boot_test.sh` |
 | C compat libuv barrier | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvbarrierprobe.c` | `make uvbarrier-test`, `./tests/boot_test.sh` |
 | C compat libuv timed condition wait | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvcondprobe.c` | `make uvcond-test`, `./tests/boot_test.sh` |
 | C compat libuv socketpair | `kernel/vfs/vfs.swift`, `kernel/syscall/syscall.swift`, `userland/compat/sys/socket.h`, `userland/compat/stubs.c`, `userland/uvsocketpairprobe.c` | `make uvsocketpair-test`, `./tests/boot_test.sh` |

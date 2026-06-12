@@ -2104,17 +2104,17 @@ private func copyProcessSecurity(from parent: Int, to child: Int) {
 }
 
 private func buildUserEntryStack(_ ttbr0: UInt, packed: UInt, packedLen: UInt,
-                                 argc: Int) -> UInt {
-    if packedLen > 0 && argc > 0, let p = UnsafePointer<CChar>(bitPattern: packed) {
-        return userStackBuild(ttbr0, userStackTop, p, packedLen, Int32(argc))
-    }
+                                 argc: Int, envPacked: UInt = 0,
+                                 envPackedLen: UInt = 0, envc: Int = 0) -> UInt {
+    let argvPtr = (packedLen > 0 && argc > 0) ? UnsafePointer<CChar>(bitPattern: packed) : nil
+    let envPtr = (envPackedLen > 0 && envc > 0) ? UnsafePointer<CChar>(bitPattern: envPacked) : nil
+    if argc > 0 && argvPtr == nil { return 0 }
+    if envc > 0 && envPtr == nil { return 0 }
 
-    // Malformed or absent argv must not enter EL0 with SP at the unmapped
-    // one-past-the-stack address. Build a valid argc=0 process-entry frame.
-    var empty: CChar = 0
-    return withUnsafePointer(to: &empty) { p in
-        userStackBuild(ttbr0, userStackTop, p, 0, 0)
-    }
+    // Absent argv/envp must still produce a mapped, valid argc=0/envp=NULL
+    // process-entry frame instead of an unmapped SP.
+    return userStackBuild(ttbr0, userStackTop, argvPtr, packedLen, Int32(argc),
+                          envPtr, envPackedLen, Int32(envc))
 }
 
 // Build a process from an ELF image. Returns its slot, or -1. `inherit` selects
@@ -2198,7 +2198,8 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
 }
 
 private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
-                            argc: Int) -> (UInt, UInt, UInt) {
+                            argc: Int, envPacked: UInt, envPackedLen: UInt,
+                            envc: Int) -> (UInt, UInt, UInt) {
     let ttbr0 = address_space_create()
     if ttbr0 == 0 { return (0, 0, 0) }
     let entry = elfLoad(ttbr0, UnsafeRawPointer(bitPattern: image), size)
@@ -2215,7 +2216,9 @@ private func buildExecImage(_ image: UInt, _ size: UInt, packed: UInt, packedLen
         va += PageAllocator.pageSize
     }
 
-    let userSP = buildUserEntryStack(ttbr0, packed: packed, packedLen: packedLen, argc: argc)
+    let userSP = buildUserEntryStack(ttbr0, packed: packed, packedLen: packedLen,
+                                     argc: argc, envPacked: envPacked,
+                                     envPackedLen: envPackedLen, envc: envc)
     if userSP == 0 {
         address_space_destroy(ttbr0)
         return (0, 0, 0)
@@ -3121,13 +3124,19 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
 }
 
 /// execve(path, argv, envp): replace the current process image and return from
-/// this syscall directly into the new EL0 entry point. envp is ignored today.
+/// this syscall directly into the new EL0 entry point, with argv/envp copied
+/// onto the new user stack.
 func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
-                 argc: Int, frame: UnsafeMutablePointer<UInt>) -> Int {
+                 argc: Int, envPacked: UInt, envPackedLen: UInt, envc: Int,
+                 frame: UnsafeMutablePointer<UInt>) -> Int {
     let me = currentProcessSlot()
     guard me >= 0 else { return -22 }
 
-    let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed, packedLen: packedLen, argc: argc)
+    let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed,
+                                                packedLen: packedLen, argc: argc,
+                                                envPacked: envPacked,
+                                                envPackedLen: envPackedLen,
+                                                envc: envc)
     if ttbr0 == 0 { return -12 } // ENOMEM / invalid image during bring-up
 
     // The old image is fully replaced; reclaim its frames once we are no longer

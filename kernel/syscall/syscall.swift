@@ -140,8 +140,11 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             result = -2 // ENOENT
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
+            let (envPacked, envPackedLen, envc) = packUserArgv(frame[2])
             result = processExec(image: addr, size: len, packed: packed,
-                                 packedLen: packedLen, argc: argc, frame: frame)
+                                 packedLen: packedLen, argc: argc,
+                                 envPacked: envPacked, envPackedLen: envPackedLen,
+                                 envc: envc, frame: frame)
         }
     } else if number == sysSpawn {
         // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
