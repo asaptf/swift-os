@@ -21,6 +21,7 @@ enum service_kind {
     SERVICE_SSHD = 1,
     SERVICE_SSHD_ONCE = 2,
     SERVICE_SSHD6 = 3,
+    SERVICE_SSHD6_ONCE = 4,
 };
 
 struct supervised_service {
@@ -66,6 +67,9 @@ static const char *service_name(enum service_kind kind) {
     if (kind == SERVICE_SSHD_ONCE) {
         return "sshd-once";
     }
+    if (kind == SERVICE_SSHD6_ONCE) {
+        return "sshd6-once";
+    }
     if (kind == SERVICE_SSHD6) {
         return "sshd6";
     }
@@ -83,9 +87,10 @@ static void create_marker(const char *path) {
 }
 
 static void prepare_sshd_mode(enum service_kind kind) {
-    if (kind == SERVICE_SSHD_ONCE) {
+    if (kind == SERVICE_SSHD_ONCE || kind == SERVICE_SSHD6_ONCE) {
         create_marker(SSHD_ONCE_MARKER);
-    } else if (kind == SERVICE_SSHD6) {
+    }
+    if (kind == SERVICE_SSHD6 || kind == SERVICE_SSHD6_ONCE) {
         create_marker(SSHD_IPV6_MARKER);
     }
 }
@@ -102,7 +107,9 @@ static int start_service(enum service_kind kind) {
     if (pid == 0) {
         char *argv4[] = { "sshd", 0 };
         char *argv6[] = { "sshd6", "-6", 0 };
-        execve("/bin/sshd", kind == SERVICE_SSHD6 ? argv6 : argv4, 0);
+        execve("/bin/sshd",
+               (kind == SERVICE_SSHD6 || kind == SERVICE_SSHD6_ONCE) ? argv6 : argv4,
+               0);
         puts_raw("swos-init: exec /bin/sshd failed\n");
         _exit(127);
     }
@@ -140,8 +147,12 @@ static void run_service_token(char *tok) {
         (void)start_service(SERVICE_SSHD6);
     } else if (streq(tok, "sshd-supervised")) {
         add_supervised_service(SERVICE_SSHD);
+    } else if (streq(tok, "sshd6-supervised")) {
+        add_supervised_service(SERVICE_SSHD6);
     } else if (streq(tok, "sshd-once")) {
         add_supervised_service(SERVICE_SSHD_ONCE);
+    } else if (streq(tok, "sshd6-once")) {
+        add_supervised_service(SERVICE_SSHD6_ONCE);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);

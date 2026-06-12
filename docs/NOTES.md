@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC29 SSHD IPv6 supervision preflight (2026-06-12)
+
+- Added `sshd6-supervised` and `sshd6-once` `/bin/swos-init` service tokens.
+  `sshd6-supervised` keeps `/bin/sshd -6` under the existing restart loop for
+  operator-style manifests; `sshd6-once` combines IPv6 listener mode with the
+  one-session test marker so the restart path is deterministic.
+- Added `./tests/sshd_ipv6_supervision_test.sh` and
+  `make sshd-ipv6-supervision-test`. The test builds a temporary base image
+  with `sshd6-once`, boots QEMU with `ipv6=on`, and requires `swos-init` to
+  restart the AF_INET6 listener. On hosts where QEMU IPv6 hostfwd works, it
+  also uses host OpenSSH through `::1` to run `/bin/id`, force the first daemon
+  exit, require the restart, then run `/bin/echo HC29-V6-RESTART`.
+- The serial log must show two AF_INET6 listener cycles:
+  `sshd: listening on 22 (IPv6 session exec preflight)`, two once-mode cycles,
+  and the `swos-init: service sshd6-once ...; restarting` marker.
+
+**Acceptance.** `make sshd-ipv6-supervision-test` proves that the service
+manifest can keep the IPv6 SSHD listener restartable. On hosts with IPv6
+hostfwd, it also proves OpenSSH pins the SwiftOS host key and completes commands
+before and after restart.
+
 ## HC28 SSHD static-IPv6 deploy preflight (2026-06-12)
 
 - Added `./tests/sshd_deploy_preflight_test.sh` and

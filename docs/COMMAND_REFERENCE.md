@@ -46,7 +46,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet`; attach virtio-rng for runtime entropy proof | `tests/ssh_transport_test.sh`, `tests/ssh_runtime_entropy_test.sh` |
-| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh`, `tests/sshd_deploy_preflight_test.sh` |
+| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh`, `tests/sshd_ipv6_supervision_test.sh`, `tests/sshd_deploy_preflight_test.sh` |
 | Inspect network status | `netinfo` | QEMU virtio-net and `capNet` | `tests/netinfo_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
@@ -795,11 +795,13 @@ Notes:
   or debug runs.
 - Pass `-6` or `--ipv6` to bind an AF_INET6 stream socket. Custom service
   manifests can use the `sshd6` token to autostart `/bin/sshd -6` from
-  `/bin/swos-init`.
+  `/bin/swos-init`; `sshd6-supervised` keeps the same IPv6 listener under the
+  restart loop, and `sshd6-once` is the deterministic IPv6 restart test token.
 - Custom base images can replace `/etc/swos/services` with
   `SWOS_SERVICES_FILE=PATH`. The opt-in tokens `sshd-supervised` and
   `sshd-once` keep `/bin/swos-init` alive as a restart loop for SSHD
-  preflights; default `sshd` still hands off to the serial login.
+  preflights; the IPv6 variants are `sshd6-supervised` and `sshd6-once`.
+  Default `sshd` still hands off to the serial login.
 - This command exchanges SSH identification strings with a normal OpenSSH
   client, negotiates `curve25519-sha256`, `ssh-ed25519`, OpenSSH strict KEX, and
   `chacha20-poly1305@openssh.com`, authenticates `root` with an `ssh-ed25519`
@@ -844,6 +846,7 @@ Acceptance coverage: `tests/sshd_transport_test.sh`,
 `tests/sshd_runtime_entropy_test.sh`,
 `tests/sshd_kex_seed_test.sh`,
 `tests/sshd_authorized_keys_test.sh`,
+`tests/sshd_ipv6_supervision_test.sh`,
 `tests/sshd_deploy_preflight_test.sh`.
 
 ### `tcpget`
@@ -1075,7 +1078,7 @@ Notes:
 - The opt-in tokens `sshd-supervised` and `sshd-once` keep `swos-init` alive as
   a simple restart loop. `sshd-once` is a test token: it starts `/bin/sshd` in
   one-session mode and proves the supervisor can restart it for a second SSH
-  command.
+  command. `sshd6-supervised` and `sshd6-once` do the same for `/bin/sshd -6`.
 - It is deliberately not a full service manager: there is no dependency graph,
   package service activation, or production health policy yet.
 
