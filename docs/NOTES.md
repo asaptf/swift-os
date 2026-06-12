@@ -5334,3 +5334,32 @@ audit` blocker.
 `make ports-catalog-test`, `make pthread-test`, `make threadsync-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM19 — libuv thread-name probe (DONE, 2026-06-12)
+
+**Scope.** Cover the pthread thread-name helpers used by Node's vendored libuv
+1.52.1 Unix thread layer. `uv_thread_setname()` and `uv_thread_getname()` call
+`pthread_setname_np` and `pthread_getname_np` on the generic Unix path; SwiftOS
+previously exposed the newlib declarations but did not implement the symbols in
+the compat layer. The C/newlib facade now keeps bounded, process-local names for
+created pthread records plus the main thread, using the 16-byte limit that libuv
+selects for generic Unix/Linux-shaped pthread names. This closes another
+concrete libuv thread primitive while the catalog keeps the broader `full libuv
+thread audit` blocker.
+
+- `userland/compat/pthread.h`: exposes `pthread_setname_np` and
+  `pthread_getname_np` to compat builds independent of feature-test macro
+  choices in the bare-metal newlib sysroot.
+- `userland/compat/stubs.c`: stores per-thread names, rejects overlong names
+  with `ERANGE`, returns `ERANGE` for undersized get buffers, and returns
+  `ESRCH` after a thread record has been joined and released.
+- `/bin/uvthreadnameprobe`: proves default main-thread name, main-thread
+  set/get, name length errors, missing-thread errors, parent-set worker names,
+  worker self-set names, and joined-thread cleanup.
+- `make uvthreadname-test`: boots QEMU, logs in, runs the probe, and asserts
+  the libuv thread-name markers.
+
+**Acceptance.** `make uvthreadname-test`, `make docs-test`,
+`make ports-catalog-test`, `make pthread-test`, `make uvmutex-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
