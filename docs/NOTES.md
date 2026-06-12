@@ -5515,3 +5515,24 @@ Node runtime.
 **Acceptance.** `make uvspawn-test`, `make docs-test`,
 `make ports-catalog-test`, `make signal-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM24 - libuv key/once/thread identity probe (DONE, 2026-06-12)
+
+Node and libuv use the Unix thread layer for one-time initialization,
+thread-local request/runtime state, worker identity comparisons, joins, and
+detached helper threads. SwiftOS already had the underlying pthread facade; this
+milestone ties the remaining key/once/identity pieces directly to libuv-shaped
+wrappers so the Node runtime audit can retire another thread-layer gap.
+
+- `/bin/uvkeyonceprobe`: proves `uv_once`-style one-time initialization,
+  thread-local key create/get/set/delete behavior, thread self/equality checks,
+  joined worker completion, and detached worker completion.
+- `make uvkeyonce-test`: boots QEMU, logs in, runs the probe, and asserts the
+  key/once/thread identity markers.
+- Catalog and command/API docs now list `uvkeyonceprobe` alongside the other
+  Node/libuv compatibility probes.
+
+**Acceptance.** `make uvkeyonce-test`, `make docs-test`,
+`make ports-catalog-test`, `make pthread-test`, `make uvthreadstack-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
