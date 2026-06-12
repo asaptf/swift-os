@@ -359,7 +359,7 @@
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
       "blockedBy": ["full libuv thread audit"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
-      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, pthread_atfork child reinitialization, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
+      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, error-check and recursive mutex types used by libuv's Unix mutex wrappers, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, pthread_atfork child reinitialization, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
     },
     {
       "name": "npm",
