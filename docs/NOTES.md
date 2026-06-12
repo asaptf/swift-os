@@ -3,6 +3,31 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC28 SSHD static-IPv6 deploy preflight (2026-06-12)
+
+- Added `./tests/sshd_deploy_preflight_test.sh` and
+  `make sshd-deploy-preflight-test`. The gate builds a temporary signed base
+  image with a Hetzner-style `/etc/swos/net-ipv6`, deploy-specific
+  `/etc/ssh/ssh_host_ed25519_seed`, `/etc/ssh/ssh_kex_seed`, and
+  `/etc/ssh/authorized_keys`, plus an `/etc/swos/services` manifest that starts
+  `sshd6`.
+- The test verifies the staged image files before boot, then boots QEMU with
+  `ipv6=on`, virtio-net, and virtio-rng. The guest must apply the static
+  `2001:db8:0:3df1::1/64` config with gateway `fe80::1`, report runtime entropy
+  readiness, autostart `/bin/sshd -6`, reach the serial login, and print the
+  same static IPv6/gateway state through `/bin/netinfo`.
+- On hosts where QEMU IPv6 host forwarding works, the same gate also drives a
+  real OpenSSH IPv6 remote exec through `::1` and requires `/bin/sshd` to load
+  the deploy host-key seed, KEX seed, runtime entropy, and authorized key while
+  running remote `/bin/netinfo`.
+- This is a local deploy-candidate gate. A real provider-routed Hetzner IPv6 SSH
+  run remains the cloud acceptance step.
+
+**Acceptance.** `make sshd-deploy-preflight-test` proves that a single deploy
+candidate image can carry static cloud IPv6 config, SSHD host/KEX/login
+material, `sshd6` autostart, virtio-rng runtime entropy, and guest-visible
+`/bin/netinfo` status without crashing.
+
 ## HC27 network status deploy preflight (2026-06-11)
 
 - Added `SYS_NETINFO` (83), a fixed 56-byte read-only network status snapshot

@@ -460,9 +460,15 @@ Current Hetzner readiness status:
   `./tests/sshd_kex_seed_test.sh`,
   `./tests/sshd_authorized_keys_test.sh`,
   `./tests/sshd_ipv6_listener_test.sh`, and
-  `./tests/sshd_supervision_test.sh`; `./tests/sshd_usr_bin_exec_test.sh`
-  also boots the `pkghello` package payload and runs `/usr/bin/pkghello` over
-  SSHD. Together they verify that host OpenSSH pins the
+  `./tests/sshd_supervision_test.sh`; `make sshd-deploy-preflight-test`
+  builds one temporary Hetzner-style deploy candidate with static IPv6,
+  deploy-specific SSHD host/KEX seeds, deploy `authorized_keys`, `sshd6`, and
+  virtio-rng, then requires `/bin/netinfo` to report the static IPv6/gateway
+  state from inside the guest. On hosts with working QEMU IPv6 host forwarding,
+  it also runs `/bin/netinfo` through OpenSSH over `::1`.
+  `./tests/sshd_usr_bin_exec_test.sh` also boots the `pkghello` package payload
+  and runs `/usr/bin/pkghello` over SSHD. Together they verify that host OpenSSH
+  pins the
   SwiftOS host key through known_hosts, that stale fixture keys are rejected,
   that custom images can boot with rotated SSHD host-key and authorized-key
   material, that quoted argv reaches remote `/bin/echo`, that bounded stdin
@@ -490,12 +496,13 @@ Not deploy-complete yet:
 - `/bin/ssh` is not a full SSH client yet. It has a minimal file-backed
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
-- Primary IPv6 can be staged as static image config and SSHD can be started as
-  an AF_INET6 listener, but cloud metadata ingestion, automatic
+- Static Primary IPv6 config, deploy-specific SSHD material, `sshd6` autostart,
+  virtio-rng, and `/bin/netinfo` are now checked together by
+  `make sshd-deploy-preflight-test`. Cloud metadata ingestion, automatic
   refresh/reconfigure, firewall policy, routing/configuration commands beyond
   the read-only `/bin/netinfo` status snapshot, provider-routed
-  SSHD-over-IPv6 acceptance, and a general service manager remain follow-up
-  work.
+  SSHD-over-IPv6 acceptance on a real Hetzner network, and a general service
+  manager remain follow-up work.
 
 Provider references to re-check before a real cloud run:
 

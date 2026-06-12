@@ -46,7 +46,7 @@ syntax, examples, limits, and acceptance coverage remain in the sections below.
 | Serve HTTP content | `httpd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet` | `tests/httpd_test.sh` |
 | Serve AI completions | `llmd` | QEMU virtio-net, TCP 8080 host forwarding, `capNet`, readable model bundle | `tests/llm_serve_test.sh` |
 | Exercise SSH client preauth | `ssh` | QEMU virtio-net, host OpenSSH server, `capNet`; attach virtio-rng for runtime entropy proof | `tests/ssh_transport_test.sh`, `tests/ssh_runtime_entropy_test.sh` |
-| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh` |
+| Exercise SSHD remote command | `sshd` | QEMU virtio-net, TCP 22 host forwarding, `capNet`, authorized key; default base image autostarts it via `swos-init`; attach virtio-rng for runtime entropy proof | `tests/sshd_transport_test.sh`, `tests/sshd_runtime_entropy_test.sh`, `tests/sshd_kex_seed_test.sh`, `tests/sshd_authorized_keys_test.sh`, `tests/sshd_deploy_preflight_test.sh` |
 | Inspect network status | `netinfo` | QEMU virtio-net and `capNet` | `tests/netinfo_test.sh` |
 | Test TCP, UDP, DNS, or TLS | `tcpecho`, `udpecho`, `tcpget`, `nslookup`, `tlsget` | QEMU virtio-net and `capNet`; inbound tools also need host forwarding | Network tests listed in [Networking Guide](NETWORKING_GUIDE.md) |
 | Exercise runtime features | `threadsdemo`, `mmapdemo`, `calc`, `kv` | Normal login shell | `tests/threads_test.sh`, `tests/mmap_test.sh`, `tests/calc_test.sh`, `tests/kv_test.sh` |
@@ -820,8 +820,10 @@ Notes:
   checked-in default seed is development-only. It mixes a daemon-local KEX
   session counter, runtime entropy from `SYS_RANDOM` when virtio-rng is
   attached, and, when present, `/etc/ssh/ssh_kex_seed`. It can bind IPv4 by
-  default or AF_INET6 with `-6`/`sshd6`, but
-  provider-routed SSHD-over-IPv6 remains a deploy acceptance item. The
+  default or AF_INET6 with `-6`/`sshd6`. `make
+  sshd-deploy-preflight-test` proves one local static-IPv6/deploy-key/`sshd6`
+  image profile; provider-routed SSHD-over-IPv6 remains a real-cloud deploy
+  acceptance item. The
   `authorized_keys` parser supports simple `ssh-ed25519` public-key lines plus
   the safe restriction options `restrict`, `no-pty`, `no-port-forwarding`,
   `no-agent-forwarding`, and `no-X11-forwarding`. Other options, including
@@ -841,7 +843,8 @@ Acceptance coverage: `tests/sshd_transport_test.sh`,
 `tests/sshd_host_key_rotation_test.sh`,
 `tests/sshd_runtime_entropy_test.sh`,
 `tests/sshd_kex_seed_test.sh`,
-`tests/sshd_authorized_keys_test.sh`.
+`tests/sshd_authorized_keys_test.sh`,
+`tests/sshd_deploy_preflight_test.sh`.
 
 ### `tcpget`
 
