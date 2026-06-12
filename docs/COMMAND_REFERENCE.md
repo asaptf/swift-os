@@ -1028,6 +1028,7 @@ diagnostic fixtures than stable application interfaces.
 | `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
+| `uvsemprobe` | `uvsemprobe` | Exercise C/newlib POSIX semaphores used by libuv's Unix semaphore wrappers. | `tests/uvsem_test.sh` |
 | `uvmutexprobe` | `uvmutexprobe` | Exercise C/newlib mutex types used by libuv's Unix mutex wrappers. | `tests/uvmutex_test.sh` |
 | `uvthreadnameprobe` | `uvthreadnameprobe` | Exercise C/newlib thread names used by libuv's Unix thread helpers. | `tests/uvthreadname_test.sh` |
 | `uvbarrierprobe` | `uvbarrierprobe` | Exercise C/newlib pthread barriers used by libuv's native barrier path. | `tests/uvbarrier_test.sh` |
@@ -1405,6 +1406,7 @@ are not the primary operator interface.
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
+| `uvsemprobe` | newlib compat POSIX semaphore init, try/wait/timedwait/post, cross-thread wake, counting, and overflow behavior, matching libuv's Unix semaphore wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvsem_test.sh` |
 | `uvmutexprobe` | newlib compat `PTHREAD_MUTEX_ERRORCHECK` and `PTHREAD_MUTEX_RECURSIVE`, matching libuv's Unix mutex wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvmutex_test.sh` |
 | `uvthreadnameprobe` | newlib compat `pthread_setname_np` and `pthread_getname_np`, matching libuv's Unix thread naming helpers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvthreadname_test.sh` |
 | `uvbarrierprobe` | newlib compat reusable `pthread_barrier_*` phases, matching libuv's native barrier branch. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvbarrier_test.sh` |

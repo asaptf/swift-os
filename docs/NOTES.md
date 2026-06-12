@@ -5363,3 +5363,26 @@ thread audit` blocker.
 `make ports-catalog-test`, `make pthread-test`, `make uvmutex-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM20 — libuv semaphore probe (DONE, 2026-06-12)
+
+**Scope.** Cover the POSIX semaphore behavior used by Node's vendored libuv
+1.52.1 Unix semaphore wrappers. SwiftOS already provided process-local
+`sem_*` primitives for the broader C thread-sync facade; this milestone ties
+that surface directly to the libuv audit by proving init/destroy, empty
+`sem_trywait`, realtime absolute `sem_timedwait` timeout, cross-thread
+`sem_post` wakeup, counting post/wait semantics, and overflow rejection. This
+closes another concrete libuv thread primitive while the catalog keeps the
+broader `full libuv thread audit` blocker.
+
+- `/bin/uvsemprobe`: proves the libuv-shaped POSIX semaphore paths over the
+  existing newlib compat `sem_*` implementation plus pthread worker wakeup.
+- `make uvsem-test`: boots QEMU, logs in, runs the probe, and asserts the
+  semaphore markers.
+- Catalog and command/API docs now list `uvsemprobe` alongside the other
+  Node/libuv compatibility probes.
+
+**Acceptance.** `make uvsem-test`, `make docs-test`,
+`make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.

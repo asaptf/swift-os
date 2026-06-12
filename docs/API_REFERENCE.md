@@ -71,6 +71,7 @@ source, then follow its Makefile rule and acceptance test.
 | C select/pselect compatibility | `userland/selectprobe.c` | `select`, `pselect`, `fd_set` readiness over `poll` | `./tests/select_test.sh` |
 | C eventfd compatibility | `userland/eventfdprobe.c` | `eventfd`, `eventfd_read`, `eventfd_write`, `poll`/`select` readiness | `./tests/eventfd_test.sh` |
 | C libuv async wake compatibility | `userland/uvwakeprobe.c` | worker-thread `eventfd_write` waking a main-thread `poll` waiter | `./tests/uvwake_test.sh` |
+| C libuv semaphore compatibility | `userland/uvsemprobe.c` | `sem_init`, `sem_wait`, `sem_trywait`, `sem_timedwait`, and `sem_post` behavior used by libuv semaphores | `./tests/uvsem_test.sh` |
 | C libuv mutex-type compatibility | `userland/uvmutexprobe.c` | `PTHREAD_MUTEX_ERRORCHECK` and `PTHREAD_MUTEX_RECURSIVE` semantics used by libuv mutex init paths | `./tests/uvmutex_test.sh` |
 | C libuv thread-name compatibility | `userland/uvthreadnameprobe.c` | `pthread_setname_np` and `pthread_getname_np` semantics used by libuv thread naming helpers | `./tests/uvthreadname_test.sh` |
 | C libuv barrier compatibility | `userland/uvbarrierprobe.c` | reusable `pthread_barrier_*` phases for libuv's native barrier path | `./tests/uvbarrier_test.sh` |
@@ -1523,6 +1524,7 @@ one booting acceptance path:
 | C compat select/pselect | `userland/compat/stubs.c`, `userland/selectprobe.c` | `make select-test`, `./tests/boot_test.sh` |
 | C compat eventfd | `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/eventfdprobe.c` | `make eventfd-test`, `./tests/boot_test.sh` |
 | C compat libuv async wake | `userland/compat/pthread.h`, `userland/compat/sys/eventfd.h`, `userland/compat/stubs.c`, `userland/uvwakeprobe.c` | `make uvwake-test`, `./tests/boot_test.sh` |
+| C compat libuv semaphore | `userland/compat/pthread.h`, `userland/compat/semaphore.h`, `userland/compat/stubs.c`, `userland/uvsemprobe.c` | `make uvsem-test`, `./tests/boot_test.sh` |
 | C compat libuv mutex types | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvmutexprobe.c` | `make uvmutex-test`, `./tests/boot_test.sh` |
 | C compat libuv thread names | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvthreadnameprobe.c` | `make uvthreadname-test`, `./tests/boot_test.sh` |
 | C compat libuv barrier | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvbarrierprobe.c` | `make uvbarrier-test`, `./tests/boot_test.sh` |
