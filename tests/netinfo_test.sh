@@ -103,6 +103,8 @@ send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 send_line "/bin/netinfo"
 await "netinfo: HC27 OK" 90 || true
+send_line "/bin/netinfo --check"
+await "netinfo: check ok" 90 || true
 exec 3>&-
 stop_qemu
 QP=""
@@ -123,9 +125,11 @@ grep -qF "netinfo: gateway6 " <<<"$clean" \
   || { echo "FAIL: netinfo did not report IPv6 gateway status" >&2; ok=0; }
 grep -qF "netinfo: HC27 OK" <<<"$clean" \
   || { echo "FAIL: netinfo completion marker missing" >&2; ok=0; }
+grep -qF "netinfo: check ok" <<<"$clean" \
+  || { echo "FAIL: netinfo --check did not report a successful deploy gate" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/netinfo reports guest network status for deploy preflight"
+  echo "PASS: /bin/netinfo reports guest network status and --check succeeds for deploy preflight"
   exit 0
 fi
 

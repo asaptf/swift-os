@@ -425,8 +425,11 @@ Current Hetzner readiness status:
 - The base image includes `/bin/netinfo` for guest-side deploy preflight. It
   reads `SYS_NETINFO` and reports link readiness, IPv4 address/prefix/source,
   IPv4 gateway, DNS server, IPv6 address/prefix/source, and IPv6 gateway
-  status. `make netinfo-test` boots the normal virtio-net profile and proves
-  the status output under QEMU slirp.
+  status. `netinfo --check` exits nonzero when the basic network state is not
+  deploy-ready; `netinfo --check --require-static6` also requires staged static
+  IPv6, prefix `/64`, and an IPv6 gateway. `make netinfo-test` boots the normal
+  virtio-net profile and proves the status/check output under QEMU slirp, while
+  `make sshd-deploy-preflight-test` proves the static-IPv6 deploy check.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is

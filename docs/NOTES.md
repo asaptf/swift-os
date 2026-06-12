@@ -3,6 +3,24 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC30 netinfo deploy check mode (2026-06-12)
+
+- Added `/bin/netinfo --check`, which keeps the normal status transcript and
+  exits nonzero when the guest network is not deploy-ready: link not ready,
+  missing IPv4, missing IPv4 prefix, missing gateway, or missing DNS.
+- Added `/bin/netinfo --require-static6`, which implies `--check` and also
+  fails unless the guest has staged static IPv6, prefix `/64`, and an IPv6
+  gateway. This turns the HC23/HC28 Hetzner-style IPv6 image state into a
+  target-side deploy gate rather than only a readable transcript.
+- Hardened `tests/netinfo_test.sh` to run `/bin/netinfo --check` after the
+  normal status print, and hardened `tests/sshd_deploy_preflight_test.sh` to
+  run `/bin/netinfo --check --require-static6` in the static-IPv6 deploy image
+  and over SSHD when IPv6 hostfwd is available.
+
+**Acceptance.** `make netinfo-test` proves the default slirp profile passes
+`--check`; `make sshd-deploy-preflight-test` proves a Hetzner-style static IPv6
+candidate passes `--check --require-static6`.
+
 ## HC29 SSHD IPv6 supervision preflight (2026-06-12)
 
 - Added `sshd6-supervised` and `sshd6-once` `/bin/swos-init` service tokens.
