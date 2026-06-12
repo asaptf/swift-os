@@ -26,5 +26,7 @@
 #endif
 
 int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void));
+int pthread_getname_np(pthread_t thread, char *name, size_t size);
+int pthread_setname_np(pthread_t thread, const char *name);
 
 #endif

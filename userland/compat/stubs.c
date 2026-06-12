@@ -685,6 +685,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_PTHREAD_MAX_BARRIERS 16
 #define COMPAT_PTHREAD_MAX_CONDS 32
 #define COMPAT_PTHREAD_TID_MAX 32
+#define COMPAT_PTHREAD_NAME_MAX 16
 #define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
 
 static unsigned int atomic_load_u32(unsigned int *p) {
@@ -760,6 +761,7 @@ struct compat_pthread_record {
     int stack_owned;
     void *(*start)(void *);
     void *arg;
+    char name[COMPAT_PTHREAD_NAME_MAX];
 };
 
 struct compat_pthread_barrier_record {
@@ -784,6 +786,7 @@ static struct compat_pthread_cond_record pthread_cond_records[COMPAT_PTHREAD_MAX
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
 static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
 static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
+static char pthread_main_name[COMPAT_PTHREAD_NAME_MAX];
 static int pthread_concurrency_level;
 static int pthread_atfork_handler_count;
 
@@ -854,6 +857,22 @@ static struct compat_pthread_record *pthread_find_locked(pthread_t tid) {
             return &pthread_records[i];
         }
     }
+    return 0;
+}
+
+static int pthread_name_store(char dst[COMPAT_PTHREAD_NAME_MAX], const char *name) {
+    if (!name) { return EINVAL; }
+    size_t len = strlen(name);
+    if (len >= COMPAT_PTHREAD_NAME_MAX) { return ERANGE; }
+    memcpy(dst, name, len + 1);
+    return 0;
+}
+
+static int pthread_name_load(const char src[COMPAT_PTHREAD_NAME_MAX], char *name, size_t size) {
+    if (!name || size == 0) { return EINVAL; }
+    size_t len = strlen(src);
+    if (len + 1 > size) { return ERANGE; }
+    memcpy(name, src, len + 1);
     return 0;
 }
 
@@ -1681,6 +1700,36 @@ W void pthread_exit(void *value_ptr) {
 
 W pthread_t pthread_self(void) { return pthread_current_tid(); }
 W int pthread_equal(pthread_t t1, pthread_t t2) { return t1 == t2; }
+W int pthread_setname_np(pthread_t thread, const char *name) {
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(thread);
+    int r;
+    if (rec) {
+        r = pthread_name_store(rec->name, name);
+    } else if (thread == self) {
+        r = pthread_name_store(pthread_main_name, name);
+    } else {
+        r = ESRCH;
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return r;
+}
+W int pthread_getname_np(pthread_t thread, char *name, size_t size) {
+    pthread_t self = pthread_current_tid();
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(thread);
+    int r;
+    if (rec) {
+        r = pthread_name_load(rec->name, name, size);
+    } else if (thread == self) {
+        r = pthread_name_load(pthread_main_name, name, size);
+    } else {
+        r = ESRCH;
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return r;
+}
 W int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id) {
     (void)thread; (void)clock_id;
     return ENOSYS;
