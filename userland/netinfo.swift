@@ -12,6 +12,19 @@ private func put(_ s: StaticString) {
     }
 }
 
+private func argEquals(_ p: UnsafeMutablePointer<CChar>?, _ literal: StaticString) -> Bool {
+    guard let p else { return false }
+    return literal.withUTF8Buffer { bytes in
+        var i = 0
+        while i < bytes.count {
+            if p[i] == 0 { return false }
+            if UInt8(bitPattern: p[i]) != bytes[i] { return false }
+            i += 1
+        }
+        return p[i] == 0
+    }
+}
+
 private func printUInt(_ v: UInt) {
     if v >= 10 { printUInt(v / 10) }
     swiftos_putc(UInt8(0x30 + (v % 10)))
@@ -72,9 +85,24 @@ private func printIPv6(_ gateway: Bool) {
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
-    _ = argc
-    _ = argv
     _ = envp
+
+    var check = false
+    var requireStatic6 = false
+    var ai: Int32 = 1
+    while ai < argc {
+        let arg = argv?[Int(ai)]
+        if argEquals(arg, "--check") {
+            check = true
+        } else if argEquals(arg, "--require-static6") {
+            check = true
+            requireStatic6 = true
+        } else {
+            put("netinfo: usage netinfo [--check] [--require-static6]\n")
+            return 2
+        }
+        ai += 1
+    }
 
     let rc = swiftos_netinfo_refresh()
     if rc != 0 {
@@ -83,28 +111,35 @@ func main(_ argc: Int32,
     }
 
     let flags = swiftos_net_flags()
+    let ipv4 = swiftos_net_ipv4()
+    let gateway4 = swiftos_net_gateway4()
+    let dns4 = swiftos_net_dns4()
+    let mask4 = swiftos_net_mask4()
+    let prefix4 = prefixLenFromMask(mask4)
+    let prefix6 = swiftos_net_ipv6_prefix_len()
+
     put("netinfo: ready ")
     put((flags & flagReady) != 0 ? "yes\n" : "no\n")
 
     put("netinfo: ipv4 ")
-    printIPv4(swiftos_net_ipv4())
+    printIPv4(ipv4)
     swiftos_putc(0x2F)
-    printUInt(prefixLenFromMask(swiftos_net_mask4()))
+    printUInt(prefix4)
     put(" source ")
     put((flags & flagDHCP4) != 0 ? "dhcp\n" : "fallback\n")
 
     put("netinfo: gateway4 ")
-    printIPv4(swiftos_net_gateway4())
+    printIPv4(gateway4)
     swiftos_putc(0x0A)
 
     put("netinfo: dns4 ")
-    printIPv4(swiftos_net_dns4())
+    printIPv4(dns4)
     swiftos_putc(0x0A)
 
     put("netinfo: ipv6 ")
     printIPv6(false)
     put(" prefix ")
-    printUInt(UInt(swiftos_net_ipv6_prefix_len()))
+    printUInt(UInt(prefix6))
     put(" source ")
     put((flags & flagStatic6) != 0 ? "static\n" : "link-local\n")
 
@@ -117,5 +152,22 @@ func main(_ argc: Int32,
     }
 
     put("netinfo: HC27 OK\n")
+    if check {
+        var ok = true
+        if (flags & flagReady) == 0 || ipv4 == 0 || prefix4 == 0 || gateway4 == 0 || dns4 == 0 {
+            ok = false
+            put("netinfo: check failed ipv4\n")
+        }
+        if requireStatic6 {
+            if (flags & flagStatic6) == 0 || (flags & flagGateway6) == 0 || prefix6 != 64 {
+                ok = false
+                put("netinfo: check failed static6\n")
+            }
+        }
+        if ok {
+            put("netinfo: check ok\n")
+        }
+        return ok ? 0 : 2
+    }
     return 0
 }

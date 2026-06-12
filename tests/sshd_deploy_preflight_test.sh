@@ -191,8 +191,8 @@ send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
-send_line "/bin/netinfo"
-await "netinfo: HC27 OK" 90 || drive_fail "/bin/netinfo did not complete in deploy image"
+send_line "/bin/netinfo --check --require-static6"
+await "netinfo: check ok" 90 || drive_fail "/bin/netinfo deploy check did not complete in deploy image"
 
 if [[ "$drive_openssh" -eq 1 ]]; then
   ssh_common=(
@@ -213,7 +213,7 @@ if [[ "$drive_openssh" -eq 1 ]]; then
     -o MACs=hmac-sha2-256
   )
   "$SSH" "${ssh_common[@]}" -i "$ALLOW_KEY" \
-    root@::1 /bin/netinfo >"$SSHOUT" 2>"$SSHERR" </dev/null
+    root@::1 "/bin/netinfo --check --require-static6" >"$SSHOUT" 2>"$SSHERR" </dev/null
   ssh_rc=$?
   await "sshd: session exec completed status 0" 30 || true
 else
@@ -240,11 +240,13 @@ grep -qF "netinfo: gateway6 fe80:0000:0000:0000:0000:0000:0000:0001" <<<"$clean"
   || { echo "FAIL: guest netinfo did not report deploy IPv6 gateway" >&2; ok=0; }
 grep -qF "netinfo: HC27 OK" <<<"$clean" \
   || { echo "FAIL: guest netinfo completion marker missing" >&2; ok=0; }
+grep -qF "netinfo: check ok" <<<"$clean" \
+  || { echo "FAIL: guest netinfo deploy check did not succeed" >&2; ok=0; }
 
 if [[ "$drive_openssh" -eq 1 ]]; then
   [[ "$ssh_rc" -eq 0 ]] || { echo "FAIL: host OpenSSH IPv6 deploy command failed with rc=$ssh_rc" >&2; ok=0; }
-  grep -qF "netinfo: HC27 OK" "$SSHOUT" \
-    || { echo "FAIL: remote /bin/netinfo over SSHD IPv6 did not complete" >&2; ok=0; }
+  grep -qF "netinfo: check ok" "$SSHOUT" \
+    || { echo "FAIL: remote /bin/netinfo deploy check over SSHD IPv6 did not complete" >&2; ok=0; }
   grep -qF "netinfo: ipv6 2001:0db8:0000:3df1:0000:0000:0000:0001 prefix 64 source static" "$SSHOUT" \
     || { echo "FAIL: remote /bin/netinfo over SSHD IPv6 did not report static IPv6" >&2; ok=0; }
   grep -qF "Host '[::1]:$HOST_PORT' is known and matches the ED25519 host key." "$SSHERR" \

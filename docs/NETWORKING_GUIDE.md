@@ -316,6 +316,7 @@ network state for deploy preflights:
 
 ```sh
 /bin/netinfo
+/bin/netinfo --check
 ```
 
 Expected QEMU slirp output includes:
@@ -326,11 +327,14 @@ netinfo: ipv4 10.0.2.15/24 source dhcp
 netinfo: gateway4 10.0.2.2
 netinfo: dns4 10.0.2.3
 netinfo: HC27 OK
+netinfo: check ok
 ```
 
 The IPv4 source may be `fallback` when DHCP is absent. IPv6 reports either the
 default link-local address or the static `/etc/swos/net-ipv6` address staged
-with `NET_IPV6_CONFIG_FILE`.
+with `NET_IPV6_CONFIG_FILE`. Use `/bin/netinfo --check --require-static6` in a
+static cloud IPv6 image to fail the deploy script unless staged IPv6 and the
+link-local gateway are visible inside the guest.
 
 Proof:
 

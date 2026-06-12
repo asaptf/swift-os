@@ -519,16 +519,19 @@ see [NETWORKING_GUIDE.md](NETWORKING_GUIDE.md).
 
 ### `netinfo`
 
-Print the guest's current network status snapshot.
+Print the guest's current network status snapshot, or turn that snapshot into a
+deploy-readiness check.
 
 ```text
-netinfo
+netinfo [--check] [--require-static6]
 ```
 
 Examples in the guest:
 
 ```sh
 /bin/netinfo
+/bin/netinfo --check
+/bin/netinfo --check --require-static6
 ```
 
 Typical QEMU slirp output:
@@ -543,6 +546,12 @@ netinfo: gateway6 none
 netinfo: HC27 OK
 ```
 
+Successful check output adds:
+
+```text
+netinfo: check ok
+```
+
 Notes:
 
 - The command uses `SYS_NETINFO`, which is read-only but still requires
@@ -551,8 +560,13 @@ Notes:
   slirp defaults are in use.
 - IPv6 source is `static` when `/etc/swos/net-ipv6` was staged at image build
   time, otherwise `link-local`.
+- `--check` exits nonzero if the link is not ready or if IPv4 address, prefix,
+  gateway, or DNS state is missing.
+- `--require-static6` implies `--check` and also exits nonzero unless static
+  IPv6, prefix `/64`, and an IPv6 gateway are present.
 
-Acceptance coverage: `tests/netinfo_test.sh`, `make netinfo-test`.
+Acceptance coverage: `tests/netinfo_test.sh`, `make netinfo-test`,
+`tests/sshd_deploy_preflight_test.sh`.
 
 ### `httpd`
 
