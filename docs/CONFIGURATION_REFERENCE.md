@@ -155,6 +155,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make sshd-supervision-test` | Build a temporary base image with `sshd-once` and prove `swos-init` restarts SSHD between two host OpenSSH commands. |
 | `make sshd-ipv6-listener-test` | Build a temporary base image with `sshd6` and prove `/bin/sshd -6` autostarts as an AF_INET6 listener under `ipv6=on`. |
 | `make sshd-runtime-entropy-test` | Attach QEMU virtio-rng and prove SSHD marks KEX as runtime-seeded while completing OpenSSH remote exec. |
+| `make sshd-deploy-preflight-test` | Build a temporary Hetzner-style deploy image with static IPv6, deploy SSHD seeds, deploy `authorized_keys`, `sshd6`, and virtio-rng, then prove `/bin/netinfo` reports that state in the guest. |
 | `make net-static-ipv6-test` | Build a temporary base image with Hetzner-style static IPv6 config and prove the kernel applies it at boot. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |

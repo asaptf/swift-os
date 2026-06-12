@@ -86,6 +86,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Exercise SSH client transport | Outbound-only profile | `/bin/ssh 10.0.2.2 <port>` | Start a host OpenSSH `sshd`; attach virtio-rng for runtime entropy proof | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
 | Exercise SSHD IPv6 listener | SSHD IPv6 profile | Custom `/etc/swos/services` containing `sshd6`; manual `/bin/sshd -6` | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available | `make sshd-ipv6-listener-test` |
+| Exercise SSHD deploy candidate | SSHD deploy profile | Temporary image with static IPv6, deploy SSHD seeds, deploy `authorized_keys`, `sshd6`, and virtio-rng | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available; serial `/bin/netinfo` always runs | `make sshd-deploy-preflight-test` |
 | Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
@@ -550,6 +551,7 @@ Proof:
 ```sh
 ./tests/sshd_transport_test.sh
 make sshd-ipv6-listener-test
+make sshd-deploy-preflight-test
 make sshd-runtime-entropy-test
 make sshd-kex-seed-test
 ```
@@ -677,6 +679,7 @@ Run the narrowest proof for the path you changed:
 | Static cloud IPv6 config | `make net-static-ipv6-test` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
 | SSHD IPv6 listener preflight | `make sshd-ipv6-listener-test` |
+| SSHD static-IPv6 deploy preflight | `make sshd-deploy-preflight-test` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |
@@ -723,8 +726,9 @@ Current limits that matter when exposing a SwiftOS network service:
   provide `SSHD_HOST_SEED_FILE`, `SSHD_KEX_SEED_FILE`, and
   `SSHD_AUTHORIZED_KEYS_FILE`. The KEX seed is mixed with a per-session counter,
   and SSHD uses `SYS_RANDOM` runtime entropy when virtio-rng is attached. It can
-  bind IPv4 by default or AF_INET6 with `-6`/`sshd6`; provider-routed
-  SSHD-over-IPv6 still needs a real cloud
+  bind IPv4 by default or AF_INET6 with `-6`/`sshd6`. `make
+  sshd-deploy-preflight-test` proves the static-IPv6/deploy-key/`sshd6` image
+  profile locally; provider-routed SSHD-over-IPv6 still needs a real cloud
   acceptance run. It supports simple `ssh-ed25519` lines plus safe restriction
   options in `/etc/ssh/authorized_keys`, bounded stdout/stdin, and
   direct single-component `/bin/<tool>` or `/usr/bin/<tool>` remote exec with
