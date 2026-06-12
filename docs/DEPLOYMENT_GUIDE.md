@@ -430,6 +430,12 @@ Current Hetzner readiness status:
   IPv6, prefix `/64`, and an IPv6 gateway. `make netinfo-test` boots the normal
   virtio-net profile and proves the status/check output under QEMU slirp, while
   `make sshd-deploy-preflight-test` proves the static-IPv6 deploy check.
+- For handoff rehearsal, set `SSHD_DEPLOY_EVIDENCE_DIR=PATH` while running
+  `tests/sshd_deploy_preflight_test.sh`, or run
+  `make hetzner-deploy-bundle-test`, to prove that a passing static-IPv6 SSHD
+  preflight can produce a shareable evidence bundle with manifest, git state,
+  hashes, serial log, public login material, and explicit private-seed
+  omissions.
 - A Hetzner custom ISO or snapshot must match the server architecture. For this
   repository's current `aarch64` target, use an Arm64 cloud server/ISO path.
 - The base image includes `/bin/sshd` as an SSHD session/exec preflight. It is
@@ -473,6 +479,11 @@ Current Hetzner readiness status:
   virtio-rng, then requires `/bin/netinfo` to report the static IPv6/gateway
   state from inside the guest. On hosts with working QEMU IPv6 host forwarding,
   it also runs `/bin/netinfo` through OpenSSH over `::1`.
+  With `SSHD_DEPLOY_EVIDENCE_DIR=PATH`, the same preflight writes a Hetzner
+  handoff bundle after success. The bundle records public evidence only and
+  deliberately omits the generated host-key seed, KEX seed, and deploy login
+  private key. `make hetzner-deploy-bundle-test` runs this mode and verifies
+  the bundle contents.
   `./tests/sshd_usr_bin_exec_test.sh` also boots the `pkghello` package payload
   and runs `/usr/bin/pkghello` over SSHD. Together they verify that host OpenSSH
   pins the
@@ -620,6 +631,7 @@ Run the narrow gate for the chosen profile before broader validation.
 | DHCP/virtio-net cloud readiness | `./tests/virtio_net_test.sh` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | SSHD remote-command, runtime entropy, and key provisioning preflight | `./tests/sshd_transport_test.sh`, `./tests/sshd_runtime_entropy_test.sh`, `./tests/sshd_authorized_keys_test.sh`, `./tests/sshd_host_key_rotation_test.sh`, `./tests/sshd_supervision_test.sh` |
+| Hetzner SSHD/static-IPv6 evidence bundle | `make hetzner-deploy-bundle-test` |
 | Package overlay | `make package-overlay-test` |
 | Package store | `make package-store-test` |
 | Local package install plumbing | `make package-local-install-test` |
@@ -654,6 +666,26 @@ A deployment handoff should include:
 - Rollback artifact location.
 
 For support cases, use the report structure in [Support Guide](SUPPORT_GUIDE.md).
+
+For the current Hetzner-style SSHD/static-IPv6 preflight, generate and verify a
+safe handoff bundle with:
+
+```sh
+make hetzner-deploy-bundle-test
+```
+
+To keep the bundle from a manual run, choose an output directory:
+
+```sh
+SSHD_DEPLOY_EVIDENCE_DIR=support/deployment-candidate/hetzner \
+  ./tests/sshd_deploy_preflight_test.sh
+```
+
+The generated bundle includes `manifest.txt`, `git-head.txt`,
+`git-status.txt`, `artifacts-sha256.txt`, `artifacts-size.txt`,
+`validation.txt`, `serial.log`, `net-ipv6`, `services`, `authorized_keys`, and
+`secrets-omitted.txt`. It copies `known_hosts` and SSH client logs only when the
+host drove OpenSSH over IPv6. It does not copy deploy private key material.
 
 ## Rollback
 

@@ -143,6 +143,7 @@ private let fullGateGroups = [
             "./tests/sshd_runtime_entropy_test.sh",
             "./tests/sshd_ipv6_supervision_test.sh",
             "./tests/sshd_deploy_preflight_test.sh",
+            "./tests/hetzner_deploy_bundle_test.sh",
             "./tests/net_zero_copy_throughput_test.sh"
         ]
     ),

@@ -87,6 +87,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Exercise SSHD remote command | SSHD profile | Autostart from `/etc/swos/services`; manual `/bin/sshd` for custom ports | `ssh -i fixtures/ssh/sshd_hc5_ed25519 -p <host-port> root@127.0.0.1 /bin/id` | `./tests/sshd_transport_test.sh` |
 | Exercise SSHD IPv6 listener | SSHD IPv6 profile | Custom `/etc/swos/services` containing `sshd6`; manual `/bin/sshd -6` | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available | `make sshd-ipv6-listener-test` |
 | Exercise SSHD deploy candidate | SSHD deploy profile | Temporary image with static IPv6, deploy SSHD seeds, deploy `authorized_keys`, `sshd6`, and virtio-rng | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available; serial `/bin/netinfo` always runs | `make sshd-deploy-preflight-test` |
+| Exercise Hetzner deploy handoff bundle | SSHD deploy profile | Same temporary static-IPv6 SSHD image with evidence capture enabled | Verify manifest, hashes, serial log, public key material, and omitted private seeds | `make hetzner-deploy-bundle-test` |
 | Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
 | Exercise SSHD IPv6 restart proof | SSHD IPv6 supervised profile | Custom `/etc/swos/services` containing `sshd6-once` | Two host OpenSSH commands when IPv6 hostfwd is available; serial restart proof otherwise | `make sshd-ipv6-supervision-test` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
@@ -561,6 +562,7 @@ make sshd-ipv6-listener-test
 make sshd-deploy-preflight-test
 make sshd-runtime-entropy-test
 make sshd-kex-seed-test
+make hetzner-deploy-bundle-test
 ```
 
 ### Exercise The SSH Client
@@ -688,6 +690,7 @@ Run the narrowest proof for the path you changed:
 | SSHD IPv6 listener preflight | `make sshd-ipv6-listener-test` |
 | SSHD IPv6 supervision preflight | `make sshd-ipv6-supervision-test` |
 | SSHD static-IPv6 deploy preflight | `make sshd-deploy-preflight-test` |
+| Hetzner static-IPv6 deploy evidence bundle | `make hetzner-deploy-bundle-test` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |
 | DNS resolver and `nslookup` | `./tests/dns_test.sh` |

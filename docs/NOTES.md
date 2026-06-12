@@ -3,6 +3,28 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC31 Hetzner deploy evidence bundle preflight (2026-06-12)
+
+- Extended `tests/sshd_deploy_preflight_test.sh` with optional
+  `SSHD_DEPLOY_EVIDENCE_DIR=PATH` evidence capture. A passing run now can emit
+  a handoff bundle with the manifest, git state, artifact hashes/sizes, serial
+  log, static IPv6 config, service manifest, public `authorized_keys`, and
+  public `known_hosts` material when host OpenSSH verification was driven.
+- The bundle deliberately omits private deploy material: the SSHD host-key
+  seed, KEX seed, and deploy login private key. `secrets-omitted.txt` records
+  that boundary so the preflight can be shared for review without copying
+  per-instance secrets.
+- Added `tests/hetzner_deploy_bundle_test.sh` and
+  `make hetzner-deploy-bundle-test`. The focused gate runs the real
+  static-IPv6 SSHD deploy preflight with evidence capture enabled, then asserts
+  the bundle contains the reproducible public deploy records and the guest
+  `netinfo --check --require-static6` success marker.
+
+**Acceptance.** `make hetzner-deploy-bundle-test` boots the temporary
+Hetzner-style SSHD/static-IPv6 candidate under QEMU, proves the deploy preflight
+passes, and verifies the generated evidence bundle is complete enough for
+handoff while excluding private seeds.
+
 ## HC30 netinfo deploy check mode (2026-06-12)
 
 - Added `/bin/netinfo --check`, which keeps the normal status transcript and
