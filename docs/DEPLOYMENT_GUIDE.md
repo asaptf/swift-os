@@ -452,15 +452,19 @@ Current Hetzner readiness status:
   through `SYS_RANDOM` when the VM exposes virtio-rng.
   `SWOS_SERVICES_FILE` can replace
   `/etc/swos/services` for a custom candidate; the `sshd6` token starts
-  `/bin/sshd -6` as an AF_INET6 TCP/22 listener, while `sshd-supervised` and
-  `sshd-once` exercise the current opt-in restart loop. The checked
+  `/bin/sshd -6` as an AF_INET6 TCP/22 listener, while `sshd-supervised`,
+  `sshd-once`, `sshd6-supervised`, and `sshd6-once` exercise the current opt-in
+  restart loop. The checked
   proofs are `./tests/sshd_transport_test.sh`,
   `./tests/sshd_host_key_rotation_test.sh`,
   `./tests/sshd_runtime_entropy_test.sh`,
   `./tests/sshd_kex_seed_test.sh`,
   `./tests/sshd_authorized_keys_test.sh`,
   `./tests/sshd_ipv6_listener_test.sh`, and
-  `./tests/sshd_supervision_test.sh`; `make sshd-deploy-preflight-test`
+  `./tests/sshd_supervision_test.sh`; `make sshd-ipv6-supervision-test`
+  proves that the AF_INET6 listener can be restarted by `swos-init`, and on
+  hosts with IPv6 host forwarding also proves two OpenSSH commands before and
+  after restart. `make sshd-deploy-preflight-test`
   builds one temporary Hetzner-style deploy candidate with static IPv6,
   deploy-specific SSHD host/KEX seeds, deploy `authorized_keys`, `sshd6`, and
   virtio-rng, then requires `/bin/netinfo` to report the static IPv6/gateway
@@ -473,7 +477,8 @@ Current Hetzner readiness status:
   that custom images can boot with rotated SSHD host-key and authorized-key
   material, that quoted argv reaches remote `/bin/echo`, that bounded stdin
   reaches remote `/bin/cat`, that long output is capped and logged without pipe
-  backpressure, and that opt-in `swos-init` supervision restarts `sshd-once`.
+  backpressure, and that opt-in `swos-init` supervision restarts both
+  `sshd-once` and `sshd6-once`.
 - The base image also includes `/bin/ssh` as an outbound SSH client transport
   preflight. It connects to a host OpenSSH server, verifies the server's
   `ssh-ed25519` host-key signature over the exchange hash, matches the host key
@@ -497,7 +502,8 @@ Not deploy-complete yet:
   `known_hosts` trust store, but no user authentication, session/exec channels,
   PTY, scp, or sftp.
 - Static Primary IPv6 config, deploy-specific SSHD material, `sshd6` autostart,
-  virtio-rng, and `/bin/netinfo` are now checked together by
+  IPv6 SSHD restart supervision, virtio-rng, and `/bin/netinfo` are now checked
+  by `make sshd-ipv6-supervision-test` and
   `make sshd-deploy-preflight-test`. Cloud metadata ingestion, automatic
   refresh/reconfigure, firewall policy, routing/configuration commands beyond
   the read-only `/bin/netinfo` status snapshot, provider-routed

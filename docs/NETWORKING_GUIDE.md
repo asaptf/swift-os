@@ -88,6 +88,7 @@ need a login context with `capNet`, so the examples below assume `root`.
 | Exercise SSHD IPv6 listener | SSHD IPv6 profile | Custom `/etc/swos/services` containing `sshd6`; manual `/bin/sshd -6` | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available | `make sshd-ipv6-listener-test` |
 | Exercise SSHD deploy candidate | SSHD deploy profile | Temporary image with static IPv6, deploy SSHD seeds, deploy `authorized_keys`, `sshd6`, and virtio-rng | Host OpenSSH over `::1` when QEMU IPv6 hostfwd is available; serial `/bin/netinfo` always runs | `make sshd-deploy-preflight-test` |
 | Exercise SSHD restart proof | SSHD supervised profile | Custom `/etc/swos/services` containing `sshd-once` | Two host OpenSSH commands before and after restart | `make sshd-supervision-test` |
+| Exercise SSHD IPv6 restart proof | SSHD IPv6 supervised profile | Custom `/etc/swos/services` containing `sshd6-once` | Two host OpenSSH commands when IPv6 hostfwd is available; serial restart proof otherwise | `make sshd-ipv6-supervision-test` |
 | Exercise IPv6 link-local/NDP | IPv6 smoke profile | Test harness driven | None beyond QEMU profile | `./tests/ipv6_smoke_test.sh` |
 
 Operator flow:
@@ -477,8 +478,10 @@ Boot with host TCP 2222 forwarded to guest TCP 22. The default base image starts
 `SWOS_SERVICES_FILE=PATH`; `sshd-supervised` restarts a normal SSHD child and
 `sshd-once` is the restart acceptance token used by `make sshd-supervision-test`.
 The `sshd6` token starts `/bin/sshd -6` as an AF_INET6 TCP/22 listener for
-IPv6 cloud preflights. The default checked-in service manifest stays IPv4-only
-so the existing local hostfwd path remains stable.
+IPv6 cloud preflights; `sshd6-supervised` keeps that listener under the restart
+loop, and `sshd6-once` is the deterministic IPv6 restart acceptance token used
+by `make sshd-ipv6-supervision-test`. The default checked-in service manifest
+stays IPv4-only so the existing local hostfwd path remains stable.
 For a manual debug run or a custom port, log in as `root` and start:
 
 ```sh
@@ -679,6 +682,7 @@ Run the narrowest proof for the path you changed:
 | Static cloud IPv6 config | `make net-static-ipv6-test` |
 | SSHD remote-command preflight | `./tests/sshd_transport_test.sh` |
 | SSHD IPv6 listener preflight | `make sshd-ipv6-listener-test` |
+| SSHD IPv6 supervision preflight | `make sshd-ipv6-supervision-test` |
 | SSHD static-IPv6 deploy preflight | `make sshd-deploy-preflight-test` |
 | SSH client transport preflight | `./tests/ssh_transport_test.sh`, `./tests/ssh_runtime_entropy_test.sh` |
 | Guest-to-host TCP | `./tests/tcp_connect_test.sh` |

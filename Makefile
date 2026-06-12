@@ -435,6 +435,7 @@ BASE_EXEC_ELFS := \
 build: $(KERNEL_ELF)
 .PHONY: ssh-runtime-entropy-test
 .PHONY: sshd-ipv6-listener-test
+.PHONY: sshd-ipv6-supervision-test
 .PHONY: sshd-deploy-preflight-test
 .PHONY: netinfo-test
 
@@ -1219,6 +1220,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/sshd_transport_test.sh
 	./tests/sshd_runtime_entropy_test.sh
 	./tests/sshd_ipv6_listener_test.sh
+	./tests/sshd_ipv6_supervision_test.sh
 	./tests/sshd_deploy_preflight_test.sh
 	bash ./tests/net_zero_copy_throughput_test.sh
 	./tests/dns_test.sh
@@ -1439,6 +1441,9 @@ sshd-supervision-test: build $(QEMU_DTB) $(SSHKEY)
 
 sshd-ipv6-listener-test: build $(QEMU_DTB) $(SSHKEY)
 	./tests/sshd_ipv6_listener_test.sh
+
+sshd-ipv6-supervision-test: build $(QEMU_DTB) $(SSHKEY)
+	./tests/sshd_ipv6_supervision_test.sh
 
 sshd-runtime-entropy-test: build $(QEMU_DTB) base-image $(SSHKEY)
 	./tests/sshd_runtime_entropy_test.sh
