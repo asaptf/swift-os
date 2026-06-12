@@ -5447,3 +5447,26 @@ broader `full libuv thread audit` blocker.
 `make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
 `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM21 — libuv rwlock probe (DONE, 2026-06-12)
+
+**Scope.** Cover the POSIX read/write lock behavior used by Node's vendored
+libuv 1.52.1 Unix rwlock wrappers. SwiftOS already provided process-local
+`pthread_rwlock_*` primitives for the broader C thread-sync facade; this
+milestone ties that surface directly to the libuv audit by proving attr/init,
+static initializer use, writer exclusion, concurrent readers, and a blocked
+writer waking once readers release the lock. This closes another concrete libuv
+thread primitive while the catalog keeps the broader `full libuv thread audit`
+blocker.
+
+- `/bin/uvrwlockprobe`: proves the libuv-shaped pthread rwlock paths over the
+  existing newlib compat implementation plus pthread/sem worker coordination.
+- `make uvrwlock-test`: boots QEMU, logs in, runs the probe, and asserts the
+  rwlock markers.
+- Catalog and command/API docs now list `uvrwlockprobe` alongside the other
+  Node/libuv compatibility probes.
+
+**Acceptance.** `make uvrwlock-test`, `make docs-test`,
+`make ports-catalog-test`, `make threadsync-test`, `make pthread-test`,
+`./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
