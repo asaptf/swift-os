@@ -18,6 +18,7 @@ SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
 SSH_KEYGEN="${SSH_KEYGEN:-ssh-keygen}"
 HOST_PORT="${SSHD_DEPLOY_HOST_PORT:-$((31000 + ($$ % 12000)))}"
 HOSTFWD_MODE="${SSHD_DEPLOY_IPV6_HOSTFWD:-auto}"
+EVIDENCE_DIR="${SSHD_DEPLOY_EVIDENCE_DIR:-}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DTB" ]]; then
@@ -172,6 +173,78 @@ send_line() {
   sleep "${SSHD_DEPLOY_SEND_DELAY:-0.08}"
 }
 
+write_evidence_bundle() {
+  [[ -n "$EVIDENCE_DIR" ]] || return 0
+  mkdir -p "$EVIDENCE_DIR" || return 1
+
+  local head status remote_mode
+  head="$(git -C "$ROOT" log -1 --oneline 2>/dev/null || true)"
+  status="$(git -C "$ROOT" status --short --branch 2>/dev/null || true)"
+  if [[ "$drive_openssh" -eq 1 ]]; then
+    remote_mode="OpenSSH-over-IPv6 enabled"
+  else
+    remote_mode="serial-only on this host"
+  fi
+
+  sed 's/\r//' "$LOG" >"$EVIDENCE_DIR/serial.log"
+  printf '%s\n' "$head" >"$EVIDENCE_DIR/git-head.txt"
+  printf '%s\n' "$status" >"$EVIDENCE_DIR/git-status.txt"
+  shasum -a 256 "$KERNEL" "$DTB" "$IMG" >"$EVIDENCE_DIR/artifacts-sha256.txt"
+  ls -lh "$KERNEL" "$DTB" "$IMG" >"$EVIDENCE_DIR/artifacts-size.txt"
+  cp "$NET_CONFIG" "$EVIDENCE_DIR/net-ipv6"
+  cp "$SERVICES" "$EVIDENCE_DIR/services"
+  cp "$AUTHORIZED_KEYS" "$EVIDENCE_DIR/authorized_keys"
+  [[ -f "$KNOWN_HOSTS" ]] && cp "$KNOWN_HOSTS" "$EVIDENCE_DIR/known_hosts"
+  [[ -f "$SSHOUT" ]] && cp "$SSHOUT" "$EVIDENCE_DIR/ssh-stdout.txt"
+  [[ -f "$SSHERR" ]] && cp "$SSHERR" "$EVIDENCE_DIR/ssh-stderr.txt"
+
+  cat >"$EVIDENCE_DIR/validation.txt" <<EOF
+command: ./tests/sshd_deploy_preflight_test.sh
+result: pass
+guest gate: /bin/netinfo --check --require-static6
+network profile: QEMU virtio-net slirp with ipv6=on
+remote ssh mode: $remote_mode
+EOF
+
+  cat >"$EVIDENCE_DIR/secrets-omitted.txt" <<'EOF'
+The evidence bundle intentionally omits deploy private material:
+- ssh_host_ed25519_seed
+- ssh_kex_seed
+- deploy login private key
+Only public authorized_keys and known_hosts material are copied.
+EOF
+
+  cat >"$EVIDENCE_DIR/manifest.txt" <<EOF
+SwiftOS Hetzner Cloud deploy preflight evidence
+revision: $head
+profile: hcloud-sshd-static-ipv6
+architecture: aarch64
+network:
+  ipv4: DHCP/fallback verified through /bin/netinfo --check
+  ipv6: static Primary IPv6 style config from net-ipv6
+  ipv6 gateway: fe80::1
+services:
+  swos-init manifest: services
+  sshd listener: /bin/sshd -6 on guest TCP/22
+identity:
+  sshd host key: deploy-specific seed staged in image, public known_hosts copied when generated
+  sshd kex seed: deploy-specific seed staged in image, private seed omitted from evidence
+  login keys: authorized_keys copied, deploy private key omitted from evidence
+validation:
+  preflight: ./tests/sshd_deploy_preflight_test.sh pass
+  guest command: /bin/netinfo --check --require-static6
+  serial log: serial.log
+artifacts:
+  kernel: $KERNEL
+  dtb: $DTB
+  base image: $IMG
+hashes: artifacts-sha256.txt
+sizes: artifacts-size.txt
+limits:
+  This is a local QEMU deploy preflight. Provider-routed Hetzner IPv6 SSH acceptance still requires a real cloud run.
+EOF
+}
+
 "${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!
 exec 3<>"$INFIFO"
@@ -271,6 +344,10 @@ if grep -qiE 'panic|data abort|undefined instruction|kernel panic' "$LOG"; then
 fi
 
 if [[ "$ok" -eq 1 ]]; then
+  if ! write_evidence_bundle; then
+    echo "FAIL: could not write SSHD deploy evidence bundle" >&2
+    exit 1
+  fi
   if [[ "$drive_openssh" -eq 1 ]]; then
     echo "PASS: deploy image staged static IPv6 and SSHD keys, autostarted sshd6, and OpenSSH ran /bin/netinfo over IPv6"
   else

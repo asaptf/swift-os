@@ -177,6 +177,7 @@ Current full-gate coverage includes:
 - UEFI disk boot in single-core and SMP profiles.
 - Virtio block and virtio net.
 - IPv4, IPv6, UDP, TCP, DNS, TLS, HTTP, and zero-copy throughput guard paths.
+- SSHD/static-IPv6 Hetzner deploy evidence bundle generation.
 - VFS, disk exec, console login, capability enforcement, redirection, core
   commands, busybox shell, `vi`, `top`, threads, mmap, packages, and LLM
   serving.
@@ -232,6 +233,7 @@ Run the narrowest test that proves the path you changed.
 | DNS resolver | `./tests/dns_test.sh` |
 | TLS client smoke path | `./tests/tls_test.sh` |
 | IPv6 smoke | `./tests/ipv6_smoke_test.sh` |
+| Hetzner SSHD/static-IPv6 deploy handoff | `make hetzner-deploy-bundle-test` |
 | LLM local inference | `./tests/llm_run_test.sh` |
 | LLM HTTP serving | `./tests/llm_serve_test.sh` |
 | Busybox shell compatibility | `./tests/busybox_test.sh` |

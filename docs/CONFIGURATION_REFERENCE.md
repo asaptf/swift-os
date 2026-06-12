@@ -157,6 +157,7 @@ busybox, the packed base image, and the newlib sysroot are kept.
 | `make sshd-ipv6-supervision-test` | Build a temporary base image with `sshd6-once` and prove `swos-init` restarts the AF_INET6 SSHD listener; on hosts with IPv6 hostfwd, also prove two host OpenSSH commands before and after restart. |
 | `make sshd-runtime-entropy-test` | Attach QEMU virtio-rng and prove SSHD marks KEX as runtime-seeded while completing OpenSSH remote exec. |
 | `make sshd-deploy-preflight-test` | Build a temporary Hetzner-style deploy image with static IPv6, deploy SSHD seeds, deploy `authorized_keys`, `sshd6`, and virtio-rng, then prove `/bin/netinfo` reports that state in the guest. |
+| `make hetzner-deploy-bundle-test` | Run the SSHD/static-IPv6 deploy preflight with `SSHD_DEPLOY_EVIDENCE_DIR` enabled, then verify the generated handoff bundle contains public deploy evidence and no private seeds. |
 | `make net-static-ipv6-test` | Build a temporary base image with Hetzner-style static IPv6 config and prove the kernel applies it at boot. |
 | `make swport` | Build the ports catalog and recipe helper. |
 | `make package-fixture` | Build and verify the sample package plus payload image. |
@@ -389,6 +390,11 @@ build/sshkey known-host \
 `NET_IPV6_CONFIG_FILE` becomes `/etc/swos/net-ipv6`;
 `SWOS_SERVICES_FILE` becomes `/etc/swos/services` when a custom service
 manifest is supplied.
+
+Set `SSHD_DEPLOY_EVIDENCE_DIR=PATH` when running
+`tests/sshd_deploy_preflight_test.sh` to save a Hetzner-style handoff bundle
+with public deploy evidence, artifact hashes, and the serial log. Private
+deploy host-key, KEX, and login key material is intentionally omitted.
 
 ### Filesystem
 
