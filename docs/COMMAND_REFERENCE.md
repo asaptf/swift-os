@@ -1056,6 +1056,7 @@ diagnostic fixtures than stable application interfaces.
 | `uvwakeprobe` | `uvwakeprobe` | Exercise C/newlib pthread-to-eventfd async wake over a blocking poll waiter. | `tests/uvwake_test.sh` |
 | `uvsignalprobe` | `uvsignalprobe` | Exercise C/newlib libuv-style signal watcher self-pipe behavior. | `tests/uvsignal_test.sh` |
 | `uvatforkprobe` | `uvatforkprobe` | Exercise C/newlib `pthread_atfork` ordering used by libuv fork reinitialization paths. | `tests/uvatfork_test.sh` |
+| `uvspawnprobe` | `uvspawnprobe` | Exercise C/newlib fork/exec process-spawn behavior used by libuv's Unix `uv_spawn` path. | `tests/uvspawn_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
@@ -1436,6 +1437,7 @@ are not the primary operator interface.
 | `uvwakeprobe` | newlib compat worker-thread `eventfd_write` waking a main-thread blocking `poll`, matching libuv async wake expectations. | Yes, when validating C runtime event-loop wake compatibility. | `tests/uvwake_test.sh` |
 | `uvsignalprobe` | newlib compat `pthread_sigmask` facade and handler-to-pipe wake, matching libuv signal watcher setup and dispatch shape. | Yes, when validating C runtime libuv signal-watcher compatibility. | `tests/uvsignal_test.sh` |
 | `uvatforkprobe` | newlib compat `pthread_atfork` prepare/parent/child ordering around `fork`, matching libuv fork reinitialization expectations. | Yes, when validating C runtime libuv process compatibility. | `tests/uvatfork_test.sh` |
+| `uvspawnprobe` | newlib compat `fork`/`execvp` close-on-exec error pipe, `dup2` stdio mapping, and `waitpid`, matching libuv's Unix `uv_spawn` child setup. | Yes, when validating C runtime libuv process compatibility. | `tests/uvspawn_test.sh` |
 | `signalprobe` | newlib compat `sigaction`, `signal`, `raise`, `sigreturn` handler frames, `kill`, and `waitpid` signaled status. | Yes, when validating C runtime process-control compatibility. | `tests/signal_test.sh` |
 | `socketprobe` | newlib compat `pipe2`, `socket` flags, `accept4`, `getaddrinfo`, socket options, TCP client, and TCP server paths. | Yes, when validating C runtime network compatibility. | `tests/socket_test.sh` |
 | `coproc` | CPU-bound EL0 scheduling and preemption telemetry. | Usually launched by kernel/test harnesses with tags. | `tests/boot_test.sh`, `tests/smp_boot_test.sh` |

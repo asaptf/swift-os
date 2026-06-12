@@ -81,6 +81,7 @@ source, then follow its Makefile rule and acceptance test.
 | C libuv socketpair compatibility | `userland/uvsocketpairprobe.c` | `AF_UNIX` full-duplex `socketpair` with flags and poll readiness | `./tests/uvsocketpair_test.sh` |
 | C libuv signal watcher compatibility | `userland/uvsignalprobe.c` | `pthread_sigmask` facade plus handler-to-pipe wake path | `./tests/uvsignal_test.sh` |
 | C libuv atfork compatibility | `userland/uvatforkprobe.c` | `pthread_atfork` prepare/parent/child handler ordering around `fork` | `./tests/uvatfork_test.sh` |
+| C libuv process spawn compatibility | `userland/uvspawnprobe.c` | `fork`/`execvp` close-on-exec error-pipe handshake, `dup2` stdio mapping, and `waitpid` status used by libuv's Unix `uv_spawn` path | `./tests/uvspawn_test.sh` |
 | C signal lifecycle compatibility | `userland/signalprobe.c` | `sigaction`, `signal`, `raise`, current-process handler frames via `sigreturn`, `kill(pid, 0)`, `kill(pid, SIGTERM)`, `waitpid` signaled status | `./tests/signal_test.sh` |
 | System and process statistics | `userland/top.swift`, `userland/ps.swift` | `sysinfo`, `procstat`, `swiftos_sys_*`, `swiftos_top_*` | `./tests/top_test.sh`, `./tests/boot_test.sh` |
 | C realtime and monotonic clocks | `userland/clockprobe.c` | `clock_gettime`, `clock_getres`, `nanosleep`, `SYS_TIME`, `SYS_SYSINFO` | `./tests/clock_test.sh` |
@@ -1536,6 +1537,7 @@ one booting acceptance path:
 | C compat libuv socketpair | `kernel/vfs/vfs.swift`, `kernel/syscall/syscall.swift`, `userland/compat/sys/socket.h`, `userland/compat/stubs.c`, `userland/uvsocketpairprobe.c` | `make uvsocketpair-test`, `./tests/boot_test.sh` |
 | C compat libuv signal watcher | `userland/compat/pthread.h`, `userland/compat/signal.h`, `userland/compat/stubs.c`, `userland/uvsignalprobe.c` | `make uvsignal-test`, `./tests/boot_test.sh` |
 | C compat libuv atfork | `userland/compat/pthread.h`, `userland/compat/stubs.c`, `userland/uvatforkprobe.c` | `make uvatfork-test`, `./tests/boot_test.sh` |
+| C compat libuv process spawn | `userland/compat/pthread.h`, `userland/compat/signal.h`, `userland/compat/unistd.h`, `userland/compat/stubs.c`, `userland/uvspawnprobe.c` | `make uvspawn-test`, `./tests/boot_test.sh` |
 | C compat signal lifecycle | `kernel/signal/signal.swift`, `kernel/user/process.swift`, `userland/compat/stubs.c`, `userland/signalprobe.c` | `make signal-test`, `./tests/boot_test.sh` |
 | C compat clocks | `userland/compat/time.h`, `userland/compat/stubs.c`, `userland/clockprobe.c` | `make clock-test`, `./tests/boot_test.sh` |
 | mmap and W^X | `kernel/mm/vm.swift`, `userland/lib/syscall.h`, `userland/lib/swift_user.h` | `./tests/mmap_test.sh`, `./tests/boot_test.sh` |

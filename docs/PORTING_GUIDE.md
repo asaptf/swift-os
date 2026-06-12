@@ -412,6 +412,7 @@ Before merging a port:
 | `userland/uvsocketpairprobe.c` | newlib compat full-duplex AF_UNIX socketpair for libuv local streams |
 | `userland/uvsignalprobe.c` | newlib compat pthread signal-mask facade and handler self-pipe wake for libuv signal watchers |
 | `userland/uvatforkprobe.c` | newlib compat pthread_atfork handler ordering for libuv fork reinitialization |
+| `userland/uvspawnprobe.c` | newlib compat fork/exec process-spawn handshake for libuv's Unix `uv_spawn` path |
 | `userland/signalprobe.c` | newlib compat signal disposition, current-process handler frames, kill probes, SIGTERM child termination, and waitpid status |
 | `userland/mmapdemo.swift` | mmap, mprotect, W^X |
 | `userland/clockprobe.c` | newlib compat realtime and monotonic clocks |

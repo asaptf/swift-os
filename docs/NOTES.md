@@ -5492,3 +5492,26 @@ in the compat `<unistd.h>` header.
 **Acceptance.** `make uvthreadstack-test`, `make docs-test`,
 `make ports-catalog-test`, `make pthread-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM23 - libuv process spawn handshake probe (DONE, 2026-06-12)
+
+Node's `child_process` path enters libuv's Unix `uv_spawn` implementation, where
+the parent blocks signals around `fork`, the child maps stdio with `dup2`, and a
+close-on-exec error pipe tells the parent whether `execvp` succeeded. That
+contract matters for Node, npm install scripts, and PM2 child lifecycles, so this
+milestone captures it in a dedicated C/newlib probe before attempting a real
+Node runtime.
+
+- `/bin/uvspawnprobe`: proves the successful `execvp` path with EOF on the
+  close-on-exec error pipe, argv/stdout capture through `dup2`, and `waitpid`
+  exit status.
+- The same probe also covers the failed-`execvp` path where the child writes
+  `-errno` to the error pipe and exits with status 127.
+- `make uvspawn-test`: boots QEMU, logs in, runs the probe, and asserts the
+  libuv-shaped spawn markers.
+- Catalog and command/API docs now list `uvspawnprobe` as the process-spawn
+  bridge for Node, npm, and PM2 planning.
+
+**Acceptance.** `make uvspawn-test`, `make docs-test`,
+`make ports-catalog-test`, `make signal-test`, `./tests/boot_test.sh`, and
+`SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
