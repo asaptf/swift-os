@@ -5645,3 +5645,52 @@ core or V8 platform glue, and the host-mksnapshot cross-build step).
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM28 - libuv linux-backend header surface (DONE, 2026-06-15)
+
+The plan from NPM27 was to steer libuv to its `posix-poll.c` backend, but
+inspection of `deps/uv/uv.gyp` showed the linux backend (`src/unix/linux.c`) is
+monolithic: it bundles the epoll event loop, inotify fs-events, and procfs
+cpu/memory queries. `posix-poll.c` only ships on aix/os400 and supplies just the
+event loop, so swapping to it would drop libuv's cpu/mem/fs functions and create
+a wave of undefined symbols. Decision: keep `OS==linux` and **supply the missing
+Linux headers as shims**, emulating epoll over `poll` (SwiftOS has poll/eventfd/
+futex, no epoll) rather than shimming epoll 1:1.
+
+- **New `userland/node-compat/`** holds the Linux-API shims, deliberately
+  **separate from `userland/compat`** so adding epoll/inotify/etc. cannot change
+  feature detection for the other source ports (nginx, curl, ...) that build
+  against the shared compat layer. `build-node.sh` puts it on the include path
+  ahead of `userland/compat` for the Node build only. Headers added (declarations
+  only; behaviour deferred to the companion implementation): `sys/epoll.h`,
+  `sys/inotify.h`, `ifaddrs.h`, `netpacket/packet.h`, `net/ethernet.h`,
+  `sys/prctl.h`, `sys/syscall.h`, `syscall.h`, `dlfcn.h`, plus `#include_next`
+  shadow headers that add `MAP_POPULATE` (sys/mman.h), `IFF_UP/RUNNING/LOOPBACK`
+  (net/if.h), and `AF_PACKET/PF_PACKET` (sys/socket.h).
+- **Two build-config requirements identified.** libuv keys its loop struct
+  platform fields (epoll fd, inotify watchers, io_uring) on the compiler-defined
+  `__linux__`, which `aarch64-elf-gcc` does not set, so the build must pass
+  `-D__linux__`. newlib gates `pthread_rwlock_t`/`pthread_barrier_t` typedefs on
+  `_POSIX_READER_WRITER_LOCKS`/`_POSIX_BARRIERS` (matching the existing
+  `NEWLIB_COMPAT_CFLAGS`), so those `-D`s are required too.
+- **Result:** with the shims + those `-D`s, `deps/uv/src/unix/linux.c` -- the file
+  carrying every Linux-only dependency -- now compiles to an object. `make
+  node-configure-probe` asserts this (configure succeeds AND linux.c compiles
+  against node-compat); it fails loudly if the surface regresses.
+- **Surface enumerated for NPM29+.** A full sweep of libuv's unix sources to .o
+  shows the remaining work splits cleanly: (a) a constant long-tail in 8 other
+  files (`cpu_set_t`/`CPU_*` + `pthread_*affinity_np` in thread.c, `CMSG_*` in
+  stream.c, `sys/sendfile.h` in fs.c, `linux/errqueue.h` in udp.c, `rusage`
+  fields + `SYS_close/SYS_gettid` + `FIONBIO`/`MSG_CMSG_CLOEXEC` in core.c,
+  `SA_RESETHAND` in signal.c, `TIOCGPTN` in tty.c, `SSIZE_MAX` in strscpy.c);
+  and (b) a 13-function implementation surface: `epoll_create1/epoll_ctl/
+  epoll_pwait`, `getifaddrs/freeifaddrs`, `inotify_init1/add_watch/rm_watch`,
+  `prctl`, `syscall`, `dlopen/dlsym/dlclose/dlerror`.
+
+**Next (NPM29).** Close the constant long-tail so all of libuv's unix layer
+compiles, then (NPM30) implement the 13-function shim — epoll emulated over
+`poll`/`eventfd`, `getifaddrs` from the SwiftOS net stack, inotify/`syscall`
+returning `-ENOSYS`, `dlopen` failing cleanly — and link `libuv.a`.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.

@@ -16,16 +16,20 @@
 #   NPM27 - First-pass strategy: masquerade as `linux` (NODE_DEST_OS, default
 #           `linux`) instead of standing up a first-class `swiftos` platform
 #           across configure+GYP+libuv+V8. With the dead flags dropped, configure
-#           now COMPLETES. The frontier moves into the build: libuv's `linux`
-#           backend (`deps/uv/src/unix/linux.c`) hard-includes <sys/epoll.h>,
-#           <sys/inotify.h>, <sys/syscall.h> -- none of which exist in our
-#           newlib sysroot or userland/compat. SwiftOS provides poll + eventfd +
-#           futex but no epoll. libuv ships a poll-based core (`posix-poll.c`),
-#           so NPM28 will steer libuv to that backend rather than shim epoll.
+#           now COMPLETES. The frontier moves into the build.
+#   NPM28 - libuv's linux backend (`deps/uv/src/unix/linux.c`) is monolithic
+#           (epoll event loop + inotify fs-events + procfs cpu/mem), so steering
+#           to libuv's posix-poll backend would drop those non-event functions;
+#           instead we keep OS==linux and supply the missing Linux headers as
+#           isolated shims under `userland/node-compat` (kept separate from
+#           userland/compat so other ports' feature detection is unaffected).
+#           With those shims + `-D__linux__` + the newlib pthread feature-test
+#           macros, linux.c now compiles to an object. SwiftOS has poll/eventfd/
+#           futex but no epoll, so epoll is emulated over poll in the companion
+#           implementation (NPM29+), not shimmed 1:1.
 #
-# This probe asserts the NPM27 frontier: configure must SUCCEED under the linux
-# masquerade, and the epoll-class headers the linux backend needs must be ABSENT
-# (proving the next wall is libuv's event backend, not configure).
+# This probe asserts the NPM28 frontier: configure must SUCCEED under the linux
+# masquerade AND libuv's linux backend must COMPILE against node-compat.
 #
 # Run via: make node-configure-probe
 #
@@ -121,29 +125,41 @@ if [[ "$CONFIGURE_RC" -ne 0 ]]; then
 fi
 log "configure completed successfully (DEST_OS=$DEST_OS)."
 
-# --- assert the NPM27 frontier: libuv event-backend wall --------------------
-# libuv's linux backend needs epoll/inotify/syscall headers we do not provide.
-# Prove they are absent so the next milestone (NPM28) is unambiguously "steer
-# libuv to its posix-poll backend", not "configure".
-MISSING=()
-for h in sys/epoll.h sys/inotify.h sys/syscall.h; do
-    if printf '#include <%s>\nint main(void){return 0;}\n' "$h" |
-        "$CC" -isystem "$COMPAT" -isystem "$SYSROOT/include" -x c - \
-            -fsyntax-only -o /dev/null >/dev/null 2>&1; then
-        : # header resolved -- unexpected
-    else
-        MISSING+=("$h")
-    fi
-done
+# --- assert the NPM28 frontier: libuv linux-backend header surface ----------
+# The libuv linux backend (deps/uv/src/unix/linux.c) is the file that pulls
+# every Linux-only header (epoll/inotify/ifaddrs/packet/prctl/syscall). With the
+# userland/node-compat shims on the include path ahead of userland/compat, and
+# the newlib pthread feature-test macros + __linux__ set, that file must now
+# compile to an object. This proves the header surface is complete; the
+# remaining work (NPM29+) is the *implementation* of the shim functions and the
+# constant long-tail in libuv's other unix sources.
+UV="$SRC/deps/uv"
+NODE_COMPAT="$ROOT/userland/node-compat"
+LINUX_BACKEND="$UV/src/unix/linux.c"
+LINUX_OBJ="$ROOT/build/node-uv-linux.o"
+[[ -f "$LINUX_BACKEND" ]] || fail "libuv linux backend not found at $LINUX_BACKEND"
 
-if [[ "${#MISSING[@]}" -eq 3 ]]; then
+UV_CFLAGS=(
+    -I "$UV/include" -I "$UV/src"
+    -D_GNU_SOURCE -D__linux__
+    -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1
+    -isystem "$NODE_COMPAT" -isystem "$COMPAT" -isystem "$SYSROOT/include"
+)
+
+if "$CC" "${UV_CFLAGS[@]}" -c "$LINUX_BACKEND" -o "$LINUX_OBJ" 2>"$ROOT/build/node-uv-linux.err"; then
     log ""
-    log "NPM27 frontier CONFIRMED: configure succeeds; libuv linux backend wall ahead."
-    log "  Absent headers (no epoll on SwiftOS): ${MISSING[*]}"
-    log "  Next (NPM28): build libuv with its posix-poll backend (uses poll, which"
-    log "  SwiftOS has) instead of linux.c's epoll path."
+    log "NPM28 frontier CONFIRMED: configure succeeds and libuv's linux backend"
+    log "  (src/unix/linux.c) compiles to an object against userland/node-compat."
+    log "  Object: $LINUX_OBJ"
+    log "Next (NPM29+): close the constant long-tail in libuv's other unix sources"
+    log "  (cpu_set_t/CPU_*, CMSG_*, sendfile.h, errqueue.h, rusage fields, ...) and"
+    log "  implement the shim surface: epoll_* over poll/eventfd, getifaddrs,"
+    log "  inotify_* (ENOSYS), prctl, syscall (-ENOSYS), dlopen stubs."
     log "Full configure output: $LOG"
     exit 0
 fi
 
-fail "expected epoll-class headers to be absent (got missing: ${MISSING[*]:-none}); frontier moved -- libuv may now build, advance build-node.sh to the next wall (compile/link)."
+log "libuv linux backend FAILED to compile against node-compat:"
+log "--- errors ---"
+grep -E 'error:' "$ROOT/build/node-uv-linux.err" | sed -E 's/.*error: //' | sort -u | head -20 >&2 || true
+fail "node-compat header surface incomplete; linux.c no longer compiles. Restore/extend userland/node-compat."
