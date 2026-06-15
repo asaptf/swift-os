@@ -149,6 +149,10 @@ long swiftos_lseek(int fd, long offset, int whence) {
     return __syscall3(SYS_LSEEK, fd, offset, whence);
 }
 
+int swiftos_ftruncate(int fd, long length) {
+    return (int)__syscall3(SYS_FTRUNCATE, fd, length, 0);
+}
+
 int swiftos_pipe(int fds[2]) {
     return (int)__syscall3(SYS_PIPE, (long)fds, 0, 0);
 }

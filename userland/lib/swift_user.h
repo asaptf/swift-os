@@ -48,6 +48,8 @@ long swiftos_read(int fd, void *buf, unsigned long count);
 int  swiftos_close(int fd);
 // Reposition fd offset (whence: 0=SET, 1=CUR, 2=END). Returns new offset or <0.
 long swiftos_lseek(int fd, long offset, int whence);
+// Resize an open file to length bytes (tmpfs only). 0 on success, else <0.
+int  swiftos_ftruncate(int fd, long length);
 int  swiftos_pipe(int fds[2]);
 long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
                                unsigned long handle_count);

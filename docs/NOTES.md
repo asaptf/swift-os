@@ -3,6 +3,34 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC33 SFTP write path (2026-06-15)
+
+- The SFTP subsystem now implements the write surface against the RAM tmpfs:
+  `OPEN` with write intent (`SSH_FXF_WRITE`/`APPEND`/`CREAT`/`TRUNC` mapped to the
+  kernel `O_*` ABI), `WRITE` (handle + absolute offset), `MKDIR`, `RMDIR`,
+  `REMOVE`, `RENAME`, and `SETSTAT`/`FSETSTAT` (permissions via `chmod`, size via
+  the new `swiftos_ftruncate` bridge). The read-only base is honored by the
+  kernel: write attempts outside tmpfs return `EROFS`/`EACCES`/`EPERM`, which map
+  to `SSH_FX_PERMISSION_DENIED` and surface to the client as "Permission denied".
+  Only symlink/readlink remain `SSH_FX_OP_UNSUPPORTED` (no symlinks in swift-os).
+- Transport sizing: the SSH transport reads at most `maxPacketLen` (8192) bytes
+  per packet, so a 32 KiB SFTP write would overflow the reassembly buffer. The
+  session channel now advertises a 4096-byte max packet, and the SFTP server
+  advertises the `limits@openssh.com` extension (max-write 3072, max-read 4096)
+  so the OpenSSH client bounds each `WRITE` to a single channel frame. Uploads
+  larger than one write therefore arrive as a sequence of bounded, offset-keyed
+  `WRITE`s that we stream straight to the file.
+- Added the `swiftos_ftruncate` syscall bridge (`SYS_FTRUNCATE`).
+- Added `./tests/sshd_sftp_write_test.sh` and `make sshd-sftp-write-test`. The
+  gate drives a real OpenSSH `sftp` batch: `mkdir /tmp/hc33`, `put` a 10 000-byte
+  payload (several bounded WRITE frames), byte-exact round-trip `get`, `rename`,
+  re-`get` the renamed file, `rm`, and `rmdir`. A second session proves a `put`
+  onto the read-only `/readme.txt` is denied.
+
+**Acceptance.** `make sshd-sftp-write-test` proves a real host `sftp` client can
+create directories, upload multi-chunk files with byte-exact integrity, rename
+and delete them on the SwiftOS tmpfs, while the read-only base rejects writes.
+
 ## HC32 SFTP subsystem read-only browse (2026-06-15)
 
 - `/bin/sshd` now answers the `subsystem sftp` channel request and speaks SFTP

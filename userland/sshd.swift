@@ -1464,8 +1464,28 @@ private let attrAcModTime: UInt32 = 0x0000_0008
 // SSH_FXF_* open-intent flags.
 private let fxfRead: UInt32 = 0x0000_0001
 private let fxfWrite: UInt32 = 0x0000_0002
+private let fxfAppend: UInt32 = 0x0000_0004
+private let fxfCreat: UInt32 = 0x0000_0008
+private let fxfTrunc: UInt32 = 0x0000_0010
+
+// SSH_FXP_EXTENDED request/reply (used for limits@openssh.com).
+private let fxpExtended: UInt8 = 200
+private let fxpExtendedReply: UInt8 = 201
+
+// Kernel open-flag ABI bits not already declared above.
+private let oReadWrite: Int32 = 2
+private let oAppendFlag: Int32 = 0x100
 
 private let sIFDIRMode: UInt32 = 0x4000
+
+// HC33: the SSH transport reads at most maxPacketLen bytes per packet, so the
+// session channel advertises a small max packet and the SFTP layer advertises
+// limits@openssh.com to keep the client's writes within one or two channel
+// frames. These keep a single SFTP WRITE message inside the reassembly buffer.
+private let channelMaxPacket: UInt32 = 4096
+private let sftpLimitPacket: UInt64 = 4096
+private let sftpLimitRead: UInt64 = 4096
+private let sftpLimitWrite: UInt64 = 3072
 
 private struct SftpContext {
     let fd: Int32
@@ -1669,6 +1689,41 @@ private func sftpStatToErr(_ rc: Int32) -> UInt32 {
     return rc == -2 ? fxNoSuchFile : fxFailure
 }
 
+// Map a kernel errno from a write-intent operation to an SFTP status. The
+// read-only base returns -30 (EROFS) / -13 (EACCES) / -1 (EPERM), which the
+// client surfaces as "Permission denied".
+private func sftpWriteErr(_ rc: Int32) -> UInt32 {
+    if rc == -2 { return fxNoSuchFile }
+    if rc == -30 || rc == -13 || rc == -1 { return fxPermissionDenied }
+    return fxFailure
+}
+
+// Decode an SFTP v3 ATTRS structure, surfacing the fields we can act on
+// (size, permissions). Returns nil on a truncated structure.
+private func readSftpAttrs(_ r: inout SSHReader)
+    -> (hasSize: Bool, size: UInt64, hasPerms: Bool, perms: UInt32)? {
+    guard let flags = r.u32() else { return nil }
+    var hasSize = false
+    var size: UInt64 = 0
+    var hasPerms = false
+    var perms: UInt32 = 0
+    if (flags & attrSize) != 0 {
+        guard let s = r.u64() else { return nil }
+        hasSize = true; size = s
+    }
+    if (flags & attrUidGid) != 0 {
+        guard r.u32() != nil, r.u32() != nil else { return nil }
+    }
+    if (flags & attrPermissions) != 0 {
+        guard let p = r.u32() else { return nil }
+        hasPerms = true; perms = p & 0xFFF
+    }
+    if (flags & attrAcModTime) != 0 {
+        guard r.u32() != nil, r.u32() != nil else { return nil }
+    }
+    return (hasSize, size, hasPerms, perms)
+}
+
 // Dispatch one decoded SFTP request packet. Returns false only on a fatal
 // protocol framing error (the session is then torn down).
 private func sftpHandlePacket(_ ctx: SftpContext, _ body: UnsafeRawPointer, _ bodyLen: Int,
@@ -1678,7 +1733,9 @@ private func sftpHandlePacket(_ ctx: SftpContext, _ body: UnsafeRawPointer, _ bo
     if type == fxpInit {
         guard r.u32() != nil else { return false }
         var w = SSHWriter(p: ctx.outBuf, cap: ctx.outCap)
-        guard w.u8(fxpVersion), w.u32(sftpVersion) else { return false }
+        guard w.u8(fxpVersion), w.u32(sftpVersion),
+              writerStringStatic(&w, "limits@openssh.com"),
+              writerStringStatic(&w, "1") else { return false }
         initDone = true
         return sftpFrameAndSend(ctx, w.len)
     }
@@ -1722,18 +1779,27 @@ private func sftpHandlePacket(_ ctx: SftpContext, _ body: UnsafeRawPointer, _ bo
 
     case fxpOpen:
         guard let path = r.string(), let pflags = r.u32() else { return false }
-        if (pflags & fxfWrite) != 0 || (pflags & fxfRead) == 0 {
-            return sftpSendStatus(ctx, reqId, fxOpUnsupported)  // HC33: write path
-        }
         let n = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: path.p, inputLen: path.len,
                               out: ctx.pathBuf, outCap: sftpPathCap - 1)
         if n < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
-        var mode: UInt32 = 0
-        let rc = swiftos_stat(sftpCStr(ctx.pathBuf, n), &mode, nil, nil, nil, nil, nil)
-        if rc != 0 { return sftpSendStatus(ctx, reqId, sftpStatToErr(rc)) }
-        if (mode & 0xF000) == sIFDIRMode { return sftpSendStatus(ctx, reqId, fxFailure) }
-        let ofd = swiftos_open(sftpCStr(ctx.pathBuf, n), oReadOnly)
-        if ofd < 0 { return sftpSendStatus(ctx, reqId, fxNoSuchFile) }
+        let writing = (pflags & (fxfWrite | fxfAppend | fxfCreat | fxfTrunc)) != 0
+        var oflags: Int32 = oReadOnly
+        if writing {
+            oflags = (pflags & fxfRead) != 0 ? oReadWrite : oWriteOnly
+            if (pflags & fxfCreat) != 0 { oflags |= oCreate }
+            if (pflags & fxfTrunc) != 0 { oflags |= oTrunc }
+            if (pflags & fxfAppend) != 0 { oflags |= oAppendFlag }
+        } else {
+            // Pure read: reject opening a directory as a file so READ stays sane.
+            var mode: UInt32 = 0
+            let rc = swiftos_stat(sftpCStr(ctx.pathBuf, n), &mode, nil, nil, nil, nil, nil)
+            if rc != 0 { return sftpSendStatus(ctx, reqId, sftpStatToErr(rc)) }
+            if (mode & 0xF000) == sIFDIRMode { return sftpSendStatus(ctx, reqId, fxFailure) }
+        }
+        let ofd = swiftos_open(sftpCStr(ctx.pathBuf, n), oflags)
+        if ofd < 0 {
+            return sftpSendStatus(ctx, reqId, writing ? sftpWriteErr(ofd) : sftpStatToErr(ofd))
+        }
         let idx = sftpAllocHandle(ctx, ofd, false, ctx.pathBuf, n)
         if idx < 0 { _ = swiftos_close(ofd); return sftpSendStatus(ctx, reqId, fxFailure) }
         return sftpSendHandle(ctx, reqId, idx)
@@ -1824,9 +1890,106 @@ private func sftpHandlePacket(_ ctx: SftpContext, _ body: UnsafeRawPointer, _ bo
         }
         return sftpSendStatus(ctx, reqId, fxOk)
 
-    case fxpWrite, fxpMkdir, fxpRmdir, fxpRemove, fxpRename,
-         fxpSetstat, fxpFsetstat, fxpSymlink, fxpReadlink:
-        return sftpSendStatus(ctx, reqId, fxOpUnsupported)  // HC33: write path
+    case fxpWrite:
+        guard let h = r.string(), let offset = r.u64(), let data = r.string() else { return false }
+        let i = sftpHandleIndex(ctx, h)
+        if i < 0 || (ctx.hUsed[i] & 2) != 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        if offset > UInt64(Int.max) { return sftpSendStatus(ctx, reqId, fxFailure) }
+        if swiftos_lseek(ctx.hFd[i], Int(offset), 0) < 0 {
+            return sftpSendStatus(ctx, reqId, fxFailure)
+        }
+        var written = 0
+        while written < data.len {
+            let w = swiftos_write(ctx.hFd[i], data.p + written, UInt(data.len - written))
+            if w <= 0 { return sftpSendStatus(ctx, reqId, sftpWriteErr(Int32(truncatingIfNeeded: w))) }
+            written += Int(w)
+        }
+        return sftpSendStatus(ctx, reqId, fxOk)
+
+    case fxpMkdir:
+        guard let path = r.string() else { return false }
+        let n = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: path.p, inputLen: path.len,
+                              out: ctx.pathBuf, outCap: sftpPathCap - 1)
+        if n < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        let rc = swiftos_mkdir(sftpCStr(ctx.pathBuf, n))
+        return sftpSendStatus(ctx, reqId, rc == 0 ? fxOk : sftpWriteErr(rc))
+
+    case fxpRmdir:
+        guard let path = r.string() else { return false }
+        let n = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: path.p, inputLen: path.len,
+                              out: ctx.pathBuf, outCap: sftpPathCap - 1)
+        if n < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        let rc = swiftos_rmdir(sftpCStr(ctx.pathBuf, n))
+        return sftpSendStatus(ctx, reqId, rc == 0 ? fxOk : sftpWriteErr(rc))
+
+    case fxpRemove:
+        guard let path = r.string() else { return false }
+        let n = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: path.p, inputLen: path.len,
+                              out: ctx.pathBuf, outCap: sftpPathCap - 1)
+        if n < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        let rc = swiftos_unlink(sftpCStr(ctx.pathBuf, n))
+        return sftpSendStatus(ctx, reqId, rc == 0 ? fxOk : sftpWriteErr(rc))
+
+    case fxpRename:
+        guard let oldp = r.string(), let newp = r.string() else { return false }
+        let n1 = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: oldp.p, inputLen: oldp.len,
+                               out: ctx.pathBuf, outCap: sftpPathCap - 1)
+        let n2 = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: newp.p, inputLen: newp.len,
+                               out: ctx.path2Buf, outCap: sftpPathCap - 1)
+        if n1 < 0 || n2 < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        let rc = swiftos_rename(sftpCStr(ctx.pathBuf, n1), sftpCStr(ctx.path2Buf, n2))
+        return sftpSendStatus(ctx, reqId, rc == 0 ? fxOk : sftpWriteErr(rc))
+
+    case fxpSetstat:
+        guard let path = r.string(), let attrs = readSftpAttrs(&r) else { return false }
+        let n = normalizePath(cwd: ctx.cwd, cwdLen: ctx.cwdLen, input: path.p, inputLen: path.len,
+                              out: ctx.pathBuf, outCap: sftpPathCap - 1)
+        if n < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        if attrs.hasSize {
+            let ofd = swiftos_open(sftpCStr(ctx.pathBuf, n), oWriteOnly)
+            if ofd < 0 { return sftpSendStatus(ctx, reqId, sftpWriteErr(ofd)) }
+            let len = attrs.size > UInt64(Int.max) ? Int.max : Int(attrs.size)
+            let rc = swiftos_ftruncate(ofd, len)
+            _ = swiftos_close(ofd)
+            if rc != 0 { return sftpSendStatus(ctx, reqId, sftpWriteErr(rc)) }
+        }
+        if attrs.hasPerms {
+            let rc = swiftos_chmod(sftpCStr(ctx.pathBuf, n), attrs.perms)
+            if rc != 0 { return sftpSendStatus(ctx, reqId, sftpWriteErr(rc)) }
+        }
+        return sftpSendStatus(ctx, reqId, fxOk)
+
+    case fxpFsetstat:
+        guard let h = r.string(), let attrs = readSftpAttrs(&r) else { return false }
+        let i = sftpHandleIndex(ctx, h)
+        if i < 0 { return sftpSendStatus(ctx, reqId, fxFailure) }
+        if attrs.hasSize {
+            let len = attrs.size > UInt64(Int.max) ? Int.max : Int(attrs.size)
+            if swiftos_ftruncate(ctx.hFd[i], len) != 0 {
+                return sftpSendStatus(ctx, reqId, fxFailure)
+            }
+        }
+        if attrs.hasPerms {
+            let pl = Int(ctx.hPathLen[i])
+            copyBytes(ctx.pathBuf, 0, ctx.hPath + i * sftpPathCap, pl)
+            let rc = swiftos_chmod(sftpCStr(ctx.pathBuf, pl), attrs.perms)
+            if rc != 0 { return sftpSendStatus(ctx, reqId, sftpWriteErr(rc)) }
+        }
+        return sftpSendStatus(ctx, reqId, fxOk)
+
+    case fxpExtended:
+        guard let ext = r.string() else { return false }
+        if stringEquals(ext, "limits@openssh.com") {
+            var w = SSHWriter(p: ctx.outBuf, cap: ctx.outCap)
+            guard w.u8(fxpExtendedReply), w.u32(reqId),
+                  w.u64(sftpLimitPacket), w.u64(sftpLimitRead),
+                  w.u64(sftpLimitWrite), w.u64(UInt64(maxSftpHandles)) else { return false }
+            return sftpFrameAndSend(ctx, w.len)
+        }
+        return sftpSendStatus(ctx, reqId, fxOpUnsupported)
+
+    case fxpSymlink, fxpReadlink:
+        return sftpSendStatus(ctx, reqId, fxOpUnsupported)  // no symlinks in swift-os
 
     default:
         return sftpSendStatus(ctx, reqId, fxOpUnsupported)
@@ -2145,7 +2308,7 @@ private func handleSSHSession(_ fd: Int32,
                       w.u32(clientChannel),
                       w.u32(serverChannel),
                       w.u32(65536),
-                      w.u32(32768),
+                      w.u32(channelMaxPacket),
                       sendEncryptedChachaPacket(fd, packet, w.len, serverKey, &serverSeq) else {
                     return false
                 }
