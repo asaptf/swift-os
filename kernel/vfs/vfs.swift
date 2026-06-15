@@ -113,6 +113,7 @@ private struct OpenDescription {
     var pipe = -1
     var writePipe = -1
     var pipeEnd = pipeReadEnd
+    var pty = -1
 }
 
 private struct Pipe {
@@ -1118,6 +1119,8 @@ private func releaseDescription(_ d: Int) {
     if desc.kind == .device {
         releaseDeviceGrant(desc.node)
     }
+    if desc.kind == .ptyMaster { ptyReleaseEnd(desc.pty, master: true) }
+    if desc.kind == .ptySlave { ptyReleaseEnd(desc.pty, master: false) }
     openDescriptions[d] = OpenDescription()
 }
 
@@ -1741,6 +1744,46 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         return copied
     }
 
+    if entry.kind == .ptyMaster {
+        let p = file.pty
+        var copied = 0
+        enable_irq()
+        while copied == 0 {
+            let daif = vfsLock()
+            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+            while copied < Int(count) && ptyOutCount(p) > 0 { dst[copied] = ptyOutPop(p); copied += 1 }
+            let done = copied > 0 || ptySlaveRefs(p) == 0
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
+            vfsUnlock(daif)
+            if done { break }
+            processYieldForIO()
+        }
+        return copied
+    }
+
+    if entry.kind == .ptySlave {
+        let p = file.pty
+        var copied = 0
+        enable_irq()
+        while copied == 0 {
+            let daif = vfsLock()
+            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+            let canonical = (ptySlaveLflag(p) & ttyICANON) != 0
+            while copied < Int(count) && ptyCookedCount(p) > 0 {
+                let byte = ptyCookedPop(p)
+                dst[copied] = byte
+                copied += 1
+                if canonical && byte == 0x0A { break } // one line per read
+            }
+            let done = copied > 0 || ptyMasterRefs(p) == 0
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
+            vfsUnlock(daif)
+            if done { break }
+            processYieldForIO()
+        }
+        return copied
+    }
+
     if entry.kind == .event {
         if count < 8 { return errInvalid }
         let ev = file.node
@@ -1918,6 +1961,48 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
                 vfsUnlock(daif)
                 return written > 0 ? written : errAgain
             }
+            vfsUnlock(daif)
+            if done { break }
+            if written < Int(count) { processYieldForIO() }
+        }
+        return written
+    }
+
+    if entry.kind == .ptyMaster {
+        // Keystrokes from the terminal server: feed through the line discipline.
+        // Non-blocking by design (a full cooked buffer drops input, as on a real
+        // tty under flow control).
+        let p = file.pty
+        let daif = vfsLock()
+        if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+        var w = 0
+        while w < Int(count) { ptyInput(p, src[w]); w += 1 }
+        vfsUnlock(daif)
+        return Int(count)
+    }
+
+    if entry.kind == .ptySlave {
+        // Program output: copy to the master-readable ring with ONLCR (LF->CRLF).
+        let p = file.pty
+        var written = 0
+        enable_irq()
+        while written < Int(count) {
+            let daif = vfsLock()
+            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+            if ptyMasterRefs(p) == 0 { vfsUnlock(daif); return written > 0 ? written : errPipe }
+            while written < Int(count) {
+                let byte = src[written]
+                if byte == 0x0A {
+                    if ptyOutSpace(p) < 2 { break }
+                    ptyOutPush(p, 0x0D); ptyOutPush(p, 0x0A)
+                } else {
+                    if ptyOutSpace(p) < 1 { break }
+                    ptyOutPush(p, byte)
+                }
+                written += 1
+            }
+            let done = written >= Int(count)
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return written > 0 ? written : errAgain }
             vfsUnlock(daif)
             if done { break }
             if written < Int(count) { processYieldForIO() }
@@ -2136,6 +2221,53 @@ func vfsPipe(fdsVA: UInt) -> Int {
     let raw = UnsafeMutableRawPointer(out)
     raw.storeBytes(of: Int32(rfd), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(wfd), toByteOffset: 4, as: Int32.self)
+    return 0
+}
+
+// HC34: allocate a pseudo-terminal pair, returning the master fd in *masterVA
+// and the slave fd in *slaveVA. The slave is the controlling-tty end (line
+// discipline, S_IFCHR); the master is the terminal-server end.
+func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
+    guard let mOut = userWritableBuffer(masterVA, 4),
+          let sOut = userWritableBuffer(slaveVA, 4) else { return errInvalid }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let mfd = allocFDInProcess(proc, from: 0)
+    if mfd == -1 { return errNoSpace }
+    setFDEntry(proc, mfd, HandleEntry(inUse: true, object: -1)) // reserve
+    let sfd = allocFDInProcess(proc, from: 0)
+    if sfd == -1 { setFDEntry(proc, mfd, HandleEntry()); return errNoSpace }
+    setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1))
+
+    func unwind(_ code: Int) -> Int {
+        setFDEntry(proc, mfd, HandleEntry())
+        setFDEntry(proc, sfd, HandleEntry())
+        return code
+    }
+
+    let p = ptyAlloc()
+    if p == -1 { return unwind(errNoMem) }
+    let md = allocDescription()
+    let sd = allocDescription()
+    if md == -1 || sd == -1 {
+        discardUninstalledDescription(md)
+        discardUninstalledDescription(sd)
+        ptyReleaseEnd(p, master: true)
+        ptyReleaseEnd(p, master: false)
+        return unwind(errNoSpace)
+    }
+
+    openDescriptions[md].kind = .ptyMaster
+    openDescriptions[md].pty = p
+    openDescriptions[sd].kind = .ptySlave
+    openDescriptions[sd].pty = p
+    installDescription(proc, mfd, md, rights: posixRights(read: true, write: true))
+    installDescription(proc, sfd, sd, rights: posixRights(read: true, write: true))
+
+    UnsafeMutableRawPointer(mOut).storeBytes(of: Int32(mfd), toByteOffset: 0, as: Int32.self)
+    UnsafeMutableRawPointer(sOut).storeBytes(of: Int32(sfd), toByteOffset: 0, as: Int32.self)
     return 0
 }
 
@@ -2546,6 +2678,9 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let me = processCurrentPrincipal()
     let now = rtcNow()
     if entry.kind == .tty { return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now) }
+    if entry.kind == .ptyMaster || entry.kind == .ptySlave {
+        return writeStatMode(statbuf, sIFCHR | 0o666, 0, uid: me, gid: me, mtime: now)
+    }
     if entry.kind == .pipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .event { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .file { return writeStatNode(statbuf, file.node) }
@@ -2816,6 +2951,26 @@ private func pollReadyForDescription(_ desc: OpenDescription, kind: HandleKind,
         }
         if desc.pipeEnd == pipeReadEnd && pipes[p].writeRefs == 0 { revents |= pollHup }
         if desc.pipeEnd == pipeWriteEnd && pipes[p].readRefs == 0 { revents |= pollErr }
+        return revents
+    }
+    if kind == .ptyMaster {
+        let p = desc.pty
+        if !ptyValid(p) { return pollNval }
+        if (events & pollIn) != 0 && rights.contains(.read) {
+            if ptyOutCount(p) > 0 || ptySlaveRefs(p) == 0 { revents |= pollIn }
+        }
+        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }
+        if ptySlaveRefs(p) == 0 { revents |= pollHup }
+        return revents
+    }
+    if kind == .ptySlave {
+        let p = desc.pty
+        if !ptyValid(p) { return pollNval }
+        if (events & pollIn) != 0 && rights.contains(.read) {
+            if ptyCookedCount(p) > 0 || ptyMasterRefs(p) == 0 { revents |= pollIn }
+        }
+        if (events & pollOut) != 0 && rights.contains(.write) { revents |= pollOut }
+        if ptyMasterRefs(p) == 0 { revents |= pollHup }
         return revents
     }
     if kind == .endpoint {

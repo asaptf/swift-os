@@ -16,7 +16,10 @@
 // .endpoint is the C4 IPC object; .event is the POSIX-like event notification
 // counter used by runtime ports; .device is the C5 opaque device-ownership grant
 // used by restartable driver services.
-enum HandleKind: UInt8 { case none, tty, file, pipe, socket, endpoint, event, device }
+// .ptyMaster / .ptySlave are the two ends of a pseudo-terminal (HC34): a
+// bidirectional conduit with a per-instance line discipline. Both report as
+// character devices to fstat.
+enum HandleKind: UInt8 { case none, tty, file, pipe, socket, endpoint, event, device, ptyMaster, ptySlave }
 
 // Per-handle, per-kind rights — a typed bitset checked per *handle*, not per
 // *process*. read/write are used today; the rest are reserved for later

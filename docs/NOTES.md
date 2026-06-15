@@ -3,6 +3,35 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC34 PTY kernel object (2026-06-15)
+
+- Added pseudo-terminals as a first-class kernel object (`kernel/tty/pty.swift`)
+  plus the `openpty(master*, slave*)` syscall (`SYS_OPENPTY` = 84). A PTY is a
+  bidirectional conduit with a per-instance line discipline on the master->slave
+  path: master writes are cooked (canonical line assembly, echo, backspace) into
+  a slave-readable ring; the editor's echo and the slave's output (with ONLCR,
+  LF->CRLF) flow into a master-readable ring. Modeled on the existing
+  pipe/socketpair objects: two `HandleKind` cases (`.ptyMaster`/`.ptySlave`), a
+  per-end reference count released at description teardown, and blocking
+  read/write with `processYieldForIO`. Both ends `fstat` as `S_IFCHR` and
+  participate in `poll`. The whole object runs under the VFS lock from syscall
+  context (never IRQ), so unlike the console line discipline in `tty.swift` it
+  needs no IRQ-reentrancy care; it keeps its own buffers and editor state.
+- Out of scope here (kept for a later milestone): job control. The kernel's
+  signal machinery targets only the single console foreground process, so a PTY
+  carries Ctrl-C as a data byte rather than raising SIGINT to a foreground
+  process group. Per-fd termios (`tcsetattr` still drives the console tty) and
+  `TIOCSWINSZ` are likewise deferred; the ioctl stub reports a fixed 24x80.
+- Added the `swiftos_openpty` bridge and `/bin/ptyprobe`, a native Swift
+  self-test, with `./tests/pty_test.sh` and `make pty-test`. The probe allocates
+  a pair and asserts canonical line assembly (master write -> slave read), echo
+  back to the master, ONLCR on slave output, backspace editing, and master-close
+  EOF. Documented the `ptys` table in `docs/SMP_STATE_AUDIT.md`.
+
+**Acceptance.** `make pty-test` boots, logs into the root shell, runs
+`/bin/ptyprobe`, and asserts every line-discipline marker plus `PTYPROBE-OK`.
+The PTY object is the substrate for the HC35 interactive SSH session.
+
 ## HC33 SFTP write path (2026-06-15)
 
 - The SFTP subsystem now implements the write surface against the RAM tmpfs:

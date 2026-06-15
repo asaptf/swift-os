@@ -50,6 +50,9 @@ int  swiftos_close(int fd);
 long swiftos_lseek(int fd, long offset, int whence);
 // Resize an open file to length bytes (tmpfs only). 0 on success, else <0.
 int  swiftos_ftruncate(int fd, long length);
+// Allocate a pseudo-terminal pair; writes the master fd to *master and the
+// slave fd to *slave. Returns 0 on success, else <0.
+int  swiftos_openpty(int *master, int *slave);
 int  swiftos_pipe(int fds[2]);
 long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
                                unsigned long handle_count);

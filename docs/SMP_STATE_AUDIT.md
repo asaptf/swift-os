@@ -245,6 +245,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/timer/generic_timer.swift:systemTicks`
 - `kernel/timer/generic_timer.swift:timerHz`
 - `kernel/timer/generic_timer.swift:timerIntervalTicks`
+- `kernel/tty/pty.swift:ptys`
 - `kernel/tty/tty.swift:cookedBuf`
 - `kernel/tty/tty.swift:cookedHead`
 - `kernel/tty/tty.swift:cookedTail`

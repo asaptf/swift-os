@@ -84,6 +84,7 @@ private let sysRandom: UInt = 80          // random(buf, cap) — runtime entrop
 private let sysPkgRemove: UInt = 81       // pkg_remove(name) — deactivate package on next boot
 private let sysLogStats: UInt = 82        // log_stats(buf, cap) — needs capLogExport
 private let sysNetInfo: UInt = 83         // netinfo(buffer, cap) — network status snapshot
+private let sysOpenpty: UInt = 84         // openpty(master*, slave*) — pseudo-terminal pair (HC34)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -313,6 +314,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
     } else if number == sysLogStats {
         result = syscallLogStats(buffer: frame[0], capacity: frame[1])
+    } else if number == sysOpenpty {
+        result = vfsOpenpty(masterVA: frame[0], slaveVA: frame[1])
     } else if number == sysSocketpair {
         result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
     } else if number == sysRandom {
