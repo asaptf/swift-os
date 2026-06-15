@@ -122,6 +122,13 @@ int  swiftos_pkg_stream_commit(void);
 int  swiftos_pkg_stream_abort(void);
 // Replace this image with `path`, passing argv = { "sh", NULL }. Returns on error.
 int  swiftos_exec_shell(const char *path);
+// HC35: fork and exec an interactive shell with slave_fd wired to the child's
+// stdin/stdout/stderr (and all other fds closed). Returns the child pid in the
+// parent, or <0 on fork error; never returns in the child.
+int  swiftos_pty_spawn_shell(const char *path, int slave_fd);
+// Wait for `pid` to exit; writes the wait-encoded status to *status (use
+// (status >> 8) & 0xff for the exit code). Returns the pid, or <0 on error.
+int  swiftos_waitpid(int pid, int *status);
 // Toggle terminal echo on fd 0 (off while reading a password). Non-zero = on.
 void swiftos_set_echo(int on);
 // Toggle raw mode on fd 0 (off = canonical). Raw clears ICANON+ECHO so a single

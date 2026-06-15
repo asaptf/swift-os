@@ -3,6 +3,36 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC35 sshd interactive PTY session (2026-06-15)
+
+- `/bin/sshd` now serves a real interactive login shell. It accepts the
+  `pty-req` and `shell` channel requests, allocates a PTY pair via `openpty()`
+  (HC34), forks the shell onto the slave end (`/bin/busybox` as `sh`, via the new
+  `swiftos_pty_spawn_shell` helper, which dup2's the slave to stdio and drops all
+  other fds), and relays bytes between the SSH channel and the PTY master in a
+  single `poll` loop. Keeping the relay in one thread means the chacha20
+  send/sequence state stays single-owner (no locking). The loop honors the
+  client's channel window for shell output and replenishes our receive window
+  (`SSH_MSG_CHANNEL_WINDOW_ADJUST`) for keystrokes. On master EOF (shell exit) or
+  channel close it reaps the shell with `waitpid` and sends `exit-status` +
+  `SSH_MSG_CHANNEL_CLOSE`. No new kernel surface: built entirely on existing
+  `fork`/`execve`/`waitpid` plus HC34's PTY.
+- busybox is built without `FEATURE_EDITING`, so `ash` reads the tty in plain
+  canonical mode — a perfect match for the PTY's canonical+echo line discipline.
+  Caveat (carried from HC34): Ctrl-C is a data byte, not a SIGINT to the shell —
+  job control is a separate milestone. `tcsetattr` still targets the console tty,
+  not the PTY, and window size is fixed; neither matters for a canonical shell.
+- Added `swiftos_pty_spawn_shell` and `swiftos_waitpid` bridges. New gate
+  `./tests/sshd_interactive_test.sh` / `make sshd-interactive-test` drives a real
+  OpenSSH `ssh -tt` session: requests a pty, runs `echo hc35''ok` (the contiguous
+  marker only appears in the command's output, not the echoed command line),
+  asserts it round-trips through the PTY, and that the guest logs a clean
+  `interactive shell completed status 0`.
+
+**Acceptance.** `make sshd-interactive-test` proves a host OpenSSH client gets an
+interactive shell over SSH — pty allocation, line-discipline echo, command
+execution, output relay, and a clean exit.
+
 ## HC34 PTY kernel object (2026-06-15)
 
 - Added pseudo-terminals as a first-class kernel object (`kernel/tty/pty.swift`)
