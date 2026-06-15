@@ -340,6 +340,26 @@ int swiftos_exec_shell(const char *path) {
     return execve(path, argv, 0);
 }
 
+int swiftos_pty_spawn_shell(const char *path, int slave_fd) {
+    int pid = fork();
+    if (pid != 0) return pid;            // parent (pid > 0) or fork error (< 0)
+    // Child: wire the PTY slave to stdio, drop every inherited fd (listen/conn
+    // sockets, the PTY master), then become the shell.
+    dup2(slave_fd, 0);
+    dup2(slave_fd, 1);
+    dup2(slave_fd, 2);
+    for (int fd = 3; fd < 32; fd++) close(fd);
+    char arg0[] = "sh";
+    char *argv[] = { arg0, 0 };
+    execve(path, argv, 0);
+    __syscall3(SYS_EXIT, 127, 0, 0);     // exec failed
+    return 0;                            // unreachable
+}
+
+int swiftos_waitpid(int pid, int *status) {
+    return waitpid(pid, status, 0);
+}
+
 void swiftos_set_echo(int on) {
     // termios is four 32-bit words; c_lflag is word 3 (offset 12). ECHO = 1<<1.
     unsigned int t[4] = { 0, 0, 0, 0 };

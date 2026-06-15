@@ -2188,6 +2188,161 @@ private func sendGlobalRequestResult(_ fd: Int32, _ packet: UnsafeMutableRawPoin
     return sendEncryptedChachaPacket(fd, packet, w.len, key, &seq)
 }
 
+private let interactiveRelayChunk = 1024
+private let interactiveShellPath: StaticString = "/bin/busybox"
+
+// HC35: run an interactive shell session. Allocates a PTY, forks the shell onto
+// the slave, and relays bytes between the SSH channel and the PTY master with a
+// single poll loop (no extra thread, so the chacha send/seq state stays
+// single-owner). Honors the client's channel window for our output and
+// replenishes our receive window for keystrokes. Reaps the shell for its exit
+// status. Returns true on a clean teardown.
+private func runInteractiveShell(_ fd: Int32,
+                                 _ packet: UnsafeMutableRawPointer, _ cap: Int,
+                                 _ serverKey: UnsafeRawPointer,
+                                 _ serverSeq: inout UInt32,
+                                 _ clientKey: UnsafeRawPointer,
+                                 _ clientSeq: inout UInt32,
+                                 _ clientChannel: UInt32,
+                                 _ serverChannel: UInt32,
+                                 _ initialWindow: UInt32) -> Bool {
+    var master: Int32 = -1
+    var slave: Int32 = -1
+    if swiftos_openpty(&master, &slave) != 0 || master < 0 || slave < 0 {
+        swiftos_puts("sshd: openpty failed\n")
+        return false
+    }
+    let pid = interactiveShellPath.withUTF8Buffer { p in
+        swiftos_pty_spawn_shell(UnsafeRawPointer(p.baseAddress!).assumingMemoryBound(to: CChar.self),
+                                slave)
+    }
+    // The forked child holds its own dup'd slave fds; drop ours so the master
+    // observes EOF once the shell exits.
+    _ = swiftos_close(slave)
+    if pid < 0 {
+        swiftos_puts("sshd: shell fork failed\n")
+        _ = swiftos_close(master)
+        return false
+    }
+
+    var clientWindow = initialWindow
+    var recvConsumed: UInt32 = 0
+
+    _ = withUnsafeTemporaryAllocation(byteCount: interactiveRelayChunk, alignment: 8) { buf -> Bool in
+      withUnsafeTemporaryAllocation(byteCount: 16, alignment: 8) { pfds -> Bool in
+        let pbase = pfds.baseAddress!
+        var done = false
+        while !done {
+            // Always watch the socket; watch the master only when we still have
+            // window to forward its output (avoids spinning when window is 0).
+            pbase.storeBytes(of: fd, toByteOffset: 0, as: Int32.self)
+            pbase.storeBytes(of: pollIn, toByteOffset: 4, as: Int16.self)
+            pbase.storeBytes(of: Int16(0), toByteOffset: 6, as: Int16.self)
+            var nfds: UInt = 1
+            if clientWindow > 0 {
+                pbase.storeBytes(of: master, toByteOffset: 8, as: Int32.self)
+                pbase.storeBytes(of: pollIn, toByteOffset: 12, as: Int16.self)
+                pbase.storeBytes(of: Int16(0), toByteOffset: 14, as: Int16.self)
+                nfds = 2
+            }
+            let rc = swiftos_poll(pbase, nfds, 60_000)
+            if rc < 0 { break }
+            if rc == 0 { continue } // idle: keep the session open
+
+            let socketReady = (pbase.load(fromByteOffset: 6, as: Int16.self) & pollIn) != 0
+            let masterReady = nfds == 2 &&
+                (pbase.load(fromByteOffset: 14, as: Int16.self) & pollIn) != 0
+
+            // Shell output -> client.
+            if masterReady && clientWindow > 0 {
+                let want = min(interactiveRelayChunk, Int(clientWindow))
+                let nr = swiftos_read(master, buf.baseAddress!, UInt(want))
+                if nr <= 0 { break } // master EOF: the shell exited
+                var dataWriter = SSHWriter(p: packet, cap: cap)
+                guard dataWriter.u8(msgChannelData),
+                      dataWriter.u32(clientChannel),
+                      dataWriter.string(buf.baseAddress!, Int(nr)),
+                      sendEncryptedChachaPacket(fd, packet, dataWriter.len, serverKey, &serverSeq) else {
+                    break
+                }
+                clientWindow -= UInt32(nr)
+            }
+
+            // Client keystrokes / control -> shell.
+            if socketReady {
+                let n = readEncryptedChachaPacket(fd, packet, cap, clientKey, &clientSeq)
+                if n <= 0 { break } // client disconnected
+                var rr = SSHReader(p: packet, len: n)
+                guard let cmsg = rr.u8() else { break }
+                if cmsg == msgChannelData {
+                    guard let _ = rr.u32(), let data = rr.string() else { break }
+                    var off = 0
+                    while off < data.len {
+                        let w = swiftos_write(master, data.p + off, UInt(data.len - off))
+                        if w <= 0 { break }
+                        off += Int(w)
+                    }
+                    // Replenish our receive window so long pastes keep flowing.
+                    recvConsumed += UInt32(data.len)
+                    if recvConsumed >= 32768 {
+                        var wa = SSHWriter(p: packet, cap: cap)
+                        if wa.u8(msgChannelWindowAdjust), wa.u32(clientChannel), wa.u32(recvConsumed),
+                           sendEncryptedChachaPacket(fd, packet, wa.len, serverKey, &serverSeq) {
+                            recvConsumed = 0
+                        }
+                    }
+                } else if cmsg == msgChannelWindowAdjust {
+                    guard let _ = rr.u32(), let add = rr.u32() else { break }
+                    clientWindow = clientWindow &+ add
+                } else if cmsg == msgChannelRequest {
+                    guard let _ = rr.u32(), let _ = rr.string(), let wantReply = rr.bool() else { break }
+                    if wantReply &&
+                        !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                                  clientChannel, false) {
+                        break
+                    }
+                } else if cmsg == msgGlobalRequest {
+                    guard let _ = rr.string(), let wantReply = rr.bool() else { break }
+                    if wantReply &&
+                        !sendGlobalRequestResult(fd, packet, cap, serverKey, &serverSeq, false) {
+                        break
+                    }
+                } else if cmsg == msgChannelEof {
+                    // Client closed its input; let the shell run until it exits.
+                } else if cmsg == msgChannelClose {
+                    done = true
+                }
+            }
+        }
+        return true
+      }
+    }
+
+    // Ensure the shell sees EOF if it is still alive, then reap it.
+    _ = swiftos_close(master)
+    var status: Int32 = 0
+    let reaped = swiftos_waitpid(pid, &status)
+    let exitStatus: UInt32 = reaped >= 0 ? UInt32((status >> 8) & 0xff) : 0
+
+    var eofW = SSHWriter(p: packet, cap: cap)
+    if eofW.u8(msgChannelEof), eofW.u32(clientChannel) {
+        _ = sendEncryptedChachaPacket(fd, packet, eofW.len, serverKey, &serverSeq)
+    }
+    var stW = SSHWriter(p: packet, cap: cap)
+    if stW.u8(msgChannelRequest), stW.u32(clientChannel),
+       writerStringStatic(&stW, "exit-status"), stW.u8(0), stW.u32(exitStatus) {
+        _ = sendEncryptedChachaPacket(fd, packet, stW.len, serverKey, &serverSeq)
+    }
+    var clW = SSHWriter(p: packet, cap: cap)
+    if clW.u8(msgChannelClose), clW.u32(clientChannel) {
+        _ = sendEncryptedChachaPacket(fd, packet, clW.len, serverKey, &serverSeq)
+    }
+    swiftos_puts("sshd: interactive shell completed status ")
+    printUInt(UInt(exitStatus))
+    swiftos_puts("\n")
+    return true
+}
+
 private func handleSSHSession(_ fd: Int32,
                               _ packet: UnsafeMutableRawPointer, _ cap: Int,
                               _ clientKey: UnsafeRawPointer, _ serverKey: UnsafeRawPointer,
@@ -2278,6 +2433,8 @@ private func handleSSHSession(_ fd: Int32,
     var clientChannel: UInt32 = 0
     let serverChannel: UInt32 = 0
     var channelOpen = false
+    var clientWindow: UInt32 = 0   // bytes we may still send the client (HC35 relay)
+    var ptyRequested = false       // a pty-req preceded the shell request
     var loops = 0
     while loops < 24 {
         loops += 1
@@ -2296,12 +2453,13 @@ private func handleSSHSession(_ fd: Int32,
         } else if msg == msgChannelOpen {
             guard let ctype = r.string(),
                   let sender = r.u32(),
-                  let _ = r.u32(),
+                  let initialWindow = r.u32(),
                   let _ = r.u32() else {
                 return false
             }
             if stringEquals(ctype, "session") {
                 clientChannel = sender
+                clientWindow = initialWindow
                 channelOpen = true
                 w = SSHWriter(p: packet, cap: cap)
                 guard w.u8(msgChannelOpenConfirmation),
@@ -2358,6 +2516,30 @@ private func handleSSHSession(_ fd: Int32,
                 swiftos_puts("sshd: sftp subsystem started\n")
                 return runSftpSubsystem(fd, packet, cap, serverKey, &serverSeq,
                                         clientKey, &clientSeq, clientChannel, serverChannel)
+            }
+            if stringEquals(req, "pty-req") {
+                // We accept the request but the kernel PTY uses its own fixed
+                // geometry and modes, so the term/winsize/modes fields are not
+                // applied. Just remember a tty was asked for.
+                ptyRequested = true
+                if wantReply &&
+                    !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                              clientChannel, true) {
+                    return false
+                }
+                continue
+            }
+            if stringEquals(req, "shell") {
+                if wantReply &&
+                    !sendChannelRequestResult(fd, packet, cap, serverKey, &serverSeq,
+                                              clientChannel, true) {
+                    return false
+                }
+                swiftos_puts(ptyRequested ? "sshd: interactive pty shell session\n"
+                                          : "sshd: shell session (no pty-req)\n")
+                return runInteractiveShell(fd, packet, cap, serverKey, &serverSeq,
+                                           clientKey, &clientSeq,
+                                           clientChannel, serverChannel, clientWindow)
             }
             guard stringEquals(req, "exec"),
                   let command = r.string() else {
