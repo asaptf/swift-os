@@ -5734,3 +5734,43 @@ dlerror`. (`in6addr_any` is a data symbol to provide at link too.)
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM30 - libuv links into a static AArch64 ELF on SwiftOS (DONE, 2026-06-15)
+
+Implemented the shim surface in `userland/node-compat/node_compat.c`, archived
+`libuv.a`, and linked a minimal libuv program — libuv is now usable on SwiftOS
+through the linux masquerade.
+
+- **epoll emulated over poll().** Each `epoll_create1` allocates a real
+  `eventfd` (so the descriptor is unique and libuv's `close()` works) and a
+  dynamic interest list; `epoll_ctl` ADD/MOD/DEL maintains it; `epoll_pwait`
+  builds a `pollfd[]`, calls `poll()`, and translates `revents` back to epoll
+  events with the stored `epoll_data`. SwiftOS has poll/eventfd/futex but no
+  epoll, so this is emulation, not a 1:1 shim. (`sigmask` is ignored — libuv
+  passes NULL; an empty interest list waits via `poll(NULL,0,timeout)`.)
+- **ENOSYS / clean fallbacks** so libuv uses portable paths: inotify (no fs
+  watching), `sendfile`/`recvmmsg`/`sendmmsg` (read/write + recvmsg loops), raw
+  `syscall`, and the `dlopen` family (static-only OS, returns a clear error).
+  `getifaddrs` returns an empty list for now; `in6addr_any` is defined.
+- **POSIX functions newlib lacks**, implemented over what SwiftOS has: `pread`/
+  `pwrite` via save/seek/io/restore, `dup3` via `dup2`+`FD_CLOEXEC`, `scandir`
+  via `opendir`/`readdir`+`qsort`, `fdatasync`→0 (tmpfs), `pathconf`→4096; and
+  no-op/ENOSYS for `sched_yield`/`sched_getcpu`/`sched_get_priority_*`,
+  `pthread_get/setaffinity_np` (reports CPU 0), `pthread_get/setschedparam`,
+  `setgroups`, `getpwuid_r`/`getgrgid_r`/`lchown`/`futimens`/`utimensat`.
+- `make node-configure-probe` now runs the full chain: configure (linux
+  masquerade) → compile all 34 libuv unix sources → archive `libuv.a` → link
+  `build/uvhello.elf` (uv_loop_init/uv_run/uv_loop_close + uv_version_string)
+  and assert it is a static AArch64 ELF with **no undefined symbols**.
+
+These shims live in node-compat (isolated from the shared `userland/compat`); a
+few of the generic ones (pread/pwrite/scandir/dup3) could be promoted to the
+shared layer later if other ports need them.
+
+**Next (NPM31).** Run `uvhello.elf` in QEMU to prove the epoll-over-poll event
+loop works at *runtime* (not just links), wired through the base image like the
+other probes. After that, the V8 platform build (host `mksnapshot` cross-build,
+the largest remaining wall).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.

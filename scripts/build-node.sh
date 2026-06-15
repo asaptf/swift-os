@@ -33,9 +33,19 @@
 #           IPv6 multicast + source-membership structs, struct mmsghdr) via more
 #           userland/node-compat shims. ALL libuv unix sources now compile to
 #           objects; what remains is the external shim *implementation* (NPM30).
+#   NPM30 - Implemented the shim surface in userland/node-compat/node_compat.c:
+#           epoll emulated over poll()/eventfd (a real eventfd backs each epoll
+#           instance; a dynamic interest list is turned into a pollfd[] each
+#           wait), ENOSYS fallbacks for inotify/sendfile/recvmmsg/sendmmsg/raw
+#           syscall, clean dlopen-family failures, getifaddrs empty list,
+#           in6addr_any, and the POSIX functions newlib lacks (pread/pwrite via
+#           lseek, dup3, scandir via readdir, sched_*/affinity/schedparam no-ops,
+#           pathconf, getpwuid_r/getgrgid_r/lchown/utimens ENOSYS). libuv now
+#           archives to libuv.a and links a minimal uv program into a static
+#           AArch64 ELF with no undefined symbols.
 #
-# This probe asserts the NPM29 frontier: configure must SUCCEED under the linux
-# masquerade AND every libuv unix source must COMPILE against node-compat.
+# This probe asserts the NPM30 frontier: configure SUCCEEDS, every libuv unix
+# source COMPILES, and libuv LINKS into a static AArch64 ELF (uvhello.elf).
 #
 # Run via: make node-configure-probe
 #
@@ -180,14 +190,72 @@ if [[ "$uv_fail" -ne 0 ]]; then
     fail "$uv_fail libuv source(s) failed to compile against node-compat; extend userland/node-compat."
 fi
 
-# Enumerate the still-undefined external shim functions (the NPM30 surface).
-SHIM_RE='^(epoll_(create1|ctl|wait|pwait)|inotify_(init1|add_watch|rm_watch)|getifaddrs|freeifaddrs|prctl|syscall|sendfile|recvmmsg|sendmmsg|dlopen|dlsym|dlclose|dlerror)$'
-SHIMS="$(aarch64-elf-nm "$OBJ_DIR"/*.o 2>/dev/null | awk '$1=="U"{print $2}' | sort -u | grep -E "$SHIM_RE" || true)"
+log "All ${#UV_SRCS[@]} libuv unix sources compiled to objects."
+
+# --- assert the NPM30 frontier: libuv links into a static AArch64 ELF -------
+# Implement the shim surface (userland/node-compat/node_compat.c: epoll over
+# poll/eventfd + ENOSYS fallbacks + dlopen stubs + in6addr_any + the POSIX
+# funcs newlib lacks), archive libuv.a, and link a minimal uv program. Success
+# proves libuv is usable on SwiftOS via the masquerade.
+RUNTIME_DIR="$ROOT/build/node-port-runtime"
+mkdir -p "$RUNTIME_DIR"
+RT_CFLAGS=(
+    -ffreestanding -Os -D_GNU_SOURCE -D__linux__
+    -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1
+    -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1
+    -isystem "$NODE_COMPAT" -isystem "$COMPAT" -isystem "$SYSROOT/include"
+)
+
+"$CC" "${RT_CFLAGS[@]}" -I "$UV/include" -c "$NODE_COMPAT/node_compat.c" \
+    -o "$RUNTIME_DIR/node_compat.o" || fail "node_compat.c failed to compile"
+"$CC" "${RT_CFLAGS[@]}" -c "$ROOT/userland/lib/crt0_newlib.S" -o "$RUNTIME_DIR/crt0.o"
+"$CC" "${RT_CFLAGS[@]}" -c "$ROOT/userland/lib/newlib_syscalls.c" -o "$RUNTIME_DIR/syscalls.o"
+"$CC" "${RT_CFLAGS[@]}" -c "$ROOT/userland/compat/stubs.c" -o "$RUNTIME_DIR/compat_stubs.o"
+
+LIBUV_A="$RUNTIME_DIR/libuv.a"
+rm -f "$LIBUV_A"
+aarch64-elf-ar rcs "$LIBUV_A" "$OBJ_DIR"/*.o "$RUNTIME_DIR/node_compat.o"
+
+# Minimal libuv program: init a loop, run one non-blocking turn, close it.
+cat > "$RUNTIME_DIR/uvhello.c" <<'EOF'
+#include <uv.h>
+#include <stdio.h>
+int main(void) {
+    printf("libuv %s\n", uv_version_string());
+    uv_loop_t loop;
+    if (uv_loop_init(&loop)) { printf("loop init failed\n"); return 1; }
+    uv_run(&loop, UV_RUN_NOWAIT);
+    uv_loop_close(&loop);
+    printf("ok\n");
+    return 0;
+}
+EOF
+"$CC" "${RT_CFLAGS[@]}" -I "$UV/include" -c "$RUNTIME_DIR/uvhello.c" \
+    -o "$RUNTIME_DIR/uvhello.o" || fail "uvhello.c failed to compile"
+
+UVHELLO_ELF="$ROOT/build/uvhello.elf"
+LDFLAGS=(-nostartfiles -nostdlib -static -T "$ROOT/userland/user_newlib.ld"
+    -Wl,-z,max-page-size=4096 -L "$SYSROOT/lib")
+if ! "$CC" "${LDFLAGS[@]}" "$RUNTIME_DIR/crt0.o" "$RUNTIME_DIR/uvhello.o" \
+        "$RUNTIME_DIR/syscalls.o" "$RUNTIME_DIR/compat_stubs.o" "$LIBUV_A" \
+        -Wl,--start-group -lc -lm -lgcc -Wl,--end-group -o "$UVHELLO_ELF" \
+        2>"$RUNTIME_DIR/uvlink.err"; then
+    log "libuv link FAILED. Unresolved symbols:"
+    grep -oE "undefined reference to \`[^']+'" "$RUNTIME_DIR/uvlink.err" |
+        sed -E "s/.*\`([^']+)'/\1/" | sort -u >&2 || true
+    fail "libuv did not link; implement the missing symbols in node_compat.c."
+fi
+
+undef="$(aarch64-elf-nm -u "$UVHELLO_ELF" 2>/dev/null)"
+[[ -z "$undef" ]] || fail "uvhello.elf has undefined symbols: $undef"
+aarch64-elf-readelf -h "$UVHELLO_ELF" | grep -q 'Machine:.*AArch64' ||
+    fail "uvhello.elf is not an AArch64 ELF"
 
 log ""
-log "NPM29 frontier CONFIRMED: configure succeeds and ALL libuv unix sources"
-log "  (${#UV_SRCS[@]} files) compile to objects against userland/node-compat."
-log "Remaining shim surface to implement (NPM30) before libuv links:"
-printf '  %s\n' $SHIMS
+log "NPM30 frontier CONFIRMED: libuv (${#UV_SRCS[@]} sources + node_compat shims)"
+log "  archives to libuv.a and links a minimal uv program into a static AArch64"
+log "  ELF with no undefined symbols: $UVHELLO_ELF"
+log "Next (NPM31): run uvhello.elf in QEMU (prove the epoll-over-poll event loop"
+log "  works at runtime), then tackle the V8 platform build (host mksnapshot)."
 log "Full configure output: $LOG"
 exit 0
