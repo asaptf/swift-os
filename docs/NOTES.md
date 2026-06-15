@@ -5607,3 +5607,41 @@ frontier to the next wall (expected: GYP/libuv backend selection).
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM27 - Node configure passes via linux masquerade; libuv backend wall (DONE, 2026-06-15)
+
+Strategy decision for the platform wall found in NPM26: for the first build pass,
+**masquerade as `linux`** and close the resulting gaps in newlib/compat, rather
+than standing up a first-class `swiftos` platform across configure + GYP + libuv
++ V8 (deferred — that is the larger, cleaner long-term port). Two findings
+unblocked configure:
+
+- **Recipe carried dead flags.** `ports/lang/nodejs/Port.json` passed
+  `--without-dtrace` and `--without-etw`, which Node 24.16's `configure.py` no
+  longer defines. configure forwards unknown args to GYP, so GYP aborted with
+  `gyp: --without-etw not found while trying to load --without-etw`. Both flags
+  are removed from the recipe; `--without-npm`, `--without-corepack`,
+  `--fully-static`, and `--v8-lite-mode` remain valid.
+- **Masquerade works at configure time.** With `--dest-os=linux --dest-cpu=arm64
+  --cross-compiling --fully-static --v8-lite-mode` (CC=aarch64-elf-gcc,
+  CXX=aarch64-elf-g++), `configure.py` now reports `configure completed
+  successfully`. The recipe args and `build-node.sh` were updated to this set;
+  `build-node.sh` maps the eventual swiftos target to `NODE_DEST_OS` (default
+  `linux`).
+- **Frontier moved into the build.** libuv's linux backend
+  (`deps/uv/src/unix/linux.c`) hard-includes `<sys/epoll.h>`, `<sys/inotify.h>`,
+  and `<sys/syscall.h>`. The probe compiles a one-line TU per header with the
+  SwiftOS include path and confirms all three are ABSENT — SwiftOS has
+  `poll`/`eventfd`/futex but no `epoll`. So the next wall is libuv's event
+  backend, not configure.
+- `make node-configure-probe` now asserts this state: configure must succeed and
+  the epoll-class headers must be absent; it fails loudly if either changes.
+
+**Next (NPM28).** Steer libuv to its existing `posix-poll.c` backend (which uses
+`poll`, present on SwiftOS) instead of shimming `epoll`, by adjusting the libuv
+GYP backend selection for this target, then advance `build-node.sh` past the
+libuv compile to the next wall (expected: further newlib/compat gaps in libuv
+core or V8 platform glue, and the host-mksnapshot cross-build step).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.
