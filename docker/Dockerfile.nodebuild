@@ -14,7 +14,7 @@
 # Build context = repo root. Heavy one-time build (toolchain ~30-60 min).
 FROM debian:trixie-slim
 
-ARG BINUTILS_VERSION=2.46
+ARG BINUTILS_VERSION=2.46.1
 ARG GCC_VERSION=16.1.0
 ARG NEWLIB_VERSION=4.6.0.20260123
 ARG JOBS=8
