@@ -467,6 +467,54 @@ private func runPsDemo() {
     uartPuts("\n")
 }
 
+/// D0: bring the persistent "data" disk into play. Independent of the read-only
+/// base/store, this is a writable virtio-blk device (sector-0 magic "SWDATAFS")
+/// that will host the /data tier (datafs, D1+). Here we only prove end-to-end
+/// persistence: read a boot counter near the start of the disk, increment it,
+/// write it back, and flush. The counter surviving across reboots is the D0
+/// acceptance (tests/data_persist_test.sh).
+private func runDataDeviceProbeD0() {
+    if !virtioBlkDataAvailable() {
+        uartPuts("D0: no data disk attached\n")
+        return
+    }
+    uartPuts("D0: data device, ")
+    uartPutUInt(virtioBlkDataCapacitySectors())
+    uartPuts(" sectors\n")
+
+    // Boot counter at a fixed byte offset (sector 2), clear of the D1 superblock.
+    let counterOff: UInt64 = 1024
+    var buf = [UInt8](repeating: 0, count: 8)
+    let rrc = buf.withUnsafeMutableBytes { raw -> Int32 in
+        virtioBlkDataReadRange(counterOff, raw.baseAddress, 8)
+    }
+    if rrc != 0 {
+        uartPuts("D0: data read failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rrc)))
+        uartPuts("\n")
+        return
+    }
+    var count: UInt64 = 0
+    var k = 0
+    while k < 8 { count |= UInt64(buf[k]) << (8 * UInt64(k)); k += 1 }
+    count &+= 1
+    k = 0
+    while k < 8 { buf[k] = UInt8((count >> (8 * UInt64(k))) & 0xFF); k += 1 }
+    let wrc = buf.withUnsafeBytes { raw -> Int32 in
+        virtioBlkDataWriteRange(counterOff, raw.baseAddress, 8)
+    }
+    if wrc != 0 {
+        uartPuts("D0: data write failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(wrc)))
+        uartPuts("\n")
+        return
+    }
+    _ = virtioBlkDataFlush()
+    uartPuts("D0 OK: data disk persistent, boot count ")
+    uartPutUInt(count)
+    uartPuts("\n")
+}
+
 /// M11b: probe the virtio-blk disk. Bring up the block device discovered in the
 /// virtio-mmio window, read sector 0, and report it. When the attached disk is a
 /// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
@@ -954,6 +1002,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klog(.info, "smp", "S4a OK: PMM lock boundary ready", UInt64(pmmS4aLockAcquireCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    runDataDeviceProbeD0() // D0: persistent /data disk end-to-end persistence check
     if virtioRngInit() {
         uartPuts("virtio-rng: runtime entropy ready\n")
     }

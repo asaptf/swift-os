@@ -43,6 +43,11 @@ QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
+# D0: a writable, persistent virtio-blk "data" disk (the /data tier, datafs from
+# D1). Stamped with the "SWDATAFS" sector-0 magic so the kernel scan identifies
+# it positively. Persists across `make run` invocations; not rebuilt once created.
+DATA_IMG  := $(BUILD)/data.img
+DATA_IMG_SIZE_MB ?= 16
 BASEPACK  := $(BUILD)/basepack
 UPDATESTORE := $(BUILD)/updatestore
 KERNELBOOT := $(BUILD)/kernelboot
@@ -220,7 +225,15 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
 	-device loader,file=$(QEMU_DTB),addr=$(QEMU_DTB_ADDR),force-raw=on \
 	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 	-device virtio-blk-device,drive=swosbase \
+	-drive file=$(DATA_IMG),format=raw,if=none,id=swosdata \
+	-device virtio-blk-device,drive=swosdata \
 	-kernel $(BUILD)/kernel.elf
+
+# D0: create the blank, stamped data disk if it does not yet exist. Order-only on
+# the build dir so an existing image is preserved (persistence across runs).
+$(DATA_IMG): | $(BUILD)/.dir
+	dd if=/dev/zero of=$@ bs=1048576 count=$(DATA_IMG_SIZE_MB) 2>/dev/null
+	printf 'SWDATAFS' | dd of=$@ bs=1 seek=0 conv=notrunc 2>/dev/null
 
 # ---- UEFI loader (M10) -----------------------------------------------------
 # The loader is an AArch64 PE32+ EFI application; clang targets Windows/COFF and
@@ -453,7 +466,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test data-persist-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1125,11 +1138,11 @@ $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
-run: build $(QEMU_DTB) base-image
+run: build $(QEMU_DTB) base-image $(DATA_IMG)
 	$(QEMU) $(QEMU_FLAGS)
 
 # Paused under the gdbstub on tcp::1234. Attach with `make gdb` in another shell.
-debug: build $(QEMU_DTB) base-image
+debug: build $(QEMU_DTB) base-image $(DATA_IMG)
 	$(QEMU) $(QEMU_FLAGS) -s -S
 
 gdb:
@@ -1315,6 +1328,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/data_persist_test.sh
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -1391,6 +1405,11 @@ smp-test: build base-image
 
 clock-test: build $(QEMU_DTB) base-image
 	./tests/clock_test.sh
+
+# D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
+# is emitted before vfsInit), so this focused gate runs without the full image.
+data-persist-test: build $(QEMU_DTB)
+	./tests/data_persist_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
