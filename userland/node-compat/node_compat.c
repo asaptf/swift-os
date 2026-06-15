@@ -257,6 +257,10 @@ void *dlsym(void *handle, const char *symbol) {
     return NULL;
 }
 int dlclose(void *handle) { (void)handle; return 0; }
+int dladdr(const void *addr, Dl_info *info) {
+    (void)addr; (void)info;
+    return 0;   /* dladdr returns 0 on failure (no dynamic symbol info) */
+}
 char *dlerror(void) {
     const char *m = node_compat_dlerr;
     node_compat_dlerr = NULL;
