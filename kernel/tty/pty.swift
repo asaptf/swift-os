@@ -157,16 +157,17 @@ private func ptyEcho(_ p: Int, _ byte: UInt8) {
 func ptyInput(_ p: Int, _ byte: UInt8) {
     guard ptyValid(p) else { return }
 
-    // Job control: Ctrl-C raises SIGINT to the foreground process rather than
-    // being delivered as data. Echo "^C\r\n" (mirroring tty.swift) and discard
-    // any partially-typed canonical line.
-    if (ptys[p].lflag & ttyISIG) != 0 && byte == 0x03 { // Ctrl-C (ETX)
+    // Job control: with ISIG set and a foreground process designated, Ctrl-C
+    // raises SIGINT to it rather than being delivered as data. Echo "^C\r\n"
+    // (mirroring tty.swift) and discard any partially-typed canonical line. When
+    // no foreground is set (a PTY that has not opted into job control, e.g. the
+    // HC35 sshd shell), Ctrl-C falls through and is carried as an ordinary byte.
+    if (ptys[p].lflag & ttyISIG) != 0 && byte == 0x03 && ptys[p].fgPid > 0 { // Ctrl-C (ETX)
         if (ptys[p].lflag & ttyECHO) != 0 {
             ptyOutPush(p, 0x5E); ptyOutPush(p, 0x43); ptyOutPush(p, 0x0D); ptyOutPush(p, 0x0A) // "^C\r\n"
         }
         ptys[p].editLen = 0
-        let fg = ptys[p].fgPid
-        if fg > 0 { signalRaiseSlot(fg - 1, SIGINT) } // pid -> process slot
+        signalRaiseSlot(ptys[p].fgPid - 1, SIGINT) // pid -> process slot
         return
     }
 
