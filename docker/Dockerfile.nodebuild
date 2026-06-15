@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+# Dockerfile.nodebuild — Linux build environment for the SwiftOS Node.js port.
+#
+# Why: cross-building Node FOR our aarch64-elf+newlib target ON macOS fails
+# because Node builds host tools (host node/libuv/torque) under the same
+# OS=="linux" source selection, and macOS clang can't compile the Linux backend
+# (NPM35b). A Linux host builds those host tools natively, so only the *target*
+# objects use our cross toolchain + node-compat shims.
+#
+# This image builds, in one combined source tree, an aarch64-elf cross toolchain
+# WITH libstdc++ and POSIX threads (V8 needs both; threads also fixes -pthread),
+# then leaves the repo ready to build Node via scripts/build-node.sh.
+#
+# Build context = repo root. Heavy one-time build (toolchain ~30-60 min).
+FROM debian:trixie-slim
+
+ARG BINUTILS_VERSION=2.46
+ARG GCC_VERSION=16.1.0
+ARG NEWLIB_VERSION=4.6.0.20260123
+ARG JOBS=8
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PREFIX=/opt/swiftos-toolchain
+ENV PATH=${PREFIX}/bin:${PATH}
+
+# Host build deps. The container's native gcc/g++ build Node's host tools
+# (host_arch matches the container arch); python3 drives Node's configure/gyp.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential gcc g++ make python3 python-is-python3 \
+        curl ca-certificates xz-utils texinfo bison flex \
+        libgmp-dev libmpfr-dev libmpc-dev libisl-dev zlib1g-dev \
+        git ninja-build pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/toolchain
+
+# 1) binutils for aarch64-elf.
+RUN curl -fsSL "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz" \
+        | tar xJ \
+    && mkdir build-binutils && cd build-binutils \
+    && ../binutils-${BINUTILS_VERSION}/configure \
+        --target=aarch64-elf --prefix="${PREFIX}" \
+        --disable-nls --disable-werror --with-gnu-as --with-gnu-ld \
+    && make -j${JOBS} && make install
+
+# 2) Combined gcc + newlib + libstdc++ tree (the canonical newlib cross build):
+#    symlink newlib's source dirs into the gcc tree so one `make` builds the C
+#    and C++ compilers, newlib (our syscalls override it later), libgcc, and a
+#    newlib-targeted libstdc++ with POSIX threads.
+RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz" | tar xJ \
+    && curl -fsSL "https://sourceware.org/pub/newlib/newlib-${NEWLIB_VERSION}.tar.gz" | tar xz \
+    && ( cd "gcc-${GCC_VERSION}" && ./contrib/download_prerequisites ) \
+    && ln -s "../newlib-${NEWLIB_VERSION}/newlib"  "gcc-${GCC_VERSION}/newlib" \
+    && ln -s "../newlib-${NEWLIB_VERSION}/libgloss" "gcc-${GCC_VERSION}/libgloss" \
+    && mkdir build-gcc && cd build-gcc \
+    && ../gcc-${GCC_VERSION}/configure \
+        --target=aarch64-elf --prefix="${PREFIX}" \
+        --enable-languages=c,c++ --with-newlib \
+        --enable-threads=posix \
+        --disable-shared --disable-libssp --disable-libstdcxx-pch \
+        --disable-nls --disable-libgomp --disable-libquadmath \
+        --with-gnu-as --with-gnu-ld \
+    && make -j${JOBS} all-gcc all-target-libgcc all-target-newlib all-target-libstdc++-v3 \
+    && make install-gcc install-target-libgcc install-target-newlib install-target-libstdc++-v3 \
+    && cd / && rm -rf /tmp/toolchain
+
+# Sanity: the cross g++ must carry libstdc++ and accept -pthread.
+RUN aarch64-elf-g++ -print-file-name=libstdc++.a \
+    && printf '#include <vector>\n#include <thread>\nint main(){std::vector<int> v;v.push_back(1);return v.size()-1;}\n' \
+        | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti -pthread -x c++ - -c -o /tmp/t.o \
+    && echo "toolchain OK: libstdc++ + threads"
+
+WORKDIR /src
+# Repo is bind-mounted at /src by scripts/build-node-docker.sh; the container's
+# sysroot/toolchain lives at $PREFIX (not under the repo), so the Node build
+# uses NODE_CC/NODE_CXX pointing at $PREFIX/bin and host=native gcc.
+CMD ["/bin/bash"]

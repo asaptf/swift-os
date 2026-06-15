@@ -6115,3 +6115,46 @@ the final link. The long multi-hour, multi-milestone haul; the groundwork
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM35b - full Node build attempt: build-driver mechanics + two macOS-host walls (IN PROGRESS, 2026-06-15)
+
+First real `make` of Node under the masquerade (on branch `node-v8-build`).
+Established the build-driver mechanics and hit two substantial environment walls.
+
+**Mechanics established (work):**
+- gyp generates `out/` and the build runs. The masquerade target compiler
+  (`sysroot/bin/aarch64-elf-{gcc,g++}`) is set via `CC`/`CXX` at configure; the
+  **host** toolset (Torque, js2c, the snapshot host tools — must run on macOS)
+  needs `CC_host=cc CXX_host=c++` or it wrongly uses the cross compiler and dies
+  on `-pthread`.
+- **Target-only flag injection works:** `make CFLAGS="…" CXXFLAGS="…"` is routed
+  by gyp-make to the *target* toolset only (host uses `CFLAGS_host`), confirmed —
+  our `-isystem userland/node-compat -isystem userland/compat` + the `-D` knobs
+  appear on target compiles and NOT on host ones. So no common.gypi patch needed.
+- Configured with `--without-snapshot --without-node-snapshot
+  --without-node-code-cache --without-inspector --without-intl` to shrink the
+  first build (no ICU, no inspector, snapshotless V8 — pairs with `--v8-lite-mode`).
+
+**Two walls (both point away from a macOS build host):**
+1. **Host tools build libuv as Linux on macOS.** Node still builds a host libuv
+   (`obj.host/libuv`) even with snapshots off; under `OS=="linux"` gyp picks
+   `deps/uv/src/unix/linux.c` for *both* toolsets, so host `cc` (macOS clang)
+   tries to compile the Linux backend and fails on `netpacket/packet.h` /
+   `syscall.h`. gyp uses a single `OS` for source selection across toolsets, so a
+   macOS host can't produce the Linux-shaped host tools.
+2. **Toolchain has no threads.** `scripts/build-cxx-toolchain.sh` built GCC
+   `--disable-threads`, so the target `aarch64-elf-gcc` rejects `-pthread` (which
+   gyp's linux config adds) — and V8 is heavily threaded, so it needs
+   `--enable-threads=posix` anyway. The toolchain must be rebuilt with threads.
+
+**Recommended pivot (fork for the user).** Cross-building Node *for* Linux *on*
+macOS fights the toolchain at the host-toolset layer. The conventional, far more
+tractable path is to run the Node/V8 build inside a **Linux build environment
+(Docker)** — host=linux builds the host tools natively, target = the SwiftOS
+aarch64 masquerade — which removes the entire host-as-linux class. Independently,
+the cross toolchain should be rebuilt `--enable-threads=posix` (V8 needs threads;
+also fixes `-pthread`). All the SwiftOS-side groundwork (node-compat shims,
+include strategy, libuv port, base/platform) carries over unchanged.
+
+**Acceptance.** `make node-configure-probe` (groundwork still green); full Node
+build deferred pending the build-environment decision.
