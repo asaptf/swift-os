@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <dirent.h>
 #include <pwd.h>
 #include <grp.h>
@@ -208,7 +209,28 @@ ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count) {
     errno = ENOSYS; return -1;
 }
 
-long syscall(long number, ...) { (void)number; errno = ENOSYS; return -1; }
+// Minimal syscall() router. Abseil/V8/libuv call syscall(__NR_*, ...) directly
+// for a few fast paths; route the ones with real SwiftOS backings (mmap/munmap/
+// write) and return -ENOSYS for the rest so callers fall back.
+long syscall(long number, ...) {
+    va_list ap;
+    va_start(ap, number);
+    long a0 = va_arg(ap, long), a1 = va_arg(ap, long), a2 = va_arg(ap, long);
+    long a3 = va_arg(ap, long), a4 = va_arg(ap, long), a5 = va_arg(ap, long);
+    va_end(ap);
+    switch (number) {
+    case __NR_write:
+        return (long)write((int)a0, (const void *)a1, (size_t)a2);
+    case __NR_mmap:
+    case __NR_mmap2:
+        return (long)mmap((void *)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, (off_t)a5);
+    case __NR_munmap:
+        return (long)munmap((void *)a0, (size_t)a1);
+    default:
+        errno = ENOSYS;
+        return -1;
+    }
+}
 
 // SwiftOS does not page user memory, so madvise hints (MADV_DONTNEED/FREE) are
 // accepted as no-ops; the memory simply stays mapped.

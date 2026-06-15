@@ -11,19 +11,37 @@
 
 long syscall(long number, ...);
 
-/* libuv references a few SYS_* numbers directly (e.g. syscall(SYS_gettid)).
- * The values are placeholders: the companion syscall() returns -ENOSYS for all
- * of them, so libuv takes its portable fallback (e.g. uv_os_gettid -> error). */
+#include <linux/unistd.h>   /* __NR_* numbers (routed by node_compat.c syscall) */
+
+/* SYS_* aliases of the __NR_* numbers libuv / V8 / Abseil reference directly.
+ * node_compat.c's syscall() routes mmap/munmap/write to the real functions and
+ * returns -ENOSYS for the rest, so callers fall back. */
 #ifndef SYS_close
 #define SYS_close 57
 #endif
-#ifndef SYS_gettid
-#define SYS_gettid 178
+#ifndef SYS_write
+#define SYS_write __NR_write
 #endif
-/* V8 calls syscall(__NR_gettid); our syscall() returns -ENOSYS so V8's gettid
- * falls back. The value only needs to exist. */
-#ifndef __NR_gettid
-#define __NR_gettid SYS_gettid
+#ifndef SYS_mmap
+#define SYS_mmap __NR_mmap
+#endif
+#ifndef SYS_mmap2
+#define SYS_mmap2 __NR_mmap2
+#endif
+#ifndef SYS_munmap
+#define SYS_munmap __NR_munmap
+#endif
+#ifndef SYS_futex
+#define SYS_futex __NR_futex
+#endif
+#ifndef SYS_getcpu
+#define SYS_getcpu __NR_getcpu
+#endif
+#ifndef SYS_rt_sigprocmask
+#define SYS_rt_sigprocmask __NR_rt_sigprocmask
+#endif
+#ifndef SYS_gettid
+#define SYS_gettid __NR_gettid
 #endif
 
 #endif /* _SWOS_NODE_COMPAT_SYS_SYSCALL_H */
