@@ -305,12 +305,59 @@ if [[ "$CXX_OK" -eq 1 ]]; then
     log "NPM33 frontier CONFIRMED: a libstdc++-carrying aarch64-elf toolchain is"
     log "  present ($CXX) and a C++ program (vector/atomic/memory) links to a"
     log "  static AArch64 ELF: $ROOT/build/cxxhello.elf. V8's C++ prerequisite met."
-    log "Next (NPM34+): the V8/Node compile itself (host mksnapshot, GYP is_linux)."
 else
     log ""
     log "NPM33 pending: V8 is BLOCKED on a missing C++ standard library for the"
     log "  target. Build one with scripts/build-cxx-toolchain.sh (rebuilds"
     log "  aarch64-elf-gcc with --enable-languages=c,c++ and a newlib libstdc++)."
+    log "Full configure output: $LOG"
+    exit 0
+fi
+
+# --- NPM35a assert: V8's base/platform layer compiles -----------------------
+# The OS-interface layer of V8 (deps/v8/src/base/platform) is where the Linux
+# header/constant gaps concentrate. With the discovered include strategy
+# (node-compat + compat as -isystem AHEAD of the toolchain's newlib dir -- but
+# NOT -isystem'ing newlib itself, which would break libstdc++'s include_next
+# <stdlib.h>), the V8 base/platform TUs compile against the new toolchain.
+V8="$SRC/deps/v8"
+if [[ -d "$V8/src/base/platform" ]]; then
+    V8_CXXFLAGS=(
+        -std=c++20 -fno-exceptions -fno-rtti -O0 -c
+        -I "$V8" -I "$V8/include" -I "$V8/third_party/abseil-cpp"
+        -isystem "$NODE_COMPAT" -isystem "$COMPAT"
+        -D_GNU_SOURCE -D__linux__
+        -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1
+        -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1
+        -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone
+        -DV8_TARGET_ARCH_ARM64 -DV8_HAVE_TARGET_OS -DV8_TARGET_OS_LINUX
+    )
+    v8_fail=0
+    for rel in src/base/bits.cc src/base/cpu.cc src/base/sys-info.cc \
+               src/base/platform/platform-posix.cc \
+               src/base/platform/platform-posix-time.cc \
+               src/base/platform/condition-variable.cc; do
+        if ! "$CXX" "${V8_CXXFLAGS[@]}" "$V8/$rel" -o "$RUNTIME_DIR/v8_$(basename "$rel").o" \
+                2>"$RUNTIME_DIR/v8_$(basename "$rel").err"; then
+            log "V8 COMPILE FAIL: $rel"
+            grep -oE '(fatal error|error): .*' "$RUNTIME_DIR/v8_$(basename "$rel").err" |
+                sort -u | head -6 >&2 || true
+            v8_fail=$((v8_fail + 1))
+        fi
+    done
+    if [[ "$v8_fail" -eq 0 ]]; then
+        log ""
+        log "NPM35a frontier CONFIRMED: V8's base/platform layer compiles against"
+        log "  the new toolchain + node-compat shims (epoll/madvise/RTLD/__NR_gettid/"
+        log "  pthread_getattr_np/struct-tm). V8 + Abseil C++ is viable; no"
+        log "  fundamental blocker. Next (NPM35b+): wire this include strategy into"
+        log "  Node's V8 gyp cflags and drive the full V8 + Node compile (torque,"
+        log "  host mksnapshot, target objects, link) -- the long multi-hour haul."
+    else
+        log ""
+        log "NPM35a pending: $v8_fail V8 base/platform TU(s) fail to compile; extend"
+        log "  userland/node-compat with the missing constants/shims."
+    fi
 fi
 log "Full configure output: $LOG"
 exit 0

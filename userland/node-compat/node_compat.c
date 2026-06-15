@@ -210,6 +210,28 @@ ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count) {
 
 long syscall(long number, ...) { (void)number; errno = ENOSYS; return -1; }
 
+// SwiftOS does not page user memory, so madvise hints (MADV_DONTNEED/FREE) are
+// accepted as no-ops; the memory simply stays mapped.
+int madvise(void *addr, size_t length, int advice) {
+    (void)addr; (void)length; (void)advice; return 0;
+}
+
+// No ELF auxiliary vector on SwiftOS: report no optional CPU-feature bits, so
+// V8's cpu.cc falls back to the AArch64 baseline.
+unsigned long getauxval(unsigned long type) { (void)type; return 0; }
+
+// V8 reads a thread's stack bounds via pthread_getattr_np. We can't recover the
+// real base, so report a plausible default stack size; the base is left at the
+// attr default. Good enough to compile/run; precise stack-limit detection is a
+// later refinement.
+int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+    (void)thread;
+    if (!attr) { errno = EINVAL; return -1; }
+    if (pthread_attr_init(attr) != 0) return -1;
+    pthread_attr_setstacksize(attr, (size_t)8 * 1024 * 1024);
+    return 0;
+}
+
 int recvmmsg(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags,
              struct timespec *timeout) {
     (void)fd; (void)msgvec; (void)vlen; (void)flags; (void)timeout;

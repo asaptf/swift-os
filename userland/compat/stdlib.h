@@ -7,8 +7,14 @@
 #include_next <stdlib.h>
 #undef itoa
 #undef utoa
+#ifdef __cplusplus
+extern "C" {
+#endif
 int clearenv(void);
 int setenv(const char *, const char *, int);
 int unsetenv(const char *);
 void *memalign(size_t, size_t);
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -5909,3 +5909,41 @@ multi-milestone haul. No fundamental blocker identified; the path is tractable.
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM35a - V8 base/platform layer compiles under the masquerade (DONE, 2026-06-15)
+
+First concrete step of the V8 compile: V8's OS-interface layer
+(`deps/v8/src/base/platform`) — where the Linux header/constant gaps
+concentrate — now compiles against the new C++ toolchain.
+
+- **Include strategy nailed down.** Put `userland/node-compat` then
+  `userland/compat` on the include path with `-isystem` (so node-compat's
+  `#include_next` augmentations of newlib headers take effect), but do NOT
+  `-isystem` the newlib dir itself — the toolchain already places it after the
+  C++ headers, so libstdc++'s `#include_next <stdlib.h>` (from `<cstdlib>`) still
+  resolves. Explicitly `-isystem`-ing newlib was what broke earlier C++ probes.
+- **Shims added to node-compat** for the base/platform gaps: `MADV_*` +
+  `madvise` (sys/mman.h), `RTLD_DEFAULT`/`RTLD_NEXT` (dlfcn.h), `__NR_gettid`
+  (sys/syscall.h), `pthread_getattr_np` (pthread.h), and new `sys/auxv.h` +
+  `linux/auxvec.h` (`getauxval`/`AT_HWCAP`). Implementations in `node_compat.c`:
+  `madvise` no-op, `pthread_getattr_np` reports an 8 MiB default stack,
+  `getauxval` returns 0 (AArch64 baseline, no optional CPU bits).
+- **Two build knobs:** `-D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone` (newlib
+  gates those `struct tm` fields behind these macros; V8 reads them by the
+  standard names); and an `extern "C"` guard added to the shared
+  `userland/compat/stdlib.h` (its `memalign` decl clashed with newlib's C-linkage
+  one in C++ TUs — a latent bug, now fixed harmlessly for C consumers).
+- `make node-configure-probe` now compiles 6 representative V8 base/platform TUs
+  (bits, cpu, sys-info, platform-posix, platform-posix-time, condition-variable —
+  the last pulls in vendored Abseil) and asserts they build. V8 + Abseil C++ is
+  viable; no fundamental blocker.
+
+**Next (NPM35b+).** Wire this include strategy + defines into Node's V8 gyp
+cflags, then drive the full V8 + Node compile: Torque/bytecode generators, the
+host-toolset `mksnapshot` (host clang, bakes the arm64 snapshot), the thousands
+of target TUs (expect more header-shim whack-a-mole outside base/platform), and
+the final link. The long multi-hour, multi-milestone haul; the groundwork
+(toolchain, libuv, include strategy, base/platform) is in place.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.

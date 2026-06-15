@@ -20,5 +20,10 @@ long syscall(long number, ...);
 #ifndef SYS_gettid
 #define SYS_gettid 178
 #endif
+/* V8 calls syscall(__NR_gettid); our syscall() returns -ENOSYS so V8's gettid
+ * falls back. The value only needs to exist. */
+#ifndef __NR_gettid
+#define __NR_gettid SYS_gettid
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_SYS_SYSCALL_H */
