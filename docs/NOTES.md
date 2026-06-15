@@ -5694,3 +5694,43 @@ returning `-ENOSYS`, `dlopen` failing cleanly — and link `libuv.a`.
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM29 - libuv unix layer fully compiles under the masquerade (DONE, 2026-06-15)
+
+Closed the Linux constant/type long-tail so every libuv unix source compiles to
+an object (not just the linux backend from NPM28). Added shims to
+`userland/node-compat`:
+
+- `sched.h`: `cpu_set_t` + `CPU_SETSIZE`/`CPU_ZERO/SET/CLR/ISSET/COUNT` (static
+  inlines) + `sched_get_priority_max/min`.
+- `pthread.h`: `pthread_get/setaffinity_np`, `pthread_get/setschedparam`.
+- `sys/resource.h`: a full BSD `struct rusage` (timeval `ru_utime/ru_stime` +
+  all named counters) reusing compat's include guard so it supersedes compat's
+  minimal rusage for the Node build only (libuv reads `ru_utime.tv_sec` etc.).
+- `sys/socket.h`: `CMSG_FIRSTHDR`/`CMSG_NXTHDR`, `MSG_CMSG_CLOEXEC`,
+  `MSG_ERRQUEUE`, `struct mmsghdr` + `recvmmsg`/`sendmmsg`.
+- `sys/stat.h` (`UTIME_NOW/OMIT`), `sys/ioctl.h` (`FIONBIO`, `TIOCGPTN`, `_IOC`/
+  `_IO`/`_IOR`/`_IOW`/`_IOWR`), `dirent.h` (`scandir`/`alphasort`), `limits.h`
+  (`SSIZE_MAX`), `signal.h` (`SA_RESETHAND`), `sys/sendfile.h` (`sendfile`),
+  `sys/syscall.h` (`SYS_close`/`SYS_gettid`), `linux/errqueue.h`
+  (`struct sock_extended_err`, `SO_EE_OFFENDER`, `SOL_IP`/`IP_RECVERR`/...).
+- `netinet/in.h`: `IPPROTO_IPV6`, IPv4/IPv6 multicast + (source-)membership
+  option constants, `struct ip_mreq`/`ip_mreq_source`/`ipv6_mreq`/
+  `group_source_req`, `extern in6addr_any`.
+- Build also needs `-D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1` (newlib gates
+  `PTHREAD_MUTEX_RECURSIVE`/`ERRORCHECK` on it), added alongside the NPM28 `-D`s.
+
+`make node-configure-probe` now compiles all 34 libuv unix sources to objects and
+asserts zero failures, then enumerates the still-undefined external shim surface:
+`epoll_create1/ctl/pwait`, `inotify_init1/add_watch/rm_watch`, `getifaddrs/
+freeifaddrs`, `sendfile`, `recvmmsg/sendmmsg`, `syscall`, `dlopen/dlsym/dlclose/
+dlerror`. (`in6addr_any` is a data symbol to provide at link too.)
+
+**Next (NPM30).** Implement that shim surface in a node-compat translation unit —
+`epoll_*` emulated over `poll`+`eventfd`; `getifaddrs` from the SwiftOS net stack
+(or empty list); `inotify_*`/`syscall`/`sendfile`/`recvmmsg`/`sendmmsg` returning
+`-ENOSYS` so libuv falls back; `dlopen` family failing cleanly; define
+`in6addr_any` — then link `libuv.a` and advance to the V8 platform glue.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.

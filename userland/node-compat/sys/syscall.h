@@ -11,4 +11,14 @@
 
 long syscall(long number, ...);
 
+/* libuv references a few SYS_* numbers directly (e.g. syscall(SYS_gettid)).
+ * The values are placeholders: the companion syscall() returns -ENOSYS for all
+ * of them, so libuv takes its portable fallback (e.g. uv_os_gettid -> error). */
+#ifndef SYS_close
+#define SYS_close 57
+#endif
+#ifndef SYS_gettid
+#define SYS_gettid 178
+#endif
+
 #endif /* _SWOS_NODE_COMPAT_SYS_SYSCALL_H */

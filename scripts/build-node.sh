@@ -26,10 +26,16 @@
 #           With those shims + `-D__linux__` + the newlib pthread feature-test
 #           macros, linux.c now compiles to an object. SwiftOS has poll/eventfd/
 #           futex but no epoll, so epoll is emulated over poll in the companion
-#           implementation (NPM29+), not shimmed 1:1.
+#           implementation (NPM30), not shimmed 1:1.
+#   NPM29 - Closed the Linux constant/type long-tail in libuv's other unix
+#           sources (cpu_set_t/CPU_* + affinity, CMSG_FIRSTHDR/NXTHDR, sendfile,
+#           errqueue, full struct rusage, UTIME_*, _IOC macros, scandir, IPv4/
+#           IPv6 multicast + source-membership structs, struct mmsghdr) via more
+#           userland/node-compat shims. ALL libuv unix sources now compile to
+#           objects; what remains is the external shim *implementation* (NPM30).
 #
-# This probe asserts the NPM28 frontier: configure must SUCCEED under the linux
-# masquerade AND libuv's linux backend must COMPILE against node-compat.
+# This probe asserts the NPM29 frontier: configure must SUCCEED under the linux
+# masquerade AND every libuv unix source must COMPILE against node-compat.
 #
 # Run via: make node-configure-probe
 #
@@ -125,41 +131,63 @@ if [[ "$CONFIGURE_RC" -ne 0 ]]; then
 fi
 log "configure completed successfully (DEST_OS=$DEST_OS)."
 
-# --- assert the NPM28 frontier: libuv linux-backend header surface ----------
-# The libuv linux backend (deps/uv/src/unix/linux.c) is the file that pulls
-# every Linux-only header (epoll/inotify/ifaddrs/packet/prctl/syscall). With the
-# userland/node-compat shims on the include path ahead of userland/compat, and
-# the newlib pthread feature-test macros + __linux__ set, that file must now
-# compile to an object. This proves the header surface is complete; the
-# remaining work (NPM29+) is the *implementation* of the shim functions and the
-# constant long-tail in libuv's other unix sources.
+# --- assert the NPM29 frontier: all of libuv's unix layer compiles ----------
+# With the userland/node-compat shims on the include path ahead of
+# userland/compat, plus -D__linux__ and the newlib pthread feature-test macros,
+# every libuv unix source (not just the linux backend) must compile to an
+# object. This proves the Linux *header/constant* surface is complete; the
+# remaining work (NPM30) is the *implementation* of the shim functions, after
+# which libuv can link.
 UV="$SRC/deps/uv"
 NODE_COMPAT="$ROOT/userland/node-compat"
-LINUX_BACKEND="$UV/src/unix/linux.c"
-LINUX_OBJ="$ROOT/build/node-uv-linux.o"
-[[ -f "$LINUX_BACKEND" ]] || fail "libuv linux backend not found at $LINUX_BACKEND"
+OBJ_DIR="$ROOT/build/node-uv-obj"
+[[ -d "$UV/src/unix" ]] || fail "libuv source not found at $UV"
+mkdir -p "$OBJ_DIR"
 
 UV_CFLAGS=(
     -I "$UV/include" -I "$UV/src"
     -D_GNU_SOURCE -D__linux__
     -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1
+    -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1
     -isystem "$NODE_COMPAT" -isystem "$COMPAT" -isystem "$SYSROOT/include"
 )
 
-if "$CC" "${UV_CFLAGS[@]}" -c "$LINUX_BACKEND" -o "$LINUX_OBJ" 2>"$ROOT/build/node-uv-linux.err"; then
-    log ""
-    log "NPM28 frontier CONFIRMED: configure succeeds and libuv's linux backend"
-    log "  (src/unix/linux.c) compiles to an object against userland/node-compat."
-    log "  Object: $LINUX_OBJ"
-    log "Next (NPM29+): close the constant long-tail in libuv's other unix sources"
-    log "  (cpu_set_t/CPU_*, CMSG_*, sendfile.h, errqueue.h, rusage fields, ...) and"
-    log "  implement the shim surface: epoll_* over poll/eventfd, getifaddrs,"
-    log "  inotify_* (ENOSYS), prctl, syscall (-ENOSYS), dlopen stubs."
-    log "Full configure output: $LOG"
-    exit 0
+# The unix sources GYP compiles for OS==linux, plus the portable src/*.c core.
+UV_SRCS=(
+    src/unix/async.c src/unix/core.c src/unix/dl.c src/unix/fs.c
+    src/unix/getaddrinfo.c src/unix/getnameinfo.c src/unix/loop-watcher.c
+    src/unix/loop.c src/unix/pipe.c src/unix/poll.c src/unix/process.c
+    src/unix/random-devurandom.c src/unix/random-getrandom.c
+    src/unix/random-sysctl-linux.c src/unix/signal.c src/unix/stream.c
+    src/unix/tcp.c src/unix/thread.c src/unix/tty.c src/unix/udp.c
+    src/unix/linux.c src/unix/procfs-exepath.c src/unix/proctitle.c
+    src/fs-poll.c src/idna.c src/inet.c src/random.c src/strscpy.c
+    src/strtok.c src/threadpool.c src/timer.c src/uv-common.c
+    src/uv-data-getter-setters.c src/version.c
+)
+
+uv_fail=0
+for f in "${UV_SRCS[@]}"; do
+    o="$OBJ_DIR/$(printf '%s' "$f" | tr '/' '_').o"
+    if ! ( cd "$UV" && "$CC" "${UV_CFLAGS[@]}" -c "$f" -o "$o" ) 2>"$o.err"; then
+        log "COMPILE FAIL: $f"
+        grep -E 'error:' "$o.err" | sed -E 's/.*error: //' | sort -u | head -8 >&2 || true
+        uv_fail=$((uv_fail + 1))
+    fi
+done
+
+if [[ "$uv_fail" -ne 0 ]]; then
+    fail "$uv_fail libuv source(s) failed to compile against node-compat; extend userland/node-compat."
 fi
 
-log "libuv linux backend FAILED to compile against node-compat:"
-log "--- errors ---"
-grep -E 'error:' "$ROOT/build/node-uv-linux.err" | sed -E 's/.*error: //' | sort -u | head -20 >&2 || true
-fail "node-compat header surface incomplete; linux.c no longer compiles. Restore/extend userland/node-compat."
+# Enumerate the still-undefined external shim functions (the NPM30 surface).
+SHIM_RE='^(epoll_(create1|ctl|wait|pwait)|inotify_(init1|add_watch|rm_watch)|getifaddrs|freeifaddrs|prctl|syscall|sendfile|recvmmsg|sendmmsg|dlopen|dlsym|dlclose|dlerror)$'
+SHIMS="$(aarch64-elf-nm "$OBJ_DIR"/*.o 2>/dev/null | awk '$1=="U"{print $2}' | sort -u | grep -E "$SHIM_RE" || true)"
+
+log ""
+log "NPM29 frontier CONFIRMED: configure succeeds and ALL libuv unix sources"
+log "  (${#UV_SRCS[@]} files) compile to objects against userland/node-compat."
+log "Remaining shim surface to implement (NPM30) before libuv links:"
+printf '  %s\n' $SHIMS
+log "Full configure output: $LOG"
+exit 0
