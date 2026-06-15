@@ -82,8 +82,15 @@ TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__
 # Build the `node` gyp target specifically: it pulls in the V8/libuv/OpenSSL
 # *libraries* it needs but skips unrelated target executables (e.g. openssl-cli)
 # that we don't ship and that would just hit the freestanding-link issues early.
-echo "--- make -j${JOBS} node ---"
-CFLAGS="$TF" CXXFLAGS="$TF" make -j"${JOBS}" -C out/Release node V=1 BUILDTYPE=Release
+# Phase 1: compile everything (-k keeps going past the target-executable LINK
+# failures, which need the freestanding crt0/syscalls/linker-script integration
+# handled separately) so all V8/Node *objects* and static libs get built and any
+# remaining compile-time shim gaps surface in one pass.
+echo "--- make -k -j${JOBS} (compile-all; exe links deferred) ---"
+CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${JOBS}" -C out BUILDTYPE=Release || true
+echo "--- objects/libs built: ---"
+find out/Release/obj.target -name '*.o' | wc -l
+ls -la out/Release/obj.target/*/*.a 2>/dev/null | awk '{print $5, $9}' | head -20
 
 echo "--- result ---"
 ls -la out/Release/node && file out/Release/node || true
