@@ -5563,3 +5563,47 @@ it into the replacement image.
 **Acceptance.** `make uvenv-test`, `make docs-test`,
 `make ports-catalog-test`, `make uvspawn-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM26 - first Node.js cross-build attempt / configure frontier (DONE, 2026-06-15)
+
+The NPM1–NPM25 probes individually validated every libuv/newlib primitive the
+catalog lists under the Node.js "full libuv thread audit" blocker. The next step
+in discharging that blocker is to actually drive Node's own build and record the
+first concrete wall, rather than add more isolated probes. This milestone stands
+up the real build driver and asserts the current frontier.
+
+- New `scripts/build-node.sh` is the growing cross-build entry point for
+  `ports/lang/nodejs`. It reads the pinned source URL + sha256 directly from
+  `Port.json` (so script and recipe cannot drift), fetches and verifies the
+  Node 24.16.0 distfile, extracts it, and runs upstream `configure.py` with the
+  exact argument vector recorded in the recipe (`--dest-cpu=arm64
+  --dest-os=swiftos --cross-compiling --fully-static --without-dtrace
+  --without-etw --without-npm --without-corepack --v8-lite-mode`).
+- New `make node-configure-probe` runs the driver. The distfile sha256
+  (`f511d32e3876cb54fa6ddccaa8dd46649ae6ebe9e499c57531c5ca56e7ad4548`) matches
+  the recipe pin, confirming the scaffolded `Port.json` source is correct.
+- **Frontier found.** Vanilla `configure.py` rejects `--dest-os=swiftos`:
+  `swiftos` is not in its fixed `valid_os` tuple (`win, mac, solaris, freebsd,
+  openbsd, linux, android, aix, cloudabi, os400, ios, openharmony`). Splicing
+  `swiftos` into that tuple by hand only exposes the wall immediately behind it:
+  GYP fails because no `swiftos` flavor exists across GYP, libuv (`deps/uv`), and
+  V8 (`deps/v8`). Each selects platform backends by OS name (libuv linux=epoll,
+  bsd=kqueue, sunos=event ports; there is no generic POSIX event backend), so a
+  `swiftos` target requires a deliberate platform port across all three trees.
+  The recipe's `--dest-os=swiftos` is therefore aspirational; the catalog's
+  "full libuv thread audit" blocker resolves into a concrete **platform-port
+  series** (configure flavor → GYP flavor → libuv backend → V8 platform), not a
+  single switch.
+- The probe asserts this state: `build-node.sh` treats "configure rejects
+  swiftos at the `valid_os` wall" as a PASS, and fails loudly if configure ever
+  succeeds or fails elsewhere (frontier moved → recipe needs advancing). This
+  keeps the build driver honest as later milestones clear each wall.
+
+**Next (NPM27).** Decide the platform strategy — add a first-class `swiftos`
+flavor to configure.py + GYP and a libuv backend that uses our `poll`-based
+event path (we have `poll`, `eventfd`, futex; no `epoll`), versus masquerading
+as `linux` and shimming. Then re-run `make node-configure-probe` to advance the
+frontier to the next wall (expected: GYP/libuv backend selection).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
