@@ -44,7 +44,8 @@ struct epoll_reg {
 };
 
 struct epoll_inst {
-    int               backing_fd;   /* real eventfd; -1 means slot free */
+    int               used;         /* 0 (BSS default) means slot free */
+    int               backing_fd;   /* real eventfd backing this epoll */
     struct epoll_reg *regs;
     int               count;
     int               cap;
@@ -54,8 +55,9 @@ struct epoll_inst {
 static struct epoll_inst epoll_table[EPOLL_MAX_INST];
 
 static struct epoll_inst *epoll_find(int epfd) {
+    if (epfd < 0) return NULL;
     for (int i = 0; i < EPOLL_MAX_INST; i++)
-        if (epoll_table[i].backing_fd == epfd && epfd >= 0)
+        if (epoll_table[i].used && epoll_table[i].backing_fd == epfd)
             return &epoll_table[i];
     return NULL;
 }
@@ -64,13 +66,14 @@ int epoll_create1(int flags) {
     (void)flags;
     int slot = -1;
     for (int i = 0; i < EPOLL_MAX_INST; i++) {
-        if (epoll_table[i].backing_fd < 0) { slot = i; break; }
+        if (!epoll_table[i].used) { slot = i; break; }
     }
     if (slot < 0) { errno = EMFILE; return -1; }
 
     int fd = eventfd(0, 0);
     if (fd < 0) return -1;            /* errno set by eventfd */
 
+    epoll_table[slot].used = 1;
     epoll_table[slot].backing_fd = fd;
     epoll_table[slot].regs = NULL;
     epoll_table[slot].count = 0;

@@ -1045,6 +1045,7 @@ diagnostic fixtures than stable application interfaces.
 | `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
+| `epollprobe` | `epollprobe` | Exercise the node-compat epoll-over-poll emulation (create/ctl/wait/del) used by the Node.js/libuv masquerade. | `tests/epoll_test.sh` |
 | `uvsemprobe` | `uvsemprobe` | Exercise C/newlib POSIX semaphores used by libuv's Unix semaphore wrappers. | `tests/uvsem_test.sh` |
 | `uvrwlockprobe` | `uvrwlockprobe` | Exercise C/newlib pthread read/write locks used by libuv's Unix rwlock wrappers. | `tests/uvrwlock_test.sh` |
 | `uvmutexprobe` | `uvmutexprobe` | Exercise C/newlib mutex types used by libuv's Unix mutex wrappers. | `tests/uvmutex_test.sh` |
@@ -1429,6 +1430,7 @@ are not the primary operator interface.
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
+| `epollprobe` | node-compat epoll emulation over poll/eventfd (`epoll_create1`/`epoll_ctl`/`epoll_wait`), the SwiftOS backend for libuv's linux event loop. | Yes, when validating the Node.js/libuv epoll masquerade. | `tests/epoll_test.sh` |
 | `uvsemprobe` | newlib compat POSIX semaphore init, try/wait/timedwait/post, cross-thread wake, counting, and overflow behavior, matching libuv's Unix semaphore wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvsem_test.sh` |
 | `uvrwlockprobe` | newlib compat pthread read/write lock init, writer exclusion, concurrent readers, and blocked-writer wake behavior, matching libuv's Unix rwlock wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvrwlock_test.sh` |
 | `uvmutexprobe` | newlib compat `PTHREAD_MUTEX_ERRORCHECK` and `PTHREAD_MUTEX_RECURSIVE`, matching libuv's Unix mutex wrappers. | Yes, when validating C runtime libuv thread compatibility. | `tests/uvmutex_test.sh` |

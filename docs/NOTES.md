@@ -5774,3 +5774,34 @@ the largest remaining wall).
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM31 - epoll-over-poll emulation runs in QEMU (DONE, 2026-06-15)
+
+NPM30 proved libuv *links*; this proves the SwiftOS-authored epoll emulation
+*runs*. Rather than drag the whole Node distfile + 1 MB uvhello.elf into the base
+image, a self-contained probe links the same `node_compat.c` epoll translation
+unit and exercises the API on hardware (QEMU).
+
+- New `userland/epollprobe.c` (`/bin/epollprobe`): `epoll_create1` →
+  `epoll_ctl(ADD)` an eventfd for `EPOLLIN` → assert a 50 ms wait times out with
+  zero events → `write()` the eventfd → assert `epoll_wait` returns exactly one
+  event carrying the right `data.fd` and `EPOLLIN` → drain, `epoll_ctl(DEL)`, and
+  assert no further events. It links `node_compat.o` (the NPM30 epoll-over-poll
+  implementation) via a new `NODE_COMPAT_CFLAGS` (node-compat shims + the
+  masquerade `-D`s) and is wired into the base image like the other NPM probes.
+- **Runtime bug found and fixed:** the static `epoll_table` lives in BSS
+  (zero-initialised), but free-slot detection used `backing_fd < 0`; since 0 is a
+  valid fd, every slot looked occupied and `epoll_create1` returned `EMFILE`.
+  Added an explicit `used` flag (0 = free, the BSS default). Known first-pass
+  limitation: instances are not reclaimed when libuv `close()`s the backend fd
+  (no epoll_close hook); 16 concurrent instances is ample for current use.
+- `make epoll-test` boots the base image and asserts the markers
+  `epollprobe: idle timeout OK`, `epollprobe: readable event OK`,
+  `epollprobe: ctl del OK`, `EPOLLPROBE-OK`.
+
+**Next (NPM32+).** The V8 platform build under the masquerade — host-toolset
+`mksnapshot` cross-build, V8's GN/gyp platform assumptions, and the C++ newlib
+gap surface. The largest remaining wall.
+
+**Acceptance.** `make epoll-test`, `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
