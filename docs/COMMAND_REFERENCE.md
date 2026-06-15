@@ -1062,6 +1062,8 @@ diagnostic fixtures than stable application interfaces.
 | `uvatforkprobe` | `uvatforkprobe` | Exercise C/newlib `pthread_atfork` ordering used by libuv fork reinitialization paths. | `tests/uvatfork_test.sh` |
 | `uvspawnprobe` | `uvspawnprobe` | Exercise C/newlib fork/exec process-spawn behavior used by libuv's Unix `uv_spawn` path. | `tests/uvspawn_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
+| `ptyprobe` | `ptyprobe` | Exercise the pseudo-terminal line discipline end to end: canonical line assembly, echo, ONLCR output, backspace editing, and EOF on master close. | `tests/pty_test.sh` |
+| `ptysigprobe` | `ptysigprobe` | Exercise PTY job-control SIGINT: Ctrl-C on the master delivers SIGINT to the foreground process under both default disposition and an installed handler. | `tests/ptysig_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |

@@ -275,6 +275,8 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 81 | `pkg_remove` | `name` | 0 or negative error |
 | 82 | `log_stats` | `buf`, `cap` | 0 or negative error |
 | 83 | `netinfo` | `buffer`, `capacity` | 0 or negative error |
+| 84 | `openpty` | `master*`, `slave*` | 0 or negative error |
+| 85 | `pty_set_foreground` | `fd`, `pid` | 0 or negative error |
 
 Notes:
 
@@ -290,6 +292,10 @@ Notes:
   flags.
 - `netinfo` is a read-only network status snapshot for deploy preflight tools.
   It is still gated by `capNet`.
+- `openpty` allocates a pseudo-terminal pair and writes the master and slave fds
+  to the caller-supplied pointers. `pty_set_foreground` names the foreground
+  process (target of tty-generated signals such as Ctrl-C) for the PTY referenced
+  by either end; a `pid` of 0 clears it.
 
 ## Filesystem API
 
@@ -1288,6 +1294,8 @@ int swiftos_pipe(int fds[2]);
 
 ```c
 int swiftos_open(const char *path, int flags);
+long swiftos_lseek(int fd, long offset, int whence);
+int swiftos_ftruncate(int fd, long length);
 long swiftos_getcwd(char *buf, unsigned long size);
 long swiftos_getdents(int fd, void *buf, unsigned long count);
 int swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
@@ -1350,8 +1358,17 @@ long swiftos_random(void *buf, unsigned long count);
 int swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 int swiftos_exec_shell(const char *path);
+int swiftos_pty_spawn_shell(const char *path, int slave_fd);
+int swiftos_waitpid(int pid, int *status);
 long swiftos_getpid(void);
 ```
+
+`swiftos_pty_spawn_shell` forks and execs an interactive shell with `slave_fd`
+wired to the child's stdin/stdout/stderr (all other fds closed). It returns the
+child pid in the parent, or a negative value on fork error, and never returns in
+the child. `swiftos_waitpid` waits for `pid` to exit and writes the wait-encoded
+status to `*status` (the exit code is `(status >> 8) & 0xff`); it returns the
+pid, or a negative value on error.
 
 ### System And Process Stats
 
@@ -1402,9 +1419,17 @@ void swiftos_nanosleep(unsigned long sec, unsigned long nsec);
 ### Terminal
 
 ```c
+int  swiftos_openpty(int *master, int *slave);
+int  swiftos_pty_set_foreground(int fd, int pid);
 void swiftos_set_echo(int on);
 void swiftos_set_raw(int on);
 ```
+
+`swiftos_openpty` allocates a pseudo-terminal pair, writing the master fd to
+`*master` and the slave fd to `*slave`; it returns 0 on success, else a negative
+value. `swiftos_pty_set_foreground` sets the foreground process (target of
+tty-generated signals such as Ctrl-C) for the PTY referenced by `fd` (either
+end); a `pid` of 0 clears it.
 
 ### Memory
 
