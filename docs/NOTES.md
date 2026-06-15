@@ -5838,3 +5838,35 @@ a C++ stdlib exists.
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM33 - C++ standard library for aarch64-elf+newlib (V8 prerequisite) (DONE, 2026-06-15)
+
+Cleared the NPM32 blocker by giving the target a C++ runtime. New
+`scripts/build-cxx-toolchain.sh` rebuilds GCC from source — matching the
+Homebrew version (16.1.0) — with `--enable-languages=c,c++ --with-newlib`,
+building **libstdc++ against the newlib already in `./sysroot`**, and installs
+the c/c++ compilers + libstdc++ into the same `./sysroot` prefix (gitignored,
+like the newlib sysroot). After it runs, `sysroot/bin/aarch64-elf-g++` exists
+with `sysroot/aarch64-elf/lib/libstdc++.a`.
+
+- **Two issues found and folded into the script:**
+  - The installed driver looked for its assembler/linker in
+    `$prefix/aarch64-elf/bin` but binutils live in the Homebrew prefix, so it
+    fell back to the host `as` and miscompiled target assembly. The script now
+    symlinks `aarch64-elf-{as,ld,ar,nm,ranlib,strip,objcopy,objdump}` into
+    `sysroot/aarch64-elf/bin`.
+  - Linking any C++ program pulled an undefined `_getentropy` from libstdc++
+    (std::random_device). Added a `_getentropy` syscall stub to
+    `userland/lib/newlib_syscalls.c` backed by `SYS_RANDOM` (virtio-rng).
+- **Validated:** a C++ program using `std::vector`/`std::atomic`/`std::unique_ptr`
+  compiles (hosted, `-fno-exceptions -fno-rtti`; libstdc++ rejects `-ffreestanding`)
+  and statically links to an AArch64 ELF (`build/cxxhello.elf`) with no undefined
+  symbols. `build-node.sh` now prefers this toolchain for both CC and CXX and
+  ends with an NPM33 assert that compiles+links that C++ program.
+
+**Next (NPM34+).** The V8/Node compile itself: host-toolset `mksnapshot`
+cross-build, V8's GYP platform assumptions (`is_linux`), and any remaining C++
+newlib gaps surfaced at compile/link. The largest remaining wall.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.

@@ -44,8 +44,10 @@
 #           archives to libuv.a and links a minimal uv program into a static
 #           AArch64 ELF with no undefined symbols.
 #
-# This probe asserts the NPM30 frontier: configure SUCCEEDS, every libuv unix
-# source COMPILES, and libuv LINKS into a static AArch64 ELF (uvhello.elf).
+# This probe asserts the frontier through NPM33: configure SUCCEEDS, every libuv
+# unix source COMPILES, libuv LINKS into a static AArch64 ELF (uvhello.elf), and
+# (NPM33) a C++ program links against the libstdc++-carrying toolchain built by
+# scripts/build-cxx-toolchain.sh -- V8's C++ prerequisite.
 #
 # Run via: make node-configure-probe
 #
@@ -61,8 +63,15 @@ WORK="$ROOT/build/node-port-work"
 SRC="$WORK/node-v${VERSION}"
 TARBALL="$DISTFILES/node-v${VERSION}.tar.gz"
 LOG="$ROOT/build/node-configure.log"
-CC="${NODE_CC:-aarch64-elf-gcc}"
-CXX="${NODE_CXX:-aarch64-elf-g++}"
+# Prefer the C++-capable toolchain built by scripts/build-cxx-toolchain.sh (it
+# carries libstdc++, which V8 needs); fall back to the bare-metal Homebrew gcc.
+if [[ -x "$ROOT/sysroot/bin/aarch64-elf-g++" ]]; then
+    CC="${NODE_CC:-$ROOT/sysroot/bin/aarch64-elf-gcc}"
+    CXX="${NODE_CXX:-$ROOT/sysroot/bin/aarch64-elf-g++}"
+else
+    CC="${NODE_CC:-aarch64-elf-gcc}"
+    CXX="${NODE_CXX:-aarch64-elf-g++}"
+fi
 # First-pass platform strategy (NPM27): build as if targeting linux and close
 # the gaps in newlib/compat, rather than porting a first-class swiftos platform.
 DEST_OS="${NODE_DEST_OS:-linux}"
@@ -257,29 +266,51 @@ log "  archives to libuv.a and links a minimal uv program into a static AArch64"
 log "  ELF with no undefined symbols: $UVHELLO_ELF"
 log "Runtime: epoll-over-poll is exercised in QEMU by 'make epoll-test' (NPM31)."
 
-# --- NPM32 recon: the V8 prerequisite wall (C++ standard library) -----------
+# --- NPM32 recon / NPM33 assert: the V8 C++ prerequisite --------------------
 # V8 is overwhelmingly C++ and needs a C++ standard library for the target even
 # with -fno-exceptions/-fno-rtti (std::vector, <atomic>, operator new, ...). The
-# bare-metal aarch64-elf GCC ships none. Assert that wall so the V8 phase starts
-# from a known prerequisite, not a surprise mid-build.
-CXX_VIABLE=0
-if printf '#include <vector>\nint main(){ std::vector<int> v; v.push_back(1); return v.size()-1; }\n' |
-    "$CXX" -fno-exceptions -fno-rtti -isystem "$COMPAT" -isystem "$SYSROOT/include" \
-        -x c++ - -c -o /dev/null >/dev/null 2>&1; then
-    CXX_VIABLE=1
+# bare-metal Homebrew aarch64-elf GCC ships none; scripts/build-cxx-toolchain.sh
+# builds a libstdc++-carrying toolchain into ./sysroot. Assert the current state
+# by compiling AND statically linking a small C++ program with libstdc++.
+CXX_TU="$RUNTIME_DIR/cxxprobe.cpp"
+cat > "$CXX_TU" <<'EOF'
+#include <vector>
+#include <atomic>
+#include <memory>
+static std::atomic<int> a{0};
+int main(void) {
+    std::vector<int> v;
+    for (int i = 0; i < 5; i++) v.push_back(i * i);
+    auto p = std::make_unique<int>(0);
+    for (int x : v) *p += x;
+    a.store(*p);
+    return a.load() == 30 ? 0 : 1;
+}
+EOF
+CXX_OK=0
+if [[ -x "$ROOT/sysroot/bin/aarch64-elf-g++" ]] &&
+   "$CXX" -Os -fno-exceptions -fno-rtti -c "$CXX_TU" -o "$RUNTIME_DIR/cxxprobe.o" >/dev/null 2>&1 &&
+   "$CXX" -nostartfiles -nostdlib -static -T "$ROOT/userland/user_newlib.ld" \
+        -Wl,-z,max-page-size=4096 -L "$SYSROOT/lib" \
+        "$RUNTIME_DIR/crt0.o" "$RUNTIME_DIR/cxxprobe.o" "$RUNTIME_DIR/syscalls.o" \
+        "$RUNTIME_DIR/compat_stubs.o" \
+        -Wl,--start-group -lstdc++ -lc -lm -lgcc -Wl,--end-group \
+        -o "$ROOT/build/cxxhello.elf" >/dev/null 2>&1 &&
+   [[ -z "$(aarch64-elf-nm -u "$ROOT/build/cxxhello.elf" 2>/dev/null)" ]]; then
+    CXX_OK=1
 fi
 
-if [[ "$CXX_VIABLE" -eq 0 ]]; then
+if [[ "$CXX_OK" -eq 1 ]]; then
     log ""
-    log "NPM32 recon: V8 is BLOCKED on a missing C++ standard library for the"
-    log "  target. '$CXX' has no libstdc++/<vector> for aarch64-elf+newlib (it is"
-    log "  a bare-metal toolchain). The V8 phase requires first providing a target"
-    log "  C++ runtime: rebuild aarch64-elf-gcc with --enable-languages=c,c++ and"
-    log "  a newlib-targeted libstdc++ (as arm-none-eabi ships), or port libc++."
+    log "NPM33 frontier CONFIRMED: a libstdc++-carrying aarch64-elf toolchain is"
+    log "  present ($CXX) and a C++ program (vector/atomic/memory) links to a"
+    log "  static AArch64 ELF: $ROOT/build/cxxhello.elf. V8's C++ prerequisite met."
+    log "Next (NPM34+): the V8/Node compile itself (host mksnapshot, GYP is_linux)."
 else
     log ""
-    log "NPM32 recon: target C++ stdlib is available -- the V8 build can proceed;"
-    log "  advance build-node.sh into the V8/Node compile (host mksnapshot first)."
+    log "NPM33 pending: V8 is BLOCKED on a missing C++ standard library for the"
+    log "  target. Build one with scripts/build-cxx-toolchain.sh (rebuilds"
+    log "  aarch64-elf-gcc with --enable-languages=c,c++ and a newlib libstdc++)."
 fi
 log "Full configure output: $LOG"
 exit 0
