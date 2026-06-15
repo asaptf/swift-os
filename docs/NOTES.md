@@ -5684,3 +5684,387 @@ it into the replacement image.
 **Acceptance.** `make uvenv-test`, `make docs-test`,
 `make ports-catalog-test`, `make uvspawn-test`, `./tests/boot_test.sh`, and
 `SMP_CPUS=4 SMP_DTB=build/virt-smp4.dtb ./tests/smp_boot_test.sh`.
+
+### NPM26 - first Node.js cross-build attempt / configure frontier (DONE, 2026-06-15)
+
+The NPM1–NPM25 probes individually validated every libuv/newlib primitive the
+catalog lists under the Node.js "full libuv thread audit" blocker. The next step
+in discharging that blocker is to actually drive Node's own build and record the
+first concrete wall, rather than add more isolated probes. This milestone stands
+up the real build driver and asserts the current frontier.
+
+- New `scripts/build-node.sh` is the growing cross-build entry point for
+  `ports/lang/nodejs`. It reads the pinned source URL + sha256 directly from
+  `Port.json` (so script and recipe cannot drift), fetches and verifies the
+  Node 24.16.0 distfile, extracts it, and runs upstream `configure.py` with the
+  exact argument vector recorded in the recipe (`--dest-cpu=arm64
+  --dest-os=swiftos --cross-compiling --fully-static --without-dtrace
+  --without-etw --without-npm --without-corepack --v8-lite-mode`).
+- New `make node-configure-probe` runs the driver. The distfile sha256
+  (`f511d32e3876cb54fa6ddccaa8dd46649ae6ebe9e499c57531c5ca56e7ad4548`) matches
+  the recipe pin, confirming the scaffolded `Port.json` source is correct.
+- **Frontier found.** Vanilla `configure.py` rejects `--dest-os=swiftos`:
+  `swiftos` is not in its fixed `valid_os` tuple (`win, mac, solaris, freebsd,
+  openbsd, linux, android, aix, cloudabi, os400, ios, openharmony`). Splicing
+  `swiftos` into that tuple by hand only exposes the wall immediately behind it:
+  GYP fails because no `swiftos` flavor exists across GYP, libuv (`deps/uv`), and
+  V8 (`deps/v8`). Each selects platform backends by OS name (libuv linux=epoll,
+  bsd=kqueue, sunos=event ports; there is no generic POSIX event backend), so a
+  `swiftos` target requires a deliberate platform port across all three trees.
+  The recipe's `--dest-os=swiftos` is therefore aspirational; the catalog's
+  "full libuv thread audit" blocker resolves into a concrete **platform-port
+  series** (configure flavor → GYP flavor → libuv backend → V8 platform), not a
+  single switch.
+- The probe asserts this state: `build-node.sh` treats "configure rejects
+  swiftos at the `valid_os` wall" as a PASS, and fails loudly if configure ever
+  succeeds or fails elsewhere (frontier moved → recipe needs advancing). This
+  keeps the build driver honest as later milestones clear each wall.
+
+**Next (NPM27).** Decide the platform strategy — add a first-class `swiftos`
+flavor to configure.py + GYP and a libuv backend that uses our `poll`-based
+event path (we have `poll`, `eventfd`, futex; no `epoll`), versus masquerading
+as `linux` and shimming. Then re-run `make node-configure-probe` to advance the
+frontier to the next wall (expected: GYP/libuv backend selection).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
+
+### NPM27 - Node configure passes via linux masquerade; libuv backend wall (DONE, 2026-06-15)
+
+Strategy decision for the platform wall found in NPM26: for the first build pass,
+**masquerade as `linux`** and close the resulting gaps in newlib/compat, rather
+than standing up a first-class `swiftos` platform across configure + GYP + libuv
++ V8 (deferred — that is the larger, cleaner long-term port). Two findings
+unblocked configure:
+
+- **Recipe carried dead flags.** `ports/lang/nodejs/Port.json` passed
+  `--without-dtrace` and `--without-etw`, which Node 24.16's `configure.py` no
+  longer defines. configure forwards unknown args to GYP, so GYP aborted with
+  `gyp: --without-etw not found while trying to load --without-etw`. Both flags
+  are removed from the recipe; `--without-npm`, `--without-corepack`,
+  `--fully-static`, and `--v8-lite-mode` remain valid.
+- **Masquerade works at configure time.** With `--dest-os=linux --dest-cpu=arm64
+  --cross-compiling --fully-static --v8-lite-mode` (CC=aarch64-elf-gcc,
+  CXX=aarch64-elf-g++), `configure.py` now reports `configure completed
+  successfully`. The recipe args and `build-node.sh` were updated to this set;
+  `build-node.sh` maps the eventual swiftos target to `NODE_DEST_OS` (default
+  `linux`).
+- **Frontier moved into the build.** libuv's linux backend
+  (`deps/uv/src/unix/linux.c`) hard-includes `<sys/epoll.h>`, `<sys/inotify.h>`,
+  and `<sys/syscall.h>`. The probe compiles a one-line TU per header with the
+  SwiftOS include path and confirms all three are ABSENT — SwiftOS has
+  `poll`/`eventfd`/futex but no `epoll`. So the next wall is libuv's event
+  backend, not configure.
+- `make node-configure-probe` now asserts this state: configure must succeed and
+  the epoll-class headers must be absent; it fails loudly if either changes.
+
+**Next (NPM28).** Steer libuv to its existing `posix-poll.c` backend (which uses
+`poll`, present on SwiftOS) instead of shimming `epoll`, by adjusting the libuv
+GYP backend selection for this target, then advance `build-node.sh` past the
+libuv compile to the next wall (expected: further newlib/compat gaps in libuv
+core or V8 platform glue, and the host-mksnapshot cross-build step).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM28 - libuv linux-backend header surface (DONE, 2026-06-15)
+
+The plan from NPM27 was to steer libuv to its `posix-poll.c` backend, but
+inspection of `deps/uv/uv.gyp` showed the linux backend (`src/unix/linux.c`) is
+monolithic: it bundles the epoll event loop, inotify fs-events, and procfs
+cpu/memory queries. `posix-poll.c` only ships on aix/os400 and supplies just the
+event loop, so swapping to it would drop libuv's cpu/mem/fs functions and create
+a wave of undefined symbols. Decision: keep `OS==linux` and **supply the missing
+Linux headers as shims**, emulating epoll over `poll` (SwiftOS has poll/eventfd/
+futex, no epoll) rather than shimming epoll 1:1.
+
+- **New `userland/node-compat/`** holds the Linux-API shims, deliberately
+  **separate from `userland/compat`** so adding epoll/inotify/etc. cannot change
+  feature detection for the other source ports (nginx, curl, ...) that build
+  against the shared compat layer. `build-node.sh` puts it on the include path
+  ahead of `userland/compat` for the Node build only. Headers added (declarations
+  only; behaviour deferred to the companion implementation): `sys/epoll.h`,
+  `sys/inotify.h`, `ifaddrs.h`, `netpacket/packet.h`, `net/ethernet.h`,
+  `sys/prctl.h`, `sys/syscall.h`, `syscall.h`, `dlfcn.h`, plus `#include_next`
+  shadow headers that add `MAP_POPULATE` (sys/mman.h), `IFF_UP/RUNNING/LOOPBACK`
+  (net/if.h), and `AF_PACKET/PF_PACKET` (sys/socket.h).
+- **Two build-config requirements identified.** libuv keys its loop struct
+  platform fields (epoll fd, inotify watchers, io_uring) on the compiler-defined
+  `__linux__`, which `aarch64-elf-gcc` does not set, so the build must pass
+  `-D__linux__`. newlib gates `pthread_rwlock_t`/`pthread_barrier_t` typedefs on
+  `_POSIX_READER_WRITER_LOCKS`/`_POSIX_BARRIERS` (matching the existing
+  `NEWLIB_COMPAT_CFLAGS`), so those `-D`s are required too.
+- **Result:** with the shims + those `-D`s, `deps/uv/src/unix/linux.c` -- the file
+  carrying every Linux-only dependency -- now compiles to an object. `make
+  node-configure-probe` asserts this (configure succeeds AND linux.c compiles
+  against node-compat); it fails loudly if the surface regresses.
+- **Surface enumerated for NPM29+.** A full sweep of libuv's unix sources to .o
+  shows the remaining work splits cleanly: (a) a constant long-tail in 8 other
+  files (`cpu_set_t`/`CPU_*` + `pthread_*affinity_np` in thread.c, `CMSG_*` in
+  stream.c, `sys/sendfile.h` in fs.c, `linux/errqueue.h` in udp.c, `rusage`
+  fields + `SYS_close/SYS_gettid` + `FIONBIO`/`MSG_CMSG_CLOEXEC` in core.c,
+  `SA_RESETHAND` in signal.c, `TIOCGPTN` in tty.c, `SSIZE_MAX` in strscpy.c);
+  and (b) a 13-function implementation surface: `epoll_create1/epoll_ctl/
+  epoll_pwait`, `getifaddrs/freeifaddrs`, `inotify_init1/add_watch/rm_watch`,
+  `prctl`, `syscall`, `dlopen/dlsym/dlclose/dlerror`.
+
+**Next (NPM29).** Close the constant long-tail so all of libuv's unix layer
+compiles, then (NPM30) implement the 13-function shim — epoll emulated over
+`poll`/`eventfd`, `getifaddrs` from the SwiftOS net stack, inotify/`syscall`
+returning `-ENOSYS`, `dlopen` failing cleanly — and link `libuv.a`.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM29 - libuv unix layer fully compiles under the masquerade (DONE, 2026-06-15)
+
+Closed the Linux constant/type long-tail so every libuv unix source compiles to
+an object (not just the linux backend from NPM28). Added shims to
+`userland/node-compat`:
+
+- `sched.h`: `cpu_set_t` + `CPU_SETSIZE`/`CPU_ZERO/SET/CLR/ISSET/COUNT` (static
+  inlines) + `sched_get_priority_max/min`.
+- `pthread.h`: `pthread_get/setaffinity_np`, `pthread_get/setschedparam`.
+- `sys/resource.h`: a full BSD `struct rusage` (timeval `ru_utime/ru_stime` +
+  all named counters) reusing compat's include guard so it supersedes compat's
+  minimal rusage for the Node build only (libuv reads `ru_utime.tv_sec` etc.).
+- `sys/socket.h`: `CMSG_FIRSTHDR`/`CMSG_NXTHDR`, `MSG_CMSG_CLOEXEC`,
+  `MSG_ERRQUEUE`, `struct mmsghdr` + `recvmmsg`/`sendmmsg`.
+- `sys/stat.h` (`UTIME_NOW/OMIT`), `sys/ioctl.h` (`FIONBIO`, `TIOCGPTN`, `_IOC`/
+  `_IO`/`_IOR`/`_IOW`/`_IOWR`), `dirent.h` (`scandir`/`alphasort`), `limits.h`
+  (`SSIZE_MAX`), `signal.h` (`SA_RESETHAND`), `sys/sendfile.h` (`sendfile`),
+  `sys/syscall.h` (`SYS_close`/`SYS_gettid`), `linux/errqueue.h`
+  (`struct sock_extended_err`, `SO_EE_OFFENDER`, `SOL_IP`/`IP_RECVERR`/...).
+- `netinet/in.h`: `IPPROTO_IPV6`, IPv4/IPv6 multicast + (source-)membership
+  option constants, `struct ip_mreq`/`ip_mreq_source`/`ipv6_mreq`/
+  `group_source_req`, `extern in6addr_any`.
+- Build also needs `-D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1` (newlib gates
+  `PTHREAD_MUTEX_RECURSIVE`/`ERRORCHECK` on it), added alongside the NPM28 `-D`s.
+
+`make node-configure-probe` now compiles all 34 libuv unix sources to objects and
+asserts zero failures, then enumerates the still-undefined external shim surface:
+`epoll_create1/ctl/pwait`, `inotify_init1/add_watch/rm_watch`, `getifaddrs/
+freeifaddrs`, `sendfile`, `recvmmsg/sendmmsg`, `syscall`, `dlopen/dlsym/dlclose/
+dlerror`. (`in6addr_any` is a data symbol to provide at link too.)
+
+**Next (NPM30).** Implement that shim surface in a node-compat translation unit —
+`epoll_*` emulated over `poll`+`eventfd`; `getifaddrs` from the SwiftOS net stack
+(or empty list); `inotify_*`/`syscall`/`sendfile`/`recvmmsg`/`sendmmsg` returning
+`-ENOSYS` so libuv falls back; `dlopen` family failing cleanly; define
+`in6addr_any` — then link `libuv.a` and advance to the V8 platform glue.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM30 - libuv links into a static AArch64 ELF on SwiftOS (DONE, 2026-06-15)
+
+Implemented the shim surface in `userland/node-compat/node_compat.c`, archived
+`libuv.a`, and linked a minimal libuv program — libuv is now usable on SwiftOS
+through the linux masquerade.
+
+- **epoll emulated over poll().** Each `epoll_create1` allocates a real
+  `eventfd` (so the descriptor is unique and libuv's `close()` works) and a
+  dynamic interest list; `epoll_ctl` ADD/MOD/DEL maintains it; `epoll_pwait`
+  builds a `pollfd[]`, calls `poll()`, and translates `revents` back to epoll
+  events with the stored `epoll_data`. SwiftOS has poll/eventfd/futex but no
+  epoll, so this is emulation, not a 1:1 shim. (`sigmask` is ignored — libuv
+  passes NULL; an empty interest list waits via `poll(NULL,0,timeout)`.)
+- **ENOSYS / clean fallbacks** so libuv uses portable paths: inotify (no fs
+  watching), `sendfile`/`recvmmsg`/`sendmmsg` (read/write + recvmsg loops), raw
+  `syscall`, and the `dlopen` family (static-only OS, returns a clear error).
+  `getifaddrs` returns an empty list for now; `in6addr_any` is defined.
+- **POSIX functions newlib lacks**, implemented over what SwiftOS has: `pread`/
+  `pwrite` via save/seek/io/restore, `dup3` via `dup2`+`FD_CLOEXEC`, `scandir`
+  via `opendir`/`readdir`+`qsort`, `fdatasync`→0 (tmpfs), `pathconf`→4096; and
+  no-op/ENOSYS for `sched_yield`/`sched_getcpu`/`sched_get_priority_*`,
+  `pthread_get/setaffinity_np` (reports CPU 0), `pthread_get/setschedparam`,
+  `setgroups`, `getpwuid_r`/`getgrgid_r`/`lchown`/`futimens`/`utimensat`.
+- `make node-configure-probe` now runs the full chain: configure (linux
+  masquerade) → compile all 34 libuv unix sources → archive `libuv.a` → link
+  `build/uvhello.elf` (uv_loop_init/uv_run/uv_loop_close + uv_version_string)
+  and assert it is a static AArch64 ELF with **no undefined symbols**.
+
+These shims live in node-compat (isolated from the shared `userland/compat`); a
+few of the generic ones (pread/pwrite/scandir/dup3) could be promoted to the
+shared layer later if other ports need them.
+
+**Next (NPM31).** Run `uvhello.elf` in QEMU to prove the epoll-over-poll event
+loop works at *runtime* (not just links), wired through the base image like the
+other probes. After that, the V8 platform build (host `mksnapshot` cross-build,
+the largest remaining wall).
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`, `make ports-recipe-test`.
+
+### NPM31 - epoll-over-poll emulation runs in QEMU (DONE, 2026-06-15)
+
+NPM30 proved libuv *links*; this proves the SwiftOS-authored epoll emulation
+*runs*. Rather than drag the whole Node distfile + 1 MB uvhello.elf into the base
+image, a self-contained probe links the same `node_compat.c` epoll translation
+unit and exercises the API on hardware (QEMU).
+
+- New `userland/epollprobe.c` (`/bin/epollprobe`): `epoll_create1` →
+  `epoll_ctl(ADD)` an eventfd for `EPOLLIN` → assert a 50 ms wait times out with
+  zero events → `write()` the eventfd → assert `epoll_wait` returns exactly one
+  event carrying the right `data.fd` and `EPOLLIN` → drain, `epoll_ctl(DEL)`, and
+  assert no further events. It links `node_compat.o` (the NPM30 epoll-over-poll
+  implementation) via a new `NODE_COMPAT_CFLAGS` (node-compat shims + the
+  masquerade `-D`s) and is wired into the base image like the other NPM probes.
+- **Runtime bug found and fixed:** the static `epoll_table` lives in BSS
+  (zero-initialised), but free-slot detection used `backing_fd < 0`; since 0 is a
+  valid fd, every slot looked occupied and `epoll_create1` returned `EMFILE`.
+  Added an explicit `used` flag (0 = free, the BSS default). Known first-pass
+  limitation: instances are not reclaimed when libuv `close()`s the backend fd
+  (no epoll_close hook); 16 concurrent instances is ample for current use.
+- `make epoll-test` boots the base image and asserts the markers
+  `epollprobe: idle timeout OK`, `epollprobe: readable event OK`,
+  `epollprobe: ctl del OK`, `EPOLLPROBE-OK`.
+
+**Next (NPM32+).** The V8 platform build under the masquerade — host-toolset
+`mksnapshot` cross-build, V8's GN/gyp platform assumptions, and the C++ newlib
+gap surface. The largest remaining wall.
+
+**Acceptance.** `make epoll-test`, `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
+
+### NPM32 - V8 recon: blocked on a missing target C++ standard library (DONE, 2026-06-15)
+
+Bounded reconnaissance of the V8 build before committing to it. The decisive
+finding came from a single compile probe rather than an hours-long build:
+
+- The `aarch64-elf` GCC toolchain (Homebrew `aarch64-elf-gcc` 16.1.0) is
+  **bare-metal: it ships no libstdc++** — no `<vector>`/`<memory>`/`<atomic>`
+  C++ headers and no `libstdc++.a` for the target (`g++ -print-file-name=
+  libstdc++.a` returns the bare name; the only C++ headers on the machine are
+  the host LLVM libc++ for macOS). Its `#include <...>` search path for C++ is
+  just the GCC builtin C headers.
+- V8 is overwhelmingly C++ and needs a C++ standard library even when built
+  `-fno-exceptions -fno-rtti` (std::vector, std::unique_ptr, `<atomic>`,
+  `<type_traits>`, `operator new/delete`, `__cxa_*` static guards). So **V8 is
+  blocked on a missing C++ runtime for aarch64-elf+newlib** — a prerequisite
+  that sits *before* any GYP/mksnapshot work.
+- `make node-configure-probe` now ends with an NPM32 recon check: it tries to
+  compile `#include <vector>` with the target `g++` and reports the V8 C++-stdlib
+  blocker when (as today) that fails; if a target C++ stdlib is later present it
+  instead says the V8 build can proceed.
+
+**Path forward (the V8 prerequisite, not yet chosen).** Provide a C++ standard
+library for the target: (a) rebuild the cross toolchain with
+`--enable-languages=c,c++` and a newlib-targeted libstdc++ (the well-trodden
+arm-none-eabi approach — those toolchains ship libstdc++ over newlib), or
+(b) cross-build LLVM libc++/libc++abi for aarch64-elf+newlib. Either is a
+sizable sub-project (toolchain/runtime work) that must land before V8 compiles.
+Mksnapshot cross-exec and V8's GYP platform assumptions remain to be probed once
+a C++ stdlib exists.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
+
+### NPM33 - C++ standard library for aarch64-elf+newlib (V8 prerequisite) (DONE, 2026-06-15)
+
+Cleared the NPM32 blocker by giving the target a C++ runtime. New
+`scripts/build-cxx-toolchain.sh` rebuilds GCC from source — matching the
+Homebrew version (16.1.0) — with `--enable-languages=c,c++ --with-newlib`,
+building **libstdc++ against the newlib already in `./sysroot`**, and installs
+the c/c++ compilers + libstdc++ into the same `./sysroot` prefix (gitignored,
+like the newlib sysroot). After it runs, `sysroot/bin/aarch64-elf-g++` exists
+with `sysroot/aarch64-elf/lib/libstdc++.a`.
+
+- **Two issues found and folded into the script:**
+  - The installed driver looked for its assembler/linker in
+    `$prefix/aarch64-elf/bin` but binutils live in the Homebrew prefix, so it
+    fell back to the host `as` and miscompiled target assembly. The script now
+    symlinks `aarch64-elf-{as,ld,ar,nm,ranlib,strip,objcopy,objdump}` into
+    `sysroot/aarch64-elf/bin`.
+  - Linking any C++ program pulled an undefined `_getentropy` from libstdc++
+    (std::random_device). Added a `_getentropy` syscall stub to
+    `userland/lib/newlib_syscalls.c` backed by `SYS_RANDOM` (virtio-rng).
+- **Validated:** a C++ program using `std::vector`/`std::atomic`/`std::unique_ptr`
+  compiles (hosted, `-fno-exceptions -fno-rtti`; libstdc++ rejects `-ffreestanding`)
+  and statically links to an AArch64 ELF (`build/cxxhello.elf`) with no undefined
+  symbols. `build-node.sh` now prefers this toolchain for both CC and CXX and
+  ends with an NPM33 assert that compiles+links that C++ program.
+
+**Next (NPM34+).** The V8/Node compile itself: host-toolset `mksnapshot`
+cross-build, V8's GYP platform assumptions (`is_linux`), and any remaining C++
+newlib gaps surfaced at compile/link. The largest remaining wall.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
+
+### NPM34 - V8 reconnaissance: C++ compiles, no fundamental blocker (DONE, 2026-06-15)
+
+Bounded recon of the V8 compile with the new C++ toolchain, before committing to
+the (hours-long) full build. Probe-compiled representative V8 sources directly
+(`build/v8-probe/`, gitignored) rather than running gyp+make.
+
+- **V8's C++ compiles against the libstdc++/newlib toolchain.** With C++20,
+  `-fno-exceptions -fno-rtti`, V8 include dirs, and `userland/{node-compat,compat}`
+  on the include path, these `deps/v8/src/base` TUs compile clean: `bits.cc`,
+  `division-by-constant.cc`, `cpu.cc`, `platform/condition-variable.cc`,
+  `platform/semaphore.cc`, `utils/random-number-generator.cc`. Notably
+  `condition-variable.cc` pulls in **Abseil** (`deps/v8/third_party/abseil-cpp`,
+  vendored) and still compiles — so V8 + Abseil's C++ is viable here. **No
+  fundamental C++-runtime blocker.**
+- **Remaining gaps are the familiar header-shim class** (same as libuv), seen in
+  `platform-posix.cc`/`platform-posix-time.cc`/`sys-info.cc`: `MADV_DONTNEED`,
+  `PRIO_PROCESS`, `PTHREAD_STACK_MIN`, `RTLD_DEFAULT`, `__NR_gettid`,
+  `struct tm.tm_gmtoff`/`tm_zone`, `RLIMIT_*`/`getrlimit`. Several already exist
+  in node-compat (e.g. sys/resource.h constants).
+- **Include-ordering is the central NPM35 task.** node-compat's value comes from
+  *shadowing* newlib headers (it augments them via `#include_next`), which needs
+  node-compat *ahead* of the system dirs; but putting it ahead with `-isystem`
+  breaks libstdc++'s own `#include_next <stdlib.h>` chain (cstdlib fails to find
+  stdlib.h). `-idirafter` fixes libstdc++ but then the node-compat augmentations
+  aren't picked up where newlib already has a (thinner) header. Reconciling these
+  — per-header shadow vs fallback — is the main work to get V8 compiling, not a
+  toolchain or runtime limitation.
+- **mksnapshot looks feasible:** config.gypi has `host_arch=arm64`,
+  `target_arch=arm64`, so V8's host-toolset mksnapshot (built with the host
+  clang/libc++, not our newlib) can bake an arm64 target snapshot on this host.
+
+**Next (NPM35+).** Wire the node-compat/compat include strategy into Node's V8
+build (gyp cflags), add the remaining base-platform constant shims, then drive
+the actual V8 + Node compile (host mksnapshot, then target objects) — the long
+multi-milestone haul. No fundamental blocker identified; the path is tractable.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
+
+### NPM35a - V8 base/platform layer compiles under the masquerade (DONE, 2026-06-15)
+
+First concrete step of the V8 compile: V8's OS-interface layer
+(`deps/v8/src/base/platform`) — where the Linux header/constant gaps
+concentrate — now compiles against the new C++ toolchain.
+
+- **Include strategy nailed down.** Put `userland/node-compat` then
+  `userland/compat` on the include path with `-isystem` (so node-compat's
+  `#include_next` augmentations of newlib headers take effect), but do NOT
+  `-isystem` the newlib dir itself — the toolchain already places it after the
+  C++ headers, so libstdc++'s `#include_next <stdlib.h>` (from `<cstdlib>`) still
+  resolves. Explicitly `-isystem`-ing newlib was what broke earlier C++ probes.
+- **Shims added to node-compat** for the base/platform gaps: `MADV_*` +
+  `madvise` (sys/mman.h), `RTLD_DEFAULT`/`RTLD_NEXT` (dlfcn.h), `__NR_gettid`
+  (sys/syscall.h), `pthread_getattr_np` (pthread.h), and new `sys/auxv.h` +
+  `linux/auxvec.h` (`getauxval`/`AT_HWCAP`). Implementations in `node_compat.c`:
+  `madvise` no-op, `pthread_getattr_np` reports an 8 MiB default stack,
+  `getauxval` returns 0 (AArch64 baseline, no optional CPU bits).
+- **Two build knobs:** `-D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone` (newlib
+  gates those `struct tm` fields behind these macros; V8 reads them by the
+  standard names); and an `extern "C"` guard added to the shared
+  `userland/compat/stdlib.h` (its `memalign` decl clashed with newlib's C-linkage
+  one in C++ TUs — a latent bug, now fixed harmlessly for C consumers).
+- `make node-configure-probe` now compiles 6 representative V8 base/platform TUs
+  (bits, cpu, sys-info, platform-posix, platform-posix-time, condition-variable —
+  the last pulls in vendored Abseil) and asserts they build. V8 + Abseil C++ is
+  viable; no fundamental blocker.
+
+**Next (NPM35b+).** Wire this include strategy + defines into Node's V8 gyp
+cflags, then drive the full V8 + Node compile: Torque/bytecode generators, the
+host-toolset `mksnapshot` (host clang, bakes the arm64 snapshot), the thousands
+of target TUs (expect more header-shim whack-a-mole outside base/platform), and
+the final link. The long multi-hour, multi-milestone haul; the groundwork
+(toolchain, libuv, include strategy, base/platform) is in place.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
