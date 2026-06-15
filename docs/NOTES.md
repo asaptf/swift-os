@@ -5805,3 +5805,36 @@ gap surface. The largest remaining wall.
 
 **Acceptance.** `make epoll-test`, `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM32 - V8 recon: blocked on a missing target C++ standard library (DONE, 2026-06-15)
+
+Bounded reconnaissance of the V8 build before committing to it. The decisive
+finding came from a single compile probe rather than an hours-long build:
+
+- The `aarch64-elf` GCC toolchain (Homebrew `aarch64-elf-gcc` 16.1.0) is
+  **bare-metal: it ships no libstdc++** — no `<vector>`/`<memory>`/`<atomic>`
+  C++ headers and no `libstdc++.a` for the target (`g++ -print-file-name=
+  libstdc++.a` returns the bare name; the only C++ headers on the machine are
+  the host LLVM libc++ for macOS). Its `#include <...>` search path for C++ is
+  just the GCC builtin C headers.
+- V8 is overwhelmingly C++ and needs a C++ standard library even when built
+  `-fno-exceptions -fno-rtti` (std::vector, std::unique_ptr, `<atomic>`,
+  `<type_traits>`, `operator new/delete`, `__cxa_*` static guards). So **V8 is
+  blocked on a missing C++ runtime for aarch64-elf+newlib** — a prerequisite
+  that sits *before* any GYP/mksnapshot work.
+- `make node-configure-probe` now ends with an NPM32 recon check: it tries to
+  compile `#include <vector>` with the target `g++` and reports the V8 C++-stdlib
+  blocker when (as today) that fails; if a target C++ stdlib is later present it
+  instead says the V8 build can proceed.
+
+**Path forward (the V8 prerequisite, not yet chosen).** Provide a C++ standard
+library for the target: (a) rebuild the cross toolchain with
+`--enable-languages=c,c++` and a newlib-targeted libstdc++ (the well-trodden
+arm-none-eabi approach — those toolchains ship libstdc++ over newlib), or
+(b) cross-build LLVM libc++/libc++abi for aarch64-elf+newlib. Either is a
+sizable sub-project (toolchain/runtime work) that must land before V8 compiles.
+Mksnapshot cross-exec and V8's GYP platform assumptions remain to be probed once
+a C++ stdlib exists.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.

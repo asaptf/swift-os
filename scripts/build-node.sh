@@ -256,6 +256,30 @@ log "NPM30 frontier CONFIRMED: libuv (${#UV_SRCS[@]} sources + node_compat shims
 log "  archives to libuv.a and links a minimal uv program into a static AArch64"
 log "  ELF with no undefined symbols: $UVHELLO_ELF"
 log "Runtime: epoll-over-poll is exercised in QEMU by 'make epoll-test' (NPM31)."
-log "Next (NPM32+): the V8 platform build under the masquerade (host mksnapshot)."
+
+# --- NPM32 recon: the V8 prerequisite wall (C++ standard library) -----------
+# V8 is overwhelmingly C++ and needs a C++ standard library for the target even
+# with -fno-exceptions/-fno-rtti (std::vector, <atomic>, operator new, ...). The
+# bare-metal aarch64-elf GCC ships none. Assert that wall so the V8 phase starts
+# from a known prerequisite, not a surprise mid-build.
+CXX_VIABLE=0
+if printf '#include <vector>\nint main(){ std::vector<int> v; v.push_back(1); return v.size()-1; }\n' |
+    "$CXX" -fno-exceptions -fno-rtti -isystem "$COMPAT" -isystem "$SYSROOT/include" \
+        -x c++ - -c -o /dev/null >/dev/null 2>&1; then
+    CXX_VIABLE=1
+fi
+
+if [[ "$CXX_VIABLE" -eq 0 ]]; then
+    log ""
+    log "NPM32 recon: V8 is BLOCKED on a missing C++ standard library for the"
+    log "  target. '$CXX' has no libstdc++/<vector> for aarch64-elf+newlib (it is"
+    log "  a bare-metal toolchain). The V8 phase requires first providing a target"
+    log "  C++ runtime: rebuild aarch64-elf-gcc with --enable-languages=c,c++ and"
+    log "  a newlib-targeted libstdc++ (as arm-none-eabi ships), or port libc++."
+else
+    log ""
+    log "NPM32 recon: target C++ stdlib is available -- the V8 build can proceed;"
+    log "  advance build-node.sh into the V8/Node compile (host mksnapshot first)."
+fi
 log "Full configure output: $LOG"
 exit 0
