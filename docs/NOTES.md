@@ -3,6 +3,40 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC32 SFTP subsystem read-only browse (2026-06-15)
+
+- `/bin/sshd` now answers the `subsystem sftp` channel request and speaks SFTP
+  protocol v3 (the OpenSSH baseline) over the existing chacha20-poly1305 session
+  channel. This first stage covers the read-only browse surface needed by the
+  host `sftp`/`scp -O` clients: `SSH_FXP_INIT`/`VERSION`, `REALPATH` (with a
+  byte-level `.`/`..`/slash path canonicalizer rooted at the server cwd),
+  `STAT`/`LSTAT`/`FSTAT`, `OPENDIR`/`READDIR`/`CLOSE`, and
+  `OPEN(read)`/`READ`/`CLOSE`. Write operations (`WRITE`, `MKDIR`, `RMDIR`,
+  `REMOVE`, `RENAME`, `SETSTAT`, symlinks) answer `SSH_FX_OP_UNSUPPORTED` — the
+  write path is HC33.
+- Handles are a fixed 8-slot table keyed by a 4-byte index; per-READ absolute
+  offsets are honored via the new `swiftos_lseek` bridge (`SYS_LSEEK`). `DATA`
+  replies are bounded to 4096 bytes per `READ` and `READDIR` drains the
+  directory in bounded `getdents` batches, matching the exec path's
+  bounded-output philosophy. The OpenSSH client re-requests short reads, so
+  large files reassemble correctly across many chunks. Inbound channel data is
+  reassembled into complete SFTP packets and our receive window is replenished
+  with `SSH_MSG_CHANNEL_WINDOW_ADJUST`. Very large downloads that would outrun
+  the client's *send* window to us are still out of scope.
+- Added `SSHWriter.u64`/`SSHReader.u64` for SFTP 64-bit sizes/offsets.
+- Added `./tests/sshd_sftp_test.sh` and `make sshd-sftp-test`. The gate boots
+  the autostarted SSHD, pins the host key through a derived `known_hosts` entry,
+  authenticates with the staged Ed25519 key, requests the `sftp` subsystem, and
+  drives a real OpenSSH `sftp` batch: `pwd` (REALPATH → `/`), `ls /`, and three
+  downloads byte-compared on the host — `/readme.txt`, `/etc/passwd`, and the
+  ~118 KiB `/bin/sshd` (byte-identical to `build/sshd.elf`, proving multi-chunk
+  reassembly). The guest logs `sshd: sftp subsystem started` and
+  `sshd: sftp subsystem completed`.
+
+**Acceptance.** `make sshd-sftp-test` proves a real host `sftp` client can
+browse and download files from SwiftOS over the host-key-pinned, key-authed
+channel, with byte-exact transfers including a multi-chunk binary.
+
 ## HC31 Hetzner deploy evidence bundle preflight (2026-06-12)
 
 - Extended `tests/sshd_deploy_preflight_test.sh` with optional
