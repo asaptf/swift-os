@@ -5870,3 +5870,42 @@ newlib gaps surfaced at compile/link. The largest remaining wall.
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+### NPM34 - V8 reconnaissance: C++ compiles, no fundamental blocker (DONE, 2026-06-15)
+
+Bounded recon of the V8 compile with the new C++ toolchain, before committing to
+the (hours-long) full build. Probe-compiled representative V8 sources directly
+(`build/v8-probe/`, gitignored) rather than running gyp+make.
+
+- **V8's C++ compiles against the libstdc++/newlib toolchain.** With C++20,
+  `-fno-exceptions -fno-rtti`, V8 include dirs, and `userland/{node-compat,compat}`
+  on the include path, these `deps/v8/src/base` TUs compile clean: `bits.cc`,
+  `division-by-constant.cc`, `cpu.cc`, `platform/condition-variable.cc`,
+  `platform/semaphore.cc`, `utils/random-number-generator.cc`. Notably
+  `condition-variable.cc` pulls in **Abseil** (`deps/v8/third_party/abseil-cpp`,
+  vendored) and still compiles — so V8 + Abseil's C++ is viable here. **No
+  fundamental C++-runtime blocker.**
+- **Remaining gaps are the familiar header-shim class** (same as libuv), seen in
+  `platform-posix.cc`/`platform-posix-time.cc`/`sys-info.cc`: `MADV_DONTNEED`,
+  `PRIO_PROCESS`, `PTHREAD_STACK_MIN`, `RTLD_DEFAULT`, `__NR_gettid`,
+  `struct tm.tm_gmtoff`/`tm_zone`, `RLIMIT_*`/`getrlimit`. Several already exist
+  in node-compat (e.g. sys/resource.h constants).
+- **Include-ordering is the central NPM35 task.** node-compat's value comes from
+  *shadowing* newlib headers (it augments them via `#include_next`), which needs
+  node-compat *ahead* of the system dirs; but putting it ahead with `-isystem`
+  breaks libstdc++'s own `#include_next <stdlib.h>` chain (cstdlib fails to find
+  stdlib.h). `-idirafter` fixes libstdc++ but then the node-compat augmentations
+  aren't picked up where newlib already has a (thinner) header. Reconciling these
+  — per-header shadow vs fallback — is the main work to get V8 compiling, not a
+  toolchain or runtime limitation.
+- **mksnapshot looks feasible:** config.gypi has `host_arch=arm64`,
+  `target_arch=arm64`, so V8's host-toolset mksnapshot (built with the host
+  clang/libc++, not our newlib) can bake an arm64 target snapshot on this host.
+
+**Next (NPM35+).** Wire the node-compat/compat include strategy into Node's V8
+build (gyp cflags), add the remaining base-platform constant shims, then drive
+the actual V8 + Node compile (host mksnapshot, then target objects) — the long
+multi-milestone haul. No fundamental blocker identified; the path is tractable.
+
+**Acceptance.** `make node-configure-probe`, `make docs-test`,
+`make ports-catalog-test`.
