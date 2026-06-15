@@ -26,6 +26,7 @@
 #define SYS_SBRK  19
 #define SYS_UNLINK 27
 #define SYS_TIME 37
+#define SYS_RANDOM 80
 
 static long sys3(long n, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = n;
@@ -160,3 +161,18 @@ int _gettimeofday(struct timeval *tv, void *tz) {
     return 0;
 }
 int _wait(int *status) { (void)status; errno = ECHILD; return -1; }
+
+// Runtime entropy from virtio-rng (SYS_RANDOM). newlib's getentropy() wrapper
+// and libstdc++ (std::random_device) bottom out here. getentropy fills exactly
+// `len` bytes (<= 256) or fails wholesale.
+int _getentropy(void *buf, size_t len) {
+    if (len > 256) { errno = EIO; return -1; }
+    unsigned char *p = (unsigned char *)buf;
+    size_t got = 0;
+    while (got < len) {
+        long r = sys3(SYS_RANDOM, (long)(p + got), (long)(len - got), 0);
+        if (r <= 0) { errno = (r < 0) ? (int)-r : EIO; return -1; }
+        got += (size_t)r;
+    }
+    return 0;
+}

@@ -202,6 +202,9 @@ SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
 NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
 NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -isystem userland/compat -isystem $(SYSROOT)/include -c
+# Node.js/libuv masquerade compat: node-compat shims ahead of compat, with the
+# Linux + newlib feature-test macros the masquerade needs (see scripts/build-node.sh).
+NODE_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_GNU_SOURCE -D__linux__ -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -isystem userland/node-compat -isystem userland/compat -isystem $(SYSROOT)/include -c
 NEWLIB_LDFLAGS := -nostartfiles -nostdlib -static -T userland/user_newlib.ld -Wl,-z,max-page-size=4096 -L $(SYSROOT)/lib
 NEWLIB_LIBS    := -Wl,--start-group -lc -lm -lgcc -Wl,--end-group
 # Garbage-collect unused sections; entry is _start from the boot stub.
@@ -279,6 +282,7 @@ USER_PTHREADPROBE_ELF := $(BUILD)/pthreadprobe.elf
 USER_THREADSYNCPROBE_ELF := $(BUILD)/threadsyncprobe.elf
 USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
 USER_EVENTFDPROBE_ELF := $(BUILD)/eventfdprobe.elf
+USER_EPOLLPROBE_ELF := $(BUILD)/epollprobe.elf
 USER_UVWAKEPROBE_ELF := $(BUILD)/uvwakeprobe.elf
 USER_UVSEMPROBE_ELF := $(BUILD)/uvsemprobe.elf
 USER_UVRWLOCKPROBE_ELF := $(BUILD)/uvrwlockprobe.elf
@@ -414,6 +418,7 @@ BASE_EXEC_ELFS := \
 	$(USER_THREADSYNCPROBE_ELF) \
 	$(USER_SELECTPROBE_ELF) \
 	$(USER_EVENTFDPROBE_ELF) \
+	$(USER_EPOLLPROBE_ELF) \
 	$(USER_UVWAKEPROBE_ELF) \
 	$(USER_UVSEMPROBE_ELF) \
 	$(USER_UVRWLOCKPROBE_ELF) \
@@ -443,7 +448,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SLEEPPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -981,6 +986,17 @@ $(BUILD)/n_uvwakeprobe.o: userland/uvwakeprobe.c userland/compat/pthread.h userl
 $(USER_UVWAKEPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_uvwakeprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_uvwakeprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+# epollprobe links the node-compat epoll-over-poll emulation (node_compat.o),
+# the same translation unit Node's libuv masquerade uses (NPM30).
+$(BUILD)/n_node_compat.o: userland/node-compat/node_compat.c userland/node-compat/sys/epoll.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NODE_COMPAT_CFLAGS) $< -o $@
+
+$(BUILD)/n_epollprobe.o: userland/epollprobe.c userland/node-compat/sys/epoll.h userland/compat/sys/eventfd.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NODE_COMPAT_CFLAGS) $< -o $@
+
+$(USER_EPOLLPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_uvsemprobe.o: userland/uvsemprobe.c userland/compat/pthread.h userland/compat/semaphore.h userland/compat/time.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -1381,6 +1397,9 @@ select-test: build $(QEMU_DTB) base-image
 eventfd-test: build $(QEMU_DTB) base-image
 	./tests/eventfd_test.sh
 
+epoll-test: build $(QEMU_DTB) base-image
+	./tests/epoll_test.sh
+
 uvwake-test: build $(QEMU_DTB) base-image
 	./tests/uvwake_test.sh
 
@@ -1689,6 +1708,12 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
 
+# NPM26: assert the current Node.js cross-build frontier. Vanilla Node
+# configure.py rejects --dest-os=swiftos; this probe fetches+verifies the
+# pinned source and confirms the build stops exactly at that documented wall.
+node-configure-probe: $(SYSROOT)/lib/libc.a ports/lang/nodejs/Port.json scripts/build-node.sh
+	./scripts/build-node.sh
+
 ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/catalog.json $(PORT_RECIPE_FILES) $(PORT_BUILD_SCRIPTS)
 	./scripts/build-ports-seed-repo.sh
 
@@ -1849,6 +1874,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_THREADSYNCPROBE_ELF) $(BASE_ROOT)/bin/threadsyncprobe
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
+	cp $(USER_EPOLLPROBE_ELF) $(BASE_ROOT)/bin/epollprobe
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
 	cp $(USER_UVSEMPROBE_ELF) $(BASE_ROOT)/bin/uvsemprobe
 	cp $(USER_UVRWLOCKPROBE_ELF) $(BASE_ROOT)/bin/uvrwlockprobe
