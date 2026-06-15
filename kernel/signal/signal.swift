@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-// signal.swift — minimal signal support for the foreground process.
+// signal.swift — minimal per-process signal support.
 //
-// M7 scope: enough to make Ctrl-C interrupt a running command. Pending signals
-// are tracked for the single foreground EL0 process; delivery happens at a safe
-// point. The default action for an uncaught SIGINT is to terminate the process
-// (exit status 128+signo), which is exactly "Ctrl-C interrupts the command".
-// SIG_IGN is honored. NPM10 adds custom handler delivery on syscall return via
-// a kernel-built user signal frame and sigreturn; asynchronous delivery while a
-// process is blocked in EL1 remains a later slice.
+// M7 scope: enough to make Ctrl-C interrupt a running command. The default
+// action for an uncaught SIGINT is to terminate the process (exit status
+// 128+signo); SIG_IGN is honored; NPM10 added custom handler delivery on
+// syscall return via a kernel-built user signal frame and sigreturn.
+//
+// HC36 made *pending* signals per-process: a signal is now marked pending for a
+// specific process slot (in process.swift's pPendingSignals) and delivered when
+// that slot next returns to EL0. signalRaise() targets the running process (the
+// console foreground, raised from the UART IRQ); signalRaiseSlot() targets an
+// arbitrary slot (e.g. a PTY's foreground process, raised under the VFS lock).
+// Dispositions/restorers remain process-global for now — correct while only one
+// interactive process installs handlers at a time; per-process dispositions are
+// recorded as future work in docs/NOTES.md. Asynchronous delivery while a
+// process is blocked in EL1 still relies on the blocked syscall noticing a
+// pending signal and returning (see the PTY read loops in vfs.swift).
 
 let SIGINT: Int = 2
 let SIGSEGV: Int = 11
@@ -18,7 +26,6 @@ let SIGCHLD: Int = 17
 let SIG_DFL: UInt = 0
 let SIG_IGN: UInt = 1
 
-private var pendingMask: UInt32 = 0
 private var dispositions = [UInt](repeating: 0, count: 32) // index = signo; SIG_DFL
 private var restorers = [UInt](repeating: 0, count: 32)     // userspace sigreturn trampoline
 
@@ -27,7 +34,6 @@ func signalIsValid(_ sig: Int) -> Bool {
 }
 
 func signalReset() {
-    pendingMask = 0
     for i in 0..<dispositions.count {
         dispositions[i] = SIG_DFL
         restorers[i] = 0
@@ -54,29 +60,49 @@ func signalRestorer(_ sig: Int) -> UInt {
     return restorers[sig]
 }
 
-/// True if any signal is pending for the foreground process.
+/// True if any signal is pending for the running process.
 func signalHasPending() -> Bool {
-    return pendingMask != 0
+    let me = processCurrentSlot()
+    return me >= 0 && processSignalHasPending(me)
 }
 
-/// Mark a signal pending for the foreground process (called from IRQ context).
-func signalRaise(_ sig: Int) {
+/// True if a (deliverable) signal is pending for the running process. Blocked
+/// syscalls (e.g. PTY reads) poll this to break out and let the syscall-return
+/// path deliver the signal. Ignored signals are never marked pending, so any
+/// pending bit here is deliverable.
+func signalPendingForCurrent() -> Bool {
+    signalHasPending()
+}
+
+/// Mark `sig` pending for `slot`, unless it is ignored. The signal is delivered
+/// when that slot next returns to EL0.
+func signalRaiseSlot(_ slot: Int, _ sig: Int) {
     guard signalIsValid(sig) else { return }
-    pendingMask |= (UInt32(1) << UInt32(sig))
+    if dispositions[sig] == SIG_IGN { return }
+    processSignalMarkPending(slot, sig)
+}
+
+/// Mark a signal pending for the running process (e.g. console Ctrl-C from the
+/// UART IRQ, where the foreground reader is the current process).
+func signalRaise(_ sig: Int) {
+    let me = processCurrentSlot()
+    if me < 0 { return }
+    signalRaiseSlot(me, sig)
 }
 
 private func signalDeliverPending(_ sig: Int, _ frame: UnsafeMutablePointer<UInt>?) {
-    let bit = UInt32(1) << UInt32(sig)
-    if (pendingMask & bit) == 0 { return }
+    let me = processCurrentSlot()
+    if me < 0 { return }
+    if !processSignalIsPending(me, sig) { return }
     let disp = dispositions[sig]
     if disp == SIG_IGN {
-        pendingMask &= ~bit
+        processSignalClearPending(me, sig)
         return
     }
     if disp != SIG_DFL {
         if let frame = frame, restorers[sig] != 0 {
             if processInstallSignalFrame(sig: sig, handler: disp, restorer: restorers[sig], frame: frame) {
-                pendingMask &= ~bit
+                processSignalClearPending(me, sig)
                 return
             }
         }
@@ -84,17 +110,15 @@ private func signalDeliverPending(_ sig: Int, _ frame: UnsafeMutablePointer<UInt
         // return can install the handler frame.
         return
     }
-    pendingMask &= ~bit
+    processSignalClearPending(me, sig)
     processTerminateBySignal(sig) // never returns
 }
 
-/// Deliver pending signals to the running foreground process. Must be called
-/// with the foreground process on the CPU (e.g. from the IRQ handler after EOI).
+/// Deliver pending signals to the running process. Must be called with that
+/// process on the CPU (e.g. from the IRQ handler after EOI). No frame is
+/// available here, so custom handlers stay pending until the next syscall return.
 func signalDeliverToForeground() {
-    guard processIsActive() else {
-        pendingMask = 0
-        return
-    }
+    guard processIsActive() else { return }
 
     signalDeliverPending(SIGINT, nil)
     signalDeliverPending(SIGTERM, nil)
@@ -104,10 +128,7 @@ func signalDeliverToForeground() {
 /// Deliver pending signals at a syscall-return safe point. Custom handlers are
 /// installed by rewriting the trap frame to enter the registered handler at EL0.
 func signalDeliverToCurrentFrame(_ frame: UnsafeMutablePointer<UInt>) {
-    guard processIsActive() else {
-        pendingMask = 0
-        return
-    }
+    guard processIsActive() else { return }
 
     signalDeliverPending(SIGINT, frame)
     signalDeliverPending(SIGTERM, frame)

@@ -18,9 +18,13 @@
 // echoes back to its own master. The termios local-flag bits (ttyICANON/ttyECHO)
 // are shared with tty.swift.
 //
-// Job control (ISIG/Ctrl-C to a foreground process group) is intentionally out
-// of scope here: the kernel's signal machinery targets only the single console
-// foreground process, so a PTY treats every byte as data. See docs/NOTES.md.
+// Job control (HC36): each PTY carries a foreground target (a process slot set
+// via swiftos_pty_set_foreground). When ISIG is set, Ctrl-C (0x03) raises SIGINT
+// to that target instead of being delivered as data — the per-process signal
+// machinery (signal.swift / process.swift) makes this possible. A target blocked
+// in a slave read notices the pending signal and returns so it can be delivered.
+// Ctrl-\ (SIGQUIT) and Ctrl-Z (SIGTSTP, which needs stop semantics) are not yet
+// handled. See docs/NOTES.md.
 
 private let maxPtys = 8
 private let ptyCookedCap = 1024   // slave-readable cooked input (whole lines)
@@ -31,7 +35,8 @@ private struct PtyState {
     var inUse = false
     var masterRefs = 0            // open descriptions on the master end
     var slaveRefs = 0             // open descriptions on the slave end
-    var lflag: UInt32 = ttyICANON | ttyECHO
+    var lflag: UInt32 = ttyICANON | ttyECHO | ttyISIG
+    var fgPid = 0                 // foreground process pid for tty-generated signals (0 = none)
     var editPtr: UInt = 0
     var editLen = 0
     var cookedPtr: UInt = 0
@@ -96,6 +101,8 @@ func ptyMasterRefs(_ p: Int) -> Int { ptyValid(p) ? ptys[p].masterRefs : 0 }
 func ptySlaveRefs(_ p: Int) -> Int { ptyValid(p) ? ptys[p].slaveRefs : 0 }
 func ptySlaveLflag(_ p: Int) -> UInt32 { ptyValid(p) ? ptys[p].lflag : 0 }
 func ptySetLflag(_ p: Int, _ value: UInt32) { if ptyValid(p) { ptys[p].lflag = value } }
+func ptyForeground(_ p: Int) -> Int { ptyValid(p) ? ptys[p].fgPid : 0 }
+func ptySetForeground(_ p: Int, _ pid: Int) { if ptyValid(p) { ptys[p].fgPid = pid } }
 
 /// Allocate a PTY pair. Returns its index with masterRefs == slaveRefs == 1, or
 /// -1 if no slot or buffer is available. Buffers are allocated once per slot and
@@ -116,7 +123,7 @@ func ptyAlloc() -> Int {
         ptys[i].inUse = true
         ptys[i].masterRefs = 1
         ptys[i].slaveRefs = 1
-        ptys[i].lflag = ttyICANON | ttyECHO
+        ptys[i].lflag = ttyICANON | ttyECHO | ttyISIG
         return i
     }
     return -1
@@ -149,6 +156,19 @@ private func ptyEcho(_ p: Int, _ byte: UInt8) {
 /// the VFS lock (never IRQ context).
 func ptyInput(_ p: Int, _ byte: UInt8) {
     guard ptyValid(p) else { return }
+
+    // Job control: Ctrl-C raises SIGINT to the foreground process rather than
+    // being delivered as data. Echo "^C\r\n" (mirroring tty.swift) and discard
+    // any partially-typed canonical line.
+    if (ptys[p].lflag & ttyISIG) != 0 && byte == 0x03 { // Ctrl-C (ETX)
+        if (ptys[p].lflag & ttyECHO) != 0 {
+            ptyOutPush(p, 0x5E); ptyOutPush(p, 0x43); ptyOutPush(p, 0x0D); ptyOutPush(p, 0x0A) // "^C\r\n"
+        }
+        ptys[p].editLen = 0
+        let fg = ptys[p].fgPid
+        if fg > 0 { signalRaiseSlot(fg - 1, SIGINT) } // pid -> process slot
+        return
+    }
 
     if (ptys[p].lflag & ttyICANON) == 0 {
         // Raw mode: deliver verbatim; the foreground program does its own editing.

@@ -201,6 +201,11 @@ private var pSecurity = [ProcessSecurityContext](
 private var pIsThread = [Bool](repeating: false, count: maxProc)
 private var pSignalFrameActive = [Bool](repeating: false, count: maxProc)
 private var pSignalFrameSP = [UInt](repeating: 0, count: maxProc)
+// HC36: per-process pending-signal bitmask (index = signo). Signals are now
+// targeted at a specific process slot (e.g. a PTY's foreground process) rather
+// than a single global foreground, and delivered when that slot next returns to
+// EL0. Dispositions/restorers remain process-global in signal.swift for now.
+private var pPendingSignals = [UInt32](repeating: 0, count: maxProc)
 
 // Accounting for /bin/top. CPU is charged one tick per timer interrupt to
 // whichever process is current (idle ticks when none is). Resident pages track
@@ -355,6 +360,7 @@ func processInit() {
         pSchedulerQuiesced[i] = true
         pSignalFrameActive[i] = false
         pSignalFrameSP[i] = 0
+        pPendingSignals[i] = 0
     }
     for cpuSlot in 0..<processSchedulerCpuSlots {
         currentProcByCpu[cpuSlot] = -1
@@ -540,6 +546,40 @@ private func clearSignalFrameState(_ slot: Int) {
     if slot < 0 || slot >= maxProc { return }
     pSignalFrameActive[slot] = false
     pSignalFrameSP[slot] = 0
+}
+
+// --- per-process pending signals (HC36) ---------------------------------------
+// Storage lives here (next to the rest of the per-slot process state and the
+// only place that knows maxProc); signal.swift drives policy through these.
+
+/// Mark `sig` pending for process `slot`. No-op for an invalid slot or signo.
+func processSignalMarkPending(_ slot: Int, _ sig: Int) {
+    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return }
+    pPendingSignals[slot] |= (UInt32(1) << UInt32(sig))
+}
+
+/// Clear the pending bit for `sig` on process `slot`.
+func processSignalClearPending(_ slot: Int, _ sig: Int) {
+    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return }
+    pPendingSignals[slot] &= ~(UInt32(1) << UInt32(sig))
+}
+
+/// True if `sig` is pending for process `slot`.
+func processSignalIsPending(_ slot: Int, _ sig: Int) -> Bool {
+    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return false }
+    return (pPendingSignals[slot] & (UInt32(1) << UInt32(sig))) != 0
+}
+
+/// True if any signal is pending for process `slot`.
+func processSignalHasPending(_ slot: Int) -> Bool {
+    guard slot >= 0 && slot < maxProc else { return false }
+    return pPendingSignals[slot] != 0
+}
+
+/// Drop all pending signals for `slot` (fork child / exec / fresh slot).
+func processSignalClearAllPending(_ slot: Int) {
+    guard slot >= 0 && slot < maxProc else { return }
+    pPendingSignals[slot] = 0
 }
 
 private func setCurrentProcessSlot(_ slot: Int) {
@@ -2174,6 +2214,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     anonVmasClear(slot)
     pIsThread[slot] = false
     clearSignalFrameState(slot)
+    processSignalClearAllPending(slot)
     // elfLoad (above) recorded the image's mapped page count; stack mapping used
     // the PMM directly, so it is still valid. RES = image + user stack pages.
     pCpuTicks[slot] = 0
@@ -2272,6 +2313,7 @@ private func reapProcess(_ slot: Int) {
         pTtbr0[slot] = 0
     }
     clearSignalFrameState(slot)
+    processSignalClearAllPending(slot)
     if pKstack[slot] != 0 {
         var pa = pKstack[slot]
         for _ in 0..<kernelStackPages {
@@ -2854,6 +2896,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     anonVmasCopy(child, parent)
     pIsThread[child] = false
     clearSignalFrameState(child)
+    processSignalClearAllPending(child) // POSIX: pending signals are not inherited
     // The COW address-space clone preserves the child's logical mapped
     // footprint; physical frames are copied lazily on write. CPU/time start
     // fresh.
@@ -2921,6 +2964,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     anonVmasCopy(slot, creator)
     pIsThread[slot] = true
     clearSignalFrameState(slot)
+    processSignalClearAllPending(slot)
     pWakeTick[slot] = 0
     pSchedulerQuiesced[slot] = false
     pHomeCpu[slot] = unassignedCpu
@@ -3149,6 +3193,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     fileVmasClear(me)
     anonVmasClear(me)
     clearSignalFrameState(me)
+    processSignalClearAllPending(me) // exec resets pending signals
     // New image replaces the resident set (old pages are dropped with the old
     // address space); accumulated CPU time and the start tick survive the exec.
     pResPages[me] = Int(elfLastLoadPages()) + userStackPages

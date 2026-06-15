@@ -220,7 +220,6 @@ manifest entries left behind after globals move or disappear.
 - `kernel/sched/scheduler.swift:states`
 - `kernel/sched/scheduler.swift:threadCount`
 - `kernel/signal/signal.swift:dispositions`
-- `kernel/signal/signal.swift:pendingMask`
 - `kernel/signal/signal.swift:restorers`
 - `kernel/smp/percpu.swift:smpCpuState`
 - `kernel/smp/percpu.swift:smpIpiLastSourceCpu`
@@ -346,6 +345,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:pName`
 - `kernel/user/process.swift:pNameLen`
 - `kernel/user/process.swift:pParent`
+- `kernel/user/process.swift:pPendingSignals`
 - `kernel/user/process.swift:pHomeCpu`
 - `kernel/user/process.swift:pRunNext`
 - `kernel/user/process.swift:pRunQueued`

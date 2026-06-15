@@ -53,6 +53,9 @@ int  swiftos_ftruncate(int fd, long length);
 // Allocate a pseudo-terminal pair; writes the master fd to *master and the
 // slave fd to *slave. Returns 0 on success, else <0.
 int  swiftos_openpty(int *master, int *slave);
+// Set the foreground process (target of tty-generated signals like Ctrl-C) for
+// the PTY referenced by `fd` (either end). `pid` of 0 clears it. Returns 0/-errno.
+int  swiftos_pty_set_foreground(int fd, int pid);
 int  swiftos_pipe(int fds[2]);
 long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
                                unsigned long handle_count);

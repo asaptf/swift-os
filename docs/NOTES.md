@@ -3,6 +3,52 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## HC36 PTY job-control SIGINT (2026-06-15)
+
+- Made Ctrl-C work for PTY sessions by giving signals a per-process target.
+  Until now the signal subsystem tracked a single global `pendingMask` for "the
+  console foreground process"; that cannot address a shell behind a PTY. HC36
+  moves pending signals into per-process state (`pPendingSignals[maxProc]` in
+  `kernel/user/process.swift`, reset on slot alloc / fork / exec / thread / reap)
+  and reworks `kernel/signal/signal.swift` around it: `signalRaise(sig)` now
+  targets the running process (still correct for the UART-IRQ console path, where
+  the foreground reader is current), and new `signalRaiseSlot(slot, sig)` marks a
+  signal pending for an arbitrary slot. Ignored signals are dropped at raise time,
+  so any pending bit is deliverable. Dispositions/restorers stay process-global
+  for now — correct while only one interactive process installs handlers at a
+  time; per-process dispositions (with fork-inherit / exec-reset semantics) are
+  the obvious follow-up.
+- PTYs gained a foreground target. `PtyState` carries `fgPid` (0 = none), set via
+  the new `pty_set_foreground(fd, pid)` syscall (`SYS_PTY_SET_FOREGROUND` = 85,
+  `swiftos_pty_set_foreground` bridge) on either end of the pair — TIOCSPGRP-shaped
+  but pid-scoped, as we do not yet model process groups. `ptyInput` now honors
+  `ISIG`: on Ctrl-C (0x03) it echoes `^C\r\n` (when `ECHO`), flushes the partial
+  canonical line, and raises `SIGINT` to `fgPid` instead of pushing the byte as
+  data. The default PTY `lflag` now includes `ISIG`. Ctrl-\ (SIGQUIT) and Ctrl-Z
+  (SIGTSTP, which needs stop semantics) are still unhandled.
+- Delivery to a blocked reader: PTY reads block by busy-yielding
+  (`processYieldForIO`) rather than truly parking, so the master/slave read loops
+  in `kernel/vfs/vfs.swift` now also break with `EINTR` (-4) when a signal is
+  pending for the current process. The reader returns to the syscall dispatcher,
+  where `signalDeliverToCurrentFrame` either terminates it (default SIGINT ->
+  status 130) or installs the handler frame (handler runs, `read()` returns
+  EINTR). `processKill`'s remote hard-teardown is unchanged and still used by the
+  generic `kill(2)` path; the PTY path deliberately uses `signalRaiseSlot` so the
+  target delivers in its own context and can run a custom handler.
+- Test: `/bin/ptysigprobe` (C/newlib — it needs newlib's working sigaction +
+  sigreturn trampoline, which the Swift userland bridge lacks) with
+  `./tests/ptysig_test.sh` and `make ptysig-test`. It allocates a PTY, forks a
+  child that adopts the slave as stdin and is named the PTY foreground, writes
+  Ctrl-C to the master, and asserts both the default-terminate case
+  (`WTERMSIG == SIGINT`, plus the `^C` echo on the master) and the installed-handler
+  case (handler ran, child exits 42). Added `pPendingSignals` to
+  `docs/SMP_STATE_AUDIT.md` and removed the now-gone `pendingMask`.
+
+**Acceptance.** `make ptysig-test` boots, logs in, runs `/bin/ptysigprobe`, and
+asserts `ptysigprobe: default terminate OK`, `ptysigprobe: handler delivered OK`,
+and `PTYSIGPROBE-OK`. End-to-end Ctrl-C over the HC35 interactive SSH session is
+the natural next step once that session exists.
+
 ## HC34 PTY kernel object (2026-06-15)
 
 - Added pseudo-terminals as a first-class kernel object (`kernel/tty/pty.swift`)

@@ -9,6 +9,7 @@
 // getcwd, dup, dup2, pipe, eventfd, poll, unlink, rename, mkdir, rmdir.
 
 // errno-ish returns (negative).
+private let errIntr = -4
 private let errNoEntry = -2
 private let errBadFD = -9
 private let errAccess = -13
@@ -1754,6 +1755,9 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             while copied < Int(count) && ptyOutCount(p) > 0 { dst[copied] = ptyOutPop(p); copied += 1 }
             let done = copied > 0 || ptySlaveRefs(p) == 0
             if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
+            // A pending signal (e.g. SIGINT raised on this PTY) interrupts the
+            // blocking read so syscall return can deliver it.
+            if !done && signalPendingForCurrent() { vfsUnlock(daif); return errIntr }
             vfsUnlock(daif)
             if done { break }
             processYieldForIO()
@@ -1777,6 +1781,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             }
             let done = copied > 0 || ptyMasterRefs(p) == 0
             if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
+            if !done && signalPendingForCurrent() { vfsUnlock(daif); return errIntr }
             vfsUnlock(daif)
             if done { break }
             processYieldForIO()
@@ -2268,6 +2273,23 @@ func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
 
     UnsafeMutableRawPointer(mOut).storeBytes(of: Int32(mfd), toByteOffset: 0, as: Int32.self)
     UnsafeMutableRawPointer(sOut).storeBytes(of: Int32(sfd), toByteOffset: 0, as: Int32.self)
+    return 0
+}
+
+// HC36: set the foreground process for a PTY (the target of tty-generated
+// signals such as Ctrl-C/SIGINT). `fd` may be either end of the pair; `pid`
+// names the foreground process (0 clears it). TIOCSPGRP-shaped but pid-scoped,
+// as we do not yet model process groups.
+func vfsPtySetForeground(fd: Int, pid: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .ptyMaster || entry.kind == .ptySlave else { return errInvalid }
+    let p = openDescriptions[entry.object].pty
+    guard ptyValid(p) else { return errInvalid }
+    ptySetForeground(p, pid)
     return 0
 }
 
