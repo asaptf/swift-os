@@ -30,54 +30,67 @@ if [[ "${REBUILD_IMAGE:-0}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/n
     docker build -t "$IMAGE" -f "$ROOT/docker/Dockerfile.nodebuild" "$ROOT/docker"
 fi
 
-echo "==> Cross-building Node $VERSION in the container…"
-docker run --rm -v "$ROOT":/src -w /src "$IMAGE" bash -euo pipefail -c '
-  TC=/opt/swiftos-toolchain
-  VERSION="'"$VERSION"'"
-  JOBS="'"$JOBS"'"
-  DIST=/src/build/swport-distfiles
-  WORK=/src/build/node-docker-work
-  SRC="$WORK/node-v${VERSION}"
-  mkdir -p "$WORK"
-
-  # Use the already-fetched, checksum-verified distfile from the host tree.
-  [ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
-  [ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
-
-  # The cross toolchain is built --disable-threads, so it rejects gyp's linux
-  # -pthread flag. V8 does its own threading via pthread directly (newlib +
-  # node-compat), so wrap the cross compilers to drop -pthread (compile + link).
-  mkdir -p /tmp/wrap
-  for t in gcc g++; do
-    cat > "/tmp/wrap/aarch64-elf-$t" <<WRAP
+# Write the in-container build script to the (bind-mounted, gitignored) build
+# dir. A fully single-quoted heredoc means the OUTER shell expands nothing;
+# VERSION/JOBS are passed into the container via `docker run -e`.
+INSCRIPT="$ROOT/build/node-build-in-container.sh"
+mkdir -p "$ROOT/build"
+cat > "$INSCRIPT" <<'NODESCRIPT'
 #!/usr/bin/env bash
-new=(); for a in "\$@"; do [[ "\$a" == -pthread ]] || new+=("\$a"); done
+set -euo pipefail
+TC=/opt/swiftos-toolchain
+DIST=/src/build/swport-distfiles
+WORK=/src/build/node-docker-work
+SRC="$WORK/node-v${VERSION}"
+mkdir -p "$WORK"
+
+# Use the already-fetched, checksum-verified distfile from the host tree.
+[ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
+[ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
+
+# The cross toolchain is built --disable-threads, so it rejects gyp's linux
+# -pthread flag. V8 does its own threading via pthread directly (newlib +
+# node-compat), so wrap the cross compilers to drop -pthread (compile + link).
+mkdir -p /tmp/wrap
+for t in gcc g++; do
+  cat > "/tmp/wrap/aarch64-elf-$t" <<WRAP
+#!/usr/bin/env bash
+# Drop linux driver flags the bare-metal aarch64-elf toolchain doesn't accept
+# (-pthread: threadless toolchain; -rdynamic: dynamic export, n/a for static).
+new=(); for a in "\$@"; do
+  case "\$a" in -pthread|-rdynamic) continue;; esac
+  new+=("\$a")
+done
 exec "$TC/bin/aarch64-elf-$t" "\${new[@]}"
 WRAP
-    chmod +x "/tmp/wrap/aarch64-elf-$t"
-  done
+  chmod +x "/tmp/wrap/aarch64-elf-$t"
+done
 
-  cd "$SRC"
-  echo "--- configure (host=native linux, target=aarch64-elf) ---"
-  CC="/tmp/wrap/aarch64-elf-gcc" CXX="/tmp/wrap/aarch64-elf-g++" \
-  CC_host=gcc CXX_host=g++ \
-    python3 configure.py \
-      --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
-      --without-npm --without-corepack --v8-lite-mode \
-      --without-snapshot --without-node-snapshot --without-node-code-cache \
-      --without-inspector --without-intl
+cd "$SRC"
+echo "--- configure (host=native linux, target=aarch64-elf) ---"
+CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
+  python3 configure.py \
+    --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
+    --without-npm --without-corepack --v8-lite-mode \
+    --without-snapshot --without-node-snapshot --without-node-code-cache \
+    --without-inspector --without-intl
 
-  # node-compat shims + masquerade defines, injected to the TARGET toolset only
-  # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
-  TF="-isystem /src/userland/node-compat -isystem /src/userland/compat \
--D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_READER_WRITER_LOCKS=1 \
--D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 \
--D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
+# node-compat shims + masquerade defines, injected to the TARGET toolset only
+# (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
+TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
 
-  echo "--- make -j$JOBS ---"
-  CFLAGS="$TF" CXXFLAGS="$TF" make -j"$JOBS"
+# Build the `node` gyp target specifically: it pulls in the V8/libuv/OpenSSL
+# *libraries* it needs but skips unrelated target executables (e.g. openssl-cli)
+# that we don't ship and that would just hit the freestanding-link issues early.
+echo "--- make -j${JOBS} node ---"
+CFLAGS="$TF" CXXFLAGS="$TF" make -j"${JOBS}" -C out/Release node V=1 BUILDTYPE=Release
 
-  echo "--- result ---"
-  ls -la out/Release/node && file out/Release/node || true
-'
+echo "--- result ---"
+ls -la out/Release/node && file out/Release/node || true
+NODESCRIPT
+chmod +x "$INSCRIPT"
+
+echo "==> Cross-building Node $VERSION in the container…"
+docker run --rm -e "VERSION=$VERSION" -e "JOBS=$JOBS" -v "$ROOT":/src -w /src "$IMAGE" \
+    bash /src/build/node-build-in-container.sh
 echo "==> Done. Target binary: build/node-docker-work/node-v${VERSION}/out/Release/node"

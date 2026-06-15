@@ -23,4 +23,15 @@
 #endif
 int madvise(void *addr, size_t length, int advice);
 
+/* Page locking is advisory; SwiftOS does not page user memory, so the companion
+ * implementations are no-ops returning success. */
+int mlock(const void *addr, size_t len);
+int munlock(const void *addr, size_t len);
+int mlockall(int flags);
+int munlockall(void);
+#ifndef MCL_CURRENT
+#define MCL_CURRENT 1
+#define MCL_FUTURE  2
+#endif
+
 #endif /* _SWOS_NODE_COMPAT_SYS_MMAN_H */

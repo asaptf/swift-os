@@ -238,6 +238,12 @@ int madvise(void *addr, size_t length, int advice) {
     (void)addr; (void)length; (void)advice; return 0;
 }
 
+/* Page locking is advisory and unsupported; succeed as a no-op. */
+int mlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
+int munlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
+int mlockall(int flags) { (void)flags; return 0; }
+int munlockall(void) { return 0; }
+
 // No ELF auxiliary vector on SwiftOS: report no optional CPU-feature bits, so
 // V8's cpu.cc falls back to the AArch64 baseline.
 unsigned long getauxval(unsigned long type) { (void)type; return 0; }
