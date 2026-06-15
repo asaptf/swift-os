@@ -44,9 +44,22 @@ docker run --rm -v "$ROOT":/src -w /src "$IMAGE" bash -euo pipefail -c '
   [ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
   [ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
 
+  # The cross toolchain is built --disable-threads, so it rejects gyp's linux
+  # -pthread flag. V8 does its own threading via pthread directly (newlib +
+  # node-compat), so wrap the cross compilers to drop -pthread (compile + link).
+  mkdir -p /tmp/wrap
+  for t in gcc g++; do
+    cat > "/tmp/wrap/aarch64-elf-$t" <<WRAP
+#!/usr/bin/env bash
+new=(); for a in "\$@"; do [[ "\$a" == -pthread ]] || new+=("\$a"); done
+exec "$TC/bin/aarch64-elf-$t" "\${new[@]}"
+WRAP
+    chmod +x "/tmp/wrap/aarch64-elf-$t"
+  done
+
   cd "$SRC"
   echo "--- configure (host=native linux, target=aarch64-elf) ---"
-  CC="$TC/bin/aarch64-elf-gcc" CXX="$TC/bin/aarch64-elf-g++" \
+  CC="/tmp/wrap/aarch64-elf-gcc" CXX="/tmp/wrap/aarch64-elf-g++" \
   CC_host=gcc CXX_host=g++ \
     python3 configure.py \
       --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
@@ -57,8 +70,8 @@ docker run --rm -v "$ROOT":/src -w /src "$IMAGE" bash -euo pipefail -c '
   # node-compat shims + masquerade defines, injected to the TARGET toolset only
   # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
   TF="-isystem /src/userland/node-compat -isystem /src/userland/compat \
--D__linux__ -D_GNU_SOURCE -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 \
--D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 \
+-D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_READER_WRITER_LOCKS=1 \
+-D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 \
 -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
 
   echo "--- make -j$JOBS ---"

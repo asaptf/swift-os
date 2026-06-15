@@ -55,7 +55,7 @@ RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION
     && ../gcc-${GCC_VERSION}/configure \
         --target=aarch64-elf --prefix="${PREFIX}" \
         --enable-languages=c,c++ --with-newlib \
-        --enable-threads=posix \
+        --disable-threads \
         --disable-shared --disable-libssp --disable-libstdcxx-pch \
         --disable-nls --disable-libgomp --disable-libquadmath \
         --with-gnu-as --with-gnu-ld \
@@ -63,11 +63,14 @@ RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION
     && make install-gcc install-target-libgcc install-target-newlib install-target-libstdc++-v3 \
     && cd / && rm -rf /tmp/toolchain
 
-# Sanity: the cross g++ must carry libstdc++ and accept -pthread.
+# Sanity: the cross g++ must carry libstdc++ (single-threaded; V8 does its own
+# threading via pthread directly, and gyp's -pthread is dropped target-side by
+# scripts/build-node-docker.sh). A threaded newlib libstdc++ hits a known
+# gthr-posix/newlib incompatibility, deferred.
 RUN aarch64-elf-g++ -print-file-name=libstdc++.a \
-    && printf '#include <vector>\n#include <thread>\nint main(){std::vector<int> v;v.push_back(1);return v.size()-1;}\n' \
-        | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti -pthread -x c++ - -c -o /tmp/t.o \
-    && echo "toolchain OK: libstdc++ + threads"
+    && printf '#include <vector>\n#include <atomic>\nstatic std::atomic<int> a{0};int main(){std::vector<int> v;v.push_back(1);a.store(v.size());return a.load()-1;}\n' \
+        | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti -x c++ - -c -o /tmp/t.o \
+    && echo "toolchain OK: libstdc++ present"
 
 WORKDIR /src
 # Repo is bind-mounted at /src by scripts/build-node-docker.sh; the container's
