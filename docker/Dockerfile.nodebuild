@@ -55,22 +55,26 @@ RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION
     && ../gcc-${GCC_VERSION}/configure \
         --target=aarch64-elf --prefix="${PREFIX}" \
         --enable-languages=c,c++ --with-newlib \
-        --disable-threads \
+        --enable-threads=posix \
         --disable-shared --disable-libssp --disable-libstdcxx-pch \
         --disable-nls --disable-libgomp --disable-libquadmath \
         --with-gnu-as --with-gnu-ld \
-    && make -j${JOBS} all-gcc all-target-libgcc all-target-newlib all-target-libstdc++-v3 \
+    && make -j${JOBS} \
+        CFLAGS_FOR_TARGET="-O2 -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS" \
+        CXXFLAGS_FOR_TARGET="-O2 -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS" \
+        all-gcc all-target-libgcc all-target-newlib all-target-libstdc++-v3 \
     && make install-gcc install-target-libgcc install-target-newlib install-target-libstdc++-v3 \
     && cd / && rm -rf /tmp/toolchain
 
-# Sanity: the cross g++ must carry libstdc++ (single-threaded; V8 does its own
-# threading via pthread directly, and gyp's -pthread is dropped target-side by
-# scripts/build-node-docker.sh). A threaded newlib libstdc++ hits a known
-# gthr-posix/newlib incompatibility, deferred.
+# Sanity: the cross g++ must carry a thread-enabled libstdc++ (V8's cctz uses
+# std::mutex). The gthr-posix/newlib weakref issue is worked around by building
+# the target libs with the newlib pthread feature-test macros (above), so newlib's
+# <pthread.h> fully declares the functions gthr-posix weak-references. The pthread
+# symbols themselves resolve at the final node link via userland/compat.
 RUN aarch64-elf-g++ -print-file-name=libstdc++.a \
-    && printf '#include <vector>\n#include <atomic>\nstatic std::atomic<int> a{0};int main(){std::vector<int> v;v.push_back(1);a.store(v.size());return a.load()-1;}\n' \
+    && printf '#include <vector>\n#include <atomic>\n#include <mutex>\n#include <condition_variable>\n#include <thread>\nstatic std::mutex m; static std::condition_variable cv;\nint main(){std::lock_guard<std::mutex> g(m); std::vector<int> v; v.push_back(1); return v.size()-1;}\n' \
         | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti -x c++ - -c -o /tmp/t.o \
-    && echo "toolchain OK: libstdc++ present"
+    && echo "toolchain OK: libstdc++ with std::mutex/thread"
 
 WORKDIR /src
 # Repo is bind-mounted at /src by scripts/build-node-docker.sh; the container's
