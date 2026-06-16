@@ -9,6 +9,9 @@
 #ifndef _SWOS_NODE_COMPAT_SYS_SYSCALL_H
 #define _SWOS_NODE_COMPAT_SYS_SYSCALL_H
 
+#ifdef __cplusplus
+extern "C"
+#endif
 long syscall(long number, ...);
 
 #include <linux/unistd.h>   /* __NR_* numbers (routed by node_compat.c syscall) */

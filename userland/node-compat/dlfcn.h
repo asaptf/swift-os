@@ -16,6 +16,9 @@
 #define RTLD_DEFAULT ((void *)0)
 #define RTLD_NEXT    ((void *)-1l)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 void *dlopen(const char *filename, int flags);
 void *dlsym(void *handle, const char *symbol);
 int   dlclose(void *handle);
@@ -30,5 +33,8 @@ typedef struct {
     void       *dli_saddr;
 } Dl_info;
 int dladdr(const void *addr, Dl_info *info);
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_DLFCN_H */

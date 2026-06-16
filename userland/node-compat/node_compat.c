@@ -28,6 +28,8 @@
 #include <sched.h>
 #include <sys/eventfd.h>
 #include <sys/random.h>
+#include <sys/mman.h>      /* mmap/munmap, routed by the syscall() shim below */
+#include <sys/stat.h>      /* fchmodat / mode_t */
 
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -225,7 +227,9 @@ long syscall(long number, ...) {
     case __NR_write:
         return (long)write((int)a0, (const void *)a1, (size_t)a2);
     case __NR_mmap:
+#if __NR_mmap2 != __NR_mmap   /* aarch64 aliases mmap2->mmap; avoid duplicate case */
     case __NR_mmap2:
+#endif
         return (long)mmap((void *)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, (off_t)a5);
     case __NR_munmap:
         return (long)munmap((void *)a0, (size_t)a1);
@@ -470,6 +474,34 @@ void makecontext(ucontext_t *ucp, void (*func)(void), int argc, ...) {
 }
 int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
     (void)oucp; (void)ucp; errno = ENOSYS; return -1;
+}
+
+/* ----- freestanding-link support ------------------------------------------
+ * Symbols that V8 and libstdc++ reference but a bare-metal newlib/libstdc++ on
+ * a static-only OS doesn't provide. We link Node with -nostartfiles, so the
+ * crtbegin.o that would define __dso_handle is absent; provide it ourselves.
+ * The rest are user/group/fs/signal calls Node touches at startup; SwiftOS has
+ * no passwd/group database and a minimal fs surface, so they degrade safely. */
+void *__dso_handle = 0;   /* anchor for __cxa_atexit global-dtor registration */
+
+int truncate(const char *path, off_t length) {
+    (void)path; (void)length; errno = ENOSYS; return -1;
+}
+int fchmodat(int fd, const char *path, mode_t mode, int flag) {
+    (void)fd; (void)path; (void)mode; (void)flag; errno = ENOSYS; return -1;
+}
+int pthread_kill(pthread_t thread, int sig) {
+    (void)thread; (void)sig; return 0;   /* no cross-thread signalling */
+}
+int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen,
+               struct passwd **result) {
+    (void)name; (void)pwd; (void)buf; (void)buflen;
+    *result = NULL; return 0;   /* not found: no passwd database */
+}
+int getgrnam_r(const char *name, struct group *grp, char *buf, size_t buflen,
+               struct group **result) {
+    (void)name; (void)grp; (void)buf; (void)buflen;
+    *result = NULL; return 0;   /* not found: no group database */
 }
 
 /* ----- data symbol -------------------------------------------------------- */

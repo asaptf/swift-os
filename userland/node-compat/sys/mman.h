@@ -30,6 +30,9 @@
 #define MADV_SEQUENTIAL 2
 #define MADV_RANDOM     1
 #endif
+#ifdef __cplusplus
+extern "C" {
+#endif
 int madvise(void *addr, size_t length, int advice);
 
 /* mremap: SwiftOS can't relocate mappings; the companion impl fails so callers
@@ -49,6 +52,9 @@ int munlockall(void);
 #ifndef MCL_CURRENT
 #define MCL_CURRENT 1
 #define MCL_FUTURE  2
+#endif
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* _SWOS_NODE_COMPAT_SYS_MMAN_H */

@@ -37,6 +37,9 @@ struct dl_phdr_info {
     Elf64_Half        dlpi_phnum;
 };
 
+#ifdef __cplusplus
+extern "C"
+#endif
 int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *info,
                                     size_t size, void *data),
                     void *data);
