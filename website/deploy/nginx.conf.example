@@ -1,0 +1,54 @@
+# swift-os website — static build served by nginx.
+#
+# Build:   cd website/apps/web && PUBLIC_SITE_URL=https://your-domain npm run build:static
+# Deploy:  copy website/apps/web/build/ to /var/www/swiftos/build and reload nginx.
+#
+# This serves clean URLs, the correct WASM MIME type, and — only on /try and the
+# /qemu artifacts — the cross-origin-isolation headers the in-browser QEMU/WASM
+# VM needs (SharedArrayBuffer / pthreads). The rest of the site is NOT isolated,
+# so cross-origin resources (e.g. Google Fonts) keep loading normally.
+
+# If your mime.types lacks wasm, add this in the http{} block:
+#   types { application/wasm wasm; }
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name your-domain;            # e.g. swift-os.dev
+
+    root /var/www/swiftos/build;        # the apps/web/build output
+    index index.html;
+
+    # Clean URLs: /status -> status.html, /docs/concepts -> docs/concepts.html
+    location / {
+        try_files $uri $uri.html $uri/index.html $uri/ /404.html;
+    }
+
+    # The /try document must be cross-origin isolated for qemu-wasm threads.
+    # credentialless keeps cross-origin fonts working; for full Safari support
+    # switch to `require-corp` AND self-host the fonts.
+    location = /try {
+        try_files /try.html =404;
+        add_header Cross-Origin-Opener-Policy   "same-origin"   always;
+        add_header Cross-Origin-Embedder-Policy "credentialless" always;
+    }
+
+    # The pinned emulator artifacts (qemu-system-aarch64.{js,wasm,worker.js,data}).
+    # Adjust the path to match PUBLIC_QEMU_WASM_BASE (default /qemu).
+    location /qemu/ {
+        types { application/wasm wasm; application/javascript js; }
+        default_type application/octet-stream;
+        add_header Cross-Origin-Opener-Policy   "same-origin"   always;
+        add_header Cross-Origin-Embedder-Policy "credentialless" always;
+        add_header Cache-Control "public, max-age=86400" always;
+    }
+
+    # Hashed, immutable build assets — cache hard.
+    location /_app/immutable/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # sitemap/robots are plain files in build/
+    location = /robots.txt  { try_files /robots.txt  =404; }
+    location = /sitemap.xml { try_files /sitemap.xml =404; }
+}
