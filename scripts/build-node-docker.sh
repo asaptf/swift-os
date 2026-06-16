@@ -81,8 +81,10 @@ ABSL_SYNC="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal"
 # stack_trace_posix.cc reads info->si_addr (fault address) for crash reports;
 # map it onto the void* si_value.sival_ptr so the TU compiles.
 STP="$SRC/deps/v8/src/base/debug/stack_trace_posix.cc"
-[ -f "$STP" ] && ! grep -q 'define si_addr' "$STP" && \
-  sed -i '1i #define si_addr si_value.sival_ptr' "$STP"
+if [ -f "$STP" ]; then
+  sed -i '/#define si_addr/d' "$STP"                                  # drop any prior macro attempt
+  sed -i 's/info->si_addr/reinterpret_cast<void*>(0)/g' "$STP"        # newlib siginfo_t has no si_addr
+fi
 
 cd "$SRC"
 echo "--- configure (host=native linux, target=aarch64-elf) ---"
