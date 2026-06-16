@@ -339,11 +339,33 @@ func addressSpaceCreate() -> UInt {
 #if BOARD_VIRTUALBOX
     tableStore(l1, 0, blockDesc1G(0x0000_0000, ATTR_NORMAL))
     tableStore(l1, 3, blockDesc1G(0xC000_0000, ATTR_DEVICE))
+    return l0
 #else
     tableStore(l1, 0, blockDesc1G(0x0000_0000, ATTR_DEVICE))
     tableStore(l1, 1, blockDesc1G(0x4000_0000, ATTR_NORMAL))
-#endif
+    // H2 device windows must exist in EVERY address space, not just the kernel
+    // boot tables (vm_early.c): when a userland process (e.g. /bin/sshd) is the
+    // current TTBR0 and the kernel touches a virtio device on PCIe — the NIC
+    // BAR in the 64-bit MMIO window during TX/RX of an incoming connection — the
+    // access faults at L0 unless the window is mapped here too. Mirror the PCIe
+    // ECAM (l1[256] = 0x40_0000_0000) and the 64-bit PCI MMIO window
+    // (l0[1] -> first 4 GiB at 0x80_0000_0000) as Device, identically to
+    // mmu_init_identity_map.
+    tableStore(l1, 256, blockDesc1G(0x40_0000_0000, ATTR_DEVICE))
+    let l1pci = pmm_alloc_page()
+    if l1pci == 0 {
+        pmm_free_page(l0)
+        pmm_free_page(l1)
+        return 0
+    }
+    zeroTable(l1pci)
+    tableStore(l1pci, 0, blockDesc1G(0x80_0000_0000, ATTR_DEVICE))
+    tableStore(l1pci, 1, blockDesc1G(0x80_4000_0000, ATTR_DEVICE))
+    tableStore(l1pci, 2, blockDesc1G(0x80_8000_0000, ATTR_DEVICE))
+    tableStore(l1pci, 3, blockDesc1G(0x80_C000_0000, ATTR_DEVICE))
+    tableStore(l0, 1, tableDesc(UInt64(l1pci)))
     return l0
+#endif
 }
 
 @_cdecl("address_space_map")
