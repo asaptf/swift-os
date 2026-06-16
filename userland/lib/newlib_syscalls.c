@@ -176,3 +176,19 @@ int _getentropy(void *buf, size_t len) {
     }
     return 0;
 }
+
+// Public getentropy(). OpenSSL's getrandom seed source probes a *weak* extern
+// `getentropy` (no underscore) and only calls it when the symbol is non-NULL:
+//
+//     extern int getentropy(void*, size_t) __attribute__((weak));
+//     if (getentropy != NULL) { if (getentropy(buf,len)==0) return len; ... }
+//
+// newlib (built --disable-newlib-supplied-syscalls) supplies only the `_` stub,
+// and a weak *undefined* reference never pulls a definition out of libc.a — so
+// the symbol stays NULL, OpenSSL silently skips it, reaches no other source on
+// this freestanding target, and its DRBG instantiate fails with "entropy source
+// strength too weak" (taking nginx/TLS down) even though SYS_RANDOM works fine
+// for everything that calls it directly (e.g. sshd). Defining the strong public
+// name here — in an object that is always linked, not archived — makes the weak
+// reference bind and routes OpenSSL through SYS_RANDOM like every other caller.
+int getentropy(void *buf, size_t len) { return _getentropy(buf, len); }

@@ -163,6 +163,7 @@ SWIFT_SRCS := \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/crypto/sha256.swift \
+	kernel/crypto/sysrng.swift \
 	kernel/crypto/sha512.swift \
 	kernel/crypto/ed25519.swift \
 	kernel/pkg/store.swift \

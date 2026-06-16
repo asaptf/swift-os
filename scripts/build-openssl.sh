@@ -83,6 +83,7 @@ openssl_libs="-Wl,--start-group -lc -lgcc -Wl,--end-group"
         --prefix=/usr \
         --openssldir=/usr/etc/ssl \
         --libdir=lib \
+        --with-rand-seed=getrandom \
         no-shared \
         no-dso \
         no-module \

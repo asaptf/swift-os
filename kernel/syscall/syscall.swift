@@ -389,5 +389,12 @@ private func syscallRandom(buffer ptr: UInt, capacity cap: UInt) -> Int {
     if cap == 0 { return 0 }
     if cap > UInt(Int.max) { return -22 }
     guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
-    return virtioRngRead(dst, Int(cap))
+    // Prefer the hypervisor's virtio-rng when present (QEMU `-device virtio-rng`);
+    // otherwise serve the jitter-seeded kernel DRBG. Hetzner Cloud ARM VMs expose
+    // no virtio-rng and N1 has no RNDR, so the fallback is what keeps getentropy()
+    // — and therefore OpenSSL/TLS and sshd KEX — working there.
+    if virtioRngAvailable() {
+        return virtioRngRead(dst, Int(cap))
+    }
+    return sysRngFill(dst, Int(cap))
 }

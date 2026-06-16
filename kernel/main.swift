@@ -1074,6 +1074,20 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         uartPuts("virtio-rng: runtime entropy ready\n")
         runVirtioRngQueueProbeH2()
     }
+    // Always seed the jitter-entropy DRBG: it is the SYS_RANDOM source whenever
+    // no virtio-rng device is present (e.g. the Hetzner Cloud ARM VM), keeping
+    // getentropy()/OpenSSL/sshd entropy alive without a hardware RNG.
+    sysRngInit()
+    if virtioRngAvailable() {
+        uartPuts("SYS_RANDOM: source virtio-rng (DRBG fallback armed)\n")
+        klog(.info, "rng", "SYS_RANDOM source: virtio-rng", 0)
+    } else if sysRngHealthy() {
+        uartPuts("SYS_RANDOM: source jitter-entropy DRBG (no virtio-rng device)\n")
+        klog(.info, "rng", "SYS_RANDOM source: jitter-entropy DRBG", 1)
+    } else {
+        uartPuts("SYS_RANDOM WARN: no entropy source available\n")
+        klog(.warn, "rng", "SYS_RANDOM has no entropy source", 0)
+    }
     pkgStoreInit()      // P3: read active package-store generation, if present
     if !pkgStoreS4dReadinessSelfTest() {
         uartPuts("panic: S4d package-store lock boundary self-test failed\n")
