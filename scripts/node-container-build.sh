@@ -60,16 +60,19 @@ else
   echo "--- configure skipped (out/ already generated) ---"
 fi
 
-# Node's objects have order-only prereqs we must drop so the node core compiles:
+# Node's objects have order-only prereqs we must drop so the node core compiles.
+# These tokens appear in BOTH node.target.mk (the node exe) AND libnode.target.mk
+# (the bulk of node's src -> libnode.a), so patch every generated *.target.mk:
 #  - $(builddir)/openssl-cli: an exe we don't ship (can't link freestanding).
 #  - gtest_prod.stamp: googletest fails to compile (test-only, newlib gaps) and
-#    node never links gtest, yet its stamp gates node's OBJS and the
-#    reset_openssl_cnf action. Drop both so libnode.a + node_main.o build.
-if [ -f out/node.target.mk ]; then
-  grep -q 'builddir)/openssl-cli' out/node.target.mk && sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
-  grep -q 'googletest/gtest_prod.stamp' out/node.target.mk && \
-    sed -i 's@\$(obj)\.target/deps/googletest/gtest_prod.stamp@@g' out/node.target.mk
-fi
+#    node never links gtest, yet its stamp gates node's OBJS, libnode's OBJS, and
+#    the reset_openssl_cnf action. Drop both so libnode.a + node_main.o build.
+for mk in out/node.target.mk out/libnode.target.mk; do
+  [ -f "$mk" ] || continue
+  grep -q 'builddir)/openssl-cli' "$mk" && sed -i 's@\$(builddir)/openssl-cli@@g' "$mk"
+  grep -q 'googletest/gtest_prod.stamp' "$mk" && \
+    sed -i 's@\$(obj)\.target/deps/googletest/gtest_prod.stamp@@g' "$mk"
+done
 
 [ -n "${NODE_CLEAN_TARGET:-}" ] && { echo "--- cleaning obj.target ---"; rm -rf out/Release/obj.target; }
 
