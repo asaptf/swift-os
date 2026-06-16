@@ -6200,3 +6200,65 @@ include strategy, libuv port, base/platform) carries over unchanged.
 
 **Acceptance.** `make node-configure-probe` (groundwork still green); full Node
 build deferred pending the build-environment decision.
+
+## H-series — bare-metal Hetzner ARM bring-up, 2026-06-16
+
+**Why.** The real deployment target is the user's Hetzner ARM cloud VM
+(`ssh root@swiftos.tech -p 651`, currently Ubuntu 24.04 aarch64, fully wipeable).
+SwiftOS today assumes the QEMU `virt` board (device-tree firmware, virtio-mmio,
+GICv2, virtio-blk). The Hetzner VM presents a different device model (ACPI
+firmware, virtio-PCI, GICv3, virtio-scsi). This series writes the missing
+drivers/boot support so SwiftOS boots as the *actual OS* of that VM, reachable
+over SSH. Stages H0–H6; develop against a local QEMU profile that reproduces the
+VM device model, use the real server only for final bring-up.
+
+### H0 — Hetzner-faithful local QEMU profile + firmware investigation (DONE, 2026-06-16)
+
+**Deliverables.**
+- `make hetzner-run` (Makefile): boots the current UEFI disk under a QEMU profile
+  matching the live VM — `-M virt,gic-version=3 -cpu max -m 4G -smp 2`, ACPI on
+  (no `acpi=off`), boot disk on **virtio-scsi-pci**, plus virtio-net-pci and
+  virtio-rng-pci. This reproduces all four gaps (ACPI / virtio-PCI / GICv3 /
+  virtio-scsi) locally so H1–H5 can be developed without the server.
+- Findings recorded here (this decides H5's approach).
+
+**What the loader/kernel sees on the Hetzner profile** (QEMU 11.0.1, firmware
+`edk2-stable202408-prebuilt.qemu.org`, representative of the VM's EDK2/BOCHS):
+- **EFI loader works over virtio-scsi-pci.** Firmware boots `BOOTAA64.EFI` from
+  the GPT/ESP at `PciRoot(0x0)/Pci(0x1,0x0)/Scsi(0x0,0x0)`; the loader reads the
+  kernel slot from the ESP via the firmware Simple File System with NO change.
+  **Decision input for H3:** the loader can read `base.img` from the ESP the same
+  way (transport-agnostic via firmware) — the ESP-ramdisk route is viable and we
+  need not write a virtio-scsi kernel driver just to mount the root FS.
+- **FDT configuration table: ABSENT.** Under ACPI mode the edk2 firmware does
+  **not** publish the FDT table (`gFdtTableGuid`, the standard
+  `b1b621d5-f19c-41a5-...` GUID — verified correct). Loader prints
+  "device tree NOT in config table". The kernel's RAM scan then finds no DTB and
+  keeps QEMU-virt compiled-in defaults. **Decisive for H5:** there is NO FDT
+  fallback on the real target; H5 must parse ACPI (RSDP→XSDT→MADT for GIC, SPCR
+  for UART, MCFG for ECAM, GTDT for timer). (Note: with `acpi=off` the QEMU virt
+  firmware *does* publish an FDT table — that is the existing `uefi-run`/`disk-run`
+  profile, which stays working. The dual path is firmware-mode driven.)
+- **ACPI 2.0 table: PRESENT** (`EFI_ACPI_20_TABLE_GUID` → RSDP). So the RSDP is
+  reachable as an EFI configuration table; the loader already probes it and can
+  forward its pointer to the kernel for H5.
+- **CurrentEL 1, MMU on** at handoff — same as the existing UEFI path.
+- **Memory:** largest conventional region base `0x4800_0000`, size `0xF460_E000`
+  (~3.9 GiB) for `-m 4G`. RAM base is still `0x4000_0000`; firmware reserves
+  `0x4000_0000`–`0x4800_0000`. The compiled-in `ramSize` (256 MiB) is wrong for
+  this VM — H5/ACPI (or the EFI memory map) must supply real RAM size.
+- **No GOP framebuffer** — headless, serial-only (PL011 @ `0x0900_0000`, matches).
+- **Kernel panics at GICv2 init** as expected: with DT/ACPI giving nothing it
+  keeps the GICv2 defaults and faults reading the GICv2 CPU interface at
+  `0x0801_0000` (`FAR_EL1=0x08010000`, ESR `0x96000050` = data abort) — there is
+  no MMIO GICC under GICv3. This is the concrete H1 evidence (GICv3 needed).
+
+**Re-plan note (H5).** H0 resolves the open H5 question: the FDT-config-table
+fallback is NOT available on the ACPI VM, so H5 is "parse minimal ACPI", not
+"consume the FDT table". The loader already locates the RSDP; the remaining work
+is XSDT/MADT/SPCR/MCFG/GTDT parsing in the kernel and forwarding the RSDP from
+the loader (currently it only prints present/absent).
+
+**Acceptance.** `make hetzner-run` boots the loader under the VM device model and
+the survey above is reproduced; findings committed. (A clean kernel boot is not
+expected until H1/H5 land.)

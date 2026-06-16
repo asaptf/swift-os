@@ -497,6 +497,48 @@ Follow-ups (not blocking): double-indirect blocks for >4 MiB files; moving the F
 into a userland service in line with the driver-serviceization arc; per-cell
 quotas on `/data`.
 
+## H-series — bare-metal Hetzner ARM bring-up (IN PROGRESS, 2026-06-16)
+
+Driven by the website-hosting goal: make SwiftOS boot as the *actual OS* of the
+user's Hetzner ARM cloud VM (`swiftos.tech:651`, wipeable), reachable over SSH —
+not as a QEMU guest under Linux. The VM presents a different device model than the
+QEMU `virt` board SwiftOS targets today; this arc writes the missing drivers/boot
+support. All work stays **dual-path** (detect, don't replace) so the existing
+QEMU-virt (DT / virtio-mmio / GICv2 / virtio-blk) profile and its tests keep
+passing. Full design + per-stage findings are in `docs/NOTES.md` (H-series).
+
+Gaps vs SwiftOS today (probed from the live VM): ACPI firmware (no FDT), virtio
+over PCIe, GICv3, virtio-scsi boot disk, virtio-net-pci. Console (PL011) and RAM
+base (`0x4000_0000`) match.
+
+- **H0** (DONE, this branch): `make hetzner-run` — a local QEMU profile that
+  reproduces the VM device model (`-M virt,gic-version=3 -cpu max -m 4G -smp 2`,
+  ACPI on, virtio-scsi-pci boot disk, virtio-net-pci, virtio-rng-pci) so H1–H5
+  develop without the server. **Key findings:** the EFI loader already reads the
+  kernel from the ESP over virtio-scsi-pci via firmware (so H3's ESP-ramdisk root
+  is viable); under ACPI mode the firmware publishes **no FDT config table** (only
+  ACPI/RSDP) — so **H5 must parse ACPI, there is no FDT fallback**; the kernel
+  panics at GICv2 CPU-interface MMIO (`0x0801_0000`) under GICv3, the concrete H1
+  signal. See `docs/NOTES.md` H0 for the full survey.
+- **H1** (planned): GICv3 driver — detect v2 vs v3; redistributor init + ICC_*
+  system-register CPU interface. Acceptance: interrupts work under the profile.
+- **H2** (planned): PCIe ECAM enumeration + virtio-PCI transport abstraction
+  (mmio | pci); port virtio-rng first. Acceptance: a virtio-pci device exchanges
+  a queue.
+- **H3** (planned): root FS without virtio-scsi — EFI loader reads `base.img`
+  from the ESP into RAM, passes it as a ramdisk; kernel mounts the read-only base
+  from RAM. (H0 confirmed the ESP read works on this firmware.) Acceptance: boots
+  to login with no block driver bound.
+- **H4** (planned): virtio-net over PCI + DHCP + `/bin/sshd`; prove a bounded SSH
+  command end-to-end under the local profile.
+- **H5** (planned): boot on ACPI firmware — parse minimal ACPI (RSDP→XSDT→MADT for
+  GIC, SPCR for UART, MCFG for ECAM, GTDT for timer); forward the RSDP from the
+  loader. Acceptance: kernel derives platform config under ACPI with no DTB.
+- **H6** (planned): real-server bring-up — build the GPT disk, `dd` onto the VM
+  boot disk via rescue, observe over serial/VNC, iterate until SSH reaches
+  SwiftOS. SAFETY: confirm with the user before the destructive step; keep a
+  rescue path.
+
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:

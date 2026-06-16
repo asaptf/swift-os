@@ -477,7 +477,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1723,6 +1723,33 @@ run-gfx: disk base-image
 		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
+
+# ---- Hetzner-faithful local profile (H-series bare-metal bring-up) ---------
+# Reproduces the Hetzner ARM cloud VM device model in local QEMU so the
+# bare-metal drivers (docs/RISK_REMEDIATION_ROADMAP.md, H-series) can be
+# developed WITHOUT the server. It differs from the QEMU `virt` profile the
+# kernel boots on today in the four ways the live VM does:
+#   * ACPI firmware (NO `acpi=off`) — edk2 boots in ACPI mode and, as H0 found,
+#     publishes NO FDT configuration table (only ACPI). The kernel's DT path
+#     therefore finds nothing here; ACPI parsing is H5.
+#   * virtio over PCIe (virtio-scsi-pci boot disk, virtio-net-pci, virtio-rng-pci)
+#     instead of virtio-mmio — H2/H3/H4.
+#   * GICv3 (`gic-version=3`, sysreg CPU interface) instead of GICv2 MMIO — H1.
+#   * `-cpu max -smp 2 -m 4G`, matching the 2-vCPU / ~4 GiB VM.
+# The bootable GPT disk rides on virtio-scsi-pci (like `/dev/sda` on the VM);
+# the EFI loader reads the kernel from its ESP via the firmware (transport-
+# agnostic), which already works here. The kernel then panics at GICv2 init
+# (expected until H1) — this target is for driver bring-up, not a clean boot yet.
+HETZNER_QEMU_FLAGS := -M virt,gic-version=3 -cpu max -m 4G -smp 2 -no-reboot \
+	-bios $(AAVMF_CODE) \
+	-drive file=$(DISK_IMG),format=raw,if=none,id=hdd \
+	-device virtio-scsi-pci -device scsi-hd,drive=hdd \
+	-device virtio-net-pci,netdev=hn0 -netdev user,id=hn0 \
+	-device virtio-rng-pci \
+	-nographic
+
+hetzner-run: disk
+	$(QEMU) $(HETZNER_QEMU_FLAGS)
 
 $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) -O tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
