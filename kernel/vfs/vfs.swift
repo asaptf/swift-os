@@ -72,6 +72,7 @@ private struct VNode {
     var diskOffset = 0      // byte offset of contents within the disk image
     var dataFs = false      // contents persist on the writable /data disk (datafs, D1)
     var dfsInode = -1       // datafs inode number when dataFs
+    var special = 0         // device node: 0 none, 1 = /dev/null, 2 = /dev/zero
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
@@ -309,6 +310,20 @@ private func addDir(_ parent: Int, _ name: StaticString, readOnly: Bool = true) 
     nodes[n].readOnly = readOnly
     linkChild(parent, n)
     return n
+}
+
+// Add a /dev special node (1 = null, 2 = zero). Reads of null give EOF, reads of
+// zero give zero bytes; writes to either are discarded. Many programs (and the
+// shell's job control) need /dev/null.
+private func addSpecial(_ parent: Int, _ name: StaticString, _ special: Int) {
+    let n = allocNode()
+    if n < 0 { return }
+    setName(n, name)
+    nodes[n].isDir = false
+    nodes[n].readOnly = false
+    nodes[n].special = special
+    nodes[n].mode = 0o666
+    linkChild(parent, n)
 }
 
 private func addFile(_ parent: Int, _ name: StaticString, _ content: StaticString) {
@@ -790,6 +805,11 @@ func vfsInit() {
         addFile(root, "hello.txt", "M5 file: hello from VFS read()\n")
     }
     _ = addDir(root, "tmp", readOnly: false)
+    let dev = addDir(root, "dev", readOnly: true)
+    if dev >= 0 {
+        addSpecial(dev, "null", 1)
+        addSpecial(dev, "zero", 2)
+    }
 
     // Stamp the base/literal tree (and /tmp) with the boot time, so ls -l shows
     // a real date for read-only files instead of the 1970 epoch. tmpfs nodes
@@ -1911,6 +1931,12 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         result = errInvalid
     } else if nodes[node].isDir {
         result = errIsDir
+    } else if nodes[node].special != 0 {
+        if nodes[node].special == 2 { // /dev/zero: count zero bytes
+            var z = 0
+            while z < Int(count) { dst[z] = 0; z += 1 }
+            result = Int(count)
+        } // /dev/null: result stays 0 (EOF)
     } else if nodes[node].dataFs {
         // Persistent /data file: read from the data disk by inode. Done under the
         // VFS lock (synchronous polled block I/O on the single EL0 CPU).
@@ -2144,6 +2170,8 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         result = errInvalid
     } else if nodes[node].isDir {
         result = errIsDir
+    } else if nodes[node].special != 0 {
+        result = Int(count)   // /dev/null and /dev/zero: discard writes
     } else if nodes[node].dataFs {
         // Persistent /data file: write through to the data disk by inode.
         let w = datafsWrite(nodes[node].dfsInode, current.offset,

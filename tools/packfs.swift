@@ -28,7 +28,7 @@ struct PackedFSEntry {
 
 struct PackedFSBuildOptions {
     var defaultOwner: UInt32 = swosPackedRootOwner
-    var executablePathPrefixes: [String] = ["bin/"]
+    var executablePathPrefixes: [String] = ["bin/", "sbin/", "usr/bin/", "usr/sbin/", "usr/local/bin/"]
 }
 
 struct PackedFSImage {
