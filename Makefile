@@ -180,6 +180,7 @@ SWIFT_SRCS := \
 	kernel/user/ustack.swift \
 	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
+	kernel/fs/ramdisk.swift \
 	kernel/fs/swosboot.swift \
 	kernel/fs/updatestore.swift \
 	kernel/fs/esp.swift \
@@ -480,7 +481,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1355,6 +1356,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/disk_exec_test.sh
 	./tests/gicv3_test.sh
 	./tests/virtio_pci_test.sh
+	./tests/h3_ramdisk_test.sh
 	./tests/data_persist_test.sh
 	./tests/datafs_test.sh
 	./tests/datafs_fsync_test.sh
@@ -1455,6 +1457,14 @@ gicv3-test: build $(QEMU_DTB_GICV3)
 # needed — the marker is emitted during early driver bring-up.
 virtio-pci-test: build $(QEMU_DTB_GICV3)
 	./tests/virtio_pci_test.sh
+
+# H3: boot to login from a RAM base image with NO block driver bound. Boots the
+# GPT disk under UEFI on the Hetzner profile (GICv3, boot disk on virtio-scsi-pci
+# which the kernel does not drive); the loader reads base.img from the ESP into
+# RAM and the kernel mounts the read-only base FS from RAM. Needs the full base
+# image, so it depends on `disk` (which builds base-image + the GPT).
+h3-ramdisk-test: disk
+	./tests/h3_ramdisk_test.sh
 
 # D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
 # is emitted before vfsInit), so this focused gate runs without the full image.
@@ -1718,10 +1728,20 @@ $(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_S
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 
+# H3: stage the packed read-only base image on the ESP so the loader can read it
+# into RAM and hand the kernel a ramdisk (the path for boards whose boot disk —
+# e.g. the Hetzner VM's virtio-scsi — the kernel does not drive). When a
+# virtio-blk base disk is also attached (the QEMU UEFI tests), the kernel still
+# prefers it; the ramdisk base is used when no block base disk is present.
+$(ESP_DIR)/EFI/swift-os/base.img: base-image
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(BASE_IMG) $@
+
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
       $(ESP_DIR)/EFI/swift-os/kernelA.bin \
       $(ESP_DIR)/EFI/swift-os/kernelB.bin \
-      $(ESP_DIR)/EFI/swift-os/kernel-boot
+      $(ESP_DIR)/EFI/swift-os/kernel-boot \
+      $(ESP_DIR)/EFI/swift-os/base.img
 	rm -f $(ESP_DIR)/EFI/swift-os/kernel-boot-alt
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.

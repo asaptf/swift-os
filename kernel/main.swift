@@ -867,8 +867,11 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 
 /// Kernel entry point, called from the boot stub. Must never return.
 /// `dtbPhys` is the device-tree pointer the boot stub preserved from x0.
+/// `ramdiskBase`/`ramdiskSize` (x4/x5) are the UEFI loader's H3 RAM base-image
+/// handoff (0/0 when the base comes from a virtio-blk disk instead).
 @_cdecl("kernel_main")
-func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt) {
+func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt,
+                _ ramdiskBase: UInt, _ ramdiskSize: UInt) {
     uartInit()  // no-op on QEMU; enables the PL011 on VirtualBox before any output
     // The UEFI loader may hand us a GOP framebuffer (x1=base, x2=w<<32|h,
     // x3=stride<<32|format). When present, mirror the boot log to the screen.
@@ -878,6 +881,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         let stride = UInt32(truncatingIfNeeded: fbStrFmt >> 32)
         fb_init(UInt64(fbBase), w, h, stride)
     }
+    ramdiskInit(base: ramdiskBase, size: ramdiskSize)  // H3: RAM-backed base image
     uartPuts("Hello from Swift kernel\n")
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")

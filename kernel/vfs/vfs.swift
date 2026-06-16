@@ -463,6 +463,9 @@ private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>)
 
 func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
     if image == vfsActiveBaseImage {
+        // H3: serve the read-only base from the RAM image the UEFI loader staged
+        // (no block driver), falling back to virtio-blk on the QEMU `-kernel` path.
+        if ramdiskAvailable() { return ramdiskReadRange(byteOff, buf, len) }
         return virtioBlkReadRange(byteOff, buf, len)
     }
     let rawCount = virtioBlkSwosbaseImageCount()
@@ -478,7 +481,7 @@ func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawP
 private var vfsVerifyScratch = InlineArray<4096, UInt8>(repeating: 0)
 
 private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
-    if !virtioBlkAvailable() { return false }
+    if !virtioBlkAvailable() && !ramdiskAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in
@@ -527,7 +530,7 @@ private func packedImageHasPath(_ image: Int, _ target: StaticString) -> Bool {
 private func buildImageFromDisk(_ image: Int, _ root: Int,
                                 allowExistingDirs: Bool,
                                 requireSigned: Bool) -> Bool {
-    if !virtioBlkAvailable() { return false }
+    if !virtioBlkAvailable() && !ramdiskAvailable() { return false }
 
     var hdr = [UInt8](repeating: 0, count: 64)
     let hok = hdr.withUnsafeMutableBytes { raw -> Bool in

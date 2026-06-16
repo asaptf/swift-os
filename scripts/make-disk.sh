@@ -56,6 +56,11 @@ export MTOOLS_SKIP_CHECK=1
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelA.bin"  ::/EFI/swift-os/kernelA.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernelB.bin"  ::/EFI/swift-os/kernelB.bin
 "$MCOPY"   -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/kernel-boot"  ::/EFI/swift-os/kernel-boot
+# H3: the packed read-only base image, loaded into RAM by the loader as a ramdisk
+# (the root-FS source on boards without a kernel-driven boot disk).
+if [[ -f "$ESP_SRC/base.img" ]]; then
+    "$MCOPY" -i "${IMG}@@${PART_OFFSET}" "$ESP_SRC/base.img" ::/EFI/swift-os/base.img
+fi
 
 echo "make-disk: done -> $IMG"
 echo "make-disk: ESP contents:"

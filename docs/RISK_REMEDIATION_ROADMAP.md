@@ -537,10 +537,14 @@ base (`0x4000_0000`) match.
   Acceptance: `make virtio-pci-test` exchanges an entropy virtqueue over
   virtio-pci; also reached on `make hetzner-run` (UEFI firmware BARs). See
   `docs/NOTES.md` H2.
-- **H3** (planned): root FS without virtio-scsi — EFI loader reads `base.img`
-  from the ESP into RAM, passes it as a ramdisk; kernel mounts the read-only base
-  from RAM. (H0 confirmed the ESP read works on this firmware.) Acceptance: boots
-  to login with no block driver bound.
+- **H3** (DONE, this branch): root FS without virtio-scsi. The EFI loader reads
+  `base.img` from the ESP into RAM (below 2 GiB) and hands the kernel a ramdisk
+  via a new x4/x5 entry ABI; `kernel/fs/ramdisk.swift` + the VFS mount the
+  read-only base from RAM (preferring a virtio-blk base when one is attached, so
+  `-kernel` boots are unchanged). Acceptance: `make h3-ramdisk-test` boots the
+  GPT disk under UEFI on the Hetzner profile (virtio-scsi boot disk, no
+  virtio-blk) to `swift-os login:` with no block driver bound. See `docs/NOTES.md`
+  H3. H0–H3 now boot the real-target device model end-to-end to login.
 - **H4** (planned): virtio-net over PCI + DHCP + `/bin/sshd`; prove a bounded SSH
   command end-to-end under the local profile.
 - **H5** (planned): boot on ACPI firmware — parse minimal ACPI (RSDP→XSDT→MADT for

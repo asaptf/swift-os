@@ -6375,4 +6375,52 @@ direct boots unaffected (MMU/IPS change verified).
 
 **Open for H5/H6.** The ECAM base is a compiled-in default (correct for both
 targets); ACPI MCFG parsing (H5) should supply it on the real server rather than
-assume it. virtio-net/virtio-scsi over PCI are H3/H4.
+assume it. virtio-net over PCI is H4.
+
+### H3 — root filesystem from RAM (ESP-ramdisk), no block driver (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM's boot disk is virtio-scsi over PCIe, which the kernel
+does not drive. Rather than write a virtio-scsi driver just to mount the
+read-only base FS, the UEFI loader reads the packed base image from the ESP into
+RAM and hands the kernel a ramdisk; the kernel mounts the read-only base from RAM
+(/tmp is RAM anyway, so this fits the FS design). Acceptance: boots to login with
+NO block driver bound.
+
+**What changed.**
+- `boot/efi/loader.c`: `load_base_ramdisk` opens `\EFI\swift-os\base.img` on the
+  ESP (firmware Simple File System — works over virtio-scsi-pci, as H0 found),
+  `AllocatePages(AllocateMaxAddress, 0x8000_0000)` to keep it **below 2 GiB** (the
+  kernel identity-maps only the first 1 GiB of RAM as normal memory), reads it in,
+  cleans the dcache, and passes base/size to the kernel.
+- **Entry ABI:** `boot.S` preserves x4/x5 (ramdisk base/size) alongside the
+  existing x0–x3 (dtb + framebuffer); `kernel_main` gains two params and calls
+  `ramdiskInit`. The QEMU `-kernel` path leaves x4/x5 = 0 → no ramdisk.
+- `kernel/fs/ramdisk.swift`: the RAM base-image source. `ramdiskReadRange`
+  mirrors the **virtio-blk read contract the VFS expects — 0 on success**, a
+  negative errno on a short/out-of-range read (the bug that first broke the mount
+  was returning a byte count instead of 0). Bounds are overflow-safe.
+- `kernel/vfs/vfs.swift`: `vfsImageReadRange` serves the base image from the
+  ramdisk when present (else virtio-blk); the two `virtioBlkAvailable()` mount
+  guards now also accept a ramdisk. `buildBaseFromDisk` still **prefers a
+  virtio-blk base when one is attached** (`swosbaseCount > 0`) and uses the
+  ramdisk only when no block base disk is present — so existing virtio-blk boots
+  are unchanged and the ramdisk activates on the Hetzner-style profile.
+- Build: `make-disk.sh` + the `uefi` target stage `base.img` on the ESP (in
+  `\EFI\swift-os`). The GPT disk is ~96 MiB; base.img is ~41 MiB.
+
+**Acceptance.** `make h3-ramdisk-test` (`tests/h3_ramdisk_test.sh`) boots the GPT
+disk under UEFI on the Hetzner profile (GICv3, boot disk on **virtio-scsi-pci**,
+no virtio-blk), drives the tty demo + login, and asserts: loader staged base.img
+into RAM, `M11b: no virtio-blk disk attached`, the RAM base verified
+(ed25519) + `M11c` mounted, `swift-os login:` reached, and a command served from
+the RAM base ran. So H0–H3 now boot the real-target device model end-to-end to a
+login prompt with no kernel block driver. Wired into `make test`.
+
+**Regression.** The QEMU `-kernel` path (x4/x5 = 0, virtio-blk base) is unchanged
+— it binds the virtio-blk base (`M11b: virtio-blk disk …`), mounts (`M11c`), and
+runs the userland (`S5f OK`). `gicv3-test` / `virtio-pci-test` still pass (they
+exercise the new entry ABI).
+
+**Open for H4/H6.** `/data` (datafs) on the real server still needs a PCI block
+path (virtio-blk-pci or virtio-scsi) — out of scope for the read-only root. H4
+brings virtio-net over PCI + SSH.
