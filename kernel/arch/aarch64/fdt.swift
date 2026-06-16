@@ -32,6 +32,10 @@ private let platformInfoHaveGic: UInt32 = 1 << 4
 private let platformInfoHaveVirtio: UInt32 = 1 << 5
 private let platformInfoHaveCpuTopology: UInt32 = 1 << 6
 private let platformInfoHavePsci: UInt32 = 1 << 7
+// H1: the GIC node is "arm,gic-v3" — its second reg range is the redistributor
+// base, not a GICC window. Kept in the flags word (not a stored Bool) so the
+// struct stays 8-byte aligned for the MMU-off early parse (strict-align).
+private let platformInfoGicV3: UInt32 = 1 << 8
 
 private let platformMaxCpuSlots = 8
 
@@ -95,6 +99,10 @@ struct PlatformInfo {
     var haveUartIrq: Bool {
         get { (flags & platformInfoHaveUartIrq) != 0 }
         set { setFlag(platformInfoHaveUartIrq, newValue) }
+    }
+    var gicIsV3: Bool {
+        get { (flags & platformInfoGicV3) != 0 }
+        set { setFlag(platformInfoGicV3, newValue) }
     }
     var haveGic: Bool {
         get { (flags & platformInfoHaveGic) != 0 }
@@ -340,6 +348,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     var devIsMemory = false
     var devIsPl011 = false
     var devIsGic = false
+    var devGicV3 = false
     var devIsVirtio = false
     var devRegPtr: UnsafePointer<UInt8>? = nil
     var devIrqPtr: UnsafePointer<UInt8>? = nil
@@ -362,6 +371,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                 devIsMemory = nameStartsWith(namePtr, "memory")
                 devIsPl011 = false
                 devIsGic = false
+                devGicV3 = false
                 devIsVirtio = false
                 devRegPtr = nil
                 devIrqPtr = nil
@@ -374,7 +384,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
         if token == fdtEndNode {
             if depth == 2 && inDevice {
                 finalizeDevice(&info, addrCells, sizeCells,
-                               devIsMemory, devIsPl011, devIsGic, devIsVirtio,
+                               devIsMemory, devIsPl011, devIsGic, devGicV3, devIsVirtio,
                                devRegPtr, devIrqPtr, devIrqLen)
                 inDevice = false
             }
@@ -406,6 +416,10 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                         if compatibleHas(valPtr, len, "arm,pl011") { devIsPl011 = true }
                         if compatibleHas(valPtr, len, "arm,cortex-a15-gic") ||
                            compatibleHas(valPtr, len, "arm,gic-400") { devIsGic = true }
+                        if compatibleHas(valPtr, len, "arm,gic-v3") {
+                            devIsGic = true
+                            devGicV3 = true
+                        }
                         if compatibleHas(valPtr, len, "virtio,mmio") { devIsVirtio = true }
                     } else if cstrEquals(propName, "interrupts") {
                         devIrqPtr = valPtr
@@ -589,7 +603,7 @@ func fdtParseSmpInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
 private func finalizeDevice(_ info: inout PlatformInfo,
                             _ addrCells: Int, _ sizeCells: Int,
                             _ isMemory: Bool, _ isPl011: Bool, _ isGic: Bool,
-                            _ isVirtio: Bool,
+                            _ isGicV3: Bool, _ isVirtio: Bool,
                             _ regPtr: UnsafePointer<UInt8>?,
                             _ irqPtr: UnsafePointer<UInt8>?, _ irqLen: Int) {
     if isMemory, let rp = regPtr {
@@ -612,11 +626,16 @@ private func finalizeDevice(_ info: inout PlatformInfo,
         }
     }
     if isGic, let rp = regPtr {
+        // reg = <GICD_base GICD_size SECOND_base SECOND_size ...>. On GICv2 the
+        // second range is the GICC MMIO window; on GICv3 it is the first
+        // redistributor region. We keep both in gicCpu and disambiguate with
+        // gicIsV3 (platformInit routes it to gicCpu or gicRedist accordingly).
         let (dist, _) = regPair(rp, 0, addrCells, sizeCells)
-        let (cpu, _) = regPair(rp, 1, addrCells, sizeCells)
+        let (second, _) = regPair(rp, 1, addrCells, sizeCells)
         info.haveGic = true
         info.gicDist = dist
-        info.gicCpu = cpu
+        info.gicCpu = second
+        info.gicIsV3 = isGicV3
     }
     if isVirtio, let rp = regPtr {
         // The transport slots are identical and contiguous; record the lowest

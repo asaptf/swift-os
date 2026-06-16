@@ -6262,3 +6262,65 @@ the loader (currently it only prints present/absent).
 **Acceptance.** `make hetzner-run` boots the loader under the VM device model and
 the survey above is reproduced; findings committed. (A clean kernel boot is not
 expected until H1/H5 land.)
+
+### H1 — GICv3 driver (detect v2/v3; redistributor + ICC_* CPU interface) (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM (and `-M virt,gic-version=3`) present a GICv3: a
+distributor + per-CPU **redistributors** + a **system-register** CPU interface
+(ICC_*). The kernel had a GICv2-only MMIO driver and faulted at the GICv2 GICC
+window (`0x0801_0000`) on a GICv3 machine (H0). Make the GIC driver dual-path
+(detect, don't replace) so the same kernel drives both, and prove interrupts
+work under the GICv3 profile.
+
+**What changed.**
+- `kernel/drivers/gic.swift` rewritten as a dual-path driver. Version is detected
+  from **`ID_AA64PFR0_EL1.GIC`** (bits [27:24]; nonzero ⇒ GICv3 sysreg interface).
+  This is a CPU register, so it is fault-free — an early attempt to read
+  `GICD_PIDR2` (offset `0xFFE8`) instead **aborted on the GICv2 distributor**
+  (QEMU's v2 GICD has no register there; v2 ID regs live at `0xFE8`). Lesson
+  recorded: do not probe v3-only MMIO offsets to detect the version.
+  - GICv3 init: distributor `GICD_CTLR = ARE | EnableGrp1 | EnableGrp0` (QEMU/
+    Hetzner run the GIC in the single-security-state DS=1 view, so the NS group
+    bits are settable from EL1); per-PE redistributor wake (clear
+    `GICR_WAKER.ProcessorSleep`, wait `ChildrenAsleep`), SGIs/PPIs → Group 1 in
+    the SGI frame; system-register CPU interface (`ICC_SRE_EL1.SRE=1`,
+    `ICC_PMR_EL1=0xFF`, `ICC_BPR1_EL1=0`, `ICC_CTLR_EL1=0`, `ICC_IGRPEN1_EL1=1`).
+  - Ack/EOI via `ICC_IAR1_EL1`/`ICC_EOIR1_EL1`; SGI generation via
+    `ICC_SGI1R_EL1` (TargetList = the 8-bit CPU mask, single cluster Aff1/2/3=0).
+  - SPI routing uses `GICD_IROUTER` (64-bit/INTID, valid under ARE) instead of
+    the v2 `GICD_ITARGETSR`; SGI/PPI enable/priority go to **this PE's**
+    redistributor SGI frame (found by matching `GICR_TYPER` affinity to MPIDR).
+  - The same surface (`gicInit`, `gicInitCpuInterfaceForCurrentCpu`,
+    `gicEnableInterrupt`, `gicAcknowledge`, `gicEndInterrupt`, the SGI helpers,
+    `gicSoftwareGeneratedInterruptSelfTest`) branches on the detected version, so
+    the SMP per-CPU init and the IPI substrate are correct on both.
+- `kernel/arch/aarch64/io.h`: ICC_* `msr`/`mrs` bridges + `read_id_aa64pfr0_el1`
+  (Embedded Swift cannot emit `msr`/`mrs`; this is the documented low-level
+  bridge exception, like the existing MMIO/`cntp_*` shims).
+- HAL: `platform.gicRedist` (default `0x080A_0000` — the GICR base on QEMU virt
+  GICv3 and the Hetzner VM). `fdt.swift` recognises `arm,gic-v3` and records the
+  second reg range as the redistributor (via a `gicIsV3` flag kept in the
+  `PlatformInfo.flags` word — a stored `Bool` between the `UInt` fields broke the
+  struct's 8-byte alignment and **alignment-faulted at M1 with the MMU off**;
+  recorded as a strict-align gotcha for that struct).
+
+**Acceptance.** `make gicv3-test` (`tests/gicv3_test.sh`) boots the kernel on
+`-M virt,gic-version=3 -cpu max -smp 2` and asserts interrupts are live
+multi-core, before any base FS / userland: `M2 GIC: GICv3 …` (detection), `S2a`
+per-CPU timer-IRQ heartbeat for **CPU0 and the secondary**, `S1` secondary
+online, and `S3b` SGI/IPI substrate (ICC_SGI1R). On both GICv2 and GICv3 the
+boot then reaches the identical point (the pre-existing no-`base.img` `S2`
+userland guard — out of scope here). Regression: the GICv2 path is unchanged
+(`M2 GIC: GICv2`, same markers); the host `fdt_test` + `qemu_virt_hardware_map`
+gates still pass. Wired into `make test`.
+
+**Bonus.** `make hetzner-run` (the ACPI/PCI/GICv3 profile, no DTB) now also
+clears GIC init — it detects GICv3 via the CPU register, uses the default GICD/
+GICR bases (correct for the VM), brings the secondary online over PSCI, and
+reaches the same `S2` point. So H1 directly removes the GIC blocker on the real
+target; virtio-PCI (H2/H3) and ACPI platform config (H5) remain.
+
+**Not done here.** Full SMP+userland validation *on GICv3* (the S2–S5 / userland
+suite under `gic-version=3`) is deferred until a root FS boots on the GICv3
+profile (after H3); the existing suite still runs on GICv2. The GIC primitives
+themselves (per-CPU timer IRQ + SGI on two CPUs) are proven by `gicv3-test`.

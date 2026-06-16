@@ -41,6 +41,7 @@ BUILD     := build
 MODEL_DIR := models
 QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
+QEMU_DTB_GICV3 := $(BUILD)/virt-gicv3-smp2.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
 # D0: a writable, persistent virtio-blk "data" disk (the /data tier, datafs from
@@ -477,7 +478,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -495,6 +496,11 @@ $(QEMU_DTB): | $(BUILD)/.dir
 
 $(QEMU_DTB_SMP4): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -smp 4 -m 256M -nographic
+
+# H1: a GICv3, -smp 2 device tree for the direct-boot harness — the interrupt
+# controller the Hetzner ARM VM presents (and what `-M virt,gic-version=3` emits).
+$(QEMU_DTB_GICV3): | $(BUILD)/.dir
+	$(QEMU) -M virt,gic-version=3,dumpdtb=$@ -cpu cortex-a72 -smp 2 -m 256M -nographic
 
 $(BUILD)/.dir:
 	@mkdir -p $(BUILD)
@@ -1345,6 +1351,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/gicv3_test.sh
 	./tests/data_persist_test.sh
 	./tests/datafs_test.sh
 	./tests/datafs_fsync_test.sh
@@ -1427,6 +1434,15 @@ smp-test: build base-image
 
 clock-test: build $(QEMU_DTB) base-image
 	./tests/clock_test.sh
+
+# H1: GICv3 driver — detect GICv2 vs v3 and drive the GICv3 redistributor +
+# ICC_* system-register CPU interface. Boots on `-M virt,gic-version=3` (the
+# interrupt controller the Hetzner ARM VM presents) and proves interrupts are
+# live multi-core: CPU0 + secondary timer IRQs and SGI/IPI delivery. The QEMU
+# `virt` GICv2 profile is unchanged (the driver detects, it does not replace).
+# No base image needed — the markers are emitted during SMP bring-up.
+gicv3-test: build $(QEMU_DTB_GICV3)
+	./tests/gicv3_test.sh
 
 # D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
 # is emitted before vfsInit), so this focused gate runs without the full image.

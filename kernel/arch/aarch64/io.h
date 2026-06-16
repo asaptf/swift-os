@@ -372,6 +372,16 @@ static inline uint64_t read_mpidr_el1(void) {
     return value;
 }
 
+// H1: ID_AA64PFR0_EL1.GIC (bits [27:24]) is nonzero iff the GICv3+ system-
+// register CPU interface is implemented. The GIC driver uses this to choose the
+// GICv2 vs GICv3 path — fault-free, unlike probing the GICD_PIDR2 MMIO offset
+// (the v2 distributor aborts on the v3 PIDR2 location).
+static inline uint64_t read_id_aa64pfr0_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, id_aa64pfr0_el1" : "=r"(value));
+    return value;
+}
+
 static inline uint64_t read_daif(void) {
     uint64_t value;
     __asm__ volatile("mrs %0, daif" : "=r"(value));
@@ -429,6 +439,48 @@ static inline void write_cntp_ctl_el0(uint64_t value) {
 
 static inline void write_cntp_tval_el0(uint64_t value) {
     __asm__ volatile("msr cntp_tval_el0, %0; isb" :: "r"(value) : "memory");
+}
+
+// --- H1: GICv3 system-register CPU interface (ICC_*_EL1) --------------------
+// The GICv3 CPU interface is a set of system registers, not an MMIO window
+// (that is the GICv2 model). Embedded Swift cannot emit `msr`/`mrs` directly,
+// so the GICv3 driver (kernel/drivers/gic.swift) routes the CPU-interface
+// accesses through these inlines. The named ICC_* encodings are part of the
+// base AArch64 GIC system-register set, so the assembler accepts them without a
+// CPU-feature flag. Used only on the GICv3 path (QEMU `-M virt,gic-version=3`
+// and the Hetzner ARM cloud VM); the GICv2 path stays pure MMIO.
+static inline uint64_t gicv3_read_sre(void) {
+    uint64_t v;
+    __asm__ volatile("mrs %0, ICC_SRE_EL1" : "=r"(v));
+    return v;
+}
+static inline void gicv3_write_sre(uint64_t v) {
+    __asm__ volatile("msr ICC_SRE_EL1, %0; isb" :: "r"(v) : "memory");
+}
+static inline void gicv3_write_pmr(uint64_t v) {
+    __asm__ volatile("msr ICC_PMR_EL1, %0" :: "r"(v) : "memory");
+}
+static inline void gicv3_write_bpr1(uint64_t v) {
+    __asm__ volatile("msr ICC_BPR1_EL1, %0" :: "r"(v) : "memory");
+}
+static inline void gicv3_write_ctlr(uint64_t v) {
+    __asm__ volatile("msr ICC_CTLR_EL1, %0" :: "r"(v) : "memory");
+}
+static inline void gicv3_write_igrpen1(uint64_t v) {
+    __asm__ volatile("msr ICC_IGRPEN1_EL1, %0; isb" :: "r"(v) : "memory");
+}
+static inline uint64_t gicv3_read_iar1(void) {
+    uint64_t v;
+    __asm__ volatile("mrs %0, ICC_IAR1_EL1" : "=r"(v));
+    // Architecturally a DSB is required after reading IAR before the handler.
+    __asm__ volatile("dsb sy" ::: "memory");
+    return v;
+}
+static inline void gicv3_write_eoir1(uint64_t v) {
+    __asm__ volatile("msr ICC_EOIR1_EL1, %0; isb" :: "r"(v) : "memory");
+}
+static inline void gicv3_write_sgi1r(uint64_t v) {
+    __asm__ volatile("msr ICC_SGI1R_EL1, %0; isb" :: "r"(v) : "memory");
 }
 
 // I8: the Ed25519 public key the packed base image must be signed with,

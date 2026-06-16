@@ -520,8 +520,14 @@ base (`0x4000_0000`) match.
   ACPI/RSDP) — so **H5 must parse ACPI, there is no FDT fallback**; the kernel
   panics at GICv2 CPU-interface MMIO (`0x0801_0000`) under GICv3, the concrete H1
   signal. See `docs/NOTES.md` H0 for the full survey.
-- **H1** (planned): GICv3 driver — detect v2 vs v3; redistributor init + ICC_*
-  system-register CPU interface. Acceptance: interrupts work under the profile.
+- **H1** (DONE, this branch): GICv3 driver — `kernel/drivers/gic.swift` is now
+  dual-path. Version detected from `ID_AA64PFR0_EL1.GIC` (fault-free, unlike
+  probing GICD_PIDR2 which aborts on the v2 distributor). GICv3 adds distributor
+  ARE + per-PE redistributor wake + a system-register CPU interface (ICC_SRE/PMR/
+  IGRPEN1/IAR1/EOIR1/SGI1R) and SPI routing via GICD_IROUTER. Acceptance:
+  `make gicv3-test` proves interrupts live multi-core on `-M virt,gic-version=3`
+  (CPU0 + secondary timer IRQ, secondary online, SGI/IPI), GICv2 path unchanged.
+  Bonus: `make hetzner-run` now clears GIC init too. See `docs/NOTES.md` H1.
 - **H2** (planned): PCIe ECAM enumeration + virtio-PCI transport abstraction
   (mmio | pci); port virtio-rng first. Acceptance: a virtio-pci device exchanges
   a queue.

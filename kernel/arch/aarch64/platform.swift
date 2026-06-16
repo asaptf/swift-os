@@ -21,6 +21,9 @@
     // GICv3 support lands; the VBox boot path parks before GIC init.
     var gicDist: UInt = 0xFCD3_0000
     var gicCpu: UInt = 0xFCD4_0000
+    // GICv3 redistributor base (H1). Informational on VBox (it parks before GIC
+    // init); the kernel detects GICv2 vs v3 from GICD_PIDR2 at gicInit.
+    var gicRedist: UInt = 0xFCD4_0000
     // PL011 UART.
     var uartBase: UInt = 0xFFDD_F000
     var uartIrq: UInt32 = 33
@@ -52,6 +55,10 @@
     // GICv2 distributor and CPU interface.
     var gicDist: UInt = 0x0800_0000
     var gicCpu: UInt = 0x0801_0000
+    // GICv3 redistributor base (H1). QEMU `-M virt,gic-version=3` and the Hetzner
+    // ARM cloud VM both place GICR at 0x080A_0000 (the same GICD at 0x0800_0000).
+    // Unused on the GICv2 path; the kernel detects the version from GICD_PIDR2.
+    var gicRedist: UInt = 0x080A_0000
     // PL011 UART.
     var uartBase: UInt = 0x0900_0000
     var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
@@ -136,7 +143,14 @@ func platformInit(_ dtbPhys: UInt) {
     }
     if info.haveGic {
         platform.gicDist = info.gicDist
-        platform.gicCpu = info.gicCpu
+        // For GICv3 the second reg range is the redistributor, not a CPU
+        // interface (the CPU interface is system registers). For GICv2 it is
+        // the GICC MMIO window. fdtParseInto records which via gicIsV3.
+        if info.gicIsV3 {
+            platform.gicRedist = info.gicCpu
+        } else {
+            platform.gicCpu = info.gicCpu
+        }
     }
     if info.haveVirtio && info.virtioCount > 0 {
         platform.virtioMmioBase = info.virtioBase
