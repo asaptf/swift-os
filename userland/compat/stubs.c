@@ -578,7 +578,7 @@ W long sysconf(int name) {
     switch (name) {
     case 2: return 100;   // _SC_CLK_TCK
     case 8: return 4096;  // _SC_PAGESIZE (newlib value varies; harmless)
-    case 4: return 32;    // _SC_OPEN_MAX
+    case 4: return 512;   // _SC_OPEN_MAX (matches kernel maxFDs)
     default: return -1;
     }
 }
@@ -604,8 +604,8 @@ W int getrlimit(int r, struct rlimit *l) {
     if (!l) { errno = EFAULT; return -1; }
     switch (r) {
     case RLIMIT_NOFILE:
-        l->rlim_cur = 32;
-        l->rlim_max = 32;
+        l->rlim_cur = 512;   // matches kernel maxFDs (per-process fd ceiling)
+        l->rlim_max = 512;
         return 0;
     case RLIMIT_CORE:
         l->rlim_cur = 0;

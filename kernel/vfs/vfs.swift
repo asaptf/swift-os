@@ -170,8 +170,8 @@ private struct DeviceGrant {
     var ownerProc = -1
 }
 
-private let maxFDs = 32
-private let maxOpenDescriptions = 96
+private let maxFDs = 512
+private let maxOpenDescriptions = 1024
 private let maxPipes = 16
 private let pipeCap = 1024
 private let maxVFSProcesses = 16

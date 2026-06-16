@@ -37,7 +37,7 @@ private let netInfoFlagGateway6: UInt32 = 1 << 3
 let AF_INET: Int = 2
 let AF_INET6: Int = 10
 
-private let maxSockets = 32
+private let maxSockets = 256
 private let sockRingDepth = 4
 
 // Ephemeral local-port allocator (net-rob). The pure rotating allocator lives in
