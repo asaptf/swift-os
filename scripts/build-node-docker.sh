@@ -106,6 +106,15 @@ else
   echo "--- configure skipped (out/ already generated; resume incremental) ---"
 fi
 
+# Node's objects have an ORDER-ONLY prereq on $(builddir)/openssl-cli (an exe we
+# don't ship and that can't link freestanding). Node only needs libopenssl.a, not
+# the CLI binary, so drop that prereq token from node.target.mk -- otherwise the
+# node core (libnode.a + node_main.o) never compiles. Idempotent.
+if [ -f out/node.target.mk ] && grep -q 'builddir)/openssl-cli' out/node.target.mk; then
+  echo "--- dropping openssl-cli order-only prereq from node.target.mk ---"
+  sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
+fi
+
 # node-compat shims + masquerade defines, injected to the TARGET toolset only
 # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
 TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
