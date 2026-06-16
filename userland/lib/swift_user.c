@@ -238,6 +238,25 @@ int swiftos_context(unsigned int *principal, unsigned int *session, unsigned lon
     return 0;
 }
 
+int swiftos_context_ex(unsigned int *principal, unsigned int *session, unsigned long *caps,
+                       unsigned int *real_principal, unsigned int *real_session,
+                       unsigned long *real_caps) {
+    struct security_info_ex si;
+    int rc = security_info_ex(&si);
+    if (rc != 0) return rc;
+    if (principal) *principal = si.principal;
+    if (session) *session = si.session;
+    if (caps) *caps = si.caps;
+    if (real_principal) *real_principal = si.real_principal;
+    if (real_session) *real_session = si.real_session;
+    if (real_caps) *real_caps = si.real_caps;
+    return 0;
+}
+
+int swiftos_execv(const char *path, char *const argv[]) {
+    return execve(path, argv, 0);
+}
+
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count) {
     return log_read(buf, cap, max_count);
 }

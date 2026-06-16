@@ -26,9 +26,18 @@ struct PackedFSEntry {
     let data: Data
 }
 
+// Octal 4000 (Unix S_ISUID). A file packed with this bit is honored as
+// setuid-on-exec by the kernel (only for read-only base-image files); see
+// kernel/security/security.swift `modeSetuid`.
+let swosPackedSetuidBit: UInt32 = 0o4000
+
 struct PackedFSBuildOptions {
     var defaultOwner: UInt32 = swosPackedRootOwner
     var executablePathPrefixes: [String] = ["bin/"]
+    // Base-image binaries to mark setuid-root. `/bin/sudo` elevates the invoker
+    // to the owner (root) on exec, then re-authenticates and applies the
+    // /etc/swos/sudoers policy in userland.
+    var setuidPaths: [String] = ["bin/sudo"]
 }
 
 struct PackedFSImage {
@@ -123,8 +132,10 @@ func collectPackedFSEntries(root: URL, options: PackedFSBuildOptions = PackedFSB
         } else if values.isRegularFile == true {
             let data = try Data(contentsOf: url)
             let isExec = options.executablePathPrefixes.contains { rel.hasPrefix($0) }
+            var mode: UInt32 = isExec ? 0o755 : 0o644
+            if options.setuidPaths.contains(rel) { mode |= swosPackedSetuidBit }
             entries.append(PackedFSEntry(path: rel, kind: swosPackedKindFile,
-                                         mode: isExec ? 0o755 : 0o644,
+                                         mode: mode,
                                          owner: options.defaultOwner, data: data))
         }
     }

@@ -277,6 +277,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 83 | `netinfo` | `buffer`, `capacity` | 0 or negative error |
 | 84 | `openpty` | `master*`, `slave*` | 0 or negative error |
 | 85 | `pty_set_foreground` | `fd`, `pid` | 0 or negative error |
+| 86 | `security_info_ex` | `security_info_ex*` | 0 or negative error |
 
 Notes:
 
@@ -742,6 +743,31 @@ struct security_info {
 
 `login(principal, session, caps)` replaces the calling process's context only if
 the caller holds `capConsole`. The normal path is `/bin/console-login`.
+
+`security_info_ex` writes the *effective* and *real* identity (the swift-os
+analogue of Unix euid/ruid):
+
+```c
+struct security_info_ex {
+    unsigned int principal;       // effective: what the process can do now
+    unsigned int session;
+    unsigned long caps;
+    unsigned int real_principal;  // real: who invoked the process
+    unsigned int real_session;
+    unsigned long real_caps;
+};
+```
+
+The two are equal for an ordinary process; they diverge only after a
+**setuid-on-exec**. A binary packed into the read-only signed base image with the
+setuid mode bit (octal `4000`) elevates the process's *effective* identity to the
+file owner (full root authority) on exec, while preserving the invoker as the
+*real* identity. The setuid bit is honored **only** for read-only base-image
+files — never for tmpfs — so the trust root is the signed image. `/bin/sudo` is
+the one setuid-root binary: it reads the real identity via `security_info_ex`,
+re-authenticates the invoker against `/etc/swos/passwd`, checks
+`/etc/swos/sudoers`, then `login()`s to the target identity and `execve()`s the
+command. See COMMAND_REFERENCE.md (`sudo`).
 
 `capSpawn` is the process-launch authority bit in the identity model. Current
 process-launch behavior is documented by the syscall table and the handle
@@ -1357,11 +1383,19 @@ long swiftos_random(void *buf, unsigned long count);
 ```c
 int swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+int swiftos_context_ex(unsigned int *principal, unsigned int *session, unsigned long *caps,
+                       unsigned int *real_principal, unsigned int *real_session,
+                       unsigned long *real_caps);
 int swiftos_exec_shell(const char *path);
+int swiftos_execv(const char *path, char *const argv[]);
 int swiftos_pty_spawn_shell(const char *path, int slave_fd);
 int swiftos_waitpid(int pid, int *status);
 long swiftos_getpid(void);
 ```
+
+`swiftos_context_ex` returns both the effective and real identity (see the
+`security_info_ex` syscall above); `swiftos_execv` replaces the current image
+with `path` and the given argv. Together they back `/bin/sudo`.
 
 `swiftos_pty_spawn_shell` forks and execs an interactive shell with `slave_fd`
 wired to the child's stdin/stdout/stderr (all other fds closed). It returns the

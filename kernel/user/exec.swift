@@ -16,18 +16,20 @@
 private var elfBuf: UInt = 0
 private let elfBufMax = 8 * 1024 * 1024
 
-private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
-    let (found, image, off, len) = vfsDiskImageExtent(path)
-    if !found || len <= 0 || len > elfBufMax { return (0, 0) }
+private func loadElfFromCString(_ path: UnsafePointer<UInt8>)
+    -> (addr: UInt, len: UInt, setuid: Bool, owner: UInt32) {
+    let ext = vfsDiskImageExtent(path)
+    if !ext.found || ext.len <= 0 || ext.len > elfBufMax { return (0, 0, false, 0) }
 
     if elfBuf == 0 {
         let pa = pmmAllocPages(elfBufMax / 4096)
-        if pa == 0 { return (0, 0) }
+        if pa == 0 { return (0, 0, false, 0) }
         elfBuf = pa
     }
-    let rc = vfsImageReadRange(image, UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
-    if rc != 0 { return (0, 0) }
-    return (elfBuf, UInt(len))
+    let rc = vfsImageReadRange(ext.image, UInt64(ext.offset),
+                               UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(ext.len))
+    if rc != 0 { return (0, 0, false, 0) }
+    return (elfBuf, UInt(ext.len), ext.setuid, ext.owner)
 }
 
 /// Resolve an absolute kernel path on a packed image and read its ELF into the
@@ -36,7 +38,8 @@ private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
 private func loadElfFromDisk(_ path: StaticString) -> (UInt, UInt) {
     var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
     path.withUTF8Buffer { b in for i in 0..<b.count { name[i] = b[i] } }
-    return name.withUnsafeBufferPointer { loadElfFromCString($0.baseAddress!) }
+    let r = name.withUnsafeBufferPointer { loadElfFromCString($0.baseAddress!) }
+    return (r.addr, r.len) // kernel-shell / busybox launchers run as root; setuid is irrelevant here
 }
 
 /// Load a program ELF from the packed base image, logging the source. Returns
@@ -85,10 +88,12 @@ private func uartPutsCString(_ p: UnsafePointer<UInt8>) {
     }
 }
 
-/// Resolve a program path to (ELF address, length), or (0, 0) if unknown.
-/// Normal executable paths are read from the VFS, so package overlays can expose
-/// `/usr/bin/*`. Busybox's synthetic re-exec paths still map to `/bin/busybox`.
-func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
+/// Resolve a program path to (ELF address, length, setuid, owner), or a zero
+/// address if unknown. Normal executable paths are read from the VFS, so package
+/// overlays can expose `/usr/bin/*`. Busybox's synthetic re-exec paths still map
+/// to `/bin/busybox` (never setuid). `setuid`/`owner` carry the file's
+/// setuid-on-exec elevation for processExec/spawn to apply.
+func execResolve(_ pathVA: UInt) -> (addr: UInt, len: UInt, setuid: Bool, owner: UInt32) {
     // busybox + its standalone re-exec path: re-exec'ing /proc/self/exe (or
     // /bin/busybox or /bin/sh) reloads busybox, which dispatches to the applet
     // named by argv[0]. This is how the standalone shell runs ls/cat/echo.
@@ -96,17 +101,18 @@ func execResolve(_ pathVA: UInt) -> (UInt, UInt) {
         || userPathEquals(pathVA, "/bin/busybox")
         || userPathEquals(pathVA, "/bin/sh")
         || userPathEquals(pathVA, "/bin/vi") {
-        return loadProgramImage("/bin/busybox")
+        let (a, l) = loadProgramImage("/bin/busybox")
+        return (a, l, false, 0)
     }
-    guard let path = userCString(pathVA) else { return (0, 0) }
+    guard let path = userCString(pathVA) else { return (0, 0, false, 0) }
     let loaded = loadElfFromCString(path)
-    if loaded.0 != 0 {
+    if loaded.addr != 0 {
         uartPuts("M11d: exec loaded from disk ")
         uartPutsCString(path)
         uartPuts("\n")
         return loaded
     }
-    return (0, 0)
+    return (0, 0, false, 0)
 }
 
 /// Read a NULL-terminated argv array (of user VAs) from the caller's address

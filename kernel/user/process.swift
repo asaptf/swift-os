@@ -193,7 +193,8 @@ private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 // one typed record per slot (adding a Cell field is now a struct change, not a
 // new parallel array).
 private var pSecurity = [ProcessSecurityContext](
-    repeating: ProcessSecurityContext(principal: 0, session: 0, caps: 0, cell: globalCell),
+    repeating: ProcessSecurityContext(principal: 0, session: 0, caps: 0, cell: globalCell,
+                                      realPrincipal: 0, realSession: 0, realCaps: 0),
     count: maxProc)
 // rt-a: a thread shares its creator's address space (TTBR0) instead of owning a
 // private one, so its exit must not be treated as an address-space teardown and
@@ -2806,7 +2807,8 @@ func processRunS5fRunAnyPlacement(_ image: UInt, _ size: UInt,
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,
                                               packedLen: UInt, argc: Int,
                                               inherit: HandleInheritance,
-                                              specsVA: UInt = 0, specCount: UInt = 0) -> Int {
+                                              specsVA: UInt = 0, specCount: UInt = 0,
+                                              setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
     let parent = currentProcessSlot()
     guard parent >= 0 else { return -22 }
     let valid = vfsValidateHandleInheritance(parent: parent, inherit: inherit,
@@ -2816,6 +2818,12 @@ private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packe
                               parent: parent, inherit: inherit,
                               inheritSpecsVA: specsVA, inheritSpecCount: specCount)
     if child < 0 { return -11 } // EAGAIN
+    // setuid-on-exec for the spawn path: the child inherited the parent's context
+    // in createProcess; elevate it to the file owner with the invoker preserved
+    // as the real identity (mirrors the execve path in processExec).
+    if setuid {
+        pSecurity[child] = securityApplySetuid(pSecurity[child], owner: setuidOwner)
+    }
     pState[parent] = pBlocked
     pWait[parent] = child
     yieldToScheduler() // scheduler runs the child; we resume once it exits
@@ -2826,18 +2834,22 @@ private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packe
 }
 
 /// spawn(path) child: create it with stdio only, block until it exits, return its exit status.
-func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int) -> Int {
+func processSpawnChild(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, argc: Int,
+                       setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
     return processSpawnChildWithInheritance(image, size, packed: packed, packedLen: packedLen,
-                                            argc: argc, inherit: .stdioOnly)
+                                            argc: argc, inherit: .stdioOnly,
+                                            setuid: setuid, setuidOwner: setuidOwner)
 }
 
 /// spawn_handles(path) child: start from an empty handle table and inherit exactly
 /// the caller-provided HandleSpec vector.
 func processSpawnChildWithHandles(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
-                                  argc: Int, specsVA: UInt, specCount: UInt) -> Int {
+                                  argc: Int, specsVA: UInt, specCount: UInt,
+                                  setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
     return processSpawnChildWithInheritance(image, size, packed: packed, packedLen: packedLen,
                                             argc: argc, inherit: .explicit,
-                                            specsVA: specsVA, specCount: specCount)
+                                            specsVA: specsVA, specCount: specCount,
+                                            setuid: setuid, setuidOwner: setuidOwner)
 }
 
 func processCurrentPid() -> Int {
@@ -3172,6 +3184,7 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
 /// onto the new user stack.
 func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
                  argc: Int, envPacked: UInt, envPackedLen: UInt, envc: Int,
+                 setuid: Bool = false, setuidOwner: UInt32 = 0,
                  frame: UnsafeMutablePointer<UInt>) -> Int {
     let me = currentProcessSlot()
     guard me >= 0 else { return -22 }
@@ -3200,6 +3213,15 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     // POSIX: close-on-exec descriptors are dropped across exec. ash relocates
     // its saved fds above 10 with F_DUPFD_CLOEXEC and relies on this.
     vfsCloseCloexec(slot: me)
+    // Identity across exec: a setuid base-image binary elevates the effective
+    // identity to the file owner (full root authority) while preserving the
+    // invoker as the real identity; an ordinary exec keeps the current identity
+    // and re-establishes real==effective.
+    if setuid {
+        pSecurity[me] = securityApplySetuid(pSecurity[me], owner: setuidOwner)
+    } else {
+        pSecurity[me] = securitySyncRealToEffective(pSecurity[me])
+    }
     setProcessName(slot: me, packed: packed, argc: argc)
     frame[trapFrameSPIndex] = userSP
     frame[trapFrameELRIndex] = entry
@@ -3374,6 +3396,24 @@ func processSecurityInfo(buffer: UInt) -> Int {
     raw.storeBytes(of: pSecurity[me].principal, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: pSecurity[me].session, toByteOffset: 4, as: UInt32.self)
     raw.storeBytes(of: pSecurity[me].caps, toByteOffset: 8, as: UInt64.self)
+    return 0
+}
+
+/// SYS_security_info_ex: copy the current process's effective AND real security
+/// identity. Record layout (32 bytes): principal:u32, session:u32, caps:u64,
+/// real_principal:u32, real_session:u32, real_caps:u64. `/bin/sudo` uses the
+/// real identity to learn the invoker while running setuid-root.
+func processSecurityInfoEx(buffer: UInt) -> Int {
+    let me = currentProcessSlot()
+    guard me >= 0 else { return -22 }
+    guard let dst = userWritableBuffer(buffer, 32) else { return -22 }
+    let raw = UnsafeMutableRawPointer(dst)
+    raw.storeBytes(of: pSecurity[me].principal, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].session, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].caps, toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: pSecurity[me].realPrincipal, toByteOffset: 16, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].realSession, toByteOffset: 20, as: UInt32.self)
+    raw.storeBytes(of: pSecurity[me].realCaps, toByteOffset: 24, as: UInt64.self)
     return 0
 }
 
