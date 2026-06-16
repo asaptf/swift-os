@@ -6424,3 +6424,46 @@ exercise the new entry ABI).
 **Open for H4/H6.** `/data` (datafs) on the real server still needs a PCI block
 path (virtio-blk-pci or virtio-scsi) — out of scope for the read-only root. H4
 brings virtio-net over PCI + SSH.
+
+### H4 — virtio-net over PCI + SSH reachable (DONE, 2026-06-16)
+
+**Goal.** Port virtio-net to the PCI transport and prove a bounded SSH command
+end-to-end over it under the Hetzner network/IRQ model (GICv3 + virtio-net-pci).
+
+**What changed.**
+- `kernel/drivers/virtio_transport.swift`: extended for multi-queue devices —
+  per-queue notify doorbells (`notifyAddrs`, since virtio-net has rx=0/tx=1 with
+  distinct `queue_notify_off`), 64-bit device-feature read/write
+  (`deviceFeatures`/`setDriverFeatures`/`setFeaturesOk`), and device-config reads
+  (`configRead32`, for the MAC). `negotiateVersion1` now builds on these.
+- `kernel/drivers/virtio_net.swift`: the NIC binds over `VirtioTransport` — tries
+  virtio-mmio first, then virtio-pci (`virtioPciFindDevice(deviceType: 1)`). Only
+  the control plane (status/features/queue setup/notify/ISR/MAC) moved to the
+  transport; the RX/TX buffer-pool + zero-copy logic is unchanged. Removed the now
+  dead per-device MMIO register/feature constants.
+- **GICv3 SPI fix (gic.swift):** the UART RX interrupt (SPI 33) was silent on
+  GICv3 — SPIs default to **Group 0** in `GICD_IGROUPR`, but EL1 only takes Group 1
+  (we set `ICC_IGRPEN1`). `gicv3EnableInterrupt` now sets the SPI's `GICD_IGROUPR`
+  bit to Group 1. H1 had only exercised the timer (PPI, via the redistributor
+  `GICR_IGROUPR0`) and SGIs; the UART/NIC SPIs were the first real GICv3 SPI
+  consumers and surfaced this. (PPIs were already Group 1, so this is SPI-only.)
+
+**Acceptance.** `make h4-ssh-pci-test` (`tests/h4_ssh_pci_test.sh`) boots GICv3
+with the NIC + RNG on PCIe (the Hetzner net/IRQ device model), and asserts the
+full path: the guest brings the NIC up over PCIe and gets a DHCP lease
+(`net-dhcp OK`), autostarts `/bin/sshd`, seeds KEX entropy from virtio-rng-pci,
+and a host OpenSSH client runs a bounded `/bin/id` over the network (QEMU
+hostfwd → guest :22) — `publickey auth accepted`, `session exec completed status
+0`, ssh exit 0, output `principal=1(root)`. The root FS rides on virtio-blk here
+for a fast boot (RAM-base boot is the separate H3 gate); this gate isolates
+"virtio-net over PCI + SSH". Wired into `make test`.
+
+**Regression.** virtio-net over mmio still works (DHCP + ARP + ICMP on QEMU
+`virt`); `gicv3-test` / `virtio-pci-test` / `h3-ramdisk-test` still pass. The
+GICv3 SPI fix also benefits every SPI consumer (UART RX, NIC) on the Hetzner
+profile — e.g. the H3 ramdisk login over serial now takes keystrokes via the
+real UART IRQ.
+
+**Status.** H0–H4 now boot the Hetzner device model end-to-end and are reachable
+over SSH in QEMU. Remaining: H5 (derive platform config from ACPI on the real
+firmware — no FDT, per H0) and H6 (bring-up on the real server).

@@ -20,6 +20,7 @@ private var gicrBase: UInt { platform.gicRedist }    // GICv3 redistributor fram
 private let gicdCtlr: UInt = 0x000
 private let gicdIcenabler: UInt = 0x180
 private let gicdIsenabler: UInt = 0x100
+private let gicdIgroupr: UInt = 0x080       // v3: SPI group select (0=Grp0, 1=Grp1)
 private let gicdIpriorityr: UInt = 0x400
 private let gicdItargetsr: UInt = 0x800     // v2 SPI routing (one byte per INTID)
 private let gicdIcfgr: UInt = 0xC00
@@ -309,7 +310,13 @@ private func gicv3EnableInterrupt(_ id: UInt32) {
         return
     }
 
-    // SPI: distributor priority, config, affinity routing, then enable.
+    // SPI: assign to Group 1 (we enable interrupts via ICC_IGRPEN1; SPIs default
+    // to Group 0 in GICD_IGROUPR, which would never reach the EL1 Group 1 path —
+    // this is why the UART RX SPI was silent until set here), then priority,
+    // config, affinity routing, and enable.
+    let groupAddr = gicdBase + gicdIgroupr + UInt((id / 32) * 4)
+    mmio_write32(groupAddr, mmio_read32(groupAddr) | (UInt32(1) << UInt32(id % 32)))
+
     let priorityAddr = gicdBase + gicdIpriorityr + UInt(id)
     mmio_write32(priorityAddr & ~UInt(3), 0x8080_8080)
 

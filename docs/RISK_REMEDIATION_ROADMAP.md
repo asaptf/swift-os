@@ -545,8 +545,15 @@ base (`0x4000_0000`) match.
   GPT disk under UEFI on the Hetzner profile (virtio-scsi boot disk, no
   virtio-blk) to `swift-os login:` with no block driver bound. See `docs/NOTES.md`
   H3. H0–H3 now boot the real-target device model end-to-end to login.
-- **H4** (planned): virtio-net over PCI + DHCP + `/bin/sshd`; prove a bounded SSH
-  command end-to-end under the local profile.
+- **H4** (DONE, this branch): virtio-net over PCI + SSH. `virtio_net` binds over
+  the `VirtioTransport` (mmio|pci) abstraction (extended for per-queue notify,
+  device-feature negotiation, and device-config/MAC reads). Also fixed a GICv3
+  SPI-delivery bug (SPIs must be put in Group 1 via `GICD_IGROUPR`; the UART RX /
+  NIC IRQs were silent — H1 had only exercised the PPI timer + SGIs). Acceptance:
+  `make h4-ssh-pci-test` boots GICv3 with the NIC + RNG on PCIe, gets a DHCP lease
+  over virtio-net-pci, autostarts `/bin/sshd`, and a host OpenSSH client runs a
+  bounded `/bin/id` end-to-end (publickey auth, exec status 0). See `docs/NOTES.md`
+  H4. H0–H4 now boot the Hetzner device model end-to-end and are SSH-reachable.
 - **H5** (planned): boot on ACPI firmware — parse minimal ACPI (RSDP→XSDT→MADT for
   GIC, SPCR for UART, MCFG for ECAM, GTDT for timer); forward the RSDP from the
   loader. Acceptance: kernel derives platform config under ACPI with no DTB.

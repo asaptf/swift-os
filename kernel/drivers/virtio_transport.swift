@@ -34,6 +34,9 @@ private let M_QDRVL: UInt = 0x090
 private let M_QDRVH: UInt = 0x094
 private let M_QDEVL: UInt = 0x0a0
 private let M_QDEVH: UInt = 0x0a4
+private let M_CONFIG: UInt = 0x100        // device-specific config (e.g. the MAC)
+
+private let maxVirtqueues = 4             // rng uses 1; net uses 2 (rx, tx)
 
 // virtio_pci_common_cfg field offsets (virtio 1.0 §4.1.4.3).
 private let C_DEVFEATSEL: UInt = 0x00
@@ -57,7 +60,9 @@ struct VirtioTransport {
     var isPci: Bool = false
     var mmio: UInt = 0                       // virtio-mmio register base
     var pci = VirtioPciDevice()              // resolved modern virtio-pci device
-    private(set) var notifyAddr: UInt = 0    // doorbell for the configured queue (PCI)
+    // Per-queue notify doorbell address (PCI). Each queue can have a distinct
+    // notify_off; on the mmio transport notify uses M_QNOTIFY with the index.
+    private(set) var notifyAddrs: InlineArray<4, UInt> = .init(repeating: 0)
 
     init(mmio base: UInt) { isPci = false; mmio = base }
     init(pci device: VirtioPciDevice) { isPci = true; pci = device }
@@ -79,22 +84,55 @@ struct VirtioTransport {
     }
 
     // --- feature negotiation ---
-    // Accept only VIRTIO_F_VERSION_1 (the modern contract); leave every other
-    // feature off, then set FEATURES_OK and confirm the device kept it.
-    func negotiateVersion1() -> Bool {
+    /// The 64-bit device feature bits the device offers.
+    func deviceFeatures() -> UInt64 {
         if isPci {
-            mmio_write32(pci.common + C_DRVFEATSEL, VIRTIO_F_VERSION_1_SELECT)
-            mmio_write32(pci.common + C_DRVFEAT, VIRTIO_F_VERSION_1_BIT)
-            mmio_write32(pci.common + C_DRVFEATSEL, 0)
-            mmio_write32(pci.common + C_DRVFEAT, 0)
-        } else {
-            mmio_write32(mmio + M_DRVFEATSEL, VIRTIO_F_VERSION_1_SELECT)
-            mmio_write32(mmio + M_DRVFEAT, VIRTIO_F_VERSION_1_BIT)
-            mmio_write32(mmio + M_DRVFEATSEL, 0)
-            mmio_write32(mmio + M_DRVFEAT, 0)
+            mmio_write32(pci.common + C_DEVFEATSEL, 0)
+            let lo = mmio_read32(pci.common + C_DEVFEAT)
+            mmio_write32(pci.common + C_DEVFEATSEL, 1)
+            let hi = mmio_read32(pci.common + C_DEVFEAT)
+            return UInt64(lo) | (UInt64(hi) << 32)
         }
+        mmio_write32(mmio + M_DEVFEATSEL, 0)
+        let lo = mmio_read32(mmio + M_DEVFEAT)
+        mmio_write32(mmio + M_DEVFEATSEL, 1)
+        let hi = mmio_read32(mmio + M_DEVFEAT)
+        return UInt64(lo) | (UInt64(hi) << 32)
+    }
+
+    /// Publish the 64-bit driver feature bits we accept.
+    func setDriverFeatures(_ features: UInt64) {
+        let lo = UInt32(truncatingIfNeeded: features)
+        let hi = UInt32(truncatingIfNeeded: features >> 32)
+        if isPci {
+            mmio_write32(pci.common + C_DRVFEATSEL, 0)
+            mmio_write32(pci.common + C_DRVFEAT, lo)
+            mmio_write32(pci.common + C_DRVFEATSEL, 1)
+            mmio_write32(pci.common + C_DRVFEAT, hi)
+        } else {
+            mmio_write32(mmio + M_DRVFEATSEL, 0)
+            mmio_write32(mmio + M_DRVFEAT, lo)
+            mmio_write32(mmio + M_DRVFEATSEL, 1)
+            mmio_write32(mmio + M_DRVFEAT, hi)
+        }
+    }
+
+    /// Set FEATURES_OK and confirm the device accepted the negotiated set.
+    func setFeaturesOk() -> Bool {
         setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)
         return (getStatus() & VIRTIO_STATUS_FEATURES_OK) != 0
+    }
+
+    /// Convenience for single-feature devices: accept only VIRTIO_F_VERSION_1.
+    func negotiateVersion1() -> Bool {
+        setDriverFeatures(UInt64(1) << 32)   // bit 32 = VIRTIO_F_VERSION_1
+        return setFeaturesOk()
+    }
+
+    // --- device-specific config (e.g. the virtio-net MAC) ---
+    func configRead32(_ offset: UInt) -> UInt32 {
+        if isPci { return mmio_read32(pci.device + offset) }
+        return mmio_read32(mmio + M_CONFIG + offset)
     }
 
     // --- queue setup ---
@@ -113,7 +151,9 @@ struct VirtioTransport {
             mmio_write64(pci.common + C_QDRIVER, avail)
             mmio_write64(pci.common + C_QDEVICE, used)
             let notifyOff = UInt(mmio_read16(pci.common + C_QNOTIFYOFF))
-            notifyAddr = pci.notify + notifyOff * UInt(pci.notifyMultiplier)
+            if Int(q) < maxVirtqueues {
+                notifyAddrs[Int(q)] = pci.notify + notifyOff * UInt(pci.notifyMultiplier)
+            }
             mmio_write16(pci.common + C_QENABLE, 1)
             return size
         }
@@ -136,8 +176,9 @@ struct VirtioTransport {
     // --- doorbell + interrupt ack ---
     func notify(queue q: UInt16) {
         if isPci {
-            // The modern notify register expects the queue index (16-bit).
-            mmio_write16(notifyAddr, q)
+            // The modern notify register expects the queue index (16-bit). Each
+            // queue has its own doorbell address (resolved in setupQueue).
+            if Int(q) < maxVirtqueues { mmio_write16(notifyAddrs[Int(q)], q) }
         } else {
             mmio_write32(mmio + M_QNOTIFY, UInt32(q))
         }
