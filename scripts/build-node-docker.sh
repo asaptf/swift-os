@@ -66,12 +66,16 @@ WRAP
   chmod +x "/tmp/wrap/aarch64-elf-$t"
 done
 
-# Neutralize Abseil's stdcpp waiter: its header unconditionally includes
-# <mutex>/<condition_variable>, absent in our threadless libstdc++. Abseil uses
-# the futex waiter here (FUTEX_CLOCK_REALTIME is defined in node-compat), so the
-# stdcpp waiter is dead code; empty its TU to drop the std::mutex dependency.
-SW="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal/stdcpp_waiter.cc"
-[ -f "$SW" ] && printf '// neutralized for SwiftOS: futex waiter used (see build-node-docker.sh)\n' > "$SW"
+# Neutralize Abseil's stdcpp waiter. waiter.h unconditionally #includes ALL five
+# waiter headers, and stdcpp_waiter.h unconditionally pulls <mutex>/
+# <condition_variable> (absent in our threadless libstdc++). We use the futex
+# waiter (FUTEX_CLOCK_REALTIME defined) or pthread waiter, both std::mutex-free,
+# so empty stdcpp_waiter.cc AND drop its #include from waiter.h.
+ABSL_SYNC="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal"
+[ -f "$ABSL_SYNC/stdcpp_waiter.cc" ] && \
+  printf '// neutralized for SwiftOS: futex/pthread waiter used (build-node-docker.sh)\n' > "$ABSL_SYNC/stdcpp_waiter.cc"
+[ -f "$ABSL_SYNC/waiter.h" ] && \
+  sed -i 's@#include "absl/synchronization/internal/stdcpp_waiter.h"@// stdcpp_waiter.h removed for SwiftOS (no std::mutex)@' "$ABSL_SYNC/waiter.h"
 
 cd "$SRC"
 echo "--- configure (host=native linux, target=aarch64-elf) ---"
@@ -93,8 +97,12 @@ TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__
 # failures, which need the freestanding crt0/syscalls/linker-script integration
 # handled separately) so all V8/Node *objects* and static libs get built and any
 # remaining compile-time shim gaps surface in one pass.
-echo "--- make -k -j${JOBS} (compile-all; exe links deferred) ---"
-CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${JOBS}" -C out BUILDTYPE=Release || true
+# Memory-capped parallelism: the biggest V8 TUs (bytecode-generator, builtins,
+# torque output) need ~2-3 GiB of cc1plus each; with only ~7.6 GiB in the
+# container, high -j OOM-kills the compiler. Cap at NODE_JOBS (default 2).
+VJOBS="${NODE_JOBS:-2}"
+echo "--- make -k -j${VJOBS} (compile-all; exe links deferred) ---"
+CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${VJOBS}" -C out BUILDTYPE=Release || true
 echo "--- objects/libs built: ---"
 find out/Release/obj.target -name '*.o' | wc -l
 ls -la out/Release/obj.target/*/*.a 2>/dev/null | awk '{print $5, $9}' | head -20
