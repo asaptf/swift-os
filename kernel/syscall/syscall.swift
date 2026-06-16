@@ -86,6 +86,8 @@ private let sysLogStats: UInt = 82        // log_stats(buf, cap) — needs capLo
 private let sysNetInfo: UInt = 83         // netinfo(buffer, cap) — network status snapshot
 private let sysOpenpty: UInt = 84         // openpty(master*, slave*) — pseudo-terminal pair (HC34)
 private let sysPtySetForeground: UInt = 85 // pty_set_foreground(fd, pid) — tty signal target (HC36)
+private let sysFsync: UInt = 86           // fsync(fd)/fdatasync(fd) — flush the fd's filesystem to media (D2)
+private let sysSync: UInt = 87            // sync() — flush all writable filesystems to media (D2)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -211,6 +213,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
                               caps: UInt64(frame[2]))
     } else if number == sysFtruncate {
         result = vfsFtruncate(fd: Int(bitPattern: frame[0]), length: Int(bitPattern: frame[1]))
+    } else if number == sysFsync {
+        result = vfsFsync(fd: Int(bitPattern: frame[0]))
+    } else if number == sysSync {
+        result = vfsSyncAll()
     } else if number == sysFcntl {
         result = vfsFcntl(fd: Int(bitPattern: frame[0]), cmd: Int(bitPattern: frame[1]),
                           arg: Int(bitPattern: frame[2]))

@@ -2213,6 +2213,32 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
     return 0
 }
 
+// D2: fsync(fd)/fdatasync(fd). Flush the fd's filesystem to stable media. For a
+// /data (datafs) file this issues the data-disk cache flush; for tmpfs/base or
+// non-file fds there is nothing durable to flush, so it succeeds as a no-op.
+func vfsFsync(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .file else { return 0 }
+    let node = openDescriptions[entry.object].node
+    if node >= 0 && node < nodeCount && nodes[node].dataFs {
+        return datafsFlush() == 0 ? 0 : errInvalid
+    }
+    return 0
+}
+
+// D2: sync(). Flush every writable filesystem to stable media. Only the /data
+// disk is durable, so this flushes it (when present).
+func vfsSyncAll() -> Int {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    if virtioBlkDataAvailable() { _ = datafsFlush() }
+    return 0
+}
+
 func vfsClose(fd: Int) -> Int {
     return handleClose(currentVFSProcess(), fd)
 }

@@ -2810,7 +2810,9 @@ W int chown(const char *p, uid_t owner, gid_t group) {
     return sysret(sys3(SYS_CHOWN, (long)p, (long)owner, 0));
 }
 W int fchown(int fd, uid_t owner, gid_t group) { (void)fd; (void)owner; (void)group; return 0; }
-W int fsync(int fd) { (void)fd; return 0; }
+W int fsync(int fd) { return sysret(sys3(SYS_FSYNC, fd, 0, 0)); }
+W int fdatasync(int fd) { return sysret(sys3(SYS_FSYNC, fd, 0, 0)); }
+W void sync(void) { (void)sys3(SYS_SYNC, 0, 0, 0); }
 W int symlink(const char *target, const char *linkpath) {
     (void)target; (void)linkpath; errno = ENOSYS; return -1;
 }

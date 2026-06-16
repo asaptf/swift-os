@@ -141,6 +141,9 @@ private var blkServedDevice = -1
 // (datafs, D1+). SMP: set once at boot before EL0 runs.
 private var blkDataDevice = -1
 
+// D2: count successful data-disk cache flushes (fsync/sync), for the boot self-test.
+private var blkDataFlushes: UInt64 = 0
+
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
     var a = pa & ~UInt(63)
@@ -725,9 +728,12 @@ func virtioBlkDataFlush() -> Int32 {
     if blkDataDevice < 0 { return -1 }
     if !blkSelectDevice(blkDataDevice) { return -1 }
     let rc = blkDoFlush()
+    if rc == 0 { blkDataFlushes &+= 1 }
     if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
     return rc
 }
+// D2: number of successful data-disk flushes since boot.
+func virtioBlkDataFlushCount() -> UInt64 { blkDataFlushes }
 
 // --- A/B update store: active/fallback slot offsets (U1a) --------------------
 // True if the selected disk is an A/B update-store disk (sector 0 is SWOSBOOT).

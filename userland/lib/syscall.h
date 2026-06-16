@@ -92,6 +92,8 @@
 #define SYS_NETINFO        83
 #define SYS_OPENPTY        84
 #define SYS_PTY_SET_FOREGROUND 85
+#define SYS_FSYNC          86
+#define SYS_SYNC           87
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0

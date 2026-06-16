@@ -515,6 +515,24 @@ private func runDataDeviceProbeD0() {
     uartPuts("\n")
 }
 
+/// D2: confirm the durable-sync path. fsync/fdatasync/sync now flush the data
+/// disk's write cache to stable media. Here we prove the flush mechanism runs
+/// after datafs is mounted; the userland fsync() -> SYS_FSYNC path is exercised
+/// end-to-end by durable SQLite (D3).
+private func runFsyncProbeD2() {
+    if !virtioBlkDataAvailable() { return }
+    let rc = virtioBlkDataFlush()
+    if rc != 0 {
+        uartPuts("D2: data flush failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rc)))
+        uartPuts("\n")
+        return
+    }
+    uartPuts("D2 OK: data sync path ready, flush count ")
+    uartPutUInt(virtioBlkDataFlushCount())
+    uartPuts("\n")
+}
+
 /// M11b: probe the virtio-blk disk. Bring up the block device discovered in the
 /// virtio-mmio window, read sector 0, and report it. When the attached disk is a
 /// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
@@ -1013,6 +1031,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     }
     klog(.info, "smp", "S4d OK: package-store lock boundary ready", UInt64(pkgStoreS4dLockAcquireCount()))
     vfsInit()           // M11c: serves the read-only base from disk when present
+    runFsyncProbeD2()   // D2: confirm the data-disk durable-sync path
     if !vfsS4bReadinessSelfTest() {
         uartPuts("panic: S4b VFS lock boundary self-test failed\n")
         while true {}
