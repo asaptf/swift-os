@@ -74,9 +74,14 @@ fi
 # memory-limited container. First-pass node doesn't need -O3.
 TF="-O2 -isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
 
-echo "--- make -k -j${JOBS} -C out node (continuous, -O2 target+host) ---"
+# Build 'all' with -k: the target executable LINKS (node, openssl-cli, nop, ...)
+# fail freestanding (crt0/-ldl), but -k keeps compiling, so ALL objects + static
+# libs -- including libnode.a and node's own objects -- get built. We then link
+# node ourselves (freestanding) in scripts/link-node.sh. (Targeting `node`
+# directly didn't remake it because of an openssl-cli link error in its graph.)
+echo "--- make -k -j${JOBS} -C out all (continuous, -O2 target+host) ---"
 CFLAGS="$TF" CXXFLAGS="$TF" CFLAGS_host="-O2" CXXFLAGS_host="-O2" \
-  make -k -j"${JOBS}" -C out BUILDTYPE=Release node
+  make -k -j"${JOBS}" -C out BUILDTYPE=Release
 rc=$?
 echo "--- make rc=$rc ---"
 echo "--- result ---"
