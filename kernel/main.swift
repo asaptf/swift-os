@@ -909,6 +909,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     swiftRaw.deallocate()
     uartPuts("M1 probe: Swift raw allocation hook ok\n")
 
+    // Bring up a virtio-gpu scanout console as early as possible (right after the
+    // PMM, which it needs for the framebuffer) so the boot log is visible on a
+    // hypervisor whose only console is the graphical framebuffer — e.g. Hetzner
+    // Cloud's noVNC, which has no serial tab. No-op when there is no virtio-gpu
+    // (the GOP/ramfb framebuffer from the loader, if any, stays in use).
+    if virtioGpuInit() {
+        uartPuts("virtio-gpu: scanout console active\n")
+    }
+
     let probe = HeapProbe(13, 29)
     if probe.sum() != 42 {
         uartPuts("panic: Swift class heap probe failed\n")
@@ -1099,7 +1108,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     signalReset()
     uartRxInit()
     let inputKeyboard = virtioKbdInit() > 0
-    let interactiveConsole = inputKeyboard && fb_available() != 0
+    // Take the "boot straight into swos-init / services" path (skipping the
+    // serial-only milestone demo sequence) when a human is at a graphical window
+    // (keyboard + framebuffer), OR when a virtio-gpu scanout console is the only
+    // console — a headless server like a Hetzner Cloud VM, whose noVNC console
+    // shows virtio-gpu and which has no serial input at all. Without this, the
+    // demo sequence runs /bin/ttydemo, which blocks forever on a serial read that
+    // never arrives, so swos-init (and therefore sshd) would never start. The
+    // pure-serial dev/test path (`make run`, no framebuffer) keeps the demos.
+    let interactiveConsole = (inputKeyboard && fb_available() != 0) || virtioGpuActive()
     if inputKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }

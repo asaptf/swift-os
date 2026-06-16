@@ -146,6 +146,7 @@ SWIFT_SRCS := \
 	kernel/drivers/virtio_net.swift \
 	kernel/drivers/virtio_blk.swift \
 	kernel/drivers/virtio_rng.swift \
+	kernel/drivers/virtio_gpu.swift \
 	kernel/drivers/virtio_input.swift \
 	kernel/net/packet.swift \
 	kernel/net/ethernet.swift \

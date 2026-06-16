@@ -62,6 +62,7 @@ private var g_cells: InlineArray<32768, UInt8> = .init(repeating: UInt8(ascii: "
 // the cursor is currently painted so it can be lifted when it moves or blinks off.
 private var g_cur_col: UInt = 0, g_cur_row: UInt = 0
 private var g_blink_ctr: UInt = 0
+private var g_gpu_flush_ctr: UInt = 0   // throttles the timer-driven virtio-gpu scanout flush
 private var g_blink_on = true          // desired phase: true = show cursor, false = hide
 private var g_cur_drawn = false        // is an inverted cell currently on screen?
 
@@ -514,6 +515,10 @@ func fb_putc(_ c: UInt8) {
         fb_scroll()
         g_cy = g_rows - 1
     }
+    // A line completed (newline/CR/tab). On a virtio-gpu scanout, a framebuffer
+    // write is not shown until it is transferred + flushed; do that per line so
+    // the boot log streams to a GPU-only console (no-op on ramfb/GOP/serial).
+    gpuConsoleFlush()
 }
 
 // Drive the blinking block cursor. Called every timer tick; toggles the visible
@@ -540,5 +545,13 @@ func fb_cursor_blink() {
         g_cur_col = g_cx
         g_cur_row = g_cy
         g_cur_drawn = true
+    }
+    // Periodically push the framebuffer to a virtio-gpu scanout so output with no
+    // trailing newline (e.g. the "login:" prompt) and the cursor still appear.
+    // ~6 Hz at the 100 Hz tick; no-op unless a virtio-gpu console is active.
+    g_gpu_flush_ctr += 1
+    if g_gpu_flush_ctr >= 16 {
+        g_gpu_flush_ctr = 0
+        gpuConsoleFlush()
     }
 }
