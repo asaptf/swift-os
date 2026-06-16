@@ -23,6 +23,9 @@ private let CFG_STATUS: UInt32 = 0x06
 private let CFG_CAP_PTR: UInt32 = 0x34
 private let CFG_BAR0: UInt32 = 0x10
 private let CFG_SUBSYSTEM_ID: UInt32 = 0x2E   // legacy/transitional: virtio device type
+private let CFG_HEADER_TYPE: UInt32 = 0x0E    // bit 7 = multifunction, bits 0..6 = layout
+private let CFG_SECONDARY_BUS: UInt32 = 0x19  // header type 1 (PCI-to-PCI bridge)
+private let HEADER_TYPE_BRIDGE: UInt8 = 1
 
 private let CMD_MEM_SPACE: UInt16 = 1 << 1
 private let CMD_BUS_MASTER: UInt16 = 1 << 2
@@ -182,22 +185,58 @@ private func pciResolveVirtioCaps(_ b: UInt32, _ d: UInt32, _ f: UInt32,
     }
 }
 
-/// Find a modern virtio-pci device of the given virtio device type (e.g. 4 for
-/// RNG) on bus 0, assign/resolve its BARs and config structures, and return it.
-/// Returns nil if PCI is disabled (no ECAM) or no such device is present.
-func virtioPciFindDevice(deviceType: UInt32) -> VirtioPciDevice? {
-    if platform.pcieEcamBase == 0 { return nil }
+// Resolve a single function known to be the wanted virtio device type.
+private func pciResolveFunction(_ b: UInt32, _ d: UInt32, _ f: UInt32,
+                                _ deviceType: UInt32) -> VirtioPciDevice? {
+    var out = VirtioPciDevice()
+    out.bus = b; out.dev = d; out.fn = f; out.deviceType = deviceType
+    let bars = pciAssignBars(b, d, f)
+    pciResolveVirtioCaps(b, d, f, bars, into: &out)
+    return out.valid ? out : nil
+}
 
+// Scan one PCI bus for a virtio device of `deviceType`, recursing through any
+// PCI-to-PCI bridge (PCIe root port) into its secondary bus. Real cloud VMs
+// (Hetzner) place virtio functions behind root ports on non-zero buses — only
+// the GPU sits on bus 0 — so a bus-0-only scan misses the NIC/RNG/SCSI. On UEFI
+// the firmware has already programmed the bridge secondary-bus numbers and BAR
+// windows; we just follow them. `depth` bounds the recursion as a loop guard.
+private func pciScanBusForVirtio(_ bus: UInt32, _ deviceType: UInt32, _ depth: Int) -> VirtioPciDevice? {
+    if depth > 32 { return nil }
     var d: UInt32 = 0
     while d < 32 {
-        if pciVirtioDeviceType(0, d, 0) == deviceType {
-            var out = VirtioPciDevice()
-            out.bus = 0; out.dev = d; out.fn = 0; out.deviceType = deviceType
-            let bars = pciAssignBars(0, d, 0)
-            pciResolveVirtioCaps(0, d, 0, bars, into: &out)
-            if out.valid { return out }
+        if pciRead16(bus, d, 0, CFG_VENDOR) != 0xFFFF {
+            let multifn = (pciRead8(bus, d, 0, CFG_HEADER_TYPE) & 0x80) != 0
+            let fnCount: UInt32 = multifn ? 8 : 1
+            var f: UInt32 = 0
+            while f < fnCount {
+                if pciRead16(bus, d, f, CFG_VENDOR) != 0xFFFF {
+                    if pciVirtioDeviceType(bus, d, f) == deviceType,
+                       let found = pciResolveFunction(bus, d, f, deviceType) {
+                        return found
+                    }
+                    // PCI-to-PCI bridge / PCIe root port: descend into its bus.
+                    if (pciRead8(bus, d, f, CFG_HEADER_TYPE) & 0x7F) == HEADER_TYPE_BRIDGE {
+                        let secondary = UInt32(pciRead8(bus, d, f, CFG_SECONDARY_BUS))
+                        if secondary != 0 && secondary != bus,
+                           let found = pciScanBusForVirtio(secondary, deviceType, depth + 1) {
+                            return found
+                        }
+                    }
+                }
+                f += 1
+            }
         }
         d += 1
     }
     return nil
+}
+
+/// Find a modern virtio-pci device of the given virtio device type (e.g. 4 for
+/// RNG, 1 for net), descending through PCIe root ports, assign/resolve its BARs
+/// and config structures, and return it. Returns nil if PCI is disabled (no
+/// ECAM) or no such device is present.
+func virtioPciFindDevice(deviceType: UInt32) -> VirtioPciDevice? {
+    if platform.pcieEcamBase == 0 { return nil }
+    return pciScanBusForVirtio(0, deviceType, 0)
 }
