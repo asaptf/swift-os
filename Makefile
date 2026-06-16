@@ -2099,7 +2099,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(SQLITE_BIN) $(BASE_ROOT)/bin/sqlite3
 	mkdir -p $(BASE_ROOT)/sbin $(BASE_ROOT)/usr/etc/nginx $(BASE_ROOT)/usr/share/nginx/html
 	cp $(NGINX_BIN) $(BASE_ROOT)/sbin/nginx
-	cp $(BUILD)/nginx-root/usr/share/nginx/html/index.html $(BASE_ROOT)/usr/share/nginx/html/index.html
+	if [ -n "$(NGINX_SITE_DIR)" ]; then cp -R "$(NGINX_SITE_DIR)/." $(BASE_ROOT)/usr/share/nginx/html/; else cp $(BUILD)/nginx-root/usr/share/nginx/html/index.html $(BASE_ROOT)/usr/share/nginx/html/index.html; fi
 	mkdir -p $(BASE_ROOT)/usr/etc/nginx/certs
 	cp $(BUILD)/nginx-certs/server.crt $(BUILD)/nginx-certs/server.key $(BASE_ROOT)/usr/etc/nginx/certs/
 	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
