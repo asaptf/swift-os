@@ -80,10 +80,10 @@ $GCC -nostartfiles -nostdlib -static -T /src/userland/user_newlib.ld \
   "$B/crt0.o" \
   "$REL/obj.target/node/src/node_main.o" \
   "$REL/obj.target/node/src/node_snapshot_stub.o" \
+  "$B/node_compat.o" "$B/syscalls.o" "$B/stubs.o" \
   -Wl,--start-group \
     "${LIBS[@]}" \
     -Wl,--whole-archive "$SNAP" -Wl,--no-whole-archive \
-    "$B/node_compat.o" "$B/syscalls.o" "$B/stubs.o" \
     -lstdc++ -lc -lm -lgcc \
   -Wl,--end-group \
   -o "$REL/node.elf" 2>&1 | tee /src/build/node-link.log | tail -40

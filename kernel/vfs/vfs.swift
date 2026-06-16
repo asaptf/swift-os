@@ -86,7 +86,10 @@ private struct VNode {
 // Keep fixed-table tmpfs churn headroom above the packed base image and early
 // package payloads. Data packages such as tzdata add hundreds of read-only
 // vnodes, so the bootstrap table is intentionally larger than the M7/M11 demos.
-private let maxNodes = 2048
+// The bundled npm tree alone is ~2060 files, so the base image now packs ~2700
+// entries; size the table well above that plus runtime tmpfs headroom. At
+// ~120 B/VNode this is ~0.7 MiB of the 16 MiB kernel heap.
+private let maxNodes = 6144
 private var nodes: UnsafeMutablePointer<VNode>! = nil
 private var nodeCount = 0
 private var mountedPackageStorePayloads = 0

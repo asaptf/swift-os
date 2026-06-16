@@ -176,3 +176,27 @@ int _getentropy(void *buf, size_t len) {
     }
     return 0;
 }
+
+// getentropy() — STRONG override of newlib's libc.a stub. newlib exports its own
+// getentropy() that does NOT route through our SYS_RANDOM _getentropy and returns
+// unreliable/partial data, so OpenSSL's DRBG seeding (it calls the weak
+// getentropy first) flakily failed node's CSPRNG self-check at startup. Because
+// this object links ahead of libc.a, our definition wins. We fill the WHOLE
+// buffer from virtio-rng in 256-byte SYS_RANDOM chunks (OpenSSL may request more
+// than the POSIX 256-byte cap), so the seed is always complete and deterministic.
+int getentropy(void *buf, size_t len) {
+    unsigned char *p = (unsigned char *)buf;
+    size_t got = 0;
+    while (got < len) {
+        size_t chunk = len - got;
+        if (chunk > 256) chunk = 256;
+        size_t c = 0;
+        while (c < chunk) {
+            long r = sys3(SYS_RANDOM, (long)(p + got + c), (long)(chunk - c), 0);
+            if (r <= 0) { errno = EIO; return -1; }
+            c += (size_t)r;
+        }
+        got += chunk;
+    }
+    return 0;
+}
