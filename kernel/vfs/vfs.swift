@@ -2289,6 +2289,9 @@ private let fSetFD = 2
 private let fGetFL = 3
 private let fSetFL = 4
 private let fDupFDCloexec = 14
+private let fGetLk = 7     // F_GETLK  (newlib value)
+private let fSetLk = 8     // F_SETLK
+private let fSetLkw = 9    // F_SETLKW
 private let fdCloexecFlag = 1
 private let mutableStatusFlags = oNonblock
 
@@ -2326,6 +2329,12 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         let d = fdEntry(proc, fd).object
         openDescriptions[d].flags = (openDescriptions[d].flags & ~mutableStatusFlags)
             | (arg & mutableStatusFlags)
+        return 0
+    case fGetLk, fSetLk, fSetLkw:
+        // POSIX advisory record locks. With no concurrent openers of a /data file
+        // (single process, SQLITE_THREADSAFE=0) advisory locking is a no-op
+        // success — SQLite's unix VFS only needs F_SETLK to succeed to proceed.
+        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
         return 0
     default:
         return errInvalid
