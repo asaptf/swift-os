@@ -18,13 +18,15 @@ _start:
     // its direct-boot fallback. x1-x3 carry the loader's framebuffer handoff
     // (base / width:height / stride:format), zero on the QEMU -kernel path.
     // x4/x5 carry the H3 ramdisk handoff (base / size of the RAM base image),
-    // zero when the base FS comes from a virtio-blk disk instead.
+    // zero when the base FS comes from a virtio-blk disk instead. x6 carries the
+    // H5 ACPI RSDP pointer (0 when the firmware is device-tree based).
     mov     x19, x0
     mov     x20, x1
     mov     x21, x2
     mov     x22, x3
     mov     x23, x4
     mov     x24, x5
+    mov     x25, x6
 
     // Single-core bring-up: park every CPU whose affinity != 0.
     mrs     x0, mpidr_el1
@@ -81,13 +83,14 @@ _start:
 
     // Enter Swift. kernel_main is `@_cdecl` and must not return; if it does,
     // fall through into the parking loop. x0 = dtb, x1-x3 = framebuffer handoff,
-    // x4 = ramdisk base, x5 = ramdisk size.
+    // x4 = ramdisk base, x5 = ramdisk size, x6 = ACPI RSDP.
     mov     x0, x19
     mov     x1, x20
     mov     x2, x21
     mov     x3, x22
     mov     x4, x23
     mov     x5, x24
+    mov     x6, x25
     bl      kernel_main
 
 .Lhang:

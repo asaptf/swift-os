@@ -554,9 +554,14 @@ base (`0x4000_0000`) match.
   over virtio-net-pci, autostarts `/bin/sshd`, and a host OpenSSH client runs a
   bounded `/bin/id` end-to-end (publickey auth, exec status 0). See `docs/NOTES.md`
   H4. H0–H4 now boot the Hetzner device model end-to-end and are SSH-reachable.
-- **H5** (planned): boot on ACPI firmware — parse minimal ACPI (RSDP→XSDT→MADT for
-  GIC, SPCR for UART, MCFG for ECAM, GTDT for timer); forward the RSDP from the
-  loader. Acceptance: kernel derives platform config under ACPI with no DTB.
+- **H5** (DONE, this branch): boot on ACPI firmware. The loader forwards the RSDP
+  (x6); `kernel/arch/aarch64/acpi.swift` parses RSDP→XSDT→MADT (GIC + CPUs), MCFG
+  (ECAM), SPCR (UART), FADT (PSCI), all MMU-off (the tables sit high in RAM).
+  `platformInit` prefers ACPI over the FDT. Acceptance: `make h5-acpi-test` boots
+  the Hetzner device model and the kernel derives gic/redist/uart/ecam + CPU
+  topology + PSCI from ACPI (no DTB), then the whole stack comes up on those
+  values (GICv3, secondary CPU via PSCI, virtio-pci, DHCP). See `docs/NOTES.md`
+  H5. H0–H5 boot the Hetzner model end-to-end, SSH-reachable, with no FDT.
 - **H6** (planned): real-server bring-up — build the GPT disk, `dd` onto the VM
   boot disk via rescue, observe over serial/VNC, iterate until SSH reaches
   SwiftOS. SAFETY: confirm with the user before the destructive step; keep a

@@ -6467,3 +6467,53 @@ real UART IRQ.
 **Status.** H0–H4 now boot the Hetzner device model end-to-end and are reachable
 over SSH in QEMU. Remaining: H5 (derive platform config from ACPI on the real
 firmware — no FDT, per H0) and H6 (bring-up on the real server).
+
+### H5 — platform config from ACPI (no device tree) (DONE, 2026-06-16)
+
+**Goal.** On the real Hetzner VM there is no FDT (H0) — the firmware publishes
+only ACPI. Derive the platform map from ACPI so the kernel does not depend on a
+device tree.
+
+**What changed.**
+- The UEFI loader (`boot/efi/loader.c`) forwards the ACPI RSDP pointer to the
+  kernel in x6 (it already located it via `EFI_ACPI_20_TABLE_GUID`); `boot.S`
+  preserves x6 and `kernel_main` passes it to `platformInit`.
+- `kernel/arch/aarch64/acpi.swift`: a minimal parser. RSDP → XSDT → tables:
+  **MADT** (GICD base + version → GICv3; GICR base; one CPU per enabled GICC,
+  with MPIDR.Aff0 and the PSCI enable mask), **MCFG** (PCIe ECAM base), **SPCR**
+  (console UART), **FADT** (PSCI conduit HVC/SMC from the ARM boot flags). Like
+  the FDT parser it runs with the MMU off, so every field is assembled from
+  non-inlined byte reads (`rd8`) — unaligned multi-byte access to Device-typed
+  RAM faults.
+- `platformInit(dtbPhys, acpiRsdp)` now prefers ACPI when an RSDP was passed
+  (the real firmware path), else the device tree, else defaults. The whole ACPI
+  apply happens **with the MMU off**, because the ACPI tables sit high in RAM
+  (~5 GiB on the VM, `RSDP @ 0x1_3CB4_3018`) and are unmapped once the MMU is on.
+  CPU topology is copied through `applyAcpiTopology`, marked `@_optimize(none)`,
+  so the eight adjacent `cpuAff0_*` stores are not coalesced into a wider
+  unaligned access (the FDT path defers this to post-MMU; the ACPI path can't).
+- Gotcha repeated from H1: adding a `UInt` field (`ecamBase`) to `PlatformInfo`
+  perturbed its size and triggered an unaligned vectorized store at M1 (MMU off,
+  strict-align) — on **both** the ACPI and FDT paths. Fix: don't grow that
+  struct; the MCFG parse writes `platform.pcieEcamBase` directly (one aligned
+  global store). The boot-log "M9 OK: discovered from device tree" klog is now
+  conditional on `platformDiscoveredFromAcpi`.
+
+**Acceptance.** `make h5-acpi-test` (`tests/h5_acpi_test.sh`) boots the GPT disk
+under UEFI on the Hetzner device model (ACPI firmware, GICv3, virtio-PCI) and
+asserts `M9 OK: hardware discovered from ACPI` (not "device tree"), the exact
+derived map (`gic 0x0800_0000 redist 0x080A_0000 uart 0x0900_0000 ecam
+0x40_1000_0000`), then the whole stack on those values: GICv3 (`M2 GIC: GICv3`),
+the secondary CPU online via PSCI (`S1 OK`), a virtio-pci queue (ECAM,
+`H2 OK`), and a DHCP lease over virtio-net-pci. Wired into `make test`.
+
+**Regression.** The device-tree paths are unchanged — direct `-kernel` and the
+`acpi=off` UEFI boot still log "M9 OK: hardware discovered from device tree"
+(the klog several tests assert); `gicv3-test`/`virtio-pci-test` still pass.
+
+**Status.** H0–H5 complete: the kernel boots the Hetzner device model
+end-to-end — GICv3, virtio over PCIe, RAM-base root FS, SSH-reachable — deriving
+its platform map from ACPI with no device tree. Remaining: **H6** (bring-up on
+the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
+via the provider rescue system, confirm with the user before the destructive
+step, iterate over serial/VNC until SSH reaches SwiftOS).

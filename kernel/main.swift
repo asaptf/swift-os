@@ -871,7 +871,7 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 /// handoff (0/0 when the base comes from a virtio-blk disk instead).
 @_cdecl("kernel_main")
 func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt,
-                _ ramdiskBase: UInt, _ ramdiskSize: UInt) {
+                _ ramdiskBase: UInt, _ ramdiskSize: UInt, _ acpiRsdp: UInt) {
     uartInit()  // no-op on QEMU; enables the PL011 on VirtualBox before any output
     // The UEFI loader may hand us a GOP framebuffer (x1=base, x2=w<<32|h,
     // x3=stride<<32|format). When present, mirror the boot log to the screen.
@@ -886,9 +886,10 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")
 
-    // M9: discover the hardware map from the device tree before any subsystem
-    // (PMM, GIC, timer) relies on it. Discovery falls back to QEMU virt defaults.
-    platformInit(dtbPhys)
+    // M9/H5: discover the hardware map before any subsystem (PMM, GIC, timer)
+    // relies on it. Prefer ACPI when the UEFI loader passed an RSDP (the real
+    // Hetzner firmware has no FDT), else the device tree, else QEMU virt defaults.
+    platformInit(dtbPhys, acpiRsdp)
 
     swiftos_heap_init()
     enableMMU()
@@ -939,7 +940,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     klog(.info, "timer", "tick rate (Hz)", 100)
-    klog(.info, "platform", "M9 OK: hardware discovered from device tree")
+    if platformDiscoveredFromAcpi {
+        klog(.info, "platform", "M9 OK: hardware discovered from ACPI")
+    } else {
+        klog(.info, "platform", "M9 OK: hardware discovered from device tree")
+    }
     klog(.info, "smp", "S0 OK: foundations ready", UInt64(currentCpuId()))
     if !smpAtomicSelfTest() {
         uartPuts("panic: S0b atomic self-test failed\n")

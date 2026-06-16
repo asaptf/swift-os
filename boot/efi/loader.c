@@ -515,14 +515,15 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     // table set and memory map differ; this report is what we use to adapt the
     // HAL, and it prints regardless of whether the kernel can drive the UART.
     EFI_GUID acpi = EFI_ACPI_20_TABLE_GUID;
-    int have_acpi = 0;
+    UINT64 rsdp = 0;   // H5: ACPI RSDP, forwarded to the kernel for platform discovery.
     for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
         if (guid_eq(&st->ConfigurationTable[i].VendorGuid, &acpi)) {
-            have_acpi = 1;
+            rsdp = (UINT64)(UINTN)st->ConfigurationTable[i].VendorTable;
         }
     }
     puts16(st, "UEFI: ACPI 2.0 table ");
-    puts16(st, have_acpi ? "present\r\n" : "absent\r\n");
+    if (rsdp) { puts16(st, "present "); puthex(st, rsdp); puts16(st, "\r\n"); }
+    else { puts16(st, "absent\r\n"); }
 
     {
         UINTN ms = sizeof(mmap_buf), mk = 0, ds = 0;
@@ -709,10 +710,10 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     __asm__ volatile("msr daifset, #0xf" ::: "memory");
 
     // x0=dtb, x1=framebuffer base, x2=(width<<32|height), x3=(stride<<32|format),
-    // x4=ramdisk base, x5=ramdisk size (H3; 0/0 when no base.img was staged).
-    typedef void (*kernel_entry_t)(UINT64, UINT64, UINT64, UINT64, UINT64, UINT64);
+    // x4=ramdisk base, x5=ramdisk size (H3), x6=ACPI RSDP (H5; 0 when absent).
+    typedef void (*kernel_entry_t)(UINT64, UINT64, UINT64, UINT64, UINT64, UINT64, UINT64);
     kernel_entry_t enter = (kernel_entry_t)(UINTN)KERNEL_LOAD_ADDR;
-    enter((UINT64)(UINTN)dtb, fb_base, fb_dims, fb_strfmt, ramdisk_base, ramdisk_size);
+    enter((UINT64)(UINTN)dtb, fb_base, fb_dims, fb_strfmt, ramdisk_base, ramdisk_size, rsdp);
 
     for (;;) {}
     return EFI_SUCCESS;
