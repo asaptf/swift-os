@@ -31,5 +31,8 @@
 #ifndef __NR_gettid
 #define __NR_gettid 178
 #endif
+#ifndef __NR_getrandom      /* OpenSSL seeds its DRBG via syscall(__NR_getrandom) */
+#define __NR_getrandom 278
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_LINUX_UNISTD_H */

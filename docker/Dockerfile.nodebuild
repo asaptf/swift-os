@@ -72,9 +72,16 @@ RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION
 # the target libs with the newlib pthread feature-test macros (above), so newlib's
 # <pthread.h> fully declares the functions gthr-posix weak-references. The pthread
 # symbols themselves resolve at the final node link via userland/compat.
+# Consumers of <mutex>/<thread> must compile with the same newlib pthread/clock
+# feature macros so gthr-posix.h sees the full <pthread.h> (matches the target
+# flags scripts/build-node-docker.sh passes for the V8 build).
 RUN aarch64-elf-g++ -print-file-name=libstdc++.a \
     && printf '#include <vector>\n#include <atomic>\n#include <mutex>\n#include <condition_variable>\n#include <thread>\nstatic std::mutex m; static std::condition_variable cv;\nint main(){std::lock_guard<std::mutex> g(m); std::vector<int> v; v.push_back(1); return v.size()-1;}\n' \
-        | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti -x c++ - -c -o /tmp/t.o \
+        | aarch64-elf-g++ -std=c++20 -fno-exceptions -fno-rtti \
+            -D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES \
+            -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS \
+            -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION \
+            -x c++ - -c -o /tmp/t.o \
     && echo "toolchain OK: libstdc++ with std::mutex/thread"
 
 WORKDIR /src

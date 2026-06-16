@@ -293,6 +293,10 @@ USER_UVTHREADSTACKPROBE_ELF := $(BUILD)/uvthreadstackprobe.elf
 USER_UVKEYONCEPROBE_ELF := $(BUILD)/uvkeyonceprobe.elf
 USER_UVENVPROBE_ELF := $(BUILD)/uvenvprobe.elf
 USER_ENVCHILD_ELF := $(BUILD)/envchild.elf
+# Node.js 24.16 cross-built for SwiftOS in Docker (scripts/build-node-docker.sh
+# compiles all objects; scripts/link-node.sh does the freestanding final link).
+# The heavy build runs out-of-band; `make` only stages the resulting binary.
+USER_NODE_ELF := $(BUILD)/node.elf
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -359,6 +363,7 @@ USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
 USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 BASE_EXEC_ELFS := \
+	$(USER_NODE_ELF) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
 	$(USER_LLMD_ELF) \
@@ -1007,6 +1012,16 @@ $(BUILD)/n_epollprobe.o: userland/epollprobe.c userland/node-compat/sys/epoll.h 
 
 $(USER_EPOLLPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+# Node.js is cross-built out-of-band in Docker (it can't build in this Makefile's
+# macOS host toolchain). This guard only fires when build/node.elf is absent: it
+# never triggers the multi-hour Docker build implicitly, it just explains how.
+$(USER_NODE_ELF):
+	@test -f $@ || { echo "ERROR: $@ missing. Build Node for SwiftOS with:"; \
+	  echo "  ./scripts/build-node-docker.sh   # build image + compile all objects"; \
+	  echo "  docker run --rm -e NODE_VERSION=24.16.0 -v \$$(pwd):/src -w /src swiftos-nodebuild bash /src/scripts/link-node.sh"; \
+	  echo "  cp build/node-docker-work/node-v24.16.0/out/Release/node.elf $@"; \
+	  exit 1; }
 
 $(BUILD)/n_uvsemprobe.o: userland/uvsemprobe.c userland/compat/pthread.h userland/compat/semaphore.h userland/compat/time.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
@@ -1909,6 +1924,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_EPOLLPROBE_ELF) $(BASE_ROOT)/bin/epollprobe
+	cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
 	cp $(USER_UVSEMPROBE_ELF) $(BASE_ROOT)/bin/uvsemprobe
 	cp $(USER_UVRWLOCKPROBE_ELF) $(BASE_ROOT)/bin/uvrwlockprobe

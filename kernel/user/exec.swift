@@ -14,16 +14,32 @@
 // small bump heap. Server-package binaries are already larger than busybox:
 // the first static nginx package is ~2.7 MiB.
 private var elfBuf: UInt = 0
-private let elfBufMax = 8 * 1024 * 1024
+private var elfBufPages: Int = 0
+// Hard ceiling on a single executable image. The Node.js 24 binary (V8
+// --v8-lite-mode, jitless, no snapshot) is ~55 MiB; server-package binaries are
+// a few MiB. We don't reserve this whole span — the staging buffer is sized to
+// the actual file (see below) — it only bounds a pathological/corrupt length.
+private let elfBufMax = 128 * 1024 * 1024
 
 private func loadElfFromCString(_ path: UnsafePointer<UInt8>) -> (UInt, UInt) {
     let (found, image, off, len) = vfsDiskImageExtent(path)
     if !found || len <= 0 || len > elfBufMax { return (0, 0) }
 
-    if elfBuf == 0 {
-        let pa = pmmAllocPages(elfBufMax / 4096)
+    // Size the reusable staging buffer to the actual file, growing it on demand
+    // (e.g. the first time the ~55 MiB Node binary is exec'd). Grow-only: a later
+    // smaller load reuses the larger buffer. Free the old block page-by-page on
+    // growth so we don't leak. This keeps small-RAM configs (256 MiB) cheap —
+    // they only ever stage their few-MiB binaries.
+    let need = (Int(len) + 4095) / 4096
+    if need > elfBufPages {
+        if elfBuf != 0 {
+            for i in 0..<elfBufPages { pmmFreePage(elfBuf + UInt(i) * 4096) }
+            elfBuf = 0; elfBufPages = 0
+        }
+        let pa = pmmAllocPages(need)
         if pa == 0 { return (0, 0) }
         elfBuf = pa
+        elfBufPages = need
     }
     let rc = vfsImageReadRange(image, UInt64(off), UnsafeMutableRawPointer(bitPattern: elfBuf), UInt32(len))
     if rc != 0 { return (0, 0) }

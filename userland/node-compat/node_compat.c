@@ -233,6 +233,10 @@ long syscall(long number, ...) {
         return (long)mmap((void *)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, (off_t)a5);
     case __NR_munmap:
         return (long)munmap((void *)a0, (size_t)a1);
+    case __NR_getrandom:
+        /* OpenSSL's DRBG seeds via syscall(__NR_getrandom) on Linux; route it to
+         * the SwiftOS virtio-rng entropy source so RAND_status() reports ready. */
+        return (long)getrandom((void *)a0, (size_t)a1, (unsigned int)a2);
     default:
         errno = ENOSYS;
         return -1;
@@ -474,6 +478,21 @@ void makecontext(ucontext_t *ucp, void (*func)(void), int argc, ...) {
 }
 int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
     (void)oucp; (void)ucp; errno = ENOSYS; return -1;
+}
+
+/* ----- OpenSSL CPU-probe suppression --------------------------------------
+ * OpenSSL detects optional Arm crypto extensions (AES, SHA, PMULL, and also
+ * SM3/SM4/SVE2) by *executing* a candidate instruction and catching the SIGILL
+ * the CPU raises when the extension is absent (e.g. SM3 on cortex-a72). SwiftOS
+ * does not yet deliver SIGILL to EL0 for an undefined instruction -- it panics
+ * the kernel -- so the probe is fatal. OpenSSL skips the whole SIGILL dance when
+ * the OPENSSL_armcap env var is set, falling back to portable C crypto. Set it
+ * to 0 from a high-priority constructor so it lands before OpenSSL's own
+ * cpuid-setup constructor reads it. (environ is live: crt0 sets it before the
+ * .init_array loop that runs these constructors.) */
+__attribute__((constructor(101)))
+static void swos_disable_openssl_cpu_probe(void) {
+    setenv("OPENSSL_armcap", "0", 1);
 }
 
 /* ----- freestanding-link support ------------------------------------------
