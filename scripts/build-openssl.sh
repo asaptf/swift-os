@@ -128,3 +128,11 @@ chmod 0644 "$STAGE/usr/share/openssl/swiftos-openssl.version"
 
 printf 'Built %s\n' "$PACKAGE"
 printf 'Published signed repo fixture %s\n' "$REPO_ROOT/aarch64/current"
+
+# W3: AFTER packaging (so swport validates only declared files), stage the static
+# dev libraries + headers into $STAGE/usr for build-time consumers like nginx
+# (--with-http_ssl_module). These are not part of the .swpkg.
+mkdir -p "$STAGE/usr/lib" "$STAGE/usr/include"
+cp "$SRC/libssl.a" "$SRC/libcrypto.a" "$STAGE/usr/lib/"
+cp -R "$SRC/include/openssl" "$STAGE/usr/include/"
+printf 'Staged openssl static dev libs + headers under %s/usr\n' "$STAGE"

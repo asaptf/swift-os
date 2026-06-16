@@ -89,6 +89,7 @@ private let sysPtySetForeground: UInt = 85 // pty_set_foreground(fd, pid) — tt
 private let sysSecurityInfoEx: UInt = 86   // security_info_ex(struct*) — effective + real identity (sudo)
 private let sysFsync: UInt = 87           // fsync(fd)/fdatasync(fd) — flush the fd's filesystem to media (D2)
 private let sysSync: UInt = 88            // sync() — flush all writable filesystems to media (D2)
+private let sysRecv: UInt = 89            // recv(fd, buf, len) MSG_PEEK on TCP — peek without consuming (W3)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -223,6 +224,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsFsync(fd: Int(bitPattern: frame[0]))
     } else if number == sysSync {
         result = vfsSyncAll()
+    } else if number == sysRecv {
+        result = vfsRecvPeek(fd: Int(bitPattern: frame[0]), buffer: frame[1], count: frame[2])
     } else if number == sysFcntl {
         result = vfsFcntl(fd: Int(bitPattern: frame[0]), cmd: Int(bitPattern: frame[1]),
                           arg: Int(bitPattern: frame[2]))

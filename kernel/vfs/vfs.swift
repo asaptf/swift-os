@@ -809,6 +809,8 @@ func vfsInit() {
     if dev >= 0 {
         addSpecial(dev, "null", 1)
         addSpecial(dev, "zero", 2)
+        addSpecial(dev, "urandom", 3)
+        addSpecial(dev, "random", 3)
     }
 
     // Stamp the base/literal tree (and /tmp) with the boot time, so ls -l shows
@@ -1936,6 +1938,9 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             var z = 0
             while z < Int(count) { dst[z] = 0; z += 1 }
             result = Int(count)
+        } else if nodes[node].special == 3 { // /dev/urandom, /dev/random
+            let got = virtioRngRead(dst, Int(count))
+            result = got > 0 ? got : 0
         } // /dev/null: result stays 0 (EOF)
     } else if nodes[node].dataFs {
         // Persistent /data file: read from the data disk by inode. Done under the
@@ -2021,6 +2026,29 @@ func vfsKernelReadFile(fd: Int, offset: Int, buffer: UnsafeMutableRawPointer?, c
         i += 1
     }
     return want
+}
+
+// W3: recv(fd, buf, len) with MSG_PEEK on a TCP socket — return buffered bytes
+// without consuming them. nginx's `listen ssl` peeks the first byte to detect
+// TLS. Only TCP-socket peek is supported; callers route here only for MSG_PEEK.
+func vfsRecvPeek(fd: Int, buffer: UInt, count: UInt) -> Int {
+    if count == 0 { return 0 }
+    let proc = currentVFSProcess()
+    let borrowed = borrowDescriptionForFD(proc, fd)
+    if borrowed.err != 0 { return borrowed.err }
+    let entry = borrowed.entry
+    let d = borrowed.descIndex
+    let file = borrowed.desc
+    defer { releaseBorrowedDescription(d) }
+    guard entry.rights.contains(.read) else { return errBadFD }
+    guard entry.kind == .socket, socketIsTCP(file.node) else { return errInvalid }
+    guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
+    if (file.flags & oNonblock) != 0 {
+        netPump()
+        if !socketPollReadable(file.node) { return errAgain }
+    }
+    return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
+                   timeoutMs: socketRecvTimeoutMs, peek: true)
 }
 
 func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
@@ -2849,7 +2877,9 @@ private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
     let perms: UInt32 = nodes[node].mode != 0
         ? nodes[node].mode
         : (nodes[node].isDir ? 0o755 : (nodeIsExecutable(node) ? 0o755 : 0o644))
-    let mode: UInt32 = (nodes[node].isDir ? sIFDIR : sIFREG) | perms
+    let mode: UInt32 = nodes[node].special != 0
+        ? (sIFCHR | perms)
+        : ((nodes[node].isDir ? sIFDIR : sIFREG) | perms)
     let owner = nodes[node].owner
     return writeStatMode(va, mode, nodes[node].dataLen, uid: owner, gid: owner,
                          mtime: nodes[node].mtime)
