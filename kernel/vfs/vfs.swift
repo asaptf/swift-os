@@ -70,6 +70,8 @@ private struct VNode {
     var dataCap = 0         // tmpfs growth capacity
     var diskImage = 0       // SWOSBASE image index for on-disk files
     var diskOffset = 0      // byte offset of contents within the disk image
+    var dataFs = false      // contents persist on the writable /data disk (datafs, D1)
+    var dfsInode = -1       // datafs inode number when dataFs
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
     var mtime: UInt64 = 0   // modification time, Unix seconds (0 = unknown)
@@ -795,6 +797,10 @@ func vfsInit() {
     let bootTime = rtcNow()
     for i in 0..<nodeCount { nodes[i].mtime = bootTime }
 
+    // D1: mount the persistent /data tier after stamping, so datafs nodes keep
+    // their own on-disk mtimes rather than the boot time.
+    vfsMountDataFs(root)
+
     for p in 0..<maxVFSProcesses {
         cwdNodes[p] = root
         for fd in 0..<maxFDs { handles[fdIndex(p, fd)] = HandleEntry() }
@@ -1363,6 +1369,75 @@ private func ensureTmpFileCapacity(_ node: Int, _ needed: Int) -> Bool {
     return true
 }
 
+// ---- datafs (/data) integration (D1) --------------------------------------
+
+// Create a persistent /data node (file or dir) under a datafs-backed parent,
+// allocating both the on-disk inode and its mirror VNode.
+private func createDataFsNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int,
+                              isDir: Bool) -> Int {
+    if nodeCount >= maxNodes || nameLen <= 0 { return -1 }
+    let mode: UInt32 = isDir ? 0o755 : 0o644
+    let ino = datafsCreate(nodes[parent].dfsInode, namePtr, nameLen, isDir: isDir, mode: mode)
+    if ino < 0 { return -1 }
+    let n = allocNode()
+    if n < 0 { _ = datafsRemove(ino); return -1 }
+    if !setNameCopy(n, namePtr, nameLen) { _ = datafsRemove(ino); return -1 }
+    nodes[n].isDir = isDir
+    nodes[n].readOnly = false
+    nodes[n].dataFs = true
+    nodes[n].dfsInode = ino
+    nodes[n].owner = processCurrentPrincipal()
+    nodes[n].mode = mode
+    nodes[n].mtime = rtcNow()
+    nodes[n].dataLen = 0
+    linkChild(parent, n)
+    return n
+}
+
+// Build mirror VNodes for every datafs inode whose parent is `parentInode`,
+// recursing into directories. Called once per directory at mount.
+private func datafsMirror(_ parentVNode: Int, _ parentInode: Int) {
+    var nameBuf = [UInt8](repeating: 0, count: 128)
+    let count = datafsInodeCount()
+    var ino = 0
+    while ino < count {
+        if ino != datafsRootInode() && datafsInodeUsed(ino) && datafsInodeParent(ino) == parentInode {
+            let isDir = datafsInodeIsDir(ino)
+            let n = allocNode()
+            if n >= 0 {
+                let nl = nameBuf.withUnsafeMutableBufferPointer {
+                    datafsInodeNameCopy(ino, $0.baseAddress!, $0.count)
+                }
+                _ = nameBuf.withUnsafeBufferPointer { setNameCopy(n, $0.baseAddress!, nl) }
+                nodes[n].isDir = isDir
+                nodes[n].readOnly = false
+                nodes[n].dataFs = true
+                nodes[n].dfsInode = ino
+                nodes[n].dataLen = datafsInodeSize(ino)
+                nodes[n].mode = datafsInodeMode(ino)
+                nodes[n].mtime = datafsInodeMtime(ino)
+                linkChild(parentVNode, n)
+                if isDir { datafsMirror(n, ino) }
+            }
+        }
+        ino += 1
+    }
+}
+
+// D1: format-if-needed, mount the data disk's datafs, and mirror its tree under
+// /data. Called from vfsInit after the base + /tmp are set up.
+private func vfsMountDataFs(_ root: Int) {
+    if !virtioBlkDataAvailable() { return }
+    if !datafsMount() { uartPuts("D1: datafs mount failed\n"); return }
+    let data = addDir(root, "data", readOnly: false)
+    if data < 0 { return }
+    nodes[data].dataFs = true
+    nodes[data].dfsInode = datafsRootInode()
+    nodes[data].mode = 0o755
+    datafsMirror(data, datafsRootInode())
+    uartPuts("D1 OK: datafs mounted at /data\n")
+}
+
 private func pipeCount(_ p: Int) -> Int {
     (pipes[p].tail - pipes[p].head + pipes[p].cap) % pipes[p].cap
 }
@@ -1651,7 +1726,9 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
             if !isDescendant(parent, of: confineRoot) { return errAccess } // C3 confinement
             if nodes[parent].readOnly { return errReadOnly }
             if findChild(parent, path + ls, ll) != -1 { return errExists }
-            node = createTmpNode(parent, path + ls, ll, isDir: false)
+            node = nodes[parent].dataFs
+                ? createDataFsNode(parent, path + ls, ll, isDir: false)
+                : createTmpNode(parent, path + ls, ll, isDir: false)
             if node == -1 { return errNoSpace }
         } else {
             return errNoEntry
@@ -1667,6 +1744,7 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
     // Base/disk files are read-only, so truncation never applies to them.
     if (f & oTrunc) != 0 && !nodes[node].isDir && !nodes[node].readOnly {
+        if nodes[node].dataFs { _ = datafsTruncate(nodes[node].dfsInode, 0) }
         nodes[node].dataLen = 0
     }
 
@@ -1833,6 +1911,22 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         result = errInvalid
     } else if nodes[node].isDir {
         result = errIsDir
+    } else if nodes[node].dataFs {
+        // Persistent /data file: read from the data disk by inode. Done under the
+        // VFS lock (synchronous polled block I/O on the single EL0 CPU).
+        let avail = nodes[node].dataLen - current.offset
+        if avail > 0 {
+            let want = min(Int(count), avail)
+            let got = datafsRead(nodes[node].dfsInode, current.offset,
+                                 UnsafeMutableRawPointer(dst), want)
+            if got > 0 {
+                current.offset += got
+                openDescriptions[d] = current
+                result = got
+            } else if got < 0 {
+                result = errInvalid
+            }
+        }
     } else if nodes[node].onDisk {
         // Reserve the shared offset under the VFS lock, then do the block-device
         // read without holding the VFS lock.
@@ -2050,6 +2144,19 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         result = errInvalid
     } else if nodes[node].isDir {
         result = errIsDir
+    } else if nodes[node].dataFs {
+        // Persistent /data file: write through to the data disk by inode.
+        let w = datafsWrite(nodes[node].dfsInode, current.offset,
+                            UnsafeRawPointer(src), Int(count))
+        if w > 0 {
+            current.offset += w
+            nodes[node].dataLen = datafsInodeSize(nodes[node].dfsInode)
+            nodes[node].mtime = rtcNow()
+            openDescriptions[d] = current
+            result = w
+        } else {
+            result = w == 0 ? 0 : errNoSpace
+        }
     } else if nodes[node].readOnly {
         result = errReadOnly
     } else if !ensureTmpFileCapacity(node, current.offset + Int(count)) {
@@ -2088,6 +2195,12 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
     guard entry.kind == .file else { return errInvalid }
     let node = file.node
     if nodes[node].isDir { return errIsDir }
+    if nodes[node].dataFs {
+        if !datafsTruncate(nodes[node].dfsInode, length) { return errNoSpace }
+        nodes[node].dataLen = length
+        nodes[node].mtime = rtcNow()
+        return 0
+    }
     if nodes[node].readOnly { return errReadOnly }
     if length > nodes[node].dataCap { return errNoSpace }
     if length > nodes[node].dataLen {
@@ -2839,6 +2952,7 @@ func vfsUnlink(path pathVA: UInt) -> Int {
     if nodes[node].isDir { return errIsDir }
     let parent = nodes[node].parent
     if nodes[parent].readOnly { return errReadOnly }
+    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
 }
@@ -2854,7 +2968,10 @@ func vfsMkdir(path pathVA: UInt) -> Int {
     if !confinedAllows(parent) { return errAccess }
     if nodes[parent].readOnly { return errReadOnly }
     if findChild(parent, path + ls, ll) != -1 { return errExists }
-    return createTmpNode(parent, path + ls, ll, isDir: true) == -1 ? errNoSpace : 0
+    let made = nodes[parent].dataFs
+        ? createDataFsNode(parent, path + ls, ll, isDir: true)
+        : createTmpNode(parent, path + ls, ll, isDir: true)
+    return made == -1 ? errNoSpace : 0
 }
 
 func vfsRmdir(path pathVA: UInt) -> Int {
@@ -2869,6 +2986,7 @@ func vfsRmdir(path pathVA: UInt) -> Int {
     if nodes[node].firstChild != -1 { return errNotEmpty }
     let parent = nodes[node].parent
     if nodes[parent].readOnly { return errReadOnly }
+    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
 }
@@ -2890,6 +3008,8 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if !confinedAllows(dstParent) { return errAccess }
     let srcParent = nodes[src].parent
     if nodes[srcParent].readOnly || nodes[dstParent].readOnly { return errReadOnly }
+    // No cross-filesystem rename (datafs <-> tmpfs would need a copy).
+    if nodes[src].dataFs != nodes[dstParent].dataFs { return errInvalid }
     if nodes[src].isDir && isDescendant(dstParent, of: src) { return errInvalid }
 
     let existing = findChild(dstParent, newPath + nls, nll)
@@ -2897,12 +3017,16 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if existing != -1 {
         if nodes[existing].isDir != nodes[src].isDir { return errInvalid }
         if nodes[existing].isDir && nodes[existing].firstChild != -1 { return errNotEmpty }
+        if nodes[existing].dataFs { _ = datafsRemove(nodes[existing].dfsInode) }
         _ = unlinkChild(dstParent, existing)
     }
 
     _ = unlinkChild(srcParent, src)
     if !setNameCopy(src, newPath + nls, nll) { return errNoMem }
     linkChild(dstParent, src)
+    if nodes[src].dataFs {
+        _ = datafsSetParentName(nodes[src].dfsInode, nodes[dstParent].dfsInode, newPath + nls, nll)
+    }
     return 0
 }
 
