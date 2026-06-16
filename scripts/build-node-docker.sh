@@ -95,7 +95,7 @@ CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=
 
 # node-compat shims + masquerade defines, injected to the TARGET toolset only
 # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
-TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
+TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
 
 # Build the `node` gyp target specifically: it pulls in the V8/libuv/OpenSSL
 # *libraries* it needs but skips unrelated target executables (e.g. openssl-cli)
@@ -108,6 +108,12 @@ TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__
 # torque output) need ~2-3 GiB of cc1plus each; with only ~7.6 GiB in the
 # container, high -j OOM-kills the compiler. Cap at NODE_JOBS (default 2).
 VJOBS="${NODE_JOBS:-2}"
+# One-shot clean of target objects/libs (e.g. after a toolchain ABI change),
+# keeping obj.host (native, valid). Set NODE_CLEAN_TARGET=1.
+if [ -n "'"${NODE_CLEAN_TARGET:-}"'" ]; then
+  echo "--- cleaning out/Release/obj.target (toolchain change) ---"
+  rm -rf out/Release/obj.target
+fi
 echo "--- make -k -j${VJOBS} (compile-all; exe links deferred) ---"
 CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${VJOBS}" -C out BUILDTYPE=Release || true
 echo "--- objects/libs built: ---"
