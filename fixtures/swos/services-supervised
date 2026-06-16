@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Supervised sshd for the headless cloud-deploy regression test: swos-init
+# restarts sshd after each session (persistent SSH), no console-login handoff.
+sshd-supervised
