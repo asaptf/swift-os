@@ -103,6 +103,7 @@ static long sys4(long n, long a0, long a1, long a2, long a3) {
 #define SYS_FCNTL 34
 #define SYS_FSYNC 87
 #define SYS_SYNC 88
+#define SYS_RECV 89
 #define SYS_CHOWN 36
 #define SYS_TIME 37
 #define SYS_SOCKET 38
@@ -2269,8 +2270,12 @@ W long send(int fd, const void *buf, size_t n, int flags) {
 }
 
 W long recv(int fd, void *buf, size_t n, int flags) {
-    if (flags & ~MSG_DONTWAIT) { errno = EOPNOTSUPP; return -1; }
+    // MSG_DONTWAIT is honored; other flags (e.g. MSG_NOSIGNAL that TLS libraries
+    // pass on stream reads during the handshake) are tolerated as no-ops rather
+    // than rejected with EOPNOTSUPP. MSG_PEEK is not truly supported, but stream
+    // reads here do not peek.
     if ((flags & MSG_DONTWAIT) && socket_ready_now(fd, COMPAT_POLLIN) <= 0) { return -1; }
+    if (flags & MSG_PEEK) { return sysret_long(sys3(SYS_RECV, fd, (long)buf, (long)n)); }
     return sysret_long(sys3(SYS_READ, fd, (long)buf, (long)n));
 }
 
@@ -2313,7 +2318,6 @@ W long sendto(int fd, const void *buf, size_t n, int flags,
 W long recvfrom(int fd, void *buf, size_t n, int flags,
                 struct sockaddr *addr, socklen_t *len) {
     if (addr && !len) { errno = EFAULT; return -1; }
-    if (flags & ~MSG_DONTWAIT) { errno = EOPNOTSUPP; return -1; }
     struct socket_meta *m = socket_meta_get(fd);
     if (m && m->type == SOCK_STREAM) {
         long r = recv(fd, buf, n, flags);

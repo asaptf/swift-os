@@ -57,6 +57,11 @@ SQLITE_BIN := $(BUILD)/sqlite-root/usr/bin/sqlite3
 # root, baked into the base image as /sbin/nginx so we can host a site. Built by
 # build-nginx.sh (compiles the current userland/compat stubs).
 NGINX_BIN := $(BUILD)/nginx-root/usr/sbin/nginx
+# W3: openssl static dev libs (staged by build-openssl.sh) that nginx links for TLS.
+OPENSSL_DEV := $(BUILD)/openssl-root/usr/lib/libssl.a
+# W3: a build-time self-signed cert baked in for the HTTPS demo (replace with
+# acme.sh / Let's Encrypt certs later).
+NGINX_CERT := $(BUILD)/nginx-certs/server.crt
 BASEPACK  := $(BUILD)/basepack
 UPDATESTORE := $(BUILD)/updatestore
 KERNELBOOT := $(BUILD)/kernelboot
@@ -482,7 +487,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1366,6 +1371,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/datafs_sqlite_test.sh
 	./tests/nginx_test.sh
 	./tests/nginx_data_test.sh
+	./tests/nginx_tls_test.sh
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -1512,6 +1518,11 @@ nginx-test: build $(QEMU_DTB) base-image
 # survives reboot. Needs the base image and host curl.
 nginx-data-test: build $(QEMU_DTB) base-image
 	./tests/nginx_data_test.sh
+
+# W3: nginx serves HTTPS/TLS (self-signed) — static openssl, /dev/urandom entropy,
+# TCP MSG_PEEK for TLS detection. Needs the base image and host curl.
+nginx-tls-test: build $(QEMU_DTB) base-image
+	./tests/nginx_tls_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
@@ -1908,7 +1919,18 @@ $(SQLITE_BIN): $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databas
 
 # W1: build the nginx server binary (+ staged config and index.html) for baking
 # into base.img. Depends on the userland runtime sources so stub changes rebuild.
-$(NGINX_BIN): $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
+# W3: build the openssl static dev libs (and headers) for nginx TLS linking.
+# Tool prereqs are order-only so rebuilding swport/swpkg/pkgrepo does not force a
+# (slow) openssl recompile; only the recipe/script/libc actually trigger it.
+$(OPENSSL_DEV): scripts/build-openssl.sh ports/security/openssl/Port.json $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+	./scripts/build-openssl.sh
+
+# W3: a build-time self-signed cert for the HTTPS demo (CN=swift-os, 10y).
+$(NGINX_CERT): | $(BUILD)/.dir
+	mkdir -p $(BUILD)/nginx-certs
+	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=swift-os -keyout $(BUILD)/nginx-certs/server.key -out $(NGINX_CERT) >/dev/null 2>&1
+
+$(NGINX_BIN): $(OPENSSL_DEV) $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
 	./scripts/build-nginx.sh
 
 # NPM26: assert the current Node.js cross-build frontier. Vanilla Node
@@ -2025,7 +2047,7 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -2064,6 +2086,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	mkdir -p $(BASE_ROOT)/sbin $(BASE_ROOT)/usr/etc/nginx $(BASE_ROOT)/usr/share/nginx/html
 	cp $(NGINX_BIN) $(BASE_ROOT)/sbin/nginx
 	cp $(BUILD)/nginx-root/usr/share/nginx/html/index.html $(BASE_ROOT)/usr/share/nginx/html/index.html
+	mkdir -p $(BASE_ROOT)/usr/etc/nginx/certs
+	cp $(BUILD)/nginx-certs/server.crt $(BUILD)/nginx-certs/server.key $(BASE_ROOT)/usr/etc/nginx/certs/
 	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo

@@ -265,10 +265,14 @@ struct TCPConnection {
     }
 
     /// Copy delivered in-order bytes to `dst` (capacity `cap`). Returns the count.
-    mutating func read(_ dst: UnsafeMutableRawPointer, _ cap: Int) -> Int {
+    /// With `peek`, the bytes are copied but NOT consumed (MSG_PEEK) — a later
+    /// read returns the same bytes. nginx's `listen ssl` peeks the first byte to
+    /// detect TLS, so peek support is required for the HTTPS server.
+    mutating func read(_ dst: UnsafeMutableRawPointer, _ cap: Int, peek: Bool = false) -> Int {
         let n = rcvCount > cap ? cap : rcvCount
         var i = 0
         while i < n { dst.storeBytes(of: rcvBuf[i], toByteOffset: i, as: UInt8.self); i += 1 }
+        if peek { return n }
         // Shift the remainder to the front.
         var j = n
         while j < rcvCount { rcvBuf[j - n] = rcvBuf[j]; j += 1 }
