@@ -23,6 +23,14 @@
 #endif
 int madvise(void *addr, size_t length, int advice);
 
+/* mremap: SwiftOS can't relocate mappings; the companion impl fails so callers
+ * (e.g. sqlite) fall back to munmap+mmap. */
+#ifndef MREMAP_MAYMOVE
+#define MREMAP_MAYMOVE 1
+#define MREMAP_FIXED   2
+#endif
+void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...);
+
 /* Page locking is advisory; SwiftOS does not page user memory, so the companion
  * implementations are no-ops returning success. */
 int mlock(const void *addr, size_t len);

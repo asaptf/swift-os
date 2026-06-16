@@ -86,6 +86,15 @@ int  swiftos_kernel_activate(void);
 int  swiftos_kernel_confirm(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+// Fetch the effective AND real security identity (any out-param may be NULL).
+// Effective = what the process can do now; real = who invoked it. They differ
+// only after a setuid-on-exec (e.g. /bin/sudo). Returns 0 on success.
+int  swiftos_context_ex(unsigned int *principal, unsigned int *session, unsigned long *caps,
+                        unsigned int *real_principal, unsigned int *real_session,
+                        unsigned long *real_caps);
+// Replace this image with `path`, passing the given NULL-terminated argv. Returns
+// only on error (negative). Used by /bin/sudo to become the target command.
+int  swiftos_execv(const char *path, char *const argv[]);
 // Export a serialized tail of the kernel log ring. Returns bytes written, or a
 // negative errno-style value. Needs capLogExport.
 long swiftos_log_read(void *buf, unsigned long cap, unsigned long max_count);

@@ -16,5 +16,19 @@
 #ifndef FUTEX_PRIVATE_FLAG
 #define FUTEX_PRIVATE_FLAG 128
 #endif
+#ifndef FUTEX_WAIT_BITSET
+#define FUTEX_WAIT_BITSET 9
+#endif
+#ifndef FUTEX_WAKE_BITSET
+#define FUTEX_WAKE_BITSET 10
+#endif
+/* Defining FUTEX_CLOCK_REALTIME makes Abseil select its futex-based waiter (over
+ * the std::mutex-based stdcpp waiter, which our threadless libstdc++ lacks). */
+#ifndef FUTEX_CLOCK_REALTIME
+#define FUTEX_CLOCK_REALTIME 256
+#endif
+#ifndef FUTEX_BITSET_MATCH_ANY
+#define FUTEX_BITSET_MATCH_ANY 0xFFFFFFFF
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_LINUX_FUTEX_H */

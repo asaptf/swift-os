@@ -35,6 +35,8 @@
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <dlfcn.h>
+#include <link.h>
+#include <ucontext.h>
 
 /* ----- epoll over poll ---------------------------------------------------- */
 
@@ -238,6 +240,13 @@ int madvise(void *addr, size_t length, int advice) {
     (void)addr; (void)length; (void)advice; return 0;
 }
 
+/* SwiftOS cannot relocate a mapping; fail so callers fall back to munmap+mmap. */
+void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...) {
+    (void)old_address; (void)old_size; (void)new_size; (void)flags;
+    errno = ENOSYS;
+    return (void *)-1;   /* MAP_FAILED */
+}
+
 /* Page locking is advisory and unsupported; succeed as a no-op. */
 int mlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
 int munlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
@@ -415,6 +424,26 @@ fail:
     closedir(d);
     errno = ENOMEM;
     return -1;
+}
+
+/* ----- dynamic-link introspection (static-only OS: nothing to report) ----- */
+
+struct r_debug _r_debug;   /* zeroed: no dynamic link map */
+
+int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *),
+                    void *data) {
+    (void)callback; (void)data;
+    return 0;   /* no shared objects to iterate */
+}
+
+/* ucontext coroutines are unsupported (no makecontext-based fibers). */
+int getcontext(ucontext_t *ucp) { (void)ucp; errno = ENOSYS; return -1; }
+int setcontext(const ucontext_t *ucp) { (void)ucp; errno = ENOSYS; return -1; }
+void makecontext(ucontext_t *ucp, void (*func)(void), int argc, ...) {
+    (void)ucp; (void)func; (void)argc;
+}
+int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
+    (void)oucp; (void)ucp; errno = ENOSYS; return -1;
 }
 
 /* ----- data symbol -------------------------------------------------------- */
