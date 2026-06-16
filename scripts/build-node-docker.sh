@@ -94,7 +94,7 @@ cd "$SRC"
 # Configure ONCE: re-running configure regenerates the gyp Makefiles and makes
 # `make` redo work each resume (progress oscillates and never converges). Skip
 # it when out/ is already generated. Set NODE_RECONFIGURE=1 to force.
-if [ ! -f out/Makefile ] || [ -n "'"${NODE_RECONFIGURE:-}"'" ]; then
+if [ ! -f out/Makefile ]; then
   echo "--- configure (host=native linux, target=aarch64-elf) ---"
   CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
     python3 configure.py \
