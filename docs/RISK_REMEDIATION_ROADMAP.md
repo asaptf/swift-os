@@ -469,6 +469,34 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 
 This roadmap turns the current set of "we deliberately didn't do X" into a deliberate, testable, reviewable sequence that brings the implementation back in line with the written architecture while delivering the SMP capability the project now requires.
 
+## D-series — persistent /data storage (durable SQLite) (DONE, 2026-06-16)
+
+Driven by the website-hosting goal (nginx + Let's Encrypt + Node/Strapi + SQLite):
+the stack needs storage that survives reboot, which the two-tier bring-up FS
+(read-only signed base + RAM tmpfs) does not provide. The D-series adds a third,
+**persistent writable tier** at `/data` — an explicit, reviewed change to the
+"data loss on reboot is acceptable by design" hard decision (CLAUDE.md is updated
+to describe a three-tier FS). The base stays immutable and unjournaled; datafs is
+a small inode-table + block-bitmap filesystem with no journaling, and crash-safety
+relies on honest `fsync` plus the application's own journaling (SQLite's rollback
+journal). Full design + decisions are in `docs/NOTES.md` (D-series).
+
+- **D0** (`acd659d`): a second, writable virtio-blk "data" disk (`SWDATAFS` magic),
+  with raw read/write/flush; boot self-test proves a counter survives reboot.
+  Gate: `make data-persist-test`.
+- **D1** (`7deacfb`): `kernel/fs/datafs.swift`, mounted at `/data`, mirrored into
+  the VFS; create/open/read/write/lseek/ftruncate/mkdir/unlink/rmdir/rename route
+  to disk. Gate: `make datafs-test`.
+- **D2** (`4a61aef`): `fsync`/`fdatasync`/`sync` syscalls flush the data disk to
+  stable media. Gate: `make datafs-fsync-test`.
+- **D3** (`4bcb6d4`): the packaged `sqlite3` shell baked into the base image;
+  POSIX record locks accepted (no-op) in `vfsFcntl`. Acceptance:
+  `make datafs-sqlite-test` — a database on `/data` survives reboot.
+
+Follow-ups (not blocking): double-indirect blocks for >4 MiB files; moving the FS
+into a userland service in line with the driver-serviceization arc; per-cell
+quotas on `/data`.
+
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:

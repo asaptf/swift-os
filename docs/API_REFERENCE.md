@@ -275,6 +275,10 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 81 | `pkg_remove` | `name` | 0 or negative error |
 | 82 | `log_stats` | `buf`, `cap` | 0 or negative error |
 | 83 | `netinfo` | `buffer`, `capacity` | 0 or negative error |
+| 84 | `openpty` | `master*`, `slave*` | 0 or negative error |
+| 85 | `pty_set_foreground` | `fd`, `pid` | 0 or negative error |
+| 86 | `fsync` | `fd` | 0 or negative error (flushes /data to media) |
+| 87 | `sync` | none | 0 (flushes all writable filesystems) |
 
 Notes:
 

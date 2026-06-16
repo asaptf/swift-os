@@ -6115,3 +6115,46 @@ the final link. The long multi-hour, multi-milestone haul; the groundwork
 
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
+
+## D-series — persistent /data storage (durable SQLite), 2026-06-16
+
+**Why.** Hosting our own site (nginx + Let's Encrypt + Node/Strapi + SQLite)
+needs storage that survives reboot. The bring-up FS was deliberately two-tier
+(read-only signed base + RAM tmpfs; "data loss on reboot acceptable by design").
+This series adds a third, **persistent writable tier** at `/data` and is an
+explicit, reviewed change to that hard decision (CLAUDE.md updated to three-tier).
+
+**Decisions recorded.**
+- New tier lives on a **dedicated, separate virtio-blk disk** (id `swosdata`),
+  not the base/ESP disks, so the signed base stays immutable. The kernel scan
+  (`virtioBlkInit`) identifies it positively by an `SWDATAFS` sector-0 magic.
+- **No FS journaling** (consistent with the project stance). datafs is a small
+  inode-table + block-bitmap filesystem. Crash-safety comes from honest `fsync`
+  plus the application's own journaling (SQLite's rollback journal), not from FS
+  journaling. The superblock is written only in sector 0 of block 0, so the D0
+  raw boot-counter (sector 2) and the FS metadata never overlap.
+- File size cap is single-indirect (one index block -> ~4 MiB/file at 4 KiB
+  blocks) for now; double-indirect is a later extension if needed.
+
+**Milestones (all on branch `claude/funny-ishizaka-2b024a`).**
+- **D0** (`acd659d`): second writable virtio-blk "data" disk + raw read/write/
+  flush range; boot self-test proves a counter survives reboot.
+  Gate: `make data-persist-test`.
+- **D1** (`7deacfb`): `kernel/fs/datafs.swift` on-disk FS, mounted at `/data`,
+  mirrored into VNodes; `vfs.swift` routes create/open/read/write/lseek/
+  ftruncate/mkdir/unlink/rmdir/rename to datafs. Gate: `make datafs-test`.
+- **D2** (`4a61aef`): `fsync`/`fdatasync` (SYS_FSYNC=86) and `sync` (SYS_SYNC=87)
+  flush the data disk to media; newlib stubs wired. Gate: `make datafs-fsync-test`.
+- **D3** (`4bcb6d4`): the packaged `sqlite3` shell baked into the base image at
+  `/bin/sqlite3`; `vfsFcntl` accepts POSIX record locks (F_GETLK/F_SETLK/F_SETLKW
+  = newlib 7/8/9) as no-op success so SQLite's unix VFS proceeds. Gate:
+  `make datafs-sqlite-test` — create+insert into `/data/app.db`, reboot, SELECT
+  the row back.
+
+**Open items.**
+- SYS_FSYNC/SYS_SYNC took syscall numbers 86/87; a separate sudo arc used 86 for
+  `security_info_ex`. Resolve the number collision when those branches merge.
+- `make docs-test` has pre-existing failures unrelated to this series
+  (ptyprobe/ptysigprobe command entries and several `swiftos_*` PTY/waitpid Swift
+  bridge entries from the HC34/HC36 sessions). The D-series reference entries
+  (sqlite3 command; fsync/sync/openpty/pty_set_foreground syscalls) are documented.

@@ -1405,6 +1405,31 @@ Notes:
 Acceptance coverage: `tests/package_overlay_test.sh` and
 `tests/pkg_store_boot_test.sh`.
 
+### `sqlite3`
+
+The SQLite command-line shell (packaged port, baked into the base image as
+`/bin/sqlite3`). Create and query databases. Durable databases live on the
+persistent `/data` tier (datafs); `:memory:` and `/tmp` databases are ephemeral.
+
+```text
+sqlite3 [DB] [SQL]
+```
+
+Example:
+
+```sh
+sqlite3 /data/app.db "create table t(x text); insert into t values('hi');"
+sqlite3 /data/app.db "select * from t;"
+```
+
+Notes:
+
+- Built from the SQLite amalgamation (`SQLITE_OMIT_WAL`, `SQLITE_THREADSAFE=0`);
+  it uses a rollback journal, so a database on `/data` is crash-safe via `fsync`.
+- A database stored under `/data` survives reboot; under `/tmp` it does not.
+
+Acceptance coverage: `tests/datafs_sqlite_test.sh`.
+
 ## Bring-up Diagnostic Commands
 
 The following programs remain staged in `/bin` because they prove specific
