@@ -66,6 +66,13 @@ WRAP
   chmod +x "/tmp/wrap/aarch64-elf-$t"
 done
 
+# Neutralize Abseil's stdcpp waiter: its header unconditionally includes
+# <mutex>/<condition_variable>, absent in our threadless libstdc++. Abseil uses
+# the futex waiter here (FUTEX_CLOCK_REALTIME is defined in node-compat), so the
+# stdcpp waiter is dead code; empty its TU to drop the std::mutex dependency.
+SW="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal/stdcpp_waiter.cc"
+[ -f "$SW" ] && printf '// neutralized for SwiftOS: futex waiter used (see build-node-docker.sh)\n' > "$SW"
+
 cd "$SRC"
 echo "--- configure (host=native linux, target=aarch64-elf) ---"
 CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
