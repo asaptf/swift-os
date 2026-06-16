@@ -77,6 +77,13 @@ ABSL_SYNC="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal"
 [ -f "$ABSL_SYNC/waiter.h" ] && \
   sed -i 's@#include "absl/synchronization/internal/stdcpp_waiter.h"@// stdcpp_waiter.h removed for SwiftOS (no std::mutex)@' "$ABSL_SYNC/waiter.h"
 
+# newlib's siginfo_t has no si_addr (only si_signo/si_code/si_value). V8's
+# stack_trace_posix.cc reads info->si_addr (fault address) for crash reports;
+# map it onto the void* si_value.sival_ptr so the TU compiles.
+STP="$SRC/deps/v8/src/base/debug/stack_trace_posix.cc"
+[ -f "$STP" ] && ! grep -q 'define si_addr' "$STP" && \
+  sed -i '1i #define si_addr si_value.sival_ptr' "$STP"
+
 cd "$SRC"
 echo "--- configure (host=native linux, target=aarch64-elf) ---"
 CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \

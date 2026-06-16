@@ -91,4 +91,62 @@ struct group_source_req {
 /* Global any-address (provided by the companion implementation at link). */
 extern const struct in6_addr in6addr_any;
 
+/* IPv6 address test macros c-ares uses (newlib provides only some). Operate on
+ * struct in6_addr's s6_addr byte array. */
+#ifndef IN6_IS_ADDR_UNSPECIFIED
+#define IN6_IS_ADDR_UNSPECIFIED(a) \
+    (((const uint8_t *)(a))[0] == 0 && ((const uint8_t *)(a))[1] == 0 && \
+     ((const uint8_t *)(a))[2] == 0 && ((const uint8_t *)(a))[3] == 0 && \
+     ((const uint8_t *)(a))[4] == 0 && ((const uint8_t *)(a))[5] == 0 && \
+     ((const uint8_t *)(a))[6] == 0 && ((const uint8_t *)(a))[7] == 0 && \
+     ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 && \
+     ((const uint8_t *)(a))[10] == 0 && ((const uint8_t *)(a))[11] == 0 && \
+     ((const uint8_t *)(a))[12] == 0 && ((const uint8_t *)(a))[13] == 0 && \
+     ((const uint8_t *)(a))[14] == 0 && ((const uint8_t *)(a))[15] == 0)
+#endif
+#ifndef IN6_IS_ADDR_LOOPBACK
+#define IN6_IS_ADDR_LOOPBACK(a) \
+    (((const uint8_t *)(a))[0] == 0 && ((const uint8_t *)(a))[1] == 0 && \
+     ((const uint8_t *)(a))[2] == 0 && ((const uint8_t *)(a))[3] == 0 && \
+     ((const uint8_t *)(a))[4] == 0 && ((const uint8_t *)(a))[5] == 0 && \
+     ((const uint8_t *)(a))[6] == 0 && ((const uint8_t *)(a))[7] == 0 && \
+     ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 && \
+     ((const uint8_t *)(a))[10] == 0 && ((const uint8_t *)(a))[11] == 0 && \
+     ((const uint8_t *)(a))[12] == 0 && ((const uint8_t *)(a))[13] == 0 && \
+     ((const uint8_t *)(a))[14] == 0 && ((const uint8_t *)(a))[15] == 1)
+#endif
+#ifndef IN6_IS_ADDR_MULTICAST
+#define IN6_IS_ADDR_MULTICAST(a) (((const uint8_t *)(a))[0] == 0xff)
+#endif
+#ifndef IN6_IS_ADDR_LINKLOCAL
+#define IN6_IS_ADDR_LINKLOCAL(a) \
+    (((const uint8_t *)(a))[0] == 0xfe && (((const uint8_t *)(a))[1] & 0xc0) == 0x80)
+#endif
+#ifndef IN6_IS_ADDR_SITELOCAL
+#define IN6_IS_ADDR_SITELOCAL(a) \
+    (((const uint8_t *)(a))[0] == 0xfe && (((const uint8_t *)(a))[1] & 0xc0) == 0xc0)
+#endif
+#ifndef IN6_IS_ADDR_V4MAPPED
+#define IN6_IS_ADDR_V4MAPPED(a) \
+    (((const uint8_t *)(a))[0] == 0 && ((const uint8_t *)(a))[1] == 0 && \
+     ((const uint8_t *)(a))[2] == 0 && ((const uint8_t *)(a))[3] == 0 && \
+     ((const uint8_t *)(a))[4] == 0 && ((const uint8_t *)(a))[5] == 0 && \
+     ((const uint8_t *)(a))[6] == 0 && ((const uint8_t *)(a))[7] == 0 && \
+     ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 && \
+     ((const uint8_t *)(a))[10] == 0xff && ((const uint8_t *)(a))[11] == 0xff)
+#endif
+#ifndef IN6_IS_ADDR_V4COMPAT
+#define IN6_IS_ADDR_V4COMPAT(a) \
+    (((const uint8_t *)(a))[0] == 0 && ((const uint8_t *)(a))[1] == 0 && \
+     ((const uint8_t *)(a))[2] == 0 && ((const uint8_t *)(a))[3] == 0 && \
+     ((const uint8_t *)(a))[4] == 0 && ((const uint8_t *)(a))[5] == 0 && \
+     ((const uint8_t *)(a))[6] == 0 && ((const uint8_t *)(a))[7] == 0 && \
+     ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 && \
+     ((const uint8_t *)(a))[10] == 0 && ((const uint8_t *)(a))[11] == 0)
+#endif
+#ifndef IN6_IS_ADDR_MC_LINKLOCAL
+#define IN6_IS_ADDR_MC_LINKLOCAL(a) \
+    (((const uint8_t *)(a))[0] == 0xff && (((const uint8_t *)(a))[1] & 0x0f) == 0x02)
+#endif
+
 #endif /* _SWOS_NODE_COMPAT_NETINET_IN_H */

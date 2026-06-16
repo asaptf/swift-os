@@ -21,6 +21,15 @@
 #ifndef MADV_FREE
 #define MADV_FREE     8
 #endif
+#ifndef MADV_DONTFORK
+#define MADV_DONTFORK   10
+#define MADV_DOFORK     11
+#endif
+#ifndef MADV_WILLNEED
+#define MADV_WILLNEED   3
+#define MADV_SEQUENTIAL 2
+#define MADV_RANDOM     1
+#endif
 int madvise(void *addr, size_t length, int advice);
 
 /* mremap: SwiftOS can't relocate mappings; the companion impl fails so callers

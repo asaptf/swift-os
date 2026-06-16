@@ -27,6 +27,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/eventfd.h>
+#include <sys/random.h>
 
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -232,6 +233,31 @@ long syscall(long number, ...) {
         errno = ENOSYS;
         return -1;
     }
+}
+
+/* getrandom via the SwiftOS virtio-rng entropy stub (_getentropy in
+ * newlib_syscalls.c), chunked to its 256-byte limit. */
+extern int _getentropy(void *buf, size_t len);
+ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
+    (void)flags;
+    size_t off = 0;
+    while (off < buflen) {
+        size_t chunk = buflen - off;
+        if (chunk > 256) chunk = 256;
+        if (_getentropy((char *)buf + off, chunk) != 0) return -1;
+        off += chunk;
+    }
+    return (ssize_t)buflen;
+}
+
+/* Service-by-port reverse lookup: SwiftOS has no services DB, so report
+ * not-found (success with NULL result) and let c-ares use the numeric port. */
+struct servent;
+int getservbyport_r(int port, const char *proto, struct servent *result_buf,
+                    char *buf, size_t buflen, struct servent **result) {
+    (void)port; (void)proto; (void)result_buf; (void)buf; (void)buflen;
+    if (result) *result = (struct servent *)0;
+    return 0;
 }
 
 // SwiftOS does not page user memory, so madvise hints (MADV_DONTNEED/FREE) are
