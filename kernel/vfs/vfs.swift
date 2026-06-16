@@ -3025,6 +3025,9 @@ func vfsMkdir(path pathVA: UInt) -> Int {
     if !mayWriteTmp() { return errAccess }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
+    // An existing path (including "/") is EEXIST, not ENOENT — `mkdir -p` walks
+    // ancestors and expects EEXIST on the ones that already exist.
+    if resolve(path) != -1 { return errExists }
     var ls = 0, ll = 0
     let parent = resolveParent(path, &ls, &ll)
     if parent == -1 { return errNoEntry }
