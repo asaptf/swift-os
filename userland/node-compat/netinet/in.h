@@ -71,6 +71,9 @@ struct group_source_req {
 #ifndef IPV6_UNICAST_HOPS
 #define IPV6_UNICAST_HOPS 16
 #endif
+#ifndef IPV6_TCLASS
+#define IPV6_TCLASS 67   /* IPv6 traffic-class byte; tcp_wrap.cc sets DSCP/TOS */
+#endif
 
 #ifndef IP_TTL
 #define IP_TTL 2

@@ -44,6 +44,14 @@ if [ -f "$STP" ] && grep -q 'info->si_addr\|#define si_addr' "$STP"; then
   sed -i '/#define si_addr/d' "$STP"
   sed -i 's/info->si_addr/reinterpret_cast<void*>(0)/g' "$STP"
 fi
+# newlib's uid_t/gid_t are 16-bit; Node static_asserts they're uint32_t. SwiftOS
+# only uses small uids/gids, so the (truncating) conversion is harmless -- drop
+# the two type asserts so node_credentials.cc compiles. Idempotent.
+NCR="$SRC/src/node_credentials.cc"
+if [ -f "$NCR" ] && grep -q 'static_assert(std::is_same<uid_t, uint32_t>::value)' "$NCR"; then
+  sed -i 's@static_assert(std::is_same<uid_t, uint32_t>::value);@/* SwiftOS: uid_t is 16-bit */@' "$NCR"
+  sed -i 's@static_assert(std::is_same<gid_t, uint32_t>::value);@/* SwiftOS: gid_t is 16-bit */@' "$NCR"
+fi
 
 cd "$SRC"
 
