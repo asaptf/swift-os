@@ -71,29 +71,40 @@ done
 # <condition_variable> (absent in our threadless libstdc++). We use the futex
 # waiter (FUTEX_CLOCK_REALTIME defined) or pthread waiter, both std::mutex-free,
 # so empty stdcpp_waiter.cc AND drop its #include from waiter.h.
+# Patches must be idempotent AND must not rewrite already-patched files (a
+# changed mtime on a widely-included header like waiter.h would rebuild half of
+# abseil every resume). Only touch a file when it still needs patching.
 ABSL_SYNC="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal"
-[ -f "$ABSL_SYNC/stdcpp_waiter.cc" ] && \
+if [ -f "$ABSL_SYNC/stdcpp_waiter.cc" ] && ! grep -q 'neutralized for SwiftOS' "$ABSL_SYNC/stdcpp_waiter.cc"; then
   printf '// neutralized for SwiftOS: futex/pthread waiter used (build-node-docker.sh)\n' > "$ABSL_SYNC/stdcpp_waiter.cc"
-[ -f "$ABSL_SYNC/waiter.h" ] && \
+fi
+if [ -f "$ABSL_SYNC/waiter.h" ] && grep -q '#include "absl/synchronization/internal/stdcpp_waiter.h"' "$ABSL_SYNC/waiter.h"; then
   sed -i 's@#include "absl/synchronization/internal/stdcpp_waiter.h"@// stdcpp_waiter.h removed for SwiftOS (no std::mutex)@' "$ABSL_SYNC/waiter.h"
+fi
 
-# newlib's siginfo_t has no si_addr (only si_signo/si_code/si_value). V8's
-# stack_trace_posix.cc reads info->si_addr (fault address) for crash reports;
-# map it onto the void* si_value.sival_ptr so the TU compiles.
+# newlib's siginfo_t has no si_addr; V8's stack_trace_posix.cc reads it for crash
+# reports. Replace the usage with null (fault-address print only). Only if needed.
 STP="$SRC/deps/v8/src/base/debug/stack_trace_posix.cc"
-if [ -f "$STP" ]; then
-  sed -i '/#define si_addr/d' "$STP"                                  # drop any prior macro attempt
-  sed -i 's/info->si_addr/reinterpret_cast<void*>(0)/g' "$STP"        # newlib siginfo_t has no si_addr
+if [ -f "$STP" ] && grep -q 'info->si_addr\|#define si_addr' "$STP"; then
+  sed -i '/#define si_addr/d' "$STP"
+  sed -i 's/info->si_addr/reinterpret_cast<void*>(0)/g' "$STP"
 fi
 
 cd "$SRC"
-echo "--- configure (host=native linux, target=aarch64-elf) ---"
-CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
-  python3 configure.py \
-    --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
-    --without-npm --without-corepack --v8-lite-mode \
-    --without-snapshot --without-node-snapshot --without-node-code-cache \
-    --without-inspector --without-intl
+# Configure ONCE: re-running configure regenerates the gyp Makefiles and makes
+# `make` redo work each resume (progress oscillates and never converges). Skip
+# it when out/ is already generated. Set NODE_RECONFIGURE=1 to force.
+if [ ! -f out/Makefile ] || [ -n "'"${NODE_RECONFIGURE:-}"'" ]; then
+  echo "--- configure (host=native linux, target=aarch64-elf) ---"
+  CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
+    python3 configure.py \
+      --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
+      --without-npm --without-corepack --v8-lite-mode \
+      --without-snapshot --without-node-snapshot --without-node-code-cache \
+      --without-inspector --without-intl
+else
+  echo "--- configure skipped (out/ already generated; resume incremental) ---"
+fi
 
 # node-compat shims + masquerade defines, injected to the TARGET toolset only
 # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
