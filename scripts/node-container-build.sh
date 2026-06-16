@@ -60,10 +60,15 @@ else
   echo "--- configure skipped (out/ already generated) ---"
 fi
 
-# Drop the node->openssl-cli order-only prereq (we don't ship the CLI; it can't
-# link freestanding) so the node core (libnode.a + node_main.o) compiles.
-if [ -f out/node.target.mk ] && grep -q 'builddir)/openssl-cli' out/node.target.mk; then
-  sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
+# Node's objects have order-only prereqs we must drop so the node core compiles:
+#  - $(builddir)/openssl-cli: an exe we don't ship (can't link freestanding).
+#  - gtest_prod.stamp: googletest fails to compile (test-only, newlib gaps) and
+#    node never links gtest, yet its stamp gates node's OBJS and the
+#    reset_openssl_cnf action. Drop both so libnode.a + node_main.o build.
+if [ -f out/node.target.mk ]; then
+  grep -q 'builddir)/openssl-cli' out/node.target.mk && sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
+  grep -q 'googletest/gtest_prod.stamp' out/node.target.mk && \
+    sed -i 's@\$(obj)\.target/deps/googletest/gtest_prod.stamp@@g' out/node.target.mk
 fi
 
 [ -n "${NODE_CLEAN_TARGET:-}" ] && { echo "--- cleaning obj.target ---"; rm -rf out/Release/obj.target; }
