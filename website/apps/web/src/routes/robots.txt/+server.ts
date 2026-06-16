@@ -1,10 +1,12 @@
 import type { RequestHandler } from './$types';
+import { env } from '$env/dynamic/public';
 
 /* robots.txt — open to everyone, and explicitly welcoming AI crawlers so the
  * project's docs and story are discoverable by both people and models. */
-export const prerender = false;
+export const prerender = process.env.ADAPTER === 'static';
 
 export const GET: RequestHandler = ({ url }) => {
+	const base = (env.PUBLIC_SITE_URL || url.origin).replace(/\/$/, '');
 	const aiBots = [
 		'GPTBot',
 		'OAI-SearchBot',
@@ -24,7 +26,7 @@ export const GET: RequestHandler = ({ url }) => {
 		'',
 		'# AI crawlers are explicitly welcome.',
 		...aiBots.flatMap((ua) => [`User-agent: ${ua}`, 'Allow: /', '']),
-		`Sitemap: ${url.origin}/sitemap.xml`,
+		`Sitemap: ${base}/sitemap.xml`,
 		''
 	].join('\n');
 

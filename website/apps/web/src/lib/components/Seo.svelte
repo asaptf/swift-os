@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { env } from '$env/dynamic/public';
 
 	/* Per-page SEO: title, description, canonical, Open Graph + Twitter card, and
 	 * optional JSON-LD structured data (rich, crawlable signal for search and AI
-	 * crawlers). Canonical/og:url derive from the request URL. */
+	 * crawlers). Absolute URLs use PUBLIC_SITE_URL when set (needed for the
+	 * prerendered static build); otherwise they derive from the request URL. */
+	const siteBase = (env.PUBLIC_SITE_URL || '').replace(/\/$/, '');
 	let {
 		title,
 		description,
@@ -18,7 +21,7 @@
 		noindex?: boolean;
 	} = $props();
 
-	const url = $derived(page.url.origin + page.url.pathname);
+	const url = $derived((siteBase || page.url.origin) + page.url.pathname);
 </script>
 
 <svelte:head>

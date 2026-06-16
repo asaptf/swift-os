@@ -130,6 +130,14 @@ export async function getDocNav(): Promise<DocSection[]> {
 	return (await index()).sections;
 }
 
+/** Every doc slug on disk (including ones not surfaced in the nav) — used by the
+ *  static build to prerender all reachable /docs/* pages. */
+export async function getAllDocSlugs(): Promise<string[]> {
+	if (!existsSync(DOCS_DIR)) return [];
+	const files = await readdir(DOCS_DIR);
+	return files.filter((f) => f.endsWith('.md')).map((f) => docSlug(f.replace(/\.md$/, '')));
+}
+
 export interface LoadedDoc {
 	slug: string;
 	title: string;

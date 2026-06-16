@@ -1,6 +1,9 @@
 import { Marked, type Tokens } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js';
+import { env } from '$env/dynamic/private';
+
+const REPO = (env.PUBLIC_REPO_URL || 'https://github.com/asaptf/swift-os').replace(/\/$/, '');
 
 export interface TocEntry {
 	id: string;
@@ -20,11 +23,24 @@ function slugify(text: string, used: Map<string, number>): string {
 	return n === 0 ? base || 'section' : `${base}-${n}`;
 }
 
-/** Rewrite intra-repo doc links (FOO.md, ./FOO.md, docs/FOO.md) to site routes. */
+/* Rewrite repo-relative links:
+ *  - docs/*.md (or a bare FOO.md) → the /docs/<slug> reader route
+ *  - any other relative path (source files, dirs, non-docs .md) → GitHub blob
+ *  Absolute site paths (/foo) and external/anchor/mailto links pass through. */
 function rewriteHref(href: string): string {
 	if (/^(https?:)?\/\//.test(href) || href.startsWith('#') || href.startsWith('mailto:')) return href;
-	const m = href.match(/(?:^|\/)([A-Z0-9_]+)\.md(#.*)?$/i);
-	if (m) return `/docs/${m[1].toLowerCase().replace(/_/g, '-')}${m[2] ?? ''}`;
+
+	const md = href.match(/(?:^|\/)([A-Za-z0-9_]+)\.md(#.*)?$/);
+	const inDocs = /(^|\/)docs\//.test(href);
+	if (md && (!href.includes('/') || inDocs)) {
+		return `/docs/${md[1].toLowerCase().replace(/_/g, '-')}${md[2] ?? ''}`;
+	}
+
+	// Any other relative link points at a repo file/dir — send it to GitHub.
+	if (!href.startsWith('/')) {
+		const clean = href.replace(/^\.\//, '').replace(/^(\.\.\/)+/, '').split('#')[0];
+		return `${REPO}/blob/main/${clean}`;
+	}
 	return href;
 }
 
