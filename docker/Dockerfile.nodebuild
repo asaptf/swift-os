@@ -59,9 +59,10 @@ RUN curl -fsSL "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION
         --disable-shared --disable-libssp --disable-libstdcxx-pch \
         --disable-nls --disable-libgomp --disable-libquadmath \
         --with-gnu-as --with-gnu-ld \
+    && TGT_FEATURES="-D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION -D_POSIX_SPIN_LOCKS" \
     && make -j${JOBS} \
-        CFLAGS_FOR_TARGET="-O2 -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS" \
-        CXXFLAGS_FOR_TARGET="-O2 -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS" \
+        CFLAGS_FOR_TARGET="-O2 ${TGT_FEATURES}" \
+        CXXFLAGS_FOR_TARGET="-O2 ${TGT_FEATURES}" \
         all-gcc all-target-libgcc all-target-newlib all-target-libstdc++-v3 \
     && make install-gcc install-target-libgcc install-target-newlib install-target-libstdc++-v3 \
     && cd / && rm -rf /tmp/toolchain
