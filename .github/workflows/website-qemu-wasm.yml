@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Build + pin the in-browser emulator bundle for the website's /try page:
+#   1. build the swift-os guest image (kernel.elf + base.img + virt.dtb)
+#   2. build qemu-system-aarch64 → WebAssembly (ktock/qemu-wasm) and package the
+#      guest image into the Emscripten FS under /pack
+#   3. publish the pinned artifact bundle (js/wasm/worker.js/data + manifest)
+#
+# The website points PUBLIC_QEMU_WASM_BASE at the published bundle and
+# PUBLIC_QEMU_WASM_VERSION at this run's sha. See website/apps/web/TRY.md.
+
+name: website · qemu-wasm
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['website-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  guest-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU (for virt.dtb dump) + tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+
+      # The Embedded Swift toolchain + target triple are version-pinned in
+      # docs/NOTES.md — install the matching toolchain here.
+      - name: Install Swift Embedded toolchain
+        run: |
+          echo "TODO: install the toolchain pinned in docs/NOTES.md"
+          # e.g. via swiftly / a pinned swift.org nightly, then add to PATH
+
+      - name: Build kernel + base image + DTB
+        run: make build base-image build/virt.dtb
+
+      - name: Stage guest pack
+        run: |
+          mkdir -p pack
+          cp build/kernel.elf build/base.img build/virt.dtb pack/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swiftos-guest
+          path: pack/
+          retention-days: 7
+
+  qemu-wasm:
+    needs: guest-image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: swiftos-guest
+          path: pack
+
+      - name: Check out ktock/qemu-wasm
+        uses: actions/checkout@v4
+        with:
+          repository: ktock/qemu-wasm
+          path: qemu-wasm
+
+      - name: Build the Emscripten builder image
+        working-directory: qemu-wasm
+        run: docker build -t buildqemu - < Dockerfile
+
+      - name: Compile qemu-system-aarch64 → WASM
+        working-directory: qemu-wasm
+        run: |
+          docker run --rm -d --name bq -v "$PWD":/qemu/:ro buildqemu
+          EXTRA_CFLAGS="-O3 -g -Wno-error=unused-command-line-argument -matomics -mbulk-memory -DNDEBUG -DG_DISABLE_ASSERT -D_GNU_SOURCE -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sALLOW_TABLE_GROWTH -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc --js-library=/build/node_modules/xterm-pty/emscripten-pty.js -sEXPORT_ES6=1 -sASYNCIFY_IMPORTS=ffi_call_js"
+          docker exec bq emconfigure /qemu/configure --static --target-list=aarch64-softmmu \
+            --cpu=wasm32 --cross-prefix= --without-default-features --enable-system \
+            --with-coroutine=fiber --enable-virtfs \
+            --extra-cflags="$EXTRA_CFLAGS" --extra-cxxflags="$EXTRA_CFLAGS" \
+            --extra-ldflags="-sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
+          docker exec bq emmake make -j "$(nproc)" qemu-system-aarch64
+
+      - name: Package the swift-os guest into the Emscripten FS (/pack)
+        working-directory: qemu-wasm
+        run: |
+          docker cp ../pack bq:/pack
+          docker exec bq /bin/sh -c \
+            "/emsdk/upstream/emscripten/tools/file_packager.py qemu-system-aarch64.data --preload /pack > load.js"
+
+      - name: Collect bundle
+        working-directory: qemu-wasm
+        run: |
+          mkdir -p ../bundle
+          docker cp bq:/qemu/build/qemu-system-aarch64 ../bundle/qemu-system-aarch64.js
+          docker cp bq:/qemu/build/qemu-system-aarch64.wasm ../bundle/
+          docker cp bq:/qemu/build/qemu-system-aarch64.worker.js ../bundle/ || true
+          docker cp bq:/qemu/qemu-system-aarch64.data ../bundle/
+          printf '{ "version": "%s", "built": "%s" }\n' "${GITHUB_SHA}" "$(date -u +%FT%TZ)" > ../bundle/manifest.json
+          docker stop bq
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-wasm-aarch64
+          path: bundle/
+          retention-days: 30
+
+      # Deploy: copy bundle/ to where the site serves PUBLIC_QEMU_WASM_BASE
+      # (e.g. apps/web/static/qemu, an object store, or a GitHub Release), then
+      # set PUBLIC_QEMU_WASM_VERSION=${GITHUB_SHA} in the web app's env.

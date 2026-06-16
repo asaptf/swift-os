@@ -1,0 +1,15 @@
+{
+  "kind": "collectionType",
+  "collectionName": "articles",
+  "info": { "singularName": "article", "pluralName": "articles", "displayName": "Article" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "title": { "type": "string", "required": true },
+    "slug": { "type": "uid", "targetField": "title" },
+    "eyebrow": { "type": "string" },
+    "excerpt": { "type": "text" },
+    "body": { "type": "text" },
+    "readingMinutes": { "type": "integer" },
+    "date": { "type": "date" }
+  }
+}

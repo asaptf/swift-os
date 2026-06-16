@@ -1,0 +1,10 @@
+{
+  "collectionName": "components_shared_features",
+  "info": { "displayName": "Feature", "icon": "bulletList" },
+  "options": {},
+  "attributes": {
+    "icon": { "type": "string" },
+    "title": { "type": "string", "required": true },
+    "bodyHtml": { "type": "text" }
+  }
+}

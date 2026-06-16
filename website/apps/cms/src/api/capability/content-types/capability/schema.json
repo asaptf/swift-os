@@ -1,0 +1,14 @@
+{
+  "kind": "collectionType",
+  "collectionName": "capabilities",
+  "info": { "singularName": "capability", "pluralName": "capabilities", "displayName": "Capability" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "name": { "type": "string", "required": true },
+    "note": { "type": "string" },
+    "status": { "type": "string" },
+    "variant": { "type": "enumeration", "enum": ["ok", "accent", "warn", "info", "muted", "err"], "default": "ok" },
+    "detail": { "type": "text" },
+    "order": { "type": "integer", "default": 0 }
+  }
+}

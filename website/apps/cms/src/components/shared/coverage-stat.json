@@ -1,0 +1,12 @@
+{
+  "collectionName": "components_shared_coverage_stats",
+  "info": { "displayName": "Coverage stat", "icon": "chartCircle" },
+  "options": {},
+  "attributes": {
+    "to": { "type": "decimal", "required": true },
+    "decimals": { "type": "integer", "default": 0 },
+    "suffix": { "type": "string" },
+    "label": { "type": "string" },
+    "accent": { "type": "boolean", "default": false }
+  }
+}

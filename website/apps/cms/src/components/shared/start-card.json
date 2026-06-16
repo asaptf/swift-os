@@ -1,0 +1,10 @@
+{
+  "collectionName": "components_shared_start_cards",
+  "info": { "displayName": "Start card", "icon": "cursor" },
+  "options": {},
+  "attributes": {
+    "title": { "type": "string", "required": true },
+    "bodyHtml": { "type": "text" },
+    "href": { "type": "string" }
+  }
+}

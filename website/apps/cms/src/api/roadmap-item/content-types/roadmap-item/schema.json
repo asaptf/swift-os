@@ -1,0 +1,11 @@
+{
+  "kind": "collectionType",
+  "collectionName": "roadmap_items",
+  "info": { "singularName": "roadmap-item", "pluralName": "roadmap-items", "displayName": "Roadmap item" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "phase": { "type": "enumeration", "enum": ["done", "active", "planned"], "default": "planned", "required": true },
+    "label": { "type": "text", "required": true },
+    "order": { "type": "integer", "default": 0 }
+  }
+}

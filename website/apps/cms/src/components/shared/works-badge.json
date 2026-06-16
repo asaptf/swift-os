@@ -1,0 +1,9 @@
+{
+  "collectionName": "components_shared_works_badges",
+  "info": { "displayName": "Works badge", "icon": "dashboard" },
+  "options": {},
+  "attributes": {
+    "label": { "type": "string", "required": true },
+    "variant": { "type": "enumeration", "enum": ["ok", "accent", "warn", "info", "muted", "err"], "default": "ok" }
+  }
+}

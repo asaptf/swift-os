@@ -1,0 +1,16 @@
+{
+  "kind": "singleType",
+  "collectionName": "status_pages",
+  "info": { "singularName": "status-page", "pluralName": "status-pages", "displayName": "Status page" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "eyebrow": { "type": "string" },
+    "heading": { "type": "text" },
+    "lead": { "type": "text" },
+    "build": { "type": "string" },
+    "updated": { "type": "string" },
+    "testLog": { "type": "text" },
+    "nonGoals": { "type": "component", "repeatable": true, "component": "shared.non-goal" },
+    "coverage": { "type": "component", "repeatable": true, "component": "shared.coverage-stat" }
+  }
+}

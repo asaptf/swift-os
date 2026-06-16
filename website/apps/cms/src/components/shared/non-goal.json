@@ -1,0 +1,9 @@
+{
+  "collectionName": "components_shared_non_goals",
+  "info": { "displayName": "Non-goal", "icon": "crossCircle" },
+  "options": {},
+  "attributes": {
+    "title": { "type": "string", "required": true },
+    "body": { "type": "text" }
+  }
+}

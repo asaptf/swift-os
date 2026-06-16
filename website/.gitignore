@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build output
+apps/web/.svelte-kit/
+apps/web/build/
+apps/cms/dist/
+apps/cms/.strapi/
+apps/cms/build/
+
+# strapi runtime
+apps/cms/.tmp/
+apps/cms/.cache/
+apps/cms/public/uploads/*
+!apps/cms/public/uploads/.gitkeep
+apps/cms/exports/
+apps/cms/*.db
+
+# logs
+*.log
+
+# os
+.DS_Store

@@ -1,0 +1,10 @@
+{
+  "kind": "collectionType",
+  "collectionName": "glossary_terms",
+  "info": { "singularName": "glossary-term", "pluralName": "glossary-terms", "displayName": "Glossary term" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "key": { "type": "string", "required": true },
+    "definition": { "type": "text", "required": true }
+  }
+}
