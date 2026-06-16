@@ -43,5 +43,15 @@ long syscall(long number, ...);
 #ifndef SYS_gettid
 #define SYS_gettid __NR_gettid
 #endif
+/* node_credentials.cc probes capabilities via syscall(SYS_capget,...); SwiftOS
+ * has no capability model, so the router returns -ENOSYS and Node treats the
+ * process as holding no capabilities (the safe default). Values are the aarch64
+ * ABI numbers but are immaterial -- only the -ENOSYS fallback path is taken. */
+#ifndef SYS_capget
+#define SYS_capget 90
+#endif
+#ifndef SYS_capset
+#define SYS_capset 91
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_SYS_SYSCALL_H */
