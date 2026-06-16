@@ -1,0 +1,13 @@
+{
+  "kind": "singleType",
+  "collectionName": "quickstart_pages",
+  "info": { "singularName": "quickstart-page", "pluralName": "quickstart-pages", "displayName": "Quickstart page" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "eyebrow": { "type": "string" },
+    "heading": { "type": "string" },
+    "leadHtml": { "type": "text" },
+    "needHtml": { "type": "text" },
+    "tracks": { "type": "json" }
+  }
+}

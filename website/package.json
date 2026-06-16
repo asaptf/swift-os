@@ -1,0 +1,21 @@
+{
+  "name": "swiftos-website",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The swift-os public website — SvelteKit (SSR) frontend + Strapi (CMS) backend.",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:cms": "npm --prefix apps/cms run develop",
+    "build": "npm --prefix apps/cms run build && npm --prefix apps/web run build",
+    "build:web": "npm --prefix apps/web run build",
+    "build:cms": "npm --prefix apps/cms run build",
+    "start:web": "npm --prefix apps/web run preview",
+    "start:cms": "npm --prefix apps/cms run start",
+    "check": "npm --prefix apps/web run check",
+    "install:all": "npm --prefix apps/cms install && npm --prefix apps/web install"
+  },
+  "engines": {
+    "node": ">=20 <=24"
+  }
+}

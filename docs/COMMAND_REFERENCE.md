@@ -209,6 +209,57 @@ Notes:
 
 Acceptance coverage: `tests/busybox_test.sh`, `tests/cap_enforce_test.sh`.
 
+### `sudo`
+
+Run a command as another principal (root by default) after authenticating the
+invoking user. `/bin/sudo` is the one setuid-root binary in the signed base
+image: exec'ing it elevates the process's effective identity to root, then sudo
+re-authenticates the invoker against `/etc/swos/passwd`, applies the
+`/etc/swos/sudoers` policy, and runs the command as the target.
+
+```text
+sudo [-u user] command [args...]
+```
+
+- The invoking user types **their own** password (the Unix default), not the
+  target's.
+- The `root` principal is always permitted and is never prompted.
+- A bare command name resolves under `/bin` (e.g. `sudo id` runs `/bin/id`).
+- `-u user` selects a target other than root, taken from `/etc/swos/passwd`.
+
+Examples:
+
+```sh
+sudo id                 # run /bin/id as root
+sudo -u guest id        # run /bin/id as the guest principal
+```
+
+Example session (logged in as the unprivileged `user`):
+
+```text
+$ id
+principal=2(user) session=2 caps=0xe
+$ sudo id
+[sudo] password for user:
+principal=1(root) session=1 caps=0x3f
+```
+
+`/etc/swos/sudoers` format — one rule per line, `#` comments ignored:
+
+```text
+name commands     # commands = ALL, or a comma-separated list of absolute paths
+user ALL
+```
+
+Notes:
+
+- A user not present in `/etc/swos/sudoers` is refused.
+- The elevated identity does not leak back into the login shell: sudo only
+  affects the command it execs, which is the process the parent shell awaits.
+- The setuid bit is honored only for read-only base-image binaries, never tmpfs.
+
+Acceptance coverage: `tests/sudo_test.sh`.
+
 ### `logtail`
 
 Print a serialized tail of the in-memory kernel log ring.
@@ -1062,6 +1113,8 @@ diagnostic fixtures than stable application interfaces.
 | `uvatforkprobe` | `uvatforkprobe` | Exercise C/newlib `pthread_atfork` ordering used by libuv fork reinitialization paths. | `tests/uvatfork_test.sh` |
 | `uvspawnprobe` | `uvspawnprobe` | Exercise C/newlib fork/exec process-spawn behavior used by libuv's Unix `uv_spawn` path. | `tests/uvspawn_test.sh` |
 | `signalprobe` | `signalprobe` | Exercise C/newlib signal disposition, current-process handler frame delivery, kill probes, SIGTERM child termination, and waitpid status. | `tests/signal_test.sh` |
+| `ptyprobe` | `ptyprobe` | Exercise the pseudo-terminal line discipline end to end: canonical line assembly, echo, ONLCR output, backspace editing, and EOF on master close. | `tests/pty_test.sh` |
+| `ptysigprobe` | `ptysigprobe` | Exercise PTY job-control SIGINT: Ctrl-C on the master delivers SIGINT to the foreground process under both default disposition and an installed handler. | `tests/ptysig_test.sh` |
 | `socketprobe` | `socketprobe flags \| client HOST PORT \| server PORT` | Exercise C/newlib fd-flag helpers and TCP socket client/server paths. | `tests/socket_test.sh` |
 | `mmapdemo` | `mmapdemo` | Exercise anonymous mmap, mprotect, executable mapping, and W^X rejection. | `tests/mmap_test.sh` |
 | `largemmapprobe` | `largemmapprobe` | Exercise C/newlib multi-MiB mmap, partial mprotect, and bottom-region munmap reuse. | `tests/largemmap_test.sh` |

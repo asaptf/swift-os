@@ -3504,17 +3504,22 @@ func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
 /// path, directory, RAM-backed node, or non-executable file. Lets the ELF loader
 /// pull a program straight off the packed base/package images instead of an
 /// embedded blob.
-func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>) -> (Bool, Int, Int, Int) {
+func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>)
+    -> (found: Bool, image: Int, offset: Int, len: Int, setuid: Bool, owner: UInt32) {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node < 0 { return (false, 0, 0, 0) }
-    if !confinedAllows(node) { return (false, 0, 0, 0) }
-    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0, 0) }
-    if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0) }
+    if node < 0 { return (false, 0, 0, 0, false, 0) }
+    if !confinedAllows(node) { return (false, 0, 0, 0, false, 0) }
+    if nodes[node].isDir || !nodes[node].onDisk { return (false, 0, 0, 0, false, 0) }
+    if (nodes[node].mode & 0o111) == 0 { return (false, 0, 0, 0, false, 0) }
     // I8: an executable from a signed image must match its content hash before load.
-    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0) }
-    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen)
+    if !vfsVerifyNodeContent(node) { return (false, 0, 0, 0, false, 0) }
+    // setuid-on-exec is honored only for read-only base-image files (the signed
+    // trust root); a setuid bit on a tmpfs file is meaningless and ignored.
+    let setuid = nodes[node].readOnly && (nodes[node].mode & modeSetuid) != 0
+    return (true, nodes[node].diskImage, nodes[node].diskOffset, nodes[node].dataLen,
+            setuid, nodes[node].owner)
 }
 
 /// Read a small kernel-owned config file from the mounted VFS namespace.

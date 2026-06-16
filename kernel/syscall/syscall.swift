@@ -86,8 +86,9 @@ private let sysLogStats: UInt = 82        // log_stats(buf, cap) — needs capLo
 private let sysNetInfo: UInt = 83         // netinfo(buffer, cap) — network status snapshot
 private let sysOpenpty: UInt = 84         // openpty(master*, slave*) — pseudo-terminal pair (HC34)
 private let sysPtySetForeground: UInt = 85 // pty_set_foreground(fd, pid) — tty signal target (HC36)
-private let sysFsync: UInt = 86           // fsync(fd)/fdatasync(fd) — flush the fd's filesystem to media (D2)
-private let sysSync: UInt = 87            // sync() — flush all writable filesystems to media (D2)
+private let sysSecurityInfoEx: UInt = 86   // security_info_ex(struct*) — effective + real identity (sudo)
+private let sysFsync: UInt = 87           // fsync(fd)/fdatasync(fd) — flush the fd's filesystem to media (D2)
+private let sysSync: UInt = 88            // sync() — flush all writable filesystems to media (D2)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -139,37 +140,40 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysFork {
         result = processFork(frame)
     } else if number == sysExecve {
-        let (addr, len) = execResolve(frame[0])
-        if addr == 0 {
+        let ex = execResolve(frame[0])
+        if ex.addr == 0 {
             result = -2 // ENOENT
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
             let (envPacked, envPackedLen, envc) = packUserArgv(frame[2])
-            result = processExec(image: addr, size: len, packed: packed,
+            result = processExec(image: ex.addr, size: ex.len, packed: packed,
                                  packedLen: packedLen, argc: argc,
                                  envPacked: envPacked, envPackedLen: envPackedLen,
-                                 envc: envc, frame: frame)
+                                 envc: envc, setuid: ex.setuid, setuidOwner: ex.owner,
+                                 frame: frame)
         }
     } else if number == sysSpawn {
         // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
-        let (addr, len) = execResolve(frame[0])
-        if addr == 0 {
+        let ex = execResolve(frame[0])
+        if ex.addr == 0 {
             result = -2 // ENOENT
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
-            result = processSpawnChild(addr, len, packed: packed, packedLen: packedLen, argc: argc)
+            result = processSpawnChild(ex.addr, ex.len, packed: packed, packedLen: packedLen,
+                                       argc: argc, setuid: ex.setuid, setuidOwner: ex.owner)
         }
     } else if number == sysSpawnHandles {
         // C2: same synchronous spawn shape, but the child starts empty and receives
         // exactly the explicit handle specs named by the caller.
-        let (addr, len) = execResolve(frame[0])
-        if addr == 0 {
+        let ex = execResolve(frame[0])
+        if ex.addr == 0 {
             result = -2 // ENOENT
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
-            result = processSpawnChildWithHandles(addr, len, packed: packed,
+            result = processSpawnChildWithHandles(ex.addr, ex.len, packed: packed,
                                                   packedLen: packedLen, argc: argc,
-                                                  specsVA: frame[2], specCount: frame[3])
+                                                  specsVA: frame[2], specCount: frame[3],
+                                                  setuid: ex.setuid, setuidOwner: ex.owner)
         }
     } else if number == sysWaitpid {
         result = processWaitpid(Int(bitPattern: frame[0]), frame[1])
@@ -207,6 +211,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsRmdir(path: frame[0])
     } else if number == sysSecurityInfo {
         result = processSecurityInfo(buffer: frame[0])
+    } else if number == sysSecurityInfoEx {
+        result = processSecurityInfoEx(buffer: frame[0])
     } else if number == sysLogin {
         result = processLogin(principal: UInt32(truncatingIfNeeded: frame[0]),
                               session: UInt32(truncatingIfNeeded: frame[1]),

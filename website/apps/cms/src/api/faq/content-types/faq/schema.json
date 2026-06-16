@@ -1,0 +1,12 @@
+{
+  "kind": "collectionType",
+  "collectionName": "faqs",
+  "info": { "singularName": "faq", "pluralName": "faqs", "displayName": "FAQ" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "question": { "type": "string", "required": true },
+    "answerHtml": { "type": "text" },
+    "category": { "type": "string" },
+    "order": { "type": "integer", "default": 0 }
+  }
+}

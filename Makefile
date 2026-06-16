@@ -337,6 +337,7 @@ USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PTYPROBE_ELF := $(BUILD)/ptyprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
+USER_SUDO_ELF := $(BUILD)/sudo.elf
 USER_LOGTAIL_ELF := $(BUILD)/logtail.elf
 USER_LOGTAILPROBE_ELF := $(BUILD)/logtail-probe.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
@@ -406,6 +407,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
+	$(USER_SUDO_ELF) \
 	$(USER_LOGTAIL_ELF) \
 	$(USER_LOGTAILPROBE_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
@@ -617,6 +619,9 @@ $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Make
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
 
+$(BUILD)/user_sudo.o: userland/sudo.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sudo.swift kernel/crypto/sha256.swift -o $@
+
 $(BUILD)/user_logtail.o: userland/logtail.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail.swift -o $@
 
@@ -817,6 +822,9 @@ $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/u
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
+
+$(USER_SUDO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sudo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sudo.o -o $@
 
 $(USER_LOGTAIL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o -o $@
@@ -1357,6 +1365,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/ab_flush_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
+	./tests/sudo_test.sh
 	./tests/ls_l_test.sh
 	./tests/redirect_test.sh
 	./tests/swift_ls_test.sh
@@ -2007,6 +2016,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
 	cp $(USER_PTYPROBE_ELF) $(BASE_ROOT)/bin/ptyprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
+	cp $(USER_SUDO_ELF) $(BASE_ROOT)/bin/sudo
 	cp $(USER_LOGTAIL_ELF) $(BASE_ROOT)/bin/logtail
 	cp $(USER_LOGTAILPROBE_ELF) $(BASE_ROOT)/bin/logtail-probe
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm

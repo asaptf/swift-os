@@ -101,8 +101,8 @@ static long sys4(long n, long a0, long a1, long a2, long a3) {
 #define SYS_RMDIR 30
 #define SYS_FTRUNCATE 33
 #define SYS_FCNTL 34
-#define SYS_FSYNC 86
-#define SYS_SYNC 87
+#define SYS_FSYNC 87
+#define SYS_SYNC 88
 #define SYS_CHOWN 36
 #define SYS_TIME 37
 #define SYS_SOCKET 38

@@ -92,8 +92,9 @@
 #define SYS_NETINFO        83
 #define SYS_OPENPTY        84
 #define SYS_PTY_SET_FOREGROUND 85
-#define SYS_FSYNC          86
-#define SYS_SYNC           87
+#define SYS_SECURITY_INFO_EX   86
+#define SYS_FSYNC          87
+#define SYS_SYNC           88
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -321,6 +322,22 @@ struct security_info {
 
 static inline int security_info(struct security_info *info) {
     return (int)__syscall3(SYS_SECURITY_INFO, (long)info, 0, 0);
+}
+
+// Effective + real identity (the swift-os ruid/euid analogue). After a
+// setuid-on-exec the effective fields hold the file owner's authority while the
+// real fields preserve the invoker; for an ordinary process they are equal.
+struct security_info_ex {
+    unsigned int principal;
+    unsigned int session;
+    unsigned long caps;
+    unsigned int real_principal;
+    unsigned int real_session;
+    unsigned long real_caps;
+};
+
+static inline int security_info_ex(struct security_info_ex *info) {
+    return (int)__syscall3(SYS_SECURITY_INFO_EX, (long)info, 0, 0);
 }
 
 // Replace the caller's security context after authenticating a principal.

@@ -1,0 +1,39 @@
+/* =========================================================================
+ * highlight.js theme — mapped onto the swift-os terminal token palette.
+ * Code surfaces stay dark in both themes (Apple-docs style).
+ * ========================================================================= */
+
+/* Code blocks inside docs prose get the design's "code well" chrome. */
+.prose pre {
+	background: var(--code-bg);
+	border: 1px solid var(--border);
+	border-radius: var(--r-md);
+	padding: var(--sp-4) var(--sp-5);
+	overflow-x: auto;
+	box-shadow: var(--shadow-sm);
+}
+.prose pre code {
+	font-family: var(--font-mono);
+	font-size: var(--fs-sm);
+	line-height: 1.7;
+	color: #e8eaed;
+	background: none;
+	border: 0;
+	padding: 0;
+}
+
+.hljs { color: #e8eaed; background: transparent; }
+.hljs-comment, .hljs-quote { color: #6b7280; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-meta-keyword { color: #d99bd0; }
+.hljs-type, .hljs-class .hljs-title, .hljs-title.class_ { color: #e3c07b; }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-bullet { color: #8ed99b; }
+.hljs-number, .hljs-literal { color: #e3c07b; }
+.hljs-title, .hljs-section, .hljs-function .hljs-title, .hljs-title.function_ { color: #9bb4d8; }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: #9bb4d8; }
+.hljs-name, .hljs-tag { color: var(--orange-400); }
+.hljs-params { color: #e8eaed; }
+.hljs-meta, .hljs-comment.hljs-doctag { color: #8b929c; }
+.hljs-deletion { color: var(--err); }
+.hljs-addition { color: var(--ok); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
