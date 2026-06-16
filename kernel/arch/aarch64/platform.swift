@@ -34,6 +34,9 @@
     var virtioMmioStride: UInt = 0x200
     var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    // H2: no PCIe ECAM modeled for the VirtualBox board yet (it parks before
+    // driver init); 0 disables PCI enumeration.
+    var pcieEcamBase: UInt = 0
     var cpuCount: UInt32 = 1
     var cpuAff0_0: UInt32 = 0
     var cpuAff0_1: UInt32 = 0
@@ -69,6 +72,10 @@
     var virtioMmioStride: UInt = 0x200
     var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    // H2: PCIe ECAM config-space base. QEMU virt (high ECAM) and the Hetzner ARM
+    // VM both place it at 0x40_1000_0000. 0 disables PCI enumeration. The early
+    // MMU map covers the containing 1 GiB block (vm_early.c).
+    var pcieEcamBase: UInt = 0x40_1000_0000
     // S0f CPU topology. CPU0 is the only compiled-in default; the DTB parser
     // replaces this with the QEMU `-smp N` `/cpus` map when available.
     var cpuCount: UInt32 = 1

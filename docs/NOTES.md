@@ -6324,3 +6324,55 @@ target; virtio-PCI (H2/H3) and ACPI platform config (H5) remain.
 suite under `gic-version=3`) is deferred until a root FS boots on the GICv3
 profile (after H3); the existing suite still runs on GICv2. The GIC primitives
 themselves (per-CPU timer IRQ + SGI on two CPUs) are proven by `gicv3-test`.
+
+### H2 — PCIe ECAM enumeration + virtio-PCI transport (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM (and `-M virt,gic-version=3 -cpu max`) expose virtio
+devices over PCIe, not virtio-mmio. Enumerate PCI config space, drive a modern
+virtio-pci device, and introduce a transport abstraction so a device driver
+works on either transport. Port the simplest device (virtio-rng) first.
+
+**Addresses (QEMU virt high-ECAM == the Hetzner VM, from the DTB `pcie` node).**
+- ECAM config space: **`0x40_1000_0000`** (256 GiB), 256 MiB.
+- 32-bit MMIO window (BARs): CPU `0x1000_0000`..`0x3eff_0000` (pci==cpu).
+- 64-bit MMIO window: `0x80_0000_0000` (512 GiB) — where **UEFI firmware places
+  modern virtio BARs** (BAR4 is a 64-bit memory BAR).
+
+**What changed.**
+- `kernel/mm/vm_early.c`: the identity map reached only the first 3 GiB and TCR
+  IPS was 36-bit (64 GiB max PA) — neither could touch the 256 GiB ECAM. Raised
+  **IPS to 40-bit** (`max`/cortex-a72 both support ≥40-bit PARange) and added two
+  device blocks: `l1_table[256]` for the ECAM 1 GiB block, and a second L1 table
+  at `l0_table[1]` mapping the first 4 GiB of the 64-bit PCI window. Gotcha
+  recorded: under UEFI the firmware-assigned BAR landed at `0x80_0000_8000`, which
+  faulted (level-0 translation) until the 64-bit window was mapped.
+- `kernel/drivers/pci.swift`: ECAM accessors (needs 8/16-bit MMIO — added to
+  io.h), BAR sizing + assignment (assign in the 32-bit window when unassigned on
+  the `-kernel` path; reuse the firmware base under UEFI), and a virtio capability
+  walk (COMMON/NOTIFY/ISR/DEVICE → mapped addresses). Device matching handles
+  **both** modern ids (`0x1040+type`) and **transitional** ids (`0x1000..0x103F`,
+  type in the PCI Subsystem ID) — QEMU's `virtio-rng-pci` is transitional
+  (`0x1af4:0x1005`) yet exposes the modern caps.
+- `kernel/drivers/virtio_transport.swift`: `VirtioTransport` — one control-plane
+  surface (reset/status, VERSION_1 negotiation + FEATURES_OK, queue setup with
+  ring addresses, notify doorbell, ISR ack) over `mmio | pci`. The virtqueue ring
+  memory is identical, so only this plane branches.
+- `virtio_rng.swift` refactored onto `VirtioTransport`: tries virtio-mmio first,
+  then virtio-pci. `platform.pcieEcamBase` (default `0x40_1000_0000`; 0 disables).
+
+**Acceptance.** `make virtio-pci-test` (`tests/virtio_pci_test.sh`) boots
+`-M virt,gic-version=3 -cpu max` with `-device virtio-rng-pci` and asserts the
+kernel enumerates the ECAM, assigns the BAR, resolves the caps, and runs a full
+virtqueue round trip (descriptor → avail → notify → used) returning entropy:
+`H2 OK: virtio-pci rng exchanged a queue, bytes 32`. Emitted during early driver
+bring-up, no base image needed. Wired into `make test`.
+
+**Validated on the real-target path too.** `make hetzner-run` (UEFI / ACPI /
+GICv3, firmware-assigned BARs in the 64-bit window) reaches the same `H2 OK`,
+exercising the firmware-BAR-reuse + 64-bit-window-mapping path. Regression:
+virtio-mmio rng still exchanges a queue (`H2 OK: virtio-mmio …`); GICv2/GICv3
+direct boots unaffected (MMU/IPS change verified).
+
+**Open for H5/H6.** The ECAM base is a compiled-in default (correct for both
+targets); ACPI MCFG parsing (H5) should supply it on the real server rather than
+assume it. virtio-net/virtio-scsi over PCI are H3/H4.

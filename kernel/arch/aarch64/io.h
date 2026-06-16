@@ -123,6 +123,29 @@ static inline uint32_t mmio_read32(uintptr_t addr) {
     return *(volatile uint32_t *)addr;
 }
 
+// 8/16/64-bit MMIO accessors. The GICv2/virtio-mmio paths only ever needed 32-bit
+// access; PCIe config space (H2) and the virtio-pci common-config structure have
+// byte/halfword/quadword fields (device_status u8, queue_size/select u16,
+// queue_desc/driver/device u64), so the virtio-pci transport needs these widths.
+static inline void mmio_write8(uintptr_t addr, uint8_t value) {
+    *(volatile uint8_t *)addr = value;
+}
+static inline uint8_t mmio_read8(uintptr_t addr) {
+    return *(volatile uint8_t *)addr;
+}
+static inline void mmio_write16(uintptr_t addr, uint16_t value) {
+    *(volatile uint16_t *)addr = value;
+}
+static inline uint16_t mmio_read16(uintptr_t addr) {
+    return *(volatile uint16_t *)addr;
+}
+static inline void mmio_write64(uintptr_t addr, uint64_t value) {
+    *(volatile uint64_t *)addr = value;
+}
+static inline uint64_t mmio_read64(uintptr_t addr) {
+    return *(volatile uint64_t *)addr;
+}
+
 // Cache maintenance for DMA. A Swift driver (kernel/drivers/virtio_net.swift)
 // cleans (writes back) the cache lines a device reads and invalidates the lines
 // a device writes, around each DMA. No-ops under TCG, real work under a caching

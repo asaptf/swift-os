@@ -1,53 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
-// virtio_rng.swift — minimal polled virtio 1.0 (modern, MMIO) RNG driver.
+// virtio_rng.swift — polled virtio 1.0 RNG driver over the transport abstraction.
 //
-// QEMU and cloud hypervisors expose hardware/runtime entropy to guests through
-// virtio-rng (device id 4). SSHD needs that before its KEX ephemeral material can
-// be treated as VM-deployable rather than image-seeded development randomness.
-// This driver mirrors the existing virtio-blk/input shape: one synchronous
-// request virtqueue, no IRQ wiring, cache maintenance through io.h, and a tiny
-// syscall-facing read function.
+// QEMU and cloud hypervisors expose hardware/runtime entropy through virtio-rng
+// (device type 4). SSHD needs that before its KEX ephemeral material can be
+// treated as VM-deployable rather than image-seeded development randomness.
+// The driver binds over `VirtioTransport`: virtio-mmio on QEMU `virt`, or
+// virtio-pci on `-cpu max` / the Hetzner ARM VM (H2). Only the device control
+// plane goes through the transport; the virtqueue ring memory is identical.
 
 private let VIRTIO_ID_RNG: UInt32 = 4
 
-// virtio-mmio register offsets.
-private let R_MAGIC: UInt      = 0x000
-private let R_VERSION: UInt    = 0x004
-private let R_DEVID: UInt      = 0x008
-private let R_DRVFEAT: UInt    = 0x020
-private let R_DRVFEATSEL: UInt = 0x024
-private let R_QSEL: UInt       = 0x030
-private let R_QNUMMAX: UInt    = 0x034
-private let R_QNUM: UInt       = 0x038
-private let R_QREADY: UInt     = 0x044
-private let R_QNOTIFY: UInt    = 0x050
-private let R_ISTATUS: UInt    = 0x060
-private let R_IACK: UInt       = 0x064
-private let R_STATUS: UInt     = 0x070
-private let R_QDESCL: UInt     = 0x080
-private let R_QDESCH: UInt     = 0x084
-private let R_QDRVL: UInt      = 0x090
-private let R_QDRVH: UInt      = 0x094
-private let R_QDEVL: UInt      = 0x0a0
-private let R_QDEVH: UInt      = 0x0a4
-
+// virtio-mmio identity registers (only what the MMIO discovery scan needs; the
+// control-plane registers live behind VirtioTransport now).
+private let R_MAGIC: UInt = 0x000
+private let R_DEVID: UInt = 0x008
 private let VIRTIO_MAGIC: UInt32 = 0x74726976   // "virt"
-
-private let S_ACK: UInt32    = 1
-private let S_DRV: UInt32    = 2
-private let S_DRVOK: UInt32  = 4
-private let S_FEATOK: UInt32 = 8
 
 private let RNG_QSZ = 1
 private let RNG_BUF_SIZE = 256
 private let RNG_SPIN_LIMIT = 2_000_000
 private let VIRTQ_DESC_F_WRITE: UInt16 = 2
 
-private let OFF_DESC: UInt  = 0x000
+// Split-virtqueue ring layout within one page (desc | avail | used).
+private let OFF_DESC: UInt = 0x000
 private let OFF_AVAIL: UInt = 0x080
-private let OFF_USED: UInt  = 0x100
+private let OFF_USED: UInt = 0x100
 
-private var rngMmio: UInt = 0
+private var rngXport = VirtioTransport(mmio: 0)
+private var rngActive = false
 private var rngRingBase: UInt = 0
 private var rngDataBase: UInt = 0
 private var rngQn: UInt32 = 0
@@ -105,28 +85,37 @@ private func rngUsedLen() -> UInt32 {
     UnsafeRawPointer(bitPattern: rngRingBase + OFF_USED + 4)!.load(fromByteOffset: 4, as: UInt32.self)
 }
 
-func virtioRngInit() -> Bool {
-    rngMmio = 0
+// Locate a virtio-rng device: prefer virtio-mmio (the QEMU `virt` default), fall
+// back to virtio-pci (the GICv3 / Hetzner profile). Returns nil if neither.
+private func rngFindTransport() -> VirtioTransport? {
     var i: UInt32 = 0
     while i < platform.virtioMmioCount {
         let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
         if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
            mmio_read32(m + R_DEVID) == VIRTIO_ID_RNG {
-            rngMmio = m
-            break
+            return VirtioTransport(mmio: m)
         }
         i += 1
     }
-    if rngMmio == 0 { return false }
+    if let dev = virtioPciFindDevice(deviceType: VIRTIO_ID_RNG) {
+        return VirtioTransport(pci: dev)
+    }
+    return nil
+}
+
+func virtioRngInit() -> Bool {
+    rngActive = false
+    guard let xport = rngFindTransport() else { return false }
+    rngXport = xport
 
     if rngRingBase == 0 {
         let r = pmm_alloc_page()
-        if r == 0 { rngMmio = 0; return false }
+        if r == 0 { return false }
         rngRingBase = r
     }
     if rngDataBase == 0 {
         let d = pmm_alloc_page()
-        if d == 0 { rngMmio = 0; return false }
+        if d == 0 { return false }
         rngDataBase = d
     }
     rngZeroPage(rngRingBase)
@@ -134,50 +123,37 @@ func virtioRngInit() -> Bool {
     rngAvailIdx = 0
     rngLastUsed = 0
 
-    mmio_write32(rngMmio + R_STATUS, 0)
-    mmio_write32(rngMmio + R_STATUS, S_ACK)
-    mmio_write32(rngMmio + R_STATUS, S_ACK | S_DRV)
-    mmio_write32(rngMmio + R_DRVFEATSEL, 1)
-    mmio_write32(rngMmio + R_DRVFEAT, 1) // VIRTIO_F_VERSION_1
-    mmio_write32(rngMmio + R_DRVFEATSEL, 0)
-    mmio_write32(rngMmio + R_DRVFEAT, 0)
-    mmio_write32(rngMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK)
-    if (mmio_read32(rngMmio + R_STATUS) & S_FEATOK) == 0 {
-        rngMmio = 0
-        return false
-    }
-
-    mmio_write32(rngMmio + R_QSEL, 0)
-    let maxq = mmio_read32(rngMmio + R_QNUMMAX)
-    if maxq == 0 {
-        rngMmio = 0
-        return false
-    }
-    rngQn = maxq < UInt32(RNG_QSZ) ? maxq : UInt32(RNG_QSZ)
-    mmio_write32(rngMmio + R_QNUM, rngQn)
-    rngClean(rngRingBase + OFF_AVAIL, 16)
-    rngClean(rngRingBase + OFF_USED, 16)
+    rngXport.reset()
+    rngXport.setStatus(VIRTIO_STATUS_ACK)
+    rngXport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
+    if !rngXport.negotiateVersion1() { return false }
 
     let da = UInt64(rngRingBase + OFF_DESC)
     let aa = UInt64(rngRingBase + OFF_AVAIL)
     let ua = UInt64(rngRingBase + OFF_USED)
-    mmio_write32(rngMmio + R_QDESCL, UInt32(da & 0xFFFF_FFFF))
-    mmio_write32(rngMmio + R_QDESCH, UInt32(da >> 32))
-    mmio_write32(rngMmio + R_QDRVL, UInt32(aa & 0xFFFF_FFFF))
-    mmio_write32(rngMmio + R_QDRVH, UInt32(aa >> 32))
-    mmio_write32(rngMmio + R_QDEVL, UInt32(ua & 0xFFFF_FFFF))
-    mmio_write32(rngMmio + R_QDEVH, UInt32(ua >> 32))
-    mmio_write32(rngMmio + R_QREADY, 1)
-    mmio_write32(rngMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK | S_DRVOK)
+    let size = rngXport.setupQueue(0, requested: UInt32(RNG_QSZ), desc: da, avail: aa, used: ua)
+    if size == 0 { return false }
+    rngQn = size
+    rngClean(rngRingBase + OFF_AVAIL, 16)
+    rngClean(rngRingBase + OFF_USED, 16)
+
+    rngXport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER |
+                       VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK)
+    rngActive = true
     return true
 }
 
-func virtioRngAvailable() -> Bool {
-    rngMmio != 0
+func virtioRngAvailable() -> Bool { rngActive }
+
+/// H2: which transport the active virtio-rng is bound to ("mmio", "pci", or
+/// "none"). Used by the H2 acceptance probe / boot log.
+func virtioRngTransportName() -> StaticString {
+    if !rngActive { return "none" }
+    return rngXport.isPci ? "pci" : "mmio"
 }
 
 private func virtioRngRequest(_ maxBytes: Int) -> Int {
-    if rngMmio == 0 { return -19 } // ENODEV
+    if !rngActive { return -19 } // ENODEV
     let want = maxBytes < RNG_BUF_SIZE ? maxBytes : RNG_BUF_SIZE
     if want <= 0 { return 0 }
 
@@ -186,7 +162,7 @@ private func virtioRngRequest(_ maxBytes: Int) -> Int {
     rngInvalidate(rngDataBase, want)
     rngAvailAdd()
     rngClean(rngRingBase + OFF_AVAIL, 16)
-    mmio_write32(rngMmio + R_QNOTIFY, 0)
+    rngXport.notify(queue: 0)
 
     var spins = 0
     while true {
@@ -201,16 +177,14 @@ private func virtioRngRequest(_ maxBytes: Int) -> Int {
     if got > want { got = want }
     rngLastUsed &+= 1
     rngInvalidate(rngDataBase, got)
-
-    let ist = mmio_read32(rngMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(rngMmio + R_IACK, ist) }
+    rngXport.ackInterrupt()
     return got > 0 ? got : -5
 }
 
 func virtioRngRead(_ dst: UnsafeMutablePointer<UInt8>, _ count: Int) -> Int {
     if count < 0 { return -22 }
     if count == 0 { return 0 }
-    if rngMmio == 0 { return -19 }
+    if !rngActive { return -19 }
 
     var done = 0
     while done < count {

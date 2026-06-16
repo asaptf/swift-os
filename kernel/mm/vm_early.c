@@ -39,6 +39,10 @@
 // (mmu_kernel_ttbr0 / address_space_destroy). The rest stay file-local.
 uint64_t l0_table[ENTRIES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t l1_table[ENTRIES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
+// H2: second L1 table for VA 512 GiB..1 TiB (L0[1]), covering the 64-bit PCIe
+// MMIO window at 0x80_0000_0000 where UEFI firmware (edk2 on QEMU virt / the
+// Hetzner VM) places modern virtio BARs.
+static uint64_t l1_table_pci64[ENTRIES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t probe_l2_table[ENTRIES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t probe_l3_table[ENTRIES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
 
@@ -114,6 +118,7 @@ static inline void tlbi_va(uintptr_t va) {
 void mmu_init_identity_map(void) {
     zero_table(l0_table);
     zero_table(l1_table);
+    zero_table(l1_table_pci64);
     zero_table(probe_l2_table);
     zero_table(probe_l3_table);
 
@@ -130,6 +135,21 @@ void mmu_init_identity_map(void) {
 #else
     l1_table[0] = block_desc_1g(0x00000000ULL, ATTR_DEVICE);
     l1_table[1] = block_desc_1g(0x40000000ULL, ATTR_NORMAL);
+    // H2: the PCIe ECAM config space sits in the high region — 0x40_1000_0000
+    // (256 GiB) on QEMU virt (high ECAM) and on the Hetzner ARM VM. Identity-map
+    // the containing 1 GiB block as Device so the kernel can enumerate PCI. (The
+    // 32-bit PCI MMIO window at 0x1000_0000, where we assign BARs, is already
+    // covered by l1_table[0].) L1 index = 0x40_0000_0000 >> 30 = 256.
+    l1_table[256] = block_desc_1g(0x4000000000ULL, ATTR_DEVICE);
+    // H2: the 64-bit PCIe MMIO window at 0x80_0000_0000 (512 GiB) — where UEFI
+    // firmware assigns modern virtio BARs. Map L0[1] -> a second L1 table and
+    // device-map its first 4 GiB (firmware packs the small virtio BARs at the
+    // window base; FAR observed at 0x80_0000_8000).
+    l0_table[1] = table_desc((uint64_t)(uintptr_t)l1_table_pci64);
+    l1_table_pci64[0] = block_desc_1g(0x8000000000ULL, ATTR_DEVICE);
+    l1_table_pci64[1] = block_desc_1g(0x8040000000ULL, ATTR_DEVICE);
+    l1_table_pci64[2] = block_desc_1g(0x8080000000ULL, ATTR_DEVICE);
+    l1_table_pci64[3] = block_desc_1g(0x80C0000000ULL, ATTR_DEVICE);
 #endif
     l1_table[2] = table_desc((uint64_t)(uintptr_t)probe_l2_table);
     probe_l2_table[0] = table_desc((uint64_t)(uintptr_t)probe_l3_table);
@@ -143,7 +163,9 @@ void mmu_configure_translation(void) {
         (1ULL << 10) |   // ORGN0: normal memory outer WB/WA.
         (3ULL << 12) |   // SH0: inner shareable.
         (1ULL << 23) |   // EPD1: disable TTBR1 walks for now.
-        (1ULL << 32);    // IPS: 36-bit physical address space.
+        (2ULL << 32);    // IPS: 40-bit PA — reaches the high PCIe ECAM at
+                         // 0x40_1000_0000 (256 GiB). cortex-a72 and `max` both
+                         // support ≥40-bit PARange; 36-bit could not address it.
 
     __asm__ volatile("msr mair_el1, %0" :: "r"(mair) : "memory");
     __asm__ volatile("msr tcr_el1, %0" :: "r"(tcr) : "memory");

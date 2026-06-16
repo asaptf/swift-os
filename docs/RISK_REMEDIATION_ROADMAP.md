@@ -528,9 +528,15 @@ base (`0x4000_0000`) match.
   `make gicv3-test` proves interrupts live multi-core on `-M virt,gic-version=3`
   (CPU0 + secondary timer IRQ, secondary online, SGI/IPI), GICv2 path unchanged.
   Bonus: `make hetzner-run` now clears GIC init too. See `docs/NOTES.md` H1.
-- **H2** (planned): PCIe ECAM enumeration + virtio-PCI transport abstraction
-  (mmio | pci); port virtio-rng first. Acceptance: a virtio-pci device exchanges
-  a queue.
+- **H2** (DONE, this branch): PCIe ECAM enumeration + virtio-PCI transport.
+  `kernel/drivers/pci.swift` scans the ECAM (0x40_1000_0000), assigns BARs (or
+  reuses firmware's), and parses the modern virtio capabilities; matches modern
+  and transitional device ids. `virtio_transport.swift` is the `mmio | pci`
+  control-plane abstraction; `virtio_rng` now binds over either. The early MMU
+  map gained the high-ECAM and 64-bit-PCI-window device blocks (+40-bit IPS).
+  Acceptance: `make virtio-pci-test` exchanges an entropy virtqueue over
+  virtio-pci; also reached on `make hetzner-run` (UEFI firmware BARs). See
+  `docs/NOTES.md` H2.
 - **H3** (planned): root FS without virtio-scsi — EFI loader reads `base.img`
   from the ESP into RAM, passes it as a ramdisk; kernel mounts the read-only base
   from RAM. (H0 confirmed the ESP read works on this firmware.) Acceptance: boots

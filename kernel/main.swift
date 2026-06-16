@@ -537,6 +537,37 @@ private func runFsyncProbeD2() {
 /// virtio-mmio window, read sector 0, and report it. When the attached disk is a
 /// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
 /// recognise here — the M11c on-disk filesystem will build on this read path.
+// H2: prove the virtio transport actually exchanges a virtqueue. After
+// virtioRngInit binds (over virtio-mmio on QEMU `virt`, or virtio-pci on
+// `-cpu max` / the Hetzner VM), request entropy and confirm bytes came back
+// through the used ring — a full descriptor → avail → notify → used round trip.
+private func runVirtioRngQueueProbeH2() {
+    let page = pmm_alloc_page()
+    if page == 0 { return }
+    let dst = UnsafeMutablePointer<UInt8>(bitPattern: page)!
+    let want = 32
+    let n = virtioRngRead(dst, want)
+    var nonzero = 0
+    if n > 0 {
+        var i = 0
+        while i < n { if dst[i] != 0 { nonzero += 1 }; i += 1 }
+    }
+    pmm_free_page(page)
+
+    if n == want {
+        uartPuts("H2 OK: virtio-")
+        uartPuts(virtioRngTransportName())
+        uartPuts(" rng exchanged a queue, bytes ")
+        uartPutUInt(UInt64(n))
+        uartPuts(" nonzero ")
+        uartPutUInt(UInt64(nonzero))
+        uartPuts("\n")
+        klog(.info, "pci", "H2 OK: virtio transport exchanged a queue", UInt64(n))
+    } else {
+        uartPuts("H2 WARN: virtio rng queue exchange incomplete\n")
+    }
+}
+
 private func runVirtioBlkProbe() {
     let cap = virtioBlkInit(platform.virtioMmioBase,
                             platform.virtioMmioStride,
@@ -1023,6 +1054,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     runDataDeviceProbeD0() // D0: persistent /data disk end-to-end persistence check
     if virtioRngInit() {
         uartPuts("virtio-rng: runtime entropy ready\n")
+        runVirtioRngQueueProbeH2()
     }
     pkgStoreInit()      // P3: read active package-store generation, if present
     if !pkgStoreS4dReadinessSelfTest() {
