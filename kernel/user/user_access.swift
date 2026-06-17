@@ -8,7 +8,12 @@
 // current user VA, so they must not bypass the EL0 write-fault path.
 
 private let userAccessMinVA: UInt = 0x8000_0000
-private let userAccessMaxVA: UInt = 0xB000_0000
+// Top of the valid user VA window. T0SZ=16 gives a 48-bit TTBR0 space, so this
+// is policy, not a hardware limit. Raised to 16 GiB so V8 (Node) can reserve its
+// large — mostly virtual, committed on demand — heap/code arenas; the old 768 MiB
+// window left only a 128 MiB mmap arena, which V8 intermittently exhausted and
+// reported as a fatal OOM. See the user-VA map in kernel/user/process.swift.
+private let userAccessMaxVA: UInt = 0x4_0000_0000
 private let userAccessPageMask: UInt = PageAllocator.pageSize - 1
 let userAccessMaxCString = 4096
 

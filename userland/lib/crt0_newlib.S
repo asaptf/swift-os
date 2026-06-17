@@ -19,8 +19,13 @@
 .extern __preinit_array_end
 .extern __init_array_start
 .extern __init_array_end
+.extern __swos_init_tls
 .global _start
 _start:
+    // Set up native thread-local storage (tpidr_el0) for the main thread before
+    // anything — C++ constructors and V8 access __thread/thread_local vars.
+    bl      __swos_init_tls
+
     // envp -> environ first, so any getenv() in a constructor sees it.
     ldr     x0, [sp]              // argc
     add     x1, sp, #8            // argv

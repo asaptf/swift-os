@@ -26,18 +26,19 @@ private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
 
 // Track B — anonymous mmap arena. The valid user window is [0x8000_0000,
-// 0xB000_0000) (user_access.swift). Within it the fixed regions are: the ELF
-// image at 0x8000_0000 growing UP (busybox ~1.1 MiB, far short of 0x8800_0000);
-// the 16-page user stack at the top of [0x8FFF_0000, 0x9000_0000); and the sbrk
-// heap at 0xA000_0000 growing UP. That leaves a 256 MiB gap between the stack
-// top (0x9000_0000) and the heap base (0xA000_0000) with nothing in it. We park
-// the mmap arena at the MIDPOINT of that gap, 0x9800_0000, and grow it DOWN.
-// This keeps 128 MiB of clearance above the stack top and 128 MiB below the
-// heap base, so an mmap region can never collide with code, data, stack, or
-// heap. The cursor is per-process (pMmapTop), reset on exec, copied on fork.
-// Growing down (away from the heap) mirrors the classic Linux mmap layout.
-private let userMmapTop: UInt = 0x9800_0000
-private let userMmapFloor: UInt = 0x9000_0000 // never grow into the stack region
+// 0x4_0000_0000) (user_access.swift, 16 GiB). Fixed regions: the ELF image at
+// 0x8000_0000 growing UP (Node is ~57 MiB; busybox ~1.1 MiB); the 16-page user
+// stack at the top of [0x8FFF_0000, 0x9000_0000); the sbrk heap from 0xA000_0000
+// growing UP and capped just below the mmap floor (so ~1.5 GiB of heap); and the
+// anonymous mmap arena filling [0x1_0000_0000, 0x4_0000_0000) (12 GiB), growing
+// DOWN from the top. The arena is virtual address space — pages commit from the
+// PMM on touch, so the 12 GiB ceiling never reserves physical RAM; it just lets
+// V8 place its large heap/code reservations without exhausting the arena (the
+// previous 128 MiB arena did, intermittently, surfacing as a fatal V8 OOM). The
+// cursor is per-process (pMmapTop), reset on exec, copied on fork. Growing down
+// (away from the heap) mirrors the classic Linux mmap layout.
+private let userMmapTop: UInt = 0x4_0000_0000
+private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena grows down from the top
 private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
@@ -3522,6 +3523,7 @@ func processSbrk(_ incr: Int) -> UInt {
 
     let newBreak = UInt(bitPattern: Int(bitPattern: old) + incr)
     if newBreak < userHeapBase { return fail }
+    if newBreak > userMmapFloor { return fail } // heap stops below the mmap arena
 
     let mask = PageAllocator.pageSize - 1
     let oldTop = (old + mask) & ~mask

@@ -162,6 +162,36 @@ int _gettimeofday(struct timeval *tv, void *tz) {
 }
 int _wait(int *status) { (void)status; errno = ECHILD; return -1; }
 
+// Native ELF thread-local storage (__thread / C++ thread_local) for the main
+// thread. The AArch64 variant-I model accesses a __thread var as
+// `tpidr_el0 + 16 + offset` (16-byte TCB), but nothing on SwiftOS set tpidr_el0
+// up, so V8's thread_local read garbage/faulted. crt0 calls this before the
+// C++ constructors run: build a block [16B TCB][.tdata copy][.tbss zero] and
+// point tpidr_el0 at it. Linker symbols (user_newlib.ld): __tdata_start is the
+// template, __tls_filesz its initialized size, __tls_memsz the full size. A
+// fixed BSS block avoids needing malloc this early; pages commit on touch, so
+// programs with no TLS only ever touch the 16-byte TCB. (Created threads still
+// need their own block — set up in the pthread_create trampoline separately.)
+// Use the section-boundary ADDRESS symbols and subtract — absolute linker size
+// symbols read via PC-relative adrp/add yield garbage in position-dependent code.
+extern char __tdata_start[];
+extern char __tdata_end[];
+extern char __tbss_end[];
+#define SWOS_MAIN_TLS_CAP (128 * 1024)
+static unsigned char swos_main_tls[16 + SWOS_MAIN_TLS_CAP] __attribute__((aligned(16)));
+void __swos_init_tls(void) {
+    unsigned long filesz = (unsigned long)(__tdata_end - __tdata_start);
+    unsigned long memsz  = (unsigned long)(__tbss_end - __tdata_start);
+    unsigned char *tp = swos_main_tls;
+    if (memsz > SWOS_MAIN_TLS_CAP) { memsz = SWOS_MAIN_TLS_CAP; }
+    if (filesz > memsz) { filesz = memsz; }
+    unsigned long i = 0;
+    for (; i < filesz; i++) { tp[16 + i] = ((const unsigned char *)__tdata_start)[i]; }
+    for (; i < memsz; i++) { tp[16 + i] = 0; }
+    *(void **)tp = (void *)tp;   // TCB self/dtv slot (variant I)
+    __asm__ volatile("msr tpidr_el0, %0" :: "r"(tp) : "memory");
+}
+
 // Runtime entropy from virtio-rng (SYS_RANDOM). newlib's getentropy() wrapper
 // and libstdc++ (std::random_device) bottom out here. getentropy fills exactly
 // `len` bytes (<= 256) or fails wholesale.
