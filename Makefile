@@ -1323,6 +1323,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/llm_bundle_test
 	$(HOST_SWIFTC) -O tests/ed25519_test.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $(BUILD)/ed25519_test
 	$(BUILD)/ed25519_test
+	$(HOST_SWIFTC) -O tests/p256_test.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/p256_test
+	$(BUILD)/p256_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/log_export_test.sh
