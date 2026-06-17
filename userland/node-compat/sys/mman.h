@@ -21,6 +21,40 @@
 #ifndef MADV_FREE
 #define MADV_FREE     8
 #endif
+#ifndef MADV_DONTFORK
+#define MADV_DONTFORK   10
+#define MADV_DOFORK     11
+#endif
+#ifndef MADV_WILLNEED
+#define MADV_WILLNEED   3
+#define MADV_SEQUENTIAL 2
+#define MADV_RANDOM     1
+#endif
+#ifdef __cplusplus
+extern "C" {
+#endif
 int madvise(void *addr, size_t length, int advice);
+
+/* mremap: SwiftOS can't relocate mappings; the companion impl fails so callers
+ * (e.g. sqlite) fall back to munmap+mmap. */
+#ifndef MREMAP_MAYMOVE
+#define MREMAP_MAYMOVE 1
+#define MREMAP_FIXED   2
+#endif
+void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...);
+
+/* Page locking is advisory; SwiftOS does not page user memory, so the companion
+ * implementations are no-ops returning success. */
+int mlock(const void *addr, size_t len);
+int munlock(const void *addr, size_t len);
+int mlockall(int flags);
+int munlockall(void);
+#ifndef MCL_CURRENT
+#define MCL_CURRENT 1
+#define MCL_FUTURE  2
+#endif
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SWOS_NODE_COMPAT_SYS_MMAN_H */

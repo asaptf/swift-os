@@ -1,23 +1,44 @@
 # swift-os
 
-swift-os is a full-fledged, modern operating system written in **Embedded
-Swift** for `aarch64`. Its flagship profile is **application & AI hosting**;
-**embedded/appliance** deployment is a co-primary profile; **desktop use is not
-excluded**. The design value is *efficient, reliable minimalism* — a small
-trusted core, capability-based isolation, fast deterministic boot, immutable
-signed images, and testable correctness, achieved by **removing legacy** rather
-than emulating it.
+**A modern operating system written from scratch in [Embedded Swift](https://www.swift.org/get-started/embedded/) for 64-bit ARM** — a small, capability-isolated, fast-booting core, built by *removing* legacy rather than emulating it. Small enough to trust; real enough to run nginx and Node.js.
 
-The project is not a Linux clone and not a legacy Unix compatibility exercise.
-The same minimalist core serves all three profiles; they differ mainly in which
-optional services and devices are present, not in the kernel.
+> 🌐 **The page at <https://swiftos.tech> is served by SwiftOS itself.** It runs on a bare-metal Hetzner Cloud ARM VM — nginx, statically linked against our own newlib port, on top of our own kernel, syscall ABI, and in-kernel TCP/IP stack. Not QEMU, not a container.
+
+## What works today
+
+- **Freestanding Embedded Swift kernel** — swift.org toolchain, target `aarch64-none-none-elf`, no Foundation, no full standard library. `~Copyable` structs with `deinit` for ownership and `Unsafe*` pointers at the metal; ARC and classes only above the heap.
+- **Real MMU isolation** — one address space per process — with a **capability/principal** security model (authorization is principal + capability mask, never `uid == 0`).
+- **A native Swift userland** — coreutils, an interactive shell, `ps`/`top`, `sshd` — on our own POSIX-like syscall ABI. No Linux ABI, static linking only, no dynamic loader.
+- **An in-kernel TCP/IP stack** — DHCP, TCP, UDP, DNS, HTTP, TLS — with a sans-IO, pure-Swift protocol core.
+- **SMP** — schedules across multiple cores (tested at `-smp 4`) with cross-CPU TLB shootdown and spinlock-protected kernel state (`make smp-test`, `make s5-test`).
+- **A three-tier filesystem** — an immutable signed read-only base, a RAM `tmpfs` scratch tier, and a persistent, `fsync`-durable `/data` tier, durable enough to back SQLite (`make datafs-sqlite-test`).
+- **Runs real software** — **nginx** serving HTTPS (`make nginx-test`, `make nginx-tls-test`), and **Node.js 24.16** brought up on V8 in `--v8-lite-mode` (jitless, so it needs no RWX pages): `node -e "console.log(6 * 7)"` prints `42`.
+- **Boots on real hardware** — a bare Hetzner Cloud ARM VM via ACPI + GICv3 + PCIe ECAM/virtio-pci, not just QEMU `virt` (`make hetzner-deploy-test`).
+
+It is a learning project: intentionally minimal, rough in places, and not production. Some pieces stay in C/asm on purpose — third-party code (busybox, the newlib port) and the MMIO / boot / syscall bridges — but the rule is **Swift by default**. The goal is a small, testable, modern core.
+
+## Try it
+
+```sh
+# See it live — this site is served by SwiftOS itself:
+#   https://swiftos.tech
+
+# Or build and boot it yourself under QEMU (macOS Apple Silicon / Linux):
+make newlib && make busybox     # one-time: cross-build the libc + bring-up shell
+make build && make run          # boot the kernel under QEMU virt
+make test                       # host unit tests + in-QEMU boot assertions
+```
+
+The project is not a Linux clone or a legacy-Unix compatibility exercise. The same minimalist core targets three profiles — **application & AI hosting** (flagship), **embedded/appliance**, and **desktop** (not excluded) — which differ mainly in which optional services and devices are present, not in the kernel.
 
 ## Current Status
 
-The bring-up phase is complete and the system runs a native Swift userland with
-networking. Development is now in **Phase 1**: hardening the system for the
-product profile (capability/handle model, SMP, restartable userland services —
-see [docs/RISK_REMEDIATION_ROADMAP.md](docs/RISK_REMEDIATION_ROADMAP.md)).
+The bring-up phase is complete; the system runs a native Swift userland with
+networking, schedules across multiple cores (SMP), serves a persistent `/data`
+tier, hosts nginx over HTTPS, and boots on real Hetzner Cloud ARM hardware.
+Development continues under **Phase 1**: hardening for the product profile —
+completing the capability/handle model and moving drivers toward restartable
+userland services (see [docs/RISK_REMEDIATION_ROADMAP.md](docs/RISK_REMEDIATION_ROADMAP.md)).
 
 What exists today, in the order it was built:
 
@@ -123,6 +144,17 @@ What exists today, in the order it was built:
   twelve into one signed seed repository, emits a static-hostable repository
   root that can be served to QEMU, and proves install from a DNS-resolved
   hosted-style repository URL.
+
+- **Product-profile hardening (post-M13):** **SMP** across cores (S0–S5: per-CPU
+  scheduling, cross-CPU TLB shootdown, spinlock-protected kernel state; boots and
+  runs the existing workloads at `-smp 4`); a persistent, `fsync`-durable **`/data`
+  tier** (`datafs` on a dedicated virtio-blk disk, durable enough to back SQLite);
+  **nginx** serving static HTTP and **HTTPS/TLS** from the base image and `/data`;
+  **Node.js 24.16** cross-built for SwiftOS and running on V8 in `--v8-lite-mode`
+  (jitless); and a bare-metal **Hetzner Cloud ARM** bring-up (ACPI tables, GICv3,
+  PCIe ECAM + virtio-pci, DHCP, headless boot to `sshd`). Gates: `make smp-test`,
+  `s5-test`, `datafs-sqlite-test`, `nginx-test`, `nginx-tls-test`,
+  `hetzner-deploy-test`.
 
 ## Philosophy
 
@@ -264,8 +296,10 @@ Key architectural decisions:
   initialization read from it instead of hardcoded constants.
 - **Kernel language:** Embedded Swift, freestanding, no Foundation, no full standard library.
 - **Isolation:** real MMU-based process isolation, one address space per process.
-- **Filesystem:** two-tier. A signed packed read-only base image (`SWOSBASE v3`) served off a virtio-blk
-  device; a RAM tmpfs for writable scratch. No journaling; data loss on reboot is by design.
+- **Filesystem:** three-tier. A signed packed read-only base image (`SWOSBASE v3`) served off a
+  virtio-blk device; a RAM tmpfs for writable scratch; and a persistent, `fsync`-durable `/data`
+  tier (`datafs` on a dedicated virtio-blk disk) for state that must survive reboot. No FS
+  journaling — crash-safety relies on honest `fsync` plus the application's own journaling.
 - **Security:** capability/principal model. `/etc/swos/passwd` is the identity source; `/etc/passwd`
   is a generated compatibility view for busybox/newlib only.
 - **ABI:** a small swift-os syscall surface, POSIX-like where useful, explicitly not the Linux
@@ -475,10 +509,11 @@ constrain *how* it serves them.
 (See the risk remediation roadmap for the current status of SMP and restartable
 driver services — they are no longer blanket non-goals.)
 
-**SMP is no longer a blanket non-goal.** It is the subject of the active S0–S5 series in
-`docs/RISK_REMEDIATION_ROADMAP.md`. Until that arc lands the practical system remains
-single-core (and `make run` / tests default to 1 CPU). The plan also covers completing
-the handle-based capability model and moving toward restartable userland driver services.
+**SMP is a delivered capability, not a non-goal.** The S0–S5 series in
+`docs/RISK_REMEDIATION_ROADMAP.md` brought up per-CPU scheduling, cross-CPU TLB shootdown, and
+spinlock-protected kernel state; the system boots and runs the existing workloads at `-smp N`
+(tested at `-smp 4`). `make run` still defaults to one CPU for speed. Phase 1 continues with
+completing the handle-based capability model and moving drivers toward restartable userland services.
 
 Networking is **not** a non-goal: a TCP/UDP/ARP/ICMP/DNS stack and a set of
 userland network tools are present and tested. The long-term target (userland network

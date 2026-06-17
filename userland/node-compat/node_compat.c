@@ -20,12 +20,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <dirent.h>
 #include <pwd.h>
 #include <grp.h>
 #include <pthread.h>
 #include <sched.h>
 #include <sys/eventfd.h>
+#include <sys/random.h>
+#include <sys/mman.h>      /* mmap/munmap, routed by the syscall() shim below */
+#include <sys/stat.h>      /* fchmodat / mode_t */
 
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -34,6 +38,8 @@
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <dlfcn.h>
+#include <link.h>
+#include <ucontext.h>
 
 /* ----- epoll over poll ---------------------------------------------------- */
 
@@ -208,13 +214,78 @@ ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count) {
     errno = ENOSYS; return -1;
 }
 
-long syscall(long number, ...) { (void)number; errno = ENOSYS; return -1; }
+// Minimal syscall() router. Abseil/V8/libuv call syscall(__NR_*, ...) directly
+// for a few fast paths; route the ones with real SwiftOS backings (mmap/munmap/
+// write) and return -ENOSYS for the rest so callers fall back.
+long syscall(long number, ...) {
+    va_list ap;
+    va_start(ap, number);
+    long a0 = va_arg(ap, long), a1 = va_arg(ap, long), a2 = va_arg(ap, long);
+    long a3 = va_arg(ap, long), a4 = va_arg(ap, long), a5 = va_arg(ap, long);
+    va_end(ap);
+    switch (number) {
+    case __NR_write:
+        return (long)write((int)a0, (const void *)a1, (size_t)a2);
+    case __NR_mmap:
+#if __NR_mmap2 != __NR_mmap   /* aarch64 aliases mmap2->mmap; avoid duplicate case */
+    case __NR_mmap2:
+#endif
+        return (long)mmap((void *)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, (off_t)a5);
+    case __NR_munmap:
+        return (long)munmap((void *)a0, (size_t)a1);
+    case __NR_getrandom:
+        /* OpenSSL's DRBG seeds via syscall(__NR_getrandom) on Linux; route it to
+         * the SwiftOS virtio-rng entropy source so RAND_status() reports ready. */
+        return (long)getrandom((void *)a0, (size_t)a1, (unsigned int)a2);
+    default:
+        errno = ENOSYS;
+        return -1;
+    }
+}
+
+/* getrandom via the SwiftOS virtio-rng entropy stub (_getentropy in
+ * newlib_syscalls.c), chunked to its 256-byte limit. */
+extern int _getentropy(void *buf, size_t len);
+ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
+    (void)flags;
+    size_t off = 0;
+    while (off < buflen) {
+        size_t chunk = buflen - off;
+        if (chunk > 256) chunk = 256;
+        if (_getentropy((char *)buf + off, chunk) != 0) return -1;
+        off += chunk;
+    }
+    return (ssize_t)buflen;
+}
+
+/* Service-by-port reverse lookup: SwiftOS has no services DB, so report
+ * not-found (success with NULL result) and let c-ares use the numeric port. */
+struct servent;
+int getservbyport_r(int port, const char *proto, struct servent *result_buf,
+                    char *buf, size_t buflen, struct servent **result) {
+    (void)port; (void)proto; (void)result_buf; (void)buf; (void)buflen;
+    if (result) *result = (struct servent *)0;
+    return 0;
+}
 
 // SwiftOS does not page user memory, so madvise hints (MADV_DONTNEED/FREE) are
 // accepted as no-ops; the memory simply stays mapped.
 int madvise(void *addr, size_t length, int advice) {
     (void)addr; (void)length; (void)advice; return 0;
 }
+
+/* SwiftOS cannot relocate a mapping; fail so callers fall back to munmap+mmap. */
+void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...) {
+    (void)old_address; (void)old_size; (void)new_size; (void)flags;
+    errno = ENOSYS;
+    return (void *)-1;   /* MAP_FAILED */
+}
+
+/* Page locking is advisory and unsupported; succeed as a no-op. */
+int mlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
+int munlock(const void *addr, size_t len) { (void)addr; (void)len; return 0; }
+int mlockall(int flags) { (void)flags; return 0; }
+int munlockall(void) { return 0; }
 
 // No ELF auxiliary vector on SwiftOS: report no optional CPU-feature bits, so
 // V8's cpu.cc falls back to the AArch64 baseline.
@@ -257,6 +328,10 @@ void *dlsym(void *handle, const char *symbol) {
     return NULL;
 }
 int dlclose(void *handle) { (void)handle; return 0; }
+int dladdr(const void *addr, Dl_info *info) {
+    (void)addr; (void)info;
+    return 0;   /* dladdr returns 0 on failure (no dynamic symbol info) */
+}
 char *dlerror(void) {
     const char *m = node_compat_dlerr;
     node_compat_dlerr = NULL;
@@ -383,6 +458,69 @@ fail:
     closedir(d);
     errno = ENOMEM;
     return -1;
+}
+
+/* ----- dynamic-link introspection (static-only OS: nothing to report) ----- */
+
+struct r_debug _r_debug;   /* zeroed: no dynamic link map */
+
+int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *),
+                    void *data) {
+    (void)callback; (void)data;
+    return 0;   /* no shared objects to iterate */
+}
+
+/* ucontext coroutines are unsupported (no makecontext-based fibers). */
+int getcontext(ucontext_t *ucp) { (void)ucp; errno = ENOSYS; return -1; }
+int setcontext(const ucontext_t *ucp) { (void)ucp; errno = ENOSYS; return -1; }
+void makecontext(ucontext_t *ucp, void (*func)(void), int argc, ...) {
+    (void)ucp; (void)func; (void)argc;
+}
+int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
+    (void)oucp; (void)ucp; errno = ENOSYS; return -1;
+}
+
+/* ----- OpenSSL CPU-probe suppression --------------------------------------
+ * OpenSSL detects optional Arm crypto extensions (AES, SHA, PMULL, and also
+ * SM3/SM4/SVE2) by *executing* a candidate instruction and catching the SIGILL
+ * the CPU raises when the extension is absent (e.g. SM3 on cortex-a72). SwiftOS
+ * does not yet deliver SIGILL to EL0 for an undefined instruction -- it panics
+ * the kernel -- so the probe is fatal. OpenSSL skips the whole SIGILL dance when
+ * the OPENSSL_armcap env var is set, falling back to portable C crypto. Set it
+ * to 0 from a high-priority constructor so it lands before OpenSSL's own
+ * cpuid-setup constructor reads it. (environ is live: crt0 sets it before the
+ * .init_array loop that runs these constructors.) */
+__attribute__((constructor(101)))
+static void swos_disable_openssl_cpu_probe(void) {
+    setenv("OPENSSL_armcap", "0", 1);
+}
+
+/* ----- freestanding-link support ------------------------------------------
+ * Symbols that V8 and libstdc++ reference but a bare-metal newlib/libstdc++ on
+ * a static-only OS doesn't provide. We link Node with -nostartfiles, so the
+ * crtbegin.o that would define __dso_handle is absent; provide it ourselves.
+ * The rest are user/group/fs/signal calls Node touches at startup; SwiftOS has
+ * no passwd/group database and a minimal fs surface, so they degrade safely. */
+void *__dso_handle = 0;   /* anchor for __cxa_atexit global-dtor registration */
+
+int truncate(const char *path, off_t length) {
+    (void)path; (void)length; errno = ENOSYS; return -1;
+}
+int fchmodat(int fd, const char *path, mode_t mode, int flag) {
+    (void)fd; (void)path; (void)mode; (void)flag; errno = ENOSYS; return -1;
+}
+int pthread_kill(pthread_t thread, int sig) {
+    (void)thread; (void)sig; return 0;   /* no cross-thread signalling */
+}
+int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen,
+               struct passwd **result) {
+    (void)name; (void)pwd; (void)buf; (void)buflen;
+    *result = NULL; return 0;   /* not found: no passwd database */
+}
+int getgrnam_r(const char *name, struct group *grp, char *buf, size_t buflen,
+               struct group **result) {
+    (void)name; (void)grp; (void)buf; (void)buflen;
+    *result = NULL; return 0;   /* not found: no group database */
 }
 
 /* ----- data symbol -------------------------------------------------------- */

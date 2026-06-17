@@ -34,5 +34,6 @@ static inline int CPU_COUNT(const cpu_set_t *s) {
 
 int sched_get_priority_max(int policy);
 int sched_get_priority_min(int policy);
+int sched_yield(void);
 
 #endif /* _SWOS_NODE_COMPAT_SCHED_H */

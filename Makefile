@@ -148,6 +148,7 @@ SWIFT_SRCS := \
 	kernel/drivers/virtio_rng.swift \
 	kernel/drivers/virtio_gpu.swift \
 	kernel/drivers/virtio_input.swift \
+	kernel/drivers/usb_xhci.swift \
 	kernel/net/packet.swift \
 	kernel/net/ethernet.swift \
 	kernel/net/arp.swift \
@@ -327,6 +328,10 @@ USER_UVTHREADSTACKPROBE_ELF := $(BUILD)/uvthreadstackprobe.elf
 USER_UVKEYONCEPROBE_ELF := $(BUILD)/uvkeyonceprobe.elf
 USER_UVENVPROBE_ELF := $(BUILD)/uvenvprobe.elf
 USER_ENVCHILD_ELF := $(BUILD)/envchild.elf
+# Node.js 24.16 cross-built for SwiftOS in Docker (scripts/build-node-docker.sh
+# compiles all objects; scripts/link-node.sh does the freestanding final link).
+# The heavy build runs out-of-band; `make` only stages the resulting binary.
+USER_NODE_ELF := $(BUILD)/node.elf
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -396,6 +401,7 @@ USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 USER_ACME_ELF := $(BUILD)/acme.elf
 BASE_EXEC_ELFS := \
 	$(USER_ACME_ELF) \
+	$(USER_NODE_ELF) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
 	$(USER_LLMD_ELF) \
@@ -491,7 +497,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1068,6 +1074,16 @@ $(BUILD)/n_epollprobe.o: userland/epollprobe.c userland/node-compat/sys/epoll.h 
 
 $(USER_EPOLLPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_node_compat.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
+# Node.js is cross-built out-of-band in Docker (it can't build in this Makefile's
+# macOS host toolchain). This guard only fires when build/node.elf is absent: it
+# never triggers the multi-hour Docker build implicitly, it just explains how.
+$(USER_NODE_ELF):
+	@test -f $@ || { echo "ERROR: $@ missing. Build Node for SwiftOS with:"; \
+	  echo "  ./scripts/build-node-docker.sh   # build image + compile all objects"; \
+	  echo "  docker run --rm -e NODE_VERSION=24.16.0 -v \$$(pwd):/src -w /src swiftos-nodebuild bash /src/scripts/link-node.sh"; \
+	  echo "  cp build/node-docker-work/node-v24.16.0/out/Release/node.elf $@"; \
+	  exit 1; }
 
 $(BUILD)/n_uvsemprobe.o: userland/uvsemprobe.c userland/compat/pthread.h userland/compat/semaphore.h userland/compat/time.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
@@ -1658,6 +1674,11 @@ signal-test: build $(QEMU_DTB) base-image
 socket-test: build $(QEMU_DTB) base-image
 	./tests/socket_test.sh
 
+# USB M1: xHCI controller bring-up over PCIe + USB-keyboard detection. Runs
+# early in boot (before any disk use), so it needs only the kernel + dtb.
+usb-xhci-test: build $(QEMU_DTB)
+	./tests/usb_xhci_test.sh
+
 smp-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
 
@@ -2159,6 +2180,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_EPOLLPROBE_ELF) $(BASE_ROOT)/bin/epollprobe
+	cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
 	cp $(USER_UVSEMPROBE_ELF) $(BASE_ROOT)/bin/uvsemprobe
 	cp $(USER_UVRWLOCKPROBE_ELF) $(BASE_ROOT)/bin/uvrwlockprobe

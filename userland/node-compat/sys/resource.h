@@ -51,10 +51,16 @@ struct rusage {
 #define PRIO_PGRP    1
 #define PRIO_USER    2
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 int getrlimit(int resource, struct rlimit *rlim);
 int setrlimit(int resource, const struct rlimit *rlim);
 int getrusage(int who, struct rusage *usage);
 int getpriority(int which, id_t who);
 int setpriority(int which, id_t who, int prio);
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SWIFTOS_SYS_RESOURCE_H */

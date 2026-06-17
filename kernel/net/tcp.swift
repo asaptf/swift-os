@@ -125,10 +125,13 @@ struct TCPSegmentOut {
     var payloadLen = 0
 }
 
-private let tcpSndCap = 2048
-private let tcpRcvCap = 2048
+// Send buffer bounds how much data can be in flight before an ACK frees space.
+// At 2 KiB a 31 KiB page drained in ~16 RTT-gated windows (~0.6 s on a 40 ms
+// link); 16 KiB lets a whole small page stream without stalling on ACKs.
+private let tcpSndCap = 16384
+private let tcpRcvCap = 4096          // request headers; GET bodies are tiny
 private let tcpSegMax = 1024          // max payload bytes per emitted segment
-private let tcpOutCap = 8
+private let tcpOutCap = 16            // segments queued per drain (16 * 1024 = 16 KiB)
 private let tcpRtoTicks: UInt64 = 100 // ~1s at 100 Hz
 private let tcpTimeWaitTicks: UInt64 = 50
 private let tcpMaxRetries = 6

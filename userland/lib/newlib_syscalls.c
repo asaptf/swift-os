@@ -191,4 +191,16 @@ int _getentropy(void *buf, size_t len) {
 // for everything that calls it directly (e.g. sshd). Defining the strong public
 // name here — in an object that is always linked, not archived — makes the weak
 // reference bind and routes OpenSSL through SYS_RANDOM like every other caller.
-int getentropy(void *buf, size_t len) { return _getentropy(buf, len); }
+// Node's OpenSSL DRBG may request more than the POSIX 256-byte cap in one call,
+// so fill the whole buffer in <=256-byte _getentropy chunks.
+int getentropy(void *buf, size_t len) {
+    unsigned char *p = (unsigned char *)buf;
+    size_t got = 0;
+    while (got < len) {
+        size_t chunk = len - got;
+        if (chunk > 256) chunk = 256;
+        if (_getentropy(p + got, chunk) != 0) return -1;
+        got += chunk;
+    }
+    return 0;
+}

@@ -31,6 +31,16 @@ struct inotify_event {
 #define IN_CLOEXEC  02000000
 #define IN_NONBLOCK 00004000
 
+/* Watch behaviour flags (c-ares config-change watcher references IN_ONLYDIR). */
+#ifndef IN_ONLYDIR
+#define IN_ONLYDIR     0x01000000
+#define IN_DONT_FOLLOW 0x02000000
+#define IN_EXCL_UNLINK 0x04000000
+#define IN_MASK_ADD    0x20000000
+#define IN_ISDIR       0x40000000
+#define IN_ONESHOT     0x80000000
+#endif
+
 int inotify_init1(int flags);
 int inotify_add_watch(int fd, const char *pathname, uint32_t mask);
 int inotify_rm_watch(int fd, int wd);

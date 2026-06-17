@@ -30,41 +30,124 @@ if [[ "${REBUILD_IMAGE:-0}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/n
     docker build -t "$IMAGE" -f "$ROOT/docker/Dockerfile.nodebuild" "$ROOT/docker"
 fi
 
-echo "==> Cross-building Node $VERSION in the container…"
-docker run --rm -v "$ROOT":/src -w /src "$IMAGE" bash -euo pipefail -c '
-  TC=/opt/swiftos-toolchain
-  VERSION="'"$VERSION"'"
-  JOBS="'"$JOBS"'"
-  DIST=/src/build/swport-distfiles
-  WORK=/src/build/node-docker-work
-  SRC="$WORK/node-v${VERSION}"
-  mkdir -p "$WORK"
+# Write the in-container build script to the (bind-mounted, gitignored) build
+# dir. A fully single-quoted heredoc means the OUTER shell expands nothing;
+# VERSION/JOBS are passed into the container via `docker run -e`.
+INSCRIPT="$ROOT/build/node-build-in-container.sh"
+mkdir -p "$ROOT/build"
+cat > "$INSCRIPT" <<'NODESCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+TC=/opt/swiftos-toolchain
+DIST=/src/build/swport-distfiles
+WORK=/src/build/node-docker-work
+SRC="$WORK/node-v${VERSION}"
+mkdir -p "$WORK"
 
-  # Use the already-fetched, checksum-verified distfile from the host tree.
-  [ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
-  [ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
+# Use the already-fetched, checksum-verified distfile from the host tree.
+[ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
+[ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
 
-  cd "$SRC"
+# The cross toolchain is built --disable-threads, so it rejects gyp's linux
+# -pthread flag. V8 does its own threading via pthread directly (newlib +
+# node-compat), so wrap the cross compilers to drop -pthread (compile + link).
+mkdir -p /tmp/wrap
+for t in gcc g++; do
+  cat > "/tmp/wrap/aarch64-elf-$t" <<WRAP
+#!/usr/bin/env bash
+# Drop linux driver flags the bare-metal aarch64-elf toolchain doesn't accept
+# (-pthread: threadless toolchain; -rdynamic: dynamic export, n/a for static).
+new=(); for a in "\$@"; do
+  case "\$a" in -pthread|-rdynamic) continue;; esac
+  new+=("\$a")
+done
+exec "$TC/bin/aarch64-elf-$t" "\${new[@]}"
+WRAP
+  chmod +x "/tmp/wrap/aarch64-elf-$t"
+done
+
+# Neutralize Abseil's stdcpp waiter. waiter.h unconditionally #includes ALL five
+# waiter headers, and stdcpp_waiter.h unconditionally pulls <mutex>/
+# <condition_variable> (absent in our threadless libstdc++). We use the futex
+# waiter (FUTEX_CLOCK_REALTIME defined) or pthread waiter, both std::mutex-free,
+# so empty stdcpp_waiter.cc AND drop its #include from waiter.h.
+# Patches must be idempotent AND must not rewrite already-patched files (a
+# changed mtime on a widely-included header like waiter.h would rebuild half of
+# abseil every resume). Only touch a file when it still needs patching.
+ABSL_SYNC="$SRC/deps/v8/third_party/abseil-cpp/absl/synchronization/internal"
+if [ -f "$ABSL_SYNC/stdcpp_waiter.cc" ] && ! grep -q 'neutralized for SwiftOS' "$ABSL_SYNC/stdcpp_waiter.cc"; then
+  printf '// neutralized for SwiftOS: futex/pthread waiter used (build-node-docker.sh)\n' > "$ABSL_SYNC/stdcpp_waiter.cc"
+fi
+if [ -f "$ABSL_SYNC/waiter.h" ] && grep -q '#include "absl/synchronization/internal/stdcpp_waiter.h"' "$ABSL_SYNC/waiter.h"; then
+  sed -i 's@#include "absl/synchronization/internal/stdcpp_waiter.h"@// stdcpp_waiter.h removed for SwiftOS (no std::mutex)@' "$ABSL_SYNC/waiter.h"
+fi
+
+# newlib's siginfo_t has no si_addr; V8's stack_trace_posix.cc reads it for crash
+# reports. Replace the usage with null (fault-address print only). Only if needed.
+STP="$SRC/deps/v8/src/base/debug/stack_trace_posix.cc"
+if [ -f "$STP" ] && grep -q 'info->si_addr\|#define si_addr' "$STP"; then
+  sed -i '/#define si_addr/d' "$STP"
+  sed -i 's/info->si_addr/reinterpret_cast<void*>(0)/g' "$STP"
+fi
+
+cd "$SRC"
+# Configure ONCE: re-running configure regenerates the gyp Makefiles and makes
+# `make` redo work each resume (progress oscillates and never converges). Skip
+# it when out/ is already generated. Set NODE_RECONFIGURE=1 to force.
+if [ ! -f out/Makefile ]; then
   echo "--- configure (host=native linux, target=aarch64-elf) ---"
-  CC="$TC/bin/aarch64-elf-gcc" CXX="$TC/bin/aarch64-elf-g++" \
-  CC_host=gcc CXX_host=g++ \
+  CC=/tmp/wrap/aarch64-elf-gcc CXX=/tmp/wrap/aarch64-elf-g++ CC_host=gcc CXX_host=g++ \
     python3 configure.py \
       --dest-cpu=arm64 --dest-os=linux --cross-compiling --fully-static \
       --without-npm --without-corepack --v8-lite-mode \
       --without-snapshot --without-node-snapshot --without-node-code-cache \
       --without-inspector --without-intl
+else
+  echo "--- configure skipped (out/ already generated; resume incremental) ---"
+fi
 
-  # node-compat shims + masquerade defines, injected to the TARGET toolset only
-  # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
-  TF="-isystem /src/userland/node-compat -isystem /src/userland/compat \
--D__linux__ -D_GNU_SOURCE -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 \
--D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 \
--D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
+# Node's objects have an ORDER-ONLY prereq on $(builddir)/openssl-cli (an exe we
+# don't ship and that can't link freestanding). Node only needs libopenssl.a, not
+# the CLI binary, so drop that prereq token from node.target.mk -- otherwise the
+# node core (libnode.a + node_main.o) never compiles. Idempotent.
+if [ -f out/node.target.mk ] && grep -q 'builddir)/openssl-cli' out/node.target.mk; then
+  echo "--- dropping openssl-cli order-only prereq from node.target.mk ---"
+  sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
+fi
 
-  echo "--- make -j$JOBS ---"
-  CFLAGS="$TF" CXXFLAGS="$TF" make -j"$JOBS"
+# node-compat shims + masquerade defines, injected to the TARGET toolset only
+# (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
+TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__ -D_GNU_SOURCE -D_REENTRANT -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION -D__TM_GMTOFF=tm_gmtoff -D__TM_ZONE=tm_zone"
 
-  echo "--- result ---"
-  ls -la out/Release/node && file out/Release/node || true
-'
+# Build the `node` gyp target specifically: it pulls in the V8/libuv/OpenSSL
+# *libraries* it needs but skips unrelated target executables (e.g. openssl-cli)
+# that we don't ship and that would just hit the freestanding-link issues early.
+# Phase 1: compile everything (-k keeps going past the target-executable LINK
+# failures, which need the freestanding crt0/syscalls/linker-script integration
+# handled separately) so all V8/Node *objects* and static libs get built and any
+# remaining compile-time shim gaps surface in one pass.
+# Memory-capped parallelism: the biggest V8 TUs (bytecode-generator, builtins,
+# torque output) need ~2-3 GiB of cc1plus each; with only ~7.6 GiB in the
+# container, high -j OOM-kills the compiler. Cap at NODE_JOBS (default 2).
+VJOBS="${NODE_JOBS:-2}"
+# One-shot clean of target objects/libs (e.g. after a toolchain ABI change),
+# keeping obj.host (native, valid). Set NODE_CLEAN_TARGET=1.
+if [ -n "'"${NODE_CLEAN_TARGET:-}"'" ]; then
+  echo "--- cleaning out/Release/obj.target (toolchain change) ---"
+  rm -rf out/Release/obj.target
+fi
+echo "--- make -k -j${VJOBS} (compile-all; exe links deferred) ---"
+CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${VJOBS}" -C out BUILDTYPE=Release || true
+echo "--- objects/libs built: ---"
+find out/Release/obj.target -name '*.o' | wc -l
+ls -la out/Release/obj.target/*/*.a 2>/dev/null | awk '{print $5, $9}' | head -20
+
+echo "--- result ---"
+ls -la out/Release/node && file out/Release/node || true
+NODESCRIPT
+chmod +x "$INSCRIPT"
+
+echo "==> Cross-building Node $VERSION in the container…"
+docker run --rm -e "VERSION=$VERSION" -e "JOBS=$JOBS" -v "$ROOT":/src -w /src "$IMAGE" \
+    bash /src/build/node-build-in-container.sh
 echo "==> Done. Target binary: build/node-docker-work/node-v${VERSION}/out/Release/node"

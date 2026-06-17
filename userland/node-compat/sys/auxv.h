@@ -7,6 +7,9 @@
 
 #include <linux/auxvec.h>
 
+#ifdef __cplusplus
+extern "C"
+#endif
 unsigned long getauxval(unsigned long type);
 
 #endif /* _SWOS_NODE_COMPAT_SYS_AUXV_H */

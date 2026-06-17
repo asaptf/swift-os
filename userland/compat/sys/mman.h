@@ -13,7 +13,13 @@
 #define MAP_NORESERVE 0x4000
 #define MAP_FIXED_NOREPLACE 0x100000
 #define MAP_FAILED ((void *)-1)
+#ifdef __cplusplus
+extern "C" {
+#endif
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, long off);
 int munmap(void *addr, size_t len);
 int mprotect(void *addr, size_t len, int prot);
+#ifdef __cplusplus
+}
+#endif
 #endif
