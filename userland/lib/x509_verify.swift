@@ -22,6 +22,26 @@ private func intTo32(_ b: [UInt8], _ t: DERTLV) -> [UInt8] {
     return v
 }
 
+/// Verify an ECDSA-P256 signature (DER ECDSA-Sig-Value) over `hash32` under the
+/// uncompressed public point `point65` (0x04‖X‖Y). Shared by chain-link checks
+/// and the TLS CertificateVerify path.
+func ecdsaP256VerifyDER(point65: [UInt8], hash32: [UInt8], derSig: [UInt8]) -> Bool {
+    if point65.count != 65 || point65[0] != 0x04 || hash32.count != 32 { return false }
+    let x = Array(point65[1..<33]); let y = Array(point65[33..<65])
+    guard let seq = derAt(derSig, 0), seq.tag == 0x30 else { return false }
+    let kids = derChildren(derSig, seq)
+    guard kids.count >= 2 else { return false }
+    let r = intTo32(derSig, kids[0])
+    let s = intTo32(derSig, kids[1])
+    if r.count != 32 || s.count != 32 { return false }
+    var ok = false
+    x.withUnsafeBytes { xp in y.withUnsafeBytes { yp in hash32.withUnsafeBytes { hp in
+    r.withUnsafeBytes { rp in s.withUnsafeBytes { sp in
+        ok = p256Verify(xp.baseAddress!, yp.baseAddress!, hp.baseAddress!,
+                        rp.baseAddress!, sp.baseAddress!) } } } } }
+    return ok
+}
+
 /// Verify `child`'s signature against `issuer`'s public key. Does NOT check
 /// names, validity, or basic constraints — that is the chain-walk's job (V2).
 func x509VerifyChainLink(child: X509Cert, issuer: X509Cert) -> Bool {
@@ -31,21 +51,7 @@ func x509VerifyChainLink(child: X509Cert, issuer: X509Cert) -> Bool {
     }
 
     if child.sigAlgOID == OID_ECDSA_SHA256 {
-        let key = issuer.spkiKey
-        if key.count != 65 || key[0] != 0x04 { return false }   // uncompressed P-256 point
-        let x = Array(key[1..<33]); let y = Array(key[33..<65])
-        guard let seq = derAt(child.signature, 0), seq.tag == 0x30 else { return false }
-        let kids = derChildren(child.signature, seq)
-        guard kids.count >= 2 else { return false }
-        let r = intTo32(child.signature, kids[0])
-        let s = intTo32(child.signature, kids[1])
-        if r.count != 32 || s.count != 32 { return false }
-        var ok = false
-        x.withUnsafeBytes { xp in y.withUnsafeBytes { yp in h.withUnsafeBytes { hp in
-        r.withUnsafeBytes { rp in s.withUnsafeBytes { sp in
-            ok = p256Verify(xp.baseAddress!, yp.baseAddress!, hp.baseAddress!,
-                            rp.baseAddress!, sp.baseAddress!) } } } } }
-        return ok
+        return ecdsaP256VerifyDER(point65: issuer.spkiKey, hash32: h, derSig: child.signature)
     }
 
     if child.sigAlgOID == OID_RSA_SHA256 {
