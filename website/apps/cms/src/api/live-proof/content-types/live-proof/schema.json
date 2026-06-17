@@ -1,0 +1,13 @@
+{
+  "kind": "singleType",
+  "collectionName": "live_proofs",
+  "info": { "singularName": "live-proof", "pluralName": "live-proofs", "displayName": "Live proof" },
+  "options": { "draftAndPublish": false },
+  "attributes": {
+    "heading": { "type": "string" },
+    "body": { "type": "text" },
+    "bootLog": { "type": "text" },
+    "hostedNote": { "type": "string" },
+    "stats": { "type": "component", "repeatable": true, "component": "shared.proof-stat" }
+  }
+}

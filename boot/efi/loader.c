@@ -160,6 +160,13 @@ static CHAR16 KERNEL_MANIFEST_PATH[] = {
     '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
     'k','e','r','n','e','l','-','b','o','o','t', 0
 };
+// H3: the packed read-only base image, staged on the ESP so we can load it into
+// RAM and hand the kernel a ramdisk (the Hetzner VM's boot disk is virtio-scsi,
+// which the kernel does not drive; the firmware Simple File System does).
+static CHAR16 BASE_IMG_PATH[] = {
+    '\\','E','F','I','\\','s','w','i','f','t','-','o','s','\\',
+    'b','a','s','e','.','i','m','g', 0
+};
 // U1g-5a: the writable boot-state (per-slot boot-attempt counter + state). Not
 // signed — only hash-protected against torn/garbage writes — so the loader and OS
 // can update it freely (the kernel images are independently signature/hash-checked).
@@ -435,6 +442,49 @@ static UINT64 load_slot(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st, int slot,
     return size;
 }
 
+// H3: load the packed base image from the ESP into a RAM region below 2 GiB
+// (the kernel identity-maps 0x4000_0000..0x7FFF_FFFF as normal memory), so the
+// kernel can mount the read-only base FS from RAM with no block driver. Fills
+// *out_base/*out_size, or leaves both 0 on any failure (the kernel then falls
+// back to a virtio-blk base disk if one is attached). Uses boot services, so it
+// must run before ExitBootServices.
+static void load_base_ramdisk(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
+                              UINT64 *out_base, UINT64 *out_size) {
+    *out_base = 0;
+    *out_size = 0;
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_FILE_PROTOCOL *f = 0;
+    UINT64 size = 0;
+    if (!open_esp_file(image_handle, st, BASE_IMG_PATH, &f, &size)) {
+        puts16(st, "UEFI: no base.img on ESP (kernel will use a block disk)\r\n");
+        return;
+    }
+    UINTN npages = (UINTN)((size + 0xFFF) / 0x1000);
+    // AllocateMaxAddress bounds the TOP of the region, keeping the image below
+    // 2 GiB and thus inside the kernel's identity-mapped normal-RAM block.
+    EFI_PHYSICAL_ADDRESS addr = 0x80000000ULL;
+    if (bs->AllocatePages(AllocateMaxAddress, EfiLoaderData, npages, &addr) != EFI_SUCCESS) {
+        f->Close(f);
+        puts16(st, "UEFI: base.img AllocatePages failed\r\n");
+        return;
+    }
+    int ok = read_file_into(f, addr, size);
+    f->Close(f);
+    if (!ok) {
+        bs->FreePages(addr, npages);
+        puts16(st, "UEFI: base.img read failed\r\n");
+        return;
+    }
+    clean_dcache(addr, size);
+    *out_base = (UINT64)addr;
+    *out_size = size;
+    puts16(st, "UEFI: base.img staged in RAM at ");
+    puthex(st, addr);
+    puts16(st, " size ");
+    puthex(st, size);
+    puts16(st, "\r\n");
+}
+
 EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     EFI_BOOT_SERVICES *bs = st->BootServices;
 
@@ -465,14 +515,15 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     // table set and memory map differ; this report is what we use to adapt the
     // HAL, and it prints regardless of whether the kernel can drive the UART.
     EFI_GUID acpi = EFI_ACPI_20_TABLE_GUID;
-    int have_acpi = 0;
+    UINT64 rsdp = 0;   // H5: ACPI RSDP, forwarded to the kernel for platform discovery.
     for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
         if (guid_eq(&st->ConfigurationTable[i].VendorGuid, &acpi)) {
-            have_acpi = 1;
+            rsdp = (UINT64)(UINTN)st->ConfigurationTable[i].VendorTable;
         }
     }
     puts16(st, "UEFI: ACPI 2.0 table ");
-    puts16(st, have_acpi ? "present\r\n" : "absent\r\n");
+    if (rsdp) { puts16(st, "present "); puthex(st, rsdp); puts16(st, "\r\n"); }
+    else { puts16(st, "absent\r\n"); }
 
     {
         UINTN ms = sizeof(mmap_buf), mk = 0, ds = 0;
@@ -635,6 +686,11 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
         puts16(st, "UEFI: no usable ESP kernel slot, using embedded blob\r\n");
     }
     clean_dcache(KERNEL_LOAD_ADDR, ksize);
+
+    // H3: stage the read-only base image into RAM (must precede ExitBootServices).
+    UINT64 ramdisk_base = 0, ramdisk_size = 0;
+    load_base_ramdisk(image_handle, st, &ramdisk_base, &ramdisk_size);
+
     puts16(st, "UEFI: kernel staged, launching (no more firmware output)\r\n");
 
     // Take ownership of the machine: get the current memory map key, then exit
@@ -653,10 +709,11 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     // and enter the kernel with the device-tree pointer in x0.
     __asm__ volatile("msr daifset, #0xf" ::: "memory");
 
-    // x0=dtb, x1=framebuffer base, x2=(width<<32|height), x3=(stride<<32|format).
-    typedef void (*kernel_entry_t)(UINT64, UINT64, UINT64, UINT64);
+    // x0=dtb, x1=framebuffer base, x2=(width<<32|height), x3=(stride<<32|format),
+    // x4=ramdisk base, x5=ramdisk size (H3), x6=ACPI RSDP (H5; 0 when absent).
+    typedef void (*kernel_entry_t)(UINT64, UINT64, UINT64, UINT64, UINT64, UINT64, UINT64);
     kernel_entry_t enter = (kernel_entry_t)(UINTN)KERNEL_LOAD_ADDR;
-    enter((UINT64)(UINTN)dtb, fb_base, fb_dims, fb_strfmt);
+    enter((UINT64)(UINTN)dtb, fb_base, fb_dims, fb_strfmt, ramdisk_base, ramdisk_size, rsdp);
 
     for (;;) {}
     return EFI_SUCCESS;

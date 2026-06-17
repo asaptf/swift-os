@@ -1,0 +1,14 @@
+{
+  "collectionName": "components_shared_proof_stats",
+  "info": { "displayName": "Proof stat", "icon": "chartBubble" },
+  "options": {},
+  "attributes": {
+    "label": { "type": "string", "required": true },
+    "value": { "type": "text" },
+    "sub": { "type": "string" },
+    "accent": { "type": "boolean", "default": false },
+    "uptimeSeconds": { "type": "integer" },
+    "countTo": { "type": "integer" },
+    "suffix": { "type": "string" }
+  }
+}

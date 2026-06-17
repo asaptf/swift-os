@@ -37,7 +37,7 @@ private let netInfoFlagGateway6: UInt32 = 1 << 3
 let AF_INET: Int = 2
 let AF_INET6: Int = 10
 
-private let maxSockets = 32
+private let maxSockets = 256
 private let sockRingDepth = 4
 
 // Ephemeral local-port allocator (net-rob). The pure rotating allocator lives in
@@ -1179,7 +1179,7 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
 
 /// Receive stream bytes from connection `c` into `dst` (cap). Blocks (pumping)
 /// until data arrives; returns 0 at EOF (peer closed) or a negative errno.
-func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int) -> Int {
+func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int, peek: Bool = false) -> Int {
     let start = systemTicks
     let ticks = UInt64((timeoutMs + 9) / 10)
     enable_irq()
@@ -1190,10 +1190,12 @@ func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int) -
             netUnlock(daif)
             return netErrInval
         }
-        let n = tcpConns[c].read(dst, cap)
+        let n = tcpConns[c].read(dst, cap, peek: peek)
         if n > 0 {
-            tcpConns[c].advertiseReadWindow()
-            tcpDrain(c, systemTicks)
+            if !peek {
+                tcpConns[c].advertiseReadWindow()
+                tcpDrain(c, systemTicks)
+            }
             netUnlock(daif)
             return n
         }

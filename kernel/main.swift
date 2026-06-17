@@ -467,10 +467,107 @@ private func runPsDemo() {
     uartPuts("\n")
 }
 
+/// D0: bring the persistent "data" disk into play. Independent of the read-only
+/// base/store, this is a writable virtio-blk device (sector-0 magic "SWDATAFS")
+/// that will host the /data tier (datafs, D1+). Here we only prove end-to-end
+/// persistence: read a boot counter near the start of the disk, increment it,
+/// write it back, and flush. The counter surviving across reboots is the D0
+/// acceptance (tests/data_persist_test.sh).
+private func runDataDeviceProbeD0() {
+    if !virtioBlkDataAvailable() {
+        uartPuts("D0: no data disk attached\n")
+        return
+    }
+    uartPuts("D0: data device, ")
+    uartPutUInt(virtioBlkDataCapacitySectors())
+    uartPuts(" sectors\n")
+
+    // Boot counter at a fixed byte offset (sector 2), clear of the D1 superblock.
+    let counterOff: UInt64 = 1024
+    var buf = [UInt8](repeating: 0, count: 8)
+    let rrc = buf.withUnsafeMutableBytes { raw -> Int32 in
+        virtioBlkDataReadRange(counterOff, raw.baseAddress, 8)
+    }
+    if rrc != 0 {
+        uartPuts("D0: data read failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rrc)))
+        uartPuts("\n")
+        return
+    }
+    var count: UInt64 = 0
+    var k = 0
+    while k < 8 { count |= UInt64(buf[k]) << (8 * UInt64(k)); k += 1 }
+    count &+= 1
+    k = 0
+    while k < 8 { buf[k] = UInt8((count >> (8 * UInt64(k))) & 0xFF); k += 1 }
+    let wrc = buf.withUnsafeBytes { raw -> Int32 in
+        virtioBlkDataWriteRange(counterOff, raw.baseAddress, 8)
+    }
+    if wrc != 0 {
+        uartPuts("D0: data write failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(wrc)))
+        uartPuts("\n")
+        return
+    }
+    _ = virtioBlkDataFlush()
+    uartPuts("D0 OK: data disk persistent, boot count ")
+    uartPutUInt(count)
+    uartPuts("\n")
+}
+
+/// D2: confirm the durable-sync path. fsync/fdatasync/sync now flush the data
+/// disk's write cache to stable media. Here we prove the flush mechanism runs
+/// after datafs is mounted; the userland fsync() -> SYS_FSYNC path is exercised
+/// end-to-end by durable SQLite (D3).
+private func runFsyncProbeD2() {
+    if !virtioBlkDataAvailable() { return }
+    let rc = virtioBlkDataFlush()
+    if rc != 0 {
+        uartPuts("D2: data flush failed, rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rc)))
+        uartPuts("\n")
+        return
+    }
+    uartPuts("D2 OK: data sync path ready, flush count ")
+    uartPutUInt(virtioBlkDataFlushCount())
+    uartPuts("\n")
+}
+
 /// M11b: probe the virtio-blk disk. Bring up the block device discovered in the
 /// virtio-mmio window, read sector 0, and report it. When the attached disk is a
 /// packed base image its first bytes are the ASCII magic "SWOSBASE", which we
 /// recognise here — the M11c on-disk filesystem will build on this read path.
+// H2: prove the virtio transport actually exchanges a virtqueue. After
+// virtioRngInit binds (over virtio-mmio on QEMU `virt`, or virtio-pci on
+// `-cpu max` / the Hetzner VM), request entropy and confirm bytes came back
+// through the used ring — a full descriptor → avail → notify → used round trip.
+private func runVirtioRngQueueProbeH2() {
+    let page = pmm_alloc_page()
+    if page == 0 { return }
+    let dst = UnsafeMutablePointer<UInt8>(bitPattern: page)!
+    let want = 32
+    let n = virtioRngRead(dst, want)
+    var nonzero = 0
+    if n > 0 {
+        var i = 0
+        while i < n { if dst[i] != 0 { nonzero += 1 }; i += 1 }
+    }
+    pmm_free_page(page)
+
+    if n == want {
+        uartPuts("H2 OK: virtio-")
+        uartPuts(virtioRngTransportName())
+        uartPuts(" rng exchanged a queue, bytes ")
+        uartPutUInt(UInt64(n))
+        uartPuts(" nonzero ")
+        uartPutUInt(UInt64(nonzero))
+        uartPuts("\n")
+        klog(.info, "pci", "H2 OK: virtio transport exchanged a queue", UInt64(n))
+    } else {
+        uartPuts("H2 WARN: virtio rng queue exchange incomplete\n")
+    }
+}
+
 private func runVirtioBlkProbe() {
     let cap = virtioBlkInit(platform.virtioMmioBase,
                             platform.virtioMmioStride,
@@ -770,8 +867,11 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
 
 /// Kernel entry point, called from the boot stub. Must never return.
 /// `dtbPhys` is the device-tree pointer the boot stub preserved from x0.
+/// `ramdiskBase`/`ramdiskSize` (x4/x5) are the UEFI loader's H3 RAM base-image
+/// handoff (0/0 when the base comes from a virtio-blk disk instead).
 @_cdecl("kernel_main")
-func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt) {
+func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UInt,
+                _ ramdiskBase: UInt, _ ramdiskSize: UInt, _ acpiRsdp: UInt) {
     uartInit()  // no-op on QEMU; enables the PL011 on VirtualBox before any output
     // The UEFI loader may hand us a GOP framebuffer (x1=base, x2=w<<32|h,
     // x3=stride<<32|format). When present, mirror the boot log to the screen.
@@ -781,13 +881,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         let stride = UInt32(truncatingIfNeeded: fbStrFmt >> 32)
         fb_init(UInt64(fbBase), w, h, stride)
     }
+    ramdiskInit(base: ramdiskBase, size: ramdiskSize)  // H3: RAM-backed base image
     uartPuts("Hello from Swift kernel\n")
     uartPuts("swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)\n")
     uartPuts("swift-os M1: runtime and memory init\n")
 
-    // M9: discover the hardware map from the device tree before any subsystem
-    // (PMM, GIC, timer) relies on it. Discovery falls back to QEMU virt defaults.
-    platformInit(dtbPhys)
+    // M9/H5: discover the hardware map before any subsystem (PMM, GIC, timer)
+    // relies on it. Prefer ACPI when the UEFI loader passed an RSDP (the real
+    // Hetzner firmware has no FDT), else the device tree, else QEMU virt defaults.
+    platformInit(dtbPhys, acpiRsdp)
 
     swiftos_heap_init()
     enableMMU()
@@ -806,6 +908,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     swiftRaw.storeBytes(of: UInt64(0x1234_5678_90AB_CDEF), as: UInt64.self)
     swiftRaw.deallocate()
     uartPuts("M1 probe: Swift raw allocation hook ok\n")
+
+    // Bring up a virtio-gpu scanout console as early as possible (right after the
+    // PMM, which it needs for the framebuffer) so the boot log is visible on a
+    // hypervisor whose only console is the graphical framebuffer — e.g. Hetzner
+    // Cloud's noVNC, which has no serial tab. No-op when there is no virtio-gpu
+    // (the GOP/ramfb framebuffer from the loader, if any, stays in use).
+    if virtioGpuInit() {
+        uartPuts("virtio-gpu: scanout console active\n")
+    }
 
     let probe = HeapProbe(13, 29)
     if probe.sum() != 42 {
@@ -838,7 +949,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     gicInit()
     timerInit(ticksPerSecond: 100) // high tick rate → frequent EL0 preemption
     klog(.info, "timer", "tick rate (Hz)", 100)
-    klog(.info, "platform", "M9 OK: hardware discovered from device tree")
+    if platformDiscoveredFromAcpi {
+        klog(.info, "platform", "M9 OK: hardware discovered from ACPI")
+    } else {
+        klog(.info, "platform", "M9 OK: hardware discovered from device tree")
+    }
     klog(.info, "smp", "S0 OK: foundations ready", UInt64(currentCpuId()))
     if !smpAtomicSelfTest() {
         uartPuts("panic: S0b atomic self-test failed\n")
@@ -954,8 +1069,24 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     klog(.info, "smp", "S4a OK: PMM lock boundary ready", UInt64(pmmS4aLockAcquireCount()))
     securityInit()
     runVirtioBlkProbe() // M11b: bring up the disk before the VFS may mount from it
+    runDataDeviceProbeD0() // D0: persistent /data disk end-to-end persistence check
     if virtioRngInit() {
         uartPuts("virtio-rng: runtime entropy ready\n")
+        runVirtioRngQueueProbeH2()
+    }
+    // Always seed the jitter-entropy DRBG: it is the SYS_RANDOM source whenever
+    // no virtio-rng device is present (e.g. the Hetzner Cloud ARM VM), keeping
+    // getentropy()/OpenSSL/sshd entropy alive without a hardware RNG.
+    sysRngInit()
+    if virtioRngAvailable() {
+        uartPuts("SYS_RANDOM: source virtio-rng (DRBG fallback armed)\n")
+        klog(.info, "rng", "SYS_RANDOM source: virtio-rng", 0)
+    } else if sysRngHealthy() {
+        uartPuts("SYS_RANDOM: source jitter-entropy DRBG (no virtio-rng device)\n")
+        klog(.info, "rng", "SYS_RANDOM source: jitter-entropy DRBG", 1)
+    } else {
+        uartPuts("SYS_RANDOM WARN: no entropy source available\n")
+        klog(.warn, "rng", "SYS_RANDOM has no entropy source", 0)
     }
     pkgStoreInit()      // P3: read active package-store generation, if present
     if !pkgStoreS4dReadinessSelfTest() {
@@ -964,6 +1095,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     }
     klog(.info, "smp", "S4d OK: package-store lock boundary ready", UInt64(pkgStoreS4dLockAcquireCount()))
     vfsInit()           // M11c: serves the read-only base from disk when present
+    runFsyncProbeD2()   // D2: confirm the data-disk durable-sync path
     if !vfsS4bReadinessSelfTest() {
         uartPuts("panic: S4b VFS lock boundary self-test failed\n")
         while true {}
@@ -990,7 +1122,15 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     signalReset()
     uartRxInit()
     let inputKeyboard = virtioKbdInit() > 0
-    let interactiveConsole = inputKeyboard && fb_available() != 0
+    // Take the "boot straight into swos-init / services" path (skipping the
+    // serial-only milestone demo sequence) when a human is at a graphical window
+    // (keyboard + framebuffer), OR when a virtio-gpu scanout console is the only
+    // console — a headless server like a Hetzner Cloud VM, whose noVNC console
+    // shows virtio-gpu and which has no serial input at all. Without this, the
+    // demo sequence runs /bin/ttydemo, which blocks forever on a serial read that
+    // never arrives, so swos-init (and therefore sshd) would never start. The
+    // pure-serial dev/test path (`make run`, no framebuffer) keeps the demos.
+    let interactiveConsole = (inputKeyboard && fb_available() != 0) || virtioGpuActive()
     if inputKeyboard {
         uartPuts("virtio-kbd: window keyboard ready\n")
     }

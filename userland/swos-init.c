@@ -14,6 +14,16 @@
 int puts_raw(const char *s);
 
 #define MAX_SUPERVISED_SERVICES 4
+// Cap restarts for daemons that fail *at startup* with no external gating (nginx:
+// a TLS/entropy failure fork-storms the kernel into a panic in a tight loop).
+// After the cap we give up on that one service; others keep running.
+//
+// This cap is deliberately NOT applied to sshd: sshd is a long-running daemon
+// that only exits when accept() returns an error, i.e. its restarts are gated by
+// inbound connections and can never fork-storm. Capping it let internet scan
+// traffic on a public IP exhaust the limit within minutes and permanently kill
+// SSH. sshd therefore keeps the original unbounded-restart supervision.
+#define MAX_RESTARTS_PER_SERVICE 5
 #define SSHD_ONCE_MARKER "/tmp/swos-sshd-once"
 #define SSHD_IPV6_MARKER "/tmp/swos-sshd-ipv6"
 
@@ -22,11 +32,13 @@ enum service_kind {
     SERVICE_SSHD_ONCE = 2,
     SERVICE_SSHD6 = 3,
     SERVICE_SSHD6_ONCE = 4,
+    SERVICE_NGINX = 5,
 };
 
 struct supervised_service {
     enum service_kind kind;
     int pid;
+    int restarts;
 };
 
 static struct supervised_service supervised[MAX_SUPERVISED_SERVICES];
@@ -64,6 +76,9 @@ static void print_uint(unsigned int v) {
 }
 
 static const char *service_name(enum service_kind kind) {
+    if (kind == SERVICE_NGINX) {
+        return "nginx";
+    }
     if (kind == SERVICE_SSHD_ONCE) {
         return "sshd-once";
     }
@@ -105,6 +120,12 @@ static int start_service(enum service_kind kind) {
         return -1;
     }
     if (pid == 0) {
+        if (kind == SERVICE_NGINX) {
+            char *argvn[] = { "nginx", "-c", "/usr/etc/nginx/nginx-prod.conf", 0 };
+            execve("/sbin/nginx", argvn, 0);
+            puts_raw("swos-init: exec /sbin/nginx failed\n");
+            _exit(127);
+        }
         char *argv4[] = { "sshd", 0 };
         char *argv6[] = { "sshd6", "-6", 0 };
         execve("/bin/sshd",
@@ -136,6 +157,7 @@ static void add_supervised_service(enum service_kind kind) {
     }
     supervised[supervised_count].kind = kind;
     supervised[supervised_count].pid = pid;
+    supervised[supervised_count].restarts = 0;
     supervised_count += 1;
     supervision_requested = 1;
 }
@@ -153,6 +175,10 @@ static void run_service_token(char *tok) {
         add_supervised_service(SERVICE_SSHD_ONCE);
     } else if (streq(tok, "sshd6-once")) {
         add_supervised_service(SERVICE_SSHD6_ONCE);
+    } else if (streq(tok, "nginx")) {
+        (void)start_service(SERVICE_NGINX);
+    } else if (streq(tok, "nginx-supervised")) {
+        add_supervised_service(SERVICE_NGINX);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);
@@ -205,10 +231,28 @@ static void start_configured_services(void) {
     }
 }
 
+// Only startup-failing daemons (nginx) are restart-capped; connection-gated
+// services (sshd) restart without bound. See MAX_RESTARTS_PER_SERVICE above.
+static int service_restart_is_capped(enum service_kind kind) {
+    return kind == SERVICE_NGINX;
+}
+
 static int restart_supervised_pid(int pid, int status) {
     int i;
     for (i = 0; i < supervised_count; i += 1) {
         if (supervised[i].pid == pid) {
+            if (service_restart_is_capped(supervised[i].kind)) {
+                supervised[i].restarts += 1;
+                if (supervised[i].restarts > MAX_RESTARTS_PER_SERVICE) {
+                    puts_raw("swos-init: service ");
+                    puts_raw(service_name(supervised[i].kind));
+                    puts_raw(" crash-looped; giving up after ");
+                    print_uint((unsigned int)MAX_RESTARTS_PER_SERVICE);
+                    puts_raw(" restarts\n");
+                    supervised[i].pid = -1;
+                    return 1;
+                }
+            }
             puts_raw("swos-init: service ");
             puts_raw(service_name(supervised[i].kind));
             puts_raw(" pid ");

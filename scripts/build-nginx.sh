@@ -152,8 +152,10 @@ exec "\$real_cc" "\${compile_flags[@]}" "\$@" "\${link_flags[@]}"
 EOF
 chmod +x "$CC_WRAPPER"
 
-CC_OPT=
-LD_OPT=
+# W3: link against the swift-os openssl port (static) for TLS.
+OPENSSL_ROOT="${NGINX_OPENSSL_ROOT:-$ROOT/build/openssl-root/usr}"
+CC_OPT="-I $OPENSSL_ROOT/include"
+LD_OPT="-L $OPENSSL_ROOT/lib"
 
 CONFIGURE_ARGS=(
     "--build=swift-os-static-probe"
@@ -171,6 +173,7 @@ CONFIGURE_ARGS=(
     "--with-cc=$CC_WRAPPER"
     "--with-cc-opt=$CC_OPT"
     "--with-ld-opt=$LD_OPT"
+    "--with-http_ssl_module"
     "--with-poll_module"
     "--without-select_module"
     "--without-pcre"

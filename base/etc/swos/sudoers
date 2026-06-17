@@ -1,0 +1,11 @@
+# swift-os sudoers — who may run what via /bin/sudo.
+#
+# One rule per line:  name commands
+#   name     a login name from /etc/swos/passwd
+#   commands the keyword ALL (any command), or a comma-separated list of
+#            absolute command paths (e.g. /bin/id,/bin/ls)
+# Lines beginning with '#' and blank lines are ignored.
+#
+# sudo authenticates the *invoking* user's own password (Unix default).
+# The root principal is always permitted and is never prompted.
+user ALL

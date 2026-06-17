@@ -21,6 +21,9 @@
     // GICv3 support lands; the VBox boot path parks before GIC init.
     var gicDist: UInt = 0xFCD3_0000
     var gicCpu: UInt = 0xFCD4_0000
+    // GICv3 redistributor base (H1). Informational on VBox (it parks before GIC
+    // init); the kernel detects GICv2 vs v3 from GICD_PIDR2 at gicInit.
+    var gicRedist: UInt = 0xFCD4_0000
     // PL011 UART.
     var uartBase: UInt = 0xFFDD_F000
     var uartIrq: UInt32 = 33
@@ -31,6 +34,9 @@
     var virtioMmioStride: UInt = 0x200
     var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    // H2: no PCIe ECAM modeled for the VirtualBox board yet (it parks before
+    // driver init); 0 disables PCI enumeration.
+    var pcieEcamBase: UInt = 0
     var cpuCount: UInt32 = 1
     var cpuAff0_0: UInt32 = 0
     var cpuAff0_1: UInt32 = 0
@@ -52,6 +58,10 @@
     // GICv2 distributor and CPU interface.
     var gicDist: UInt = 0x0800_0000
     var gicCpu: UInt = 0x0801_0000
+    // GICv3 redistributor base (H1). QEMU `-M virt,gic-version=3` and the Hetzner
+    // ARM cloud VM both place GICR at 0x080A_0000 (the same GICD at 0x0800_0000).
+    // Unused on the GICv2 path; the kernel detects the version from GICD_PIDR2.
+    var gicRedist: UInt = 0x080A_0000
     // PL011 UART.
     var uartBase: UInt = 0x0900_0000
     var uartIrq: UInt32 = 33          // QEMU virt: SPI 1 -> INTID 33.
@@ -62,6 +72,10 @@
     var virtioMmioStride: UInt = 0x200
     var dtbBase: UInt = 0
     var virtioMmioCount: UInt32 = 32
+    // H2: PCIe ECAM config-space base. QEMU virt (high ECAM) and the Hetzner ARM
+    // VM both place it at 0x40_1000_0000. 0 disables PCI enumeration. The early
+    // MMU map covers the containing 1 GiB block (vm_early.c).
+    var pcieEcamBase: UInt = 0x40_1000_0000
     // S0f CPU topology. CPU0 is the only compiled-in default; the DTB parser
     // replaces this with the QEMU `-smp N` `/cpus` map when available.
     var cpuCount: UInt32 = 1
@@ -85,14 +99,50 @@
 
 var platform = Platform()
 
+// H5: true once platformInit derived the hardware map from ACPI (the real
+// Hetzner firmware path), false on the device-tree path. Drives the boot log.
+private(set) var platformDiscoveredFromAcpi = false
+
 private let qemuDirectBootDtbAddr: UInt = 0x4FF0_0000
 
-/// Discover the hardware map from the device tree and update `platform`.
+/// Discover the hardware map and update `platform`.
 ///
-/// `dtbPhys` is the pointer the boot stub preserved from x0. If it is not a
-/// valid DTB we scan RAM for the device tree; if that also fails we keep the
-/// compiled-in defaults - the kernel never regresses on a board it already knew.
-func platformInit(_ dtbPhys: UInt) {
+/// Prefer ACPI when the UEFI loader passed an RSDP (the real Hetzner firmware
+/// publishes no FDT — H0); else the device tree from x0; else scan RAM for an
+/// FDT; else keep the compiled-in QEMU virt defaults.
+func platformInit(_ dtbPhys: UInt, _ acpiRsdp: UInt) {
+    // 0. ACPI (the real Hetzner firmware path). Everything is applied here, with
+    //    the MMU off, because the ACPI tables sit high in RAM (unmapped once the
+    //    MMU is on). GIC/UART/ECAM are single aligned stores; CPU topology goes
+    //    through applyAcpiTopology to stay SIMD-safe under strict-align.
+    if acpiRsdp != 0 {
+        var ai = PlatformInfo()
+        if acpiParse(acpiRsdp, into: &ai) {
+            if ai.haveGic {
+                platform.gicDist = ai.gicDist
+                if ai.gicIsV3 { platform.gicRedist = ai.gicCpu } else { platform.gicCpu = ai.gicCpu }
+            }
+            if ai.haveUart {
+                platform.uartBase = ai.uartBase
+                if ai.haveUartIrq { platform.uartIrq = ai.uartIrq }
+            }
+            if ai.haveCpuTopology && ai.cpuCount > 0 { applyAcpiTopology(ai) }
+            // ECAM was written to platform.pcieEcamBase directly by the MCFG parse.
+            uartPuts("M9 platform: ACPI gic ")
+            uartPutHex(platform.gicDist)
+            uartPuts(" redist ")
+            uartPutHex(platform.gicRedist)
+            uartPuts(" uart ")
+            uartPutHex(platform.uartBase)
+            uartPuts(" ecam ")
+            uartPutHex(platform.pcieEcamBase)
+            uartPuts("\nM9 OK: hardware discovered from ACPI\n")
+            platformDiscoveredFromAcpi = true
+            return
+        }
+        uartPuts("M9 platform: ACPI present but unparseable, trying device tree\n")
+    }
+
     var info = PlatformInfo()
     var parsedDtb: UInt = 0
 
@@ -136,7 +186,14 @@ func platformInit(_ dtbPhys: UInt) {
     }
     if info.haveGic {
         platform.gicDist = info.gicDist
-        platform.gicCpu = info.gicCpu
+        // For GICv3 the second reg range is the redistributor, not a CPU
+        // interface (the CPU interface is system registers). For GICv2 it is
+        // the GICC MMIO window. fdtParseInto records which via gicIsV3.
+        if info.gicIsV3 {
+            platform.gicRedist = info.gicCpu
+        } else {
+            platform.gicCpu = info.gicCpu
+        }
     }
     if info.haveVirtio && info.virtioCount > 0 {
         platform.virtioMmioBase = info.virtioBase
@@ -171,6 +228,28 @@ func platformInit(_ dtbPhys: UInt) {
     }
 }
 
+// H5: copy ACPI-derived CPU topology + PSCI into `platform` during the early
+// (MMU-off) platformInit. `@_optimize(none)` keeps the eight adjacent cpuAff0_*
+// UInt32 stores from being coalesced into a wider unaligned access that would
+// fault under strict-align with the MMU off — the same reason the FDT path
+// defers this to post-MMU (which the ACPI path cannot do; its tables are
+// unmapped once the MMU is on).
+@_optimize(none) @inline(never)
+private func applyAcpiTopology(_ info: PlatformInfo) {
+    platform.cpuCount = info.cpuCount
+    platform.cpuAff0_0 = info.cpuAff0_0
+    platform.cpuAff0_1 = info.cpuAff0_1
+    platform.cpuAff0_2 = info.cpuAff0_2
+    platform.cpuAff0_3 = info.cpuAff0_3
+    platform.cpuAff0_4 = info.cpuAff0_4
+    platform.cpuAff0_5 = info.cpuAff0_5
+    platform.cpuAff0_6 = info.cpuAff0_6
+    platform.cpuAff0_7 = info.cpuAff0_7
+    platform.cpuPsciEnableMask = info.cpuPsciEnableMask
+    platform.psciMethod = info.psciMethod
+    platform.psciCpuOn = info.psciCpuOn
+}
+
 private func tryParse(_ addr: UInt, into info: inout PlatformInfo) -> Bool {
     guard let p = UnsafePointer<UInt8>(bitPattern: addr) else {
         info.reset()
@@ -189,6 +268,9 @@ func platformInitCpuTopology() {
     considerCpuTopology(platform.dtbBase, into: &info)
     considerCpuTopology(qemuDirectBootDtbAddr, into: &info)
 
+    // H5 note: the ACPI CPU topology is applied during the early platformInit
+    // (the ACPI tables sit high in RAM — ~5 GiB on the VM — and are unmapped once
+    // the MMU is on, so they can only be read MMU-off). See applyAcpiTopology.
     if info.haveCpuTopology && info.cpuCount > 0 {
         platform.cpuCount = info.cpuCount
         platform.cpuAff0_0 = info.cpuAff0_0

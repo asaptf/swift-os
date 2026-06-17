@@ -41,8 +41,27 @@ BUILD     := build
 MODEL_DIR := models
 QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
+QEMU_DTB_GICV3 := $(BUILD)/virt-gicv3-smp2.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
+# D0: a writable, persistent virtio-blk "data" disk (the /data tier, datafs from
+# D1). Stamped with the "SWDATAFS" sector-0 magic so the kernel scan identifies
+# it positively. Persists across `make run` invocations; not rebuilt once created.
+DATA_IMG  := $(BUILD)/data.img
+DATA_IMG_SIZE_MB ?= 16
+# D3: the packaged SQLite shell (static aarch64 ELF), baked into the base image as
+# /bin/sqlite3 so durable databases can live on /data. Built by build-sqlite.sh
+# (which compiles the current userland/compat stubs, so it picks up real fsync).
+SQLITE_BIN := $(BUILD)/sqlite-root/usr/bin/sqlite3
+# W1: the static nginx web server (HTTP-only port) + its staged config and web
+# root, baked into the base image as /sbin/nginx so we can host a site. Built by
+# build-nginx.sh (compiles the current userland/compat stubs).
+NGINX_BIN := $(BUILD)/nginx-root/usr/sbin/nginx
+# W3: openssl static dev libs (staged by build-openssl.sh) that nginx links for TLS.
+OPENSSL_DEV := $(BUILD)/openssl-root/usr/lib/libssl.a
+# W3: a build-time self-signed cert baked in for the HTTPS demo (replace with
+# acme.sh / Let's Encrypt certs later).
+NGINX_CERT := $(BUILD)/nginx-certs/server.crt
 BASEPACK  := $(BUILD)/basepack
 UPDATESTORE := $(BUILD)/updatestore
 KERNELBOOT := $(BUILD)/kernelboot
@@ -118,12 +137,16 @@ SWIFT_SRCS := \
 	kernel/arch/aarch64/platform.swift \
 	kernel/arch/aarch64/cpu.swift \
 	kernel/arch/aarch64/fdt.swift \
+	kernel/arch/aarch64/acpi.swift \
 	kernel/drivers/uart.swift \
 	kernel/drivers/fb.swift \
 	kernel/drivers/gic.swift \
+	kernel/drivers/pci.swift \
+	kernel/drivers/virtio_transport.swift \
 	kernel/drivers/virtio_net.swift \
 	kernel/drivers/virtio_blk.swift \
 	kernel/drivers/virtio_rng.swift \
+	kernel/drivers/virtio_gpu.swift \
 	kernel/drivers/virtio_input.swift \
 	kernel/net/packet.swift \
 	kernel/net/ethernet.swift \
@@ -140,6 +163,7 @@ SWIFT_SRCS := \
 	kernel/net/socket.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/crypto/sha256.swift \
+	kernel/crypto/sysrng.swift \
 	kernel/crypto/sha512.swift \
 	kernel/crypto/ed25519.swift \
 	kernel/pkg/store.swift \
@@ -164,9 +188,11 @@ SWIFT_SRCS := \
 	kernel/user/ustack.swift \
 	kernel/vfs/handle.swift \
 	kernel/vfs/vfs.swift \
+	kernel/fs/ramdisk.swift \
 	kernel/fs/swosboot.swift \
 	kernel/fs/updatestore.swift \
 	kernel/fs/esp.swift \
+	kernel/fs/datafs.swift \
 	kernel/mm/page_allocator.swift \
 	kernel/mm/pmm.swift \
 	kernel/mm/vm.swift
@@ -220,7 +246,15 @@ QEMU_FLAGS := -M virt -cpu cortex-a72 -m 256M -nographic \
 	-device loader,file=$(QEMU_DTB),addr=$(QEMU_DTB_ADDR),force-raw=on \
 	-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 	-device virtio-blk-device,drive=swosbase \
+	-drive file=$(DATA_IMG),format=raw,if=none,id=swosdata \
+	-device virtio-blk-device,drive=swosdata \
 	-kernel $(BUILD)/kernel.elf
+
+# D0: create the blank, stamped data disk if it does not yet exist. Order-only on
+# the build dir so an existing image is preserved (persistence across runs).
+$(DATA_IMG): | $(BUILD)/.dir
+	dd if=/dev/zero of=$@ bs=1048576 count=$(DATA_IMG_SIZE_MB) 2>/dev/null
+	printf 'SWDATAFS' | dd of=$@ bs=1 seek=0 conv=notrunc 2>/dev/null
 
 # ---- UEFI loader (M10) -----------------------------------------------------
 # The loader is an AArch64 PE32+ EFI application; clang targets Windows/COFF and
@@ -319,6 +353,7 @@ USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PTYPROBE_ELF := $(BUILD)/ptyprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
+USER_SUDO_ELF := $(BUILD)/sudo.elf
 USER_LOGTAIL_ELF := $(BUILD)/logtail.elf
 USER_LOGTAILPROBE_ELF := $(BUILD)/logtail-probe.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
@@ -389,6 +424,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
+	$(USER_SUDO_ELF) \
 	$(USER_LOGTAIL_ELF) \
 	$(USER_LOGTAILPROBE_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
@@ -458,7 +494,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -476,6 +512,11 @@ $(QEMU_DTB): | $(BUILD)/.dir
 
 $(QEMU_DTB_SMP4): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -smp 4 -m 256M -nographic
+
+# H1: a GICv3, -smp 2 device tree for the direct-boot harness — the interrupt
+# controller the Hetzner ARM VM presents (and what `-M virt,gic-version=3` emits).
+$(QEMU_DTB_GICV3): | $(BUILD)/.dir
+	$(QEMU) -M virt,gic-version=3,dumpdtb=$@ -cpu cortex-a72 -smp 2 -m 256M -nographic
 
 $(BUILD)/.dir:
 	@mkdir -p $(BUILD)
@@ -599,6 +640,9 @@ $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Make
 
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
+
+$(BUILD)/user_sudo.o: userland/sudo.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sudo.swift kernel/crypto/sha256.swift -o $@
 
 $(BUILD)/user_logtail.o: userland/logtail.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail.swift -o $@
@@ -800,6 +844,9 @@ $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/u
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
+
+$(USER_SUDO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sudo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sudo.o -o $@
 
 $(USER_LOGTAIL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail.o -o $@
@@ -1140,11 +1187,11 @@ $(KERNEL_ELF): $(KERNEL_OBJS) $(LINKER)
 	$(OBJCOPY) -O binary $@ $(KERNEL_BIN)
 	@echo "Built $(KERNEL_ELF)"
 
-run: build $(QEMU_DTB) base-image
+run: build $(QEMU_DTB) base-image $(DATA_IMG)
 	$(QEMU) $(QEMU_FLAGS)
 
 # Paused under the gdbstub on tcp::1234. Attach with `make gdb` in another shell.
-debug: build $(QEMU_DTB) base-image
+debug: build $(QEMU_DTB) base-image $(DATA_IMG)
 	$(QEMU) $(QEMU_FLAGS) -s -S
 
 gdb:
@@ -1330,6 +1377,18 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
+	./tests/gicv3_test.sh
+	./tests/virtio_pci_test.sh
+	./tests/h3_ramdisk_test.sh
+	./tests/h4_ssh_pci_test.sh
+	./tests/h5_acpi_test.sh
+	./tests/data_persist_test.sh
+	./tests/datafs_test.sh
+	./tests/datafs_fsync_test.sh
+	./tests/datafs_sqlite_test.sh
+	./tests/nginx_test.sh
+	./tests/nginx_data_test.sh
+	./tests/nginx_tls_test.sh
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -1345,6 +1404,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/ab_flush_test.sh
 	./tests/console_login_test.sh
 	./tests/cap_enforce_test.sh
+	./tests/sudo_test.sh
 	./tests/ls_l_test.sh
 	./tests/redirect_test.sh
 	./tests/swift_ls_test.sh
@@ -1406,6 +1466,93 @@ smp-test: build base-image
 
 clock-test: build $(QEMU_DTB) base-image
 	./tests/clock_test.sh
+
+# H1: GICv3 driver — detect GICv2 vs v3 and drive the GICv3 redistributor +
+# ICC_* system-register CPU interface. Boots on `-M virt,gic-version=3` (the
+# interrupt controller the Hetzner ARM VM presents) and proves interrupts are
+# live multi-core: CPU0 + secondary timer IRQs and SGI/IPI delivery. The QEMU
+# `virt` GICv2 profile is unchanged (the driver detects, it does not replace).
+# No base image needed — the markers are emitted during SMP bring-up.
+gicv3-test: build $(QEMU_DTB_GICV3)
+	./tests/gicv3_test.sh
+
+# H2: PCIe ECAM enumeration + virtio-PCI transport. Boots on `-M virt,gic-version=3`
+# with a virtio-rng attached over PCIe (the transport the Hetzner VM uses) and
+# proves the kernel enumerates the ECAM, assigns BARs, resolves the modern virtio
+# capabilities, and exchanges a virtqueue (entropy round trip). No base image
+# needed — the marker is emitted during early driver bring-up.
+virtio-pci-test: build $(QEMU_DTB_GICV3)
+	./tests/virtio_pci_test.sh
+
+# H3: boot to login from a RAM base image with NO block driver bound. Boots the
+# GPT disk under UEFI on the Hetzner profile (GICv3, boot disk on virtio-scsi-pci
+# which the kernel does not drive); the loader reads base.img from the ESP into
+# RAM and the kernel mounts the read-only base FS from RAM. Needs the full base
+# image, so it depends on `disk` (which builds base-image + the GPT).
+h3-ramdisk-test: disk
+	./tests/h3_ramdisk_test.sh
+
+# H4: a bounded SSH command succeeds end-to-end over virtio-net on the PCI
+# transport. Boots GICv3 with the NIC + RNG on PCIe (the Hetzner network/IRQ
+# model), the guest gets a DHCP lease over virtio-net-pci, autostarts /bin/sshd,
+# and a host OpenSSH client runs /bin/id over the network (QEMU hostfwd).
+h4-ssh-pci-test: build base-image $(SSHKEY)
+	./tests/h4_ssh_pci_test.sh
+
+# H5: the kernel derives its platform map (GIC/ECAM/UART/CPU/PSCI) from ACPI with
+# no device tree. Boots the GPT disk under UEFI on the Hetzner device model (ACPI
+# firmware, GICv3, virtio-PCI); the loader forwards the RSDP and the kernel walks
+# RSDP->XSDT->MADT/MCFG/SPCR/FADT, then the whole stack comes up on those values.
+h5-acpi-test: disk
+	./tests/h5_acpi_test.sh
+
+# H6: bare-metal cloud-deploy regression (Hetzner Cloud bring-up). Boots the
+# UEFI/GPT disk on the real device model — virtio devices BEHIND PCIe root ports
+# (only the GPU on bus 0), a virtio-gpu scanout console, GICv3, -smp 2, and
+# serial OUTPUT-ONLY (no serial input) — and proves a headless server reaches a
+# PERSISTENT SSH login. Builds the disk with supervised sshd first. Guards the
+# four bring-up bugs: per-AS PCI MMU map, PCIe bridge recursion, virtio-gpu
+# console, and headless boot to swos-init/sshd.
+hetzner-deploy-test: build $(SSHKEY)
+	rm -f $(BASE_IMG) $(DISK_IMG)
+	$(MAKE) disk SWOS_SERVICES_FILE=fixtures/swos/services-supervised
+	./tests/hetzner_deploy_test.sh
+	rm -f $(BASE_IMG) $(DISK_IMG)   # restore: the supervised base.img is deploy-specific, not the default
+
+# D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
+# is emitted before vfsInit), so this focused gate runs without the full image.
+data-persist-test: build $(QEMU_DTB)
+	./tests/data_persist_test.sh
+
+# D1: datafs files created via the VFS syscall path survive reboot. Needs the
+# base image (drives the busybox shell to create/read files under /data).
+datafs-test: build $(QEMU_DTB) base-image
+	./tests/datafs_test.sh
+
+# D2: fsync/fdatasync/sync issue a real /data cache flush. Boots with a data disk
+# and confirms the durable-sync self-test. Base-image optional.
+datafs-fsync-test: build $(QEMU_DTB)
+	./tests/datafs_fsync_test.sh
+
+# D3: a SQLite database stored on /data survives reboot (headline acceptance).
+# Needs the base image (which bakes in /bin/sqlite3).
+datafs-sqlite-test: build $(QEMU_DTB) base-image
+	./tests/datafs_sqlite_test.sh
+
+# W1: nginx runs and serves a static page over HTTP on SwiftOS. Needs the base
+# image (bakes /sbin/nginx + config) and host curl.
+nginx-test: build $(QEMU_DTB) base-image
+	./tests/nginx_test.sh
+
+# W2: nginx serves a web root + logs from the persistent /data tier; content
+# survives reboot. Needs the base image and host curl.
+nginx-data-test: build $(QEMU_DTB) base-image
+	./tests/nginx_data_test.sh
+
+# W3: nginx serves HTTPS/TLS (self-signed) — static openssl, /dev/urandom entropy,
+# TCP MSG_PEEK for TLS detection. Needs the base image and host curl.
+nginx-tls-test: build $(QEMU_DTB) base-image
+	./tests/nginx_tls_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
@@ -1639,10 +1786,20 @@ $(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_S
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
 
+# H3: stage the packed read-only base image on the ESP so the loader can read it
+# into RAM and hand the kernel a ramdisk (the path for boards whose boot disk —
+# e.g. the Hetzner VM's virtio-scsi — the kernel does not drive). When a
+# virtio-blk base disk is also attached (the QEMU UEFI tests), the kernel still
+# prefers it; the ramdisk base is used when no block base disk is present.
+$(ESP_DIR)/EFI/swift-os/base.img: base-image
+	@mkdir -p $(ESP_DIR)/EFI/swift-os
+	cp $(BASE_IMG) $@
+
 uefi: $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI \
       $(ESP_DIR)/EFI/swift-os/kernelA.bin \
       $(ESP_DIR)/EFI/swift-os/kernelB.bin \
-      $(ESP_DIR)/EFI/swift-os/kernel-boot
+      $(ESP_DIR)/EFI/swift-os/kernel-boot \
+      $(ESP_DIR)/EFI/swift-os/base.img
 	rm -f $(ESP_DIR)/EFI/swift-os/kernel-boot-alt
 
 # Boot the UEFI loader under AAVMF (no `-kernel`). Exit QEMU serial with Ctrl-A X.
@@ -1677,6 +1834,33 @@ run-gfx: disk base-image
 		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
 		-device virtio-blk-device,drive=swosbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
+
+# ---- Hetzner-faithful local profile (H-series bare-metal bring-up) ---------
+# Reproduces the Hetzner ARM cloud VM device model in local QEMU so the
+# bare-metal drivers (docs/RISK_REMEDIATION_ROADMAP.md, H-series) can be
+# developed WITHOUT the server. It differs from the QEMU `virt` profile the
+# kernel boots on today in the four ways the live VM does:
+#   * ACPI firmware (NO `acpi=off`) — edk2 boots in ACPI mode and, as H0 found,
+#     publishes NO FDT configuration table (only ACPI). The kernel's DT path
+#     therefore finds nothing here; ACPI parsing is H5.
+#   * virtio over PCIe (virtio-scsi-pci boot disk, virtio-net-pci, virtio-rng-pci)
+#     instead of virtio-mmio — H2/H3/H4.
+#   * GICv3 (`gic-version=3`, sysreg CPU interface) instead of GICv2 MMIO — H1.
+#   * `-cpu max -smp 2 -m 4G`, matching the 2-vCPU / ~4 GiB VM.
+# The bootable GPT disk rides on virtio-scsi-pci (like `/dev/sda` on the VM);
+# the EFI loader reads the kernel from its ESP via the firmware (transport-
+# agnostic), which already works here. The kernel then panics at GICv2 init
+# (expected until H1) — this target is for driver bring-up, not a clean boot yet.
+HETZNER_QEMU_FLAGS := -M virt,gic-version=3 -cpu max -m 4G -smp 2 -no-reboot \
+	-bios $(AAVMF_CODE) \
+	-drive file=$(DISK_IMG),format=raw,if=none,id=hdd \
+	-device virtio-scsi-pci -device scsi-hd,drive=hdd \
+	-device virtio-net-pci,netdev=hn0 -netdev user,id=hn0 \
+	-device virtio-rng-pci \
+	-nographic
+
+hetzner-run: disk
+	$(QEMU) $(HETZNER_QEMU_FLAGS)
 
 $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) -O tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
@@ -1756,6 +1940,28 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
+
+# D3: build the SQLite shell binary (and package) so it can be baked into base.img.
+# Depends on the userland runtime sources so a stubs.c change (e.g. real fsync)
+# rebuilds the shell.
+$(SQLITE_BIN): $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
+	./scripts/build-sqlite.sh
+
+# W1: build the nginx server binary (+ staged config and index.html) for baking
+# into base.img. Depends on the userland runtime sources so stub changes rebuild.
+# W3: build the openssl static dev libs (and headers) for nginx TLS linking.
+# Tool prereqs are order-only so rebuilding swport/swpkg/pkgrepo does not force a
+# (slow) openssl recompile; only the recipe/script/libc actually trigger it.
+$(OPENSSL_DEV): scripts/build-openssl.sh ports/security/openssl/Port.json $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+	./scripts/build-openssl.sh
+
+# W3: a build-time self-signed cert for the HTTPS demo (CN=swift-os, 10y).
+$(NGINX_CERT): | $(BUILD)/.dir
+	mkdir -p $(BUILD)/nginx-certs
+	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=swift-os -keyout $(BUILD)/nginx-certs/server.key -out $(NGINX_CERT) >/dev/null 2>&1
+
+$(NGINX_BIN): $(OPENSSL_DEV) $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
+	./scripts/build-nginx.sh
 
 # NPM26: assert the current Node.js cross-build frontier. Vanilla Node
 # configure.py rejects --dest-os=swiftos; this probe fetches+verifies the
@@ -1871,7 +2077,7 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -1906,6 +2112,12 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	$(MODELSIGN) sign $(BASE_ROOT)/models/stories15M/2/manifest.toml $(SIGNING_SEED)
 	cp $(SIGNING_PUB) $(BASE_ROOT)/etc/swos/model-signing.pub
 	cp $(USER_HELLO_ELF) $(BASE_ROOT)/bin/hello
+	cp $(SQLITE_BIN) $(BASE_ROOT)/bin/sqlite3
+	mkdir -p $(BASE_ROOT)/sbin $(BASE_ROOT)/usr/etc/nginx $(BASE_ROOT)/usr/share/nginx/html
+	cp $(NGINX_BIN) $(BASE_ROOT)/sbin/nginx
+	if [ -n "$(NGINX_SITE_DIR)" ]; then cp -R "$(NGINX_SITE_DIR)/." $(BASE_ROOT)/usr/share/nginx/html/; else cp $(BUILD)/nginx-root/usr/share/nginx/html/index.html $(BASE_ROOT)/usr/share/nginx/html/index.html; fi
+	mkdir -p $(BASE_ROOT)/usr/etc/nginx/certs
+	cp $(BUILD)/nginx-certs/server.crt $(BUILD)/nginx-certs/server.key $(BASE_ROOT)/usr/etc/nginx/certs/
 	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
@@ -1956,6 +2168,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
 	cp $(USER_PTYPROBE_ELF) $(BASE_ROOT)/bin/ptyprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
+	cp $(USER_SUDO_ELF) $(BASE_ROOT)/bin/sudo
 	cp $(USER_LOGTAIL_ELF) $(BASE_ROOT)/bin/logtail
 	cp $(USER_LOGTAILPROBE_ELF) $(BASE_ROOT)/bin/logtail-probe
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm

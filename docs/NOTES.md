@@ -6116,6 +6116,48 @@ the final link. The long multi-hour, multi-milestone haul; the groundwork
 **Acceptance.** `make node-configure-probe`, `make docs-test`,
 `make ports-catalog-test`.
 
+## D-series — persistent /data storage (durable SQLite), 2026-06-16
+
+**Why.** Hosting our own site (nginx + Let's Encrypt + Node/Strapi + SQLite)
+needs storage that survives reboot. The bring-up FS was deliberately two-tier
+(read-only signed base + RAM tmpfs; "data loss on reboot acceptable by design").
+This series adds a third, **persistent writable tier** at `/data` and is an
+explicit, reviewed change to that hard decision (CLAUDE.md updated to three-tier).
+
+**Decisions recorded.**
+- New tier lives on a **dedicated, separate virtio-blk disk** (id `swosdata`),
+  not the base/ESP disks, so the signed base stays immutable. The kernel scan
+  (`virtioBlkInit`) identifies it positively by an `SWDATAFS` sector-0 magic.
+- **No FS journaling** (consistent with the project stance). datafs is a small
+  inode-table + block-bitmap filesystem. Crash-safety comes from honest `fsync`
+  plus the application's own journaling (SQLite's rollback journal), not from FS
+  journaling. The superblock is written only in sector 0 of block 0, so the D0
+  raw boot-counter (sector 2) and the FS metadata never overlap.
+- File size cap is single-indirect (one index block -> ~4 MiB/file at 4 KiB
+  blocks) for now; double-indirect is a later extension if needed.
+
+**Milestones (all on branch `claude/funny-ishizaka-2b024a`).**
+- **D0** (`acd659d`): second writable virtio-blk "data" disk + raw read/write/
+  flush range; boot self-test proves a counter survives reboot.
+  Gate: `make data-persist-test`.
+- **D1** (`7deacfb`): `kernel/fs/datafs.swift` on-disk FS, mounted at `/data`,
+  mirrored into VNodes; `vfs.swift` routes create/open/read/write/lseek/
+  ftruncate/mkdir/unlink/rmdir/rename to datafs. Gate: `make datafs-test`.
+- **D2** (`4a61aef`): `fsync`/`fdatasync` (SYS_FSYNC=86) and `sync` (SYS_SYNC=87)
+  flush the data disk to media; newlib stubs wired. Gate: `make datafs-fsync-test`.
+- **D3** (`4bcb6d4`): the packaged `sqlite3` shell baked into the base image at
+  `/bin/sqlite3`; `vfsFcntl` accepts POSIX record locks (F_GETLK/F_SETLK/F_SETLKW
+  = newlib 7/8/9) as no-op success so SQLite's unix VFS proceeds. Gate:
+  `make datafs-sqlite-test` — create+insert into `/data/app.db`, reboot, SELECT
+  the row back.
+
+**Open items.**
+- SYS_FSYNC/SYS_SYNC are syscall numbers 87/88 (security_info_ex from the sudo
+  arc is 86); the earlier 86 collision was resolved when main was merged in.
+- `make docs-test` has pre-existing failures unrelated to this series
+  (ptyprobe/ptysigprobe command entries and several `swiftos_*` PTY/waitpid Swift
+  bridge entries from the HC34/HC36 sessions). The D-series reference entries
+  (sqlite3 command; fsync/sync/openpty/pty_set_foreground syscalls) are documented.
 ### NPM35b - full Node build attempt: build-driver mechanics + two macOS-host walls (IN PROGRESS, 2026-06-15)
 
 First real `make` of Node under the masquerade (on branch `node-v8-build`).
@@ -6158,3 +6200,320 @@ include strategy, libuv port, base/platform) carries over unchanged.
 
 **Acceptance.** `make node-configure-probe` (groundwork still green); full Node
 build deferred pending the build-environment decision.
+
+## H-series — bare-metal Hetzner ARM bring-up, 2026-06-16
+
+**Why.** The real deployment target is the user's Hetzner ARM cloud VM
+(`ssh root@swiftos.tech -p 651`, currently Ubuntu 24.04 aarch64, fully wipeable).
+SwiftOS today assumes the QEMU `virt` board (device-tree firmware, virtio-mmio,
+GICv2, virtio-blk). The Hetzner VM presents a different device model (ACPI
+firmware, virtio-PCI, GICv3, virtio-scsi). This series writes the missing
+drivers/boot support so SwiftOS boots as the *actual OS* of that VM, reachable
+over SSH. Stages H0–H6; develop against a local QEMU profile that reproduces the
+VM device model, use the real server only for final bring-up.
+
+### H0 — Hetzner-faithful local QEMU profile + firmware investigation (DONE, 2026-06-16)
+
+**Deliverables.**
+- `make hetzner-run` (Makefile): boots the current UEFI disk under a QEMU profile
+  matching the live VM — `-M virt,gic-version=3 -cpu max -m 4G -smp 2`, ACPI on
+  (no `acpi=off`), boot disk on **virtio-scsi-pci**, plus virtio-net-pci and
+  virtio-rng-pci. This reproduces all four gaps (ACPI / virtio-PCI / GICv3 /
+  virtio-scsi) locally so H1–H5 can be developed without the server.
+- Findings recorded here (this decides H5's approach).
+
+**What the loader/kernel sees on the Hetzner profile** (QEMU 11.0.1, firmware
+`edk2-stable202408-prebuilt.qemu.org`, representative of the VM's EDK2/BOCHS):
+- **EFI loader works over virtio-scsi-pci.** Firmware boots `BOOTAA64.EFI` from
+  the GPT/ESP at `PciRoot(0x0)/Pci(0x1,0x0)/Scsi(0x0,0x0)`; the loader reads the
+  kernel slot from the ESP via the firmware Simple File System with NO change.
+  **Decision input for H3:** the loader can read `base.img` from the ESP the same
+  way (transport-agnostic via firmware) — the ESP-ramdisk route is viable and we
+  need not write a virtio-scsi kernel driver just to mount the root FS.
+- **FDT configuration table: ABSENT.** Under ACPI mode the edk2 firmware does
+  **not** publish the FDT table (`gFdtTableGuid`, the standard
+  `b1b621d5-f19c-41a5-...` GUID — verified correct). Loader prints
+  "device tree NOT in config table". The kernel's RAM scan then finds no DTB and
+  keeps QEMU-virt compiled-in defaults. **Decisive for H5:** there is NO FDT
+  fallback on the real target; H5 must parse ACPI (RSDP→XSDT→MADT for GIC, SPCR
+  for UART, MCFG for ECAM, GTDT for timer). (Note: with `acpi=off` the QEMU virt
+  firmware *does* publish an FDT table — that is the existing `uefi-run`/`disk-run`
+  profile, which stays working. The dual path is firmware-mode driven.)
+- **ACPI 2.0 table: PRESENT** (`EFI_ACPI_20_TABLE_GUID` → RSDP). So the RSDP is
+  reachable as an EFI configuration table; the loader already probes it and can
+  forward its pointer to the kernel for H5.
+- **CurrentEL 1, MMU on** at handoff — same as the existing UEFI path.
+- **Memory:** largest conventional region base `0x4800_0000`, size `0xF460_E000`
+  (~3.9 GiB) for `-m 4G`. RAM base is still `0x4000_0000`; firmware reserves
+  `0x4000_0000`–`0x4800_0000`. The compiled-in `ramSize` (256 MiB) is wrong for
+  this VM — H5/ACPI (or the EFI memory map) must supply real RAM size.
+- **No GOP framebuffer** — headless, serial-only (PL011 @ `0x0900_0000`, matches).
+- **Kernel panics at GICv2 init** as expected: with DT/ACPI giving nothing it
+  keeps the GICv2 defaults and faults reading the GICv2 CPU interface at
+  `0x0801_0000` (`FAR_EL1=0x08010000`, ESR `0x96000050` = data abort) — there is
+  no MMIO GICC under GICv3. This is the concrete H1 evidence (GICv3 needed).
+
+**Re-plan note (H5).** H0 resolves the open H5 question: the FDT-config-table
+fallback is NOT available on the ACPI VM, so H5 is "parse minimal ACPI", not
+"consume the FDT table". The loader already locates the RSDP; the remaining work
+is XSDT/MADT/SPCR/MCFG/GTDT parsing in the kernel and forwarding the RSDP from
+the loader (currently it only prints present/absent).
+
+**Acceptance.** `make hetzner-run` boots the loader under the VM device model and
+the survey above is reproduced; findings committed. (A clean kernel boot is not
+expected until H1/H5 land.)
+
+### H1 — GICv3 driver (detect v2/v3; redistributor + ICC_* CPU interface) (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM (and `-M virt,gic-version=3`) present a GICv3: a
+distributor + per-CPU **redistributors** + a **system-register** CPU interface
+(ICC_*). The kernel had a GICv2-only MMIO driver and faulted at the GICv2 GICC
+window (`0x0801_0000`) on a GICv3 machine (H0). Make the GIC driver dual-path
+(detect, don't replace) so the same kernel drives both, and prove interrupts
+work under the GICv3 profile.
+
+**What changed.**
+- `kernel/drivers/gic.swift` rewritten as a dual-path driver. Version is detected
+  from **`ID_AA64PFR0_EL1.GIC`** (bits [27:24]; nonzero ⇒ GICv3 sysreg interface).
+  This is a CPU register, so it is fault-free — an early attempt to read
+  `GICD_PIDR2` (offset `0xFFE8`) instead **aborted on the GICv2 distributor**
+  (QEMU's v2 GICD has no register there; v2 ID regs live at `0xFE8`). Lesson
+  recorded: do not probe v3-only MMIO offsets to detect the version.
+  - GICv3 init: distributor `GICD_CTLR = ARE | EnableGrp1 | EnableGrp0` (QEMU/
+    Hetzner run the GIC in the single-security-state DS=1 view, so the NS group
+    bits are settable from EL1); per-PE redistributor wake (clear
+    `GICR_WAKER.ProcessorSleep`, wait `ChildrenAsleep`), SGIs/PPIs → Group 1 in
+    the SGI frame; system-register CPU interface (`ICC_SRE_EL1.SRE=1`,
+    `ICC_PMR_EL1=0xFF`, `ICC_BPR1_EL1=0`, `ICC_CTLR_EL1=0`, `ICC_IGRPEN1_EL1=1`).
+  - Ack/EOI via `ICC_IAR1_EL1`/`ICC_EOIR1_EL1`; SGI generation via
+    `ICC_SGI1R_EL1` (TargetList = the 8-bit CPU mask, single cluster Aff1/2/3=0).
+  - SPI routing uses `GICD_IROUTER` (64-bit/INTID, valid under ARE) instead of
+    the v2 `GICD_ITARGETSR`; SGI/PPI enable/priority go to **this PE's**
+    redistributor SGI frame (found by matching `GICR_TYPER` affinity to MPIDR).
+  - The same surface (`gicInit`, `gicInitCpuInterfaceForCurrentCpu`,
+    `gicEnableInterrupt`, `gicAcknowledge`, `gicEndInterrupt`, the SGI helpers,
+    `gicSoftwareGeneratedInterruptSelfTest`) branches on the detected version, so
+    the SMP per-CPU init and the IPI substrate are correct on both.
+- `kernel/arch/aarch64/io.h`: ICC_* `msr`/`mrs` bridges + `read_id_aa64pfr0_el1`
+  (Embedded Swift cannot emit `msr`/`mrs`; this is the documented low-level
+  bridge exception, like the existing MMIO/`cntp_*` shims).
+- HAL: `platform.gicRedist` (default `0x080A_0000` — the GICR base on QEMU virt
+  GICv3 and the Hetzner VM). `fdt.swift` recognises `arm,gic-v3` and records the
+  second reg range as the redistributor (via a `gicIsV3` flag kept in the
+  `PlatformInfo.flags` word — a stored `Bool` between the `UInt` fields broke the
+  struct's 8-byte alignment and **alignment-faulted at M1 with the MMU off**;
+  recorded as a strict-align gotcha for that struct).
+
+**Acceptance.** `make gicv3-test` (`tests/gicv3_test.sh`) boots the kernel on
+`-M virt,gic-version=3 -cpu max -smp 2` and asserts interrupts are live
+multi-core, before any base FS / userland: `M2 GIC: GICv3 …` (detection), `S2a`
+per-CPU timer-IRQ heartbeat for **CPU0 and the secondary**, `S1` secondary
+online, and `S3b` SGI/IPI substrate (ICC_SGI1R). On both GICv2 and GICv3 the
+boot then reaches the identical point (the pre-existing no-`base.img` `S2`
+userland guard — out of scope here). Regression: the GICv2 path is unchanged
+(`M2 GIC: GICv2`, same markers); the host `fdt_test` + `qemu_virt_hardware_map`
+gates still pass. Wired into `make test`.
+
+**Bonus.** `make hetzner-run` (the ACPI/PCI/GICv3 profile, no DTB) now also
+clears GIC init — it detects GICv3 via the CPU register, uses the default GICD/
+GICR bases (correct for the VM), brings the secondary online over PSCI, and
+reaches the same `S2` point. So H1 directly removes the GIC blocker on the real
+target; virtio-PCI (H2/H3) and ACPI platform config (H5) remain.
+
+**Not done here.** Full SMP+userland validation *on GICv3* (the S2–S5 / userland
+suite under `gic-version=3`) is deferred until a root FS boots on the GICv3
+profile (after H3); the existing suite still runs on GICv2. The GIC primitives
+themselves (per-CPU timer IRQ + SGI on two CPUs) are proven by `gicv3-test`.
+
+### H2 — PCIe ECAM enumeration + virtio-PCI transport (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM (and `-M virt,gic-version=3 -cpu max`) expose virtio
+devices over PCIe, not virtio-mmio. Enumerate PCI config space, drive a modern
+virtio-pci device, and introduce a transport abstraction so a device driver
+works on either transport. Port the simplest device (virtio-rng) first.
+
+**Addresses (QEMU virt high-ECAM == the Hetzner VM, from the DTB `pcie` node).**
+- ECAM config space: **`0x40_1000_0000`** (256 GiB), 256 MiB.
+- 32-bit MMIO window (BARs): CPU `0x1000_0000`..`0x3eff_0000` (pci==cpu).
+- 64-bit MMIO window: `0x80_0000_0000` (512 GiB) — where **UEFI firmware places
+  modern virtio BARs** (BAR4 is a 64-bit memory BAR).
+
+**What changed.**
+- `kernel/mm/vm_early.c`: the identity map reached only the first 3 GiB and TCR
+  IPS was 36-bit (64 GiB max PA) — neither could touch the 256 GiB ECAM. Raised
+  **IPS to 40-bit** (`max`/cortex-a72 both support ≥40-bit PARange) and added two
+  device blocks: `l1_table[256]` for the ECAM 1 GiB block, and a second L1 table
+  at `l0_table[1]` mapping the first 4 GiB of the 64-bit PCI window. Gotcha
+  recorded: under UEFI the firmware-assigned BAR landed at `0x80_0000_8000`, which
+  faulted (level-0 translation) until the 64-bit window was mapped.
+- `kernel/drivers/pci.swift`: ECAM accessors (needs 8/16-bit MMIO — added to
+  io.h), BAR sizing + assignment (assign in the 32-bit window when unassigned on
+  the `-kernel` path; reuse the firmware base under UEFI), and a virtio capability
+  walk (COMMON/NOTIFY/ISR/DEVICE → mapped addresses). Device matching handles
+  **both** modern ids (`0x1040+type`) and **transitional** ids (`0x1000..0x103F`,
+  type in the PCI Subsystem ID) — QEMU's `virtio-rng-pci` is transitional
+  (`0x1af4:0x1005`) yet exposes the modern caps.
+- `kernel/drivers/virtio_transport.swift`: `VirtioTransport` — one control-plane
+  surface (reset/status, VERSION_1 negotiation + FEATURES_OK, queue setup with
+  ring addresses, notify doorbell, ISR ack) over `mmio | pci`. The virtqueue ring
+  memory is identical, so only this plane branches.
+- `virtio_rng.swift` refactored onto `VirtioTransport`: tries virtio-mmio first,
+  then virtio-pci. `platform.pcieEcamBase` (default `0x40_1000_0000`; 0 disables).
+
+**Acceptance.** `make virtio-pci-test` (`tests/virtio_pci_test.sh`) boots
+`-M virt,gic-version=3 -cpu max` with `-device virtio-rng-pci` and asserts the
+kernel enumerates the ECAM, assigns the BAR, resolves the caps, and runs a full
+virtqueue round trip (descriptor → avail → notify → used) returning entropy:
+`H2 OK: virtio-pci rng exchanged a queue, bytes 32`. Emitted during early driver
+bring-up, no base image needed. Wired into `make test`.
+
+**Validated on the real-target path too.** `make hetzner-run` (UEFI / ACPI /
+GICv3, firmware-assigned BARs in the 64-bit window) reaches the same `H2 OK`,
+exercising the firmware-BAR-reuse + 64-bit-window-mapping path. Regression:
+virtio-mmio rng still exchanges a queue (`H2 OK: virtio-mmio …`); GICv2/GICv3
+direct boots unaffected (MMU/IPS change verified).
+
+**Open for H5/H6.** The ECAM base is a compiled-in default (correct for both
+targets); ACPI MCFG parsing (H5) should supply it on the real server rather than
+assume it. virtio-net over PCI is H4.
+
+### H3 — root filesystem from RAM (ESP-ramdisk), no block driver (DONE, 2026-06-16)
+
+**Goal.** The Hetzner VM's boot disk is virtio-scsi over PCIe, which the kernel
+does not drive. Rather than write a virtio-scsi driver just to mount the
+read-only base FS, the UEFI loader reads the packed base image from the ESP into
+RAM and hands the kernel a ramdisk; the kernel mounts the read-only base from RAM
+(/tmp is RAM anyway, so this fits the FS design). Acceptance: boots to login with
+NO block driver bound.
+
+**What changed.**
+- `boot/efi/loader.c`: `load_base_ramdisk` opens `\EFI\swift-os\base.img` on the
+  ESP (firmware Simple File System — works over virtio-scsi-pci, as H0 found),
+  `AllocatePages(AllocateMaxAddress, 0x8000_0000)` to keep it **below 2 GiB** (the
+  kernel identity-maps only the first 1 GiB of RAM as normal memory), reads it in,
+  cleans the dcache, and passes base/size to the kernel.
+- **Entry ABI:** `boot.S` preserves x4/x5 (ramdisk base/size) alongside the
+  existing x0–x3 (dtb + framebuffer); `kernel_main` gains two params and calls
+  `ramdiskInit`. The QEMU `-kernel` path leaves x4/x5 = 0 → no ramdisk.
+- `kernel/fs/ramdisk.swift`: the RAM base-image source. `ramdiskReadRange`
+  mirrors the **virtio-blk read contract the VFS expects — 0 on success**, a
+  negative errno on a short/out-of-range read (the bug that first broke the mount
+  was returning a byte count instead of 0). Bounds are overflow-safe.
+- `kernel/vfs/vfs.swift`: `vfsImageReadRange` serves the base image from the
+  ramdisk when present (else virtio-blk); the two `virtioBlkAvailable()` mount
+  guards now also accept a ramdisk. `buildBaseFromDisk` still **prefers a
+  virtio-blk base when one is attached** (`swosbaseCount > 0`) and uses the
+  ramdisk only when no block base disk is present — so existing virtio-blk boots
+  are unchanged and the ramdisk activates on the Hetzner-style profile.
+- Build: `make-disk.sh` + the `uefi` target stage `base.img` on the ESP (in
+  `\EFI\swift-os`). The GPT disk is ~96 MiB; base.img is ~41 MiB.
+
+**Acceptance.** `make h3-ramdisk-test` (`tests/h3_ramdisk_test.sh`) boots the GPT
+disk under UEFI on the Hetzner profile (GICv3, boot disk on **virtio-scsi-pci**,
+no virtio-blk), drives the tty demo + login, and asserts: loader staged base.img
+into RAM, `M11b: no virtio-blk disk attached`, the RAM base verified
+(ed25519) + `M11c` mounted, `swift-os login:` reached, and a command served from
+the RAM base ran. So H0–H3 now boot the real-target device model end-to-end to a
+login prompt with no kernel block driver. Wired into `make test`.
+
+**Regression.** The QEMU `-kernel` path (x4/x5 = 0, virtio-blk base) is unchanged
+— it binds the virtio-blk base (`M11b: virtio-blk disk …`), mounts (`M11c`), and
+runs the userland (`S5f OK`). `gicv3-test` / `virtio-pci-test` still pass (they
+exercise the new entry ABI).
+
+**Open for H4/H6.** `/data` (datafs) on the real server still needs a PCI block
+path (virtio-blk-pci or virtio-scsi) — out of scope for the read-only root. H4
+brings virtio-net over PCI + SSH.
+
+### H4 — virtio-net over PCI + SSH reachable (DONE, 2026-06-16)
+
+**Goal.** Port virtio-net to the PCI transport and prove a bounded SSH command
+end-to-end over it under the Hetzner network/IRQ model (GICv3 + virtio-net-pci).
+
+**What changed.**
+- `kernel/drivers/virtio_transport.swift`: extended for multi-queue devices —
+  per-queue notify doorbells (`notifyAddrs`, since virtio-net has rx=0/tx=1 with
+  distinct `queue_notify_off`), 64-bit device-feature read/write
+  (`deviceFeatures`/`setDriverFeatures`/`setFeaturesOk`), and device-config reads
+  (`configRead32`, for the MAC). `negotiateVersion1` now builds on these.
+- `kernel/drivers/virtio_net.swift`: the NIC binds over `VirtioTransport` — tries
+  virtio-mmio first, then virtio-pci (`virtioPciFindDevice(deviceType: 1)`). Only
+  the control plane (status/features/queue setup/notify/ISR/MAC) moved to the
+  transport; the RX/TX buffer-pool + zero-copy logic is unchanged. Removed the now
+  dead per-device MMIO register/feature constants.
+- **GICv3 SPI fix (gic.swift):** the UART RX interrupt (SPI 33) was silent on
+  GICv3 — SPIs default to **Group 0** in `GICD_IGROUPR`, but EL1 only takes Group 1
+  (we set `ICC_IGRPEN1`). `gicv3EnableInterrupt` now sets the SPI's `GICD_IGROUPR`
+  bit to Group 1. H1 had only exercised the timer (PPI, via the redistributor
+  `GICR_IGROUPR0`) and SGIs; the UART/NIC SPIs were the first real GICv3 SPI
+  consumers and surfaced this. (PPIs were already Group 1, so this is SPI-only.)
+
+**Acceptance.** `make h4-ssh-pci-test` (`tests/h4_ssh_pci_test.sh`) boots GICv3
+with the NIC + RNG on PCIe (the Hetzner net/IRQ device model), and asserts the
+full path: the guest brings the NIC up over PCIe and gets a DHCP lease
+(`net-dhcp OK`), autostarts `/bin/sshd`, seeds KEX entropy from virtio-rng-pci,
+and a host OpenSSH client runs a bounded `/bin/id` over the network (QEMU
+hostfwd → guest :22) — `publickey auth accepted`, `session exec completed status
+0`, ssh exit 0, output `principal=1(root)`. The root FS rides on virtio-blk here
+for a fast boot (RAM-base boot is the separate H3 gate); this gate isolates
+"virtio-net over PCI + SSH". Wired into `make test`.
+
+**Regression.** virtio-net over mmio still works (DHCP + ARP + ICMP on QEMU
+`virt`); `gicv3-test` / `virtio-pci-test` / `h3-ramdisk-test` still pass. The
+GICv3 SPI fix also benefits every SPI consumer (UART RX, NIC) on the Hetzner
+profile — e.g. the H3 ramdisk login over serial now takes keystrokes via the
+real UART IRQ.
+
+**Status.** H0–H4 now boot the Hetzner device model end-to-end and are reachable
+over SSH in QEMU. Remaining: H5 (derive platform config from ACPI on the real
+firmware — no FDT, per H0) and H6 (bring-up on the real server).
+
+### H5 — platform config from ACPI (no device tree) (DONE, 2026-06-16)
+
+**Goal.** On the real Hetzner VM there is no FDT (H0) — the firmware publishes
+only ACPI. Derive the platform map from ACPI so the kernel does not depend on a
+device tree.
+
+**What changed.**
+- The UEFI loader (`boot/efi/loader.c`) forwards the ACPI RSDP pointer to the
+  kernel in x6 (it already located it via `EFI_ACPI_20_TABLE_GUID`); `boot.S`
+  preserves x6 and `kernel_main` passes it to `platformInit`.
+- `kernel/arch/aarch64/acpi.swift`: a minimal parser. RSDP → XSDT → tables:
+  **MADT** (GICD base + version → GICv3; GICR base; one CPU per enabled GICC,
+  with MPIDR.Aff0 and the PSCI enable mask), **MCFG** (PCIe ECAM base), **SPCR**
+  (console UART), **FADT** (PSCI conduit HVC/SMC from the ARM boot flags). Like
+  the FDT parser it runs with the MMU off, so every field is assembled from
+  non-inlined byte reads (`rd8`) — unaligned multi-byte access to Device-typed
+  RAM faults.
+- `platformInit(dtbPhys, acpiRsdp)` now prefers ACPI when an RSDP was passed
+  (the real firmware path), else the device tree, else defaults. The whole ACPI
+  apply happens **with the MMU off**, because the ACPI tables sit high in RAM
+  (~5 GiB on the VM, `RSDP @ 0x1_3CB4_3018`) and are unmapped once the MMU is on.
+  CPU topology is copied through `applyAcpiTopology`, marked `@_optimize(none)`,
+  so the eight adjacent `cpuAff0_*` stores are not coalesced into a wider
+  unaligned access (the FDT path defers this to post-MMU; the ACPI path can't).
+- Gotcha repeated from H1: adding a `UInt` field (`ecamBase`) to `PlatformInfo`
+  perturbed its size and triggered an unaligned vectorized store at M1 (MMU off,
+  strict-align) — on **both** the ACPI and FDT paths. Fix: don't grow that
+  struct; the MCFG parse writes `platform.pcieEcamBase` directly (one aligned
+  global store). The boot-log "M9 OK: discovered from device tree" klog is now
+  conditional on `platformDiscoveredFromAcpi`.
+
+**Acceptance.** `make h5-acpi-test` (`tests/h5_acpi_test.sh`) boots the GPT disk
+under UEFI on the Hetzner device model (ACPI firmware, GICv3, virtio-PCI) and
+asserts `M9 OK: hardware discovered from ACPI` (not "device tree"), the exact
+derived map (`gic 0x0800_0000 redist 0x080A_0000 uart 0x0900_0000 ecam
+0x40_1000_0000`), then the whole stack on those values: GICv3 (`M2 GIC: GICv3`),
+the secondary CPU online via PSCI (`S1 OK`), a virtio-pci queue (ECAM,
+`H2 OK`), and a DHCP lease over virtio-net-pci. Wired into `make test`.
+
+**Regression.** The device-tree paths are unchanged — direct `-kernel` and the
+`acpi=off` UEFI boot still log "M9 OK: hardware discovered from device tree"
+(the klog several tests assert); `gicv3-test`/`virtio-pci-test` still pass.
+
+**Status.** H0–H5 complete: the kernel boots the Hetzner device model
+end-to-end — GICv3, virtio over PCIe, RAM-base root FS, SSH-reachable — deriving
+its platform map from ACPI with no device tree. Remaining: **H6** (bring-up on
+the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
+via the provider rescue system, confirm with the user before the destructive
+step, iterate over serial/VNC until SSH reaches SwiftOS).

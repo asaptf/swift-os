@@ -177,25 +177,29 @@ int _getentropy(void *buf, size_t len) {
     return 0;
 }
 
-// getentropy() — STRONG override of newlib's libc.a stub. newlib exports its own
-// getentropy() that does NOT route through our SYS_RANDOM _getentropy and returns
-// unreliable/partial data, so OpenSSL's DRBG seeding (it calls the weak
-// getentropy first) flakily failed node's CSPRNG self-check at startup. Because
-// this object links ahead of libc.a, our definition wins. We fill the WHOLE
-// buffer from virtio-rng in 256-byte SYS_RANDOM chunks (OpenSSL may request more
-// than the POSIX 256-byte cap), so the seed is always complete and deterministic.
+// Public getentropy(). OpenSSL's getrandom seed source probes a *weak* extern
+// `getentropy` (no underscore) and only calls it when the symbol is non-NULL:
+//
+//     extern int getentropy(void*, size_t) __attribute__((weak));
+//     if (getentropy != NULL) { if (getentropy(buf,len)==0) return len; ... }
+//
+// newlib (built --disable-newlib-supplied-syscalls) supplies only the `_` stub,
+// and a weak *undefined* reference never pulls a definition out of libc.a — so
+// the symbol stays NULL, OpenSSL silently skips it, reaches no other source on
+// this freestanding target, and its DRBG instantiate fails with "entropy source
+// strength too weak" (taking nginx/TLS down) even though SYS_RANDOM works fine
+// for everything that calls it directly (e.g. sshd). Defining the strong public
+// name here — in an object that is always linked, not archived — makes the weak
+// reference bind and routes OpenSSL through SYS_RANDOM like every other caller.
+// Node's OpenSSL DRBG may request more than the POSIX 256-byte cap in one call,
+// so fill the whole buffer in <=256-byte _getentropy chunks.
 int getentropy(void *buf, size_t len) {
     unsigned char *p = (unsigned char *)buf;
     size_t got = 0;
     while (got < len) {
         size_t chunk = len - got;
         if (chunk > 256) chunk = 256;
-        size_t c = 0;
-        while (c < chunk) {
-            long r = sys3(SYS_RANDOM, (long)(p + got + c), (long)(chunk - c), 0);
-            if (r <= 0) { errno = EIO; return -1; }
-            c += (size_t)r;
-        }
+        if (_getentropy(p + got, chunk) != 0) return -1;
         got += chunk;
     }
     return 0;

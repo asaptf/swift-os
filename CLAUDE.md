@@ -34,7 +34,14 @@ stack. Current development hardens this for the product profile — see
   - `~Copyable` structs with `deinit` for resource ownership.
   - Classes only after the heap is up, and sparingly (ARC has a cost).
 - **Isolation:** real MMU-based isolation; one address space per process. Single core (no SMP) at the start. SMP support is a planned post-M13 remediation series (S0–S5); see `docs/RISK_REMEDIATION_ROADMAP.md`.
-- **Filesystem:** two-tier, no journaling. Read-only packed base + RAM tmpfs scratch. Data loss on reboot is acceptable by design.
+- **Filesystem:** three-tier, no journaling. Read-only packed signed base + RAM
+  tmpfs scratch (data loss on reboot acceptable for these two) + a **persistent
+  writable `/data` tier** (datafs, on a dedicated virtio-blk disk, with
+  `fsync`/`fdatasync`/`sync` durability) for state that must survive reboot — e.g.
+  the SQLite database backing the hosted site. The base stays immutable; datafs is
+  a small inode-table + block-bitmap FS with no journaling — crash-safety relies on
+  honest `fsync` plus the application's own journaling (as SQLite's rollback journal
+  does), not on FS journaling. See the D-series in `docs/RISK_REMEDIATION_ROADMAP.md`.
 - **No Linux ABI.** Our own POSIX-like syscall surface; tools are recompiled.
 - **Static linking only.** No dynamic loader.
 - **libc:** newlib port for bring-up; musl possible later.

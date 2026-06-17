@@ -1,0 +1,12 @@
+# Cross-origin isolation for the in-browser QEMU (WASM) VM on /try, so
+# SharedArrayBuffer / pthreads work. Read by Netlify and Cloudflare Pages.
+# (Vercel: use vercel.json "headers"; Nginx/Caddy: set the same headers.)
+/try
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+/try/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+/qemu/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless

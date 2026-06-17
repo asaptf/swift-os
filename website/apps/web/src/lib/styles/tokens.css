@@ -1,0 +1,152 @@
+/* =========================================================================
+ * swift-os — Design Tokens
+ * Dark theme is the default (:root). Light theme via [data-theme="light"].
+ * Identity: near-neutral base + a single Swift-orange accent, used sparingly.
+ * Type: Hanken Grotesk (UI/prose) + JetBrains Mono (code/labels).
+ * ========================================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ---- Type families ---- */
+  --font-sans: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ---- Type scale (fluid where it matters) ---- */
+  --fs-display: clamp(2.6rem, 1.6rem + 4.4vw, 5rem);   /* hero headline */
+  --fs-h1:      clamp(2.1rem, 1.5rem + 2.4vw, 3.25rem);
+  --fs-h2:      clamp(1.7rem, 1.35rem + 1.4vw, 2.4rem);
+  --fs-h3:      1.5rem;
+  --fs-h4:      1.2rem;
+  --fs-lead:    clamp(1.1rem, 1.02rem + 0.4vw, 1.3rem);
+  --fs-body:    1.0625rem;   /* 17px base reading */
+  --fs-sm:      0.9375rem;   /* 15 */
+  --fs-xs:      0.8125rem;   /* 13 */
+  --fs-micro:   0.6875rem;   /* 11 — mono micro-labels */
+
+  --lh-tight: 1.04;
+  --lh-snug:  1.18;
+  --lh-body:  1.65;
+  --tracking-tight: -0.02em;
+  --tracking-label: 0.08em;   /* mono uppercase micro-labels */
+
+  /* ---- Spacing scale (4px grid) ---- */
+  --sp-1: 0.25rem;  --sp-2: 0.5rem;  --sp-3: 0.75rem; --sp-4: 1rem;
+  --sp-5: 1.5rem;   --sp-6: 2rem;    --sp-8: 3rem;    --sp-10: 4rem;
+  --sp-12: 6rem;    --sp-16: 8rem;   --sp-20: 10rem;
+
+  /* ---- Radius ---- */
+  --r-xs: 5px; --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-full: 999px;
+
+  /* ---- Layout ---- */
+  --nav-h: 60px;
+  --w-prose: 46rem;       /* docs/article reading measure */
+  --w-content: 76rem;     /* default page max */
+  --w-wide: 92rem;
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-1: 140ms; --dur-2: 240ms; --dur-3: 360ms;
+
+  /* ---- Swift-orange accent (stable across themes) ---- */
+  --orange-300: #ff8e75;
+  --orange-400: #ff6a4d;
+  --orange-500: #f05138;   /* THE accent */
+  --orange-600: #d83a22;
+  --orange-700: #b32d18;
+  --accent: var(--orange-500);
+  --accent-hover: var(--orange-400);
+  --on-accent: #ffffff;
+
+  /* ---- Status hues (tuned per theme below) ---- */
+}
+
+/* =========================================================================
+ * DARK THEME (default)
+ * ========================================================================= */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0a0b0d;            /* page */
+  --bg-sunken: #07080a;     /* below-page (footer, code wells) */
+  --surface: #121418;       /* cards */
+  --surface-2: #181b21;     /* elevated card / hover */
+  --surface-3: #20242b;     /* chips, inputs */
+
+  --text: #f3f5f7;          /* high-emphasis */
+  --text-muted: #aab2bd;    /* body secondary */
+  --text-dim: #7b828d;      /* tertiary / captions */
+  --text-faint: #555c66;    /* disabled */
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-faint: rgba(255, 255, 255, 0.05);
+
+  --accent-tint: rgba(240, 81, 56, 0.13);
+  --accent-tint-strong: rgba(240, 81, 56, 0.22);
+
+  --ok:   #4ec77f;  --ok-tint:   rgba(78, 199, 127, 0.14);
+  --warn: #ecb45a;  --warn-tint: rgba(236, 180, 90, 0.14);
+  --err:  #f06a5e;  --err-tint:  rgba(240, 106, 94, 0.14);
+  --info: #6ea8fe;  --info-tint: rgba(110, 168, 254, 0.14);
+  --muted-chip: rgba(255,255,255,0.07);
+
+  --code-bg: #0d0f12;
+  --selection: rgba(240, 81, 56, 0.32);
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 8px 30px rgba(0,0,0,0.45);
+  --shadow-lg: 0 24px 60px rgba(0,0,0,0.55);
+
+  --nav-blur-bg: rgba(10, 11, 13, 0.72);
+  --hero-glow: radial-gradient(60% 60% at 50% 0%, rgba(240,81,56,0.10), transparent 70%);
+  --grid-line: rgba(255,255,255,0.035);
+}
+
+/* =========================================================================
+ * LIGHT THEME — warm off-whites
+ * ========================================================================= */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #faf8f5;            /* warm off-white page */
+  --bg-sunken: #f1ede7;
+  --surface: #ffffff;
+  --surface-2: #fbfaf8;
+  --surface-3: #f2efea;
+
+  --text: #1a1b1e;
+  --text-muted: #54585f;
+  --text-dim: #82868e;
+  --text-faint: #aeb2b9;
+
+  --border: rgba(20, 18, 14, 0.12);
+  --border-strong: rgba(20, 18, 14, 0.22);
+  --border-faint: rgba(20, 18, 14, 0.06);
+
+  --accent-tint: rgba(240, 81, 56, 0.10);
+  --accent-tint-strong: rgba(240, 81, 56, 0.16);
+
+  --ok:   #1f8a4d;  --ok-tint:   rgba(31, 138, 77, 0.12);
+  --warn: #b3791a;  --warn-tint: rgba(179, 121, 26, 0.13);
+  --err:  #cf3b2d;  --err-tint:  rgba(207, 59, 45, 0.11);
+  --info: #2f6bd6;  --info-tint: rgba(47, 107, 214, 0.11);
+  --muted-chip: rgba(20,18,14,0.06);
+
+  --code-bg: #1a1b1e;       /* code stays dark even in light theme (Apple-docs style) */
+  --selection: rgba(240, 81, 56, 0.22);
+
+  --shadow-sm: 0 1px 2px rgba(20,18,14,0.06);
+  --shadow-md: 0 10px 30px rgba(20,18,14,0.08);
+  --shadow-lg: 0 24px 60px rgba(20,18,14,0.12);
+
+  --nav-blur-bg: rgba(250, 248, 245, 0.78);
+  --hero-glow: radial-gradient(60% 60% at 50% 0%, rgba(240,81,56,0.07), transparent 70%);
+  --grid-line: rgba(20,18,14,0.04);
+}
+
+/* Code blocks keep a dark palette in both themes; light theme overrides text */
+[data-theme="light"] .code-block,
+[data-theme="light"] .terminal { color: #e8eaed; }

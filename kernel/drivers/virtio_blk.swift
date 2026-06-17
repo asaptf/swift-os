@@ -136,6 +136,14 @@ private var blkPayloadDevice = -1
 private var blkEspDevice = -1
 private var blkServedDevice = -1
 
+// D0: a writable persistent "data" disk, identified by the sector-0 magic
+// "SWDATAFS". Distinct from the read-only base/store/ESP; it hosts the /data tier
+// (datafs, D1+). SMP: set once at boot before EL0 runs.
+private var blkDataDevice = -1
+
+// D2: count successful data-disk cache flushes (fsync/sync), for the boot self-test.
+private var blkDataFlushes: UInt64 = 0
+
 // --- cache maintenance ------------------------------------------------------
 private func blkClean(_ pa: UInt, _ n: Int) {
     var a = pa & ~UInt(63)
@@ -339,6 +347,23 @@ private func blkBounceIsSwosboot() -> Bool {
 private func blkBounceIsEfiPart() -> Bool {
     let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     let magic: StaticString = "EFI PART"
+    var ok = true
+    magic.withUTF8Buffer { m in
+        var i = 0
+        while i < 8 {
+            if bounce.load(fromByteOffset: i, as: UInt8.self) != m[i] { ok = false }
+            i += 1
+        }
+    }
+    return ok
+}
+
+// True if the bounce buffer currently starts with the "SWDATAFS" magic of the
+// persistent /data disk (datafs superblock at sector 0). D0 stamps the magic on
+// the host-built image; D1 fills in the rest of the superblock.
+private func blkBounceIsDataFs() -> Bool {
+    let bounce = UnsafeRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    let magic: StaticString = "SWDATAFS"
     var ok = true
     magic.withUTF8Buffer { m in
         var i = 0
@@ -580,6 +605,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkPayloadDevice = -1
     blkEspDevice = -1
     blkServedDevice = -1
+    blkDataDevice = -1
     for j in 0..<maxBlkDevices {
         blkDeviceMmio[j] = 0
         blkDeviceCapacity[j] = 0
@@ -600,6 +626,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     var baseDev = -1
     var storeDev = -1
     var espDev = -1
+    var dataFsDev = -1
     var i: UInt32 = 0
     while i < count {
         let m = base + UInt(i) * stride
@@ -625,6 +652,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
             } else if blkBounceIsPackageStore() && pkgStoreDevice < 0 {
                 pkgStoreDevice = devIndex
                 pkgStoreCapacity = blkCapacity
+            } else if dataFsDev < 0 && blkBounceIsDataFs() {
+                dataFsDev = devIndex
             }
             if espDev < 0 && blkDoRead(1) == 0 && blkBounceIsEfiPart() {
                 espDev = devIndex
@@ -633,6 +662,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     }
 
     blkEspDevice = espDev
+    blkDataDevice = dataFsDev
 
     if storeDev >= 0 {
         blkStoreDevice = storeDev
@@ -665,6 +695,45 @@ func virtioBlkCapacity() -> UInt64 {
 func virtioBlkSwosbaseImageCount() -> Int { swosbaseCount }
 func virtioBlkPackageStoreAvailable() -> Bool { pkgStoreDevice >= 0 }
 func virtioBlkPackageStoreCapacityBytes() -> UInt64 { pkgStoreCapacity * UInt64(SECTOR_SIZE) }
+
+// --- persistent /data disk (D0) ---------------------------------------------
+// True if a writable persistent data disk (sector-0 magic "SWDATAFS") is present.
+func virtioBlkDataAvailable() -> Bool { blkDataDevice >= 0 }
+// Capacity of the data disk in 512-byte sectors (0 if none).
+func virtioBlkDataCapacitySectors() -> UInt64 {
+    if blkDataDevice < 0 { return 0 }
+    return blkDeviceCapacity[blkDataDevice]
+}
+// Read [byteOff, byteOff+len) from the data disk into `buf`. Restores the served
+// base/store device afterward so later base reads are unaffected. 0 on success.
+func virtioBlkDataReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if blkDataDevice < 0 { return -1 }
+    let rc = virtioBlkReadRangeFromDevice(blkDataDevice, byteOff, buf, len)
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+// Write `buf` to [byteOff, byteOff+len) on the data disk (read-modify-write for
+// partial sectors). Restores the served device afterward. 0 on success.
+func virtioBlkDataWriteRange(_ byteOff: UInt64, _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
+    if blkDataDevice < 0 { return -1 }
+    let cap = blkDeviceCapacity[blkDataDevice] * UInt64(SECTOR_SIZE)
+    if byteOff + UInt64(len) > cap { return -2 }
+    let rc = virtioBlkWriteRangeToDevice(blkDataDevice, byteOff, buf, len)
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+// Flush the data disk's write cache to stable media. Pairs with a preceding
+// write so it survives a host crash. 0 on success.
+func virtioBlkDataFlush() -> Int32 {
+    if blkDataDevice < 0 { return -1 }
+    if !blkSelectDevice(blkDataDevice) { return -1 }
+    let rc = blkDoFlush()
+    if rc == 0 { blkDataFlushes &+= 1 }
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+// D2: number of successful data-disk flushes since boot.
+func virtioBlkDataFlushCount() -> UInt64 { blkDataFlushes }
 
 // --- A/B update store: active/fallback slot offsets (U1a) --------------------
 // True if the selected disk is an A/B update-store disk (sector 0 is SWOSBOOT).

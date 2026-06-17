@@ -469,6 +469,104 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 
 This roadmap turns the current set of "we deliberately didn't do X" into a deliberate, testable, reviewable sequence that brings the implementation back in line with the written architecture while delivering the SMP capability the project now requires.
 
+## D-series — persistent /data storage (durable SQLite) (DONE, 2026-06-16)
+
+Driven by the website-hosting goal (nginx + Let's Encrypt + Node/Strapi + SQLite):
+the stack needs storage that survives reboot, which the two-tier bring-up FS
+(read-only signed base + RAM tmpfs) does not provide. The D-series adds a third,
+**persistent writable tier** at `/data` — an explicit, reviewed change to the
+"data loss on reboot is acceptable by design" hard decision (CLAUDE.md is updated
+to describe a three-tier FS). The base stays immutable and unjournaled; datafs is
+a small inode-table + block-bitmap filesystem with no journaling, and crash-safety
+relies on honest `fsync` plus the application's own journaling (SQLite's rollback
+journal). Full design + decisions are in `docs/NOTES.md` (D-series).
+
+- **D0** (`acd659d`): a second, writable virtio-blk "data" disk (`SWDATAFS` magic),
+  with raw read/write/flush; boot self-test proves a counter survives reboot.
+  Gate: `make data-persist-test`.
+- **D1** (`7deacfb`): `kernel/fs/datafs.swift`, mounted at `/data`, mirrored into
+  the VFS; create/open/read/write/lseek/ftruncate/mkdir/unlink/rmdir/rename route
+  to disk. Gate: `make datafs-test`.
+- **D2** (`4a61aef`): `fsync`/`fdatasync`/`sync` syscalls flush the data disk to
+  stable media. Gate: `make datafs-fsync-test`.
+- **D3** (`4bcb6d4`): the packaged `sqlite3` shell baked into the base image;
+  POSIX record locks accepted (no-op) in `vfsFcntl`. Acceptance:
+  `make datafs-sqlite-test` — a database on `/data` survives reboot.
+
+Follow-ups (not blocking): double-indirect blocks for >4 MiB files; moving the FS
+into a userland service in line with the driver-serviceization arc; per-cell
+quotas on `/data`.
+
+## H-series — bare-metal Hetzner ARM bring-up (IN PROGRESS, 2026-06-16)
+
+Driven by the website-hosting goal: make SwiftOS boot as the *actual OS* of the
+user's Hetzner ARM cloud VM (`swiftos.tech:651`, wipeable), reachable over SSH —
+not as a QEMU guest under Linux. The VM presents a different device model than the
+QEMU `virt` board SwiftOS targets today; this arc writes the missing drivers/boot
+support. All work stays **dual-path** (detect, don't replace) so the existing
+QEMU-virt (DT / virtio-mmio / GICv2 / virtio-blk) profile and its tests keep
+passing. Full design + per-stage findings are in `docs/NOTES.md` (H-series).
+
+Gaps vs SwiftOS today (probed from the live VM): ACPI firmware (no FDT), virtio
+over PCIe, GICv3, virtio-scsi boot disk, virtio-net-pci. Console (PL011) and RAM
+base (`0x4000_0000`) match.
+
+- **H0** (DONE, this branch): `make hetzner-run` — a local QEMU profile that
+  reproduces the VM device model (`-M virt,gic-version=3 -cpu max -m 4G -smp 2`,
+  ACPI on, virtio-scsi-pci boot disk, virtio-net-pci, virtio-rng-pci) so H1–H5
+  develop without the server. **Key findings:** the EFI loader already reads the
+  kernel from the ESP over virtio-scsi-pci via firmware (so H3's ESP-ramdisk root
+  is viable); under ACPI mode the firmware publishes **no FDT config table** (only
+  ACPI/RSDP) — so **H5 must parse ACPI, there is no FDT fallback**; the kernel
+  panics at GICv2 CPU-interface MMIO (`0x0801_0000`) under GICv3, the concrete H1
+  signal. See `docs/NOTES.md` H0 for the full survey.
+- **H1** (DONE, this branch): GICv3 driver — `kernel/drivers/gic.swift` is now
+  dual-path. Version detected from `ID_AA64PFR0_EL1.GIC` (fault-free, unlike
+  probing GICD_PIDR2 which aborts on the v2 distributor). GICv3 adds distributor
+  ARE + per-PE redistributor wake + a system-register CPU interface (ICC_SRE/PMR/
+  IGRPEN1/IAR1/EOIR1/SGI1R) and SPI routing via GICD_IROUTER. Acceptance:
+  `make gicv3-test` proves interrupts live multi-core on `-M virt,gic-version=3`
+  (CPU0 + secondary timer IRQ, secondary online, SGI/IPI), GICv2 path unchanged.
+  Bonus: `make hetzner-run` now clears GIC init too. See `docs/NOTES.md` H1.
+- **H2** (DONE, this branch): PCIe ECAM enumeration + virtio-PCI transport.
+  `kernel/drivers/pci.swift` scans the ECAM (0x40_1000_0000), assigns BARs (or
+  reuses firmware's), and parses the modern virtio capabilities; matches modern
+  and transitional device ids. `virtio_transport.swift` is the `mmio | pci`
+  control-plane abstraction; `virtio_rng` now binds over either. The early MMU
+  map gained the high-ECAM and 64-bit-PCI-window device blocks (+40-bit IPS).
+  Acceptance: `make virtio-pci-test` exchanges an entropy virtqueue over
+  virtio-pci; also reached on `make hetzner-run` (UEFI firmware BARs). See
+  `docs/NOTES.md` H2.
+- **H3** (DONE, this branch): root FS without virtio-scsi. The EFI loader reads
+  `base.img` from the ESP into RAM (below 2 GiB) and hands the kernel a ramdisk
+  via a new x4/x5 entry ABI; `kernel/fs/ramdisk.swift` + the VFS mount the
+  read-only base from RAM (preferring a virtio-blk base when one is attached, so
+  `-kernel` boots are unchanged). Acceptance: `make h3-ramdisk-test` boots the
+  GPT disk under UEFI on the Hetzner profile (virtio-scsi boot disk, no
+  virtio-blk) to `swift-os login:` with no block driver bound. See `docs/NOTES.md`
+  H3. H0–H3 now boot the real-target device model end-to-end to login.
+- **H4** (DONE, this branch): virtio-net over PCI + SSH. `virtio_net` binds over
+  the `VirtioTransport` (mmio|pci) abstraction (extended for per-queue notify,
+  device-feature negotiation, and device-config/MAC reads). Also fixed a GICv3
+  SPI-delivery bug (SPIs must be put in Group 1 via `GICD_IGROUPR`; the UART RX /
+  NIC IRQs were silent — H1 had only exercised the PPI timer + SGIs). Acceptance:
+  `make h4-ssh-pci-test` boots GICv3 with the NIC + RNG on PCIe, gets a DHCP lease
+  over virtio-net-pci, autostarts `/bin/sshd`, and a host OpenSSH client runs a
+  bounded `/bin/id` end-to-end (publickey auth, exec status 0). See `docs/NOTES.md`
+  H4. H0–H4 now boot the Hetzner device model end-to-end and are SSH-reachable.
+- **H5** (DONE, this branch): boot on ACPI firmware. The loader forwards the RSDP
+  (x6); `kernel/arch/aarch64/acpi.swift` parses RSDP→XSDT→MADT (GIC + CPUs), MCFG
+  (ECAM), SPCR (UART), FADT (PSCI), all MMU-off (the tables sit high in RAM).
+  `platformInit` prefers ACPI over the FDT. Acceptance: `make h5-acpi-test` boots
+  the Hetzner device model and the kernel derives gic/redist/uart/ecam + CPU
+  topology + PSCI from ACPI (no DTB), then the whole stack comes up on those
+  values (GICv3, secondary CPU via PSCI, virtio-pci, DHCP). See `docs/NOTES.md`
+  H5. H0–H5 boot the Hetzner model end-to-end, SSH-reachable, with no FDT.
+- **H6** (planned): real-server bring-up — build the GPT disk, `dd` onto the VM
+  boot disk via rescue, observe over serial/VNC, iterate until SSH reaches
+  SwiftOS. SAFETY: confirm with the user before the destructive step; keep a
+  rescue path.
+
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:
