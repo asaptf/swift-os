@@ -695,7 +695,13 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_PTHREAD_MAX_MUTEXES 32
 #define COMPAT_PTHREAD_MAX_BARRIERS 16
 #define COMPAT_PTHREAD_MAX_CONDS 32
-#define COMPAT_PTHREAD_TID_MAX 32
+/* Max number of *concurrent* threads with thread-local storage in one process.
+ * This is a count of live threads, NOT a kernel-id ceiling: TLS is indexed by a
+ * per-process slot allocated below, so a large/unbounded kernel tid/pid never
+ * overflows the table (the prior code indexed by the raw pid and silently broke
+ * pthread_setspecific once the pid reached 32 — which intermittently took down
+ * OpenSSL's TLS-guarded config autoload and thus every algorithm fetch). */
+#define COMPAT_PTHREAD_TID_MAX 64
 #define COMPAT_PTHREAD_NAME_MAX 16
 #define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
 
@@ -797,6 +803,9 @@ static struct compat_pthread_cond_record pthread_cond_records[COMPAT_PTHREAD_MAX
 static unsigned int pthread_key_live[COMPAT_PTHREAD_MAX_KEYS];
 static void (*pthread_key_destructor[COMPAT_PTHREAD_MAX_KEYS])(void *);
 static const void *pthread_key_values[COMPAT_PTHREAD_MAX_KEYS][COMPAT_PTHREAD_TID_MAX];
+/* slot -> owning thread id (0 = free). Maps an unbounded kernel id to a small
+ * dense TLS-array index so a large pid/tid can never overflow the table. */
+static pthread_t pthread_tls_slot_id[COMPAT_PTHREAD_TID_MAX];
 static char pthread_main_name[COMPAT_PTHREAD_NAME_MAX];
 static int pthread_concurrency_level;
 static int pthread_atfork_handler_count;
@@ -804,6 +813,23 @@ static int pthread_atfork_handler_count;
 static pthread_t pthread_current_tid(void) {
     long r = sys3(SYS_GETPID, 0, 0, 0);
     return r > 0 ? (pthread_t)r : (pthread_t)0;
+}
+
+/* Find (or, if `create`, allocate) the TLS slot for thread `tid`. Returns the
+ * slot index in [0, COMPAT_PTHREAD_TID_MAX), or -1 if absent/exhausted. Caller
+ * must hold pthread_global_lock. Slot 0 is reserved by never storing tid 0
+ * (pthread_current_tid never returns 0 for a live thread). */
+static int pthread_tls_slot_locked(pthread_t tid, int create) {
+    int freeslot = -1;
+    for (int i = 0; i < COMPAT_PTHREAD_TID_MAX; i++) {
+        if (pthread_tls_slot_id[i] == tid) { return i; }
+        if (freeslot < 0 && pthread_tls_slot_id[i] == 0) { freeslot = i; }
+    }
+    if (create && freeslot >= 0) {
+        pthread_tls_slot_id[freeslot] = tid;
+        return freeslot;
+    }
+    return -1;
 }
 
 static void mutex_lazy_init(pthread_mutex_t *mutex) {
@@ -974,15 +1000,76 @@ static void pthread_release_record(struct compat_pthread_record *rec, int unmap_
 
 static void pthread_run_key_destructors(void) {
     pthread_t tid = pthread_current_tid();
-    if (tid >= COMPAT_PTHREAD_TID_MAX) { return; }
+    futex_lock_word(&pthread_global_lock);
+    int slot = pthread_tls_slot_locked(tid, 0);
+    futex_unlock_word(&pthread_global_lock);
+    if (slot < 0) { return; }
     for (int i = 0; i < COMPAT_PTHREAD_MAX_KEYS; i++) {
-        const void *value = pthread_key_values[i][tid];
+        const void *value = pthread_key_values[i][slot];
         if (value) {
-            pthread_key_values[i][tid] = 0;
+            pthread_key_values[i][slot] = 0;
             if (pthread_key_live[i] && pthread_key_destructor[i]) {
                 pthread_key_destructor[i]((void *)value);
             }
         }
+    }
+    /* Release the slot so it can be reused by a future thread. */
+    futex_lock_word(&pthread_global_lock);
+    pthread_tls_slot_id[slot] = 0;
+    futex_unlock_word(&pthread_global_lock);
+}
+
+/* ---- atexit / __cxa_atexit: reliable, malloc-free, lock-light override -----
+ * newlib's atexit grows its handler table with malloc past 32 entries and takes
+ * an internal lock; under Node's ~150 C++ global-destructor __cxa_atexit
+ * registrations that intermittently fails, and atexit() returning non-zero makes
+ * OpenSSL's ossl_init_register_atexit -> OPENSSL_init_crypto -> EVERY algorithm
+ * fetch (incl. CTR-DRBG, i.e. the CSPRNG seed) fail. A fixed table that never
+ * allocates and always succeeds removes that failure mode. These are STRONG and
+ * this object links ahead of libc.a, so they supersede newlib's. Handlers run
+ * LIFO from newlib's exit() via the __call_exitprocs override; stdio flush is
+ * independent (handled by newlib's reent __cleanup, not atexit). */
+#define COMPAT_ATEXIT_MAX 4096
+struct compat_atexit_entry { void (*fn)(void *); void *arg; int has_arg; };
+static struct compat_atexit_entry compat_atexit_table[COMPAT_ATEXIT_MAX];
+static int compat_atexit_count;
+
+static int compat_atexit_push(void (*fn)(void *), void *arg, int has_arg) {
+    int ok = 0;
+    futex_lock_word(&pthread_global_lock);
+    if (compat_atexit_count < COMPAT_ATEXIT_MAX) {
+        compat_atexit_table[compat_atexit_count].fn = fn;
+        compat_atexit_table[compat_atexit_count].arg = arg;
+        compat_atexit_table[compat_atexit_count].has_arg = has_arg;
+        compat_atexit_count++;
+        ok = 1;
+    }
+    futex_unlock_word(&pthread_global_lock);
+    return ok ? 0 : -1;   /* atexit/__cxa_atexit: 0 = success */
+}
+
+int __cxa_atexit(void (*fn)(void *), void *arg, void *dso) {
+    (void)dso;
+    if (!fn) return 0;
+    return compat_atexit_push(fn, arg, 1);
+}
+
+int atexit(void (*fn)(void)) {
+    if (!fn) return 0;
+    return compat_atexit_push((void (*)(void *))fn, 0, 0);
+}
+
+/* newlib's exit() calls __call_exitprocs to run registered handlers; run ours
+ * LIFO. A handler may itself register more (re-check the count each pass). */
+void __call_exitprocs(int code, void *dso) {
+    (void)code; (void)dso;
+    for (;;) {
+        futex_lock_word(&pthread_global_lock);
+        if (compat_atexit_count <= 0) { futex_unlock_word(&pthread_global_lock); break; }
+        struct compat_atexit_entry e = compat_atexit_table[--compat_atexit_count];
+        futex_unlock_word(&pthread_global_lock);
+        if (e.has_arg) e.fn(e.arg);
+        else ((void (*)(void))e.fn)();
     }
 }
 
@@ -1792,19 +1879,23 @@ W int pthread_key_create(pthread_key_t *key, void (*destructor)(void *)) {
     return EAGAIN;
 }
 W int pthread_setspecific(pthread_key_t key, const void *value) {
+    if (key >= COMPAT_PTHREAD_MAX_KEYS || !pthread_key_live[key]) { return EINVAL; }
     pthread_t tid = pthread_current_tid();
-    if (key >= COMPAT_PTHREAD_MAX_KEYS || tid >= COMPAT_PTHREAD_TID_MAX || !pthread_key_live[key]) {
-        return EINVAL;
-    }
-    pthread_key_values[key][tid] = value;
+    futex_lock_word(&pthread_global_lock);
+    int slot = pthread_tls_slot_locked(tid, 1);
+    if (slot < 0) { futex_unlock_word(&pthread_global_lock); return EAGAIN; }
+    pthread_key_values[key][slot] = value;
+    futex_unlock_word(&pthread_global_lock);
     return 0;
 }
 W void *pthread_getspecific(pthread_key_t key) {
+    if (key >= COMPAT_PTHREAD_MAX_KEYS || !pthread_key_live[key]) { return 0; }
     pthread_t tid = pthread_current_tid();
-    if (key >= COMPAT_PTHREAD_MAX_KEYS || tid >= COMPAT_PTHREAD_TID_MAX || !pthread_key_live[key]) {
-        return 0;
-    }
-    return (void *)pthread_key_values[key][tid];
+    futex_lock_word(&pthread_global_lock);
+    int slot = pthread_tls_slot_locked(tid, 0);
+    void *v = (slot >= 0) ? (void *)pthread_key_values[key][slot] : 0;
+    futex_unlock_word(&pthread_global_lock);
+    return v;
 }
 W int pthread_key_delete(pthread_key_t key) {
     if (key >= COMPAT_PTHREAD_MAX_KEYS) { return EINVAL; }
