@@ -1327,6 +1327,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/p256_test
 	$(HOST_SWIFTC) -O tests/jose_test.swift userland/lib/jose.swift userland/lib/asn1.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/jose_test
 	$(BUILD)/jose_test
+	$(HOST_SWIFTC) -O tests/acme_test.swift userland/lib/acme.swift userland/lib/jose.swift userland/lib/asn1.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/acme_test
+	$(BUILD)/acme_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/log_export_test.sh
