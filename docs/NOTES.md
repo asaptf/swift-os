@@ -3,6 +3,41 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## USB1 xHCI controller bring-up + device detection (2026-06-17)
+
+- First step toward a real USB keyboard (today's keyboard is virtio-input). USB
+  needs an xHCI controller on PCIe (`-device qemu-xhci`, same controller class on
+  the Hetzner VM / real hardware). Staged: this milestone is controller bring-up
+  + port detection only — no enumeration, no transfers, no HID yet.
+- New `kernel/drivers/usb_xhci.swift` is platform-agnostic: `xhciInit(bar0)`
+  resets the controller, programs CONFIG.MaxSlotsEn, sets up the minimum DMA
+  structures the spec requires to legally run it (DCBAA + scratchpad if the
+  controller demands it, command ring with a Toggle-Cycle Link TRB, and a
+  one-segment event ring on interrupter 0), starts it (USBCMD.R/S, waits HCH=0),
+  then powers each root-hub port and reports any with CCS set. DMA structures are
+  PMM pages — identity-mapped, so PA==VA==the bus address QEMU's PCIe host
+  forwards 1:1, exactly as the virtio-pci drivers rely on. Cache maintenance
+  mirrors virtio_input.swift (no-op under TCG, real on hardware).
+- Reused the existing H2 PCIe layer rather than adding a second one:
+  `kernel/drivers/pci.swift` gained a generic `pciFindByClass(class,subclass,
+  progIf)` (alongside `virtioPciFindDevice`) that scans bus 0 + bridges, calls
+  the existing `pciAssignBars` (which assigns BAR0 in the low 32-bit MMIO window
+  already device-mapped, and enables MEM + Bus Master), and returns BAR0 + INTx
+  pin. No MMU change was needed: the high ECAM (0x40_1000_0000) is already mapped
+  by the H2 work (40-bit IPS) and BAR0 lands in the low window.
+- Quirk: QEMU's xHCI capability MMIO region rejects sub-word reads — a 16-bit
+  read of HCIVERSION (offset 0x02) returns 0. Read it from the upper half of the
+  CAPLENGTH dword (32-bit access) instead. Byte reads of CAPLENGTH do work.
+- `usbProbe()` runs in `kernel_main` just before `ttyInit`; it is a logged no-op
+  when no controller is present, so every existing boot/test path is unaffected.
+
+**Acceptance.** `make usb-xhci-test` boots with `-device qemu-xhci -device
+usb-kbd` and asserts the guest logs `USB1: xHCI 0x0100 at 0x10008000 slots 64
+ports 8`, `USB1: device connected on xHCI port 5 speed 3` (high-speed), and
+`USB1 OK: xHCI up, 1 device(s) connected` — proving real xHCI registers were
+driven, not a kernel literal. Next milestones: enable-slot / address-device USB
+enumeration, then the HID boot-protocol interrupt endpoint feeding `ttyOnInput`.
+
 ## HC36 PTY job-control SIGINT (2026-06-15)
 
 - Made Ctrl-C work for PTY sessions by giving signals a per-process target.
