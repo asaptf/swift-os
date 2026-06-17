@@ -37,7 +37,7 @@
 
 <Seo
 	title="Architecture — swift-os"
-	description="Vector diagrams of how swift-os works: boot flow, the EL0/EL1 privilege stack, the two-tier filesystem, networking, the capability security model, and the package system."
+	description="Vector diagrams of how swift-os works: boot flow, the EL0/EL1 privilege stack, the three-tier storage model, networking, the capability security model, and the package system."
 />
 
 <main id="main" class="wrap wrap-wide" style="padding-block:var(--sp-8)">
@@ -93,10 +93,10 @@
 		</figure>
 	</section>
 
-	<!-- 3. TWO-TIER FILESYSTEM -->
+	<!-- 3. THREE-TIER STORAGE -->
 	<section class="fig-block" use:reveal>
-		<div class="fig-head"><span class="fig-num">03</span><div><h2 class="fig-title">Two-tier filesystem</h2><p class="fig-sub">A signed read-only base, plus a writable scratch tier that vanishes on reboot.</p></div></div>
-		<figure class="fig" aria-label="Read-only signed base image unioned with a volatile tmpfs at /tmp">
+		<div class="fig-head"><span class="fig-num">03</span><div><h2 class="fig-title">Three-tier storage</h2><p class="fig-sub">A signed read-only base, a volatile RAM scratch tier, and a persistent <code>/data</code> disk that survives reboot.</p></div></div>
+		<figure class="fig" aria-label="Read-only signed base image, a volatile tmpfs at /tmp, and a persistent datafs at /data">
 			<div class="fs-fig">
 				<div class="fs-tier ro">
 					<div class="fs-tier-head"><Badge variant="ok" label="read-only · signed" /></div>
@@ -109,8 +109,14 @@
 					<b class="mono">/tmp <span class="dim">(tmpfs)</span></b>
 					<ul class="fs-list"><li>logs · caches · scratch</li><li>lives in RAM</li><li class="vanish">↻ vanishes on reboot</li></ul>
 				</div>
+				<div class="fs-union" aria-hidden="true"><span>data disk</span></div>
+				<div class="fs-tier rw">
+					<div class="fs-tier-head"><Badge variant="ok" label="writable · persistent" /></div>
+					<b class="mono">/data <span class="dim">(datafs)</span></b>
+					<ul class="fs-list"><li>databases · app state</li><li>on a virtio-blk disk</li><li>✓ survives reboot · fsync</li></ul>
+				</div>
 			</div>
-			<figcaption class="fig-cap">Every boot starts from the same known-good image. Nothing you write persists unless you mount a real volume.</figcaption>
+			<figcaption class="fig-cap">Every boot starts from the same known-good image. <code>/tmp</code> is scratch that vanishes on reboot; anything you write to <code>/data</code> persists — SQLite there is crash-safe via <code>fsync</code>.</figcaption>
 		</figure>
 	</section>
 
