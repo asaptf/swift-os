@@ -1118,6 +1118,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     klog(.info, "smp", "S5a OK: per-CPU utilization counters ready", UInt64(platform.cpuCount))
+    usbProbe()          // USB M1: bring up the xHCI controller and detect attached devices
     ttyInit()
     signalReset()
     uartRxInit()

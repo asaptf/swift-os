@@ -240,3 +240,70 @@ func virtioPciFindDevice(deviceType: UInt32) -> VirtioPciDevice? {
     if platform.pcieEcamBase == 0 { return nil }
     return pciScanBusForVirtio(0, deviceType, 0)
 }
+
+// --- generic class-code discovery (non-virtio controllers, e.g. xHCI) -------
+
+private let CFG_REV_CLASS: UInt32 = 0x08   // rev(8) | progif(8) | subclass(8) | class(8)
+private let CFG_INT_PIN: UInt32 = 0x3D     // INTx pin: 1=INTA..4=INTD, 0=none
+
+/// A PCI function located by class code, with all BARs assigned and memory +
+/// bus-mastering enabled (pciAssignBars). `bar0` is the CPU-visible MMIO base of
+/// BAR0; `intxPin` is the INTx pin the function asserts (0 = none). This is the
+/// hook the xHCI driver uses; virtio devices keep using virtioPciFindDevice.
+struct PciClassDevice {
+    var bus: UInt32 = 0
+    var dev: UInt32 = 0
+    var fn: UInt32 = 0
+    var bar0: UInt = 0
+    var intxPin: UInt8 = 0
+}
+
+private func pciScanBusForClass(_ bus: UInt32, _ cls: UInt8, _ sub: UInt8,
+                                _ progif: UInt8, _ depth: Int) -> PciClassDevice? {
+    if depth > 32 { return nil }
+    var d: UInt32 = 0
+    while d < 32 {
+        if pciRead16(bus, d, 0, CFG_VENDOR) != 0xFFFF {
+            let multifn = (pciRead8(bus, d, 0, CFG_HEADER_TYPE) & 0x80) != 0
+            let fnCount: UInt32 = multifn ? 8 : 1
+            var f: UInt32 = 0
+            while f < fnCount {
+                if pciRead16(bus, d, f, CFG_VENDOR) != 0xFFFF {
+                    let rc = pciRead32(bus, d, f, CFG_REV_CLASS)
+                    if UInt8((rc >> 24) & 0xFF) == cls,
+                       UInt8((rc >> 16) & 0xFF) == sub,
+                       UInt8((rc >> 8) & 0xFF) == progif {
+                        let bars = pciAssignBars(bus, d, f)
+                        if bars[0] != 0 {
+                            var out = PciClassDevice()
+                            out.bus = bus; out.dev = d; out.fn = f
+                            out.bar0 = bars[0]
+                            out.intxPin = pciRead8(bus, d, f, CFG_INT_PIN)
+                            return out
+                        }
+                    }
+                    // Descend through a PCI-to-PCI bridge / PCIe root port.
+                    if (pciRead8(bus, d, f, CFG_HEADER_TYPE) & 0x7F) == HEADER_TYPE_BRIDGE {
+                        let secondary = UInt32(pciRead8(bus, d, f, CFG_SECONDARY_BUS))
+                        if secondary != 0, secondary != bus,
+                           let found = pciScanBusForClass(secondary, cls, sub, progif, depth + 1) {
+                            return found
+                        }
+                    }
+                }
+                f += 1
+            }
+        }
+        d += 1
+    }
+    return nil
+}
+
+/// Find the first PCI function matching (class, subclass, prog-IF), descending
+/// through PCIe root ports; assign its BARs and enable memory + bus-mastering.
+/// Returns nil if PCI is disabled (no ECAM) or no such device is present. Used
+/// to locate the xHCI USB controller (class 0x0C, subclass 0x03, prog-IF 0x30).
+func pciFindByClass(classCode: UInt8, subclass: UInt8, progIf: UInt8) -> PciClassDevice? {
+    if platform.pcieEcamBase == 0 { return nil }
+    return pciScanBusForClass(0, classCode, subclass, progIf, 0)
+}
