@@ -870,8 +870,14 @@ static int pthread_mutex_type_is_valid(int type) {
 }
 
 static int pthread_mutex_type_needs_record(int type) {
-    return type == PTHREAD_MUTEX_ERRORCHECK ||
-           type == PTHREAD_MUTEX_RECURSIVE;
+    // Only RECURSIVE mutexes truly need a side-table record (to count the
+    // recursion depth). ERRORCHECK only adds owner/deadlock *diagnostics* on top
+    // of a plain lock, so it can run record-free (behaving like NORMAL) — node's
+    // libuv builds its mutexes as ERRORCHECK when NDEBUG is unset, and there are
+    // far more of those than the fixed table holds. pthread_mutex_t is only 4
+    // bytes here, so owner state can't live inline; dropping ERRORCHECK from the
+    // table avoids exhausting it (which aborted node at MutexBase init).
+    return type == PTHREAD_MUTEX_RECURSIVE;
 }
 
 static int compat_abstime_expired_clock(const struct timespec *abstime, clockid_t clock_id) {
