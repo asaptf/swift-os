@@ -282,9 +282,18 @@ func parseAuthorization(_ body: [UInt8]) -> ACMEAuthorization? {
     return ACMEAuthorization(status: status, challenges: challenges)
 }
 
+/// Compare a String to an ASCII literal by raw UTF-8 bytes. Avoids String's
+/// Unicode-normalizing `==`, which pulls normalization tables absent from the
+/// freestanding userland link.
+func acmeEq(_ s: String, _ lit: StaticString) -> Bool {
+    var lb = [UInt8]()
+    lit.withUTF8Buffer { bp in for b in bp { lb.append(b) } }
+    return Array(s.utf8) == lb
+}
+
 /// The http-01 challenge of an authorization, if any.
 func httpChallenge(_ authz: ACMEAuthorization) -> ACMEChallenge? {
-    for c in authz.challenges where c.type == "http-01" { return c }
+    for c in authz.challenges where acmeEq(c.type, "http-01") { return c }
     return nil
 }
 
