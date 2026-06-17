@@ -18,6 +18,9 @@
 // pending signal and returning (see the PTY read loops in vfs.swift).
 
 let SIGINT: Int = 2
+let SIGILL: Int = 4
+let SIGTRAP: Int = 5
+let SIGBUS: Int = 7
 let SIGSEGV: Int = 11
 let SIGPIPE: Int = 13
 let SIGTERM: Int = 15

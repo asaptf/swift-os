@@ -192,6 +192,31 @@ private func anonVmasDeactivateOverlap(_ slot: Int, _ addr: UInt, _ pages: UInt)
         if addr < vEnd && end > vBase { pAnonVmas[idx].active = false }
     }
 }
+// Partial munmap with VMA split. Unlike anonVmasDeactivateOverlap (which drops
+// the whole VMA on any overlap), this trims the unmapped sub-range out of each
+// overlapping anon VMA and re-adds the surviving head/tail segments. Required by
+// V8's aligned allocator: OS::Allocate over-allocates, then munmaps the
+// unaligned prefix/suffix — the aligned middle must remain a tracked VMA so a
+// later mprotect(commit) can demand-fill it. The re-added segments never overlap
+// the unmapped range, so they are safe to encounter later in the same scan.
+private func anonVmasUnmapRange(_ slot: Int, _ addr: UInt, _ pages: UInt) {
+    let uStart = addr
+    let uEnd = addr + pages * PageAllocator.pageSize
+    for i in 0..<maxAnonVmas {
+        let idx = slot * maxAnonVmas + i
+        if !pAnonVmas[idx].active { continue }
+        let vBase = pAnonVmas[idx].base
+        let vEnd = vBase + pAnonVmas[idx].pages * PageAllocator.pageSize
+        if uStart >= vEnd || uEnd <= vBase { continue } // no overlap
+        pAnonVmas[idx].active = false
+        if vBase < uStart {
+            _ = anonVmaAdd(slot, vBase, (uStart - vBase) / PageAllocator.pageSize)
+        }
+        if uEnd < vEnd {
+            _ = anonVmaAdd(slot, uEnd, (vEnd - uEnd) / PageAllocator.pageSize)
+        }
+    }
+}
 private var pNameLen = [Int](repeating: 0, count: maxProc)
 private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
 // Principal / session / capability mask, plus the process's Cell tag, kept as
@@ -3757,11 +3782,11 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
     // I6: a lazily-reserved file VMA must not survive its munmap — the cursor
     // reclaim below can hand the same VA range to a future mmap, and a stale
     // VMA would demand-fill the new mapping from the OLD file's disk extent.
-    // Any overlap deactivates the whole VMA (and frees its slot). A partial
+    // Any overlap deactivates the whole file VMA (and frees its slot). A partial
     // munmap therefore drops demand paging for the VMA's remaining pages:
     // already-materialized ones stay mapped, untouched ones become fatal on
     // access — acceptable for the map-whole/unmap-whole file pattern, and
-    // documented here until a VMA split is needed.
+    // documented here until a file-VMA split is needed.
     for vi in 0..<maxFileVmas {
         let idx = me * maxFileVmas + vi
         if !pFileVmas[idx].active { continue }
@@ -3769,7 +3794,12 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
         let vEnd = vBase + pFileVmas[idx].pages * PageAllocator.pageSize
         if addr < vEnd && addr + bytes > vBase { pFileVmas[idx].active = false }
     }
-    anonVmasDeactivateOverlap(me, addr, pages)
+    // Anon VMAs split on partial munmap: V8's aligned allocator over-allocates
+    // then trims the unaligned ends, and the aligned middle must stay tracked so
+    // a later mprotect(commit) can demand-fill it. (Whole-VMA deactivation here
+    // was the intermittent cppgc/Oilpan "out of memory" — the committed middle
+    // had no VMA to back it.)
+    anonVmasUnmapRange(me, addr, pages)
     // Cursor reclaim: if the freed region sat at the bottom of the arena, hand
     // the VA space back so a later mmap can reuse it. (Interior holes are left
     // as gaps — a free-list is a follow-up; the JIT pattern maps once.)

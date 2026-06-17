@@ -854,14 +854,33 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
         }
     }
 
-    uartPuts("panic: unexpected lower-EL sync exception\n")
-    uartPuts("  ESR_EL1=")
+    // Any other synchronous exception taken from EL0 is a fault in the user
+    // process, not the kernel: a BRK/trap from an aborting runtime (V8 emits
+    // `brk` on FatalProcessOutOfMemory / CHECK failures), an illegal/undefined
+    // instruction, an alignment fault, or an unhandled data/instruction abort.
+    // It must terminate the offending process with the matching signal, never
+    // halt the kernel. (A same-EL/EL1 fault routes to a different vector and is
+    // still a hard panic there.) Map the exception class to a signal, log the
+    // fault for postmortem, then zombify the process and reschedule.
+    let sig: Int
+    switch exceptionClass {
+    case 0x3C, 0x38, 0x30, 0x31, 0x32, 0x33: sig = SIGTRAP // BRK/BKPT/breakpoint/step/watchpoint
+    case 0x00, 0x0E:                         sig = SIGILL  // unknown reason / illegal execution state
+    case 0x22, 0x26:                         sig = SIGBUS  // PC / SP misalignment
+    case 0x20, 0x21, 0x24, 0x25:             sig = SIGSEGV // instruction / data abort
+    default:                                 sig = SIGILL
+    }
+    uartPuts("EL0 fault -> terminate proc by signal ")
+    uartPutHex(UInt(sig))
+    uartPuts(" ESR_EL1=")
     uartPutHex(UInt(esr))
-    uartPuts("\n  ELR_EL1=")
+    uartPuts(" ELR_EL1=")
     uartPutHex(UInt(read_elr_el1()))
-    uartPuts("\n  FAR_EL1=")
+    uartPuts(" FAR_EL1=")
     uartPutHex(UInt(read_far_el1()))
     uartPuts("\n")
+    processTerminateBySignal(sig)
+    // processTerminateBySignal does not return; guard against a future change.
     while true {}
 }
 
