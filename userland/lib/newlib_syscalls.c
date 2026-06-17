@@ -179,17 +179,30 @@ extern char __tdata_end[];
 extern char __tbss_end[];
 #define SWOS_MAIN_TLS_CAP (128 * 1024)
 static unsigned char swos_main_tls[16 + SWOS_MAIN_TLS_CAP] __attribute__((aligned(16)));
-void __swos_init_tls(void) {
+
+// Bytes a TLS block needs: 16-byte TCB + the template mem size. The
+// pthread_create trampoline mmaps one of these per created thread.
+unsigned long __swos_tls_blocksize(void) {
+    return 16 + (unsigned long)(__tbss_end - __tdata_start);
+}
+
+// Lay out a TLS block at `blk` (16-aligned, >= __swos_tls_blocksize bytes) for
+// the current thread and point tpidr_el0 at it: [16B TCB][.tdata copy][zeroed
+// .tbss]. Used for both the main thread (static block) and created threads.
+void __swos_tls_setup(void *blk) {
     unsigned long filesz = (unsigned long)(__tdata_end - __tdata_start);
     unsigned long memsz  = (unsigned long)(__tbss_end - __tdata_start);
-    unsigned char *tp = swos_main_tls;
-    if (memsz > SWOS_MAIN_TLS_CAP) { memsz = SWOS_MAIN_TLS_CAP; }
-    if (filesz > memsz) { filesz = memsz; }
+    unsigned char *tp = (unsigned char *)blk;
     unsigned long i = 0;
     for (; i < filesz; i++) { tp[16 + i] = ((const unsigned char *)__tdata_start)[i]; }
     for (; i < memsz; i++) { tp[16 + i] = 0; }
     *(void **)tp = (void *)tp;   // TCB self/dtv slot (variant I)
     __asm__ volatile("msr tpidr_el0, %0" :: "r"(tp) : "memory");
+}
+
+void __swos_init_tls(void) {
+    unsigned long memsz = (unsigned long)(__tbss_end - __tdata_start);
+    if (memsz <= SWOS_MAIN_TLS_CAP) { __swos_tls_setup(swos_main_tls); }
 }
 
 // Runtime entropy from virtio-rng (SYS_RANDOM). newlib's getentropy() wrapper

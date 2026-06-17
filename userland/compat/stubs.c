@@ -272,17 +272,20 @@ W void syslog(int priority, const char *format, ...) {
 W void closelog(void) {}
 W int setlogmask(int mask) { return mask; }
 
+// Delegate to newlib's memalign, which actually returns an aligned block and
+// whose bookkeeping free() understands. The previous stub just malloc'd and
+// failed unless the pointer happened to already be aligned -- so aligned
+// allocations (e.g. V8's Isolate and many internal structures) succeeded only
+// when malloc coincidentally returned an aligned address, which varies per boot.
+// That was THE source of node's per-boot-intermittent init crashes (a NULL from
+// a failed aligned alloc surfaced as a null-`this` ctor, a failed table, etc.).
+extern void *memalign(size_t alignment, size_t size);
 W int posix_memalign(void **memptr, size_t alignment, size_t size) {
-    if (!memptr || alignment == 0 || (alignment & (alignment - 1)) != 0 ||
-        alignment % sizeof(void *) != 0) {
+    if (!memptr || alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0) {
         return EINVAL;
     }
-    void *ptr = malloc(size);
+    void *ptr = memalign(alignment, size);
     if (!ptr) { return ENOMEM; }
-    if (((unsigned long)ptr & (alignment - 1)) != 0) {
-        free(ptr);
-        return ENOMEM;
-    }
     *memptr = ptr;
     return 0;
 }
@@ -1073,11 +1076,23 @@ void __call_exitprocs(int code, void *dso) {
     }
 }
 
+extern unsigned long __swos_tls_blocksize(void);
+extern void __swos_tls_setup(void *blk);
+
 static void pthread_trampoline(unsigned long arg) {
     struct compat_pthread_record *rec = (struct compat_pthread_record *)arg;
     while (atomic_load_u32(&rec->tid) == 0) {
         (void)futex_raw(&rec->tid, COMPAT_FUTEX_WAIT, 0);
     }
+    // Give this thread its own native-TLS block + tpidr_el0. crt0 only set up
+    // the main thread; without this, a created thread's __thread / thread_local
+    // (V8 worker threads use it heavily) reads tpidr_el0=0 and faults. Page-
+    // aligned mmap is >=16-aligned and large enough; it leaks at thread exit
+    // (threads are bounded), which is acceptable.
+    unsigned long tlssz = (__swos_tls_blocksize() + 4095UL) & ~4095UL;
+    void *tlsblk = mmap(0, tlssz, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (tlsblk != MAP_FAILED) { __swos_tls_setup(tlsblk); }
     void *retval = rec->start(rec->arg);
     pthread_exit(retval);
 }

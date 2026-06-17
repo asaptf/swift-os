@@ -52,6 +52,17 @@ if [ -f "$NCR" ] && grep -q 'static_assert(std::is_same<uid_t, uint32_t>::value)
   sed -i 's@static_assert(std::is_same<uid_t, uint32_t>::value);@/* SwiftOS: uid_t is 16-bit */@' "$NCR"
   sed -i 's@static_assert(std::is_same<gid_t, uint32_t>::value);@/* SwiftOS: gid_t is 16-bit */@' "$NCR"
 fi
+# Disable V8 leaptiering. It's the only remaining ExternalEntityTable user (the
+# sandbox, pointer compression and external-code-space are already off), and that
+# table's contiguous-reservation + fixed-base first-segment commit can't be
+# satisfied by SwiftOS's bump mmap arena -> intermittent fatal "ExternalEntityTable
+# ::InitializeTable (first segment allocation)" OOM at V8 init. Without leaptiering
+# V8 uses classic tiering (no JS dispatch table). Must run BEFORE configure (gyp
+# reads the .gypi); pair with NODE_RECONFIGURE=1 when flipping it. Idempotent.
+FG="$SRC/tools/v8_gypfiles/features.gypi"
+if [ -f "$FG" ] && grep -q "'v8_enable_leaptiering': 1" "$FG"; then
+  sed -i "s@'v8_enable_leaptiering': 1@'v8_enable_leaptiering': 0@g" "$FG"
+fi
 
 cd "$SRC"
 
