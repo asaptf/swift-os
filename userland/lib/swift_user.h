@@ -46,6 +46,8 @@ void swiftos_nanosleep(unsigned long sec, unsigned long nsec);
 int  swiftos_open(const char *path, int flags);
 long swiftos_read(int fd, void *buf, unsigned long count);
 int  swiftos_close(int fd);
+// Flush an open file's data to stable media (datafs durability). 0 on success.
+int  swiftos_fsync(int fd);
 // Reposition fd offset (whence: 0=SET, 1=CUR, 2=END). Returns new offset or <0.
 long swiftos_lseek(int fd, long offset, int whence);
 // Resize an open file to length bytes (tmpfs only). 0 on success, else <0.

@@ -78,7 +78,7 @@ PASS  package-local-install      signed .swpkg installs + verifies
   nonGoals: [
     { title: 'Not a Unix-compatibility exercise', body: 'No Linux ABI, no POSIX emulation layer. Existing binaries are recompiled against our own syscall surface, not ported.' },
     { title: 'Single architecture, on purpose', body: "AArch64 only. Supporting x86-64 would double the trusted surface for little gain to the project's goals." },
-    { title: 'Volatile by default', body: 'The base image is read-only; <code>/tmp</code> vanishes on reboot. Persistence is opt-in, never accidental.' },
+    { title: 'Volatile by default', body: 'The base image is read-only and <code>/tmp</code> vanishes on reboot; durable state is an explicit choice — you write it to the persistent <code>/data</code> tier. Persistence is opt-in, never accidental.' },
     { title: 'No ambient authority, no GPU runtime', body: "Being \"root\" grants nothing by itself, and AI hosting is CPU-only — no GPU/NPU acceleration is in scope today." }
   ],
   coverage: [
@@ -94,7 +94,7 @@ export const capabilities = [
   { name: 'QEMU virt machine', note: 'qemu-system-aarch64', status: 'Primary', variant: 'accent', detail: 'The reference target; every gate runs here.', order: 2 },
   { name: 'UEFI / GPT boot', note: 'BOOTAA64.EFI · make disk-run', status: 'Works', variant: 'ok', detail: 'Signed image, GPT-partitioned, AAVMF firmware.', order: 3 },
   { name: 'Swift userland', note: 'shell + native tools at EL0', status: 'Works', variant: 'ok', detail: 'ls, cat, ps, top, id, httpd, ssh — Embedded Swift.', order: 4 },
-  { name: 'Two-tier filesystem', note: 'ro base.img + tmpfs /tmp', status: 'Works', variant: 'ok', detail: 'Signed packed base; writable tier is volatile.', order: 5 },
+  { name: 'Three-tier storage', note: 'ro base.img · tmpfs /tmp · /data', status: 'Works', variant: 'ok', detail: 'Signed packed base, volatile /tmp, and a persistent on-disk /data (datafs) that survives reboot; crash-safe SQLite via fsync.', order: 5 },
   { name: 'Networking', note: 'in-kernel TCP/IP · virtio-net', status: 'Works', variant: 'ok', detail: 'IPv4, DHCP, DNS, TCP/UDP, ICMP/ARP. IPv6 partial.', order: 6 },
   { name: 'HTTP server', note: '/bin/httpd · :8080', status: 'Works', variant: 'ok', detail: 'Concurrent poll-driven static server with MIME + listings.', order: 7 },
   { name: 'AI inference', note: '/bin/llmd · TinyStories', status: 'Works', variant: 'ok', detail: 'Native Swift transformer over HTTP. CPU proof, not a GPU runtime.', order: 8 },
@@ -113,11 +113,11 @@ export const roadmapItems = [
   { phase: 'done', label: 'TinyStories inference (<code>/bin/llmd</code>)', order: 4 },
   { phase: 'done', label: 'Signed base image + .swpkg packages', order: 5 },
   { phase: 'done', label: 'Try-in-browser (qemu-wasm) demo', order: 6 },
+  { phase: 'done', label: 'Persistent <code>/data</code> filesystem (datafs)', order: 7 },
   { phase: 'active', label: 'Typed capability handles (C5–C6)', order: 7 },
   { phase: 'active', label: 'SMP scheduling (S3–S5)', order: 8 },
   { phase: 'active', label: 'Restartable driver services', order: 9 },
   { phase: 'active', label: 'TLS 1.3 record layer + cert verification', order: 10 },
-  { phase: 'planned', label: 'Persistent writable volumes', order: 11 },
   { phase: 'planned', label: 'Node.js / JVM hosting (Phase 2)', order: 12 },
   { phase: 'planned', label: 'Real-hardware AArch64 boards', order: 13 }
 ];
@@ -157,7 +157,8 @@ export const glossaryTerms = [
   { key: 'mmu', definition: 'Memory Management Unit — hardware that maps virtual addresses to physical ones. swift-os uses it to give each process its own isolated address space (its own TTBR0).' },
   { key: 'capability', definition: 'An unforgeable token granting a specific right to a specific object. Authority comes from holding the capability — not from being user 0. swift-os is moving from capability bits to typed handles.' },
   { key: 'embedded swift', definition: 'A mode of Swift that compiles without the full runtime, standard library, or garbage collector — suitable for freestanding kernel and bare-metal code. The whole swift-os kernel is written in it.' },
-  { key: 'tmpfs', definition: 'A filesystem that lives in RAM. Fast, and it vanishes on reboot — swift-os mounts writable /tmp this way over a signed read-only base image.' },
+  { key: 'tmpfs', definition: 'A filesystem that lives in RAM. Fast, and it vanishes on reboot — swift-os mounts writable /tmp this way over a signed read-only base image. Durable state goes to /data instead.' },
+  { key: 'datafs', definition: 'swift-os’s persistent on-disk filesystem, mounted at /data on a dedicated virtio-blk data disk. Unlike the read-only base image and the RAM-backed /tmp, files written under /data survive reboot; SQLite databases there are crash-safe via fsync.' },
   { key: 'virtio-net', definition: 'A paravirtualized network device. Under QEMU it is the NIC the in-kernel pure-Swift TCP/IP stack drives.' },
   { key: 'uefi', definition: 'Unified Extensible Firmware Interface — the modern firmware standard that hands control to the bootloader (BOOTAA64.EFI), replacing legacy BIOS.' },
   { key: 'syscall', definition: 'A controlled doorway from EL0 into EL1: a userland program requests a privileged operation and the kernel decides whether to perform it. swift-os has its own POSIX-like syscall surface, not the Linux ABI.' },
@@ -171,7 +172,7 @@ export const faqs = [
   { question: 'Does it really serve HTTP and run AI?', answerHtml: 'Yes — the in-kernel TCP/IP stack, <code>/bin/httpd</code>, and <code>/bin/llmd</code> (a TinyStories transformer over HTTP) are real and tested. <code>llmd</code> is a CPU proof-of-concept, not a general GPU model runtime. <em>This marketing site</em> is built with SvelteKit + Strapi — but you can boot swift-os in your browser and hit its httpd yourself.', category: 'General', order: 3 },
   { question: 'What hardware does it run on?', answerHtml: 'AArch64 under QEMU <code>virt</code> is the reference target (direct <code>-kernel</code> and UEFI/GPT). Real AArch64 boards are planned; x86-64 is a deliberate non-goal.', category: 'Running it', order: 4 },
   { question: 'How do I run it?', answerHtml: 'Clone the repo, install QEMU + the Swift toolchain, then <code>make newlib busybox</code> once, and <code>make build base-image build/virt.dtb && make run</code>. See the Quickstart, or try it in your browser with zero setup.', category: 'Running it', order: 5 },
-  { question: 'Does anything persist across reboots?', answerHtml: 'Not by default. The base image is read-only and <code>/tmp</code> is a tmpfs that vanishes on reboot. Persistent writable volumes are on the roadmap; for now, persistence is deliberate, never accidental.', category: 'Running it', order: 6 },
+  { question: 'Does anything persist across reboots?', answerHtml: 'Yes — anything you write under <code>/data</code>. swift-os has three storage tiers: a signed <strong>read-only</strong> base image, a <strong>volatile</strong> RAM tmpfs at <code>/tmp</code> that vanishes on reboot, and a <strong>persistent</strong> on-disk filesystem (datafs) mounted at <code>/data</code> on its own virtio-blk disk. SQLite databases under <code>/data</code> survive reboot and are crash-safe via <code>fsync</code>; <code>/tmp</code> and the read-only base are not for durable state.', category: 'Running it', order: 6 },
   { question: 'Is it multi-core yet?', answerHtml: 'Partly. It boots and runs restricted tests with <code>-smp 4</code> (S0–S2 of the SMP arc are done); full per-CPU scheduling, TLB shootdown, and arbitrary secondary EL0 execution (S3–S5) are active work.', category: 'Running it', order: 7 },
   { question: 'Can I run Node.js or a JVM?', answerHtml: 'Not yet. The libc surface, threading model, and syscall set are kept so as not to foreclose them, but Node.js / JVM hosting is recorded Phase-2 design, not something you can run today.', category: 'Roadmap', order: 8 }
 ];
@@ -244,7 +245,7 @@ The flagship profile is application and AI hosting. A native HTTP server and a n
 1. **Firmware** — QEMU \`virt\`, or a UEFI environment that loads \`BOOTAA64.EFI\` and calls \`ExitBootServices\`.
 2. The **kernel** takes over at EL1, brings up an early UART console, builds translation tables, and enables the MMU.
 3. It initializes the GIC and the generic timer, then the scheduler and process substrate.
-4. It mounts the **two-tier filesystem**: a signed, read-only packed base over a RAM tmpfs at \`/tmp\`.
+4. It mounts the **three storage tiers**: a signed, read-only packed base, a RAM tmpfs at \`/tmp\`, and — when a data disk is present — the persistent \`/data\` filesystem (datafs).
 5. It spawns \`/bin/swos-init\` → \`/bin/console-login\` → the shell.
 
 ## Why determinism matters

@@ -398,7 +398,9 @@ USER_PKG_ELF := $(BUILD)/pkg.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
 USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
+USER_ACME_ELF := $(BUILD)/acme.elf
 BASE_EXEC_ELFS := \
+	$(USER_ACME_ELF) \
 	$(USER_NODE_ELF) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
@@ -495,7 +497,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -737,9 +739,18 @@ $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile
 
 # /bin/tlsget links the pure-Swift TLS 1.3 client + crypto into one module
 # (mirrors the host tls_handshake_test target and the console-login+sha256 rule).
-TLS_SWIFT_SRCS := userland/lib/tls13.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+TLS_SWIFT_SRCS := userland/lib/tls13.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
 $(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) -o $@
+
+# /bin/acme links the ACME message layer + JOSE/ASN.1 + P-256 over the same
+# TLS 1.3 client as tlsget, all into one Embedded module.
+ACME_SWIFT_SRCS := userland/lib/acme.swift userland/lib/jose.swift userland/lib/asn1.swift \
+  userland/lib/tls13.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift \
+  kernel/crypto/p256.swift kernel/crypto/sha256.swift \
+  kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+$(BUILD)/user_acme.o: userland/acme_client.swift $(ACME_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/acme_client.swift $(ACME_SWIFT_SRCS) -o $@
 
 $(BUILD)/user_httpd.o: userland/httpd.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/httpd.swift -o $@
@@ -952,6 +963,9 @@ $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/use
 
 $(USER_TLSGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o -o $@
+
+$(USER_ACME_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o -o $@
 
 $(USER_HTTPD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_httpd.o -o $@
@@ -1329,7 +1343,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/hkdf_test
 	$(HOST_SWIFTC) tests/x25519_test.swift kernel/crypto/x25519.swift -o $(BUILD)/x25519_test
 	$(BUILD)/x25519_test
-	$(HOST_SWIFTC) tests/tls_handshake_test.swift userland/lib/tls13.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/tls_handshake_test
+	$(HOST_SWIFTC) tests/tls_handshake_test.swift userland/lib/tls13.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/tls_handshake_test
 	$(BUILD)/tls_handshake_test
 	$(HOST_SWIFTC) tests/llm_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_engine_test
 	$(BUILD)/llm_engine_test
@@ -1339,6 +1353,21 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/llm_bundle_test
 	$(HOST_SWIFTC) -O tests/ed25519_test.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $(BUILD)/ed25519_test
 	$(BUILD)/ed25519_test
+	$(HOST_SWIFTC) -O tests/p256_test.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/p256_test
+	$(BUILD)/p256_test
+	$(HOST_SWIFTC) -O tests/jose_test.swift userland/lib/jose.swift userland/lib/asn1.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/jose_test
+	$(BUILD)/jose_test
+	$(HOST_SWIFTC) -O tests/acme_test.swift userland/lib/acme.swift userland/lib/jose.swift userland/lib/asn1.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/acme_test
+	$(BUILD)/acme_test
+	$(HOST_SWIFTC) -O tests/x509_test.swift userland/lib/x509.swift -o $(BUILD)/x509_test
+	$(BUILD)/x509_test
+	$(HOST_SWIFTC) -O tests/rsa_test.swift userland/lib/rsa.swift kernel/crypto/sha256.swift -o $(BUILD)/rsa_test
+	$(BUILD)/rsa_test
+	$(HOST_SWIFTC) -O tests/x509_verify_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_verify_test
+	$(BUILD)/x509_verify_test
+	$(HOST_SWIFTC) -O tests/x509_chain_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_chain_test
+	$(BUILD)/x509_chain_test
+	./tests/tls_verify_test.sh
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/log_export_test.sh
@@ -1554,6 +1583,18 @@ nginx-data-test: build $(QEMU_DTB) base-image
 # TCP MSG_PEEK for TLS detection. Needs the base image and host curl.
 nginx-tls-test: build $(QEMU_DTB) base-image
 	./tests/nginx_tls_test.sh
+
+acme-mock-test: build $(QEMU_DTB) base-image
+	./tests/acme_mock_test.sh
+
+acme-persist-test: build $(QEMU_DTB) base-image
+	./tests/acme_persist_test.sh
+
+acme-verify-test: build $(QEMU_DTB) base-image
+	./tests/acme_verify_test.sh
+
+tls-verify-test:
+	./tests/tls_verify_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
@@ -2209,6 +2250,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_MMAPDEMO_ELF) $(BASE_ROOT)/bin/mmapdemo
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
+	cp $(USER_ACME_ELF) $(BASE_ROOT)/bin/acme
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_SSH_ELF) $(BASE_ROOT)/bin/ssh
 	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd

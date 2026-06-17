@@ -262,7 +262,28 @@ final class TLS13Client {
     /// Last error code (for diagnostics); 0 == none.
     private(set) var lastError: Int = 0
 
+    // Optional server-certificate verification (opt-in; default off preserves the
+    // legacy unauthenticated behavior). Only ECDSA-P256 leaves are supported for
+    // CertificateVerify; RSA-PSS leaves are not implemented.
+    private var verifyEnabled = false
+    private var trustRoots: [X509Cert] = []
+    private var expectHostname: String = ""
+    private var verifyNow: UInt64 = 0
+    private var chainLeaf: X509Cert? = nil
+    private var chainInters: [X509Cert] = []
+
     init() {}
+
+    /// Enable certificate verification before the handshake reaches the server
+    /// Certificate. `rootsDER` are trusted self-signed roots; the leaf must chain
+    /// to one, be valid at `now` (YYYYMMDDHHMMSS), and carry `hostname` in its SAN.
+    func enableVerification(rootsDER: [[UInt8]], hostname: String, now: UInt64) {
+        trustRoots = []
+        for d in rootsDER { if let c = parseX509(d) { trustRoots.append(c) } }
+        expectHostname = hostname
+        verifyNow = now
+        verifyEnabled = true
+    }
 
     // MARK: Public sans-IO surface
 
@@ -691,9 +712,22 @@ final class TLS13Client {
             // we must not fold it in.
             _ = full; _ = fullLen
             return true
-        case hsEncryptedExtensions, hsCertificate, hsCertificateVerify:
-            // We do not parse these (no cert verification — see the file header).
-            // They are folded into the transcript so the server Finished verifies.
+        case hsEncryptedExtensions:
+            // Folded into the transcript so the server Finished verifies.
+            transcriptAppend(full, fullLen)
+            return true
+        case hsCertificate:
+            transcriptAppend(full, fullLen)
+            if verifyEnabled && !parseCertificateMessage(full: full, fullLen: fullLen) {
+                lastError = 120; return false
+            }
+            return true
+        case hsCertificateVerify:
+            // The signed content uses Hash(CH..Certificate), i.e. the transcript
+            // BEFORE CertificateVerify is folded in — so verify, then append.
+            if verifyEnabled && !verifyCertificateVerify(full: full, fullLen: fullLen) {
+                return false   // verifyCertificateVerify set lastError
+            }
             transcriptAppend(full, fullLen)
             return true
         case hsFinished:
@@ -733,6 +767,68 @@ final class TLS13Client {
             lastError = 118
             return false
         }
+    }
+
+    /// Parse a TLS 1.3 Certificate message (RFC 8446 §4.4.2) into the leaf and
+    /// intermediate X.509 certs. `full` includes the 4-byte handshake header.
+    private func parseCertificateMessage(full: UnsafeRawPointer, fullLen: Int) -> Bool {
+        var p = [UInt8](); p.reserveCapacity(fullLen)
+        for i in 0..<fullLen { p.append(tb(full, i)) }
+        var idx = 4                                   // skip handshake header
+        if idx >= p.count { return false }
+        let ctxLen = Int(p[idx]); idx += 1 + ctxLen   // certificate_request_context
+        if idx + 3 > p.count { return false }
+        let listLen = (Int(p[idx]) << 16) | (Int(p[idx + 1]) << 8) | Int(p[idx + 2]); idx += 3
+        let listEnd = idx + listLen
+        if listEnd > p.count { return false }
+        var certs: [X509Cert] = []
+        while idx + 3 <= listEnd {
+            let clen = (Int(p[idx]) << 16) | (Int(p[idx + 1]) << 8) | Int(p[idx + 2]); idx += 3
+            if idx + clen > listEnd { return false }
+            let der = Array(p[idx..<idx + clen]); idx += clen
+            if idx + 2 > listEnd { return false }
+            let extLen = (Int(p[idx]) << 8) | Int(p[idx + 1]); idx += 2 + extLen
+            guard let c = parseX509(der) else { return false }
+            certs.append(c)
+        }
+        if certs.isEmpty { return false }
+        chainLeaf = certs[0]
+        chainInters = Array(certs[1...])
+        return true
+    }
+
+    /// Verify the server CertificateVerify (RFC 8446 §4.4.3) signature over the
+    /// CH..Certificate transcript with the leaf key (ECDSA-P256 only), then run
+    /// the full chain/host/date validation. Sets lastError and returns false on
+    /// any failure.
+    private func verifyCertificateVerify(full: UnsafeRawPointer, fullLen: Int) -> Bool {
+        guard let leaf = chainLeaf else { lastError = 121; return false }
+        if fullLen < 8 { lastError = 122; return false }
+        let scheme = (Int(tb(full, 4)) << 8) | Int(tb(full, 5))
+        let sigLen = (Int(tb(full, 6)) << 8) | Int(tb(full, 7))
+        if 8 + sigLen > fullLen { lastError = 123; return false }
+        var sig = [UInt8](); sig.reserveCapacity(sigLen)
+        for i in 0..<sigLen { sig.append(tb(full, 8 + i)) }
+
+        var th = [UInt8](repeating: 0, count: 32)
+        th.withUnsafeMutableBytes { transcriptHash($0.baseAddress!) }   // Hash(CH..Certificate)
+
+        // signed content = 0x20*64 ‖ "TLS 1.3, server CertificateVerify" ‖ 0x00 ‖ th
+        var content = [UInt8](repeating: 0x20, count: 64)
+        content += Array("TLS 1.3, server CertificateVerify".utf8)
+        content.append(0x00)
+        content += th
+        var h = [UInt8](repeating: 0, count: 32)
+        content.withUnsafeBytes { cp in
+            h.withUnsafeMutableBytes { hp in sha256(cp.baseAddress!, content.count, hp.baseAddress!) }
+        }
+
+        if scheme != 0x0403 { lastError = 124; return false }   // ecdsa_secp256r1_sha256 only
+        if !ecdsaP256VerifyDER(point65: leaf.spkiKey, hash32: h, derSig: sig) { lastError = 125; return false }
+
+        if !x509VerifyChain(leaf: leaf, intermediates: chainInters, roots: trustRoots,
+                            hostname: expectHostname, now: verifyNow) { lastError = 126; return false }
+        return true
     }
 
     /// After verifying the server Finished: derive the master secret + app traffic
