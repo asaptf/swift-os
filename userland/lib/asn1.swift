@@ -129,3 +129,63 @@ func acmeCSR(dnsNames: [[UInt8]], pubX: [UInt8], pubY: [UInt8], priv32: [UInt8])
     let signature = derBitString(ecdsaSigValueDER(r, s))
     return derSequence([tbs, sigAlg, signature])
 }
+
+// MARK: - EC private key (SEC1) + PEM
+
+private let B64_STD: [UInt8] =
+    Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".utf8)
+
+/// Standard base64 with '=' padding (RFC 4648 §4).
+func base64StdEncode(_ data: [UInt8]) -> [UInt8] {
+    var out = [UInt8]()
+    var i = 0
+    while i + 3 <= data.count {
+        let n = (UInt32(data[i]) << 16) | (UInt32(data[i + 1]) << 8) | UInt32(data[i + 2])
+        out.append(B64_STD[Int((n >> 18) & 0x3f)]); out.append(B64_STD[Int((n >> 12) & 0x3f)])
+        out.append(B64_STD[Int((n >> 6) & 0x3f)]);  out.append(B64_STD[Int(n & 0x3f)])
+        i += 3
+    }
+    let rem = data.count - i
+    if rem == 1 {
+        let n = UInt32(data[i]) << 16
+        out.append(B64_STD[Int((n >> 18) & 0x3f)]); out.append(B64_STD[Int((n >> 12) & 0x3f)])
+        out.append(0x3D); out.append(0x3D)
+    } else if rem == 2 {
+        let n = (UInt32(data[i]) << 16) | (UInt32(data[i + 1]) << 8)
+        out.append(B64_STD[Int((n >> 18) & 0x3f)]); out.append(B64_STD[Int((n >> 12) & 0x3f)])
+        out.append(B64_STD[Int((n >> 6) & 0x3f)]); out.append(0x3D)
+    }
+    return out
+}
+
+/// Wrap DER in a PEM block ("-----BEGIN <label>-----" … 64-col base64 … END).
+func pemWrap(_ der: [UInt8], _ label: StaticString) -> [UInt8] {
+    var lbl = [UInt8](); label.withUTF8Buffer { bp in for b in bp { lbl.append(b) } }
+    let b64 = base64StdEncode(der)
+    var out: [UInt8] = []
+    out += Array("-----BEGIN ".utf8); out += lbl; out += Array("-----\n".utf8)
+    var i = 0
+    while i < b64.count {
+        let end = min(i + 64, b64.count)
+        out += Array(b64[i..<end]); out.append(0x0A)
+        i = end
+    }
+    out += Array("-----END ".utf8); out += lbl; out += Array("-----\n".utf8)
+    return out
+}
+
+/// SEC1 ECPrivateKey (RFC 5915) DER for a P-256 key: version 1, the 32-byte
+/// scalar, the namedCurve parameters, and the public point.
+func ecPrivateKeyDER(priv32: [UInt8], pubX: [UInt8], pubY: [UInt8]) -> [UInt8] {
+    let version = derTLV(0x02, [0x01])
+    let pk = derTLV(0x04, priv32)                 // OCTET STRING, the raw scalar
+    let params = derTLV(0xA0, derOID(OID_P256))   // [0] EXPLICIT namedCurve
+    var point: [UInt8] = [0x04]; point += pubX; point += pubY
+    let pub = derTLV(0xA1, derBitString(point))   // [1] EXPLICIT publicKey
+    return derSequence([version, pk, params, pub])
+}
+
+/// PEM-encoded SEC1 EC private key (nginx's ssl_certificate_key form).
+func ecPrivateKeyPEM(priv32: [UInt8], pubX: [UInt8], pubY: [UInt8]) -> [UInt8] {
+    pemWrap(ecPrivateKeyDER(priv32: priv32, pubX: pubX, pubY: pubY), "EC PRIVATE KEY")
+}

@@ -19,6 +19,7 @@
 //    for the mock/Pebble test harness, but real Let's Encrypt use needs X.509
 //    verification (a separate track; see the tls13.swift header).
 
+private let oRdOnly: Int32 = 0
 private let oWrOnly: Int32 = 1
 private let oCreat: Int32 = 0x40
 private let oTrunc: Int32 = 0x80
@@ -279,6 +280,7 @@ private func writeFile(_ path: [UInt8], _ data: [UInt8]) -> Bool {
     data.withUnsafeBytes {
         if swiftos_write(fd, $0.baseAddress!, UInt($0.count)) != Int(data.count) { ok = false }
     }
+    _ = swiftos_fsync(fd)   // durability: the cert must survive reboot on /data
     _ = swiftos_close(fd)
     return ok
 }
@@ -290,6 +292,54 @@ private func mkdirC(_ path: [UInt8]) {
     }
 }
 
+private func withCPath<T>(_ path: [UInt8], _ body: (UnsafePointer<CChar>) -> T) -> T {
+    var p = path; p.append(0)
+    return p.withUnsafeBufferPointer { bp in
+        bp.baseAddress!.withMemoryRebound(to: CChar.self, capacity: p.count) { body($0) }
+    }
+}
+
+private func fileExists(_ path: [UInt8]) -> Bool {
+    var mode: UInt32 = 0, uid: UInt32 = 0, gid: UInt32 = 0, nlink: UInt32 = 0
+    var size: UInt = 0, mtime: UInt = 0
+    return withCPath(path) { swiftos_stat($0, &mode, &uid, &gid, &nlink, &size, &mtime) } == 0
+}
+
+/// Read up to `cap` bytes of a file, or nil if it cannot be opened.
+private func readFile(_ path: [UInt8], _ cap: Int) -> [UInt8]? {
+    let fd = withCPath(path) { swiftos_open($0, oRdOnly) }
+    if fd < 0 { return nil }
+    var out = [UInt8]()
+    let buf = UnsafeMutableRawPointer.allocate(byteCount: 4096, alignment: 16)
+    defer { buf.deallocate() }
+    while out.count < cap {
+        let r = swiftos_read(fd, buf, 4096)
+        if r <= 0 { break }
+        let bp = UnsafeRawBufferPointer(start: buf, count: Int(r))
+        for b in bp { out.append(b) }
+    }
+    _ = swiftos_close(fd)
+    return out
+}
+
+/// Load the account key from <statedir>/account.key, or generate and persist a
+/// fresh one. Returns the key and whether it was newly generated.
+private func loadOrCreateAccountKey(_ statedir: [UInt8]) -> (key: (priv: [UInt8], x: [UInt8], y: [UInt8]), fresh: Bool)? {
+    mkdirC(statedir)
+    var keyPath = statedir; keyPath += a("/account.key")
+    if let raw = readFile(keyPath, 32), raw.count == 32 {
+        var x = [UInt8](repeating: 0, count: 32)
+        var y = [UInt8](repeating: 0, count: 32)
+        var ok = false
+        raw.withUnsafeBytes { pp in x.withUnsafeMutableBytes { xp in y.withUnsafeMutableBytes { yp in
+            ok = p256DerivePublic(pp.baseAddress!, xp.baseAddress!, yp.baseAddress!) } } }
+        if ok { return ((raw, x, y), false) }
+    }
+    guard let k = genKey() else { return nil }
+    if !writeFile(keyPath, k.priv) { return nil }
+    return (k, true)
+}
+
 // MARK: - main
 
 @_cdecl("main")
@@ -298,7 +348,7 @@ func main(_ argc: Int32,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     if argc < 7 {
-        emitLine("acme: usage: acme <ip> <port> <dir-path> <domain> <webroot> <cert-out>")
+        emitLine("acme: usage: acme <ip> <port> <dir-path> <domain> <webroot> <statedir> [--force]")
         return 2
     }
     let ipStr = String(decoding: cstr(argv?[1]), as: UTF8.self)
@@ -306,10 +356,25 @@ func main(_ argc: Int32,
     let dirPath = String(decoding: cstr(argv?[3]), as: UTF8.self)
     let domain = String(decoding: cstr(argv?[4]), as: UTF8.self)
     let webroot = cstr(argv?[5])
-    let certOut = cstr(argv?[6])
+    let statedir = cstr(argv?[6])
+    var force = false
+    if argc >= 8 { force = cstr(argv?[7]) == a("--force") }
 
-    guard let acc = genKey(), let cert = genKey() else { emitLine("acme: FAIL keygen"); return 1 }
-    emitLine("acme: keys generated")
+    // Persistent state layout under <statedir>: account.key, <domain>/{cert,key}.pem
+    var certDir = statedir; certDir.append(0x2F); certDir += Array(domain.utf8)
+    var certPath = certDir; certPath += a("/cert.pem")
+    var keyPath = certDir; keyPath += a("/key.pem")
+
+    // Idempotency / renewal guard: an existing cert is kept unless --force.
+    if !force && fileExists(certPath) {
+        emitLine("acme: certificate already present")
+        return 0
+    }
+
+    guard let accPair = loadOrCreateAccountKey(statedir) else { emitLine("acme: FAIL account key"); return 1 }
+    let acc = accPair.key
+    emitLine(accPair.fresh ? "acme: account key generated" : "acme: account key loaded")
+    guard let cert = genKey() else { emitLine("acme: FAIL keygen"); return 1 }
 
     // 1. directory
     var durl = a("https://")
@@ -405,7 +470,12 @@ func main(_ argc: Int32,
     let protCert = acmeProtectedKID(nonce: nonce, url: cu, kid: kid)
     guard let cr = signedPOST(url: cu, protectedHdr: protCert, payload: acmePostAsGetPayload(), priv: acc.priv)
         else { emitLine("acme: FAIL cert download"); return 1 }
-    if !writeFile(certOut, cr.body) { emitLine("acme: FAIL write cert"); return 1 }
+
+    // Persist the chain and a PEM EC key (nginx ssl_certificate / _key form).
+    mkdirC(certDir)
+    if !writeFile(certPath, cr.body) { emitLine("acme: FAIL write cert"); return 1 }
+    let keyPEM = ecPrivateKeyPEM(priv32: cert.priv, pubX: cert.x, pubY: cert.y)
+    if !writeFile(keyPath, keyPEM) { emitLine("acme: FAIL write key"); return 1 }
     emitKV("acme: certificate obtained bytes=", decimal(UInt(cr.body.count)))
     return 0
 }

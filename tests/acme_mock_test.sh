@@ -105,7 +105,7 @@ require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
 require_await "Welcome to swift-os, root" 40
 require_await "built-in shell (ash)" 60
-send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /tmp/acme-cert.pem"
+send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /tmp/acmestate"
 await "acme: certificate obtained" 120 || true
 exec 3>&-
 stop_all
@@ -113,7 +113,7 @@ QP=""; SPID=""
 
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
-for m in "acme: keys generated" "acme: directory ok" "acme: account registered" \
+for m in "acme: account key generated" "acme: directory ok" "acme: account registered" \
          "acme: order created" "acme: wrote challenge file" "acme: authorization valid" \
          "acme: finalized"; do
   grep -qF "$m" <<<"$clean" || { echo "FAIL: missing stage marker: $m" >&2; ok=0; }

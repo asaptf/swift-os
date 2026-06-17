@@ -145,6 +145,10 @@ int swiftos_close(int fd) {
     return close(fd);
 }
 
+int swiftos_fsync(int fd) {
+    return (int)__syscall3(SYS_FSYNC, (long)fd, 0, 0);
+}
+
 long swiftos_lseek(int fd, long offset, int whence) {
     return __syscall3(SYS_LSEEK, fd, offset, whence);
 }

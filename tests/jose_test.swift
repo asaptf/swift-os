@@ -128,6 +128,19 @@ struct JoseTest {
         check(ok && verifySig(pubX, pubY, sha(tbs), cr, cs), "CSR self-signature valid")
         check(contains(csr, derBitString(ecdsaSigValueDER(cr, cs))), "CSR carries the DER signature")
 
+        // ---- 5. standard base64 + EC private key PEM ----------------------
+        check(str(base64StdEncode(bytes("foobar"))) == "Zm9vYmFy", "b64std foobar")
+        check(str(base64StdEncode(bytes("fo"))) == "Zm8=", "b64std pad1")
+        check(str(base64StdEncode(bytes("f"))) == "Zg==", "b64std pad2")
+        let pem = str(ecPrivateKeyPEM(priv32: priv, pubX: pubX, pubY: pubY))
+        check(pem.hasPrefix("-----BEGIN EC PRIVATE KEY-----\n"), "EC key PEM header")
+        check(pem.hasSuffix("-----END EC PRIVATE KEY-----\n"), "EC key PEM footer")
+        let kder = ecPrivateKeyDER(priv32: priv, pubX: pubX, pubY: pubY)
+        check(kder[0] == 0x30, "EC key DER is a SEQUENCE")
+        check(contains(kder, derTLV(0x04, priv)), "EC key DER carries the scalar")
+        var point: [UInt8] = [0x04]; point += pubX; point += pubY
+        check(contains(kder, point), "EC key DER carries the public point")
+
         if failed {
             FileHandle.standardError.write(Data("jose_test: FAILED\n".utf8))
             exit(1)
