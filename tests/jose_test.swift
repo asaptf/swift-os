@@ -141,6 +141,14 @@ struct JoseTest {
         var point: [UInt8] = [0x04]; point += pubX; point += pubY
         check(contains(kder, point), "EC key DER carries the public point")
 
+        // ---- 6. PEM certificate reader round-trip ----
+        let der1 = hex("3003010203"); let der2 = hex("300602010102017f")
+        var pemBundle = pemWrap(der1, "CERTIFICATE")
+        pemBundle += pemWrap(der2, "CERTIFICATE")
+        let read = pemReadCertificates(pemBundle)
+        check(read.count == 2, "pemReadCertificates found both blocks (got \(read.count))")
+        check(read.first == der1 && read.count > 1 && read[1] == der2, "pemReadCertificates round-trips DER")
+
         if failed {
             FileHandle.standardError.write(Data("jose_test: FAILED\n".utf8))
             exit(1)

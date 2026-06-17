@@ -24,6 +24,12 @@ private let oWrOnly: Int32 = 1
 private let oCreat: Int32 = 0x40
 private let oTrunc: Int32 = 0x80
 
+// Optional TLS server-certificate verification (set from --ca). When enabled,
+// every HTTPS connection authenticates the server against these roots.
+private var gVerifyEnabled = false
+private var gVerifyRoots: [[UInt8]] = []
+private var gVerifyNow: UInt64 = 0
+
 // MARK: - small output helpers
 
 private func a(_ s: StaticString) -> [UInt8] {
@@ -156,6 +162,11 @@ private func httpsExchange(_ t: Target, _ request: [UInt8]) -> [UInt8]? {
     if fd < 0 { return nil }
     if swiftos_connect(fd, t.ip, t.port) != 0 { _ = swiftos_close(fd); return nil }
     let client = TLS13Client()
+    if gVerifyEnabled {
+        client.enableVerification(rootsDER: gVerifyRoots,
+                                  hostname: String(decoding: t.host, as: UTF8.self),
+                                  now: gVerifyNow)
+    }
     var sk = [UInt8](repeating: 0, count: 32)
     var ch = [UInt8](repeating: 0, count: 32)
     sk.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
@@ -358,7 +369,27 @@ func main(_ argc: Int32,
     let webroot = cstr(argv?[5])
     let statedir = cstr(argv?[6])
     var force = false
-    if argc >= 8 { force = cstr(argv?[7]) == a("--force") }
+    var caPath: [UInt8]? = nil
+    var ai = 7
+    while ai < Int(argc) {
+        let arg = cstr(argv?[ai])
+        if arg == a("--force") { force = true; ai += 1 }
+        else if arg == a("--ca") && ai + 1 < Int(argc) { caPath = cstr(argv?[ai + 1]); ai += 2 }
+        else { ai += 1 }
+    }
+
+    // --ca enables TLS server-certificate verification against the given roots.
+    if let cp = caPath {
+        guard let pem = readFile(cp, 1 << 18) else {
+            emitLine("acme: FAIL read ca"); return 1
+        }
+        let roots = pemReadCertificates(pem)
+        if roots.isEmpty { emitLine("acme: FAIL no certs in ca"); return 1 }
+        gVerifyRoots = roots
+        gVerifyNow = unixToYYYYMMDDHHMMSS(UInt64(swiftos_time()))
+        gVerifyEnabled = true
+        emitLine("acme: verification enabled")
+    }
 
     // Persistent state layout under <statedir>: account.key, <domain>/{cert,key}.pem
     var certDir = statedir; certDir.append(0x2F); certDir += Array(domain.utf8)

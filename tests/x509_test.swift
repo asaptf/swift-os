@@ -75,6 +75,15 @@ struct X509Test {
         check(ca.subject == leaf.issuer, "leaf.issuer == ca.subject (chain link)")
         check(ca.subject == ca.issuer, "CA is self-signed (subject == issuer)")
 
+        // ---- IP + DNS SubjectAltName ----
+        let ipsanB64 = "MIIBpjCCAUygAwIBAgIUdEXFkHfRMNu3lv7ux0lu016OzB0wCgYIKoZIzj0EAwIwGDEWMBQGA1UEAwwNaXBzYW4uZXhhbXBsZTAgFw0yNjA2MTcxNTUzNTBaGA8yMTI2MDUyNDE1NTM1MFowGDEWMBQGA1UEAwwNaXBzYW4uZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABK4gJtEE8NI22QNGfrctc2ytPNKQa4k+bBJM8+/mW0a9CuIqzVXINL395wpqTd2hmiY4NNpCpaOY/Ii4Cvj+p1qjcjBwMB0GA1UdDgQWBBTH0RL9TnlYbtHaRn2V2yMARAvFIDAfBgNVHSMEGDAWgBTH0RL9TnlYbtHaRn2V2yMARAvFIDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdEQQWMBSCDHNpdGUuZXhhbXBsZYcECgACAjAKBggqhkjOPQQDAgNIADBFAiAFaqYgJCGmehj6qNVUzWlIYxOGi2xwoImqkWSyJ0mBDgIhALCDurmgBhePXoMYU46tBhVbS94KDrgPOUE1kP8fQm8q"
+        guard let ipc = parseX509(b64d(ipsanB64)) else {
+            FileHandle.standardError.write(Data("FAIL: ip-san cert did not parse\n".utf8)); exit(1)
+        }
+        check(ipc.ipSANs == ["10.0.2.2"], "iPAddress SAN parsed (got \(ipc.ipSANs))")
+        check(ipc.dnsNames == ["site.example"], "dNSName SAN alongside IP (got \(ipc.dnsNames))")
+        check(ipc.isCA, "ip-san fixture is a CA")
+
         if failed {
             FileHandle.standardError.write(Data("x509_test: FAILED\n".utf8)); exit(1)
         }

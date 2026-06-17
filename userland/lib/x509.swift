@@ -71,6 +71,7 @@ struct X509Cert {
     var spkiKey: [UInt8]      // subjectPublicKey BIT STRING content (unused-bits byte removed)
     var spki: [UInt8]         // full SubjectPublicKeyInfo TLV (for key reuse)
     var dnsNames: [String]
+    var ipSANs: [String]      // iPAddress SANs, dotted-decimal (IPv4)
     var isCA: Bool
 }
 
@@ -147,6 +148,7 @@ func parseX509(_ der: [UInt8]) -> X509Cert? {
 
     // extensions: the [3] EXPLICIT element among the remaining TBS children
     var dnsNames: [String] = []
+    var ipSANs: [String] = []
     var isCA = false
     while i < k.count {
         if k[i].tag == 0xA3 {
@@ -159,8 +161,22 @@ func parseX509(_ der: [UInt8]) -> X509Cert? {
                     guard let valT = ec.last, valT.tag == 0x04 else { continue }  // extnValue OCTET STRING
                     if oid == OID_SAN {
                         if let names = derAt(der, valT.cstart) {                  // GeneralNames SEQUENCE
-                            for gn in derChildren(der, names) where gn.tag == 0x82 {
-                                dnsNames.append(String(decoding: der[gn.cstart..<gn.end], as: UTF8.self))
+                            for gn in derChildren(der, names) {
+                                if gn.tag == 0x82 {                               // dNSName
+                                    dnsNames.append(String(decoding: der[gn.cstart..<gn.end], as: UTF8.self))
+                                } else if gn.tag == 0x87 && gn.clen == 4 {        // iPAddress (IPv4)
+                                    var ipb = [UInt8]()
+                                    for o in 0..<4 {
+                                        if o > 0 { ipb.append(0x2E) }
+                                        var v = Int(der[gn.cstart + o])
+                                        if v == 0 { ipb.append(0x30) } else {
+                                            var d = [UInt8]()
+                                            while v > 0 { d.insert(UInt8(0x30 + v % 10), at: 0); v /= 10 }
+                                            ipb += d
+                                        }
+                                    }
+                                    ipSANs.append(String(decoding: ipb, as: UTF8.self))
+                                }
                             }
                         }
                     } else if oid == OID_BASIC_CONSTRAINTS {
@@ -188,5 +204,6 @@ func parseX509(_ der: [UInt8]) -> X509Cert? {
         spkiKey: spkiKey,
         spki: derElementBytes(der, spkiT),
         dnsNames: dnsNames,
+        ipSANs: ipSANs,
         isCA: isCA)
 }

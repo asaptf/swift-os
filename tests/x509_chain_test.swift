@@ -68,6 +68,18 @@ struct X509ChainTest {
         check(!x509VerifyChain(leaf: ecLeaf, intermediates: [], roots: [ecCa], hostname: "site.example", now: 20200101000000),
               "not-yet-valid (now before notBefore) rejected")
 
+        // ---- IP-SAN: a self-signed CA:TRUE cert with IP:10.0.2.2 + DNS:site.example ----
+        let ipsanB64 = "MIIBpjCCAUygAwIBAgIUdEXFkHfRMNu3lv7ux0lu016OzB0wCgYIKoZIzj0EAwIwGDEWMBQGA1UEAwwNaXBzYW4uZXhhbXBsZTAgFw0yNjA2MTcxNTUzNTBaGA8yMTI2MDUyNDE1NTM1MFowGDEWMBQGA1UEAwwNaXBzYW4uZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABK4gJtEE8NI22QNGfrctc2ytPNKQa4k+bBJM8+/mW0a9CuIqzVXINL395wpqTd2hmiY4NNpCpaOY/Ii4Cvj+p1qjcjBwMB0GA1UdDgQWBBTH0RL9TnlYbtHaRn2V2yMARAvFIDAfBgNVHSMEGDAWgBTH0RL9TnlYbtHaRn2V2yMARAvFIDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdEQQWMBSCDHNpdGUuZXhhbXBsZYcECgACAjAKBggqhkjOPQQDAgNIADBFAiAFaqYgJCGmehj6qNVUzWlIYxOGi2xwoImqkWSyJ0mBDgIhALCDurmgBhePXoMYU46tBhVbS94KDrgPOUE1kP8fQm8q"
+        guard let ipc = parseX509(b64d(ipsanB64)) else {
+            FileHandle.standardError.write(Data("FAIL: ip-san parse\n".utf8)); exit(1)
+        }
+        check(x509VerifyChain(leaf: ipc, intermediates: [], roots: [ipc], hostname: "10.0.2.2", now: now),
+              "IP host matches iPAddress SAN")
+        check(x509VerifyChain(leaf: ipc, intermediates: [], roots: [ipc], hostname: "site.example", now: now),
+              "DNS host matches dNSName SAN on the same cert")
+        check(!x509VerifyChain(leaf: ipc, intermediates: [], roots: [ipc], hostname: "10.0.2.3", now: now),
+              "wrong IP rejected")
+
         if failed {
             FileHandle.standardError.write(Data("x509_chain_test: FAILED\n".utf8)); exit(1)
         }

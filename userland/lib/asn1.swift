@@ -158,6 +158,51 @@ func base64StdEncode(_ data: [UInt8]) -> [UInt8] {
     return out
 }
 
+/// Standard base64 decode; skips whitespace/newlines, stops at '=' padding.
+func base64StdDecode(_ s: [UInt8]) -> [UInt8] {
+    func v(_ c: UInt8) -> Int {
+        if c >= 65 && c <= 90 { return Int(c - 65) }
+        if c >= 97 && c <= 122 { return Int(c - 97 + 26) }
+        if c >= 48 && c <= 57 { return Int(c - 48 + 52) }
+        if c == 43 { return 62 }; if c == 47 { return 63 }; return -1
+    }
+    var acc = 0, bits = 0, out = [UInt8]()
+    for c in s {
+        if c == 0x3D { break }
+        let d = v(c); if d < 0 { continue }
+        acc = (acc << 6) | d; bits += 6
+        if bits >= 8 { bits -= 8; out.append(UInt8((acc >> bits) & 0xff)) }
+    }
+    return out
+}
+
+private func findSub(_ hay: [UInt8], _ needle: [UInt8], _ from: Int) -> Int? {
+    if needle.isEmpty || needle.count > hay.count { return nil }
+    var i = from
+    while i + needle.count <= hay.count {
+        var j = 0
+        while j < needle.count && hay[i + j] == needle[j] { j += 1 }
+        if j == needle.count { return i }
+        i += 1
+    }
+    return nil
+}
+
+/// Extract every "-----BEGIN CERTIFICATE-----" block from a PEM buffer as DER.
+func pemReadCertificates(_ pem: [UInt8]) -> [[UInt8]] {
+    let begin = Array("-----BEGIN CERTIFICATE-----".utf8)
+    let end = Array("-----END CERTIFICATE-----".utf8)
+    var out: [[UInt8]] = []
+    var i = 0
+    while let b = findSub(pem, begin, i) {
+        let cs = b + begin.count
+        guard let e = findSub(pem, end, cs) else { break }
+        out.append(base64StdDecode(Array(pem[cs..<e])))
+        i = e + end.count
+    }
+    return out
+}
+
 /// Wrap DER in a PEM block ("-----BEGIN <label>-----" … 64-col base64 … END).
 func pemWrap(_ der: [UInt8], _ label: StaticString) -> [UInt8] {
     var lbl = [UInt8](); label.withUTF8Buffer { bp in for b in bp { lbl.append(b) } }

@@ -120,9 +120,26 @@ func hostnameMatchesSAN(_ host: String, _ sans: [String]) -> Bool {
 /// intermediates) to a trusted self-signed root, every cert is within its
 /// validity window at `now` (YYYYMMDDHHMMSS), CAs carry basicConstraints CA:TRUE,
 /// and the leaf's SAN matches `hostname`. Returns true only if all hold.
+private func isDottedIPv4(_ s: [UInt8]) -> Bool {
+    var dots = 0, digits = 0, any = false
+    for c in s {
+        if c == 0x2E { if digits == 0 { return false }; dots += 1; digits = 0 }
+        else if c >= 0x30 && c <= 0x39 { digits += 1; any = true }
+        else { return false }
+    }
+    return any && dots == 3 && digits > 0
+}
+
 func x509VerifyChain(leaf: X509Cert, intermediates: [X509Cert],
                      roots: [X509Cert], hostname: String, now: UInt64) -> Bool {
-    if !hostnameMatchesSAN(hostname, leaf.dnsNames) { return false }
+    let hb = Array(hostname.utf8)
+    let hostOK: Bool
+    if isDottedIPv4(hb) {
+        hostOK = leaf.ipSANs.contains { Array($0.utf8) == hb }   // exact iPAddress SAN
+    } else {
+        hostOK = hostnameMatchesSAN(hostname, leaf.dnsNames)
+    }
+    if !hostOK { return false }
 
     var cur = leaf
     var depth = 0
