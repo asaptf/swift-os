@@ -62,3 +62,83 @@ func x509VerifyChainLink(child: X509Cert, issuer: X509Cert) -> Bool {
 
     return false
 }
+
+// MARK: - chain / host / date validation
+
+/// Unix seconds → a comparable YYYYMMDDHHMMSS (same shape parseX509 produces),
+/// via Howard Hinnant's civil-from-days algorithm. Valid for dates ≥ 1970.
+func unixToYYYYMMDDHHMMSS(_ t: UInt64) -> UInt64 {
+    let days = Int(t / 86400)
+    let sod = Int(t % 86400)
+    let hh = sod / 3600, mm = (sod % 3600) / 60, ss = sod % 60
+    let z = days + 719468
+    let era = (z >= 0 ? z : z - 146096) / 146097
+    let doe = z - era * 146097                                  // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    var y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)           // [0, 365]
+    let mp = (5 * doy + 2) / 153                                 // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1                         // [1, 31]
+    let m = mp < 10 ? mp + 3 : mp - 9                            // [1, 12]
+    if m <= 2 { y += 1 }
+    return UInt64(y) * 10_000_000_000 + UInt64(m) * 100_000_000 + UInt64(d) * 1_000_000
+         + UInt64(hh) * 10_000 + UInt64(mm) * 100 + UInt64(ss)
+}
+
+private func asciiLower(_ b: [UInt8]) -> [UInt8] {
+    var o = b
+    for i in 0..<o.count where o[i] >= 0x41 && o[i] <= 0x5A { o[i] += 32 }
+    return o
+}
+
+/// Match a hostname against a SAN dNSName, supporting a single leftmost `*`
+/// wildcard label (`*.example.com` matches `a.example.com`, not the bare apex
+/// or `a.b.example.com`). Case-insensitive.
+func hostnameMatchesSAN(_ host: String, _ sans: [String]) -> Bool {
+    let h = asciiLower(Array(host.utf8))
+    for san in sans {
+        let s = asciiLower(Array(san.utf8))
+        if s == h { return true }
+        // wildcard: s == "*." + suffix ; host == label + "." + suffix
+        if s.count >= 2 && s[0] == 0x2A && s[1] == 0x2E {
+            let suffix = Array(s[2...])                          // after "*."
+            guard let dot = h.firstIndex(of: 0x2E) else { continue }
+            let hostSuffix = Array(h[(dot + 1)...])
+            if !suffix.isEmpty && hostSuffix == suffix { return true }
+        }
+    }
+    return false
+}
+
+/// Verify a server certificate: the leaf chains (via the presented
+/// intermediates) to a trusted self-signed root, every cert is within its
+/// validity window at `now` (YYYYMMDDHHMMSS), CAs carry basicConstraints CA:TRUE,
+/// and the leaf's SAN matches `hostname`. Returns true only if all hold.
+func x509VerifyChain(leaf: X509Cert, intermediates: [X509Cert],
+                     roots: [X509Cert], hostname: String, now: UInt64) -> Bool {
+    if !hostnameMatchesSAN(hostname, leaf.dnsNames) { return false }
+
+    var cur = leaf
+    var depth = 0
+    while depth < 10 {
+        depth += 1
+        if now < cur.notBefore || now > cur.notAfter { return false }
+
+        // Anchored at a trusted root?
+        for root in roots where root.subject == cur.issuer {
+            if now >= root.notBefore && now <= root.notAfter && root.isCA
+               && x509VerifyChainLink(child: cur, issuer: root) {
+                return true
+            }
+        }
+        // Otherwise step up through a presented intermediate CA.
+        var stepped = false
+        for inter in intermediates where inter.isCA && inter.subject == cur.issuer {
+            if x509VerifyChainLink(child: cur, issuer: inter) {
+                cur = inter; stepped = true; break
+            }
+        }
+        if !stepped { return false }
+    }
+    return false
+}

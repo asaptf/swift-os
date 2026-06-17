@@ -1348,6 +1348,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(BUILD)/rsa_test
 	$(HOST_SWIFTC) -O tests/x509_verify_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_verify_test
 	$(BUILD)/x509_verify_test
+	$(HOST_SWIFTC) -O tests/x509_chain_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_chain_test
+	$(BUILD)/x509_chain_test
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/log_export_test.sh
