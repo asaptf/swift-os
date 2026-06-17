@@ -119,7 +119,11 @@ private struct AnonVma {
     var base: UInt = 0
     var pages: UInt = 0
 }
-private let maxAnonVmas = 16
+// V8/cppgc keep many anonymous mmap regions live at once (the heap cage, each
+// cppgc/Oilpan page, the code range, per-thread stacks, ...) — far more than the
+// old cap of 16, which made anonVmaAdd fail -> mmap ENOMEM -> intermittent V8
+// "out of memory" at init (the cppgc/Oilpan allocation failure). 512 covers Node.
+private let maxAnonVmas = 512
 private var pAnonVmas = [AnonVma](repeating: AnonVma(), count: maxProc * maxAnonVmas)
 
 private func fileVmasClear(_ slot: Int) {
