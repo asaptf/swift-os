@@ -291,17 +291,10 @@ int munlockall(void) { return 0; }
 // V8's cpu.cc falls back to the AArch64 baseline.
 unsigned long getauxval(unsigned long type) { (void)type; return 0; }
 
-// V8 reads a thread's stack bounds via pthread_getattr_np. We can't recover the
-// real base, so report a plausible default stack size; the base is left at the
-// attr default. Good enough to compile/run; precise stack-limit detection is a
-// later refinement.
-int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
-    (void)thread;
-    if (!attr) { errno = EINVAL; return -1; }
-    if (pthread_attr_init(attr) != 0) return -1;
-    pthread_attr_setstacksize(attr, (size_t)8 * 1024 * 1024);
-    return 0;
-}
+// pthread_getattr_np is implemented in userland/compat/stubs.c, where the
+// per-thread stack records (and the main-thread bounds) live; V8 needs the REAL
+// stack base/size for its conservative GC stack scan (a bogus base trips
+// CHECK_GE(stack_start, sp) when a GC runs).
 
 int recvmmsg(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags,
              struct timespec *timeout) {

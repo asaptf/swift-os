@@ -1192,6 +1192,35 @@ W int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr) {
     attr->stackaddr = stackaddr;
     return 0;
 }
+// Report a thread's REAL stack bounds. V8's conservative GC stack scanner reads
+// these (pthread_getattr_np -> pthread_attr_getstack -> stack_start = base+size)
+// and asserts CHECK_GE(stack_start, current_sp); a bogus base aborts node the
+// first time a GC scans the stack. Created threads use their mmap'd record stack;
+// the main thread uses SwiftOS's fixed 16-page stack at the top of the user
+// window (kernel userStackTop=0x9000_0000, userStackPages=16 -> [0x8FFF_0000,
+// 0x9000_0000)). Keep these in sync with kernel/user/process.swift.
+#define COMPAT_MAIN_STACK_TOP  0x90000000UL
+#define COMPAT_MAIN_STACK_SIZE 0x10000UL   /* 16 * 4096 */
+W int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+    if (!attr) { return EINVAL; }
+    if (pthread_attr_init(attr) != 0) { return EAGAIN; }
+    void *base = 0;
+    size_t size = 0;
+    futex_lock_word(&pthread_global_lock);
+    struct compat_pthread_record *rec = pthread_find_locked(thread);
+    if (rec && rec->stack && rec->stack_size > 0) {
+        base = rec->stack;
+        size = rec->stack_size;
+    }
+    futex_unlock_word(&pthread_global_lock);
+    if (!base) {   // main thread (no record)
+        base = (void *)(COMPAT_MAIN_STACK_TOP - COMPAT_MAIN_STACK_SIZE);
+        size = COMPAT_MAIN_STACK_SIZE;
+    }
+    attr->stackaddr = base;
+    attr->stacksize = (int)size;
+    return 0;
+}
 W int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *detachstate) {
     if (!attr || !detachstate) { return EINVAL; }
     *detachstate = attr->detachstate;
