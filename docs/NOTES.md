@@ -6555,6 +6555,52 @@ step, iterate over serial/VNC until SSH reaches SwiftOS).
 
 ## QW-series — quick-win hardening (post-M13 remediation)
 
+### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)
+
+**Goal.** Collapse the duplicated per-subsystem errno `let` constants and the
+scattered inline negative literals into a single source of truth, without
+touching a single numeric value or the `Int`-at-the-syscall-boundary ABI. This
+is the *safe slice* of the "typed errors internally, one flat status at the
+boundary" pattern: the kernel names errors with an enum at call sites, but the
+trap still returns a plain `Int` — **no `throws`/`Result` crosses the boundary**
+(see the error-handling note in `docs/ARCHITECTURE.md`).
+
+**Mechanism.** New `kernel/errno.swift` defines `enum Errno: Int32` covering
+every errno value in use (`EPERM -1` … `EHOSTUNREACH -101`) with POSIX-style
+case names, plus `var code: Int { Int(rawValue) }` (`@inline(__always)`) for the
+`frame[0]` boundary form. A raw-value enum carries no witness/existential cost in
+Embedded Swift — `.rawValue` is a plain integer load — so this is a compile-time
+constant table with no runtime or allocation cost and adds no shared mutable
+state (SMP-safe by construction). The file is dependency-free (no MMIO/syscall/
+heap), linked first in `SWIFT_SRCS` and standalone-compilable by the host test.
+
+**Migration.** Deleted the 15 `private let err*` in `vfs/vfs.swift` and the 6
+`let netErr*` in `net/socket.swift`; both now use `Errno.*.code`. Inline errno
+literals migrated in `syscall`, `sched/futex`, `user/process`, `pkg/store`,
+`fs/esp`, `fs/updatestore`, `mm/vm` (the `@_cdecl` map/mmap/munmap/mprotect fns
+return `Int32`, so they use `.rawValue`), `tty/tty`, `drivers/virtio_rng`,
+`crypto/sysrng`.
+
+**Deliberately left as raw numbers (not errnos / not the errno ABI):**
+- non-errno numeric returns — sbrk break, time value, resolve-IPv4, and the
+  mmap base VA encoded in `[-4095,-1]` in `syscall.swift`; the boundary write
+  `frame[0] = UInt(bitPattern: result)` is unchanged.
+- internal sentinels — slot/pid/index `-1` ("not found / no free slot") in
+  `process.swift` (`pickReady`/`allocSlot`/`createProcess`), the `pkg/store`
+  find-helpers and the `Int32` read-range codes, and the esp/updatestore slot
+  variables.
+- driver-internal status codes (`-1..-4`) in `virtio_blk`/`virtio_input`, which
+  callers interpret internally (`!= 0`) and which never cross the trap as errnos
+  — mapping e.g. `-3` to `ESRCH` would be semantically wrong.
+
+**Acceptance.** New host unit test `tests/errno_test.swift` (`make errno-test`,
+also wired into `make test` next to `handle_test`) pins the **exact raw value of
+every case** — they are ABI — and the `.code` boundary form. Gates:
+`make {errno,socket,eventfd,smp}-test` PASS; `make build` clean single-core and
+at `-smp 4`. The grep gate
+`grep -nE 'let (err|netErr)[A-Za-z]+ *= *-[0-9]+' kernel/vfs/vfs.swift kernel/net/socket.swift`
+returns nothing.
+
 ### QW4 — orderly power control: shutdown/reboot, Ctrl+Alt+Del, panic auto-reboot (DONE, 2026-06-18)
 
 **Goal.** Give the OS a real power-control surface so a headless server can be
