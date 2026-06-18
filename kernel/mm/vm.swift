@@ -651,6 +651,16 @@ func addressSpaceDestroy(_ ttbr0: UInt) {
         }
         pmm_free_page(l1) // L1 table
     }
+    // l0[1] holds the PCIe 64-bit MMIO window L1 table (l1pci) that
+    // address_space_create allocates on non-VirtualBox boards. It carries only
+    // 1 GiB block descriptors (no sub-tables, no user leaves), so free the table
+    // frame itself. Without this, every address-space teardown leaked one frame
+    // (the H2 PCIe window table), which exhausted the PMM under fork/exec churn.
+    // The VirtualBox path leaves l0[1] empty, so the guard makes this a no-op there.
+    let dPci = tableLoad(l0, 1)
+    if (dPci & DESC_VALID) != 0 && (dPci & DESC_TABLE) != 0 {
+        pmm_free_page(UInt(dPci & PAGE_4K_MASK))
+    }
     pmm_free_page(ttbr0) // L0 table
 }
 

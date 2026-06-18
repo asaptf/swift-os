@@ -261,6 +261,11 @@ private var pDispatchCount = [UInt64](repeating: 0, count: maxProc)
 private var pDispatchCpuMask = [UInt64](repeating: 0, count: maxProc)
 private var pAddressSpaceCpuMask = [UInt64](repeating: 0, count: maxProc)
 private var pSchedulerQuiesced = [Bool](repeating: true, count: maxProc)
+// QW3: true once a slot has been reparented to the kernel (-1) at RUNTIME because
+// its real parent was reaped while it was still live. Distinguishes a runtime
+// orphan that nobody will waitpid() (collect it in the scheduler when it exits)
+// from a process born top-level with parent -1 (its orchestrator reaps it).
+private var pReparentedOrphan = [Bool](repeating: false, count: maxProc)
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
@@ -389,6 +394,7 @@ func processInit() {
         pDispatchCpuMask[i] = 0
         pAddressSpaceCpuMask[i] = 0
         pSchedulerQuiesced[i] = true
+        pReparentedOrphan[i] = false
         pSignalFrameActive[i] = false
         pSignalFrameSP[i] = 0
         pPendingSignals[i] = 0
@@ -2253,6 +2259,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pResPages[slot] = Int(elfLastLoadPages()) + userStackPages
     pWakeTick[slot] = 0
     pSchedulerQuiesced[slot] = false
+    pReparentedOrphan[slot] = false
     pHomeCpu[slot] = unassignedCpu
     pRunNext[slot] = noProcessSlot
     pRunQueued[slot] = false
@@ -2353,12 +2360,30 @@ private func reapProcess(_ slot: Int) {
         }
         pKstack[slot] = 0
     }
+    // QW3: adopt this slot's children. A child that has ALREADY exited and is
+    // quiesced is an orphan nobody will ever waitpid() — reap it directly here
+    // rather than leak its zombie slot. Re-scan after every reap because reaping
+    // a child can reparent (and recursively reap) its own descendants, mutating
+    // pParent under us; the scan is bounded by the live-tree depth (<= maxProc).
+    var collected = true
+    while collected {
+        collected = false
+        for i in 0..<maxProc
+        where pParent[i] == slot && pState[i] == pZombie && pSchedulerQuiesced[i] {
+            reapProcess(i)
+            collected = true
+        }
+    }
+    // Any still-live children become kernel orphans. Flag them so a later exit is
+    // collected by the in-scheduler reaper (nobody waitpid()s a -1 parent).
     for i in 0..<maxProc where pParent[i] == slot {
         pParent[i] = -1
+        pReparentedOrphan[i] = true
     }
     pState[slot] = pUnused
     clearProcessSchedulerSlot(slot)
     pSchedulerQuiesced[slot] = true
+    pReparentedOrphan[slot] = false
 }
 
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
@@ -2400,6 +2425,15 @@ private func schedule(until done: () -> Bool) {
             smpStoreBarrier()
         }
         setCurrentProcessSlot(-1)
+        // QW3: collect a runtime-orphaned zombie (reparented to the kernel when
+        // its real parent was reaped) that no one will ever waitpid(). This is
+        // gated to pReparentedOrphan so it never races an orchestrator that is
+        // schedule(until:)-waiting on a top-level zombie it created with parent
+        // -1 (those are NOT flagged and are reaped by the orchestrator).
+        if pState[s] == pZombie && pSchedulerQuiesced[s]
+           && pParent[s] == -1 && pReparentedOrphan[s] {
+            reapProcess(s)
+        }
     }
     irq_restore(daif)
 }
@@ -2417,6 +2451,32 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
     lastReapedKilled = pKilled[slot]
     reapProcess(slot)
     return code
+}
+
+/// Kernel-internal observability: number of process slots currently in use
+/// (state != pUnused). Used by the QW3 orphan-reap self-test (no ABI surface).
+func processLiveSlotCount() -> Int {
+    var n = 0
+    for i in 0..<maxProc where pState[i] != pUnused { n += 1 }
+    return n
+}
+
+/// QW3 self-test driver: launch `image` as a top-level process (parent -1) that
+/// forks a child and exits WITHOUT waiting (orphaning it), reap that parent —
+/// which adopts the still-live child to the kernel and flags it an orphan — then
+/// drive the scheduler until every user slot is free again, i.e. until the kernel
+/// has collected the orphaned child's zombie. Returns false if the parent could
+/// not be launched. Hangs (caught by the test driver's timeout) only if the
+/// orphan is never collected — exactly the leak this milestone fixes.
+func processOrphanReapRound(_ image: UInt, _ size: UInt,
+                            packed: UInt, packedLen: UInt, argc: Int) -> Bool {
+    let p = createProcess(image, size, packed: packed, packedLen: packedLen,
+                          argc: argc, parent: -1)
+    if p < 0 { return false }
+    schedule(until: { pState[p] == pZombie && pSchedulerQuiesced[p] })
+    reapProcess(p)
+    schedule(until: { processLiveSlotCount() == 0 })
+    return true
 }
 
 /// Run two top-level processes concurrently; return when both have exited.
@@ -2947,6 +3007,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pResPages[child] = pResPages[parent]
     pWakeTick[child] = 0
     pSchedulerQuiesced[child] = false
+    pReparentedOrphan[child] = false
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
     vfsProcessInit(slot: child, parent: parent)
@@ -3009,6 +3070,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     processSignalClearAllPending(slot)
     pWakeTick[slot] = 0
     pSchedulerQuiesced[slot] = false
+    pReparentedOrphan[slot] = false
     pHomeCpu[slot] = unassignedCpu
     pRunNext[slot] = noProcessSlot
     pRunQueued[slot] = false

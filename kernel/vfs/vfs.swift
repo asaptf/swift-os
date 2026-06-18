@@ -146,6 +146,10 @@ private struct Endpoint {
     var handle = HandleEntry()
     var sendRefs = 0
     var recvRefs = 0
+    // QW3: owning process slot (mirrors DeviceGrant.ownerProc); -1 = unowned.
+    // Both ends of a freshly created endpoint live in the creating process, so
+    // the kernel can deterministically reclaim it when that process dies.
+    var ownerProc = -1
 }
 private let endpointMsgCap = 256
 
@@ -958,6 +962,10 @@ func vfsProcessCloseAll(slot: Int) {
             handles[idx] = HandleEntry()
         }
     }
+    // QW3: owner-based reclaim of any endpoint still tagged to this slot. The FD
+    // loop above already reclaimed endpoints reachable via this slot's FDs; this
+    // is the deterministic, owner-tagged backstop.
+    releaseEndpointsOwnedBy(slot)
     cwdNodes[slot] = 0
     confineNodes[slot] = 0
 }
@@ -1251,6 +1259,37 @@ private func discardEndpoint(_ ep: Int) {
     if ep >= 0 && ep < maxEndpoints {
         resetEndpointSlotForReuse(ep)
     }
+}
+
+/// QW3: belt-and-suspenders owner-based endpoint reclaim for a dying process.
+/// The FD-close loop in vfsProcessCloseAll already releases endpoints whose ends
+/// were all FDs of this slot; this sweep additionally tears down any endpoint
+/// still tagged as owned by the slot, using the exact primitives the FD path
+/// uses. The caller MUST already hold vfsLock (matches vfsProcessCloseAll). It is
+/// idempotent: endpoints reclaimed by the FD loop are no longer inUse, so they
+/// are skipped here.
+private func releaseEndpointsOwnedBy(_ slot: Int) {
+    for i in 0..<maxEndpoints where endpoints[i].inUse && endpoints[i].ownerProc == slot {
+        // Balance an in-flight handle that was never received before teardown,
+        // exactly as releaseDescription's endpoint branch does.
+        if endpoints[i].hasHandle && endpoints[i].handle.inUse {
+            releaseDescription(endpoints[i].handle.object)
+        }
+        // Keep the bump-allocated bufPtr attached to the slot for reuse; reset
+        // clears ownerProc back to -1 along with the rest of the slot state.
+        resetEndpointSlotForReuse(i)
+    }
+}
+
+/// Kernel-internal observability: count endpoint slots currently in use. Used by
+/// the QW3 orphan-reap self-test to assert endpoint slot reuse stays stable
+/// across orphan churn (no ABI / syscall surface).
+func vfsEndpointInUseCount() -> Int {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    var n = 0
+    for i in 0..<maxEndpoints where endpoints[i].inUse { n += 1 }
+    return n
 }
 
 private func rollbackEndpointCreate(proc: Int, sfd: Int, rfd: Int,
@@ -2627,7 +2666,7 @@ private func allocEndpoint() -> Int {
         }
         endpoints[i] = Endpoint(inUse: true, hasMsg: false, bufPtr: bufPtr,
                                 msgLen: 0, hasHandle: false, handle: HandleEntry(),
-                                sendRefs: 1, recvRefs: 1)
+                                sendRefs: 1, recvRefs: 1, ownerProc: -1)
         return i
     }
     return -1
@@ -2656,6 +2695,9 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
                                endpoint: -1, sendDesc: -1, recvDesc: -1)
         return errNoMem
     }
+    // QW3: stamp the creating process as the owner so reclamation-on-death can
+    // find and tear down this endpoint deterministically.
+    endpoints[ep].ownerProc = proc
     let sd = allocDescription()
     if sd == -1 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
