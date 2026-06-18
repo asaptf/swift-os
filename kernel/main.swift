@@ -764,7 +764,10 @@ func exceptionHandler() {
     uartPuts("\n  CPACR_EL1=")
     uartPutHex(UInt(read_cpacr_el1()))
     uartPuts("\n")
-    while true {}
+    // A kernel-level fault is unrecoverable, but a headless server should not be
+    // left wedged forever: count down (visible on the console) and auto-reboot so
+    // it returns to service. panicReboot never returns. See kernel/power/power.swift.
+    panicReboot(seconds: 90)
 }
 
 @_cdecl("irq_handler")

@@ -96,6 +96,11 @@
 #define SYS_FSYNC          87
 #define SYS_SYNC           88
 #define SYS_RECV           89
+#define SYS_REBOOT         90
+
+// reboot(cmd) command selectors (must match kernel/power/power.swift).
+#define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
+#define SWIFTOS_POWER_OFF   1  // PSCI SYSTEM_OFF   — power off / QEMU exit
 
 // mmap protection bits (Track B). PROT_WRITE|PROT_EXEC is rejected (W^X).
 #define PROT_NONE  0x0
@@ -416,6 +421,13 @@ static inline int device_discover(int index, struct swiftos_device_info *info) {
 // 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
 static inline int update_confirm(void) {
     return (int)__syscall3(SYS_UPDATE_CONFIRM, 0, 0, 0);
+}
+
+// Power control: reboot the machine (SWIFTOS_POWER_RESET) or power it off
+// (SWIFTOS_POWER_OFF). Privileged: needs CAP_CONSOLE. Returns negative on
+// failure (-1 EPERM); on success the machine resets/powers off and never returns.
+static inline int sys_reboot(unsigned long cmd) {
+    return (int)__syscall3(SYS_REBOOT, (long)cmd, 0, 0);
 }
 
 // U1e: promote the inactive A/B slot to active for the next boot (the current

@@ -369,6 +369,8 @@ USER_PTYPROBE_ELF := $(BUILD)/ptyprobe.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
 USER_SUDO_ELF := $(BUILD)/sudo.elf
+USER_REBOOT_ELF := $(BUILD)/reboot.elf
+USER_SHUTDOWN_ELF := $(BUILD)/shutdown.elf
 USER_LOGTAIL_ELF := $(BUILD)/logtail.elf
 USER_LOGTAILPROBE_ELF := $(BUILD)/logtail-probe.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
@@ -442,6 +444,8 @@ BASE_EXEC_ELFS := \
 	$(USER_CONSOLELOGIN_ELF) \
 	$(USER_ID_ELF) \
 	$(USER_SUDO_ELF) \
+	$(USER_REBOOT_ELF) \
+	$(USER_SHUTDOWN_ELF) \
 	$(USER_LOGTAIL_ELF) \
 	$(USER_LOGTAILPROBE_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
@@ -672,6 +676,12 @@ $(BUILD)/user_logtail.o: userland/logtail.swift userland/lib/swift_user.h Makefi
 $(BUILD)/user_logtail_probe.o: userland/logtail-probe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail-probe.swift -o $@
 
+$(BUILD)/user_reboot.o: userland/reboot.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/reboot.swift -o $@
+
+$(BUILD)/user_shutdown.o: userland/shutdown.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/shutdown.swift -o $@
+
 $(BUILD)/user_swosconfirm.o: userland/swos-confirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-confirm.swift -o $@
 
@@ -884,6 +894,12 @@ $(USER_LOGTAIL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/us
 
 $(USER_LOGTAILPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o -o $@
+
+$(USER_REBOOT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_reboot.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_reboot.o -o $@
+
+$(USER_SHUTDOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shutdown.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shutdown.o -o $@
 
 $(USER_SWOSCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosconfirm.o -o $@
@@ -2255,6 +2271,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_PTYPROBE_ELF) $(BASE_ROOT)/bin/ptyprobe
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
 	cp $(USER_SUDO_ELF) $(BASE_ROOT)/bin/sudo
+	cp $(USER_REBOOT_ELF) $(BASE_ROOT)/bin/reboot
+	cp $(USER_SHUTDOWN_ELF) $(BASE_ROOT)/bin/shutdown
 	cp $(USER_LOGTAIL_ELF) $(BASE_ROOT)/bin/logtail
 	cp $(USER_LOGTAILPROBE_ELF) $(BASE_ROOT)/bin/logtail-probe
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm

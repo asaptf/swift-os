@@ -212,6 +212,14 @@ int swiftos_update_confirm(void) {
     return update_confirm();
 }
 
+int swiftos_reboot(void) {
+    return sys_reboot(SWIFTOS_POWER_RESET);
+}
+
+int swiftos_poweroff(void) {
+    return sys_reboot(SWIFTOS_POWER_OFF);
+}
+
 int swiftos_update_activate(void) {
     return update_activate();
 }

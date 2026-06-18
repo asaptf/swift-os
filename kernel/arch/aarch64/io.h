@@ -296,6 +296,22 @@ static inline int64_t psci_cpu_on_smc(uint64_t function_id,
     return (int64_t)x0;
 }
 
+// Single-argument PSCI calls for SYSTEM_OFF/SYSTEM_RESET (kernel/power/power.swift).
+// These never return on success (the platform powers off or resets); a negative
+// PSCI error in x0 means the firmware refused the call, so the caller falls back
+// to halting. QEMU virt routes PSCI through HVC (no EL3 monitor).
+static inline int64_t psci_call0_hvc(uint64_t function_id) {
+    register uint64_t x0 __asm__("x0") = function_id;
+    __asm__ volatile("hvc #0" : "+r"(x0) :: "memory");
+    return (int64_t)x0;
+}
+
+static inline int64_t psci_call0_smc(uint64_t function_id) {
+    register uint64_t x0 __asm__("x0") = function_id;
+    __asm__ volatile("smc #0" : "+r"(x0) :: "memory");
+    return (int64_t)x0;
+}
+
 // --- C2: low-level barriers/TLB/TTBR0 bridges for the Swift VM port ---------
 // kernel/mm/vm.swift (the per-process address-space half) drives stage-1 page
 // tables but cannot emit `isb`/`tlbi`/`msr ttbr0_el1` directly in Embedded

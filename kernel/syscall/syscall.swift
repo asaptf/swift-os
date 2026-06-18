@@ -90,6 +90,7 @@ private let sysSecurityInfoEx: UInt = 86   // security_info_ex(struct*) — effe
 private let sysFsync: UInt = 87           // fsync(fd)/fdatasync(fd) — flush the fd's filesystem to media (D2)
 private let sysSync: UInt = 88            // sync() — flush all writable filesystems to media (D2)
 private let sysRecv: UInt = 89            // recv(fd, buf, len) MSG_PEEK on TCP — peek without consuming (W3)
+private let sysReboot: UInt = 90          // reboot(cmd) — 0=SYSTEM_RESET, 1=SYSTEM_OFF; needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -338,6 +339,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsSocketpair(fdsVA: frame[0], flags: Int(bitPattern: frame[1]))
     } else if number == sysRandom {
         result = syscallRandom(buffer: frame[0], capacity: frame[1])
+    } else if number == sysReboot {
+        result = powerControl(command: frame[0]) // 90: capConsole-gated reboot/poweroff
     } else {
         result = -38 // ENOSYS
     }

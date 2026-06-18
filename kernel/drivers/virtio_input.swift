@@ -64,6 +64,8 @@ private var kbdQn: UInt32 = 0
 private var kbdAvailIdx: UInt16 = 0
 private var kbdLastUsed: UInt16 = 0
 private var kbdShift = false
+private var kbdCtrl = false   // L/R Ctrl held — tracked for Ctrl+Alt+Del
+private var kbdAlt = false    // L/R Alt held — tracked for Ctrl+Alt+Del
 private var kbdPHead = 0
 private var kbdPTail = 0
 private var kbdDbgVersion: UInt32 = 0
@@ -214,6 +216,8 @@ func virtioKbdInit() -> Int32 {
     kbdPHead = 0
     kbdPTail = 0
     kbdShift = false
+    kbdCtrl = false
+    kbdAlt = false
 
     mmio_write32(found + R_STATUS, 0)                  // reset
     mmio_write32(found + R_STATUS, S_ACK)
@@ -274,7 +278,18 @@ private func kbdPump() {
         if type == 1 { // EV_KEY
             if code == 42 || code == 54 {            // L/R shift
                 kbdShift = (value != 0)
+            } else if code == 29 || code == 97 {     // L/R ctrl
+                kbdCtrl = (value != 0)
+            } else if code == 56 || code == 100 {    // L/R alt
+                kbdAlt = (value != 0)
             } else if value == 1 || value == 2 {     // press or auto-repeat
+                // Ctrl+Alt+Del (Del == evdev 111) reboots the machine. Checked on
+                // the initial press only; powerCtrlAltDelReboot does not return
+                // (it resets) unless PSCI is unavailable, in which case the key
+                // falls through to its normal forward-delete sequence.
+                if code == 111 && value == 1 && kbdCtrl && kbdAlt {
+                    powerCtrlAltDelReboot()
+                }
                 // Navigation keys become the ANSI escape sequences the tty line
                 // editor decodes; everything else is a single ASCII byte.
                 switch code {

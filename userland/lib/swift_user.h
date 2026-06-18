@@ -68,6 +68,10 @@ int  swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,
                   unsigned int *gid, unsigned int *nlink, unsigned long *size,
                   unsigned long *mtime);
 int  swiftos_login(unsigned int principal, unsigned int session, unsigned long caps);
+// Power control. Needs CAP_CONSOLE. Returns negative on failure (-1 EPERM); on
+// success the machine reboots/powers off and never returns.
+int  swiftos_reboot(void);
+int  swiftos_poweroff(void);
 // U1c: confirm the booted A/B update slot healthy (CONFIRMED). Needs CAP_CONSOLE.
 // 0 on success; negative on error (-1 EPERM, -19 ENODEV when not store-booted).
 int  swiftos_update_confirm(void);
