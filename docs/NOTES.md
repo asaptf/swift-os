@@ -6882,3 +6882,38 @@ pre-USB/datafs, so the scanner reports ~57 globals missing across unrelated
 subsystems (sysrng, usb_xhci, datafs, virtio_gpu, …) plus 2 stale entries. QW1
 documents its own state (`replyPorts`, `endpointRecvWaiters`); the broader drift
 needs a separate doc-sync pass.
+
+## SU-series — reflash-free static-site updates (post-M13)
+
+Goal: update the static site swiftos.tech serves (in-kernel nginx) on a *running*
+box without rebuilding `swift-os.img` and re-flashing the whole image via Rescue
++ `dd`. Reuses persistent `/data` (datafs + fsync), Ed25519/SHA-256, bounded-exec
+sshd, and the key-baking pattern from image/pkg signing. The site content trust
+anchor is an Ed25519 signature on the bundle; the *trigger* is gated by the
+operator SSH key in the bounded-exec allowlist (no new kernel capability).
+
+### SU-A — persistent docroot + boot seed/recovery (DONE, 2026-06-18)
+
+nginx's production docroot moved from the read-only baked `/usr/share/nginx/html`
+to `/data/www/current` (`base/usr/etc/nginx/nginx-prod.conf`). A new native Swift
+`/bin/swupdate` (`userland/swupdate.swift`) provides `swupdate seed`, run by
+`swos-init` (`seed_site()`) on every boot *before* any service:
+
+- **Fresh / empty `/data`** → recursively copies the baked default site into
+  `/data/www/current` (fsync), so a freshly-flashed box still serves a site.
+- **Crash recovery** of an interrupted atomic swap. Generations live as real dirs
+  under `/data/www/` (`current`, `next`, `prev`) — datafs has no symlinks, and
+  rejects `rename` onto a *populated* dir (`errNotEmpty`, `vfsRename`), so the swap
+  always renames into a *fresh* name (O(1): a dir's children track it by inode
+  number, unchanged by rename). If a power loss lands between the two swap renames
+  (`current`→`prev` done, `next` staged), the next boot's `seed` finishes it
+  (`next`→`current`); else it rolls back (`prev`→`current`).
+
+`swupdate` is freestanding Embedded Swift over NUL-terminated `[CChar]` / `[UInt8]`
+buffers — it deliberately avoids Swift `String`, whose `==`/interpolation pull in
+Unicode-normalization tables that aren't linked in the userland runtime.
+
+Gate `make site-seed-test` (3 boots, fresh data disk): boot 1 seeds + nginx serves
+the baked default byte-for-byte; boot 2 stages a mid-swap crash state; boot 3's
+`seed` recovers it and nginx serves the new content — all on `/data`, surviving
+reboot, no reflash. `nginx-data-test` still PASS (shared boot path unchanged).
