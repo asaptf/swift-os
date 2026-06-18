@@ -6917,3 +6917,36 @@ Gate `make site-seed-test` (3 boots, fresh data disk): boot 1 seeds + nginx serv
 the baked default byte-for-byte; boot 2 stages a mid-swap crash state; boot 3's
 `seed` recovers it and nginx serves the new content — all on `/data`, surviving
 reboot, no reflash. `nginx-data-test` still PASS (shared boot path unchanged).
+
+### SU-B — signed `SWSITE` bundle format + offline apply (DONE, 2026-06-18)
+
+A static site is published as a signed **`SWSITE`** bundle and applied to a running
+box with `/bin/swupdate apply-local <bundle.swsite>` (the HTTPS-fetch trigger is
+SU-C). The trust anchor is an Ed25519 signature; the content never travels as
+scp/writable-root.
+
+- **Bundle** = `[64-byte Ed25519 sig over body][body]`. The body header carries
+  magic `SWSITE01`, version, entry count, string-table/blob offsets, and a SHA-256
+  over the payload region; then fixed 24-byte entry records (name/blob offsets+lens,
+  type file|dir, mode), a string table of relative path names, and the blobs.
+  Entries are pre-order (a dir precedes its contents). Layout is defined once in
+  `tools/sitepack.swift` and mirrored byte-for-byte by `userland/swupdate.swift`.
+- **Host tool** `tools/sitepack.swift` (`build/sitepack`): `create <dir> <out> --seed`
+  walks a directory and writes the signed bundle; `verify <bundle> --pubkey` checks it.
+  Reuses `kernel/crypto/{ed25519,sha256,sha512}.swift`. The site-signing keypair is
+  `models/dev-site-signing.{seed,pub}` (minted by `modelsign keygen`, like the image
+  key); the **public** half is baked at `/etc/swupdate/site-root.pub`.
+- **Apply** (`swupdate apply-local`, links the same crypto): verify Ed25519 against the
+  baked pubkey → verify payload SHA-256 → bounds + inode-budget check
+  (`maxSiteEntries = 64`, since current+next+prev ≈ 3× the site against datafs's 256
+  inodes) → reject any unsafe (`..`/absolute) entry name. Only then unpack into
+  `/data/www/next` (fsync) and atomically swap (`current`→`prev`, `next`→`current`,
+  sync). A bad bundle is refused **before** `next` is touched, so `current` is never
+  disturbed.
+
+Gate `make site-bundle-test` (image built `INCLUDE_SITE_TEST=1`, which bakes a signed
+test bundle + a tampered copy under `/usr/share/swupdate-test`; production images carry
+neither): a tampered bundle is rejected and the docroot stays byte-identical to the
+baked default; a valid bundle is applied and nginx serves the new content; the new
+content survives reboot. Assertions are over curl (QEMU serial stdout is buffered);
+applies are backgrounded so the slow console can't swallow a queued command.

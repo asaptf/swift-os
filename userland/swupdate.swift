@@ -47,6 +47,19 @@ private let pNext:  StaticString = "/data/www/next"
 private let pPrev:  StaticString = "/data/www/prev"
 private let pBaked: StaticString = "/usr/share/nginx/html"
 
+// Baked site-signing public key — the trust anchor for SWSITE bundles (SU-B).
+private let pSiteRootPub: StaticString = "/etc/swupdate/site-root.pub"
+
+// SWSITE signed-bundle layout (must match tools/sitepack.swift).
+private let sigSize = 64           // leading Ed25519 detached signature
+private let hdrSize = 64           // body header
+private let entrySize = 24         // per-entry record
+// Inode budget: datafs holds 256 inodes total across current+next+prev (~3x the
+// site) plus /data overhead, so cap a single site's entry count well under 256/3.
+private let maxSiteEntries = 64
+private let maxBundleBytes = 8 * 1024 * 1024
+private let siteMagic: StaticString = "SWSITE01"
+
 // ---- small helpers ---------------------------------------------------------
 
 private func put(_ s: StaticString) {
@@ -294,10 +307,191 @@ private func seed() -> Int32 {
     return 0
 }
 
+// ---- signed bundle apply (SU-B) --------------------------------------------
+
+private func le32(_ b: [UInt8], _ off: Int) -> Int {
+    Int(UInt32(b[off]) | (UInt32(b[off + 1]) << 8)
+        | (UInt32(b[off + 2]) << 16) | (UInt32(b[off + 3]) << 24))
+}
+
+// Read an entire file into memory, refusing anything larger than `maxBytes`.
+private func readFileFully(_ path: [CChar], _ maxBytes: Int) -> [UInt8]? {
+    let fd = sOpen(path, oRdOnly)
+    if fd < 0 { return nil }
+    defer { _ = swiftos_close(fd) }
+    var out: [UInt8] = []
+    var chunk = [UInt8](repeating: 0, count: 65536)
+    while true {
+        let r = chunk.withUnsafeMutableBytes {
+            swiftos_read(fd, $0.baseAddress!, UInt($0.count))
+        }
+        if r < 0 { return nil }
+        if r == 0 { break }
+        var i = 0
+        while i < Int(r) { out.append(chunk[i]); i += 1 }
+        if out.count > maxBytes { return nil }
+    }
+    return out
+}
+
+// Load the baked 32-byte site-signing public key.
+private func loadPubkey() -> [UInt8]? {
+    guard let raw = readFileFully(cz(pSiteRootPub), 64), raw.count == 32 else { return nil }
+    return raw
+}
+
+private func magicMatches(_ b: [UInt8], _ at: Int) -> Bool {
+    let n = siteMagic.utf8CodeUnitCount
+    var i = 0
+    while i < n { if b[at + i] != siteMagic.utf8Start[i] { return false }; i += 1 }
+    return true
+}
+
+// A relative entry name must stay within the docroot: no absolute paths and no
+// ".." traversal. Defense-in-depth; sitepack only emits clean relative names.
+private func safeName(_ name: [UInt8]) -> Bool {
+    if name.isEmpty { return false }
+    if name[0] == 0x2F { return false }                 // leading '/'
+    var i = 0
+    while i + 1 < name.count {
+        // reject "/.." and a leading ".." (the only ways to escape upward)
+        if name[i] == 0x2E && name[i + 1] == 0x2E {
+            let prevSlash = (i == 0) || name[i - 1] == 0x2F
+            let nextEndOrSlash = (i + 2 == name.count) || name[i + 2] == 0x2F
+            if prevSlash && nextEndOrSlash { return false }
+        }
+        i += 1
+    }
+    return true
+}
+
+// Write `len` bytes of `bundle` starting at `off` to fd, fully.
+private func writeBlob(_ fd: Int32, _ bundle: [UInt8], _ off: Int, _ len: Int) -> Bool {
+    if len == 0 { return true }
+    return bundle.withUnsafeBytes { raw -> Bool in
+        var done = 0
+        while done < len {
+            let w = swiftos_write(fd, raw.baseAddress!.advanced(by: off + done), UInt(len - done))
+            if w <= 0 { return false }
+            done += Int(w)
+        }
+        return true
+    }
+}
+
+// Verify a SWSITE bundle's Ed25519 signature (against the baked pubkey) and its
+// payload SHA-256, validate the layout, and unpack it into /data/www/next, then
+// atomically swap it in (current->prev, next->current). A bad bundle is rejected
+// before `next` is touched, so `current` is never left half-updated. Returns 0
+// on success, nonzero (with a message) on rejection.
+private func applyBundleBytes(_ bundle: [UInt8]) -> Int32 {
+    if bundle.count < sigSize + hdrSize { put("swupdate: bundle too small\n"); return 1 }
+    guard let pub = loadPubkey() else {
+        put("swupdate: missing/invalid site-signing key\n"); return 1
+    }
+    let bodyOff = sigSize
+    let bodyLen = bundle.count - sigSize
+
+    // 1. Ed25519 signature over the body — the trust anchor.
+    let sigOK = bundle.withUnsafeBytes { bb in
+        pub.withUnsafeBytes { pb in
+            ed25519Verify(message: bb.baseAddress!.advanced(by: bodyOff), bodyLen,
+                          signature: bb.baseAddress!, publicKey: pb.baseAddress!)
+        }
+    }
+    if !sigOK { put("swupdate: bundle signature INVALID — rejected\n"); return 1 }
+
+    // 2. Header magic + version.
+    if !magicMatches(bundle, bodyOff) { put("swupdate: bad bundle magic\n"); return 1 }
+    if le32(bundle, bodyOff + 8) != 1 { put("swupdate: unsupported bundle version\n"); return 1 }
+
+    // 3. Payload SHA-256 cross-check (covers body[hdr..]).
+    let payloadOff = bodyOff + hdrSize
+    let payloadLen = bundle.count - payloadOff
+    var sha = [UInt8](repeating: 0, count: 32)
+    bundle.withUnsafeBytes { bb in
+        sha.withUnsafeMutableBytes { ob in
+            sha256(bb.baseAddress!.advanced(by: payloadOff), payloadLen, ob.baseAddress!)
+        }
+    }
+    var k = 0
+    while k < 32 { if sha[k] != bundle[bodyOff + 32 + k] { put("swupdate: payload sha256 mismatch\n"); return 1 }; k += 1 }
+
+    // 4. Layout bounds (body-relative offsets).
+    let entryCount = le32(bundle, bodyOff + 12)
+    let stringsOff = le32(bundle, bodyOff + 16)
+    let stringsLen = le32(bundle, bodyOff + 20)
+    let blobsOff = le32(bundle, bodyOff + 24)
+    let blobsLen = le32(bundle, bodyOff + 28)
+    if entryCount < 1 || entryCount > maxSiteEntries {
+        put("swupdate: bundle entry count out of range (inode budget)\n"); return 1
+    }
+    let entriesEnd = hdrSize + entryCount * entrySize
+    if entriesEnd > stringsOff || stringsOff + stringsLen > blobsOff
+        || blobsOff + blobsLen > bodyLen {
+        put("swupdate: bundle layout out of bounds\n"); return 1
+    }
+
+    // 5. Stage into a fresh /data/www/next.
+    _ = sMkdir(cz(pWww))
+    deleteTree(cz(pNext))
+    if sMkdir(cz(pNext)) < 0 && statMode(cz(pNext)) == nil {
+        put("swupdate: cannot create staging dir\n"); return 1
+    }
+    var i = 0
+    while i < entryCount {
+        let e = bodyOff + hdrSize + i * entrySize
+        let nameOff = le32(bundle, e + 0)
+        let nameLen = le32(bundle, e + 4)
+        let blobOff = le32(bundle, e + 8)
+        let blobLen = le32(bundle, e + 12)
+        let type = le32(bundle, e + 16)
+        if nameLen < 1 || nameOff + nameLen > stringsLen { put("swupdate: bad entry name\n"); return 1 }
+        if type == 0 && blobOff + blobLen > blobsLen { put("swupdate: bad entry blob\n"); return 1 }
+        var name: [UInt8] = []
+        var j = 0
+        let nameBase = bodyOff + stringsOff + nameOff
+        while j < nameLen { name.append(bundle[nameBase + j]); j += 1 }
+        if !safeName(name) { put("swupdate: unsafe entry name — rejected\n"); return 1 }
+        let dst = joinPath(cz(pNext), name)
+        if type == 1 {
+            if sMkdir(dst) < 0 && statMode(dst) == nil { put("swupdate: mkdir failed in staging\n"); return 1 }
+        } else {
+            let fd = sOpen(dst, oWrOnly | oCreat | oTrunc)
+            if fd < 0 { put("swupdate: cannot create file in staging\n"); return 1 }
+            let ok = writeBlob(fd, bundle, bodyOff + blobsOff + blobOff, blobLen)
+            _ = swiftos_fsync(fd)
+            _ = swiftos_close(fd)
+            if !ok { put("swupdate: write failed in staging\n"); return 1 }
+        }
+        i += 1
+    }
+    syncData()
+
+    // 6. Atomic swap: retire current to prev, promote next to current. Both
+    //    renames target a fresh (non-existent) name, so each is O(1) and the
+    //    only gap is between them — recovered on the next boot by `seed`.
+    deleteTree(cz(pPrev))
+    if statMode(cz(pCur)) != nil {
+        if sRename(cz(pCur), cz(pPrev)) != 0 { put("swupdate: could not retire current\n"); return 1 }
+    }
+    if sRename(cz(pNext), cz(pCur)) != 0 { put("swupdate: could not promote next\n"); return 1 }
+    syncData()
+    put("swupdate: applied site bundle; /data/www/current updated\n")
+    return 0
+}
+
+private func applyLocal(_ path: [CChar]) -> Int32 {
+    guard let bundle = readFileFully(path, maxBundleBytes) else {
+        put("swupdate: cannot read bundle file\n"); return 1
+    }
+    return applyBundleBytes(bundle)
+}
+
 // ---- entry point -----------------------------------------------------------
 
 private func usage() {
-    put("usage: swupdate seed\n")
+    put("usage: swupdate seed | swupdate apply-local <bundle.swsite>\n")
 }
 
 @_cdecl("main")
@@ -311,6 +505,14 @@ func main(_ argc: Int32,
     }
     if cstrEq(cmdp, "seed") {
         return seed()
+    }
+    if cstrEq(cmdp, "apply-local") {
+        guard argc >= 3, let p = argv[2] else { usage(); return 2 }
+        var path: [CChar] = []
+        var i = 0
+        while p[i] != 0 { path.append(p[i]); i += 1 }
+        path.append(0)
+        return applyLocal(path)
     }
     usage()
     return 2
