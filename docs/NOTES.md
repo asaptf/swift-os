@@ -6555,6 +6555,55 @@ step, iterate over serial/VNC until SSH reaches SwiftOS).
 
 ## QW-series — quick-win hardening (post-M13 remediation)
 
+### QW4 — orderly power control: shutdown/reboot, Ctrl+Alt+Del, panic auto-reboot (DONE, 2026-06-18)
+
+**Goal.** Give the OS a real power-control surface so a headless server can be
+cycled cleanly and recovers itself if the kernel wedges: `shutdown`/`reboot`
+commands, Ctrl+Alt+Del on a real keyboard, and a 90 s auto-reboot after a kernel
+panic with an on-screen countdown.
+
+**Mechanism — PSCI.** All paths funnel through PSCI (the same conduit S1 uses for
+`CPU_ON`), dispatched per the firmware-discovered `platform.psciMethod`
+(HVC on QEMU `virt`). Two new no-argument wrappers in
+`kernel/arch/aarch64/io.h` — `psci_call0_hvc/smc` — issue `SYSTEM_RESET`
+(`0x8400_0009`, warm reboot) and `SYSTEM_OFF` (`0x8400_0008`, power off → QEMU
+exits). New `kernel/power/power.swift` holds `powerReset`/`powerOff` (each does
+`vfsSyncAll()` first, then the PSCI call), the `powerControl(command:)` syscall
+backing, `powerCtrlAltDelReboot()`, and `panicReboot(seconds:)`.
+
+**Syscall + commands.** `SYS_REBOOT = 90` (`reboot(cmd)`: 0=reset, 1=off), gated
+on `capConsole`. Userland bridge `swiftos_reboot`/`swiftos_poweroff`
+(`userland/lib/swift_user.{h,c}` + `sys_reboot` inline in `syscall.h`). Two new
+programs `/bin/reboot` and `/bin/shutdown` (`userland/{reboot,shutdown}.swift`),
+packed into the base image.
+
+**Ctrl+Alt+Del.** Implemented on the virtio-input keyboard only — a serial
+console is a raw byte stream with no real modifier concept. `virtio_input.swift`
+now tracks Ctrl (evdev 29/97) and Alt (56/100) alongside Shift; Del (111) while
+both are held calls `powerCtrlAltDelReboot()`. (USB HID can hook the same path
+once enumeration lands.)
+
+**Panic auto-reboot.** `exceptionHandler` (the EL1 fault path — also where Swift
+traps land) now ends with `panicReboot(seconds: 90)` instead of spinning. The
+countdown polls `CNTPCT_EL0` directly rather than relying on the timer interrupt,
+because a panic is taken with IRQs masked (DAIF set on exception entry) and the
+kernel may be wedged. Per the project logging policy it does **NOT** touch the
+disk — a faulted kernel must not write to `/data` — it just prints the countdown
+to UART, records to the klog ring, and resets. EL0 (userland) faults are
+unaffected: they still kill the process, not the kernel.
+
+**Logging.** Reboot/poweroff/CAD/panic-countdown events log at warn/panic to the
+in-RAM klog ring + UART (no disk writes from the kernel). Serial capture is the
+durable record; clean reboot/shutdown additionally `sync()` before the PSCI call.
+
+**Acceptance.** New `make reboot-test` (`tests/reboot_test.sh`): drives to a root
+shell (capConsole) and proves `/bin/reboot` issues `SYSTEM_RESET` and the machine
+actually resets (boot prompts reach the M7 marker a 2nd time); an unprivileged
+`user` (caps=14) running `/bin/reboot` is refused and the box does **not** reset;
+`/bin/shutdown` issues `SYSTEM_OFF` and QEMU exits on its own. The panic countdown
++ reset was verified manually with a temporary EL1 fault injection (5 reboot
+cycles observed, since reverted). `make build` clean.
+
 ### QW3 — endpoint owner-tagging + orphan-zombie reaper, and a PCIe-table teardown leak fix (DONE, 2026-06-18)
 
 **Goal.** Adopt the L4/seL4 owner-tagging + deterministic reclamation-on-death
