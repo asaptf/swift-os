@@ -95,11 +95,13 @@ struct UpdateStoreTest {
 
         // 4. Serialize -> parse round-trip is identity (U1b write-back path).
         let s0 = SwosbootSlot(present: true, state: SwosbootFormat.stateConfirmed,
-                              baseLBA: 8, lengthSectors: 100, generation: 1, attemptCount: 2)
+                              baseLBA: 8, lengthSectors: 100, generation: 1, attemptCount: 2,
+                              systemVersion: 5)
         let s1 = SwosbootSlot(present: true, state: SwosbootFormat.stateUntried,
-                              baseLBA: 108, lengthSectors: 100, generation: 2, attemptCount: 0)
+                              baseLBA: 108, lengthSectors: 100, generation: 2, attemptCount: 0,
+                              systemVersion: 6)
         let m = SwosbootManifest(version: 1, activeSlot: 1, fallbackSlot: 0,
-                                 sequence: 7, slot0: s0, slot1: s1)
+                                 sequence: 7, slot0: s0, slot1: s1, minSystemVersion: 5)
         var sbuf = [UInt8](repeating: 0xAA, count: SwosbootFormat.manifestSize) // non-zero fill
         sbuf.withUnsafeMutableBytes { serializeSwosbootManifest(m, into: $0.baseAddress!) }
         if let p = parse(sbuf) {
@@ -107,8 +109,22 @@ struct UpdateStoreTest {
             check(p.slot(0).state == SwosbootFormat.stateConfirmed && p.slot(0).attemptCount == 2,
                   "round-trip slot0 state/attempts")
             check(p.slot(1).baseLBA == 108 && p.slot(1).generation == 2, "round-trip slot1")
+            // OS-3: monotonic-version fields round-trip.
+            check(p.slot(0).systemVersion == 5 && p.slot(1).systemVersion == 6,
+                  "round-trip per-slot systemVersion")
+            check(p.minSystemVersion == 5, "round-trip min_system_version floor")
         } else {
             check(false, "serialized manifest should parse")
+        }
+
+        // OS-3: a pre-OS-3 store (the reserved bytes left zero) reads back as a
+        // zero floor and zero slot versions — back-compatible, format version still 1.
+        if let legacy = parse(makeManifest(active: 0, fallback: 1)) {
+            check(legacy.minSystemVersion == 0, "legacy floor reads as 0")
+            check(legacy.slot(0).systemVersion == 0 && legacy.slot(1).systemVersion == 0,
+                  "legacy slot versions read as 0")
+        } else {
+            check(false, "legacy manifest should still parse")
         }
 
         if failures == 0 {

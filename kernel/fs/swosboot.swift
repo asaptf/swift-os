@@ -41,6 +41,7 @@
 ///   28  u32    sequence      (monotonic; higher wins among valid copies)
 ///   32  slot[0] (48 bytes)
 ///   80  slot[1] (48 bytes)
+///   128 u64    min_system_version  (anti-rollback floor; OS-3) — see below
 ///   ... reserved zeros ...
 ///   508 u32    crc32 over bytes [0, 508)
 /// ```
@@ -52,14 +53,22 @@
 ///   +16 u64   length_sectors   (slot image length in sectors)
 ///   +24 u32   generation
 ///   +28 u32   attempt_count                                — boot-state, U1b
-///   +32 u8[16] reserved
+///   +32 u64   system_version   (monotonic OS version staged here; OS-3)
+///   +40 u8[8] reserved
 /// ```
+/// OS-3 anti-rollback: `system_version` records the monotonic version of the OS
+/// staged into each slot; `min_system_version` is the floor a freshly staged slot
+/// must exceed. Both live in bytes that were reserved (and zero) in the original
+/// layout, so format `version` stays 1 and a pre-OS-3 store still parses (its
+/// floor and slot versions read back as 0). The CRC32 already covered these bytes.
 enum SwosbootFormat {
     static let manifestSize = 512
     static let version: UInt32 = 1
     static let slotCount = 2
     static let slotTableOffset = 32
     static let slotEntrySize = 48
+    static let slotSystemVersionOffset = 32 // u64 within a slot entry (OS-3)
+    static let minSystemVersionOffset = 128 // u64 in the manifest, after the slots (OS-3)
     static let crcOffset = 508 // last 4 bytes of the sector
 
     // Slot boot-state values (U1b consumes these; U1a only reads/selects).
@@ -76,6 +85,7 @@ struct SwosbootSlot {
     var lengthSectors: UInt64
     var generation: UInt32
     var attemptCount: UInt32
+    var systemVersion: UInt64   // OS-3: monotonic OS version staged in this slot
 }
 
 /// A parsed, CRC-validated SWOSBOOT manifest copy.
@@ -86,6 +96,7 @@ struct SwosbootManifest {
     var sequence: UInt32
     var slot0: SwosbootSlot
     var slot1: SwosbootSlot
+    var minSystemVersion: UInt64   // OS-3: anti-rollback floor for newly staged slots
 
     func slot(_ i: Int) -> SwosbootSlot { i == 0 ? slot0 : slot1 }
 
@@ -132,7 +143,8 @@ private func readSwosbootSlot(_ p: UnsafeRawPointer, _ o: Int) -> SwosbootSlot {
                  baseLBA: sbLoad64(p, o + 8),
                  lengthSectors: sbLoad64(p, o + 16),
                  generation: sbLoad32(p, o + 24),
-                 attemptCount: sbLoad32(p, o + 28))
+                 attemptCount: sbLoad32(p, o + 28),
+                 systemVersion: sbLoad64(p, o + SwosbootFormat.slotSystemVersionOffset))
 }
 
 /// Parse and validate a single 512-byte manifest copy. Returns nil unless the
@@ -172,7 +184,8 @@ func parseSwosbootManifest(_ buf: UnsafeRawPointer, _ len: Int) -> SwosbootManif
                             fallbackSlot: fallback,
                             sequence: sbLoad32(buf, 28),
                             slot0: readSwosbootSlot(buf, base),
-                            slot1: readSwosbootSlot(buf, base + stride))
+                            slot1: readSwosbootSlot(buf, base + stride),
+                            minSystemVersion: sbLoad64(buf, SwosbootFormat.minSystemVersionOffset))
 }
 
 // Little-endian byte writers (mirror the readers; byte-wise for +strict-align).
@@ -194,6 +207,7 @@ private func writeSwosbootSlot(_ p: UnsafeMutableRawPointer, _ o: Int, _ s: Swos
     sbStore64(p, o + 16, s.lengthSectors)
     sbStore32(p, o + 24, s.generation)
     sbStore32(p, o + 28, s.attemptCount)
+    sbStore64(p, o + SwosbootFormat.slotSystemVersionOffset, s.systemVersion)
 }
 
 /// Serialize a manifest into a 512-byte sector buffer (with a fresh CRC32). The
@@ -216,6 +230,7 @@ func serializeSwosbootManifest(_ m: SwosbootManifest, into buf: UnsafeMutableRaw
     let base = SwosbootFormat.slotTableOffset
     writeSwosbootSlot(buf, base, m.slot0)
     writeSwosbootSlot(buf, base + SwosbootFormat.slotEntrySize, m.slot1)
+    sbStore64(buf, SwosbootFormat.minSystemVersionOffset, m.minSystemVersion)
     let crc = swosbootCrc32(UnsafeRawPointer(buf), SwosbootFormat.crcOffset)
     sbStore32(buf, SwosbootFormat.crcOffset, crc)
 }
