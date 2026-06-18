@@ -6722,3 +6722,85 @@ Final marker `QW2 OK`. Running at `-smp 4` means a lost cross-CPU wakeup
 causes the child to hang and the await to time out.
 PASS at `-smp 4`; `make ipc-socket-transfer-test` (C4b) and `make smp-test`
 still PASS; `make build` clean.
+
+### QW1 — `ipc_call` / `ipc_reply_recv` synchronous request/reply (DONE, 2026-06-18)
+
+**Goal.** Add the L4/seL4-family `call` / `reply_recv` verbs in our 256-byte
+byte-message model so a server hot loop is a single `ipc_reply_recv` per request
+(reply to the previous request, block for the next), with caller-blocking and
+request/reply correlation done by the kernel via a transient reply port — instead
+of the hand-built two-endpoint duplex `drvsvcdemo` uses. Byte buffers stay; no
+register frame, no VMOs/badges/multi-handle transfer (still C4a future work).
+
+**Syscall numbers.** `ipc_call = 91`, `ipc_reply_recv = 92`. (The QW1 prompt
+assumed 90/91, but QW4's `reboot` took 90 first, so the next free pair is 91/92.)
+51/52/53 (`endpoint_create`/`ipc_send`/`ipc_recv`) are unchanged.
+
+**Reply port (`kernel/vfs/vfs.swift`).** A module-level
+`replyPorts[maxReplyPorts=16]` table — the synchronous-RPC counterpart to the
+single-slot `Endpoint`. Each port's 256-byte buffer is allocated lazily once and
+kept attached across free (mirrors `allocEndpoint`), so the hot path never calls
+`swiftos_kernel_alloc`. The port is named to the server only as a kernel-internal
+token `(generation << 32) | (index + 1)` (0 = "no reply" sentinel), carried to the
+receiver in the new `Endpoint.replyToken` field. `decodeReplyPort` validates the
+token on every reply (in range, `inUse`, generation-matched), and the reply phase
+additionally requires the port to belong to the server's own endpoint and to be
+awaiting — so a user cannot forge a token or reply to another caller's port. The
+generation is bumped per alloc and persisted across free, so a freed token never
+revalidates.
+
+- **`vfsIpcCall(fd, &msg)`** (modeled on `vfsIpcSend` + `vfsIpcRecv`'s block loop):
+  validates the send end (`.write`+`.transfer`, endpoint send end, live
+  `recvRefs`, slot free), validates the optional moved handle, mints a port
+  (`errNoSpace` if none free), delivers the request bytes ± moved handle into the
+  endpoint slot exactly as `ipc_send`, stamps `replyToken`, `ipcWakeWaiters(ep)`,
+  then parks on the reply port via the QW2 path (`processPrepareBlockOnFutex` under
+  `vfsLock`, then `processYieldAfterPreparedFutexBlock`). On wake it re-validates
+  the port (slot/caller/token), copies the reply (≤ `reply_cap`), installs any
+  replied handle as a new fd, frees the port, returns the reply byte count.
+- **`vfsIpcReplyRecv(fd, &msg)`** — reply phase (skipped on token 0, the first
+  turn): validate token + endpoint ownership, copy ≤256 reply bytes + move the
+  optional reply handle into the port, mark `hasReply`, `processWakeFromFutex` the
+  parked caller. Receive phase: the same QW2 park/wake loop as `vfsIpcRecv`, plus
+  it writes the new request's `replyToken` to `*out_reply_port` so the server can
+  reply next turn.
+
+**Lifecycle / failure modes.**
+- **Server death before reply.** When the last receiver closes and `recvRefs`
+  hits 0, `releaseDescription` calls `replyPortsWakeForEndpointEOF(ep)`; the woken
+  caller re-checks `recvRefs == 0` and returns `errPipe`, then frees its own port.
+- **Caller death.** `replyPortForgetSlot(slot)` (mirrors `ipcForgetSlot`) is wired
+  into both teardown paths (`processRemoteTerminate`, thread-exit) and reclaims any
+  port the dying caller parked on, releasing an uncollected replied handle so its
+  description ref balances. A later server reply finds a stale token → `errInvalid`
+  (clear "gone" state, never a dangling `callerSlot`).
+- **Bogus/forged token** → `errInvalid`; **busy single-slot channel** → `errAgain`.
+
+**S4b accounting.** `vfsS4bAccountingSelfTestLocked` now counts a reply port's
+moved handle toward `descRefs` exactly as it does an endpoint's in-flight handle,
+plus a sanity walk (`bufPtr != 0` when `inUse`, `replyLen ∈ [0,256]`), so the
+refcount invariant stays balanced. `docs/SMP_STATE_AUDIT.md` covers the new
+`replyPorts` (and the previously-undocumented QW2 `endpointRecvWaiters`) globals.
+
+**ABI.** `userland/lib/syscall.h` adds `SYS_IPC_CALL`/`SYS_IPC_REPLY_RECV` (91/92)
+and `static inline ipc_call` / `ipc_reply_recv` wrappers. The msg structs lead with
+the `u64` fields so the trailing `int` needs no struct padding the kernel must skip
+(CALL = 44 bytes, REPLY_RECV = 60 bytes, byte-for-byte the kernel's LE parse).
+
+**Acceptance.** New `make ipc-call-test` (`tests/ipc_call_test.sh` +
+`userland/ipc_call_test.c`), at `-smp 4`: a server child runs the one-syscall
+hot loop; the parent issues several `ipc_call`s and asserts each reply correlates
+(`reply N correlated`), a pipe write end round-trips caller→server→caller
+(`handle round-tripped`), a bogus reply-port token is refused (EINVAL), and a
+server that exits without replying fails EPIPE (not a hang/panic). The ping-pong
+is self-synchronizing (each side blocks for the other), so no sleeps are needed in
+the correlation path. PASS at `-smp 4`; `make smp-test` (S4b balanced),
+`qw2-blocking-ipc-test`, `orphan-reap-test`, `ipc-socket-transfer-test` still
+PASS; `make build` clean.
+
+**Known pre-existing gap (not QW1).** `make smp-state-audit` is red on this branch
+independent of QW1: its `SMP_STATE_AUDIT.md` manifest has not been maintained since
+pre-USB/datafs, so the scanner reports ~57 globals missing across unrelated
+subsystems (sysrng, usb_xhci, datafs, virtio_gpu, …) plus 2 stale entries. QW1
+documents its own state (`replyPorts`, `endpointRecvWaiters`); the broader drift
+needs a separate doc-sync pass.

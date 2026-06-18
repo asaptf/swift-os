@@ -56,6 +56,7 @@ source, then follow its Makefile rule and acceptance test.
 | Process launch and explicit handles | `userland/argvdemo.c`, `userland/spawndemo.c` | `spawn`, `spawn_handles`, `swiftos_spawn_handle`, handle rights | `./tests/boot_test.sh`, `./tests/spawn_self_exec_test.sh` |
 | Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
+| Synchronous request/reply IPC | `userland/ipc_call_test.c` | `ipc_call`, `ipc_reply_recv`, reply-port correlation | `make ipc-call-test` |
 | Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-authority-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | Network status preflight | `userland/netinfo.swift` | `netinfo`, `swiftos_netinfo_refresh`, `swiftos_net_*` | `make netinfo-test` |
@@ -280,6 +281,10 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 86 | `security_info_ex` | `security_info_ex*` | 0 or negative error |
 | 87 | `fsync` | `fd` | 0 or negative error (flushes /data to media) |
 | 88 | `sync` | none | 0 (flushes all writable filesystems) |
+| 89 | `recv` | `fd`, `buf`, `len` | bytes peeked (TCP `MSG_PEEK`) or negative error |
+| 90 | `reboot` | `cmd` | does not return on success; negative error (needs `capConsole`) |
+| 91 | `ipc_call` | `fd`, `msg*` | reply bytes or negative error (send + block for reply) |
+| 92 | `ipc_reply_recv` | `fd`, `msg*` | request bytes or negative error (reply then receive) |
 
 Notes:
 
@@ -914,6 +919,49 @@ ipc_send(ep[0], "H", 1, fd);
 char byte;
 int received = -1;
 long n = ipc_recv(ep[1], &byte, 1, &received);
+```
+
+### Synchronous request/reply (`ipc_call` / `ipc_reply_recv`)
+
+For request/reply RPC, `ipc_call` sends a request on a send end and blocks until
+the server replies; `ipc_reply_recv` is the server hot loop — reply to the
+previous request, then block for the next — in one syscall. The kernel mints a
+transient reply port per call and correlates the reply to the exact blocked
+caller, so the server needs no second endpoint or hand-built correlation:
+
+```c
+long ipc_call(int fd, const void *buf, unsigned long len, int handle_fd,
+              void *reply_buf, unsigned long reply_cap, int *out_handle_fd);
+long ipc_reply_recv(int fd, unsigned long reply_port,
+                    const void *reply_buf, unsigned long reply_len, int reply_handle_fd,
+                    void *recv_buf, unsigned long recv_cap, int *out_handle_fd,
+                    unsigned long *out_reply_port);
+```
+
+Behavior:
+
+- Same 256-byte byte-message model and one-moved-handle rule as `ipc_send`/`ipc_recv`.
+- The server passes `reply_port = 0` on its first turn (nothing to reply to yet);
+  each receive writes the new request's reply-port token to `*out_reply_port` for
+  the server to reply to on the next turn.
+- The reply-port token is a kernel-internal value validated on reply (it must name
+  a port currently awaiting on the server's own endpoint); a stale/forged token
+  returns `EINVAL`.
+- A caller whose server exits without replying fails with `EPIPE` rather than
+  hanging.
+
+```c
+// Server hot loop:
+unsigned long rp = 0;            // 0 = no reply on the first turn
+char out[256]; unsigned long out_len = 0; int out_h = -1;
+for (;;) {
+    char req[256]; int in_h = -1; unsigned long token = 0;
+    long n = ipc_reply_recv(recv_fd, rp, out, out_len, out_h,
+                            req, sizeof(req), &in_h, &token);
+    if (n < 0) break;            // endpoint torn down: done
+    rp = token;                  // reply to THIS request next turn
+    /* ... build the reply into out/out_len/out_h ... */
+}
 ```
 
 ## Memory API
