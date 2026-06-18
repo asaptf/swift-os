@@ -6,7 +6,7 @@
 
 ## What works today
 
-- **Freestanding Embedded Swift kernel** — swift.org toolchain, target `aarch64-none-none-elf`, no Foundation, no full standard library. `~Copyable` structs with `deinit` for ownership and `Unsafe*` pointers at the metal; ARC and classes only above the heap.
+- **Freestanding Embedded Swift kernel** — swift.org toolchain, target `aarch64-none-none-elf`, no Foundation, no full standard library. Value types and `Unsafe*` pointers at the metal; ARC and classes only above the heap.
 - **Real MMU isolation** — one address space per process — with a **capability/principal** security model (authorization is principal + capability mask, never `uid == 0`).
 - **A native Swift userland** — coreutils, an interactive shell, `ps`/`top`, `sshd` — on our own POSIX-like syscall ABI. No Linux ABI, static linking only, no dynamic loader.
 - **An in-kernel TCP/IP stack** — DHCP, TCP, UDP, DNS, HTTP, TLS — with a sans-IO, pure-Swift protocol core.

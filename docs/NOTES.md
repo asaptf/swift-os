@@ -6552,3 +6552,124 @@ its platform map from ACPI with no device tree. Remaining: **H6** (bring-up on
 the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
 via the provider rescue system, confirm with the user before the destructive
 step, iterate over serial/VNC until SSH reaches SwiftOS).
+
+## QW-series — quick-win hardening (post-M13 remediation)
+
+### QW3 — endpoint owner-tagging + orphan-zombie reaper, and a PCIe-table teardown leak fix (DONE, 2026-06-18)
+
+**Goal.** Adopt the L4/seL4 owner-tagging + deterministic reclamation-on-death
+discipline for IPC endpoints, and stop leaking process slots for orphaned
+children that are reparented to the kernel and then exit with no waiter.
+
+**Part (a) — Endpoint `ownerProc` + reclamation on death (`kernel/vfs/vfs.swift`).**
+- `struct Endpoint` gained `var ownerProc = -1`, mirroring `DeviceGrant.ownerProc`.
+- `vfsEndpointCreate` stamps the creating process as owner (under `vfsLock`).
+- `releaseEndpointsOwnedBy(slot)` (new) is called from `vfsProcessCloseAll` after
+  the FD-close loop, as a deterministic owner-tagged backstop. It funnels through
+  the existing `resetEndpointSlotForReuse` (preserving the bump-allocated `bufPtr`
+  for reuse) and is idempotent. This is defense-in-depth: the FD-close path
+  already reclaims endpoints whose ends were all FDs of the dying slot. Ownership
+  transfer across IPC/fork is a follow-up (creator-owns is sufficient here).
+
+**Part (b) — Orphan-zombie reaper leak (`kernel/user/process.swift`).** The real
+leak: when a process **P** with a live child **C** was reaped, `reapProcess`
+reparented **C** to the kernel (`pParent = -1`); when **C** later exited,
+`wakeParent` was a no-op (parent `-1`) and nothing at runtime reaped a
+`-1`-parented zombie, so **C** permanently consumed one of the 16 `maxProc` slots
+until reboot. Fix:
+- `reapProcess` now reaps already-quiesced zombie children **directly**
+  (re-scanning, since a reap can recursively reparent/reap descendants) instead of
+  only reparenting; still-live adopted children are reparented to the kernel and
+  flagged in a new `pReparentedOrphan` array.
+- `schedule()` collects a runtime-reparented orphan zombie (`pParent == -1 &&
+  pReparentedOrphan`) the instant it quiesces. The flag gates this so it never
+  races an orchestrator (`processRunElf`/`processRunPair`/S5 helpers) waiting on a
+  born-top-level (`parent: -1` at creation) zombie it reaps itself — those are not
+  flagged. SMP-safe: general EL0 (forks) is CPU0-homed, so the in-scheduler reap
+  fires only on the dispatching CPU under the existing IRQ-mask + quiesce
+  discipline.
+- No new syscalls; the ABI is unchanged. `processLiveSlotCount` /
+  `vfsEndpointInUseCount` are kernel-internal observability only.
+
+**Root-cause fix surfaced by the test (`kernel/mm/vm.swift`).** On non-VirtualBox
+boards `address_space_create` allocates an `l0[1]` PCIe-64-bit-MMIO-window L1
+table (`l1pci`, the H2 device window mirrored into every space), but
+`address_space_destroy` only walked `l0[0]` and **never freed `l1pci`** — one
+leaked frame per address-space teardown. This was **pre-existing on `main`** (the
+`runReclaimDemo` self-test was already red, ~8 frames/round across fork/exec/spawn
+churn; confirmed on a clean tree before touching it). `address_space_destroy` now
+frees the `l0[1]` table (guarded on a valid table descriptor, so the VirtualBox
+path — which leaves `l0[1]` empty — is a no-op). This is required for QW3's
+frame-baseline assertion and also turns `reclaim` green again.
+
+**Acceptance.** New `make orphan-reap-test` (`tests/orphan_reap_test.sh` +
+`userland/orphandemo.c` + in-kernel `runOrphanReapDemo` in `kernel/main.swift`).
+The self-test runs 20 rounds of the orphan scenario — a parent forks a child
+(which owns and abandons an IPC endpoint) and exits without waiting, so the child
+is reparented to the kernel and later exits — and asserts that live process slots,
+PMM frames, and endpoint slots all return to baseline. PASS single-core **and**
+`-smp 4` (slots 0→0, frames 60901→60901, endpoints 0→0). `reclaim OK` (was FAIL);
+`make smp-test` still PASS; `make build` clean (no new warnings).
+
+### QW2 — blocking IPC park/wake (DONE, 2026-06-18)
+
+**Goal.** Replace the `vfsIpcRecv` busy-spin with a true L4/seL4-family
+rendezvous: a receiver that finds an empty endpoint parks its process slot
+in a fixed-size waiter table and is woken directly by `ipc_send` (or by the
+last sender closing), instead of cycling through the run queue on every timer
+tick.
+
+**Kernel (`kernel/vfs/vfs.swift`).** A module-level
+`endpointRecvWaiters[maxEndpoints × maxRecvWaitersPerEndpoint]` array (4
+slots per endpoint, `Int32`, allocation-free, always under `vfsLock`) replaces
+the busy-loop:
+
+- `ipcRecordWaiter` / `ipcClearWaiterSlot` / `ipcClearEndpointWaiters` /
+  `ipcWakeWaiters` helpers — all under `vfsLock`.
+- `ipcForgetSlot(_ slot: Int)` — mirrors `futexForgetSlot`; drops a dying
+  slot from every endpoint's waiter list so a reused slot cannot be spuriously
+  woken.
+- **`vfsIpcRecv` loop** — under `vfsLock`, if no message and senders are alive,
+  records `processCurrentSlot()` in the waiter table, calls
+  `processPrepareBlockOnFutex()` (sets `pBlocked`) **before releasing the
+  lock**, then `vfsUnlock` + `processYieldAfterPreparedFutexBlock()`. This is
+  the same lock-discipline as the futex park/wake backend and closes the
+  lost-wakeup window on SMP. If the per-endpoint waiter table is full, falls
+  back to the old `vfsUnlock + processYieldForIO()` path (correctness
+  preserved, no wake guarantee for the overflow case). Spurious wakes are safe
+  — the loop always re-validates `hasMsg`/`sendRefs` under lock.
+- **`vfsIpcSend`** — calls `ipcWakeWaiters(ep)` after `endpoints[ep].hasMsg =
+  true` (still under `vfsLock`).
+- **`releaseDescription` EOF wake** — when a send-end description is released
+  and `sendRefs` transitions to 0, `ipcWakeWaiters(ep)` is called; the woken
+  receiver re-checks `sendRefs == 0` and returns `errPipe`.
+- **`resetEndpointSlotForReuse`** — calls `ipcClearEndpointWaiters(ep)` so a
+  reused slot cannot inherit stale waiter records.
+
+**Process teardown (`kernel/user/process.swift`).** `ipcForgetSlot(slot/me)`
+is called from both teardown paths that already call `futexForgetSlot` —
+`processRemoteTerminate` and the thread-exit branch in `processExit` — so a
+slot freed before delivery cannot be woken after reuse.
+
+**No ABI changes.** Same syscall numbers, same message layouts (SEND 20 bytes,
+RECV 24 bytes), same userland headers. The change is purely internal and
+invisible to userland except that `ipc_recv` no longer burns CPU while
+waiting.
+
+**Lock ordering.** `vfsLock → processRunQueueLock(cpu)` (via
+`markProcessReadyOnHomeCpu` inside `processWakeFromFutex`). The reverse
+ordering (`processRunQueueLock → vfsLock`) does not exist anywhere in the
+codebase, so no deadlock is possible.
+
+**Acceptance.** New `make qw2-blocking-ipc-test` (`tests/qw2_blocking_ipc_test.sh`
++ `userland/qw2_ipc.c`). Two scenarios exercised at `-smp 4`:
+1. **Recv-then-send**: child prints `QW2-RECV-PARKED`, parks on `ipc_recv`
+   before any message; parent sleeps 200 ms and sends 5 bytes; child receives
+   and prints `QW2-RECV-OK 5`.
+2. **EOF wake**: child closes its own copy of the send end, parks on `ipc_recv`;
+   parent closes the send end → `sendRefs` reaches 0 → child wakes with
+   `errPipe (-32)` and prints `QW2-EOF-OK`.
+Final marker `QW2 OK`. Running at `-smp 4` means a lost cross-CPU wakeup
+causes the child to hang and the await to time out.
+PASS at `-smp 4`; `make ipc-socket-transfer-test` (C4b) and `make smp-test`
+still PASS; `make build` clean.

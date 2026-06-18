@@ -450,6 +450,65 @@ private func runReclaimDemo() {
     }
 }
 
+/// QW3 orphan-zombie reaper self-test. Repeatedly builds the orphan scenario — a
+/// parent forks a child and exits without waiting, so the child is reparented to
+/// the kernel and later exits with no waiter — and asserts that live process
+/// slots, PMM frames, and endpoint slots all return to baseline. Before the fix,
+/// each round permanently leaked the orphan's zombie slot (and its frames); after
+/// the fix the kernel collects it. A leak that prevented collection would instead
+/// hang the round's scheduler wait, which the test driver catches via timeout.
+private func runOrphanReapDemo() {
+    klog(.info, "boot", "swift-os orphan-reap: kernel collects orphaned-child zombies")
+    let (img, sz) = demoImage("/bin/orphandemo")
+    if img == 0 {
+        uartPuts("orphan-reap: demo image missing; skipping\n")
+        return
+    }
+    let (p, n, c) = packArgs(["orphandemo"])
+    // Warm-up round settles one-time lazy state so the baseline is steady-state.
+    if !processOrphanReapRound(img, sz, packed: p, packedLen: n, argc: c) {
+        uartPuts("orphan-reap FAIL: could not launch warm-up round\n")
+        return
+    }
+    let baseSlots = processLiveSlotCount()
+    let baseFrames = pmmFreeCount()
+    let baseEndpoints = vfsEndpointInUseCount()
+    // 20 rounds exceeds both the 16-slot process table and the 16-slot endpoint
+    // table, so any per-round slot leak would exhaust a table (round launch
+    // fails) well before the count comparison.
+    var launched = true
+    for _ in 0..<20 {
+        if !processOrphanReapRound(img, sz, packed: p, packedLen: n, argc: c) {
+            launched = false
+            break
+        }
+    }
+    let afterSlots = processLiveSlotCount()
+    let afterFrames = pmmFreeCount()
+    let afterEndpoints = vfsEndpointInUseCount()
+
+    uartPuts("orphan-reap: slots base=")
+    uartPutUInt(UInt64(baseSlots))
+    uartPuts(" after=")
+    uartPutUInt(UInt64(afterSlots))
+    uartPuts(" frames base=")
+    uartPutUInt(UInt64(baseFrames))
+    uartPuts(" after=")
+    uartPutUInt(UInt64(afterFrames))
+    uartPuts(" endpoints base=")
+    uartPutUInt(UInt64(baseEndpoints))
+    uartPuts(" after=")
+    uartPutUInt(UInt64(afterEndpoints))
+    uartPuts("\n")
+
+    if launched && afterSlots == baseSlots && afterFrames == baseFrames
+       && afterEndpoints == baseEndpoints {
+        uartPuts("orphan-reap OK: no zombie slot leak across orphan churn\n")
+    } else {
+        uartPuts("orphan-reap FAIL: leaked slot/frame/endpoint across orphan churn\n")
+    }
+}
+
 private func runPsDemo() {
     klog(.info, "boot", "swift-os userland: Swift ps")
     let (img, sz) = demoImage("/bin/ps")
@@ -1257,6 +1316,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runSecurityDemo()
         runIdentityDemo()
         runReclaimDemo()
+        runOrphanReapDemo()
         runPsDemo()
         if !processMultiCpuSchedulerPostRunSelfTest() {
             uartPuts("panic: S2 multi-CPU process scheduler post-run guard failed\n")
