@@ -190,6 +190,12 @@ private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var eventCounters = [EventCounter](repeating: EventCounter(), count: maxEvents)
 private let maxEndpoints = 16
 private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
+// QW2: per-endpoint blocked-receiver waiter table. A receiver that finds an
+// empty endpoint parks here (slot index) instead of busy-yielding through the
+// run queue. Indexed as ep * maxRecvWaitersPerEndpoint + k; -1 = empty.
+private let maxRecvWaitersPerEndpoint = 4
+private var endpointRecvWaiters = [Int32](
+    repeating: -1, count: maxEndpoints * maxRecvWaitersPerEndpoint)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
 private let maxDevices = 4
@@ -1142,6 +1148,9 @@ private func releaseDescription(_ d: Int) {
         let ep = desc.node
         if desc.pipeEnd == endpointSendEnd {
             if endpoints[ep].sendRefs > 0 { endpoints[ep].sendRefs -= 1 }
+            // QW2: wake any parked receivers when the last sender closes so
+            // they return errPipe instead of sleeping forever (EOF wake).
+            if endpoints[ep].sendRefs == 0 { ipcWakeWaiters(ep) }
         } else {
             if endpoints[ep].recvRefs > 0 { endpoints[ep].recvRefs -= 1 }
         }
@@ -1253,6 +1262,67 @@ private func resetEndpointSlotForReuse(_ ep: Int) {
     let bufPtr = endpoints[ep].bufPtr
     endpoints[ep] = Endpoint()
     endpoints[ep].bufPtr = bufPtr
+    // QW2: clear all waiter slots so a reused endpoint cannot spuriously wake
+    // processes that parked on the old incarnation.
+    ipcClearEndpointWaiters(ep)
+}
+
+// ---- QW2: endpoint waiter helpers (all callers must hold vfsLock) ----------
+
+// Record process slot as a receiver waiter for ep. Returns true on success,
+// false if the per-endpoint waiter array is full (caller falls back to yield).
+private func ipcRecordWaiter(_ ep: Int, _ slot: Int32) -> Bool {
+    let base = ep * maxRecvWaitersPerEndpoint
+    for k in 0..<maxRecvWaitersPerEndpoint {
+        if endpointRecvWaiters[base + k] == -1 {
+            endpointRecvWaiters[base + k] = slot
+            return true
+        }
+    }
+    return false
+}
+
+// Clear the record for a specific process slot from ep's waiter list.
+private func ipcClearWaiterSlot(_ ep: Int, _ slot: Int32) {
+    let base = ep * maxRecvWaitersPerEndpoint
+    for k in 0..<maxRecvWaitersPerEndpoint {
+        if endpointRecvWaiters[base + k] == slot {
+            endpointRecvWaiters[base + k] = -1
+        }
+    }
+}
+
+// Clear all waiter slots for ep (slot reuse / endpoint teardown).
+private func ipcClearEndpointWaiters(_ ep: Int) {
+    let base = ep * maxRecvWaitersPerEndpoint
+    for k in 0..<maxRecvWaitersPerEndpoint {
+        endpointRecvWaiters[base + k] = -1
+    }
+}
+
+// Wake all recorded receiver waiters for ep and clear their slots. Called
+// under vfsLock by both ipc_send (message available) and the EOF close path
+// (last sender closed). Woken processes re-check hasMsg/sendRefs under lock;
+// spurious wakes are safe because the recv loop always re-validates.
+private func ipcWakeWaiters(_ ep: Int) {
+    let base = ep * maxRecvWaitersPerEndpoint
+    for k in 0..<maxRecvWaitersPerEndpoint {
+        let slot = endpointRecvWaiters[base + k]
+        if slot >= 0 {
+            endpointRecvWaiters[base + k] = -1
+            processWakeFromFutex(Int(slot))
+        }
+    }
+}
+
+/// Drop any endpoint waiter records for an exiting process slot, mirroring
+/// futexForgetSlot. Called from process teardown alongside futexForgetSlot.
+func ipcForgetSlot(_ slot: Int) {
+    let daif = vfsLock()
+    for ep in 0..<maxEndpoints {
+        ipcClearWaiterSlot(ep, Int32(slot))
+    }
+    vfsUnlock(daif)
 }
 
 private func discardEndpoint(_ ep: Int) {
@@ -2788,6 +2858,11 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
         setFDEntry(proc, handleFd, HandleEntry())       // ...then clear the source (move, no release)
     }
     endpoints[ep].hasMsg = true
+    // QW2: wake any receiver parked on this endpoint. Wake happens under the
+    // same vfsLock the receiver held when it recorded its waiter slot, closing
+    // the lost-wakeup window on SMP. The woken receiver re-checks hasMsg under
+    // lock; if it races with another receiver the loser re-parks.
+    ipcWakeWaiters(ep)
     return 0
 }
 
@@ -2815,6 +2890,10 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
 
     enable_irq()
+    // QW2: park/wake loop. The receiver records its process slot under vfsLock
+    // and sets pBlocked before unlocking, so ipc_send's ipcWakeWaiters (which
+    // also runs under vfsLock) cannot lose the wakeup across CPUs. Spurious
+    // wakes are harmless — the loop re-checks hasMsg/sendRefs under lock.
     while true {
         let daif = vfsLock()
         if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse {
@@ -2861,8 +2940,29 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
             vfsUnlock(daif)
             return errPipe
         }
-        vfsUnlock(daif)
-        processYieldForIO()
+        // No message yet and senders are alive: park.
+        // Record waiter and set pBlocked under the SAME lock that ipc_send
+        // and the close path hold when they call ipcWakeWaiters — this closes
+        // the lost-wakeup window on SMP. If the waiter table is full, fall
+        // back to the old yield-and-repoll path (correctness preserved).
+        let me = Int32(processCurrentSlot())
+        if me >= 0 && ipcRecordWaiter(ep, me) {
+            // pBlocked must be set while holding vfsLock so the wake side
+            // (which also holds vfsLock) sees it consistently.
+            if !processPrepareBlockOnFutex() {
+                // currentProcessSlot() was invalid — should not happen.
+                ipcClearWaiterSlot(ep, me)
+                vfsUnlock(daif)
+                return errInvalid
+            }
+            vfsUnlock(daif)
+            processYieldAfterPreparedFutexBlock()
+            // Re-enter the loop; re-check hasMsg/sendRefs under lock.
+        } else {
+            // Waiter slots full — fall back to yield-and-repoll.
+            vfsUnlock(daif)
+            processYieldForIO()
+        }
     }
 }
 
