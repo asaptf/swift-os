@@ -453,8 +453,10 @@ Key properties:
   how a driver manager hands a driver its device/IRQ/DMA handles. The `~Copyable` `OwnedHandle.transfer`
   from §2.3 is exactly this move.
 - **Badges** let a server distinguish clients without a side-channel identity lookup: each client's
-  endpoint is minted with a server-chosen badge that `ipc_recv` reports. This is the structural defense
-  against confused-deputy for servers.
+  send-capability carries a server-chosen badge that `ipc_recv` reports. This is the structural defense
+  against confused-deputy for servers. *Implemented as QW4:* the badge lives on the send `HandleEntry`,
+  is stamped with `ipc_badge(fd, badge)`, and is reported to the receiver by `ipc_recv_badged` (0 =
+  unbadged).
 - **Capability-reachable only.** An endpoint handle *is* the right to talk to the service. There is no
   global namespace of services that ambient authority can reach; you get a service by being handed its
   endpoint (typically by the supervisor / `init`).

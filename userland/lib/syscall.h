@@ -99,6 +99,7 @@
 #define SYS_REBOOT         90
 #define SYS_IPC_CALL       91
 #define SYS_IPC_REPLY_RECV 92
+#define SYS_IPC_BADGE      93
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -229,6 +230,12 @@ static inline int confine(const char *path) {
 // bytes into `buf`, stores any received handle's new fd in *out_handle_fd (else -1),
 // and returns the byte count. Extra args ride a small msg struct (the 3-arg syscall
 // ABI carries only (fd, &msg)), like sendto/recvfrom. Negative on error.
+//
+// QW4: the recv msg struct grew to 32 bytes with a trailing out_badge VA — the
+// sender send-capability's server-chosen badge (0 = unbadged). ipc_recv passes a
+// zero out_badge VA (don't report); ipc_recv_badged supplies one. A server stamps
+// a distinct badge into each client's send handle with ipc_badge, so one shared
+// endpoint can tell its clients apart. See docs/CAPABILITIES.md §4.2.
 static inline int endpoint_create(int ends[2]) {
     return (int)__syscall3(SYS_ENDPOINT_CREATE, (long)ends, 0, 0);
 }
@@ -239,12 +246,28 @@ static inline long ipc_send(int fd, const void *buf, unsigned long len, int hand
     m.handle_fd = handle_fd;
     return __syscall3(SYS_IPC_SEND, fd, (long)&m, 0);
 }
-static inline long ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd) {
-    struct { unsigned long buf; unsigned long cap; unsigned long out_handle_fd; } m;
+// QW4: like ipc_recv, but also reports the sender send-capability's badge (0 =
+// unbadged) into *out_badge. Pass out_badge = 0 to skip reporting.
+static inline long ipc_recv_badged(int fd, void *buf, unsigned long cap,
+                                   int *out_handle_fd, unsigned int *out_badge) {
+    struct { unsigned long buf; unsigned long cap;
+             unsigned long out_handle_fd; unsigned long out_badge; } m;
     m.buf = (unsigned long)buf;
     m.cap = cap;
     m.out_handle_fd = (unsigned long)out_handle_fd;
+    m.out_badge = (unsigned long)out_badge;
     return __syscall3(SYS_IPC_RECV, fd, (long)&m, 0);
+}
+static inline long ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd) {
+    // Always sends the 32-byte struct with a zero out_badge VA, keeping the
+    // kernel and ABI in lockstep (the kernel always reads 32 bytes).
+    return ipc_recv_badged(fd, buf, cap, out_handle_fd, 0);
+}
+// QW4: stamp a server-chosen client tag onto a send-end endpoint handle. The badge
+// travels with the send-capability and is reported to the receiver by
+// ipc_recv_badged. 0 clears it. Rejected on a non-endpoint or recv-end fd.
+static inline int ipc_badge(int fd, unsigned int badge) {
+    return (int)__syscall3(SYS_IPC_BADGE, fd, (long)badge, 0);
 }
 
 // QW1: synchronous request/reply IPC over a transient kernel reply port — the

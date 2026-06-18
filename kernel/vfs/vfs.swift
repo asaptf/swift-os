@@ -142,6 +142,10 @@ private struct Endpoint {
     var hasMsg = false      // a message (bytes ± a handle) is pending in the slot
     var bufPtr: UInt = 0    // heap byte buffer (endpointMsgCap), like Pipe.bufPtr
     var msgLen = 0          // valid bytes in bufPtr for the pending message
+    // QW4: the badge of the sender's send-capability, carried to the receiver so
+    // ipc_recv_badged can tell which client a message came from. 0 = unbadged.
+    // Set by ipc_send from the send HandleEntry's badge; cleared when consumed.
+    var badge: UInt32 = 0
     var hasHandle = false
     var handle = HandleEntry()
     var sendRefs = 0
@@ -2928,14 +2932,36 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
 // the 3-arg syscall ABI carries only (fd, &msg)):
 //   SEND  off 0: buf (u64 user VA)  off 8: len (u64)  off 16: handle_fd (i32, <0 = none)
 //   RECV  off 0: buf (u64 user VA)  off 8: cap (u64)  off 16: out_handle_fd (u64 user VA → int)
+//         off 24: out_badge (u64 user VA → u32; 0 = don't report) — QW4
+// QW4 grew the recv struct 24→32. The kernel always reads 32 bytes; the ipc_recv
+// wrapper passes a zero out_badge VA, so old callers are byte-for-byte compatible.
 private let ipcSendMsgSize: UInt = 20  // buf(8) + len(8) + handle_fd(4)
-private let ipcRecvMsgSize: UInt = 24  // buf(8) + cap(8) + out_handle_fd(8)
+private let ipcRecvMsgSize: UInt = 32  // buf(8) + cap(8) + out_handle_fd(8) + out_badge(8)
 
 private func handleNamesEndpoint(_ entry: HandleEntry, endpoint ep: Int) -> Bool {
     if entry.kind != .endpoint { return false }
     let d = entry.object
     if d < 0 || d >= maxOpenDescriptions || !openDescriptions[d].inUse { return false }
     return openDescriptions[d].node == ep
+}
+
+/// ipc_badge(fd, badge) -> 0: stamp a server-chosen client tag onto a send-end
+/// endpoint handle (QW4). The badge rides with the send-capability — through a
+/// handle transfer or a direct ipc_send — and ipc_recv_badged reports it to the
+/// receiver, so one endpoint shared among many clients can tell them apart with
+/// no side-channel identity lookup (docs/CAPABILITIES.md §4.2). 0 clears the
+/// badge. A non-endpoint fd, or the recv end, is rejected.
+func vfsIpcBadge(fd: Int, badge: UInt32) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return errBadFD }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .endpoint else { return errInvalid }
+    let desc = openDescriptions[entry.object]
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
+    handles[fdIndex(proc, fd)].badge = badge
+    return 0
 }
 
 /// ipc_send(fd, &msg): copy up to endpointMsgCap message BYTES into the endpoint and,
@@ -2979,6 +3005,8 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
         for i in 0..<n { dst[i] = src[i] }
     }
     endpoints[ep].msgLen = n
+    // QW4: the badge rides from the sender's send-capability to the receiver.
+    endpoints[ep].badge = sender.badge
 
     if handleFd >= 0 {
         endpoints[ep].handle = fdEntry(proc, handleFd) // copy the entry...
@@ -3014,8 +3042,16 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let buf = UInt(le64(m, 0))
     let cap = Int(le64(m, 8))
     let outHandleVA = UInt(le64(m, 16))
+    // QW4: optional out-badge pointer. 0 = "don't report" (back-compat with the
+    // 3-arg ipc_recv wrapper); a non-zero VA is validated before any store.
+    let outBadgeVA = UInt(le64(m, 24))
     if cap < 0 { return errInvalid }
     guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+    var outBadge: UnsafeMutablePointer<UInt8>? = nil
+    if outBadgeVA != 0 {
+        guard let b = userWritableBuffer(outBadgeVA, 4) else { return errInvalid }
+        outBadge = b
+    }
 
     enable_irq()
     // QW2: park/wake loop. The receiver records its process slot under vfsLock
@@ -3056,11 +3092,17 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
                 newfd = Int32(installed)
             }
             UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
+            // QW4: report the sending send-capability's badge (0 = unbadged) when
+            // the caller supplied a destination, inside the same locked region.
+            if let ob = outBadge {
+                UnsafeMutableRawPointer(ob).storeBytes(of: endpoints[ep].badge, toByteOffset: 0, as: UInt32.self)
+            }
 
             endpoints[ep].handle = HandleEntry()
             endpoints[ep].hasHandle = false
             endpoints[ep].hasMsg = false
             endpoints[ep].msgLen = 0
+            endpoints[ep].badge = 0
             vfsUnlock(daif)
             return n
         }
@@ -3355,6 +3397,7 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
             endpoints[ep].hasMsg = false
             endpoints[ep].msgLen = 0
             endpoints[ep].replyToken = 0
+            endpoints[ep].badge = 0   // QW4: don't leak a stale badge to the next recv
             vfsUnlock(daif)
             return n
         }

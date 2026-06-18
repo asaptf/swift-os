@@ -93,6 +93,7 @@ private let sysRecv: UInt = 89            // recv(fd, buf, len) MSG_PEEK on TCP 
 private let sysReboot: UInt = 90          // reboot(cmd) — 0=SYSTEM_RESET, 1=SYSTEM_OFF; needs capConsole
 private let sysIpcCall: UInt = 91         // ipc_call(fd, &msg) — send + block for reply (QW1)
 private let sysIpcReplyRecv: UInt = 92    // ipc_reply_recv(fd, &msg) — reply then receive (QW1)
+private let sysIpcBadge: UInt = 93        // ipc_badge(fd, badge) — stamp a server-chosen client tag (QW4)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -278,6 +279,8 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsIpcCall(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
     } else if number == sysIpcReplyRecv {
         result = vfsIpcReplyRecv(fd: Int(bitPattern: frame[0]), msgVA: frame[1])
+    } else if number == sysIpcBadge {
+        result = vfsIpcBadge(fd: Int(bitPattern: frame[0]), badge: UInt32(truncatingIfNeeded: frame[1]))
     } else if number == sysMmap {
         // Returns a base VA on success or a negative errno (encoded in the UInt,
         // in [-4095, -1]); the userland bridge maps that to MAP_FAILED + errno.

@@ -1540,6 +1540,7 @@ are not the primary operator interface.
 | `orphandemo` | QW3 orphan-zombie reaper: a parent exits leaving running children, which are reparented and reaped without leaking process slots or endpoints. | Yes, for process-teardown diagnostics. | `make orphan-reap-test` |
 | `qw2-ipc` | QW2 blocking IPC: a receiver parks on an empty endpoint and is woken by `ipc_send` or by the last sender closing (EOF). | Yes, for IPC park/wake diagnostics. | `make qw2-blocking-ipc-test` |
 | `ipc-call-test` | QW1 synchronous request/reply IPC: `ipc_call`/`ipc_reply_recv` over a kernel reply port — correlated replies, a handle round-tripped both ways, and EINVAL/EPIPE error paths. | Yes, for synchronous-IPC diagnostics. | `make ipc-call-test` |
+| `qw4-badge` | QW4 endpoint badges: stamps a distinct server-chosen badge into two clients' send handles with `ipc_badge`, then proves `ipc_recv_badged` reports the right badge per client (and `0` for an unbadged send) on otherwise-identical endpoints. | Yes, for endpoint-badge diagnostics. | `make qw4-badge-test` |
 
 Prefer the commands in the earlier sections for normal use. Use these diagnostic
 commands when validating a specific milestone or investigating a regression.

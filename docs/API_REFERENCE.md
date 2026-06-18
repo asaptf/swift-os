@@ -57,6 +57,7 @@ source, then follow its Makefile rule and acceptance test.
 | Security context and confinement | `userland/securitydemo.c`, `userland/identitydemo.c` | `security_info`, `login`, `confine`, capability bits | `./tests/boot_test.sh`, `./tests/cap_enforce_test.sh`, `./tests/console_login_test.sh` |
 | IPC endpoint and handle transfer | `userland/c4b_sockxfer.c` | `endpoint_create`, `ipc_send`, `ipc_recv`, transfer rights | `./tests/ipc_socket_transfer_test.sh` |
 | Synchronous request/reply IPC | `userland/ipc_call_test.c` | `ipc_call`, `ipc_reply_recv`, reply-port correlation | `make ipc-call-test` |
+| Endpoint badges (client tagging) | `userland/qw4_badge.c` | `ipc_badge`, `ipc_recv_badged`, send-capability badge | `make qw4-badge-test` |
 | Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-authority-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | Network status preflight | `userland/netinfo.swift` | `netinfo`, `swiftos_netinfo_refresh`, `swiftos_net_*` | `make netinfo-test` |
@@ -285,6 +286,7 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 90 | `reboot` | `cmd` | does not return on success; negative error (needs `capConsole`) |
 | 91 | `ipc_call` | `fd`, `msg*` | reply bytes or negative error (send + block for reply) |
 | 92 | `ipc_reply_recv` | `fd`, `msg*` | request bytes or negative error (reply then receive) |
+| 93 | `ipc_badge` | `fd`, `badge` | 0 or negative error (stamp a server-chosen client tag on a send-end endpoint handle) |
 
 Notes:
 
@@ -963,6 +965,30 @@ for (;;) {
     /* ... build the reply into out/out_len/out_h ... */
 }
 ```
+
+### Endpoint badges (`ipc_badge` / `ipc_recv_badged`)
+
+A badge is a server-chosen `UInt32` stamped onto a *send-capability* (the send-end
+endpoint handle), so one receiving endpoint shared among many clients can tell
+which client a message came from with no side-channel identity lookup — the
+structural confused-deputy defense (`docs/CAPABILITIES.md` §4.2). The badge rides
+with the capability (through a handle transfer or a direct `ipc_send`), not with
+the endpoint; `0` is the unbadged default.
+
+```c
+int  ipc_badge(int fd, unsigned int badge);   // stamp a send-end handle; 0 clears
+long ipc_recv_badged(int fd, void *buf, unsigned long cap,
+                     int *out_handle_fd, unsigned int *out_badge); // *out_badge = sender's badge
+```
+
+Behavior:
+
+- `ipc_badge` accepts only a send-end endpoint fd the caller holds; a non-endpoint
+  or recv-end fd returns `EINVAL`.
+- `ipc_recv_badged` reports the sending capability's badge in `*out_badge` (`0` =
+  unbadged); pass `out_badge = NULL` to skip reporting. Plain `ipc_recv` is exactly
+  `ipc_recv_badged(..., NULL)` — it carries a zero out-badge VA, so the recv msg
+  struct is a fixed 32 bytes for every caller.
 
 ## Memory API
 

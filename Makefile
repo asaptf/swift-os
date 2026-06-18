@@ -411,6 +411,7 @@ USER_SSH_ELF := $(BUILD)/ssh.elf
 USER_SSHD_ELF := $(BUILD)/sshd.elf
 USER_NSLOOKUP_ELF := $(BUILD)/nslookup.elf
 USER_C4B_SOCKXFER_ELF := $(BUILD)/c4b-sockxfer.elf
+USER_QW4_BADGE_ELF := $(BUILD)/qw4-badge.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
 USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
 USER_PKG_ELF := $(BUILD)/pkg.elf
@@ -441,6 +442,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SSHD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
+	$(USER_QW4_BADGE_ELF) \
 	$(USER_DRVINPUTD_ELF) \
 	$(USER_DRVSVCDEMO_ELF) \
 	$(USER_PKG_ELF) \
@@ -521,7 +523,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -633,6 +635,9 @@ $(BUILD)/user_forkdemo.o: userland/forkdemo.c userland/lib/syscall.h userland/li
 
 $(BUILD)/user_c4b_sockxfer.o: userland/c4b_sockxfer.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/c4b_sockxfer.c -o $@
+
+$(BUILD)/user_qw4_badge.o: userland/qw4_badge.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/qw4_badge.c -o $@
 
 $(BUILD)/user_drvinputd.o: userland/drvinputd.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/drvinputd.c -o $@
@@ -861,6 +866,9 @@ $(USER_FORKDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_fo
 
 $(USER_C4B_SOCKXFER_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_c4b_sockxfer.o -o $@
+
+$(USER_QW4_BADGE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_qw4_badge.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_qw4_badge.o -o $@
 
 $(USER_DRVINPUTD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvinputd.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_drvinputd.o -o $@
@@ -1449,6 +1457,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/udp_echo_test.sh
 	./tests/ipc_socket_transfer_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ipc_call_test.sh
+	./tests/qw4_badge_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
 	./tests/tls_test.sh
@@ -1707,6 +1716,13 @@ select-test: build $(QEMU_DTB) base-image
 
 eventfd-test: build $(QEMU_DTB) base-image
 	./tests/eventfd_test.sh
+
+# QW4: endpoint-badge acceptance. /bin/qw4-badge stamps a distinct badge into two
+# clients' send handles on otherwise-identical endpoints, sends on each, and
+# proves ipc_recv_badged reports the right badge per client — and 0 for an
+# unbadged send. No network needed.
+qw4-badge-test: build $(QEMU_DTB) base-image
+	./tests/qw4_badge_test.sh
 
 pty-test: build $(QEMU_DTB) base-image
 	./tests/pty_test.sh
@@ -2369,6 +2385,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
+	cp $(USER_QW4_BADGE_ELF) $(BASE_ROOT)/bin/qw4-badge
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
 	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg

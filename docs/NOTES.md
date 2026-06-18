@@ -6604,6 +6604,47 @@ actually resets (boot prompts reach the M7 marker a 2nd time); an unprivileged
 + reset was verified manually with a temporary EL1 fault injection (5 reboot
 cycles observed, since reverted). `make build` clean.
 
+### QW4 — endpoint badges so one server endpoint can serve many clients (DONE, 2026-06-18)
+
+**Goal.** Adopt the L4/seL4 badge pattern: a server-chosen `UInt32` on the IPC
+*send-capability* (not the endpoint) so one receiving endpoint shared among many
+clients can tell them apart with no side-channel identity lookup — the structural
+confused-deputy defense in `docs/CAPABILITIES.md` §4.2. Pure, backward-compatible
+addition: unbadged callers (`badge == 0`) are unchanged.
+
+**Where the badge lives.**
+- `kernel/vfs/handle.swift`: `struct HandleEntry` gained `var badge: UInt32 = 0`
+  (last init param, defaulted — every existing call site stays valid). The file
+  stays dependency-free so `tests/handle_test.swift` still compiles it stand-alone.
+- `kernel/vfs/vfs.swift`: `struct Endpoint` gained `var badge: UInt32 = 0`, the
+  per-message carrier. `vfsIpcSend` copies `endpoints[ep].badge = sender.badge`
+  (the send handle's badge) under `vfsLock`; `vfsIpcRecv` writes it back to a new
+  trailing out-badge VA and clears it on consume. `vfsIpcReplyRecv` also clears it
+  on consume so no stale badge leaks to a later recv. `resetEndpointSlotForReuse`
+  zeroes it via `Endpoint()`.
+- New `vfsIpcBadge(fd:badge:)` stamps a send-end endpoint handle (rejects a
+  non-endpoint / recv-end fd with `EINVAL`), all under `vfsLock`.
+
+**Syscall number.** `ipc_badge = 93`. (The QW4 prompt said 90, but 90/91/92 were
+already taken by `reboot`/`ipc_call`/`ipc_reply_recv` from intervening milestones;
+93 is the next free number.)
+
+**ABI.** The `ipc_recv` msg struct grew 24→32 bytes with a trailing `out_badge` VA
+(`0` = don't report). The kernel always reads 32 bytes and the `ipc_recv` wrapper
+now routes through `ipc_recv_badged(..., 0)`, so kernel and ABI move together and
+every caller sends 32 bytes — old 3-arg `ipc_recv` callers are byte-for-byte
+compatible. New wrappers: `ipc_badge(fd, badge)` and `ipc_recv_badged(fd, buf,
+cap, out_handle_fd, out_badge)`.
+
+**Acceptance.** New `make qw4-badge-test` (`tests/qw4_badge_test.sh` + `/bin/qw4-badge`
+from `userland/qw4_badge.c`): two endpoint pairs, a distinct badge stamped into each
+send handle (`0xA1`, `0xB2`), and `ipc_recv_badged` reports each correctly; a third
+unbadged send reports `0`; badging a recv-end fd is rejected. Markers
+`QW4-BADGE-{RECVEND-REJECTED,A1,B2,UNBADGED-ZERO}-OK` + `QW4 OK`. Passes single-core
+and `-smp 4`. The existing `make ipc-socket-transfer-test` (c4b) still passes through
+the now-32-byte recv struct (back-compat). Host `handle_test` extended (fresh entry
+`badge == 0`, stamped entry round-trips). `make build` clean.
+
 ### QW3 — endpoint owner-tagging + orphan-zombie reaper, and a PCIe-table teardown leak fix (DONE, 2026-06-18)
 
 **Goal.** Adopt the L4/seL4 owner-tagging + deterministic reclamation-on-death

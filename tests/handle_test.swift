@@ -109,6 +109,7 @@ struct HandleTest {
         check(!empty.inUse && empty.kind == .none && empty.object == -1 &&
               empty.rights == [] && !empty.cloexec,
               "default HandleEntry is empty")
+        check(empty.badge == 0, "default HandleEntry is unbadged (badge == 0)")
 
         let fd = HandleEntry(inUse: true, kind: .file, object: 7,
                              rights: [.read, .duplicate], cloexec: true)
@@ -117,6 +118,15 @@ struct HandleTest {
         check(fd.object == 7, "HandleEntry records its object index")
         check(fd.rights == [.read, .duplicate], "HandleEntry records per-handle rights")
         check(fd.cloexec, "HandleEntry records close-on-exec per slot")
+        check(fd.badge == 0, "HandleEntry left unbadged when no badge is given")
+
+        // QW4: a server-chosen badge rides on the send-capability HandleEntry and
+        // round-trips through the slot. 0 stays the unbadged sentinel.
+        var stamped = HandleEntry(inUse: true, kind: .endpoint, object: 9,
+                                  rights: [.write, .transfer], badge: 0xA1)
+        check(stamped.badge == 0xA1, "HandleEntry records a server-chosen badge")
+        stamped.badge = 0xB2
+        check(stamped.badge == 0xB2, "HandleEntry badge is mutable in place")
 
         // ---- 9. C4a endpoint handle vocabulary -------------------------------
         let sendEndpoint = HandleEntry(inUse: true, kind: .endpoint, object: 11,

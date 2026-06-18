@@ -80,20 +80,25 @@ func handleInheritanceCopiesFD(_ inherit: HandleInheritance, fd: Int) -> Bool {
 // observable view of this table: `object` is still the shared OpenDescription
 // index used by vfs.swift, while `kind`, `rights`, and `cloexec` are properties
 // of the individual handle slot.
+// `badge` (QW4) is a server-chosen client tag carried by a send-capability; 0 =
+// unbadged (the default), and `ipc_recv` reports it to the receiver so one shared
+// endpoint can distinguish its clients. See docs/CAPABILITIES.md §4.2.
 struct HandleEntry {
     var inUse = false
     var kind: HandleKind = .none
     var object = -1
     var rights = Rights()
     var cloexec = false
+    var badge: UInt32 = 0
 
     init(inUse: Bool = false, kind: HandleKind = .none, object: Int = -1,
-         rights: Rights = Rights(), cloexec: Bool = false) {
+         rights: Rights = Rights(), cloexec: Bool = false, badge: UInt32 = 0) {
         self.inUse = inUse
         self.kind = kind
         self.object = object
         self.rights = rights
         self.cloexec = cloexec
+        self.badge = badge
     }
 }
 
