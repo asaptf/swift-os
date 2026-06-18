@@ -160,7 +160,7 @@ int main(void) {
     }
     puts_raw("forkdemo: IPC-POLL-OUT-OK\n");
     int xf = open("/etc/hostname", O_RDONLY);
-    if (xf < 0 || ipc_send(ep[0], "PING\n", 5, xf) != 0) {
+    if (xf < 0 || ipc_send(ep[0], "PING\n", 5, xf, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("forkdemo: ipc_send failed\n");
         return 1;
     }

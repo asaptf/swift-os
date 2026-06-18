@@ -18,7 +18,7 @@ int puts_raw(const char *s);
 
 static int send_recv(int sfd, int rfd, const char *msg, int len,
                      unsigned int *out_badge) {
-    if (ipc_send(sfd, msg, (unsigned long)len, -1) != 0) { return -1; }
+    if (ipc_send(sfd, msg, (unsigned long)len, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) { return -1; }
     char buf[32];
     int got = -1;
     unsigned int badge = 0xFFFFFFFFu;

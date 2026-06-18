@@ -136,6 +136,10 @@
                                  SWIFTOS_RIGHT_DUPLICATE | SWIFTOS_RIGHT_TRANSFER | \
                                  SWIFTOS_RIGHT_GETATTR | SWIFTOS_RIGHT_SETATTR)
 #define SWIFTOS_SPAWN_HANDLE_CLOEXEC (1u << 0)
+// QW5: ipc_send `requested_rights` sentinel — "grant everything I hold". The
+// kernel intersects requested ∩ held, and intersecting with all-ones is the
+// identity, so this preserves the pre-QW5 move-everything behavior.
+#define SWIFTOS_RIGHTS_ALL_INHERIT 0xFFFFFFFFu
 
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
@@ -231,6 +235,14 @@ static inline int confine(const char *path) {
 // and returns the byte count. Extra args ride a small msg struct (the 3-arg syscall
 // ABI carries only (fd, &msg)), like sendto/recvfrom. Negative on error.
 //
+// QW5: ipc_send takes `requested_rights` — the rights the sender is willing to
+// grant on the moved handle. The receiver gets held ∩ requested, a subset of what
+// the sender held: monotonic attenuation that can never widen authority (e.g. a
+// sender holding READ|WRITE|TRANSFER can hand over READ|TRANSFER only). Pass
+// SWIFTOS_RIGHTS_ALL_INHERIT to grant everything held (the identity intersection,
+// preserving the pre-QW5 behavior). Ignored when handle_fd < 0. See
+// docs/CAPABILITIES.md §4.2.
+//
 // QW4: the recv msg struct grew to 32 bytes with a trailing out_badge VA — the
 // sender send-capability's server-chosen badge (0 = unbadged). ipc_recv passes a
 // zero out_badge VA (don't report); ipc_recv_badged supplies one. A server stamps
@@ -239,11 +251,16 @@ static inline int confine(const char *path) {
 static inline int endpoint_create(int ends[2]) {
     return (int)__syscall3(SYS_ENDPOINT_CREATE, (long)ends, 0, 0);
 }
-static inline long ipc_send(int fd, const void *buf, unsigned long len, int handle_fd) {
-    struct { unsigned long buf; unsigned long len; int handle_fd; } m;
+static inline long ipc_send(int fd, const void *buf, unsigned long len, int handle_fd,
+                            unsigned int requested_rights) {
+    // QW5: requested_rights appended at offset 20; buf/len/handle_fd keep their
+    // pre-QW5 offsets 0/8/16 so the kernel's LE parse is unchanged for them.
+    struct { unsigned long buf; unsigned long len; int handle_fd;
+             unsigned int requested_rights; } m;
     m.buf = (unsigned long)buf;
     m.len = len;
     m.handle_fd = handle_fd;
+    m.requested_rights = requested_rights;
     return __syscall3(SYS_IPC_SEND, fd, (long)&m, 0);
 }
 // QW4: like ipc_recv, but also reports the sender send-capability's badge (0 =

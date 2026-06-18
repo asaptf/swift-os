@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
 
     char msg[10];
     gen_msg(msg, "DRVREADY", gen);
-    if (ipc_send(ready_fd, msg, 9, -1) != 0) {
+    if (ipc_send(ready_fd, msg, 9, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("drvinputd: ready send failed\n");
         return 1;
     }
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
         if (n == 4 && streq_n(cmd, "PING", 4)) {
             if (received_fd >= 0) { close(received_fd); }
             gen_msg(msg, "DRVEVENT", gen);
-            if (ipc_send(ready_fd, msg, 9, -1) != 0) {
+            if (ipc_send(ready_fd, msg, 9, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
                 puts_raw("drvinputd: event send failed\n");
                 return 1;
             }
@@ -133,7 +133,7 @@ int main(int argc, char **argv) {
                 puts_raw("drvinputd: C5c virtio-input grant accepted\n");
             }
             gen_msg(msg, "DEVACK", gen);
-            if (ipc_send(ready_fd, msg, 7, -1) != 0) {
+            if (ipc_send(ready_fd, msg, 7, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
                 puts_raw("drvinputd: device ack send failed\n");
                 return 1;
             }

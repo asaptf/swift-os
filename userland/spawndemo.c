@@ -64,7 +64,7 @@ int main(void) {
     }
 
     int pending = open("/etc/hostname", O_RDONLY);
-    if (pending < 0 || ipc_send(recv_xfer_deny_ep[0], "R", 1, pending) != 0) {
+    if (pending < 0 || ipc_send(recv_xfer_deny_ep[0], "R", 1, pending, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("C4A-ENDPOINT-RIGHTS-SETUP-FAIL\n");
         return 1;
     }

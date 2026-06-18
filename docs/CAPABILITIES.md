@@ -452,6 +452,12 @@ Key properties:
   client a connected socket, how `spawn` could be expressed as "send the child its starting handles," and
   how a driver manager hands a driver its device/IRQ/DMA handles. The `~Copyable` `OwnedHandle.transfer`
   from §2.3 is exactly this move.
+- **Attenuation on transfer.** *Implemented as QW5:* `ipc_send` takes `requested_rights`, and the handle
+  installed in the receiver is `effective = held ∩ requested` — a fresh, attenuated `HandleEntry`. A grant
+  can only ever narrow the sender's authority, never widen it (the intersection cannot conjure `.transfer`
+  or `.write` the sender lacks). The `SWIFTOS_RIGHTS_ALL_INHERIT` sentinel (all-ones) is the identity
+  intersection, i.e. "grant everything I hold." This is the L4/seL4-family delegation rule and the IPC twin
+  of the spawn-time attenuation in §3.1.
 - **Badges** let a server distinguish clients without a side-channel identity lookup: each client's
   send-capability carries a server-chosen badge that `ipc_recv` reports. This is the structural defense
   against confused-deputy for servers. *Implemented as QW4:* the badge lives on the send `HandleEntry`,

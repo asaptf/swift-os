@@ -122,7 +122,7 @@ int main(void) {
     }
     puts_raw("c4b-sockxfer: listening on 5566\n");
 
-    if (ipc_send(ep[0], "SOCK", 4, sock) != 0) {
+    if (ipc_send(ep[0], "SOCK", 4, sock, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("c4b-sockxfer: ipc_send socket failed\n");
         return 1;
     }

@@ -6604,6 +6604,43 @@ actually resets (boot prompts reach the M7 marker a 2nd time); an unprivileged
 + reset was verified manually with a temporary EL1 fault injection (5 reboot
 cycles observed, since reverted). `make build` clean.
 
+### QW5 — rights = intersection on capability transfer (DONE, 2026-06-18)
+
+**Goal.** Adopt the L4/seL4 delegation rule on IPC handle transfer: an `ipc_send`
+sender can hand its peer *fewer* rights than it holds by computing
+`effective = held ∩ requested` at transfer time and installing a fresh, attenuated
+handle in the receiver — monotonic attenuation, never widening. The IPC twin of the
+spawn-time attenuation already at `vfs.swift` (`childEntry.rights = attenuate(...)`).
+See `docs/CAPABILITIES.md` §4.2.
+
+**ABI.** No new syscall. The send msg struct gained a trailing `unsigned int
+requested_rights` at offset 20; `buf/len/handle_fd` keep offsets 0/8/16 untouched, so
+the kernel's existing LE parse for those fields is unchanged. `ipcSendMsgSize` grew
+`20 → 24`. The `ipc_send` wrapper took a new trailing `requested_rights` parameter;
+the `SWIFTOS_RIGHTS_ALL_INHERIT (0xFFFFFFFF)` sentinel is the identity intersection
+("grant everything I hold"), so every existing caller updated to pass it is
+byte-for-byte unchanged in behavior. Found and updated all in-tree callers
+(`grep ipc_send userland/`): forkdemo, c4b_sockxfer, spawndemo, argvdemo, qw2_ipc,
+qw4_badge, drvinputd, drvsvcdemo.
+
+**Kernel.** `vfsIpcSend` reads `requested = Rights(rawValue: le32(m, 20))` and, in the
+move-commit block, installs `moved.rights = attenuate(moved.rights, to: requested)`
+into `endpoints[ep].handle`. The existing `.transfer` precondition on the *source*
+entry is untouched — the intersection only narrows what crosses and can never conjure
+`.transfer`/`.write` the sender lacks. `vfsIpcRecv` is unchanged: it already installs
+the endpoint's stored entry into a fresh fd, which is now the attenuated one. All under
+the existing `vfsLock` window (no new globals) → `-smp 4` boot unaffected.
+
+**Acceptance.** New `make qw5-rights-intersection-test` (`tests/qw5_rights_intersection_test.sh`
++ `/bin/qw5-rightsxfer` from `userland/qw5_rightsxfer.c`): a parent opens `/dev/zero`
+O_RDWR (READ|WRITE|TRANSFER), forks, and `ipc_send`s it requesting only
+`READ|TRANSFER` (dropping WRITE). The child proves a read succeeds, a write fails
+(WRITE attenuated away), and the parent proves its source fd was invalidated (move
+semantics). Marker `QW5: PASS`. Host `handle_test` (`make c5-device-rights-test`)
+still green; `make smp-test` green. `make build` clean. (Pre-existing `docs-test`
+failures for `/bin/{acme,reboot,shutdown}` and a few API_REFERENCE bridges are
+unrelated and predate this milestone.)
+
 ### QW4 — endpoint badges so one server endpoint can serve many clients (DONE, 2026-06-18)
 
 **Goal.** Adopt the L4/seL4 badge pattern: a server-chosen `UInt32` on the IPC
