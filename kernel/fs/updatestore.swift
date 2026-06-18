@@ -175,10 +175,10 @@ func updateStoreInit() {
 /// capConsole (the boot/admin context), like login. Returns 0 on success, or a
 /// negative errno-style code. Invoked from EL0 via syscall 65 (/bin/swos-confirm).
 func updateStoreConfirm() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
-    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return -19 }
-    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return -5 } // EIO
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if updateStoreActiveSlot < 0 { return Errno.noDev.code }               // ENODEV: not store-booted
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return Errno.noDev.code }
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return Errno.io.code } // EIO
 
     let s = updateStoreActiveSlot
     var updated = chosen
@@ -192,7 +192,7 @@ func updateStoreConfirm() -> Int {
     updated.sequence = chosen.sequence &+ 1
     if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
         uartPuts("update-store: confirm write failed\n")
-        return -5
+        return Errno.io.code
     }
     uartPuts("update-store: slot ")
     updateStoreLogSlot(s)
@@ -207,15 +207,15 @@ func updateStoreConfirm() -> Int {
 /// capConsole. Returns 0 on success, or a negative errno-style code. Invoked
 /// from EL0 via syscall 66 (/bin/swos-activate).
 func updateStoreActivateOther() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
-    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return -19 }
-    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return -5 } // EIO
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if updateStoreActiveSlot < 0 { return Errno.noDev.code }               // ENODEV: not store-booted
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return Errno.noDev.code }
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return Errno.io.code } // EIO
 
     let cur = updateStoreActiveSlot
     let other = 1 - cur
     if other < 0 || other >= SwosbootFormat.slotCount || !chosen.slot(other).present {
-        return -2 // ENOENT: no inactive slot to activate
+        return Errno.noEntry.code // ENOENT: no inactive slot to activate
     }
 
     var updated = chosen
@@ -232,7 +232,7 @@ func updateStoreActivateOther() -> Int {
     updated.sequence = chosen.sequence &+ 1
     if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
         uartPuts("update-store: activate write failed\n")
-        return -5
+        return Errno.io.code
     }
     uartPuts("update-store: activated slot ")
     updateStoreLogSlot(other)
@@ -270,21 +270,21 @@ func updateStoreActivateOther() -> Int {
 /// Returns 0 on success, or a negative errno-style code. Invoked from EL0 via
 /// syscall 67 (/bin/swos-update).
 func updateStoreStagePayload() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if updateStoreActiveSlot < 0 { return -19 }               // ENODEV: not store-booted
-    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return -19 }
-    if !virtioBlkHasPayload() { return -19 }                  // ENODEV: no payload disk
-    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return -5 } // EIO
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if updateStoreActiveSlot < 0 { return Errno.noDev.code }               // ENODEV: not store-booted
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return Errno.noDev.code }
+    if !virtioBlkHasPayload() { return Errno.noDev.code }                  // ENODEV: no payload disk
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { return Errno.io.code } // EIO
 
     let target = 1 - updateStoreActiveSlot
-    if target < 0 || target >= SwosbootFormat.slotCount { return -2 } // ENOENT
+    if target < 0 || target >= SwosbootFormat.slotCount { return Errno.noEntry.code } // ENOENT
     let storeBaseSec = chosen.slot(target).baseLBA
     let slotSectors = chosen.slot(target).lengthSectors
 
     // Bring up the payload and read its header: confirm a signed v3 SWOSBASE
     // image and compute its length (dataOffset + payloadLen, rounded up).
     let payCap = virtioBlkSelectPayload()
-    if payCap == 0 { virtioBlkReselectStore(); return -19 }
+    if payCap == 0 { virtioBlkReselectStore(); return Errno.noDev.code }
     var imageSectors: UInt64 = 0
     var headerOK = false
     var hdr = InlineArray<512, UInt8>(repeating: 0)
@@ -302,8 +302,8 @@ func updateStoreStagePayload() -> Int {
             headerOK = m && usLoad32(UnsafeRawPointer(p), 8) == 3 && total > 0
         }
     }
-    if !headerOK { virtioBlkReselectStore(); return -22 }              // EINVAL: not a signed v3 image
-    if imageSectors > payCap { virtioBlkReselectStore(); return -22 }  // payload truncated on disk
+    if !headerOK { virtioBlkReselectStore(); return Errno.invalid.code }              // EINVAL: not a signed v3 image
+    if imageSectors > payCap { virtioBlkReselectStore(); return Errno.invalid.code }  // payload truncated on disk
     if imageSectors > slotSectors {                                   // EFBIG: image too big for slot
         virtioBlkReselectStore()
         uartPuts("update-store: payload ")
@@ -313,7 +313,7 @@ func updateStoreStagePayload() -> Int {
         uartPuts(" (")
         uartPutUInt(slotSectors)
         uartPuts(" sectors)\n")
-        return -27
+        return Errno.fileTooBig.code
     }
 
     // Copy payload[0, imageSectors) -> store[storeBaseSec, +imageSectors).
@@ -332,14 +332,14 @@ func updateStoreStagePayload() -> Int {
     virtioBlkReselectStore()
     if !copyOK {
         uartPuts("update-store: stage copy failed\n")
-        return -5
+        return Errno.io.code
     }
     // U1h: make the staged slot data durable before the manifest is pointed at it
     // (the manifest write-back below flushes itself), so a crash can never leave a
     // committed manifest referencing half-written slot bytes.
     if virtioBlkFlush() != 0 {
         uartPuts("update-store: stage flush failed\n")
-        return -5
+        return Errno.io.code
     }
 
     // Mark the freshly-staged slot present + UNTRIED with attempts reset and a
@@ -360,7 +360,7 @@ func updateStoreStagePayload() -> Int {
     updated.sequence = chosen.sequence &+ 1
     if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
         uartPuts("update-store: stage write-back failed\n")
-        return -5
+        return Errno.io.code
     }
     uartPuts("update-store: staged payload (")
     uartPutUInt(imageSectors)

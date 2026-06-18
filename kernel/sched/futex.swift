@@ -95,12 +95,12 @@ func futexOp(uaddrVA: UInt, op: Int, val: UInt) -> Int {
     if op == futexWake {
         return futexWakeOn(uaddrVA, count: Int(bitPattern: val))
     }
-    return -22 // EINVAL
+    return Errno.invalid.code // EINVAL
 }
 
 private func futexWaitOn(_ uaddrVA: UInt, expected: UInt32) -> Int {
     // Validate the 4-byte user word lives in mapped, user-owned memory.
-    guard let p = userReadableBuffer(uaddrVA, 4) else { return -22 }
+    guard let p = userReadableBuffer(uaddrVA, 4) else { return Errno.invalid.code }
     let word = UnsafeRawPointer(p)
 
     let daif = futexLock()
@@ -116,13 +116,13 @@ private func futexWaitOn(_ uaddrVA: UInt, expected: UInt32) -> Int {
     let slot = processCurrentSlot()
     if slot < 0 {
         futexUnlock(daif)
-        return -22
+        return Errno.invalid.code
     }
     var idx = -1
     for i in 0..<maxFutexWaiters where futexSlot[i] < 0 { idx = i; break }
     if idx < 0 {
         futexUnlock(daif)
-        return -11 // EAGAIN: queue full
+        return Errno.again.code // EAGAIN: queue full
     }
     futexSlot[idx] = slot
     futexAddr[idx] = uaddrVA
@@ -130,7 +130,7 @@ private func futexWaitOn(_ uaddrVA: UInt, expected: UInt32) -> Int {
         futexSlot[idx] = -1
         futexAddr[idx] = 0
         futexUnlock(daif)
-        return -22
+        return Errno.invalid.code
     }
     futexUnlock(daif)
     processYieldAfterPreparedFutexBlock()

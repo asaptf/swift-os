@@ -151,9 +151,9 @@ func sysRngHealthy() -> Bool { rngReady }
 /// SYS_RANDOM fallback when no virtio-rng device exists.
 func sysRngFill(_ dst: UnsafeMutablePointer<UInt8>, _ count: Int) -> Int {
     if count == 0 { return 0 }
-    if count < 0 { return -22 }   // EINVAL
+    if count < 0 { return Errno.invalid.code }   // EINVAL
     if !rngReady { sysRngInit() }
-    if !rngReady { return -5 }    // EIO (allocation/seed failure — should not happen)
+    if !rngReady { return Errno.io.code }    // EIO (allocation/seed failure — should not happen)
 
     // Per-call freshness: stir a live timing sample into the nonce so two calls
     // never reuse keystream, even before the next periodic reseed.

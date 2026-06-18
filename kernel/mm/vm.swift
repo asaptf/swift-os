@@ -401,11 +401,11 @@ func addressSpaceMmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: Int3
 
 func addressSpaceMmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
                                       _ prot: Int32, _ activeCpuMask: UInt64) -> Int32 {
-    if (va & (PAGE_SIZE - 1)) != 0 { return -22 } // EINVAL
-    if pageCount == 0 { return -22 }
+    if (va & (PAGE_SIZE - 1)) != 0 { return Errno.invalid.rawValue } // EINVAL
+    if pageCount == 0 { return Errno.invalid.rawValue }
     // Reject PROT_WRITE|PROT_EXEC (W^X) and PROT_NONE up front: protPageDesc
     // would return an invalid descriptor for both.
-    if protPageDesc(0, prot) == 0 { return -22 }
+    if protPageDesc(0, prot) == 0 { return Errno.invalid.rawValue }
 
     var i: UInt = 0
     while i < pageCount {
@@ -413,18 +413,18 @@ func addressSpaceMmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UI
         let frame = pmm_alloc_page()
         if frame == 0 {
             unmapRange(ttbr0, va, i) // roll back the frames mapped so far
-            return -12 // ENOMEM
+            return Errno.noMem.rawValue // ENOMEM
         }
         zeroFrame(frame)
         if !linkPage(ttbr0, cur, protPageDesc(frame, prot)) {
             pmm_free_page(frame)
             unmapRange(ttbr0, va, i)
-            return -12
+            return Errno.noMem.rawValue
         }
         i += 1
     }
     if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
-        return -22
+        return Errno.invalid.rawValue
     }
     return 0
 }
@@ -476,10 +476,10 @@ func addressSpaceMunmap(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) -> Int32 {
 
 func addressSpaceMunmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
                                         _ activeCpuMask: UInt64) -> Int32 {
-    if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
+    if (va & (PAGE_SIZE - 1)) != 0 { return Errno.invalid.rawValue }
     unmapRange(ttbr0, va, pageCount)
     if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
-        return -22
+        return Errno.invalid.rawValue
     }
     return 0
 }
@@ -497,9 +497,9 @@ func addressSpaceMprotect(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt, _ prot: 
 
 func addressSpaceMprotectForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt,
                                           _ prot: Int32, _ activeCpuMask: UInt64) -> Int32 {
-    if (va & (PAGE_SIZE - 1)) != 0 { return -22 }
-    if pageCount == 0 { return -22 }
-    if protPageDesc(0, prot) == 0 { return -22 } // W^X + PROT_NONE guard
+    if (va & (PAGE_SIZE - 1)) != 0 { return Errno.invalid.rawValue }
+    if pageCount == 0 { return Errno.invalid.rawValue }
+    if protPageDesc(0, prot) == 0 { return Errno.invalid.rawValue } // W^X + PROT_NONE guard
 
     // Pre-validate: every page in the range must already be mapped, so we never
     // change a prefix and then fail on a hole.
@@ -507,8 +507,8 @@ func addressSpaceMprotectForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount
     while i < pageCount {
         let cur = va + i * PAGE_SIZE
         let l3 = walkToL3(ttbr0, cur, allocate: false)
-        if l3 == 0 { return -12 } // ENOMEM: address not mapped
-        if (tableLoad(l3, Int((cur >> 12) & 0x1ff)) & DESC_VALID) == 0 { return -12 }
+        if l3 == 0 { return Errno.noMem.rawValue } // ENOMEM: address not mapped
+        if (tableLoad(l3, Int((cur >> 12) & 0x1ff)) & DESC_VALID) == 0 { return Errno.noMem.rawValue }
         i += 1
     }
 
@@ -530,7 +530,7 @@ func addressSpaceMprotectForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount
         i += 1
     }
     if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
-        return -22
+        return Errno.invalid.rawValue
     }
     return 0
 }

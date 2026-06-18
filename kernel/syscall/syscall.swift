@@ -133,7 +133,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             signalSetDisposition(sig, frame[1], frame[2])
             result = 0
         } else {
-            result = -22
+            result = Errno.invalid.code
         }
     } else if number == sysSigreturn {
         processSignalReturn(frame)
@@ -147,7 +147,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysExecve {
         let ex = execResolve(frame[0])
         if ex.addr == 0 {
-            result = -2 // ENOENT
+            result = Errno.noEntry.code
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
             let (envPacked, envPackedLen, envc) = packUserArgv(frame[2])
@@ -161,7 +161,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         // Resolve + run a child synchronously (spawn = fork+exec+wait combined).
         let ex = execResolve(frame[0])
         if ex.addr == 0 {
-            result = -2 // ENOENT
+            result = Errno.noEntry.code
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
             result = processSpawnChild(ex.addr, ex.len, packed: packed, packedLen: packedLen,
@@ -172,7 +172,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         // exactly the explicit handle specs named by the caller.
         let ex = execResolve(frame[0])
         if ex.addr == 0 {
-            result = -2 // ENOENT
+            result = Errno.noEntry.code
         } else {
             let (packed, packedLen, argc) = packUserArgv(frame[1])
             result = processSpawnChildWithHandles(ex.addr, ex.len, packed: packed,
@@ -351,7 +351,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     } else if number == sysReboot {
         result = powerControl(command: frame[0]) // 90: capConsole-gated reboot/poweroff
     } else {
-        result = -38 // ENOSYS
+        result = Errno.noSys.code
     }
 
     frame[0] = UInt(bitPattern: result)
@@ -359,7 +359,7 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
 }
 
 private func syscallTcGetAttr(termios ptr: UInt) -> Int {
-    guard let base = userWritableBuffer(ptr, 16) else { return -22 }
+    guard let base = userWritableBuffer(ptr, 16) else { return Errno.invalid.code }
     let words = UnsafeMutableRawPointer(mutating: base)
     // Zero the four flag words, then publish the current c_lflag.
     words.storeBytes(of: UInt32(0), toByteOffset: 0, as: UInt32.self)
@@ -370,7 +370,7 @@ private func syscallTcGetAttr(termios ptr: UInt) -> Int {
 }
 
 private func syscallTcSetAttr(termios ptr: UInt) -> Int {
-    guard let base8 = userReadableBuffer(ptr, 16) else { return -22 }
+    guard let base8 = userReadableBuffer(ptr, 16) else { return Errno.invalid.code }
     let base = UnsafeRawPointer(base8)
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
     ttySetLflag(lflag)
@@ -378,17 +378,17 @@ private func syscallTcSetAttr(termios ptr: UInt) -> Int {
 }
 
 private func syscallLogRead(buffer ptr: UInt, capacity cap: UInt, maxCount: UInt) -> Int {
-    if !klogCanExportRing(capabilities: processCurrentCaps()) { return -1 } // EPERM
+    if !klogCanExportRing(capabilities: processCurrentCaps()) { return Errno.perm.code } // EPERM
     if cap == 0 || maxCount == 0 { return 0 }
-    if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return -22 }
-    guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
+    if cap > UInt(Int.max) || maxCount > UInt(Int.max) { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(ptr, cap) else { return Errno.invalid.code }
     return logFormatRecentTail(Int(maxCount), into: dst, capacity: Int(cap))
 }
 
 private func syscallLogStats(buffer ptr: UInt, capacity cap: UInt) -> Int {
-    if !klogCanExportRing(capabilities: processCurrentCaps()) { return -1 } // EPERM
-    if cap < UInt(logStatsSize) { return -22 }
-    guard let dst = userWritableBuffer(ptr, UInt(logStatsSize)) else { return -22 }
+    if !klogCanExportRing(capabilities: processCurrentCaps()) { return Errno.perm.code } // EPERM
+    if cap < UInt(logStatsSize) { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(ptr, UInt(logStatsSize)) else { return Errno.invalid.code }
     let raw = UnsafeMutableRawPointer(dst)
     raw.storeBytes(of: logRingStatsCapacity(), toByteOffset: 0, as: UInt64.self)
     raw.storeBytes(of: logRingStatsAvailable(), toByteOffset: 8, as: UInt64.self)
@@ -399,8 +399,8 @@ private func syscallLogStats(buffer ptr: UInt, capacity cap: UInt) -> Int {
 
 private func syscallRandom(buffer ptr: UInt, capacity cap: UInt) -> Int {
     if cap == 0 { return 0 }
-    if cap > UInt(Int.max) { return -22 }
-    guard let dst = userWritableBuffer(ptr, cap) else { return -22 }
+    if cap > UInt(Int.max) { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(ptr, cap) else { return Errno.invalid.code }
     // Prefer the hypervisor's virtio-rng when present (QEMU `-device virtio-rng`);
     // otherwise serve the jitter-seeded kernel DRBG. Hetzner Cloud ARM VMs expose
     // no virtio-rng and N1 has no RNDR, so the fallback is what keeps getentropy()

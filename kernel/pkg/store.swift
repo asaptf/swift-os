@@ -313,13 +313,13 @@ private func pkgAddActivation(_ generation: UInt64, _ dataOffset: UInt64, _ data
 
 private func pkgCopyCString(_ va: UInt, _ maxLen: Int,
                             _ dst: UnsafeMutablePointer<UInt8>, _ cap: Int) -> Int {
-    guard maxLen > 0, cap > 0, let src = userCString(va, maxLen: maxLen) else { return -22 }
+    guard maxLen > 0, cap > 0, let src = userCString(va, maxLen: maxLen) else { return Errno.invalid.code }
     var n = 0
     while n < cap && src[n] != 0 {
         dst[n] = src[n]
         n += 1
     }
-    if n == 0 || n >= cap { return -22 }
+    if n == 0 || n >= cap { return Errno.invalid.code }
     return n
 }
 
@@ -345,14 +345,14 @@ private func pkgCopyStaticPadded(_ dst: UnsafeMutablePointer<UInt8>, _ off: Int,
 
 private func pkgHashFileRange(fd: Int, offset: UInt64, size: UInt64,
                               out: UnsafeMutablePointer<UInt8>) -> Int {
-    guard let raw = swiftos_kernel_alloc(UInt(pkgStoreInstallChunkSize), 16) else { return -12 }
+    guard let raw = swiftos_kernel_alloc(UInt(pkgStoreInstallChunkSize), 16) else { return Errno.noMem.code }
     var sha = SHA256Stream()
     var done: UInt64 = 0
     while done < size {
         var chunk = UInt64(pkgStoreInstallChunkSize)
         if chunk > size - done { chunk = size - done }
         let got = vfsKernelReadFile(fd: fd, offset: Int(offset + done), buffer: raw, count: Int(chunk))
-        if got != Int(chunk) { return -22 }
+        if got != Int(chunk) { return Errno.invalid.code }
         sha.update(UnsafeRawPointer(raw), Int(chunk))
         done += chunk
     }
@@ -378,13 +378,13 @@ private func pkgWriteZeroPadding(from start: UInt64, to end: UInt64) -> Int {
 
 private func pkgWriteFileRangeToStore(fd: Int, fileOffset: UInt64, storeOffset: UInt64,
                                       size: UInt64) -> Int {
-    guard let raw = swiftos_kernel_alloc(UInt(pkgStoreInstallChunkSize), 16) else { return -12 }
+    guard let raw = swiftos_kernel_alloc(UInt(pkgStoreInstallChunkSize), 16) else { return Errno.noMem.code }
     var done: UInt64 = 0
     while done < size {
         var chunk = UInt64(pkgStoreInstallChunkSize)
         if chunk > size - done { chunk = size - done }
         let got = vfsKernelReadFile(fd: fd, offset: Int(fileOffset + done), buffer: raw, count: Int(chunk))
-        if got != Int(chunk) { return -22 }
+        if got != Int(chunk) { return Errno.invalid.code }
         let rc = virtioBlkWritePackageStoreRange(storeOffset + done, UnsafeRawPointer(raw), UInt32(chunk))
         if rc != 0 { return Int(rc) }
         done += chunk
@@ -458,7 +458,7 @@ private func pkgWritePayloadRecordHeader(recordOffset: UInt64, dataOffset: UInt6
         return pkgCopyPadded(h, 80, 32, name, nameLen) &&
                pkgCopyPadded(h, 112, 16, version, versionLen)
     }
-    if !ok { return -22 }
+    if !ok { return Errno.invalid.code }
     let hrc = header.withUnsafeBytes { raw in
         virtioBlkWritePackageStoreRange(recordOffset, raw.baseAddress, UInt32(pkgStoreRecordHeaderSize))
     }
@@ -709,7 +709,7 @@ private func pkgActivateInstalledPayload(generation: UInt64,
     }
     pkgStoreUnlock(activeDaif)
     if !alreadyActive {
-        if activationCount >= pkgStoreMaxPayloads { return -28 }
+        if activationCount >= pkgStoreMaxPayloads { return Errno.noSpace.code }
         h0s[activationCount] = newParts.0
         h1s[activationCount] = newParts.1
         h2s[activationCount] = newParts.2
@@ -747,7 +747,7 @@ private func pkgActivateInstalledPayload(generation: UInt64,
         }
         return true
     }
-    if !actOk { return -22 }
+    if !actOk { return Errno.invalid.code }
     var activationHash = [UInt8](repeating: 0, count: 32)
     activation.withUnsafeBytes { raw in
         activationHash.withUnsafeMutableBufferPointer { hp in
@@ -792,7 +792,7 @@ private func pkgActivateInstalledPayload(generation: UInt64,
                                                 h0s: h0s, h1s: h1s,
                                                 h2s: h2s, h3s: h3s,
                                                 count: activationCount)
-    if !published { return -28 }
+    if !published { return Errno.noSpace.code }
     let mountRc = vfsMountActivePackageStore()
     if mountRc != 0 { return mountRc }
     klog(.info, "pkg", "P3b: package installed and activated", generation)
@@ -870,13 +870,13 @@ private func pkgAppendActivationForHashes(generation: UInt64,
 }
 
 func pkgStoreRemove(nameVA: UInt) -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
-    if !virtioBlkPackageStoreAvailable() { return -2 }
-    guard let name = userCString(nameVA, maxLen: 32) else { return -22 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
+    if !virtioBlkPackageStoreAvailable() { return Errno.noEntry.code }
+    guard let name = userCString(nameVA, maxLen: 32) else { return Errno.invalid.code }
     var nameLen = 0
     while nameLen < 32 && name[nameLen] != 0 { nameLen += 1 }
-    if nameLen == 0 || nameLen > 31 { return -22 }
-    if !pkgStoreBeginMutation() { return -11 }
+    if nameLen == 0 || nameLen > 31 { return Errno.invalid.code }
+    if !pkgStoreBeginMutation() { return Errno.again.code }
     defer { pkgStoreEndMutation() }
 
     var allOffsets = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
@@ -903,7 +903,7 @@ func pkgStoreRemove(nameVA: UInt) -> Int {
         activeIndex += 1
     }
     pkgStoreUnlock(activeDaif)
-    if allCount == 0 { return -2 }
+    if allCount == 0 { return Errno.noEntry.code }
 
     var keepH0s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
     var keepH1s = [UInt64](repeating: 0, count: pkgStoreMaxPayloads)
@@ -933,7 +933,7 @@ func pkgStoreRemove(nameVA: UInt) -> Int {
         }
         i += 1
     }
-    if !found { return -2 }
+    if !found { return Errno.noEntry.code }
 
     let generation = pkgStoreNextGeneration()
     let removedVersion: StaticString = "removed"
@@ -947,7 +947,7 @@ func pkgStoreRemove(nameVA: UInt) -> Int {
     }
     if append.rc != 0 { return append.rc }
     if !pkgEnsureActivation(generation, append.activationOffset, append.activationSize) {
-        return -28
+        return Errno.noSpace.code
     }
     klog(.info, "pkg", "P4: package deactivated for next boot", generation)
     return 0
@@ -1088,13 +1088,13 @@ private func pkgCheckedRange(offset: UInt64, size: UInt64, fileSize: UInt64) -> 
 }
 
 func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
-    if !virtioBlkPackageStoreAvailable() { return -2 }
-    if !pkgStoreBeginMutation() { return -11 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
+    if !virtioBlkPackageStoreAvailable() { return Errno.noEntry.code }
+    if !pkgStoreBeginMutation() { return Errno.again.code }
     defer { pkgStoreEndMutation() }
 
     let fileSize = vfsKernelFileSize(fd: fd)
-    if fileSize < swpkgHeaderSize { return -22 }
+    if fileSize < swpkgHeaderSize { return Errno.invalid.code }
     let fileSize64 = UInt64(fileSize)
 
     var name = [UInt8](repeating: 0, count: 32)
@@ -1132,7 +1132,7 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
         if !pkgCheckedRange(offset: payloadOffset, size: payloadSize, fileSize: fileSize64) { return false }
         return true
     }
-    if !validHeader { return -22 }
+    if !validHeader { return Errno.invalid.code }
 
     let manifestOffset = header.withUnsafeBufferPointer { pkgLe64($0.baseAddress!, 16) }
     let manifestSize = header.withUnsafeBufferPointer { pkgLe64($0.baseAddress!, 24) }
@@ -1158,19 +1158,19 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
             }
         }
     }
-    if !hashesOk { return -22 }
+    if !hashesOk { return Errno.invalid.code }
 
     var payloadHeader = [UInt8](repeating: 0, count: 64)
     let phdr = payloadHeader.withUnsafeMutableBufferPointer { bp in
         vfsKernelReadFile(fd: fd, offset: Int(payloadOffset), buffer: UnsafeMutableRawPointer(bp.baseAddress!),
                           count: 64)
     }
-    if phdr != 64 { return -22 }
+    if phdr != 64 { return Errno.invalid.code }
     let payloadLooksPacked = payloadHeader.withUnsafeBufferPointer { bp -> Bool in
         let p = bp.baseAddress!
         return pkgBytesEqual(p, 0, "SWOSBASE") && pkgLe32(p, 8) == 2
     }
-    if !payloadLooksPacked { return -22 }
+    if !payloadLooksPacked { return Errno.invalid.code }
 
     let generation = pkgStoreNextGeneration()
     let install = name.withUnsafeBufferPointer { nbp in
@@ -1200,10 +1200,10 @@ func pkgStoreInstall(fd: Int, nameVA: UInt, versionVA: UInt) -> Int {
 }
 
 func pkgStoreStreamBegin(descVA: UInt) -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
-    if !virtioBlkPackageStoreAvailable() { return -2 }
-    guard let desc = userReadableBuffer(descVA, UInt(pkgStreamBeginDescSize)) else { return -22 }
-    if !pkgStoreBeginMutation() { return -11 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
+    if !virtioBlkPackageStoreAvailable() { return Errno.noEntry.code }
+    guard let desc = userReadableBuffer(descVA, UInt(pkgStreamBeginDescSize)) else { return Errno.invalid.code }
+    if !pkgStoreBeginMutation() { return Errno.again.code }
     var started = false
     defer {
         if !started { pkgStoreEndMutation() }
@@ -1219,7 +1219,7 @@ func pkgStoreStreamBegin(descVA: UInt) -> Int {
     }
     if versionLen < 0 { return versionLen }
     let payloadSize = pkgLe64(desc, 48)
-    if payloadSize == 0 { return -22 }
+    if payloadSize == 0 { return Errno.invalid.code }
     var i = 0
     while i < 32 {
         pkgStreamPayloadHash[i] = desc[56 + i]
@@ -1245,18 +1245,18 @@ func pkgStoreStreamBegin(descVA: UInt) -> Int {
 }
 
 func pkgStoreStreamWrite(bufVA: UInt, count: UInt) -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
-    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
+    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return Errno.again.code }
     if count == 0 { return 0 }
-    if count > UInt(pkgStoreInstallChunkSize) { pkgFailStreamMutation(); return -22 }
+    if count > UInt(pkgStoreInstallChunkSize) { pkgFailStreamMutation(); return Errno.invalid.code }
     guard let src = userReadableBuffer(bufVA, count) else {
         pkgFailStreamMutation()
-        return -22
+        return Errno.invalid.code
     }
     let remaining = pkgStreamPayloadSize - pkgStreamWritten
     if UInt64(count) > remaining {
         pkgFailStreamMutation()
-        return -22
+        return Errno.invalid.code
     }
 
     var i = 0
@@ -1277,11 +1277,11 @@ func pkgStoreStreamWrite(bufVA: UInt, count: UInt) -> Int {
 }
 
 func pkgStoreStreamCommit() -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
-    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
+    if !pkgStreamActive || pkgStreamOwnerPid != processCurrentPid() { return Errno.again.code }
     if pkgStreamWritten != pkgStreamPayloadSize {
         pkgFailStreamMutation()
-        return -22
+        return Errno.invalid.code
     }
     let payloadLooksPacked = pkgStreamFirstBytes.withUnsafeBufferPointer { bp -> Bool in
         if pkgStreamFirstByteCount != 64 { return false }
@@ -1290,7 +1290,7 @@ func pkgStoreStreamCommit() -> Int {
     }
     if !payloadLooksPacked {
         pkgFailStreamMutation()
-        return -22
+        return Errno.invalid.code
     }
 
     var actualHash = [UInt8](repeating: 0, count: 32)
@@ -1304,7 +1304,7 @@ func pkgStoreStreamCommit() -> Int {
     }
     if !hashOk {
         pkgFailStreamMutation()
-        return -22
+        return Errno.invalid.code
     }
 
     let prc = pkgWriteZeroPadding(from: pkgStreamDataOffset + pkgStreamPayloadSize, to: pkgStreamNextOffset)
@@ -1350,9 +1350,9 @@ func pkgStoreStreamCommit() -> Int {
 }
 
 func pkgStoreStreamAbort() -> Int {
-    if processCurrentPrincipal() != 1 { return -13 }
+    if processCurrentPrincipal() != 1 { return Errno.access.code }
     if !pkgStreamActive { return 0 }
-    if pkgStreamOwnerPid != processCurrentPid() { return -11 }
+    if pkgStreamOwnerPid != processCurrentPid() { return Errno.again.code }
     pkgFailStreamMutation()
     return 0
 }
@@ -1383,23 +1383,23 @@ func pkgStoreActiveInfo(_ activeIndex: Int, _ outVA: UInt, _ cap: UInt) -> Int {
     let daif = pkgStoreLock()
     if activeIndex < 0 || activeIndex >= pkgActivePayloadCountValue {
         pkgStoreUnlock(daif)
-        return -2
+        return Errno.noEntry.code
     }
     let pidx = pkgActivePayloadIndex[activeIndex]
     if pidx < 0 || pidx >= pkgStoreMaxPayloads {
         pkgStoreUnlock(daif)
-        return -2
+        return Errno.noEntry.code
     }
     let payload = pkgPayloads[pidx]
     if !payload.inUse || !payload.active || payload.offset < UInt64(pkgStoreRecordHeaderSize) {
         pkgStoreUnlock(daif)
-        return -2
+        return Errno.noEntry.code
     }
     payloadOffset = payload.offset
     pkgStoreUnlock(daif)
 
     if cap == 0 { return 0 }
-    guard let out = userWritableBuffer(outVA, cap) else { return -22 }
+    guard let out = userWritableBuffer(outVA, cap) else { return Errno.invalid.code }
     var rh = [UInt8](repeating: 0, count: pkgStoreRecordHeaderSize)
     let rc = rh.withUnsafeMutableBytes { raw in
         virtioBlkReadPackageStoreRange(payloadOffset - UInt64(pkgStoreRecordHeaderSize),
@@ -1518,19 +1518,19 @@ private func pkgReadPackedPayloadHeader(payloadOffset: UInt64, payloadSize: UInt
 }
 
 func pkgStoreActiveFiles(nameVA: UInt, outVA: UInt, cap: UInt) -> Int {
-    guard let name = userCString(nameVA, maxLen: 32) else { return -22 }
+    guard let name = userCString(nameVA, maxLen: 32) else { return Errno.invalid.code }
     var nameLen = 0
     while nameLen < 32 && name[nameLen] != 0 { nameLen += 1 }
-    if nameLen == 0 || nameLen > 31 { return -22 }
-    guard let payload = pkgActivePayloadForName(name, nameLen) else { return -2 }
+    if nameLen == 0 || nameLen > 31 { return Errno.invalid.code }
+    guard let payload = pkgActivePayloadForName(name, nameLen) else { return Errno.noEntry.code }
     let header = pkgReadPackedPayloadHeader(payloadOffset: payload.offset, payloadSize: payload.size)
-    if !header.ok { return -22 }
+    if !header.ok { return Errno.invalid.code }
 
     let out: UnsafeMutablePointer<UInt8>?
     if cap == 0 {
         out = nil
     } else {
-        guard let writable = userWritableBuffer(outVA, cap) else { return -22 }
+        guard let writable = userWritableBuffer(outVA, cap) else { return Errno.invalid.code }
         out = writable
     }
 
@@ -1577,6 +1577,6 @@ func pkgStoreActiveFiles(nameVA: UInt, outVA: UInt, cap: UInt) -> Int {
             i += 1
         }
     }
-    if !ok { return -22 }
+    if !ok { return Errno.invalid.code }
     return Int(needed)
 }

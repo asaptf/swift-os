@@ -153,7 +153,7 @@ func virtioRngTransportName() -> StaticString {
 }
 
 private func virtioRngRequest(_ maxBytes: Int) -> Int {
-    if !rngActive { return -19 } // ENODEV
+    if !rngActive { return Errno.noDev.code } // ENODEV
     let want = maxBytes < RNG_BUF_SIZE ? maxBytes : RNG_BUF_SIZE
     if want <= 0 { return 0 }
 
@@ -169,22 +169,22 @@ private func virtioRngRequest(_ maxBytes: Int) -> Int {
         rngInvalidate(rngRingBase + OFF_USED, 16)
         if rngUsedIdx() != rngLastUsed { break }
         spins += 1
-        if spins >= RNG_SPIN_LIMIT { return -5 } // EIO
+        if spins >= RNG_SPIN_LIMIT { return Errno.io.code } // EIO
     }
 
-    if (rngUsedID() % rngQn) != 0 { return -5 }
+    if (rngUsedID() % rngQn) != 0 { return Errno.io.code }
     var got = Int(rngUsedLen())
     if got > want { got = want }
     rngLastUsed &+= 1
     rngInvalidate(rngDataBase, got)
     rngXport.ackInterrupt()
-    return got > 0 ? got : -5
+    return got > 0 ? got : Errno.io.code
 }
 
 func virtioRngRead(_ dst: UnsafeMutablePointer<UInt8>, _ count: Int) -> Int {
-    if count < 0 { return -22 }
+    if count < 0 { return Errno.invalid.code }
     if count == 0 { return 0 }
-    if !rngActive { return -19 }
+    if !rngActive { return Errno.noDev.code }
 
     var done = 0
     while done < count {

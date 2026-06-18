@@ -47,13 +47,7 @@ private let sockRingDepth = 4
 // after close) never collide on a stale `40000 + slot` port.
 private var ephemeralCursor: UInt16 = ephemeralPortLow
 
-// Negative errno-ish returns shared with the syscall layer.
-let netErrDown = -100      // ENETDOWN: no NIC
-let netErrUnreach = -101   // EHOSTUNREACH: no route/MAC
-let netErrMany = -24       // EMFILE
-let netErrInval = -22      // EINVAL
-let netErrInUse = -98      // EADDRINUSE
-let netErrAgain = -11      // EAGAIN / timed out
+// Negative errno-ish returns come from the shared Errno table (kernel/errno.swift).
 
 var gNet = NetStack(mac: .zero, ip: netLocalIP)   // replaced in netInit with the real MAC
 var netReady = false
@@ -247,9 +241,9 @@ private func netInfoStoreIPv6(_ out: UnsafeMutableRawPointer, _ off: Int, _ ip: 
 /// IPv4 values are host-order addresses, matching the rest of the swift-os user ABI.
 /// IPv6 bytes are in network order.
 func netInfoSnapshot(buffer: UInt, capacity: UInt) -> Int {
-    if capacity < netInfoSnapshotSize { return netErrInval }
+    if capacity < netInfoSnapshotSize { return Errno.invalid.code }
     if (processCurrentCaps() & capNet) == 0 { return -1 }
-    guard let dst8 = userWritableBuffer(buffer, netInfoSnapshotSize) else { return netErrInval }
+    guard let dst8 = userWritableBuffer(buffer, netInfoSnapshotSize) else { return Errno.invalid.code }
     let dst = UnsafeMutableRawPointer(dst8)
 
     let daif = netLock()
@@ -728,7 +722,7 @@ private func socketAlloc(owner: UInt32, proto: UInt8, family: Int = AF_INET) -> 
 }
 
 private func socketAllocLocked(owner: UInt32, proto: UInt8, family: Int = AF_INET) -> Int {
-    if !netReady { return netErrDown }
+    if !netReady { return Errno.netDown.code }
     for s in 0..<maxSockets where !sockInUse[s] {
         sockInUse[s] = true; sockBound[s] = false; sockPort[s] = 0
         sockOwner[s] = owner; sockHead[s] = 0; sockCount[s] = 0
@@ -740,15 +734,15 @@ private func socketAllocLocked(owner: UInt32, proto: UInt8, family: Int = AF_INE
         if proto == sockProtoTCP { tcpConns[s].reset() }
         return s
     }
-    return netErrMany
+    return Errno.manyFiles.code
 }
 
 func socketBind(_ s: Int, port: UInt16) -> Int {
     let daif = netLock()
     defer { netUnlock(daif) }
-    if !socketValidLocked(s) { return netErrInval }
+    if !socketValidLocked(s) { return Errno.invalid.code }
     for o in 0..<maxSockets where o != s && sockInUse[o] && sockBound[o] && sockPort[o] == port {
-        return netErrInUse
+        return Errno.addrInUse.code
     }
     sockPort[s] = port
     sockBound[s] = true
@@ -762,11 +756,11 @@ func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, l
     var daif = netLock()
     if !netReady {
         netUnlock(daif)
-        return netErrDown
+        return Errno.netDown.code
     }
     if !socketValidLocked(s) {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
     let routeIP = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
                                   gatewayIP: netGatewayIP, dstIP: dstIP)
@@ -777,12 +771,12 @@ func socketSend(_ s: Int, dstIP: IPv4, dstPort: UInt16, src: UnsafeRawPointer, l
     }
     daif = netLock()
     defer { netUnlock(daif) }
-    if !netReady { return netErrDown }
-    if !socketValidLocked(s) { return netErrInval }
+    if !netReady { return Errno.netDown.code }
+    if !socketValidLocked(s) { return Errno.invalid.code }
     let routeTarget = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
                                       gatewayIP: netGatewayIP, dstIP: dstIP)
     let mac = gNet.arp.lookup(routeTarget)
-    guard let dmac = mac else { return netErrUnreach }
+    guard let dmac = mac else { return Errno.hostUnreach.code }
     if !sockBound[s] {                       // implicit ephemeral bind on first send
         sockPort[s] = allocEphemeralPortLocked(for: s); sockBound[s] = true
     }
@@ -798,11 +792,11 @@ func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointe
     var daif = netLock()
     if !netReady {
         netUnlock(daif)
-        return netErrDown
+        return Errno.netDown.code
     }
     if !socketValidLocked(s) || sockFamily[s] != AF_INET6 {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
     let routeIPv6 = ipv6RouteTarget(local: netLocalIPv6, prefixLen: netIPv6PrefixLen,
                                     gateway: netGatewayIPv6, dst: dstIPv6)
@@ -830,9 +824,9 @@ func socketSendv6(_ s: Int, dstIPv6: IPv6, dstPort: UInt16, src: UnsafeRawPointe
         daif = netLock()
     }
     defer { netUnlock(daif) }
-    if !netReady { return netErrDown }
-    if !socketValidLocked(s) || sockFamily[s] != AF_INET6 { return netErrInval }
-    guard let dmac = mac ?? gNet.ndp.lookup(routeIPv6) else { return netErrUnreach }
+    if !netReady { return Errno.netDown.code }
+    if !socketValidLocked(s) || sockFamily[s] != AF_INET6 { return Errno.invalid.code }
+    guard let dmac = mac ?? gNet.ndp.lookup(routeIPv6) else { return Errno.hostUnreach.code }
     if !sockBound[s] {
         sockPort[s] = allocEphemeralPortLocked(for: s); sockBound[s] = true
     }
@@ -856,11 +850,11 @@ func socketRecv(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
         let daif = netLock()
         if !netReady {
             netUnlock(daif)
-            return netErrDown
+            return Errno.netDown.code
         }
         if !socketValidLocked(s) {
             netUnlock(daif)
-            return netErrInval
+            return Errno.invalid.code
         }
         if sockCount[s] > 0 {
             let ri = s * sockRingDepth + sockHead[s]
@@ -883,7 +877,7 @@ func socketRecv(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
             return n
         }
         netUnlock(daif)
-        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return Errno.again.code }
         wfi()
     }
 }
@@ -899,11 +893,11 @@ func socketRecvV6(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
         let daif = netLock()
         if !netReady {
             netUnlock(daif)
-            return netErrDown
+            return Errno.netDown.code
         }
         if !socketValidLocked(s) || sockFamily[s] != AF_INET6 {
             netUnlock(daif)
-            return netErrInval
+            return Errno.invalid.code
         }
         if sockCount[s] > 0 {
             let ri = s * sockRingDepth + sockHead[s]
@@ -927,7 +921,7 @@ func socketRecvV6(_ s: Int, dst: UnsafeMutableRawPointer, cap: Int,
             return n
         }
         netUnlock(daif)
-        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return Errno.again.code }
         wfi()
     }
 }
@@ -1062,7 +1056,7 @@ func tcpListen(_ s: Int, backlog: Int) -> Int {
     _ = backlog
     let daif = netLock()
     defer { netUnlock(daif) }
-    if !socketValidLocked(s) || sockProto[s] != sockProtoTCP || !sockBound[s] { return netErrInval }
+    if !socketValidLocked(s) || sockProto[s] != sockProtoTCP || !sockBound[s] { return Errno.invalid.code }
     sockIsListener[s] = true
     return 0
 }
@@ -1078,11 +1072,11 @@ func tcpAccept(_ s: Int, timeoutMs: Int) -> Int {
         let daif = netLock()
         if !netReady {
             netUnlock(daif)
-            return netErrDown
+            return Errno.netDown.code
         }
         if !socketValidLocked(s) || sockProto[s] != sockProtoTCP || !sockIsListener[s] {
             netUnlock(daif)
-            return netErrInval
+            return Errno.invalid.code
         }
         for c in 0..<maxSockets where sockInUse[c] && sockProto[c] == sockProtoTCP && !sockIsListener[c]
                 && sockListenerOf[c] == s && !sockAccepted[c] && sockConnReady[c] {
@@ -1091,7 +1085,7 @@ func tcpAccept(_ s: Int, timeoutMs: Int) -> Int {
             return c
         }
         netUnlock(daif)
-        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return Errno.again.code }
         wfi()
     }
 }
@@ -1102,15 +1096,15 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
     var daif = netLock()
     if !netReady {
         netUnlock(daif)
-        return netErrDown
+        return Errno.netDown.code
     }
     if !socketValidLocked(s) || sockProto[s] != sockProtoTCP || sockIsListener[s] {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
     if tcpConns[s].state != .closed {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
 
     // Route: resolve the Ethernet next-hop selected by the configured subnet.
@@ -1124,22 +1118,22 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
     daif = netLock()
     if !netReady {
         netUnlock(daif)
-        return netErrDown
+        return Errno.netDown.code
     }
     if !socketValidLocked(s) || sockProto[s] != sockProtoTCP || sockIsListener[s] {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
     if tcpConns[s].state != .closed {
         netUnlock(daif)
-        return netErrInval
+        return Errno.invalid.code
     }
     let routeTarget = ipv4RouteTarget(localIP: netLocalIP, subnetMask: netSubnetMask,
                                       gatewayIP: netGatewayIP, dstIP: dstIP)
     let mac = gNet.arp.lookup(routeTarget)
     guard let dmac = mac else {
         netUnlock(daif)
-        return netErrUnreach
+        return Errno.hostUnreach.code
     }
 
     let localPort = sockBound[s] ? sockPort[s] : allocEphemeralPortLocked(for: s)
@@ -1161,7 +1155,7 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
         daif = netLock()
         if !socketValidLocked(s) || sockProto[s] != sockProtoTCP {
             netUnlock(daif)
-            return netErrInval
+            return Errno.invalid.code
         }
         if sockConnReady[s] {
             netUnlock(daif)
@@ -1169,10 +1163,10 @@ func socketConnect(_ s: Int, dstIP: IPv4, dstPort: UInt16, timeoutMs: Int) -> In
         }
         if tcpConns[s].state == .closed {
             netUnlock(daif)
-            return netErrUnreach
+            return Errno.hostUnreach.code
         }   // refused/reset
         netUnlock(daif)
-        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return Errno.again.code }
         wfi()
     }
 }
@@ -1188,7 +1182,7 @@ func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int, p
         let daif = netLock()
         if !socketValidLocked(c) || sockProto[c] != sockProtoTCP {
             netUnlock(daif)
-            return netErrInval
+            return Errno.invalid.code
         }
         let n = tcpConns[c].read(dst, cap, peek: peek)
         if n > 0 {
@@ -1205,7 +1199,7 @@ func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int, p
             return 0   // peer closed and no buffered data left → EOF
         }
         netUnlock(daif)
-        if timeoutMs > 0 && systemTicks - start >= ticks { return netErrAgain }
+        if timeoutMs > 0 && systemTicks - start >= ticks { return Errno.again.code }
         wfi()
     }
 }
@@ -1214,7 +1208,7 @@ func tcpRecv(_ c: Int, dst: UnsafeMutableRawPointer, cap: Int, timeoutMs: Int, p
 func tcpSend(_ c: Int, src: UnsafeRawPointer, len: Int) -> Int {
     let daif = netLock()
     defer { netUnlock(daif) }
-    if !socketValidLocked(c) || sockProto[c] != sockProtoTCP { return netErrInval }
+    if !socketValidLocked(c) || sockProto[c] != sockProtoTCP { return Errno.invalid.code }
     let now = systemTicks
     let n = tcpConns[c].appSend(src, len, now: now)
     tcpDrain(c, now)

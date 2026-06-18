@@ -8,22 +8,7 @@
 // Implements: open, read, write, close, lseek, stat, fstat, getdents, chdir,
 // getcwd, dup, dup2, pipe, eventfd, poll, unlink, rename, mkdir, rmdir.
 
-// errno-ish returns (negative).
-private let errIntr = -4
-private let errNoEntry = -2
-private let errBadFD = -9
-private let errAccess = -13
-private let errAgain = -11
-private let errBusy = -16
-private let errNoMem = -12
-private let errExists = -17
-private let errNotDir = -20
-private let errIsDir = -21
-private let errInvalid = -22
-private let errNoSpace = -28
-private let errReadOnly = -30
-private let errPipe = -32
-private let errNotEmpty = -39
+// errno-ish returns (negative) come from the shared Errno table (kernel/errno.swift).
 
 // Open flags (our ABI; userland lib/fs.h must match). The newlib bottom end
 // (userland/lib/newlib_syscalls.c) translates newlib's BSD-style O_* values
@@ -882,10 +867,10 @@ func vfsInit() {
 }
 
 func vfsMountActivePackageStore() -> Int {
-    if nodes == nil { return errInvalid }
+    if nodes == nil { return Errno.invalid.code }
     let rawCount = virtioBlkSwosbaseImageCount()
     let storeCount = pkgStoreActivePayloadCount()
-    if storeCount < mountedPackageStorePayloads { return errInvalid }
+    if storeCount < mountedPackageStorePayloads { return Errno.invalid.code }
     var store = mountedPackageStorePayloads
     while store < storeCount {
         let storeImage = rawCount + store
@@ -896,7 +881,7 @@ func vfsMountActivePackageStore() -> Int {
             mountedPackageStorePayloads += 1
         } else {
             klog(.info, "pkg", "P3b: package store payload live-mount rejected", UInt64(store))
-            return errExists
+            return Errno.exists.code
         }
         store += 1
     }
@@ -915,11 +900,11 @@ private func readHandleSpec(_ base: UnsafePointer<UInt8>, _ index: Int) -> Handl
 func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
                                   specsVA: UInt = 0, specCount: UInt = 0) -> Int {
     if inherit != .explicit { return 0 }
-    if parent < 0 || parent >= maxVFSProcesses { return errInvalid }
-    if specCount > UInt(maxFDs) { return errInvalid }
+    if parent < 0 || parent >= maxVFSProcesses { return Errno.invalid.code }
+    if specCount > UInt(maxFDs) { return Errno.invalid.code }
     if specCount == 0 { return 0 }
     guard let specs = userReadableBuffer(specsVA, specCount * UInt(handleSpecSize)) else {
-        return errInvalid
+        return Errno.invalid.code
     }
 
     let daif = vfsLock()
@@ -929,12 +914,12 @@ func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
         let spec = readHandleSpec(specs, i)
         let src = Int(spec.sourceFD)
         let dst = Int(spec.targetFD)
-        if src < 0 || src >= maxFDs || dst < 0 || dst >= maxFDs { return errBadFD }
-        if !fdEntry(parent, src).inUse { return errBadFD }
-        if !hasRights(fdEntry(parent, src).rights, .transfer) { return errAccess }
-        if (spec.flags & ~handleSpecFlagCloexec) != 0 { return errInvalid }
+        if src < 0 || src >= maxFDs || dst < 0 || dst >= maxFDs { return Errno.badFD.code }
+        if !fdEntry(parent, src).inUse { return Errno.badFD.code }
+        if !hasRights(fdEntry(parent, src).rights, .transfer) { return Errno.access.code }
+        if (spec.flags & ~handleSpecFlagCloexec) != 0 { return Errno.invalid.code }
         let bit = UInt64(1) << UInt64(dst)
-        if (targetMask & bit) != 0 { return errInvalid }
+        if (targetMask & bit) != 0 { return Errno.invalid.code }
         targetMask |= bit
     }
     return 0
@@ -1180,13 +1165,13 @@ private func releaseDescription(_ d: Int) {
         if desc.pipeEnd == endpointSendEnd {
             if endpoints[ep].sendRefs > 0 { endpoints[ep].sendRefs -= 1 }
             // QW2: wake any parked receivers when the last sender closes so
-            // they return errPipe instead of sleeping forever (EOF wake).
+            // they return Errno.pipe.code instead of sleeping forever (EOF wake).
             if endpoints[ep].sendRefs == 0 { ipcWakeWaiters(ep) }
         } else {
             if endpoints[ep].recvRefs > 0 { endpoints[ep].recvRefs -= 1 }
             // QW1: when the last receiver closes, no server can reply, so wake
             // any callers parked in ipc_call on a reply port for this endpoint;
-            // they re-check recvRefs and return errPipe (mirrors the QW2 EOF wake).
+            // they re-check recvRefs and return Errno.pipe.code (mirrors the QW2 EOF wake).
             if endpoints[ep].recvRefs == 0 { replyPortsWakeForEndpointEOF(ep) }
         }
         if endpoints[ep].sendRefs == 0 && endpoints[ep].recvRefs == 0 {
@@ -1217,15 +1202,15 @@ private func borrowDescriptionForFD(_ proc: Int, _ fd: Int,
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else {
-        return (errBadFD, HandleEntry(), -1, OpenDescription())
+        return (Errno.badFD.code, HandleEntry(), -1, OpenDescription())
     }
     let entry = fdEntry(proc, fd)
     guard hasRights(entry.rights, required) else {
-        return (errAccess, HandleEntry(), -1, OpenDescription())
+        return (Errno.access.code, HandleEntry(), -1, OpenDescription())
     }
     let d = entry.object
     guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else {
-        return (errBadFD, HandleEntry(), -1, OpenDescription())
+        return (Errno.badFD.code, HandleEntry(), -1, OpenDescription())
     }
     openDescriptions[d].refCount += 1
     return (0, entry, d, openDescriptions[d])
@@ -1244,7 +1229,7 @@ private func borrowSocketForFD(_ proc: Int, _ fd: Int,
     if b.err != 0 { return (b.err, -1, -1, 0) }
     guard b.entry.kind == .socket else {
         releaseBorrowedDescription(b.descIndex)
-        return (errBadFD, -1, -1, 0)
+        return (Errno.badFD.code, -1, -1, 0)
     }
     return (0, b.desc.node, b.descIndex, b.desc.flags)
 }
@@ -1420,7 +1405,7 @@ private func freeReplyPort(_ pr: Int, releaseHandle: Bool = false) {
 
 // Wake every caller parked on a reply port for `ep` after the last receiver
 // closes (recvRefs == 0): no server can ever reply, so the woken caller re-checks
-// recvRefs under lock and returns errPipe, then frees its own port. We only wake
+// recvRefs under lock and returns Errno.pipe.code, then frees its own port. We only wake
 // here (never free) to keep reply-port ownership with the caller.
 private func replyPortsWakeForEndpointEOF(_ ep: Int) {
     for i in 0..<maxReplyPorts where replyPorts[i].inUse && replyPorts[i].endpoint == ep {
@@ -1431,7 +1416,7 @@ private func replyPortsWakeForEndpointEOF(_ ep: Int) {
 
 // Reclaim any reply port owned by an exiting caller slot, mirroring
 // ipcForgetSlot. A server reply that lands after this finds a stale token and is
-// rejected (errInvalid) — never a dangling callerSlot. Releases an uncollected
+// rejected (Errno.invalid.code) — never a dangling callerSlot. Releases an uncollected
 // reply handle so its description ref is balanced.
 func replyPortForgetSlot(_ slot: Int) {
     let daif = vfsLock()
@@ -1551,10 +1536,10 @@ func handleRights(_ proc: Int, _ fd: Int) -> Rights {
 func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
-    guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
+    guard fdEntryHasRights(proc, fd, .duplicate) else { return Errno.access.code }
     let newfd = allocFDInProcess(proc, from: 0)
-    if newfd == -1 { return errNoSpace }
+    if newfd == -1 { return Errno.noSpace.code }
     let d = fdEntry(proc, fd).object
     retainDescription(d)
     installDescription(proc, newfd, d, rights: attenuate(fdEntry(proc, fd).rights, to: mask))
@@ -1566,7 +1551,7 @@ func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
 func handleClose(_ proc: Int, _ fd: Int) -> Int {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return errBadFD }
+    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return Errno.badFD.code }
     releaseDescription(fdEntry(proc, fd).object)
     setFDEntry(proc, fd, HandleEntry())
     return 0
@@ -1893,13 +1878,13 @@ func vfsS4bLockBoundaryHeldSelfTest() -> Bool {
 // ---- syscalls -------------------------------------------------------------
 
 func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
-    guard let name = userCString(nameVA, maxLen: deviceInfoNameCap) else { return errInvalid }
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    guard let name = userCString(nameVA, maxLen: deviceInfoNameCap) else { return Errno.invalid.code }
     let out: UnsafeMutablePointer<UInt8>?
     if infoVA == 0 {
         out = nil
     } else {
-        guard let buf = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+        guard let buf = userWritableBuffer(infoVA, deviceInfoSize) else { return Errno.invalid.code }
         out = buf
     }
 
@@ -1908,13 +1893,13 @@ func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
     defer { vfsUnlock(daif) }
 
     let dev = findDeviceByName(name)
-    if dev < 0 { return errNoEntry }
-    if devices[dev].claimed { return errBusy }
+    if dev < 0 { return Errno.noEntry.code }
+    if devices[dev].claimed { return Errno.busy.code }
 
     let fd = allocFDInProcess(proc, from: 3)
-    if fd < 0 { return errNoSpace }
+    if fd < 0 { return Errno.noSpace.code }
     let d = allocDescription()
-    if d < 0 { return errNoSpace }
+    if d < 0 { return Errno.noSpace.code }
 
     devices[dev].claimed = true
     devices[dev].ownerProc = proc
@@ -1927,9 +1912,9 @@ func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
 }
 
 func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return errAccess }
-    if index < 0 { return errInvalid }
-    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    if index < 0 { return Errno.invalid.code }
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return Errno.invalid.code }
 
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
@@ -1942,30 +1927,30 @@ func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
         }
         ordinal += 1
     }
-    return errNoEntry
+    return Errno.noEntry.code
 }
 
 func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
-    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return errInvalid }
+    guard let out = userWritableBuffer(infoVA, deviceInfoSize) else { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .device else { return errBadFD }
-    guard hasRights(entry.rights, .getattr) else { return errAccess }
+    guard entry.kind == .device else { return Errno.badFD.code }
+    guard hasRights(entry.rights, .getattr) else { return Errno.access.code }
     let d = entry.object
-    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return errBadFD }
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return Errno.badFD.code }
     let desc = openDescriptions[d]
-    guard desc.kind == .device else { return errBadFD }
+    guard desc.kind == .device else { return Errno.badFD.code }
     let dev = desc.node
-    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return errInvalid }
+    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return Errno.invalid.code }
     writeDeviceInfoLocked(dev, out)
     return 0
 }
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
 
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
@@ -1978,36 +1963,36 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     let wantWrite = (f & oWrOnly) != 0 || (f & oRdWr) != 0 ||
                     (f & oCreat) != 0 || (f & oTrunc) != 0
     let wantRead = (f & oWrOnly) == 0 // O_RDONLY or O_RDWR
-    if wantRead && (caps & capFsRead) == 0 { return errAccess }
-    if wantWrite && (caps & capTmpWrite) == 0 { return errAccess }
+    if wantRead && (caps & capFsRead) == 0 { return Errno.access.code }
+    if wantWrite && (caps & capTmpWrite) == 0 { return Errno.access.code }
 
     // C3: object-scoped confinement. A confined process (confineNodes != 0) may only
     // reach paths inside its subtree; isDescendant(_, of: 0) is always true, so this is
     // a no-op for the unconfined default. See docs/CAPABILITIES.md §6 (C3).
     let confineRoot = confineRootForCurrentProcess()
-    if node != -1 && !isDescendant(node, of: confineRoot) { return errAccess }
+    if node != -1 && !isDescendant(node, of: confineRoot) { return Errno.access.code }
 
     if node == -1 {
         if (f & oCreat) != 0 {
             var ls = 0, ll = 0
             let parent = resolveParent(path, &ls, &ll)
-            if parent == -1 { return errNoEntry }
-            if !isDescendant(parent, of: confineRoot) { return errAccess } // C3 confinement
-            if nodes[parent].readOnly { return errReadOnly }
-            if findChild(parent, path + ls, ll) != -1 { return errExists }
+            if parent == -1 { return Errno.noEntry.code }
+            if !isDescendant(parent, of: confineRoot) { return Errno.access.code } // C3 confinement
+            if nodes[parent].readOnly { return Errno.readOnly.code }
+            if findChild(parent, path + ls, ll) != -1 { return Errno.exists.code }
             node = nodes[parent].dataFs
                 ? createDataFsNode(parent, path + ls, ll, isDir: false)
                 : createTmpNode(parent, path + ls, ll, isDir: false)
-            if node == -1 { return errNoSpace }
+            if node == -1 { return Errno.noSpace.code }
         } else {
-            return errNoEntry
+            return Errno.noEntry.code
         }
     }
 
     // I8: a disk-backed file must match its signed content hash before the
     // first descriptor is handed out (verified once per boot, then cached).
     if !nodes[node].isDir && nodes[node].onDisk && !vfsVerifyNodeContent(node) {
-        return errAccess
+        return Errno.access.code
     }
 
     // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
@@ -2019,9 +2004,9 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
 
     let proc = currentVFSProcess()
     let fd = allocFDInProcess(proc)
-    if fd == -1 { return errNoSpace }
+    if fd == -1 { return Errno.noSpace.code }
     let d = allocDescription()
-    if d == -1 { return errNoSpace }
+    if d == -1 { return Errno.noSpace.code }
 
     openDescriptions[d].kind = .file
     openDescriptions[d].node = node
@@ -2047,23 +2032,23 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     let d = borrowed.descIndex
     let file = borrowed.desc
     defer { releaseBorrowedDescription(d) }
-    guard entry.rights.contains(.read) else { return errBadFD }
+    guard entry.rights.contains(.read) else { return Errno.badFD.code }
 
     if entry.kind == .tty {
         return ttyRead(buffer: buffer, count: count)
     }
-    guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
+    guard let dst = userWritableBuffer(buffer, count) else { return Errno.invalid.code }
 
     if entry.kind == .socket {
         if socketIsTCP(file.node) {
             if (file.flags & oNonblock) != 0 {
                 netPump()
-                if !socketPollReadable(file.node) { return errAgain }
+                if !socketPollReadable(file.node) { return Errno.again.code }
             }
             return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
                            timeoutMs: socketRecvTimeoutMs)
         }
-        return errInvalid   // UDP: use recvfrom
+        return Errno.invalid.code   // UDP: use recvfrom
     }
 
     if entry.kind == .pipe {
@@ -2074,7 +2059,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             let daif = vfsLock()
             if p < 0 || p >= maxPipes || !pipes[p].inUse {
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             while copied < Int(count) && pipeCount(p) > 0 {
                 dst[copied] = pipePop(p)
@@ -2083,7 +2068,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             let done = copied > 0 || pipes[p].writeRefs == 0
             if !done && (file.flags & oNonblock) != 0 {
                 vfsUnlock(daif)
-                return errAgain
+                return Errno.again.code
             }
             vfsUnlock(daif)
             if done { break }
@@ -2098,13 +2083,13 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         enable_irq()
         while copied == 0 {
             let daif = vfsLock()
-            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+            if !ptyValid(p) { vfsUnlock(daif); return Errno.invalid.code }
             while copied < Int(count) && ptyOutCount(p) > 0 { dst[copied] = ptyOutPop(p); copied += 1 }
             let done = copied > 0 || ptySlaveRefs(p) == 0
-            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return Errno.again.code }
             // A pending signal (e.g. SIGINT raised on this PTY) interrupts the
             // blocking read so syscall return can deliver it.
-            if !done && signalPendingForCurrent() { vfsUnlock(daif); return errIntr }
+            if !done && signalPendingForCurrent() { vfsUnlock(daif); return Errno.intr.code }
             vfsUnlock(daif)
             if done { break }
             processYieldForIO()
@@ -2118,7 +2103,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         enable_irq()
         while copied == 0 {
             let daif = vfsLock()
-            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+            if !ptyValid(p) { vfsUnlock(daif); return Errno.invalid.code }
             let canonical = (ptySlaveLflag(p) & ttyICANON) != 0
             while copied < Int(count) && ptyCookedCount(p) > 0 {
                 let byte = ptyCookedPop(p)
@@ -2127,8 +2112,8 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
                 if canonical && byte == 0x0A { break } // one line per read
             }
             let done = copied > 0 || ptyMasterRefs(p) == 0
-            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return errAgain }
-            if !done && signalPendingForCurrent() { vfsUnlock(daif); return errIntr }
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return Errno.again.code }
+            if !done && signalPendingForCurrent() { vfsUnlock(daif); return Errno.intr.code }
             vfsUnlock(daif)
             if done { break }
             processYieldForIO()
@@ -2137,14 +2122,14 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     }
 
     if entry.kind == .event {
-        if count < 8 { return errInvalid }
+        if count < 8 { return Errno.invalid.code }
         let ev = file.node
         enable_irq()
         while true {
             let daif = vfsLock()
             if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse {
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             if eventCounters[ev].counter > 0 {
                 let value: UInt64
@@ -2161,14 +2146,14 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
             }
             if (file.flags & oNonblock) != 0 {
                 vfsUnlock(daif)
-                return errAgain
+                return Errno.again.code
             }
             vfsUnlock(daif)
             processYieldForIO()
         }
     }
 
-    guard entry.kind == .file else { return errBadFD }
+    guard entry.kind == .file else { return Errno.badFD.code }
     let daif = vfsLock()
     var result = 0
     var diskImage = -1
@@ -2177,9 +2162,9 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     var current = openDescriptions[d]
     let node = current.node
     if node < 0 || node >= nodeCount || !nodes[node].inUse {
-        result = errInvalid
+        result = Errno.invalid.code
     } else if nodes[node].isDir {
-        result = errIsDir
+        result = Errno.isDir.code
     } else if nodes[node].special != 0 {
         if nodes[node].special == 2 { // /dev/zero: count zero bytes
             var z = 0
@@ -2202,7 +2187,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
                 openDescriptions[d] = current
                 result = got
             } else if got < 0 {
-                result = errInvalid
+                result = Errno.invalid.code
             }
         }
     } else if nodes[node].onDisk {
@@ -2233,37 +2218,37 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
     if diskWant > 0 {
         let off = UInt64(diskOffset)
         let rc = vfsImageReadRange(diskImage, off, UnsafeMutableRawPointer(dst), UInt32(diskWant))
-        if rc != 0 { return errInvalid }
+        if rc != 0 { return Errno.invalid.code }
     }
     return result
 }
 
 func vfsKernelFileSize(fd: Int) -> Int {
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    guard entry.kind == .file, entry.rights.contains(.read) else { return Errno.badFD.code }
     let node = openDescriptions[entry.object].node
-    if node < 0 || nodes[node].isDir { return errInvalid }
+    if node < 0 || nodes[node].isDir { return Errno.invalid.code }
     return nodes[node].dataLen
 }
 
 func vfsKernelReadFile(fd: Int, offset: Int, buffer: UnsafeMutableRawPointer?, count: Int) -> Int {
     if count == 0 { return 0 }
-    if offset < 0 || count < 0 { return errInvalid }
+    if offset < 0 || count < 0 { return Errno.invalid.code }
     let proc = currentVFSProcess()
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .file, entry.rights.contains(.read) else { return errBadFD }
+    guard entry.kind == .file, entry.rights.contains(.read) else { return Errno.badFD.code }
     let node = openDescriptions[entry.object].node
-    if node < 0 || nodes[node].isDir { return errInvalid }
+    if node < 0 || nodes[node].isDir { return Errno.invalid.code }
     if offset >= nodes[node].dataLen { return 0 }
-    guard let dst = buffer else { return errInvalid }
+    guard let dst = buffer else { return Errno.invalid.code }
     let want = min(count, nodes[node].dataLen - offset)
     if nodes[node].onDisk {
         let off = UInt64(nodes[node].diskOffset + offset)
         let rc = vfsImageReadRange(nodes[node].diskImage, off, dst, UInt32(want))
-        return rc == 0 ? want : errInvalid
+        return rc == 0 ? want : Errno.invalid.code
     }
     let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
     let out = dst.bindMemory(to: UInt8.self, capacity: want)
@@ -2287,12 +2272,12 @@ func vfsRecvPeek(fd: Int, buffer: UInt, count: UInt) -> Int {
     let d = borrowed.descIndex
     let file = borrowed.desc
     defer { releaseBorrowedDescription(d) }
-    guard entry.rights.contains(.read) else { return errBadFD }
-    guard entry.kind == .socket, socketIsTCP(file.node) else { return errInvalid }
-    guard let dst = userWritableBuffer(buffer, count) else { return errInvalid }
+    guard entry.rights.contains(.read) else { return Errno.badFD.code }
+    guard entry.kind == .socket, socketIsTCP(file.node) else { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buffer, count) else { return Errno.invalid.code }
     if (file.flags & oNonblock) != 0 {
         netPump()
-        if !socketPollReadable(file.node) { return errAgain }
+        if !socketPollReadable(file.node) { return Errno.again.code }
     }
     return tcpRecv(file.node, dst: UnsafeMutableRawPointer(dst), cap: Int(count),
                    timeoutMs: socketRecvTimeoutMs, peek: true)
@@ -2307,8 +2292,8 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     let d = borrowed.descIndex
     let file = borrowed.desc
     defer { releaseBorrowedDescription(d) }
-    guard entry.rights.contains(.write) else { return errBadFD }
-    guard let src = userReadableBuffer(buffer, count) else { return errInvalid }
+    guard entry.rights.contains(.write) else { return Errno.badFD.code }
+    guard let src = userReadableBuffer(buffer, count) else { return Errno.invalid.code }
 
     if entry.kind == .tty {
         var w = 0
@@ -2329,13 +2314,13 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
                     continue
                 }
                 if n < 0 { return written > 0 ? written : n }
-                if !socketWriteOpen(file.node) { return written > 0 ? written : errPipe }
-                if (file.flags & oNonblock) != 0 { return written > 0 ? written : errAgain }
+                if !socketWriteOpen(file.node) { return written > 0 ? written : Errno.pipe.code }
+                if (file.flags & oNonblock) != 0 { return written > 0 ? written : Errno.again.code }
                 wfi()
             }
             return written
         }
-        return errInvalid   // UDP: use sendto
+        return Errno.invalid.code   // UDP: use sendto
     }
 
     if entry.kind == .pipe {
@@ -2346,11 +2331,11 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             let daif = vfsLock()
             if p < 0 || p >= maxPipes || !pipes[p].inUse {
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             if pipes[p].readRefs == 0 {
                 vfsUnlock(daif)
-                return written > 0 ? written : errPipe
+                return written > 0 ? written : Errno.pipe.code
             }
             while written < Int(count) && pipeSpace(p) > 0 {
                 pipePush(p, src[written])
@@ -2359,7 +2344,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             let done = written >= Int(count)
             if !done && (file.flags & oNonblock) != 0 {
                 vfsUnlock(daif)
-                return written > 0 ? written : errAgain
+                return written > 0 ? written : Errno.again.code
             }
             vfsUnlock(daif)
             if done { break }
@@ -2374,7 +2359,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         // tty under flow control).
         let p = file.pty
         let daif = vfsLock()
-        if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
+        if !ptyValid(p) { vfsUnlock(daif); return Errno.invalid.code }
         var w = 0
         while w < Int(count) { ptyInput(p, src[w]); w += 1 }
         vfsUnlock(daif)
@@ -2388,8 +2373,8 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         enable_irq()
         while written < Int(count) {
             let daif = vfsLock()
-            if !ptyValid(p) { vfsUnlock(daif); return errInvalid }
-            if ptyMasterRefs(p) == 0 { vfsUnlock(daif); return written > 0 ? written : errPipe }
+            if !ptyValid(p) { vfsUnlock(daif); return Errno.invalid.code }
+            if ptyMasterRefs(p) == 0 { vfsUnlock(daif); return written > 0 ? written : Errno.pipe.code }
             while written < Int(count) {
                 let byte = src[written]
                 if byte == 0x0A {
@@ -2402,7 +2387,7 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
                 written += 1
             }
             let done = written >= Int(count)
-            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return written > 0 ? written : errAgain }
+            if !done && (file.flags & oNonblock) != 0 { vfsUnlock(daif); return written > 0 ? written : Errno.again.code }
             vfsUnlock(daif)
             if done { break }
             if written < Int(count) { processYieldForIO() }
@@ -2411,16 +2396,16 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
     }
 
     if entry.kind == .event {
-        if count < 8 { return errInvalid }
+        if count < 8 { return Errno.invalid.code }
         let value = le64(src, 0)
-        if value == UInt64.max { return errInvalid }
+        if value == UInt64.max { return Errno.invalid.code }
         let ev = file.node
         enable_irq()
         while true {
             let daif = vfsLock()
             if ev < 0 || ev >= maxEvents || !eventCounters[ev].inUse {
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             if value <= eventMaxCounter - eventCounters[ev].counter {
                 eventCounters[ev].counter += value
@@ -2429,22 +2414,22 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             }
             if (file.flags & oNonblock) != 0 {
                 vfsUnlock(daif)
-                return errAgain
+                return Errno.again.code
             }
             vfsUnlock(daif)
             processYieldForIO()
         }
     }
 
-    guard entry.kind == .file else { return errBadFD }
+    guard entry.kind == .file else { return Errno.badFD.code }
     let daif = vfsLock()
     var result = 0
     var current = openDescriptions[d]
     let node = current.node
     if node < 0 || node >= nodeCount || !nodes[node].inUse {
-        result = errInvalid
+        result = Errno.invalid.code
     } else if nodes[node].isDir {
-        result = errIsDir
+        result = Errno.isDir.code
     } else if nodes[node].special != 0 {
         result = Int(count)   // /dev/null and /dev/zero: discard writes
     } else if nodes[node].dataFs {
@@ -2458,12 +2443,12 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             openDescriptions[d] = current
             result = w
         } else {
-            result = w == 0 ? 0 : errNoSpace
+            result = w == 0 ? 0 : Errno.noSpace.code
         }
     } else if nodes[node].readOnly {
-        result = errReadOnly
+        result = Errno.readOnly.code
     } else if !ensureTmpFileCapacity(node, current.offset + Int(count)) {
-        result = errNoSpace
+        result = Errno.noSpace.code
     } else {
         let dst = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
         var w = 0
@@ -2486,26 +2471,26 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
 /// the exact length — so without this an overwrite that shrinks a file would
 /// leave a stale tail. Growth zero-fills up to the node's capacity.
 func vfsFtruncate(fd: Int, length: Int) -> Int {
-    if length < 0 { return errInvalid }
+    if length < 0 { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
     let d = entry.object
     let file = openDescriptions[d]
-    guard entry.rights.contains(.write) else { return errBadFD }
-    guard entry.kind == .file else { return errInvalid }
+    guard entry.rights.contains(.write) else { return Errno.badFD.code }
+    guard entry.kind == .file else { return Errno.invalid.code }
     let node = file.node
-    if nodes[node].isDir { return errIsDir }
+    if nodes[node].isDir { return Errno.isDir.code }
     if nodes[node].dataFs {
-        if !datafsTruncate(nodes[node].dfsInode, length) { return errNoSpace }
+        if !datafsTruncate(nodes[node].dfsInode, length) { return Errno.noSpace.code }
         nodes[node].dataLen = length
         nodes[node].mtime = rtcNow()
         return 0
     }
-    if nodes[node].readOnly { return errReadOnly }
-    if length > nodes[node].dataCap { return errNoSpace }
+    if nodes[node].readOnly { return Errno.readOnly.code }
+    if length > nodes[node].dataCap { return Errno.noSpace.code }
     if length > nodes[node].dataLen {
         let base = UnsafeMutablePointer<UInt8>(bitPattern: nodes[node].dataPtr)!
         var i = nodes[node].dataLen
@@ -2523,12 +2508,12 @@ func vfsFsync(fd: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
     guard entry.kind == .file else { return 0 }
     let node = openDescriptions[entry.object].node
     if node >= 0 && node < nodeCount && nodes[node].dataFs {
-        return datafsFlush() == 0 ? 0 : errInvalid
+        return datafsFlush() == 0 ? 0 : Errno.invalid.code
     }
     return 0
 }
@@ -2550,10 +2535,10 @@ func vfsDup(fd: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
-    guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
+    guard fdEntryHasRights(proc, fd, .duplicate) else { return Errno.access.code }
     let newfd = allocFDInProcess(proc, from: 0)
-    if newfd == -1 { return errNoSpace }
+    if newfd == -1 { return Errno.noSpace.code }
     let d = fdEntry(proc, fd).object
     retainDescription(d)
     // The dup carries the source handle's rights (today: identical access via
@@ -2566,10 +2551,10 @@ func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, oldfd) else { return errBadFD }
-    if newfd < 0 || newfd >= maxFDs { return errBadFD }
+    guard validFD(proc, oldfd) else { return Errno.badFD.code }
+    if newfd < 0 || newfd >= maxFDs { return Errno.badFD.code }
     if oldfd == newfd { return newfd }
-    guard fdEntryHasRights(proc, oldfd, .duplicate) else { return errAccess }
+    guard fdEntryHasRights(proc, oldfd, .duplicate) else { return Errno.access.code }
     if fdEntry(proc, newfd).inUse {
         releaseDescription(fdEntry(proc, newfd).object)
         setFDEntry(proc, newfd, HandleEntry())
@@ -2602,33 +2587,33 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     switch cmd {
     case fDupFD, fDupFDCloexec:
-        guard fdEntryHasRights(proc, fd, .duplicate) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .duplicate) else { return Errno.access.code }
         // Duplicate to the lowest free descriptor >= arg (shares the open
         // description, like dup). F_DUPFD_CLOEXEC additionally marks the new fd
         // close-on-exec.
         let start = arg < 0 ? 0 : arg
         let newfd = allocFDInProcess(proc, from: start)
-        if newfd == -1 { return errNoSpace }
+        if newfd == -1 { return Errno.noSpace.code }
         let d = fdEntry(proc, fd).object
         retainDescription(d)
         installDescription(proc, newfd, d, rights: fdEntry(proc, fd).rights)
         if cmd == fDupFDCloexec { handles[fdIndex(proc, newfd)].cloexec = true }
         return newfd
     case fGetFD:
-        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .getattr) else { return Errno.access.code }
         return fdEntry(proc, fd).cloexec ? fdCloexecFlag : 0
     case fSetFD:
-        guard fdEntryHasRights(proc, fd, .setattr) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .setattr) else { return Errno.access.code }
         handles[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
         return 0
     case fGetFL:
-        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .getattr) else { return Errno.access.code }
         return openDescriptions[fdEntry(proc, fd).object].flags
     case fSetFL:
-        guard fdEntryHasRights(proc, fd, .setattr) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .setattr) else { return Errno.access.code }
         let d = fdEntry(proc, fd).object
         openDescriptions[d].flags = (openDescriptions[d].flags & ~mutableStatusFlags)
             | (arg & mutableStatusFlags)
@@ -2637,30 +2622,30 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         // POSIX advisory record locks. With no concurrent openers of a /data file
         // (single process, SQLITE_THREADSAFE=0) advisory locking is a no-op
         // success — SQLite's unix VFS only needs F_SETLK to succeed to proceed.
-        guard fdEntryHasRights(proc, fd, .getattr) else { return errAccess }
+        guard fdEntryHasRights(proc, fd, .getattr) else { return Errno.access.code }
         return 0
     default:
-        return errInvalid
+        return Errno.invalid.code
     }
 }
 
 func vfsPipe(fdsVA: UInt) -> Int {
-    guard let out = userWritableBuffer(fdsVA, 8) else { return errInvalid }
+    guard let out = userWritableBuffer(fdsVA, 8) else { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let rfd = allocFDInProcess(proc, from: 0)
-    if rfd == -1 { return errNoSpace }
+    if rfd == -1 { return Errno.noSpace.code }
     setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
     let wfd = allocFDInProcess(proc, from: 0)
     setFDEntry(proc, rfd, HandleEntry())
-    if wfd == -1 { return errNoSpace }
+    if wfd == -1 { return Errno.noSpace.code }
 
     let p = allocPipe()
-    if p == -1 { return errNoMem }
+    if p == -1 { return Errno.noMem.code }
     let rd = allocDescription()
     let wr = allocDescription()
-    if rd == -1 || wr == -1 { return errNoSpace }
+    if rd == -1 || wr == -1 { return Errno.noSpace.code }
 
     openDescriptions[rd].kind = .pipe
     openDescriptions[rd].pipe = p
@@ -2685,16 +2670,16 @@ func vfsPipe(fdsVA: UInt) -> Int {
 // discipline, S_IFCHR); the master is the terminal-server end.
 func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
     guard let mOut = userWritableBuffer(masterVA, 4),
-          let sOut = userWritableBuffer(slaveVA, 4) else { return errInvalid }
+          let sOut = userWritableBuffer(slaveVA, 4) else { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
 
     let mfd = allocFDInProcess(proc, from: 0)
-    if mfd == -1 { return errNoSpace }
+    if mfd == -1 { return Errno.noSpace.code }
     setFDEntry(proc, mfd, HandleEntry(inUse: true, object: -1)) // reserve
     let sfd = allocFDInProcess(proc, from: 0)
-    if sfd == -1 { setFDEntry(proc, mfd, HandleEntry()); return errNoSpace }
+    if sfd == -1 { setFDEntry(proc, mfd, HandleEntry()); return Errno.noSpace.code }
     setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1))
 
     func unwind(_ code: Int) -> Int {
@@ -2704,7 +2689,7 @@ func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
     }
 
     let p = ptyAlloc()
-    if p == -1 { return unwind(errNoMem) }
+    if p == -1 { return unwind(Errno.noMem.code) }
     let md = allocDescription()
     let sd = allocDescription()
     if md == -1 || sd == -1 {
@@ -2712,7 +2697,7 @@ func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
         discardUninstalledDescription(sd)
         ptyReleaseEnd(p, master: true)
         ptyReleaseEnd(p, master: false)
-        return unwind(errNoSpace)
+        return unwind(Errno.noSpace.code)
     }
 
     openDescriptions[md].kind = .ptyMaster
@@ -2735,11 +2720,11 @@ func vfsPtySetForeground(fd: Int, pid: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .ptyMaster || entry.kind == .ptySlave else { return errInvalid }
+    guard entry.kind == .ptyMaster || entry.kind == .ptySlave else { return Errno.invalid.code }
     let p = openDescriptions[entry.object].pty
-    guard ptyValid(p) else { return errInvalid }
+    guard ptyValid(p) else { return Errno.invalid.code }
     ptySetForeground(p, pid)
     return 0
 }
@@ -2748,9 +2733,9 @@ private let socketpairFlagNonblock = 1
 private let socketpairFlagCloexec = 2
 
 func vfsSocketpair(fdsVA: UInt, flags: Int) -> Int {
-    guard let out = userWritableBuffer(fdsVA, 8) else { return errInvalid }
+    guard let out = userWritableBuffer(fdsVA, 8) else { return Errno.invalid.code }
     if (flags & ~(socketpairFlagNonblock | socketpairFlagCloexec)) != 0 {
-        return errInvalid
+        return Errno.invalid.code
     }
 
     let proc = currentVFSProcess()
@@ -2775,20 +2760,20 @@ func vfsSocketpair(fdsVA: UInt, flags: Int) -> Int {
     defer { vfsUnlock(daif) }
 
     fd0 = allocFDInProcess(proc, from: 0)
-    if fd0 == -1 { return errNoSpace }
+    if fd0 == -1 { return Errno.noSpace.code }
     setFDEntry(proc, fd0, HandleEntry(inUse: true, object: -1))
     fd1 = allocFDInProcess(proc, from: 0)
-    if fd1 == -1 { return fail(errNoSpace) }
+    if fd1 == -1 { return fail(Errno.noSpace.code) }
     setFDEntry(proc, fd1, HandleEntry(inUse: true, object: -1))
 
     p01 = allocPipe()
-    if p01 == -1 { return fail(errNoMem) }
+    if p01 == -1 { return fail(Errno.noMem.code) }
     p10 = allocPipe()
-    if p10 == -1 { return fail(errNoMem) }
+    if p10 == -1 { return fail(Errno.noMem.code) }
     d0 = allocDescription()
-    if d0 == -1 { return fail(errNoSpace) }
+    if d0 == -1 { return fail(Errno.noSpace.code) }
     d1 = allocDescription()
-    if d1 == -1 { return fail(errNoSpace) }
+    if d1 == -1 { return fail(Errno.noSpace.code) }
 
     let statusFlags = (flags & socketpairFlagNonblock) != 0 ? oNonblock : 0
     openDescriptions[d0].kind = .pipe
@@ -2826,19 +2811,19 @@ private func allocEventCounter(initval: UInt64, flags: Int) -> Int {
 
 func vfsEventfd(initval: UInt, flags: UInt) -> Int {
     let f = Int(bitPattern: flags)
-    if (f & ~eventAllowedFlags) != 0 { return errInvalid }
+    if (f & ~eventAllowedFlags) != 0 { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
 
     let fd = allocFDInProcess(proc, from: 3)
-    if fd == -1 { return errNoSpace }
+    if fd == -1 { return Errno.noSpace.code }
     let ev = allocEventCounter(initval: UInt64(initval), flags: f & eventFlagSemaphore)
-    if ev == -1 { return errNoSpace }
+    if ev == -1 { return Errno.noSpace.code }
     let d = allocDescription()
     if d == -1 {
         eventCounters[ev] = EventCounter()
-        return errNoSpace
+        return Errno.noSpace.code
     }
 
     openDescriptions[d].kind = .event
@@ -2876,18 +2861,18 @@ private func allocEndpoint() -> Int {
 
 /// endpoint_create(int ends[2]) -> 0; ends[0] = send end, ends[1] = recv end.
 func vfsEndpointCreate(endsVA: UInt) -> Int {
-    guard let out = userWritableBuffer(endsVA, 8) else { return errInvalid }
+    guard let out = userWritableBuffer(endsVA, 8) else { return Errno.invalid.code }
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let sfd = allocFDInProcess(proc, from: 0)
-    if sfd == -1 { return errNoSpace }
+    if sfd == -1 { return Errno.noSpace.code }
     setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve
     let rfd = allocFDInProcess(proc, from: 0)
     if rfd == -1 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: -1,
                                endpoint: -1, sendDesc: -1, recvDesc: -1)
-        return errNoSpace
+        return Errno.noSpace.code
     }
     setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
 
@@ -2895,7 +2880,7 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     if ep == -1 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
                                endpoint: -1, sendDesc: -1, recvDesc: -1)
-        return errNoMem
+        return Errno.noMem.code
     }
     // QW3: stamp the creating process as the owner so reclamation-on-death can
     // find and tear down this endpoint deterministically.
@@ -2904,13 +2889,13 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     if sd == -1 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
                                endpoint: ep, sendDesc: -1, recvDesc: -1)
-        return errNoSpace
+        return Errno.noSpace.code
     }
     let rd = allocDescription()
     if rd == -1 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: rfd,
                                endpoint: ep, sendDesc: sd, recvDesc: -1)
-        return errNoSpace
+        return Errno.noSpace.code
     }
 
     openDescriptions[sd].kind = .endpoint
@@ -2955,11 +2940,11 @@ func vfsIpcBadge(fd: Int, badge: UInt32) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard entry.kind == .endpoint else { return errInvalid }
+    guard entry.kind == .endpoint else { return Errno.invalid.code }
     let desc = openDescriptions[entry.object]
-    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return Errno.invalid.code }
     handles[fdIndex(proc, fd)].badge = badge
     return 0
 }
@@ -2967,24 +2952,24 @@ func vfsIpcBadge(fd: Int, badge: UInt32) -> Int {
 /// ipc_send(fd, &msg): copy up to endpointMsgCap message BYTES into the endpoint and,
 /// if msg.handle_fd >= 0, MOVE that handle to the peer. The handle's source fd is
 /// cleared WITHOUT releasing the underlying object — ownership (and its refcount)
-/// transfers with the handle. errAgain if a message is already in flight (single-slot
+/// transfers with the handle. Errno.again.code if a message is already in flight (single-slot
 /// channel). A message may carry bytes with no handle, so the slot is gated on hasMsg.
 func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let sender = fdEntry(proc, fd)
-    guard sender.rights.contains(.write) else { return errBadFD }
-    guard sender.rights.contains(.transfer) else { return errAccess }
+    guard sender.rights.contains(.write) else { return Errno.badFD.code }
+    guard sender.rights.contains(.transfer) else { return Errno.access.code }
     let desc = openDescriptions[sender.object]
-    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return errInvalid }
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return Errno.invalid.code }
     let ep = desc.node
-    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return errInvalid }
-    if endpoints[ep].recvRefs == 0 { return errPipe }
-    if endpoints[ep].hasMsg { return errAgain }
+    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return Errno.invalid.code }
+    if endpoints[ep].recvRefs == 0 { return Errno.pipe.code }
+    if endpoints[ep].hasMsg { return Errno.again.code }
 
-    guard let m = userReadableBuffer(msgVA, ipcSendMsgSize) else { return errInvalid }
+    guard let m = userReadableBuffer(msgVA, ipcSendMsgSize) else { return Errno.invalid.code }
     let buf = UInt(le64(m, 0))
     let len = Int(le64(m, 8))
     let handleFd = Int(Int32(bitPattern: le32(m, 16)))
@@ -2992,19 +2977,19 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     // held ∩ requested — monotonic attenuation, never widening. The all-ones
     // sentinel inherits every held right (the pre-QW5 behavior).
     let requested = Rights(rawValue: le32(m, 20))
-    if len < 0 { return errInvalid }
+    if len < 0 { return Errno.invalid.code }
 
     // The handle (if any) must be a distinct, valid fd before we commit the message.
     if handleFd >= 0 {
-        guard validFD(proc, handleFd), handleFd != fd else { return errBadFD }
+        guard validFD(proc, handleFd), handleFd != fd else { return Errno.badFD.code }
         let moved = fdEntry(proc, handleFd)
-        guard moved.rights.contains(.transfer) else { return errAccess }
-        guard !handleNamesEndpoint(moved, endpoint: ep) else { return errInvalid }
+        guard moved.rights.contains(.transfer) else { return Errno.access.code }
+        guard !handleNamesEndpoint(moved, endpoint: ep) else { return Errno.invalid.code }
     }
 
     let n = min(len, endpointMsgCap)
     if n > 0 {
-        guard let src = userReadableBuffer(buf, UInt(n)) else { return errInvalid }
+        guard let src = userReadableBuffer(buf, UInt(n)) else { return Errno.invalid.code }
         let dst = UnsafeMutablePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
         for i in 0..<n { dst[i] = src[i] }
     }
@@ -3036,7 +3021,7 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
 
 /// ipc_recv(fd, &msg) -> byte count: block until a message is in flight, copy up to
 /// msg.cap bytes into msg.buf, and — if a handle was transferred — install it as a new
-/// fd written to *msg.out_handle_fd (else -1). errPipe if every sender closed first
+/// fd written to *msg.out_handle_fd (else -1). Errno.pipe.code if every sender closed first
 /// (EOF-like). Returns the number of bytes copied to the user buffer.
 func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
@@ -3046,22 +3031,22 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
     let desc = borrowed.desc
     let descIndex = borrowed.descIndex
     defer { releaseBorrowedDescription(descIndex) }
-    guard entry.rights.contains(.read) else { return errBadFD }
-    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
+    guard entry.rights.contains(.read) else { return Errno.badFD.code }
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return Errno.invalid.code }
     let ep = desc.node
 
-    guard let m = userReadableBuffer(msgVA, ipcRecvMsgSize) else { return errInvalid }
+    guard let m = userReadableBuffer(msgVA, ipcRecvMsgSize) else { return Errno.invalid.code }
     let buf = UInt(le64(m, 0))
     let cap = Int(le64(m, 8))
     let outHandleVA = UInt(le64(m, 16))
     // QW4: optional out-badge pointer. 0 = "don't report" (back-compat with the
     // 3-arg ipc_recv wrapper); a non-zero VA is validated before any store.
     let outBadgeVA = UInt(le64(m, 24))
-    if cap < 0 { return errInvalid }
-    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+    if cap < 0 { return Errno.invalid.code }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return Errno.invalid.code }
     var outBadge: UnsafeMutablePointer<UInt8>? = nil
     if outBadgeVA != 0 {
-        guard let b = userWritableBuffer(outBadgeVA, 4) else { return errInvalid }
+        guard let b = userWritableBuffer(outBadgeVA, 4) else { return Errno.invalid.code }
         outBadge = b
     }
 
@@ -3074,7 +3059,7 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
         let daif = vfsLock()
         if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse {
             vfsUnlock(daif)
-            return errInvalid
+            return Errno.invalid.code
         }
         if endpoints[ep].hasMsg {
             let n = min(endpoints[ep].msgLen, cap)
@@ -3083,18 +3068,18 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
             if endpoints[ep].hasHandle {
                 if !entry.rights.contains(.transfer) {
                     vfsUnlock(daif)
-                    return errAccess
+                    return Errno.access.code
                 }
                 installed = allocFDInProcess(proc, from: 0)
                 if installed == -1 {
                     vfsUnlock(daif)
-                    return errNoSpace
+                    return Errno.noSpace.code
                 }
             }
             if n > 0 {
                 guard let dst = userWritableBuffer(buf, UInt(n)) else {
                     vfsUnlock(daif)
-                    return errInvalid
+                    return Errno.invalid.code
                 }
                 let src = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
                 for i in 0..<n { dst[i] = src[i] }
@@ -3120,7 +3105,7 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
         }
         if endpoints[ep].sendRefs == 0 {
             vfsUnlock(daif)
-            return errPipe
+            return Errno.pipe.code
         }
         // No message yet and senders are alive: park.
         // Record waiter and set pBlocked under the SAME lock that ipc_send
@@ -3135,7 +3120,7 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
                 // currentProcessSlot() was invalid — should not happen.
                 ipcClearWaiterSlot(ep, me)
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             vfsUnlock(daif)
             processYieldAfterPreparedFutexBlock()
@@ -3169,57 +3154,57 @@ private let ipcReplyRecvMsgSize: UInt = 60
 /// reply port until the server replies. On wake, copy the reply bytes into
 /// reply_buf (≤ reply_cap), install any replied handle as a new fd written to
 /// *out_handle_fd (else -1), free the reply port, and return the reply byte count.
-/// errAgain if the single-slot channel is busy; errPipe if every receiver closes
-/// before replying; errNoSpace if no reply port is free.
+/// Errno.again.code if the single-slot channel is busy; Errno.pipe.code if every receiver closes
+/// before replying; Errno.noSpace.code if no reply port is free.
 func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
     let me = processCurrentSlot()
-    if me < 0 { return errInvalid }
+    if me < 0 { return Errno.invalid.code }
 
-    guard let m = userReadableBuffer(msgVA, ipcCallMsgSize) else { return errInvalid }
+    guard let m = userReadableBuffer(msgVA, ipcCallMsgSize) else { return Errno.invalid.code }
     let buf = UInt(le64(m, 0))
     let len = Int(le64(m, 8))
     let replyBuf = UInt(le64(m, 16))
     let replyCap = Int(le64(m, 24))
     let outHandleVA = UInt(le64(m, 32))
     let handleFd = Int(Int32(bitPattern: le32(m, 40)))
-    if len < 0 || replyCap < 0 { return errInvalid }
-    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+    if len < 0 || replyCap < 0 { return Errno.invalid.code }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return Errno.invalid.code }
 
     let portIdx: Int
     let token: UInt64
     do {
         let daif = vfsLock()
         // Validate the send end exactly as ipc_send does.
-        guard validFD(proc, fd) else { vfsUnlock(daif); return errBadFD }
+        guard validFD(proc, fd) else { vfsUnlock(daif); return Errno.badFD.code }
         let sender = fdEntry(proc, fd)
-        guard sender.rights.contains(.write) else { vfsUnlock(daif); return errBadFD }
-        guard sender.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
+        guard sender.rights.contains(.write) else { vfsUnlock(daif); return Errno.badFD.code }
+        guard sender.rights.contains(.transfer) else { vfsUnlock(daif); return Errno.access.code }
         let desc = openDescriptions[sender.object]
-        guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { vfsUnlock(daif); return errInvalid }
+        guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { vfsUnlock(daif); return Errno.invalid.code }
         let ep = desc.node
-        guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { vfsUnlock(daif); return errInvalid }
-        if endpoints[ep].recvRefs == 0 { vfsUnlock(daif); return errPipe }
-        if endpoints[ep].hasMsg { vfsUnlock(daif); return errAgain }
+        guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { vfsUnlock(daif); return Errno.invalid.code }
+        if endpoints[ep].recvRefs == 0 { vfsUnlock(daif); return Errno.pipe.code }
+        if endpoints[ep].hasMsg { vfsUnlock(daif); return Errno.again.code }
 
         // Validate the moved handle (if any) before committing anything.
         if handleFd >= 0 {
-            guard validFD(proc, handleFd), handleFd != fd else { vfsUnlock(daif); return errBadFD }
+            guard validFD(proc, handleFd), handleFd != fd else { vfsUnlock(daif); return Errno.badFD.code }
             let moved = fdEntry(proc, handleFd)
-            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
-            guard !handleNamesEndpoint(moved, endpoint: ep) else { vfsUnlock(daif); return errInvalid }
+            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return Errno.access.code }
+            guard !handleNamesEndpoint(moved, endpoint: ep) else { vfsUnlock(daif); return Errno.invalid.code }
         }
         // Validate the request payload is readable before minting the port.
         let n = min(len, endpointMsgCap)
         var src: UnsafePointer<UInt8>? = nil
         if n > 0 {
-            guard let s = userReadableBuffer(buf, UInt(n)) else { vfsUnlock(daif); return errInvalid }
+            guard let s = userReadableBuffer(buf, UInt(n)) else { vfsUnlock(daif); return Errno.invalid.code }
             src = s
         }
 
         // Mint the reply port, then deliver the request (no failure points left).
         let p = allocReplyPort(endpoint: ep, callerSlot: me)
-        if p == -1 { vfsUnlock(daif); return errNoSpace }
+        if p == -1 { vfsUnlock(daif); return Errno.noSpace.code }
         portIdx = p
         token = replyPortToken(p)
 
@@ -3252,7 +3237,7 @@ func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
             endpoints[ep].replyToken = 0
             freeReplyPort(portIdx)
             vfsUnlock(daif)
-            return errInvalid
+            return Errno.invalid.code
         }
         vfsUnlock(daif)
     }
@@ -3267,7 +3252,7 @@ func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
               replyPortToken(portIdx) == token else {
             // Port reclaimed out from under us (e.g. our own teardown raced): gone.
             vfsUnlock(daif)
-            return errPipe
+            return Errno.pipe.code
         }
         let ep = replyPorts[portIdx].endpoint
         if replyPorts[portIdx].hasReply {
@@ -3276,10 +3261,10 @@ func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
             var installed = -1
             if replyPorts[portIdx].hasHandle {
                 installed = allocFDInProcess(proc, from: 0)
-                if installed == -1 { vfsUnlock(daif); return errNoSpace }
+                if installed == -1 { vfsUnlock(daif); return Errno.noSpace.code }
             }
             if rn > 0 {
-                guard let dst = userWritableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return errInvalid }
+                guard let dst = userWritableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return Errno.invalid.code }
                 let s = UnsafePointer<UInt8>(bitPattern: replyPorts[portIdx].bufPtr)!
                 for i in 0..<rn { dst[i] = s[i] }
             }
@@ -3296,9 +3281,9 @@ func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
         if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse || endpoints[ep].recvRefs == 0 {
             freeReplyPort(portIdx)
             vfsUnlock(daif)
-            return errPipe
+            return Errno.pipe.code
         }
-        if !processPrepareBlockOnFutex() { freeReplyPort(portIdx); vfsUnlock(daif); return errInvalid }
+        if !processPrepareBlockOnFutex() { freeReplyPort(portIdx); vfsUnlock(daif); return Errno.invalid.code }
         vfsUnlock(daif)
         processYieldAfterPreparedFutexBlock()
     }
@@ -3311,11 +3296,11 @@ func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
 /// wakes its parked caller. The receive phase mirrors ipc_recv (QW2 park/wake) and
 /// additionally writes the new request's reply-port token to *out_reply_port so
 /// the server can reply to it next turn. A stale/forged token is rejected with
-/// errInvalid; errPipe when every sender closes first.
+/// Errno.invalid.code; Errno.pipe.code when every sender closes first.
 func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
     let proc = currentVFSProcess()
 
-    guard let m = userReadableBuffer(msgVA, ipcReplyRecvMsgSize) else { return errInvalid }
+    guard let m = userReadableBuffer(msgVA, ipcReplyRecvMsgSize) else { return Errno.invalid.code }
     let replyTokenIn = le64(m, 0)
     let replyBuf = UInt(le64(m, 8))
     let replyLen = Int(le64(m, 16))
@@ -3324,9 +3309,9 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
     let outHandleVA = UInt(le64(m, 40))
     let outReplyPortVA = UInt(le64(m, 48))
     let replyHandleFd = Int(Int32(bitPattern: le32(m, 56)))
-    if replyLen < 0 || recvCap < 0 { return errInvalid }
-    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
-    guard let outReplyPort = userWritableBuffer(outReplyPortVA, 8) else { return errInvalid }
+    if replyLen < 0 || recvCap < 0 { return Errno.invalid.code }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return Errno.invalid.code }
+    guard let outReplyPort = userWritableBuffer(outReplyPortVA, 8) else { return Errno.invalid.code }
 
     // Validate the recv end (server identity) and pin its description for the block.
     let borrowed = borrowDescriptionForFD(proc, fd)
@@ -3335,8 +3320,8 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
     let desc = borrowed.desc
     let descIndex = borrowed.descIndex
     defer { releaseBorrowedDescription(descIndex) }
-    guard entry.rights.contains(.read) else { return errBadFD }
-    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
+    guard entry.rights.contains(.read) else { return Errno.badFD.code }
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return Errno.invalid.code }
     let ep = desc.node
 
     // ---- Reply phase: deposit the reply for the previous request, wake caller --
@@ -3349,16 +3334,16 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
         guard pr >= 0, !replyPorts[pr].hasReply, replyPorts[pr].callerSlot >= 0,
               replyPorts[pr].endpoint == ep else {
             vfsUnlock(daif)
-            return errInvalid
+            return Errno.invalid.code
         }
         if replyHandleFd >= 0 {
-            guard validFD(proc, replyHandleFd), replyHandleFd != fd else { vfsUnlock(daif); return errBadFD }
+            guard validFD(proc, replyHandleFd), replyHandleFd != fd else { vfsUnlock(daif); return Errno.badFD.code }
             let moved = fdEntry(proc, replyHandleFd)
-            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
+            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return Errno.access.code }
         }
         let rn = min(replyLen, endpointMsgCap)
         if rn > 0 {
-            guard let s = userReadableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return errInvalid }
+            guard let s = userReadableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return Errno.invalid.code }
             let dst = UnsafeMutablePointer<UInt8>(bitPattern: replyPorts[pr].bufPtr)!
             for i in 0..<rn { dst[i] = s[i] }
         }
@@ -3380,19 +3365,19 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
         let daif = vfsLock()
         if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse {
             vfsUnlock(daif)
-            return errInvalid
+            return Errno.invalid.code
         }
         if endpoints[ep].hasMsg {
             let n = min(endpoints[ep].msgLen, recvCap)
             var newfd: Int32 = -1
             var installed = -1
             if endpoints[ep].hasHandle {
-                if !entry.rights.contains(.transfer) { vfsUnlock(daif); return errAccess }
+                if !entry.rights.contains(.transfer) { vfsUnlock(daif); return Errno.access.code }
                 installed = allocFDInProcess(proc, from: 0)
-                if installed == -1 { vfsUnlock(daif); return errNoSpace }
+                if installed == -1 { vfsUnlock(daif); return Errno.noSpace.code }
             }
             if n > 0 {
-                guard let dst = userWritableBuffer(recvBuf, UInt(n)) else { vfsUnlock(daif); return errInvalid }
+                guard let dst = userWritableBuffer(recvBuf, UInt(n)) else { vfsUnlock(daif); return Errno.invalid.code }
                 let s = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
                 for i in 0..<n { dst[i] = s[i] }
             }
@@ -3415,14 +3400,14 @@ func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
         }
         if endpoints[ep].sendRefs == 0 {
             vfsUnlock(daif)
-            return errPipe
+            return Errno.pipe.code
         }
         let meSlot = Int32(processCurrentSlot())
         if meSlot >= 0 && ipcRecordWaiter(ep, meSlot) {
             if !processPrepareBlockOnFutex() {
                 ipcClearWaiterSlot(ep, meSlot)
                 vfsUnlock(daif)
-                return errInvalid
+                return Errno.invalid.code
             }
             vfsUnlock(daif)
             processYieldAfterPreparedFutexBlock()
@@ -3437,19 +3422,19 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard hasRights(entry.rights, .read) || hasRights(entry.rights, .write) else { return errAccess }
+    guard hasRights(entry.rights, .read) || hasRights(entry.rights, .write) else { return Errno.access.code }
     let d = entry.object
     var file = openDescriptions[d]
-    guard entry.kind == .file else { return errInvalid }
+    guard entry.kind == .file else { return Errno.invalid.code }
     let node = file.node
     var base = 0
     if whence == 1 { base = file.offset }
     else if whence == 2 { base = nodes[node].dataLen }
-    else if whence != 0 { return errInvalid }
+    else if whence != 0 { return Errno.invalid.code }
     let next = base + offset
-    if next < 0 { return errInvalid }
+    if next < 0 { return Errno.invalid.code }
     file.offset = next
     openDescriptions[d] = file
     return next
@@ -3463,7 +3448,7 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
 private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int,
                            uid: UInt32 = 1, gid: UInt32 = 1, nlink: UInt32 = 1,
                            mtime: UInt64 = 0) -> Int {
-    guard let p8 = userWritableBuffer(va, 32) else { return errInvalid }
+    guard let p8 = userWritableBuffer(va, 32) else { return Errno.invalid.code }
     let p = UnsafeMutableRawPointer(p8)
     p.storeBytes(of: mode, toByteOffset: 0, as: UInt32.self)
     p.storeBytes(of: uid, toByteOffset: 4, as: UInt32.self)
@@ -3501,12 +3486,12 @@ private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
 }
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !confinedAllows(node) { return errAccess }
+    if node == -1 { return Errno.noEntry.code }
+    if !confinedAllows(node) { return Errno.access.code }
     return writeStatNode(statbuf, node)
 }
 
@@ -3514,9 +3499,9 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard hasRights(entry.rights, .getattr) else { return errAccess }
+    guard hasRights(entry.rights, .getattr) else { return Errno.access.code }
     let file = openDescriptions[entry.object]
     let me = processCurrentPrincipal()
     let now = rtcNow()
@@ -3527,7 +3512,7 @@ func vfsFstat(fd: Int, statbuf: UInt) -> Int {
     if entry.kind == .pipe { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .event { return writeStatMode(statbuf, sIFIFO | 0o666, 0, uid: me, gid: me, mtime: now) }
     if entry.kind == .file { return writeStatNode(statbuf, file.node) }
-    return errBadFD
+    return Errno.badFD.code
 }
 
 // dirent: d_ino(8) d_off(8) d_reclen(2) d_type(1) d_name[](NUL-terminated).
@@ -3536,15 +3521,15 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    guard validFD(proc, fd) else { return errBadFD }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
-    guard hasRights(entry.rights, .read) else { return errBadFD }
+    guard hasRights(entry.rights, .read) else { return Errno.badFD.code }
     let d = entry.object
     var file = openDescriptions[d]
-    guard entry.kind == .file else { return errInvalid }
+    guard entry.kind == .file else { return Errno.invalid.code }
     let dir = file.node
-    if !nodes[dir].isDir { return errInvalid }
-    guard let b = userWritableBuffer(buffer, count) else { return errInvalid }
+    if !nodes[dir].isDir { return Errno.invalid.code }
+    guard let b = userWritableBuffer(buffer, count) else { return Errno.invalid.code }
     let buf = UnsafeMutableRawPointer(b)
 
     var child = nodes[dir].firstChild
@@ -3576,13 +3561,13 @@ func vfsGetdents(fd: Int, buffer: UInt, count: UInt) -> Int {
 }
 
 func vfsChdir(path pathVA: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !confinedAllows(node) { return errAccess }
-    if !nodes[node].isDir { return errNotDir }
+    if node == -1 { return Errno.noEntry.code }
+    if !confinedAllows(node) { return Errno.access.code }
+    if !nodes[node].isDir { return Errno.notDir.code }
     cwdNodes[currentVFSProcess()] = node
     return 0
 }
@@ -3592,14 +3577,14 @@ func vfsChdir(path pathVA: UInt) -> Int {
 // so a confined process cannot widen its own reach. Once set, vfsOpen denies any
 // path outside the subtree. See docs/CAPABILITIES.md §6 (C3).
 func vfsConfine(path pathVA: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !nodes[node].isDir { return errNotDir }
+    if node == -1 { return Errno.noEntry.code }
+    if !nodes[node].isDir { return Errno.notDir.code }
     let proc = currentVFSProcess()
-    if !isDescendant(node, of: confineNodes[proc]) { return errAccess }
+    if !isDescendant(node, of: confineNodes[proc]) { return Errno.access.code }
     confineNodes[proc] = node
     if !isDescendant(cwdNodes[proc], of: node) { cwdNodes[proc] = node }
     return 0
@@ -3607,14 +3592,14 @@ func vfsConfine(path pathVA: UInt) -> Int {
 
 func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
     guard size > 0, let buf = userWritableBuffer(buffer, size) else {
-        return errInvalid
+        return Errno.invalid.code
     }
 
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let cwdNode = cwdNodeForCurrentProcess()
     if cwdNode == 0 {
-        if size < 2 { return errNoSpace }
+        if size < 2 { return Errno.noSpace.code }
         buf[0] = 0x2F; buf[1] = 0
         return 1
     }
@@ -3631,12 +3616,12 @@ func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
     var pos = 0
     var d = depth - 1
     while d >= 0 {
-        if pos + 1 >= Int(size) { return errNoSpace }
+        if pos + 1 >= Int(size) { return Errno.noSpace.code }
         buf[pos] = 0x2F; pos += 1
         let node = chain[d]
         let np = UnsafePointer<UInt8>(bitPattern: nodes[node].namePtr)!
         let nl = nodes[node].nameLen
-        if pos + nl + 1 >= Int(size) { return errNoSpace }
+        if pos + nl + 1 >= Int(size) { return Errno.noSpace.code }
         for i in 0..<nl { buf[pos] = np[i]; pos += 1 }
         d -= 1
     }
@@ -3650,53 +3635,53 @@ func vfsGetcwd(buffer: UInt, size: UInt) -> Int {
 private func mayWriteTmp() -> Bool { (processCurrentCaps() & capTmpWrite) != 0 }
 
 func vfsUnlink(path pathVA: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
-    if !mayWriteTmp() { return errAccess }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !confinedAllows(node) { return errAccess }
-    if nodes[node].isDir { return errIsDir }
+    if node == -1 { return Errno.noEntry.code }
+    if !confinedAllows(node) { return Errno.access.code }
+    if nodes[node].isDir { return Errno.isDir.code }
     let parent = nodes[node].parent
-    if nodes[parent].readOnly { return errReadOnly }
+    if nodes[parent].readOnly { return Errno.readOnly.code }
     if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
 }
 
 func vfsMkdir(path pathVA: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
-    if !mayWriteTmp() { return errAccess }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     // An existing path (including "/") is EEXIST, not ENOENT — `mkdir -p` walks
     // ancestors and expects EEXIST on the ones that already exist.
-    if resolve(path) != -1 { return errExists }
+    if resolve(path) != -1 { return Errno.exists.code }
     var ls = 0, ll = 0
     let parent = resolveParent(path, &ls, &ll)
-    if parent == -1 { return errNoEntry }
-    if !confinedAllows(parent) { return errAccess }
-    if nodes[parent].readOnly { return errReadOnly }
-    if findChild(parent, path + ls, ll) != -1 { return errExists }
+    if parent == -1 { return Errno.noEntry.code }
+    if !confinedAllows(parent) { return Errno.access.code }
+    if nodes[parent].readOnly { return Errno.readOnly.code }
+    if findChild(parent, path + ls, ll) != -1 { return Errno.exists.code }
     let made = nodes[parent].dataFs
         ? createDataFsNode(parent, path + ls, ll, isDir: true)
         : createTmpNode(parent, path + ls, ll, isDir: true)
-    return made == -1 ? errNoSpace : 0
+    return made == -1 ? Errno.noSpace.code : 0
 }
 
 func vfsRmdir(path pathVA: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
-    if !mayWriteTmp() { return errAccess }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node <= 0 { return errInvalid }
-    if !confinedAllows(node) { return errAccess }
-    if !nodes[node].isDir { return errNotDir }
-    if nodes[node].firstChild != -1 { return errNotEmpty }
+    if node <= 0 { return Errno.invalid.code }
+    if !confinedAllows(node) { return Errno.access.code }
+    if !nodes[node].isDir { return Errno.notDir.code }
+    if nodes[node].firstChild != -1 { return Errno.notEmpty.code }
     let parent = nodes[node].parent
-    if nodes[parent].readOnly { return errReadOnly }
+    if nodes[parent].readOnly { return Errno.readOnly.code }
     if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
@@ -3704,36 +3689,36 @@ func vfsRmdir(path pathVA: UInt) -> Int {
 
 func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     guard let oldPath = userCString(oldVA), let newPath = userCString(newVA) else {
-        return errInvalid
+        return Errno.invalid.code
     }
-    if !mayWriteTmp() { return errAccess }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let src = resolve(oldPath)
-    if src <= 0 { return errNoEntry }
-    if !confinedAllows(src) { return errAccess }
+    if src <= 0 { return Errno.noEntry.code }
+    if !confinedAllows(src) { return Errno.access.code }
 
     var nls = 0, nll = 0
     let dstParent = resolveParent(newPath, &nls, &nll)
-    if dstParent == -1 { return errNoEntry }
-    if !confinedAllows(dstParent) { return errAccess }
+    if dstParent == -1 { return Errno.noEntry.code }
+    if !confinedAllows(dstParent) { return Errno.access.code }
     let srcParent = nodes[src].parent
-    if nodes[srcParent].readOnly || nodes[dstParent].readOnly { return errReadOnly }
+    if nodes[srcParent].readOnly || nodes[dstParent].readOnly { return Errno.readOnly.code }
     // No cross-filesystem rename (datafs <-> tmpfs would need a copy).
-    if nodes[src].dataFs != nodes[dstParent].dataFs { return errInvalid }
-    if nodes[src].isDir && isDescendant(dstParent, of: src) { return errInvalid }
+    if nodes[src].dataFs != nodes[dstParent].dataFs { return Errno.invalid.code }
+    if nodes[src].isDir && isDescendant(dstParent, of: src) { return Errno.invalid.code }
 
     let existing = findChild(dstParent, newPath + nls, nll)
     if existing == src { return 0 }
     if existing != -1 {
-        if nodes[existing].isDir != nodes[src].isDir { return errInvalid }
-        if nodes[existing].isDir && nodes[existing].firstChild != -1 { return errNotEmpty }
+        if nodes[existing].isDir != nodes[src].isDir { return Errno.invalid.code }
+        if nodes[existing].isDir && nodes[existing].firstChild != -1 { return Errno.notEmpty.code }
         if nodes[existing].dataFs { _ = datafsRemove(nodes[existing].dfsInode) }
         _ = unlinkChild(dstParent, existing)
     }
 
     _ = unlinkChild(srcParent, src)
-    if !setNameCopy(src, newPath + nls, nll) { return errNoMem }
+    if !setNameCopy(src, newPath + nls, nll) { return Errno.noMem.code }
     linkChild(dstParent, src)
     if nodes[src].dataFs {
         _ = datafsSetParentName(nodes[src].dfsInode, nodes[dstParent].dfsInode, newPath + nls, nll)
@@ -3746,27 +3731,27 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
 // namespace mutations (M13b) this requires capTmpWrite. Cosmetic for ls -l,
 // since tmpfs is ephemeral, but completes the M13c ownership story.
 func vfsChmod(path pathVA: UInt, mode: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
-    if !mayWriteTmp() { return errAccess }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !confinedAllows(node) { return errAccess }
-    if nodes[node].readOnly { return errReadOnly }
+    if node == -1 { return Errno.noEntry.code }
+    if !confinedAllows(node) { return Errno.access.code }
+    if nodes[node].readOnly { return Errno.readOnly.code }
     nodes[node].mode = UInt32(mode & 0o7777)
     return 0
 }
 
 func vfsChown(path pathVA: UInt, owner: UInt) -> Int {
-    guard let path = userCString(pathVA) else { return errInvalid }
-    if !mayWriteTmp() { return errAccess }
+    guard let path = userCString(pathVA) else { return Errno.invalid.code }
+    if !mayWriteTmp() { return Errno.access.code }
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     let node = resolve(path)
-    if node == -1 { return errNoEntry }
-    if !confinedAllows(node) { return errAccess }
-    if nodes[node].readOnly { return errReadOnly }
+    if node == -1 { return Errno.noEntry.code }
+    if !confinedAllows(node) { return Errno.access.code }
+    if nodes[node].readOnly { return Errno.readOnly.code }
     nodes[node].owner = UInt32(truncatingIfNeeded: owner)
     return 0
 }
@@ -3892,8 +3877,8 @@ private func pollScan(_ base: UnsafeMutableRawPointer, _ nfds: Int) -> Int {
 
 func vfsPoll(fds fdsVA: UInt, nfds: UInt, timeout: Int) -> Int {
     if nfds == 0 { return 0 }
-    if nfds > UInt(maxFDs) { return errInvalid }
-    guard let buf = userWritableBuffer(fdsVA, nfds * UInt(pollfdSize)) else { return errInvalid }
+    if nfds > UInt(maxFDs) { return Errno.invalid.code }
+    guard let buf = userWritableBuffer(fdsVA, nfds * UInt(pollfdSize)) else { return Errno.invalid.code }
     let base = UnsafeMutableRawPointer(buf)
     let count = Int(nfds)
     let startTicks = systemTicks
@@ -3955,7 +3940,7 @@ private let udpMsgSizeV6: UInt = 34
 private let sockTypeStream = 1
 
 func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
-    if (processCurrentCaps() & capNet) == 0 { return errAccess }
+    if (processCurrentCaps() & capNet) == 0 { return Errno.access.code }
     let isV6 = (domain == AF_INET6)
     let s = type == sockTypeStream
         ? (isV6 ? socketCreateTCPIPv6(owner: processCurrentPrincipal())
@@ -3974,13 +3959,13 @@ private func installSocketFD(_ s: Int, flags: Int = 0) -> Int {
     if fd < 0 {
         vfsUnlock(daif)
         socketClose(s)
-        return errNoSpace
+        return Errno.noSpace.code
     }
     let d = allocDescription()
     if d < 0 {
         vfsUnlock(daif)
         socketClose(s)
-        return errNoSpace
+        return Errno.noSpace.code
     }
     openDescriptions[d].kind = .socket
     openDescriptions[d].node = s
@@ -3995,7 +3980,7 @@ private let socketAcceptTimeoutMs = 15000
 
 func vfsListen(fd: Int, backlog: Int) -> Int {
     let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     return tcpListen(borrowed.socket, backlog: backlog)
 }
@@ -4003,14 +3988,14 @@ func vfsListen(fd: Int, backlog: Int) -> Int {
 func vfsAccept(fd: Int) -> Int {
     let proc = currentVFSProcess()
     let borrowed = borrowSocketForFD(proc, fd, required: .read)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     let s = borrowed.socket
-    guard socketIsTCP(s) && socketIsListener(s) else { return errInvalid }
+    guard socketIsTCP(s) && socketIsListener(s) else { return Errno.invalid.code }
     let childFlags = borrowed.flags & mutableStatusFlags
     if (borrowed.flags & oNonblock) != 0 {
         netPump()
-        if !socketPollReadable(s) { return errAgain }
+        if !socketPollReadable(s) { return Errno.again.code }
     }
     let c = tcpAccept(s, timeoutMs: socketAcceptTimeoutMs)
     if c < 0 { return c }
@@ -4019,10 +4004,10 @@ func vfsAccept(fd: Int) -> Int {
 
 func vfsConnect(fd: Int, ip: UInt, port: Int) -> Int {
     let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     let s = borrowed.socket
-    if port <= 0 || port > 65535 { return errInvalid }
+    if port <= 0 || port > 65535 { return Errno.invalid.code }
     // For IPv6 sockets the simple u32 'ip' path is not used (userland must use a v6-aware connect).
     // We still support the old path for AF_INET sockets.
     if socketFamilyOf(s) == AF_INET6 {
@@ -4052,26 +4037,26 @@ func vfsResolve(nameVA: UInt, serverIP: UInt, serverPort: Int) -> Int {
 
 func vfsSocketBind(fd: Int, port: Int) -> Int {
     let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     let s = borrowed.socket
-    if port < 0 || port > 65535 { return errInvalid }
+    if port < 0 || port > 65535 { return Errno.invalid.code }
     return socketBind(s, port: UInt16(port))
 }
 
 func vfsSendto(fd: Int, msgVA: UInt) -> Int {
     let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .write)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     let s = borrowed.socket
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
-    guard let m = userReadableBuffer(msgVA, need) else { return errInvalid }
+    guard let m = userReadableBuffer(msgVA, need) else { return Errno.invalid.code }
 
     if isV6 {
         let buf = UInt(le64(m, 0))
         let len = Int(le32(m, 8))
-        if len < 0 || len > 65507 { return errInvalid }
+        if len < 0 || len > 65507 { return Errno.invalid.code }
         var ip6b: [UInt8] = []
         var k = 0
         while k < 16 { ip6b.append(m[12 + k]); k += 1 }
@@ -4080,7 +4065,7 @@ func vfsSendto(fd: Int, msgVA: UInt) -> Int {
         if len == 0 {
             return socketSendv6(s, dstIPv6: dst6, dstPort: port, src: UnsafeRawPointer(m), len: 0)
         }
-        guard let payload = userReadableBuffer(buf, UInt(len)) else { return errInvalid }
+        guard let payload = userReadableBuffer(buf, UInt(len)) else { return Errno.invalid.code }
         return socketSendv6(s, dstIPv6: dst6, dstPort: port, src: UnsafeRawPointer(payload), len: len)
     }
 
@@ -4089,26 +4074,26 @@ func vfsSendto(fd: Int, msgVA: UInt) -> Int {
     let len = Int(le32(m, 8))
     let ip = le32(m, 12)
     let port = UInt16(m[16]) | (UInt16(m[17]) << 8)
-    if len < 0 || len > 65507 { return errInvalid }
+    if len < 0 || len > 65507 { return Errno.invalid.code }
     if len == 0 {
         return socketSend(s, dstIP: ip, dstPort: port, src: UnsafeRawPointer(m), len: 0)
     }
-    guard let payload = userReadableBuffer(buf, UInt(len)) else { return errInvalid }
+    guard let payload = userReadableBuffer(buf, UInt(len)) else { return Errno.invalid.code }
     return socketSend(s, dstIP: ip, dstPort: port, src: UnsafeRawPointer(payload), len: len)
 }
 
 func vfsRecvfrom(fd: Int, msgVA: UInt) -> Int {
     let borrowed = borrowSocketForFD(currentVFSProcess(), fd, required: .read)
-    if borrowed.err != 0 { return errBadFD }
+    if borrowed.err != 0 { return Errno.badFD.code }
     defer { releaseBorrowedDescription(borrowed.descIndex) }
     let s = borrowed.socket
     let isV6 = (socketFamilyOf(s) == AF_INET6)
     let need = isV6 ? udpMsgSizeV6 : udpMsgSize
-    guard let m = userWritableBuffer(msgVA, need) else { return errInvalid }
+    guard let m = userWritableBuffer(msgVA, need) else { return Errno.invalid.code }
     let buf = UInt(le64(m, 0))
     let cap = Int(le32(m, 8))
-    if cap < 0 || cap > 65507 { return errInvalid }
-    guard let dst = userWritableBuffer(buf, UInt(cap)) else { return errInvalid }
+    if cap < 0 || cap > 65507 { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buf, UInt(cap)) else { return Errno.invalid.code }
 
     if isV6 {
         var srcIP6 = IPv6()
@@ -4176,7 +4161,7 @@ func vfsDiskImageExtent(_ path: UnsafePointer<UInt8>)
 func vfsReadStaticFile(_ path: StaticString,
                        into dst: UnsafeMutableRawPointer?,
                        cap: Int) -> Int {
-    if cap < 0 { return errInvalid }
+    if cap < 0 { return Errno.invalid.code }
     var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
     path.withUTF8Buffer { b in
         for i in 0..<b.count { name[i] = b[i] }
@@ -4187,30 +4172,30 @@ func vfsReadStaticFile(_ path: StaticString,
         let node = resolve(bp.baseAddress!)
         if node < 0 {
             vfsUnlock(daif)
-            return errNoEntry
+            return Errno.noEntry.code
         }
         if nodes[node].isDir {
             vfsUnlock(daif)
-            return errIsDir
+            return Errno.isDir.code
         }
         let len = nodes[node].dataLen
         if len > cap {
             vfsUnlock(daif)
-            return errNoSpace
+            return Errno.noSpace.code
         }
         guard let out = dst else {
             vfsUnlock(daif)
-            return len == 0 ? 0 : errInvalid
+            return len == 0 ? 0 : Errno.invalid.code
         }
         if nodes[node].onDisk {
             if !vfsVerifyNodeContent(node) {
                 vfsUnlock(daif)
-                return errAccess
+                return Errno.access.code
             }
             let image = nodes[node].diskImage
             let off = nodes[node].diskOffset
             vfsUnlock(daif)
-            return vfsImageReadRange(image, UInt64(off), out, UInt32(len)) == 0 ? len : errInvalid
+            return vfsImageReadRange(image, UInt64(off), out, UInt32(len)) == 0 ? len : Errno.invalid.code
         }
         let src = UnsafePointer<UInt8>(bitPattern: nodes[node].dataPtr)
         var i = 0

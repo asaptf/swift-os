@@ -2900,14 +2900,14 @@ private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packe
                                               specsVA: UInt = 0, specCount: UInt = 0,
                                               setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
     let parent = currentProcessSlot()
-    guard parent >= 0 else { return -22 }
+    guard parent >= 0 else { return Errno.invalid.code }
     let valid = vfsValidateHandleInheritance(parent: parent, inherit: inherit,
                                              specsVA: specsVA, specCount: specCount)
     if valid < 0 { return valid }
     let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
                               parent: parent, inherit: inherit,
                               inheritSpecsVA: specsVA, inheritSpecCount: specCount)
-    if child < 0 { return -11 } // EAGAIN
+    if child < 0 { return Errno.again.code } // EAGAIN
     // setuid-on-exec for the spawn path: the child inherited the parent's context
     // in createProcess; elevate it to the file owner with the invoker preserved
     // as the real identity (mirrors the execve path in processExec).
@@ -2960,16 +2960,16 @@ func processYieldForIO() {
 /// same point seeing 0; the parent gets the child pid.
 func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     let parent = currentProcessSlot()
-    guard parent >= 0 else { return -11 }
+    guard parent >= 0 else { return Errno.again.code }
     let child = allocSlot()
-    if child < 0 { return -11 } // EAGAIN
+    if child < 0 { return Errno.again.code } // EAGAIN
 
     let childTtbr0 = addressSpaceCloneForActiveCpuMask(pTtbr0[parent],
                                                        processAddressSpaceActiveCpuMaskForSlot(parent))
-    if childTtbr0 == 0 { return -12 } // ENOMEM
+    if childTtbr0 == 0 { return Errno.noMem.code } // ENOMEM
 
     let kstack = pmmAllocPages(kernelStackPages)
-    if kstack == 0 { address_space_destroy(childTtbr0); return -12 }
+    if kstack == 0 { address_space_destroy(childTtbr0); return Errno.noMem.code }
     let kstackTop = kstack + UInt(kernelStackPages) * PageAllocator.pageSize
 
     // Copy the parent's full lower-EL trap frame, including FP/SIMD state, to
@@ -3025,19 +3025,19 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
 /// every thread (page reclamation is a global follow-up, as for processes).
 func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     let creator = currentProcessSlot()
-    guard creator >= 0 else { return -22 } // EINVAL: no active process
+    guard creator >= 0 else { return Errno.invalid.code } // EINVAL: no active process
     // The entry PC and the top of the thread's stack must be valid user VAs in
     // the (shared) address space; reject obvious garbage early.
-    if userReadableBuffer(entryVA, 4) == nil { return -14 } // EFAULT
+    if userReadableBuffer(entryVA, 4) == nil { return Errno.fault.code } // EFAULT
     // The stack grows down from stackTopVA; require the word just below the top
     // to be a writable user VA in the shared space.
-    if stackTopVA < 16 || userWritableBuffer(stackTopVA - 16, 16) == nil { return -14 }
+    if stackTopVA < 16 || userWritableBuffer(stackTopVA - 16, 16) == nil { return Errno.fault.code }
 
     let slot = allocSlot()
-    if slot < 0 { return -11 } // EAGAIN: process table full
+    if slot < 0 { return Errno.again.code } // EAGAIN: process table full
 
     let kstack = pmmAllocPages(2)
-    if kstack == 0 { return -12 } // ENOMEM
+    if kstack == 0 { return Errno.noMem.code } // ENOMEM
     let kstackTop = kstack + 2 * PageAllocator.pageSize
 
     // Craft a first-run context that lands in user_thread_launch_arg, which
@@ -3121,7 +3121,7 @@ func processWakeFromFutex(_ slot: Int) {
 /// (blocked syscalls are not signal-interrupted today). Returns 0.
 func processNanosleep(seconds: UInt, nanos: UInt) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 } // EINVAL: no active process
+    guard me >= 0 else { return Errno.invalid.code } // EINVAL: no active process
     let hz = UInt64(timerHz)
     var ticks = UInt64(seconds) &* hz &+ (UInt64(nanos) &* hz) / 1_000_000_000
     if ticks == 0 {
@@ -3139,8 +3139,8 @@ func processNanosleep(seconds: UInt, nanos: UInt) -> Int {
 /// one is available. Returns the child pid, or -10 (ECHILD) if no such child.
 func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
     let parent = currentProcessSlot()
-    guard parent >= 0 else { return -10 }
-    if statusVA != 0 && userWritableBuffer(statusVA, 4) == nil { return -22 }
+    guard parent >= 0 else { return Errno.child.code }
+    if statusVA != 0 && userWritableBuffer(statusVA, 4) == nil { return Errno.invalid.code }
     let wantSlot = pid > 0 ? pid - 1 : waitAny
 
     while true {
@@ -3163,7 +3163,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
             }
             return found + 1
         }
-        if live == 0 { return -10 } // ECHILD
+        if live == 0 { return Errno.child.code } // ECHILD
         pState[parent] = pBlocked
         pWait[parent] = wantSlot
         yieldToScheduler()
@@ -3237,10 +3237,10 @@ func processSignalReturn(_ frame: UnsafeMutablePointer<UInt>) {
 }
 
 func processKill(_ pid: Int, _ sig: Int) -> Int {
-    if !signalIsValid(sig) && sig != 0 { return -22 } // EINVAL
-    if pid <= 0 { return -22 } // process groups are not modeled yet
+    if !signalIsValid(sig) && sig != 0 { return Errno.invalid.code } // EINVAL
+    if pid <= 0 { return Errno.invalid.code } // process groups are not modeled yet
     let slot = pid - 1
-    if slot < 0 || slot >= maxProc || pState[slot] == pUnused { return -3 } // ESRCH
+    if slot < 0 || slot >= maxProc || pState[slot] == pUnused { return Errno.srch.code } // ESRCH
     if sig == 0 { return 0 }
     if signalDisposition(sig) == SIG_IGN { return 0 }
 
@@ -3254,7 +3254,7 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
     }
 
     if pState[slot] == pZombie { return 0 }
-    if pState[slot] == pRunning { return -16 } // avoid remote-CPU teardown
+    if pState[slot] == pRunning { return Errno.busy.code } // avoid remote-CPU teardown
 
     if pRunQueued[slot] {
         removeProcessFromRunQueue(slot)
@@ -3281,14 +3281,14 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
                  setuid: Bool = false, setuidOwner: UInt32 = 0,
                  frame: UnsafeMutablePointer<UInt>) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }
+    guard me >= 0 else { return Errno.invalid.code }
 
     let (ttbr0, entry, userSP) = buildExecImage(image, size, packed: packed,
                                                 packedLen: packedLen, argc: argc,
                                                 envPacked: envPacked,
                                                 envPackedLen: envPackedLen,
                                                 envc: envc)
-    if ttbr0 == 0 { return -12 } // ENOMEM / invalid image during bring-up
+    if ttbr0 == 0 { return Errno.noMem.code } // ENOMEM / invalid image during bring-up
 
     // The old image is fully replaced; reclaim its frames once we are no longer
     // running on its tables. The kernel stack is reused across exec, so it is
@@ -3332,7 +3332,7 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
     let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
     if writable > 0 {
         guard let dst = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
-            return -22
+            return Errno.invalid.code
         }
         let raw = UnsafeMutableRawPointer(dst)
         for i in 0..<maxProc where pState[i] != pUnused {
@@ -3367,7 +3367,7 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
     let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
     if writable > 0 {
         guard let dst = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
-            return -22
+            return Errno.invalid.code
         }
         let raw = UnsafeMutableRawPointer(dst)
         let frameBytes = UInt64(PageAllocator.pageSize)
@@ -3416,9 +3416,9 @@ private func sysInfoCpuCount() -> UInt32 {
 /// and per-CPU idle ticks.
 func processSysInfo(buffer: UInt, capacity: UInt) -> Int {
     let requested = capacity == 0 ? UInt(sysInfoLegacySize) : capacity
-    if requested < UInt(sysInfoLegacySize) { return -22 }
+    if requested < UInt(sysInfoLegacySize) { return Errno.invalid.code }
     let writeSize = requested >= UInt(sysInfoSize) ? sysInfoSize : sysInfoLegacySize
-    guard let dst = userWritableBuffer(buffer, UInt(writeSize)) else { return -22 }
+    guard let dst = userWritableBuffer(buffer, UInt(writeSize)) else { return Errno.invalid.code }
     let raw = UnsafeMutableRawPointer(dst)
 
     var total = 0
@@ -3484,8 +3484,8 @@ func processCurrentPrincipal() -> UInt32 {
 
 func processSecurityInfo(buffer: UInt) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }
-    guard let dst = userWritableBuffer(buffer, 16) else { return -22 }
+    guard me >= 0 else { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buffer, 16) else { return Errno.invalid.code }
     let raw = UnsafeMutableRawPointer(dst)
     raw.storeBytes(of: pSecurity[me].principal, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: pSecurity[me].session, toByteOffset: 4, as: UInt32.self)
@@ -3499,8 +3499,8 @@ func processSecurityInfo(buffer: UInt) -> Int {
 /// real identity to learn the invoker while running setuid-root.
 func processSecurityInfoEx(buffer: UInt) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }
-    guard let dst = userWritableBuffer(buffer, 32) else { return -22 }
+    guard me >= 0 else { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buffer, 32) else { return Errno.invalid.code }
     let raw = UnsafeMutableRawPointer(dst)
     raw.storeBytes(of: pSecurity[me].principal, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: pSecurity[me].session, toByteOffset: 4, as: UInt32.self)
@@ -3518,8 +3518,8 @@ func processSecurityInfoEx(buffer: UInt) -> Int {
 /// inherited across the subsequent execve into the user's shell.
 func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }            // EINVAL
-    if (pSecurity[me].caps & capConsole) == 0 { return -1 } // EPERM
+    guard me >= 0 else { return Errno.invalid.code }            // EINVAL
+    if (pSecurity[me].caps & capConsole) == 0 { return Errno.perm.code } // EPERM
     pSecurity[me].principal = principal
     pSecurity[me].session = session
     pSecurity[me].caps = caps
@@ -3822,14 +3822,14 @@ func processHandleFileFault(_ faultVA: UInt) -> Bool {
 /// must be page-aligned and lie in the mmap arena. Returns 0 or a negative errno.
 func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }
-    if len == 0 { return -22 }
-    if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 } // EINVAL: unaligned
+    guard me >= 0 else { return Errno.invalid.code }
+    if len == 0 { return Errno.invalid.code }
+    if (addr & (PageAllocator.pageSize - 1)) != 0 { return Errno.invalid.code } // EINVAL: unaligned
     let pages = roundUpPages(len)
     let bytes = pages * PageAllocator.pageSize
     // Must sit wholly inside the arena [pMmapTop, userMmapTop).
-    if addr < pMmapTop[me] || addr >= userMmapTop { return -22 }
-    if addr > userMmapTop - bytes { return -22 } // range would overrun the arena top
+    if addr < pMmapTop[me] || addr >= userMmapTop { return Errno.invalid.code }
+    if addr > userMmapTop - bytes { return Errno.invalid.code } // range would overrun the arena top
 
     // Count live pages before freeing so resident accounting stays correct
     // (munmap of a hole is allowed and frees nothing there).
@@ -3881,16 +3881,16 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
 /// write code, then flip the region to RX. Returns 0 or errno.
 func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
     let me = currentProcessSlot()
-    guard me >= 0 else { return -22 }
-    if len == 0 { return -22 }
-    if (addr & (PageAllocator.pageSize - 1)) != 0 { return -22 }
+    guard me >= 0 else { return Errno.invalid.code }
+    if len == 0 { return Errno.invalid.code }
+    if (addr & (PageAllocator.pageSize - 1)) != 0 { return Errno.invalid.code }
     let pages = roundUpPages(len)
     let bytes = pages * PageAllocator.pageSize
-    if addr < pMmapTop[me] || addr >= userMmapTop { return -22 }
-    if addr > userMmapTop - bytes { return -22 }
+    if addr < pMmapTop[me] || addr >= userMmapTop { return Errno.invalid.code }
+    if addr > userMmapTop - bytes { return Errno.invalid.code }
 
     if prot == PROT_NONE {
-        if !anonVmaContains(me, addr, pages) { return -12 }
+        if !anonVmaContains(me, addr, pages) { return Errno.noMem.code }
         var live = 0
         var i: UInt = 0
         while i < pages {
@@ -3907,8 +3907,8 @@ func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
     }
 
     // W^X invariant enforced HERE (syscall entry) as well as in protPageDesc.
-    if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return -22 } // EINVAL
-    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return -22 }
+    if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return Errno.invalid.code } // EINVAL
+    if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return Errno.invalid.code }
 
     if anonVmaContains(me, addr, pages) {
         var committed = 0

@@ -185,7 +185,7 @@ func ttyOnInput(_ byte: UInt8) {
 /// process without returning here).
 func ttyRead(buffer: UInt, count: UInt) -> Int {
     if count == 0 { return 0 }
-    guard let dst = userWritableBuffer(buffer, count) else { return -22 }
+    guard let dst = userWritableBuffer(buffer, count) else { return Errno.invalid.code }
 
     enable_irq()
     while cookedCount() == 0 {

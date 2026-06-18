@@ -436,22 +436,22 @@ private func kernelStateRehash(_ p: UnsafeMutableRawPointer) {
 }
 
 private func espConfirmInner() -> Int {
-    guard let (partLBA, _) = espFindPartition() else { return -2 }
-    guard let vol = fatReadBPB(partLBA) else { return -5 }
-    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
-    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
-    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return -2 }
+    guard let (partLBA, _) = espFindPartition() else { return Errno.noEntry.code }
+    guard let vol = fatReadBPB(partLBA) else { return Errno.io.code }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return Errno.noEntry.code }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return Errno.noEntry.code }
+    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return Errno.noEntry.code }
 
-    var rc = -5
+    var rc = Errno.io.code
     var confirmedSlot = -1
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
         let lba = fatClusterLBA(vol, ks.0)
         if virtioBlkReadCurrent(lba, p) != 0 { return }
-        if !kernelStateValid(UnsafeRawPointer(p)) { rc = -22; return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { rc = Errno.invalid.code; return }
         let booted = espLd32(UnsafeRawPointer(p), kernelStateLastBootedOff)
-        if booted > 1 { rc = -22; return }
+        if booted > 1 { rc = Errno.invalid.code; return }
 
         confirmedSlot = Int(booted)
         espSt32(p, kernelStateStateOff(confirmedSlot), kernelStateConfirmed)
@@ -462,7 +462,7 @@ private func espConfirmInner() -> Int {
         rc = 0
     }
     if rc != 0 { return rc }
-    if virtioBlkFlush() != 0 { return -5 }
+    if virtioBlkFlush() != 0 { return Errno.io.code }
 
     var verify = false
     var check = InlineArray<512, UInt8>(repeating: 0)
@@ -474,30 +474,30 @@ private func espConfirmInner() -> Int {
         if espLd32(UnsafeRawPointer(p), kernelStateAttemptOff(confirmedSlot)) != 0 { return }
         verify = true
     }
-    return verify ? confirmedSlot : -5
+    return verify ? confirmedSlot : Errno.io.code
 }
 
 private func espStageInner() -> Int {
-    guard let (partLBA, _) = espFindPartition() else { return -2 }
-    guard let vol = fatReadBPB(partLBA) else { return -5 }
-    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
-    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
-    guard let ka = fatFind(vol, sw.0, "kernelA.bin"), !ka.2 else { return -2 }
-    guard let kb = fatFind(vol, sw.0, "kernelB.bin"), !kb.2 else { return -2 }
-    guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 else { return -2 }
-    if ka.1 == 0 || ka.1 != kb.1 { return -22 } // in-place copy needs equal sizes
+    guard let (partLBA, _) = espFindPartition() else { return Errno.noEntry.code }
+    guard let vol = fatReadBPB(partLBA) else { return Errno.io.code }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return Errno.noEntry.code }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return Errno.noEntry.code }
+    guard let ka = fatFind(vol, sw.0, "kernelA.bin"), !ka.2 else { return Errno.noEntry.code }
+    guard let kb = fatFind(vol, sw.0, "kernelB.bin"), !kb.2 else { return Errno.noEntry.code }
+    guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 else { return Errno.noEntry.code }
+    if ka.1 == 0 || ka.1 != kb.1 { return Errno.invalid.code } // in-place copy needs equal sizes
 
     // Active slot comes from kernel-state when present; the signed manifest
     // remains the default/authenticated slot-metadata source.
-    guard let active = fatReadEffectiveKernelActive(vol, sw.0, mf.0) else { return -22 }
+    guard let active = fatReadEffectiveKernelActive(vol, sw.0, mf.0) else { return Errno.invalid.code }
 
     let srcClus = active == 0 ? ka.0 : kb.0
     let dstClus = active == 0 ? kb.0 : ka.0
     let totalSectors = Int((ka.1 + 511) / 512)
 
-    if !fatCopyChain(vol, srcClus, dstClus, totalSectors) { return -5 }
-    if virtioBlkFlush() != 0 { return -5 }
-    if !fatVerifyChain(vol, srcClus, dstClus, totalSectors) { return -5 }
+    if !fatCopyChain(vol, srcClus, dstClus, totalSectors) { return Errno.io.code }
+    if virtioBlkFlush() != 0 { return Errno.io.code }
+    if !fatVerifyChain(vol, srcClus, dstClus, totalSectors) { return Errno.io.code }
     return 0
 }
 
@@ -537,22 +537,22 @@ private func fatReadEffectiveKernelActive(_ vol: Fat32Vol, _ swClus: UInt32, _ m
 // still authenticates slot hashes; mutable active selection now lives in the
 // hash-protected boot-state so activation no longer needs kernel-boot-alt.
 private func espActivateInner() -> Int {
-    guard let (partLBA, _) = espFindPartition() else { return -2 }
-    guard let vol = fatReadBPB(partLBA) else { return -5 }
-    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return -2 }
-    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return -2 }
-    guard let cur = fatFind(vol, sw.0, "kernel-boot"), !cur.2 else { return -2 }
-    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return -2 }
-    guard let active = fatReadEffectiveKernelActive(vol, sw.0, cur.0) else { return -22 }
+    guard let (partLBA, _) = espFindPartition() else { return Errno.noEntry.code }
+    guard let vol = fatReadBPB(partLBA) else { return Errno.io.code }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return Errno.noEntry.code }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return Errno.noEntry.code }
+    guard let cur = fatFind(vol, sw.0, "kernel-boot"), !cur.2 else { return Errno.noEntry.code }
+    guard let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 else { return Errno.noEntry.code }
+    guard let active = fatReadEffectiveKernelActive(vol, sw.0, cur.0) else { return Errno.invalid.code }
     let next = active == 0 ? 1 : 0
 
-    var rc = -5
+    var rc = Errno.io.code
     var buf = InlineArray<512, UInt8>(repeating: 0)
     withUnsafeMutableBytes(of: &buf) { raw in
         let p = raw.baseAddress!
         let lba = fatClusterLBA(vol, ks.0)
         if virtioBlkReadCurrent(lba, p) != 0 { return }
-        if !kernelStateValid(UnsafeRawPointer(p)) { rc = -22; return }
+        if !kernelStateValid(UnsafeRawPointer(p)) { rc = Errno.invalid.code; return }
         espSt32(p, kernelStateActiveOff, UInt32(next))
         espSt32(p, kernelStateAttemptOff(next), 0)
         espSt32(p, kernelStateStateOff(next), kernelStateUntried)
@@ -563,7 +563,7 @@ private func espActivateInner() -> Int {
         rc = 0
     }
     if rc != 0 { return rc }
-    if virtioBlkFlush() != 0 { return -5 }
+    if virtioBlkFlush() != 0 { return Errno.io.code }
 
     var verify = false
     var check = InlineArray<512, UInt8>(repeating: 0)
@@ -575,16 +575,16 @@ private func espActivateInner() -> Int {
         if espLd32(UnsafeRawPointer(p), kernelStateAttemptOff(next)) != 0 { return }
         verify = true
     }
-    return verify ? next : -5
+    return verify ? next : Errno.io.code
 }
 
 /// U1g-5d: activate the inactive kernel slot for the next boot by updating the
 /// writable ESP kernel-state. capConsole-gated. Returns 0 on success, or a
 /// negative errno-style code. Invoked from EL0 via syscall 69 (/bin/swos-kactivate).
 func espActivateOtherKernel() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if !virtioBlkHasEsp() { return -19 }
-    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if !virtioBlkHasEsp() { return Errno.noDev.code }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return Errno.noDev.code }
     let r = espActivateInner()
     virtioBlkReselectServed()
     if r >= 0 {
@@ -604,9 +604,9 @@ func espActivateOtherKernel() -> Int {
 /// back. capConsole-gated. Returns 0 on success, or a negative errno-style code.
 /// Invoked from EL0 via syscall 70 (/bin/swos-kconfirm).
 func espConfirmBootedKernel() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if !virtioBlkHasEsp() { return -19 }
-    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if !virtioBlkHasEsp() { return Errno.noDev.code }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return Errno.noDev.code }
     let r = espConfirmInner()
     virtioBlkReselectServed()
     if r >= 0 {
@@ -628,9 +628,9 @@ func espConfirmBootedKernel() -> Int {
 /// which the loader's hash check then rejects). capConsole-gated. Returns 0 or a
 /// negative errno-style code. Invoked from EL0 via syscall 68 (/bin/swos-kstage).
 func espStageActiveToInactive() -> Int {
-    if (processCurrentCaps() & capConsole) == 0 { return -1 } // EPERM
-    if !virtioBlkHasEsp() { return -19 }                      // ENODEV: no ESP/GPT disk
-    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -19 }
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code } // EPERM
+    if !virtioBlkHasEsp() { return Errno.noDev.code }                      // ENODEV: no ESP/GPT disk
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return Errno.noDev.code }
     let rc = espStageInner()
     virtioBlkReselectServed()
     if rc == 0 {
