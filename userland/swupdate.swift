@@ -488,10 +488,233 @@ private func applyLocal(_ path: [CChar]) -> Int32 {
     return applyBundleBytes(bundle)
 }
 
+// ---- HTTPS fetch (SU-C) -----------------------------------------------------
+//
+// `swupdate site <url>` pulls a SWSITE bundle over TLS 1.3 and applies it. TLS
+// here provides confidentiality only — the tls13 engine does not yet verify the
+// server certificate — but that is acceptable because the bundle's Ed25519
+// signature (checked in applyBundleBytes against the baked pubkey) is the real
+// authenticity anchor: a MITM serving a different bundle fails signature verify.
+
+// Fill `buf` with kernel entropy (falls back to a dev PRNG without virtio-rng);
+// copied from /bin/tlsget — acceptable while cert checks are deferred.
+private func fillRandom(_ buf: UnsafeMutableRawPointer, _ n: Int) {
+    var off = 0
+    while off < n {
+        let r = swiftos_random(buf + off, UInt(n - off))
+        if r <= 0 { break }
+        off += Int(r)
+    }
+    if off == n { return }
+    var probe: UInt64 = 0
+    var x = UInt64(swiftos_time())
+        ^ (UInt64(bitPattern: Int64(swiftos_getpid())) &* 0x9E37_79B9_7F4A_7C15)
+        ^ withUnsafeMutablePointer(to: &probe) { UInt64(UInt(bitPattern: $0)) }
+        ^ UInt64(off)
+    if x == 0 { x = 0x9E37_79B9_7F4A_7C15 }
+    var i = off
+    while i < n {
+        x = x &* 6364136223846793005 &+ 1442695040888963407
+        var z = x
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        z = z ^ (z >> 31)
+        buf.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+}
+
+// Parse a dotted-decimal IPv4 from raw bytes, or nil.
+private func parseIPv4Bytes(_ b: [UInt8]) -> UInt32? {
+    var octets = [UInt32](repeating: 0, count: 4)
+    var idx = 0, cur: UInt32 = 0, digits = 0, i = 0
+    while true {
+        let ch: UInt8 = i < b.count ? b[i] : 0
+        if ch >= 0x30 && ch <= 0x39 {
+            cur = cur * 10 + UInt32(ch - 0x30)
+            if cur > 255 { return nil }
+            digits += 1
+        } else if ch == 0x2E || ch == 0 {
+            if digits == 0 || idx > 3 { return nil }
+            octets[idx] = cur; idx += 1; cur = 0; digits = 0
+            if ch == 0 { break }
+        } else { return nil }
+        i += 1
+    }
+    if idx != 4 { return nil }
+    return (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
+}
+
+// Parse "https://host[:port]/path" from a C string into (host, port, path).
+private func parseHTTPSURL(_ url: UnsafeMutablePointer<CChar>)
+    -> (host: [UInt8], port: UInt16, path: [UInt8])? {
+    var u: [UInt8] = []
+    var i = 0
+    while url[i] != 0 { u.append(UInt8(bitPattern: url[i])); i += 1 }
+    let scheme: [UInt8] = Array("https://".utf8)
+    if u.count < scheme.count { return nil }
+    var k = 0
+    while k < scheme.count { if u[k] != scheme[k] { return nil }; k += 1 }
+    var p = scheme.count
+    var host: [UInt8] = []
+    while p < u.count && u[p] != 0x3A && u[p] != 0x2F { host.append(u[p]); p += 1 }   // until ':' or '/'
+    if host.isEmpty { return nil }
+    var port: UInt16 = 443
+    if p < u.count && u[p] == 0x3A {
+        p += 1
+        var v = 0
+        while p < u.count && u[p] >= 0x30 && u[p] <= 0x39 { v = v * 10 + Int(u[p] - 0x30); p += 1 }
+        if v < 1 || v > 65535 { return nil }
+        port = UInt16(v)
+    }
+    var path: [UInt8] = []
+    if p < u.count && u[p] == 0x2F {
+        while p < u.count { path.append(u[p]); p += 1 }
+    } else {
+        path.append(0x2F)   // "/"
+    }
+    return (host, port, path)
+}
+
+// Fetch the body of GET https://host:port/path over TLS 1.3 into memory.
+private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8]) -> [UInt8]? {
+    let fd = swiftos_socket_stream()
+    if fd < 0 { put("swupdate: socket failed\n"); return nil }
+    if swiftos_connect(fd, ip, port) != 0 { put("swupdate: connect failed\n"); _ = swiftos_close(fd); return nil }
+    defer { _ = swiftos_close(fd) }
+
+    let client = TLS13Client()
+    var sk = [UInt8](repeating: 0, count: 32)
+    var ch = [UInt8](repeating: 0, count: 32)
+    sk.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
+    ch.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
+    sk.withUnsafeBytes { skp in ch.withUnsafeBytes { chp in
+        client.startHandshake(randomSK: skp.baseAddress!, randomCH: chp.baseAddress!)
+    } }
+
+    let rxCap = tlsMaxRecord
+    let buf = UnsafeMutableRawPointer.allocate(byteCount: rxCap, alignment: 16)
+    defer { buf.deallocate() }
+
+    func flushOut() -> Bool {
+        while client.pendingOut > 0 {
+            let ok = withUnsafeTemporaryAllocation(byteCount: tlsMaxRecord, alignment: 16) { raw -> Bool in
+                let n = client.takeTLS(raw.baseAddress!, raw.count)
+                if n <= 0 { return true }
+                var off = 0
+                while off < n {
+                    let w = swiftos_write(fd, raw.baseAddress!.advanced(by: off), UInt(n - off))
+                    if w <= 0 { return false }
+                    off += Int(w)
+                }
+                return true
+            }
+            if !ok { return false }
+        }
+        return true
+    }
+
+    if !flushOut() { return nil }
+    var done = false, failed = false
+    switch client.advance() {
+    case .handshakeComplete: done = true
+    case .failed: failed = true
+    case .needMoreData: break
+    }
+    while !done && !failed {
+        let r = swiftos_read(fd, buf, UInt(rxCap))
+        if r <= 0 { failed = true; break }
+        client.feedTLS(buf, Int(r))
+        switch client.advance() {
+        case .handshakeComplete: done = true
+        case .failed: failed = true
+        case .needMoreData: break
+        }
+        if !flushOut() { failed = true; break }
+    }
+    if failed || !done { put("swupdate: TLS handshake failed\n"); return nil }
+    if !flushOut() { return nil }
+
+    // Encrypted HTTP/1.1 GET.
+    var req: [UInt8] = []
+    req.append(contentsOf: Array("GET ".utf8))
+    req.append(contentsOf: path)
+    req.append(contentsOf: Array(" HTTP/1.1\r\nHost: ".utf8))
+    req.append(contentsOf: host)
+    req.append(contentsOf: Array("\r\nConnection: close\r\n\r\n".utf8))
+    req.withUnsafeBytes { client.sendAppData($0.baseAddress!, $0.count) }
+    if !flushOut() { return nil }
+
+    // Read + decrypt the whole response into memory.
+    var resp: [UInt8] = []
+    while true {
+        let r = swiftos_read(fd, buf, UInt(rxCap))
+        if r <= 0 { break }                      // server closed (EOF)
+        client.feedTLS(buf, Int(r))
+        _ = client.advance()
+        while client.pendingAppData > 0 {
+            let n = client.receiveAppData(buf, rxCap)
+            if n <= 0 { break }
+            let bp = buf.assumingMemoryBound(to: UInt8.self)
+            var j = 0
+            while j < n { resp.append(bp[j]); j += 1 }
+            if resp.count > maxBundleBytes + 65536 { put("swupdate: response too large\n"); return nil }
+        }
+        if client.lastError != 0 { break }
+    }
+    return resp
+}
+
+// Split an HTTP response: require a 2xx status, return the body bytes.
+private func httpBody(_ resp: [UInt8]) -> [UInt8]? {
+    // Status line: "HTTP/1.x SP code ...". Accept 200.
+    if resp.count < 12 { return nil }
+    // Find " 200 " in the first line.
+    var sp = 0
+    while sp < resp.count && resp[sp] != 0x20 { sp += 1 }
+    if sp + 4 > resp.count { return nil }
+    if !(resp[sp + 1] == 0x32 && resp[sp + 2] == 0x30 && resp[sp + 3] == 0x30) {
+        put("swupdate: server did not return 200\n"); return nil
+    }
+    // Body starts after the first CRLFCRLF.
+    var i = 0
+    while i + 3 < resp.count {
+        if resp[i] == 0x0D && resp[i + 1] == 0x0A && resp[i + 2] == 0x0D && resp[i + 3] == 0x0A {
+            var body: [UInt8] = []
+            var j = i + 4
+            while j < resp.count { body.append(resp[j]); j += 1 }
+            return body
+        }
+        i += 1
+    }
+    return nil
+}
+
+private func site(_ url: UnsafeMutablePointer<CChar>) -> Int32 {
+    guard let (host, port, path) = parseHTTPSURL(url) else {
+        put("swupdate: usage: swupdate site https://host[:port]/path\n"); return 2
+    }
+    // Resolve the host: a literal IPv4 is used directly, otherwise via DNS.
+    var ip: UInt32 = 0
+    if let v = parseIPv4Bytes(host) {
+        ip = v
+    } else {
+        var hostC = host.map { CChar(bitPattern: $0) }
+        hostC.append(0)
+        ip = hostC.withUnsafeBufferPointer { swiftos_resolve($0.baseAddress!, 0, 0) }
+        if ip == 0 { put("swupdate: cannot resolve host\n"); return 1 }
+    }
+    guard let resp = httpsGet(ip: ip, port: port, host: host, path: path) else { return 1 }
+    guard let body = httpBody(resp), body.count >= sigSize + hdrSize else {
+        put("swupdate: fetch did not return a bundle\n"); return 1
+    }
+    return applyBundleBytes(body)
+}
+
 // ---- entry point -----------------------------------------------------------
 
 private func usage() {
-    put("usage: swupdate seed | swupdate apply-local <bundle.swsite>\n")
+    put("usage: swupdate seed | swupdate apply-local <bundle.swsite> | swupdate site <https-url>\n")
 }
 
 @_cdecl("main")
@@ -513,6 +736,10 @@ func main(_ argc: Int32,
         while p[i] != 0 { path.append(p[i]); i += 1 }
         path.append(0)
         return applyLocal(path)
+    }
+    if cstrEq(cmdp, "site") {
+        guard argc >= 3, let p = argv[2] else { usage(); return 2 }
+        return site(p)
     }
     usage()
     return 2

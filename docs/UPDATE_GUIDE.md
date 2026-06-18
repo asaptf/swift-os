@@ -332,6 +332,61 @@ when one exists. Examples:
 Do not edit `/etc`, `/bin`, `/www`, or `/models` from inside the guest and
 expect those edits to persist. Those paths come from the read-only base image.
 
+## Update The Hosted Static Site (Reflash-Free)
+
+Use this path to change the **static site content** that the box's nginx serves
+(e.g. swiftos.tech) on a *running* machine — no Rescue mode, no `dd`, no base-image
+reflash. This is content-only; it does not touch the kernel or base image (use the
+A/B paths above for those).
+
+How it works: nginx's production docroot is `/data/www/current` on the persistent
+`/data` tier. `/bin/swos-init` runs `/bin/swupdate seed` at every boot to seed it
+from the baked default site (so a fresh box still serves something) and to recover
+any crash-interrupted update. A new site is published as a signed `SWSITE` bundle
+and applied with an atomic directory swap; the previous generation is kept in
+`/data/www/prev` for rollback.
+
+Security model: the **trigger** is gated by the operator SSH key (the bounded-exec
+sshd allowlist permits `/bin/*`); the **content** is gated by an Ed25519 signature
+on the bundle, verified against the public key baked at `/etc/swupdate/site-root.pub`.
+There is no scp and no writable root. TLS supplies confidentiality only (the server
+certificate is not yet verified) — the signature is the authenticity anchor, so a
+man-in-the-middle serving a different bundle fails verification.
+
+Build and sign a bundle on the host (see
+[HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md)):
+
+```sh
+make sitepack
+build/sitepack create ./my-site build/my-site.swsite --seed models/dev-site-signing.seed
+```
+
+Publish `build/my-site.swsite` to an HTTPS URL, then apply it over the operator's
+SSH key:
+
+```sh
+ssh root@swiftos.tech /bin/swupdate site https://downloads.example/my-site.swsite
+```
+
+On success the next HTTP request returns the new content immediately (static files;
+no nginx reload needed). A tampered or unsigned bundle is refused and the live
+docroot is left untouched. Offline, a bundle already on the box can be applied with
+`swupdate apply-local <path>`.
+
+Bundles are capped at 64 entries (files + dirs): datafs holds 256 inodes total and
+`current`+`next`+`prev` is ~3× the site.
+
+Validation:
+
+```sh
+make site-seed-test     # boot seed + crash-recovery of an interrupted swap
+make site-bundle-test   # signed apply, tamper rejection, reboot persistence
+make site-update-test   # full operator path: swupdate site <url> over SSH
+```
+
+QEMU does not exercise every hardware path, so also validate `swupdate site` on the
+real target after a content change.
+
 ## Update Package Payloads
 
 Use this path when validating package content without baking it into `/bin`.

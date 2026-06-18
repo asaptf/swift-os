@@ -1319,6 +1319,54 @@ Notes:
   `tests/uefi_krollback_test.sh`. Kernel-slot health confirmation is tested by
   `tests/uefi_kconfirm_test.sh`.
 
+### `swupdate`
+
+Update the **hosted static site** (the nginx docroot) on a running box without a
+base-image reflash. nginx serves from `/data/www/current` on the persistent `/data`
+tier; `swupdate` seeds it, and atomically swaps in a new generation from a signed
+bundle. This is content-only — it does **not** update the kernel or base image
+(use the A/B commands above for those). Build a bundle with the host `sitepack`
+tool ([HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md)).
+
+```text
+swupdate seed                      # boot-time: seed/recover /data/www/current
+swupdate apply-local <bundle.swsite>   # apply a local signed bundle (offline/testing)
+swupdate site <https-url>          # fetch a signed bundle over HTTPS and apply it
+```
+
+`seed` runs automatically from `/bin/swos-init` before any service: on an empty
+`/data` it copies the baked default site into `/data/www/current`, and it recovers
+a crash-interrupted swap (finishing `next`→`current`, or rolling back to `prev`).
+
+`apply-local` / `site` verify the bundle's Ed25519 signature against the baked
+`/etc/swupdate/site-root.pub` **and** its payload SHA-256 before unpacking into
+`/data/www/next` and atomically swapping (`current`→`prev`, `next`→`current`). The
+previous generation is retained in `/data/www/prev` for rollback.
+
+Expected success:
+
+```text
+swupdate: applied site bundle; /data/www/current updated
+```
+
+A bad bundle is refused without touching the live docroot:
+
+```text
+swupdate: bundle signature INVALID — rejected
+```
+
+Notes:
+
+- **Security.** The trigger is gated by the operator SSH key (the bounded-exec
+  allowlist permits `/bin/*`); the content by the Ed25519 bundle signature. No
+  scp, no writable root. TLS provides confidentiality only (the cert is not yet
+  verified) — the signature is the authenticity anchor, so a MITM serving a
+  different bundle fails verification.
+- **Inode budget.** datafs holds 256 inodes total; with `current`+`next`+`prev`
+  that is ~3× the site, so a bundle is capped at 64 entries.
+- Acceptance coverage: `make site-seed-test`, `make site-bundle-test`,
+  `make site-update-test`.
+
 ## Package Commands
 
 ### `pkg`

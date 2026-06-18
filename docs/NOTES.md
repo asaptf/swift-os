@@ -6950,3 +6950,35 @@ neither): a tampered bundle is rejected and the docroot stays byte-identical to 
 baked default; a valid bundle is applied and nginx serves the new content; the new
 content survives reboot. Assertions are over curl (QEMU serial stdout is buffered);
 applies are backgrounded so the slow console can't swallow a queued command.
+
+### SU-C — HTTPS fetch + the operator SSH path (DONE, 2026-06-18)
+
+`swupdate site <https-url>` pulls a SWSITE bundle over TLS 1.3 and applies it, so an
+operator updates the site with a single SSH command:
+
+```
+ssh root@box /bin/swupdate site https://host/site.swsite
+```
+
+- swupdate links the same TLS 1.3 stack as `/bin/tlsget` (`TLS_SWIFT_SRCS`) plus
+  ed25519+sha512. It parses `https://host[:port]/path` (byte-wise — still no Swift
+  String), resolves a literal IPv4 directly or a name via `swiftos_resolve`, drives
+  the sans-IO `TLS13Client` over the socket (handshake → GET → read+decrypt the whole
+  response), strips the HTTP headers, and feeds the body to the SU-B `applyBundleBytes`.
+- **Trust split.** The trigger is gated by the operator SSH key — bounded-exec sshd
+  already allows `/bin/*` and `parseExecArgv` forwards `site <url>` as argv. The
+  content is gated by the Ed25519 signature. TLS is MITM-open (cert unverified), which
+  is acceptable *because* the signature is the authenticity anchor: a MITM serving a
+  different bundle fails verify. Documented as such.
+
+Gate `make site-update-test`: boots with a host HTTPS server (python, self-signed,
+reached at `10.0.2.2` via slirp — same pattern as `acme-mock-test`), drives the
+console past the tty demo, logs in and starts nginx, then runs `swupdate site` over a
+pinned-key OpenSSH exec (host known_hosts derived from the baked host seed). A
+tampered URL is rejected (ssh exits nonzero, docroot unchanged); a valid bundle is
+fetched, verified, swapped in, and served within seconds; the update survives reboot.
+QEMU can't catch every HW path, so `swupdate site` should also be run on the real box.
+
+User-facing docs: `swupdate` in `docs/COMMAND_REFERENCE.md`, `sitepack` in
+`docs/HOST_TOOL_REFERENCE.md`, and the operator runbook "Update The Hosted Static
+Site (Reflash-Free)" in `docs/UPDATE_GUIDE.md`.

@@ -40,6 +40,7 @@ format, manifest, signature, or fixture.
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
 | `build/pkgrepo` | `make pkgrepo` | Create and verify signed static HTTP package repositories. | `tests/pkgrepo_tool_test.swift`, `make package-repo-install-test` |
+| `build/sitepack` | `make sitepack` | Pack a static-site directory into a signed `SWSITE` bundle (and verify one) for reflash-free site updates via `/bin/swupdate`. | `make site-bundle-test`, `make site-update-test` |
 | `build/swport` | `make swport` | Validate/list/inspect the ports catalog, emit the catalog-driven packaged seed list, validate/fetch/manifest/package/repo-fixture the checked Lua, zlib, bzip2, zstd, xz, libarchive, ca-certificates, OpenSSL, pcre2, tzdata, nginx, and `databases/sqlite` recipes, and validate/manifest the `ports/net/curl/Port.json`, `ports/security/acme-sh/Port.json`, `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and `ports/sysutils/pm2/Port.json` intake scaffolds. | `make ports-catalog-test`, `make ports-recipe-test` |
 | `scripts/build-lua.sh` | `make ports-lua-repo-fixture` | Cross-build static AArch64 `lua`/`luac`, package them, and publish a signed local repository fixture. | `make ports-lua-repo-fixture`, `make package-lua-repo-install-test` |
 | `scripts/build-zlib.sh` | `make ports-zlib-repo-fixture` | Cross-build static zlib, headers, pkgconf metadata, and `minigzip`, then publish a signed local repository fixture. | `make ports-zlib-repo-fixture` |
@@ -196,6 +197,38 @@ build/pkgrepo create --package build/pkghello.swpkg --output /tmp/expired \
 `make package-repo-install-test` proves expired-catalog, incompatible-catalog,
 package-hash, dependency, repository configuration, and positive install paths
 inside QEMU.
+
+## Site Bundle Tool
+
+`sitepack` packs a static-site directory into a signed `SWSITE` bundle that
+`/bin/swupdate` applies on a running box (reflash-free site updates, SU-B/SU-C).
+
+```text
+sitepack create <site-dir> <out.swsite> --seed <seed-file>
+sitepack verify <bundle.swsite> --pubkey <pubkey>
+```
+
+The bundle is `[64-byte Ed25519 signature][body]`; the body holds a header (magic
+`SWSITE01`, counts, offsets, a payload SHA-256), fixed-size entry records, a string
+table of relative path names, and the file blobs (entries in pre-order). The
+signing keypair is `models/dev-site-signing.{seed,pub}` (minted by
+`build/modelsign keygen`, like the image key); the public half is baked into the
+image at `/etc/swupdate/site-root.pub`, which `swupdate` verifies against.
+
+Example:
+
+```sh
+make sitepack
+build/modelsign keygen models/dev-site-signing.seed models/dev-site-signing.pub
+build/sitepack create ./my-site build/my-site.swsite --seed models/dev-site-signing.seed
+build/sitepack verify build/my-site.swsite --pubkey models/dev-site-signing.pub
+# publish build/my-site.swsite to an HTTPS URL, then on the box:
+#   ssh root@box /bin/swupdate site https://host/my-site.swsite
+```
+
+`make site-bundle-test` (offline `apply-local`) and `make site-update-test`
+(HTTPS fetch over SSH) prove the apply, tamper-rejection, and reboot-persistence
+paths inside QEMU. See [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for the operator runbook.
 
 ## Ports And Recipe Tool
 
