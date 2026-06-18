@@ -146,6 +146,26 @@ static void start_sshd(void) {
     (void)start_service(SERVICE_SSHD);
 }
 
+// Seed / recover the persistent nginx docroot on /data before any service
+// starts. Runs unconditionally (independent of /etc/swos/services) so a freshly
+// flashed box, an empty /data, or a crash-interrupted update all resolve to a
+// fully-populated /data/www/current ahead of nginx. Blocks until it exits.
+static void seed_site(void) {
+    int pid = fork();
+    if (pid < 0) {
+        puts_raw("swos-init: fork failed for swupdate seed\n");
+        return;
+    }
+    if (pid == 0) {
+        char *argv[] = { "swupdate", "seed", 0 };
+        execve("/bin/swupdate", argv, 0);
+        puts_raw("swos-init: exec /bin/swupdate failed\n");
+        _exit(127);
+    }
+    int status = 0;
+    (void)waitpid(pid, &status, 0);
+}
+
 static void add_supervised_service(enum service_kind kind) {
     if (supervised_count >= MAX_SUPERVISED_SERVICES) {
         puts_raw("swos-init: too many supervised services\n");
@@ -286,6 +306,7 @@ static int supervise_services_forever(void) {
 
 int main(void) {
     puts_raw("swos-init: starting configured services\n");
+    seed_site();
     start_configured_services();
     if (supervision_requested) {
         return supervise_services_forever();

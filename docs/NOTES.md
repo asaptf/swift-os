@@ -6928,3 +6928,103 @@ pre-USB/datafs, so the scanner reports ~57 globals missing across unrelated
 subsystems (sysrng, usb_xhci, datafs, virtio_gpu, …) plus 2 stale entries. QW1
 documents its own state (`replyPorts`, `endpointRecvWaiters`); the broader drift
 needs a separate doc-sync pass.
+
+## SU-series — reflash-free static-site updates (post-M13)
+
+Goal: update the static site swiftos.tech serves (in-kernel nginx) on a *running*
+box without rebuilding `swift-os.img` and re-flashing the whole image via Rescue
++ `dd`. Reuses persistent `/data` (datafs + fsync), Ed25519/SHA-256, bounded-exec
+sshd, and the key-baking pattern from image/pkg signing. The site content trust
+anchor is an Ed25519 signature on the bundle; the *trigger* is gated by the
+operator SSH key in the bounded-exec allowlist (no new kernel capability).
+
+### SU-A — persistent docroot + boot seed/recovery (DONE, 2026-06-18)
+
+nginx's production docroot moved from the read-only baked `/usr/share/nginx/html`
+to `/data/www/current` (`base/usr/etc/nginx/nginx-prod.conf`). A new native Swift
+`/bin/swupdate` (`userland/swupdate.swift`) provides `swupdate seed`, run by
+`swos-init` (`seed_site()`) on every boot *before* any service:
+
+- **Fresh / empty `/data`** → recursively copies the baked default site into
+  `/data/www/current` (fsync), so a freshly-flashed box still serves a site.
+- **Crash recovery** of an interrupted atomic swap. Generations live as real dirs
+  under `/data/www/` (`current`, `next`, `prev`) — datafs has no symlinks, and
+  rejects `rename` onto a *populated* dir (`errNotEmpty`, `vfsRename`), so the swap
+  always renames into a *fresh* name (O(1): a dir's children track it by inode
+  number, unchanged by rename). If a power loss lands between the two swap renames
+  (`current`→`prev` done, `next` staged), the next boot's `seed` finishes it
+  (`next`→`current`); else it rolls back (`prev`→`current`).
+
+`swupdate` is freestanding Embedded Swift over NUL-terminated `[CChar]` / `[UInt8]`
+buffers — it deliberately avoids Swift `String`, whose `==`/interpolation pull in
+Unicode-normalization tables that aren't linked in the userland runtime.
+
+Gate `make site-seed-test` (3 boots, fresh data disk): boot 1 seeds + nginx serves
+the baked default byte-for-byte; boot 2 stages a mid-swap crash state; boot 3's
+`seed` recovers it and nginx serves the new content — all on `/data`, surviving
+reboot, no reflash. `nginx-data-test` still PASS (shared boot path unchanged).
+
+### SU-B — signed `SWSITE` bundle format + offline apply (DONE, 2026-06-18)
+
+A static site is published as a signed **`SWSITE`** bundle and applied to a running
+box with `/bin/swupdate apply-local <bundle.swsite>` (the HTTPS-fetch trigger is
+SU-C). The trust anchor is an Ed25519 signature; the content never travels as
+scp/writable-root.
+
+- **Bundle** = `[64-byte Ed25519 sig over body][body]`. The body header carries
+  magic `SWSITE01`, version, entry count, string-table/blob offsets, and a SHA-256
+  over the payload region; then fixed 24-byte entry records (name/blob offsets+lens,
+  type file|dir, mode), a string table of relative path names, and the blobs.
+  Entries are pre-order (a dir precedes its contents). Layout is defined once in
+  `tools/sitepack.swift` and mirrored byte-for-byte by `userland/swupdate.swift`.
+- **Host tool** `tools/sitepack.swift` (`build/sitepack`): `create <dir> <out> --seed`
+  walks a directory and writes the signed bundle; `verify <bundle> --pubkey` checks it.
+  Reuses `kernel/crypto/{ed25519,sha256,sha512}.swift`. The site-signing keypair is
+  `models/dev-site-signing.{seed,pub}` (minted by `modelsign keygen`, like the image
+  key); the **public** half is baked at `/etc/swupdate/site-root.pub`.
+- **Apply** (`swupdate apply-local`, links the same crypto): verify Ed25519 against the
+  baked pubkey → verify payload SHA-256 → bounds + inode-budget check
+  (`maxSiteEntries = 64`, since current+next+prev ≈ 3× the site against datafs's 256
+  inodes) → reject any unsafe (`..`/absolute) entry name. Only then unpack into
+  `/data/www/next` (fsync) and atomically swap (`current`→`prev`, `next`→`current`,
+  sync). A bad bundle is refused **before** `next` is touched, so `current` is never
+  disturbed.
+
+Gate `make site-bundle-test` (image built `INCLUDE_SITE_TEST=1`, which bakes a signed
+test bundle + a tampered copy under `/usr/share/swupdate-test`; production images carry
+neither): a tampered bundle is rejected and the docroot stays byte-identical to the
+baked default; a valid bundle is applied and nginx serves the new content; the new
+content survives reboot. Assertions are over curl (QEMU serial stdout is buffered);
+applies are backgrounded so the slow console can't swallow a queued command.
+
+### SU-C — HTTPS fetch + the operator SSH path (DONE, 2026-06-18)
+
+`swupdate site <https-url>` pulls a SWSITE bundle over TLS 1.3 and applies it, so an
+operator updates the site with a single SSH command:
+
+```
+ssh root@box /bin/swupdate site https://host/site.swsite
+```
+
+- swupdate links the same TLS 1.3 stack as `/bin/tlsget` (`TLS_SWIFT_SRCS`) plus
+  ed25519+sha512. It parses `https://host[:port]/path` (byte-wise — still no Swift
+  String), resolves a literal IPv4 directly or a name via `swiftos_resolve`, drives
+  the sans-IO `TLS13Client` over the socket (handshake → GET → read+decrypt the whole
+  response), strips the HTTP headers, and feeds the body to the SU-B `applyBundleBytes`.
+- **Trust split.** The trigger is gated by the operator SSH key — bounded-exec sshd
+  already allows `/bin/*` and `parseExecArgv` forwards `site <url>` as argv. The
+  content is gated by the Ed25519 signature. TLS is MITM-open (cert unverified), which
+  is acceptable *because* the signature is the authenticity anchor: a MITM serving a
+  different bundle fails verify. Documented as such.
+
+Gate `make site-update-test`: boots with a host HTTPS server (python, self-signed,
+reached at `10.0.2.2` via slirp — same pattern as `acme-mock-test`), drives the
+console past the tty demo, logs in and starts nginx, then runs `swupdate site` over a
+pinned-key OpenSSH exec (host known_hosts derived from the baked host seed). A
+tampered URL is rejected (ssh exits nonzero, docroot unchanged); a valid bundle is
+fetched, verified, swapped in, and served within seconds; the update survives reboot.
+QEMU can't catch every HW path, so `swupdate site` should also be run on the real box.
+
+User-facing docs: `swupdate` in `docs/COMMAND_REFERENCE.md`, `sitepack` in
+`docs/HOST_TOOL_REFERENCE.md`, and the operator runbook "Update The Hosted Static
+Site (Reflash-Free)" in `docs/UPDATE_GUIDE.md`.

@@ -74,6 +74,12 @@ SWPORT_CATALOG_TEST := $(BUILD)/swport_catalog_test
 SWPORT_RECIPE_TEST := $(BUILD)/swport_recipe_test
 IMG_SIGNING_SEED := $(MODEL_DIR)/dev-image-signing.seed
 IMG_SIGNING_PUB := $(MODEL_DIR)/dev-image-signing.pub
+# SU-B: site-bundle signing key (distinct lifecycle from image/model keys). The
+# public half is baked at /etc/swupdate/site-root.pub; /bin/swupdate verifies a
+# SWSITE bundle's Ed25519 signature against it before unpacking.
+SITEPACK := $(BUILD)/sitepack
+SITE_SIGNING_SEED := $(MODEL_DIR)/dev-site-signing.seed
+SITE_SIGNING_PUB := $(MODEL_DIR)/dev-site-signing.pub
 BASE_ROOT := $(BUILD)/base-root
 PKGHELLO_ROOT := $(BUILD)/pkghello-root
 PKGHELLO_PKG := $(BUILD)/pkghello.swpkg
@@ -347,6 +353,21 @@ else
 NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
 endif
+
+# SU-B: a signed test SWSITE bundle (+ a tampered copy) for site-bundle-test.
+# OPT-IN via INCLUDE_SITE_TEST=1 so production images carry no test fixtures.
+# The site-signing PUBLIC key is baked unconditionally (production `swupdate
+# site` needs it to verify bundles).
+SITE_TEST_BUNDLE := $(BUILD)/site-test.swsite
+SITE_TEST_BAD_BUNDLE := $(BUILD)/site-test-bad.swsite
+INCLUDE_SITE_TEST ?= 0
+ifeq ($(INCLUDE_SITE_TEST),1)
+SITE_TEST_DEPS := $(SITE_TEST_BUNDLE) $(SITE_TEST_BAD_BUNDLE)
+SITE_TEST_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swupdate-test; cp $(SITE_TEST_BUNDLE) $(BASE_ROOT)/usr/share/swupdate-test/site.swsite; cp $(SITE_TEST_BAD_BUNDLE) $(BASE_ROOT)/usr/share/swupdate-test/site-bad.swsite
+else
+SITE_TEST_DEPS :=
+SITE_TEST_PACK_CMD := true
+endif
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -384,6 +405,7 @@ USER_SWOSKSTAGE_ELF := $(BUILD)/swos-kstage.elf
 USER_SWOSKACTIVATE_ELF := $(BUILD)/swos-kactivate.elf
 USER_SWOSKCONFIRM_ELF := $(BUILD)/swos-kconfirm.elf
 USER_LS_ELF := $(BUILD)/ls.elf
+USER_SWUPDATE_ELF := $(BUILD)/swupdate.elf
 USER_CAT_ELF := $(BUILD)/cat.elf
 USER_ECHO_ELF := $(BUILD)/echo.elf
 USER_PWD_ELF := $(BUILD)/pwd.elf
@@ -463,6 +485,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SWOSKACTIVATE_ELF) \
 	$(USER_SWOSKCONFIRM_ELF) \
 	$(USER_LS_ELF) \
+	$(USER_SWUPDATE_ELF) \
 	$(USER_CAT_ELF) \
 	$(USER_ECHO_ELF) \
 	$(USER_PWD_ELF) \
@@ -526,7 +549,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test errno-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image swpkg swpkg-header-integrity-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -798,6 +821,14 @@ TLS_SWIFT_SRCS := userland/lib/tls13.swift userland/lib/x509.swift userland/lib/
 $(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) -o $@
 
+# SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
+# TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
+# already includes sha256, so add only ed25519+sha512 on top of it. (Defined here,
+# after TLS_SWIFT_SRCS, so the prerequisite list expands non-empty.)
+SWUPDATE_SWIFT_SRCS := $(TLS_SWIFT_SRCS) kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+$(BUILD)/user_swupdate.o: userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) -o $@
+
 # /bin/acme links the ACME message layer + JOSE/ASN.1 + P-256 over the same
 # TLS 1.3 client as tlsget, all into one Embedded module.
 ACME_SWIFT_SRCS := userland/lib/acme.swift userland/lib/jose.swift userland/lib/asn1.swift \
@@ -962,6 +993,9 @@ $(USER_SWOSKCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUIL
 
 $(USER_LS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ls.o -o $@
+
+$(USER_SWUPDATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swupdate.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swupdate.o -o $@
 
 $(USER_CAT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cat.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cat.o -o $@
@@ -1351,6 +1385,12 @@ $(IMG_SIGNING_PUB): | $(MODELSIGN) $(MODEL_DIR)
 	$(MODELSIGN) keygen $(IMG_SIGNING_SEED) $@
 $(IMG_SIGNING_SEED): $(IMG_SIGNING_PUB)
 
+# SU-B: the site-signing keypair (used by sitepack to sign SWSITE bundles; pub
+# half baked into the image for /bin/swupdate to verify against).
+$(SITE_SIGNING_PUB): | $(MODELSIGN) $(MODEL_DIR)
+	$(MODELSIGN) keygen $(SITE_SIGNING_SEED) $@
+$(SITE_SIGNING_SEED): $(SITE_SIGNING_PUB)
+
 model: $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_BIN) $(MODEL_TOK32) $(MODEL_Q8) $(MODEL15_Q8)
 
 docs-test: | $(BUILD)/.dir
@@ -1705,6 +1745,28 @@ nginx-data-test: build $(QEMU_DTB) base-image
 nginx-tls-test: build $(QEMU_DTB) base-image
 	./tests/nginx_tls_test.sh
 
+# M-A: reflash-free site updates, seed/recovery. swos-init runs `swupdate seed`
+# at boot: a fresh /data is seeded from the baked default (nginx then serves it
+# from /data/www/current), and a crash-interrupted atomic swap is recovered on
+# the next boot — proving content lives on /data and survives reboot without a
+# base-image reflash. Needs the base image and host curl.
+site-seed-test: build $(QEMU_DTB) base-image
+	./tests/site_seed_test.sh
+
+# SU-B: signed-bundle apply. Forces a repack with INCLUDE_SITE_TEST=1 so the
+# signed test bundle (+ tampered copy) is baked under /usr/share/swupdate-test.
+site-bundle-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_SITE_TEST=1
+	./tests/site_bundle_test.sh
+
+# SU-C: full operator path — `/bin/swupdate site <https-url>` over bounded-sshd
+# fetches a signed bundle from a host HTTPS server, verifies + atomically swaps
+# it, nginx serves the new content; survives reboot; tampered bundle rejected.
+# Uses the test bundles built by the SITE_TEST_* rules (served from the host).
+site-update-test: build $(QEMU_DTB) base-image $(SSHKEY) $(SITE_TEST_BUNDLE) $(SITE_TEST_BAD_BUNDLE)
+	./tests/site_update_test.sh
+
 acme-mock-test: build $(QEMU_DTB) base-image
 	./tests/acme_mock_test.sh
 
@@ -2054,6 +2116,22 @@ $(PKGSTORE): tools/pkgstore.swift tools/packfs.swift kernel/crypto/sha256.swift 
 
 pkgstore: $(PKGSTORE)
 
+# SU-B: host tool that packs a static site into a signed SWSITE bundle.
+$(SITEPACK): tools/sitepack.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) tools/sitepack.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+
+sitepack: $(SITEPACK)
+
+# Pack+sign the fixture site into a test bundle; the "bad" copy corrupts a
+# payload byte (past the 64B sig + 64B header) so both the signature and the
+# payload sha256 fail to verify.
+SITE_TEST_FIXTURES := $(shell find tests/fixtures/site-update -type f 2>/dev/null | sort)
+$(SITE_TEST_BUNDLE): $(SITEPACK) $(SITE_SIGNING_SEED) $(SITE_TEST_FIXTURES) Makefile | $(BUILD)/.dir
+	$(SITEPACK) create tests/fixtures/site-update $@ --seed $(SITE_SIGNING_SEED)
+$(SITE_TEST_BAD_BUNDLE): $(SITE_TEST_BUNDLE)
+	cp $< $@
+	printf '\377' | dd of=$@ bs=1 seek=200 conv=notrunc 2>/dev/null
+
 $(PKGREPO): tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/pkgrepo.swift tools/packfs.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
@@ -2272,7 +2350,7 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) $(SITE_SIGNING_PUB) $(SITE_TEST_DEPS) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -2313,6 +2391,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	if [ -n "$(NGINX_SITE_DIR)" ]; then cp -R "$(NGINX_SITE_DIR)/." $(BASE_ROOT)/usr/share/nginx/html/; else cp $(BUILD)/nginx-root/usr/share/nginx/html/index.html $(BASE_ROOT)/usr/share/nginx/html/index.html; fi
 	mkdir -p $(BASE_ROOT)/usr/etc/nginx/certs
 	cp $(BUILD)/nginx-certs/server.crt $(BUILD)/nginx-certs/server.key $(BASE_ROOT)/usr/etc/nginx/certs/
+	mkdir -p $(BASE_ROOT)/etc/swupdate
+	cp $(SITE_SIGNING_PUB) $(BASE_ROOT)/etc/swupdate/site-root.pub
+	$(SITE_TEST_PACK_CMD)
 	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
@@ -2378,6 +2459,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SWOSKACTIVATE_ELF) $(BASE_ROOT)/bin/swos-kactivate
 	cp $(USER_SWOSKCONFIRM_ELF) $(BASE_ROOT)/bin/swos-kconfirm
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
+	cp $(USER_SWUPDATE_ELF) $(BASE_ROOT)/bin/swupdate
 	cp $(USER_CAT_ELF) $(BASE_ROOT)/bin/cat
 	cp $(USER_ECHO_ELF) $(BASE_ROOT)/bin/echo
 	cp $(USER_PWD_ELF) $(BASE_ROOT)/bin/pwd
