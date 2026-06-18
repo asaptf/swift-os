@@ -6552,3 +6552,61 @@ its platform map from ACPI with no device tree. Remaining: **H6** (bring-up on
 the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
 via the provider rescue system, confirm with the user before the destructive
 step, iterate over serial/VNC until SSH reaches SwiftOS).
+
+## QW-series — quick-win hardening (post-M13 remediation)
+
+### QW3 — endpoint owner-tagging + orphan-zombie reaper, and a PCIe-table teardown leak fix (DONE, 2026-06-18)
+
+**Goal.** Adopt the L4/seL4 owner-tagging + deterministic reclamation-on-death
+discipline for IPC endpoints, and stop leaking process slots for orphaned
+children that are reparented to the kernel and then exit with no waiter.
+
+**Part (a) — Endpoint `ownerProc` + reclamation on death (`kernel/vfs/vfs.swift`).**
+- `struct Endpoint` gained `var ownerProc = -1`, mirroring `DeviceGrant.ownerProc`.
+- `vfsEndpointCreate` stamps the creating process as owner (under `vfsLock`).
+- `releaseEndpointsOwnedBy(slot)` (new) is called from `vfsProcessCloseAll` after
+  the FD-close loop, as a deterministic owner-tagged backstop. It funnels through
+  the existing `resetEndpointSlotForReuse` (preserving the bump-allocated `bufPtr`
+  for reuse) and is idempotent. This is defense-in-depth: the FD-close path
+  already reclaims endpoints whose ends were all FDs of the dying slot. Ownership
+  transfer across IPC/fork is a follow-up (creator-owns is sufficient here).
+
+**Part (b) — Orphan-zombie reaper leak (`kernel/user/process.swift`).** The real
+leak: when a process **P** with a live child **C** was reaped, `reapProcess`
+reparented **C** to the kernel (`pParent = -1`); when **C** later exited,
+`wakeParent` was a no-op (parent `-1`) and nothing at runtime reaped a
+`-1`-parented zombie, so **C** permanently consumed one of the 16 `maxProc` slots
+until reboot. Fix:
+- `reapProcess` now reaps already-quiesced zombie children **directly**
+  (re-scanning, since a reap can recursively reparent/reap descendants) instead of
+  only reparenting; still-live adopted children are reparented to the kernel and
+  flagged in a new `pReparentedOrphan` array.
+- `schedule()` collects a runtime-reparented orphan zombie (`pParent == -1 &&
+  pReparentedOrphan`) the instant it quiesces. The flag gates this so it never
+  races an orchestrator (`processRunElf`/`processRunPair`/S5 helpers) waiting on a
+  born-top-level (`parent: -1` at creation) zombie it reaps itself — those are not
+  flagged. SMP-safe: general EL0 (forks) is CPU0-homed, so the in-scheduler reap
+  fires only on the dispatching CPU under the existing IRQ-mask + quiesce
+  discipline.
+- No new syscalls; the ABI is unchanged. `processLiveSlotCount` /
+  `vfsEndpointInUseCount` are kernel-internal observability only.
+
+**Root-cause fix surfaced by the test (`kernel/mm/vm.swift`).** On non-VirtualBox
+boards `address_space_create` allocates an `l0[1]` PCIe-64-bit-MMIO-window L1
+table (`l1pci`, the H2 device window mirrored into every space), but
+`address_space_destroy` only walked `l0[0]` and **never freed `l1pci`** — one
+leaked frame per address-space teardown. This was **pre-existing on `main`** (the
+`runReclaimDemo` self-test was already red, ~8 frames/round across fork/exec/spawn
+churn; confirmed on a clean tree before touching it). `address_space_destroy` now
+frees the `l0[1]` table (guarded on a valid table descriptor, so the VirtualBox
+path — which leaves `l0[1]` empty — is a no-op). This is required for QW3's
+frame-baseline assertion and also turns `reclaim` green again.
+
+**Acceptance.** New `make orphan-reap-test` (`tests/orphan_reap_test.sh` +
+`userland/orphandemo.c` + in-kernel `runOrphanReapDemo` in `kernel/main.swift`).
+The self-test runs 20 rounds of the orphan scenario — a parent forks a child
+(which owns and abandons an IPC endpoint) and exits without waiting, so the child
+is reparented to the kernel and later exits — and asserts that live process slots,
+PMM frames, and endpoint slots all return to baseline. PASS single-core **and**
+`-smp 4` (slots 0→0, frames 60901→60901, endpoints 0→0). `reclaim OK` (was FAIL);
+`make smp-test` still PASS; `make build` clean (no new warnings).
