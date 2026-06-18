@@ -150,8 +150,35 @@ private struct Endpoint {
     // Both ends of a freshly created endpoint live in the creating process, so
     // the kernel can deterministically reclaim it when that process dies.
     var ownerProc = -1
+    // QW1: a kernel-internal reply-port token (0 = none) carried alongside a
+    // request delivered by ipc_call. ipc_reply_recv hands it to the receiving
+    // server so the server can target the exact caller to reply to. Plain
+    // ipc_send leaves it 0. Cleared when the message is consumed.
+    var replyToken: UInt64 = 0
 }
 private let endpointMsgCap = 256
+
+// QW1: a transient one-shot reply port — the synchronous-RPC counterpart to the
+// Endpoint slot. ipc_call mints one, parks the caller on it, and records the
+// request's token in the endpoint slot so the receiving server learns the port.
+// ipc_reply_recv validates the token, deposits the reply, and wakes the exact
+// parked caller. The port is named to the server only as a kernel-internal token
+// (generation << 32 | index+1), never a user-forgeable fd, and is validated on
+// every reply (must be inUse, generation-matched, and belong to the server's
+// endpoint), so a user cannot reply to an arbitrary caller's port.
+private struct ReplyPort {
+    var inUse = false
+    var bufPtr: UInt = 0        // 256-byte reply buffer (endpointMsgCap), allocated once & reused
+    var hasReply = false        // a server has deposited its reply (bytes ± a handle)
+    var replyLen = 0
+    var hasHandle = false
+    var handle = HandleEntry()
+    var callerSlot = -1         // scheduler slot of the parked caller (wake target)
+    var endpoint = -1           // owning endpoint, so the recv-end EOF path can fail pending ports
+    var generation: UInt32 = 0  // nonce, bumped each alloc & persisted across free: a freed token never revalidates
+}
+private let maxReplyPorts = 16
+private var replyPorts = [ReplyPort](repeating: ReplyPort(), count: maxReplyPorts)
 
 private struct EventCounter {
     var inUse = false
@@ -1153,6 +1180,10 @@ private func releaseDescription(_ d: Int) {
             if endpoints[ep].sendRefs == 0 { ipcWakeWaiters(ep) }
         } else {
             if endpoints[ep].recvRefs > 0 { endpoints[ep].recvRefs -= 1 }
+            // QW1: when the last receiver closes, no server can reply, so wake
+            // any callers parked in ipc_call on a reply port for this endpoint;
+            // they re-check recvRefs and return errPipe (mirrors the QW2 EOF wake).
+            if endpoints[ep].recvRefs == 0 { replyPortsWakeForEndpointEOF(ep) }
         }
         if endpoints[ep].sendRefs == 0 && endpoints[ep].recvRefs == 0 {
             // Balance an in-flight handle that was never received before teardown.
@@ -1321,6 +1352,87 @@ func ipcForgetSlot(_ slot: Int) {
     let daif = vfsLock()
     for ep in 0..<maxEndpoints {
         ipcClearWaiterSlot(ep, Int32(slot))
+    }
+    vfsUnlock(daif)
+}
+
+// ---- QW1: reply-port helpers (all callers must hold vfsLock) ---------------
+
+// The token is opaque to userland: (generation << 32) | (index + 1). The +1
+// keeps 0 reserved as the "no reply" sentinel, and the generation makes a freed
+// port's token fail revalidation after the slot is reused.
+private func replyPortToken(_ pr: Int) -> UInt64 {
+    (UInt64(replyPorts[pr].generation) << 32) | UInt64(pr + 1)
+}
+
+// Decode a token to its reply-port index, or -1 if it is the sentinel, out of
+// range, names a free port, or fails the generation check (stale/forged).
+private func decodeReplyPort(_ token: UInt64) -> Int {
+    if token == 0 { return -1 }
+    let idx = Int(token & 0xFFFF_FFFF) - 1
+    if idx < 0 || idx >= maxReplyPorts || !replyPorts[idx].inUse { return -1 }
+    if replyPorts[idx].generation != UInt32(truncatingIfNeeded: token >> 32) { return -1 }
+    return idx
+}
+
+// Mint a reply port for `ep`, owned by caller scheduler slot `callerSlot`. The
+// 256-byte buffer is allocated lazily once and kept attached to the slot across
+// free (mirrors allocEndpoint), so the hot path never calls swiftos_kernel_alloc.
+private func allocReplyPort(endpoint ep: Int, callerSlot: Int) -> Int {
+    for i in 0..<maxReplyPorts where !replyPorts[i].inUse {
+        var bufPtr = replyPorts[i].bufPtr
+        if bufPtr == 0 {
+            guard let buf = swiftos_kernel_alloc(UInt(endpointMsgCap), 16) else { return -1 }
+            bufPtr = UInt(bitPattern: buf)
+        }
+        let gen = replyPorts[i].generation &+ 1
+        replyPorts[i] = ReplyPort()
+        replyPorts[i].inUse = true
+        replyPorts[i].bufPtr = bufPtr
+        replyPorts[i].generation = gen
+        replyPorts[i].endpoint = ep
+        replyPorts[i].callerSlot = callerSlot
+        return i
+    }
+    return -1
+}
+
+// Release a reply port. Keeps the buffer and generation for reuse (bumped on the
+// next alloc). `releaseHandle` MUST be true when the port still holds a moved
+// handle that no one has collected (caller died after a server reply) so the
+// underlying description ref is balanced; it is false on the normal collect path
+// where ipc_call already installed the handle into a fresh fd before freeing.
+private func freeReplyPort(_ pr: Int, releaseHandle: Bool = false) {
+    if pr < 0 || pr >= maxReplyPorts { return }
+    if releaseHandle && replyPorts[pr].hasHandle && replyPorts[pr].handle.inUse {
+        releaseDescription(replyPorts[pr].handle.object)
+    }
+    let bufPtr = replyPorts[pr].bufPtr
+    let gen = replyPorts[pr].generation
+    replyPorts[pr] = ReplyPort()
+    replyPorts[pr].bufPtr = bufPtr
+    replyPorts[pr].generation = gen
+}
+
+// Wake every caller parked on a reply port for `ep` after the last receiver
+// closes (recvRefs == 0): no server can ever reply, so the woken caller re-checks
+// recvRefs under lock and returns errPipe, then frees its own port. We only wake
+// here (never free) to keep reply-port ownership with the caller.
+private func replyPortsWakeForEndpointEOF(_ ep: Int) {
+    for i in 0..<maxReplyPorts where replyPorts[i].inUse && replyPorts[i].endpoint == ep {
+        let slot = replyPorts[i].callerSlot
+        if slot >= 0 { processWakeFromFutex(slot) }
+    }
+}
+
+// Reclaim any reply port owned by an exiting caller slot, mirroring
+// ipcForgetSlot. A server reply that lands after this finds a stale token and is
+// rejected (errInvalid) — never a dangling callerSlot. Releases an uncollected
+// reply handle so its description ref is balanced.
+func replyPortForgetSlot(_ slot: Int) {
+    let daif = vfsLock()
+    for i in 0..<maxReplyPorts where replyPorts[i].inUse && replyPorts[i].callerSlot == slot {
+        freeReplyPort(i, releaseHandle: true)
     }
     vfsUnlock(daif)
 }
@@ -1654,6 +1766,22 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                             if endpoints[ep].msgLen < 0 || endpoints[ep].msgLen > endpointMsgCap { return false }
                             if endpoints[ep].hasHandle {
                                 let entry = endpoints[ep].handle
+                                if !entry.inUse { return false }
+                                let d = entry.object
+                                if d < 0 || d >= maxOpenDescriptions { return false }
+                                if !openDescriptions[d].inUse { return false }
+                                descRefs[d] += 1
+                            }
+                        }
+
+                        // QW1: a reply port holding a moved (replied) handle owns
+                        // a description ref exactly like an endpoint's in-flight
+                        // handle — count it so the refcount audit stays balanced.
+                        for pr in 0..<maxReplyPorts where replyPorts[pr].inUse {
+                            if replyPorts[pr].bufPtr == 0 { return false }
+                            if replyPorts[pr].replyLen < 0 || replyPorts[pr].replyLen > endpointMsgCap { return false }
+                            if replyPorts[pr].hasHandle {
+                                let entry = replyPorts[pr].handle
                                 if !entry.inUse { return false }
                                 let d = entry.object
                                 if d < 0 || d >= maxOpenDescriptions { return false }
@@ -2960,6 +3088,290 @@ func vfsIpcRecv(fd: Int, msgVA: UInt) -> Int {
             // Re-enter the loop; re-check hasMsg/sendRefs under lock.
         } else {
             // Waiter slots full — fall back to yield-and-repoll.
+            vfsUnlock(daif)
+            processYieldForIO()
+        }
+    }
+}
+
+// QW1: synchronous request/reply over a transient reply port. The user-side msg
+// structs use fixed little-endian offsets (like ipc_send/ipc_recv); the u64
+// fields lead so the trailing i32 needs no struct padding the kernel must skip.
+//   CALL  off 0:  buf (u64)        off 8:  len (u64)
+//         off 16: reply_buf (u64)  off 24: reply_cap (u64)
+//         off 32: out_handle_fd (u64 user VA → i32)   off 40: handle_fd (i32, <0 = none)
+//   REPLY_RECV
+//         off 0:  reply_port (u64 token, 0 = no reply / first turn)
+//         off 8:  reply_buf (u64)  off 16: reply_len (u64)
+//         off 24: recv_buf (u64)   off 32: recv_cap (u64)
+//         off 40: out_handle_fd (u64 user VA → i32)
+//         off 48: out_reply_port (u64 user VA → u64)
+//         off 56: reply_handle_fd (i32, <0 = none)
+private let ipcCallMsgSize: UInt = 44
+private let ipcReplyRecvMsgSize: UInt = 60
+
+/// ipc_call(fd, &msg) -> reply byte count: send up to endpointMsgCap request BYTES
+/// (± one moved handle) on an endpoint SEND end, then BLOCK on a freshly minted
+/// reply port until the server replies. On wake, copy the reply bytes into
+/// reply_buf (≤ reply_cap), install any replied handle as a new fd written to
+/// *out_handle_fd (else -1), free the reply port, and return the reply byte count.
+/// errAgain if the single-slot channel is busy; errPipe if every receiver closes
+/// before replying; errNoSpace if no reply port is free.
+func vfsIpcCall(fd: Int, msgVA: UInt) -> Int {
+    let proc = currentVFSProcess()
+    let me = processCurrentSlot()
+    if me < 0 { return errInvalid }
+
+    guard let m = userReadableBuffer(msgVA, ipcCallMsgSize) else { return errInvalid }
+    let buf = UInt(le64(m, 0))
+    let len = Int(le64(m, 8))
+    let replyBuf = UInt(le64(m, 16))
+    let replyCap = Int(le64(m, 24))
+    let outHandleVA = UInt(le64(m, 32))
+    let handleFd = Int(Int32(bitPattern: le32(m, 40)))
+    if len < 0 || replyCap < 0 { return errInvalid }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+
+    let portIdx: Int
+    let token: UInt64
+    do {
+        let daif = vfsLock()
+        // Validate the send end exactly as ipc_send does.
+        guard validFD(proc, fd) else { vfsUnlock(daif); return errBadFD }
+        let sender = fdEntry(proc, fd)
+        guard sender.rights.contains(.write) else { vfsUnlock(daif); return errBadFD }
+        guard sender.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
+        let desc = openDescriptions[sender.object]
+        guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { vfsUnlock(daif); return errInvalid }
+        let ep = desc.node
+        guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { vfsUnlock(daif); return errInvalid }
+        if endpoints[ep].recvRefs == 0 { vfsUnlock(daif); return errPipe }
+        if endpoints[ep].hasMsg { vfsUnlock(daif); return errAgain }
+
+        // Validate the moved handle (if any) before committing anything.
+        if handleFd >= 0 {
+            guard validFD(proc, handleFd), handleFd != fd else { vfsUnlock(daif); return errBadFD }
+            let moved = fdEntry(proc, handleFd)
+            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
+            guard !handleNamesEndpoint(moved, endpoint: ep) else { vfsUnlock(daif); return errInvalid }
+        }
+        // Validate the request payload is readable before minting the port.
+        let n = min(len, endpointMsgCap)
+        var src: UnsafePointer<UInt8>? = nil
+        if n > 0 {
+            guard let s = userReadableBuffer(buf, UInt(n)) else { vfsUnlock(daif); return errInvalid }
+            src = s
+        }
+
+        // Mint the reply port, then deliver the request (no failure points left).
+        let p = allocReplyPort(endpoint: ep, callerSlot: me)
+        if p == -1 { vfsUnlock(daif); return errNoSpace }
+        portIdx = p
+        token = replyPortToken(p)
+
+        if n > 0, let s = src {
+            let dst = UnsafeMutablePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
+            for i in 0..<n { dst[i] = s[i] }
+        }
+        endpoints[ep].msgLen = n
+        if handleFd >= 0 {
+            endpoints[ep].handle = fdEntry(proc, handleFd)
+            endpoints[ep].hasHandle = true
+            setFDEntry(proc, handleFd, HandleEntry())       // move, no release
+        }
+        endpoints[ep].replyToken = token
+        endpoints[ep].hasMsg = true
+        ipcWakeWaiters(ep)                                  // wake a server parked in reply_recv
+
+        // Park on the reply port under the SAME lock the reply side takes, so a
+        // reply that races us cannot be lost (mirrors QW2's recv park).
+        if !processPrepareBlockOnFutex() {
+            // Slot vanished mid-call (should not happen): undo our delivery so the
+            // server never sees a request no one is waiting on, then fail.
+            if endpoints[ep].hasHandle && endpoints[ep].handle.inUse {
+                releaseDescription(endpoints[ep].handle.object)
+            }
+            endpoints[ep].handle = HandleEntry()
+            endpoints[ep].hasHandle = false
+            endpoints[ep].hasMsg = false
+            endpoints[ep].msgLen = 0
+            endpoints[ep].replyToken = 0
+            freeReplyPort(portIdx)
+            vfsUnlock(daif)
+            return errInvalid
+        }
+        vfsUnlock(daif)
+    }
+    processYieldAfterPreparedFutexBlock()
+
+    // Woken: collect the reply, re-validating the port each turn (the caller can
+    // be woken spuriously, by a server reply, or by recv-end EOF).
+    while true {
+        let daif = vfsLock()
+        guard portIdx >= 0 && portIdx < maxReplyPorts && replyPorts[portIdx].inUse,
+              replyPorts[portIdx].callerSlot == me,
+              replyPortToken(portIdx) == token else {
+            // Port reclaimed out from under us (e.g. our own teardown raced): gone.
+            vfsUnlock(daif)
+            return errPipe
+        }
+        let ep = replyPorts[portIdx].endpoint
+        if replyPorts[portIdx].hasReply {
+            let rn = min(replyPorts[portIdx].replyLen, replyCap)
+            var newfd: Int32 = -1
+            var installed = -1
+            if replyPorts[portIdx].hasHandle {
+                installed = allocFDInProcess(proc, from: 0)
+                if installed == -1 { vfsUnlock(daif); return errNoSpace }
+            }
+            if rn > 0 {
+                guard let dst = userWritableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return errInvalid }
+                let s = UnsafePointer<UInt8>(bitPattern: replyPorts[portIdx].bufPtr)!
+                for i in 0..<rn { dst[i] = s[i] }
+            }
+            if replyPorts[portIdx].hasHandle {
+                setFDEntry(proc, installed, replyPorts[portIdx].handle)  // ref moves to the new fd
+                newfd = Int32(installed)
+            }
+            UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
+            freeReplyPort(portIdx)   // handle (if any) already moved to `installed`
+            vfsUnlock(daif)
+            return rn
+        }
+        // No reply yet: if the receiving side is gone, fail; else re-park.
+        if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse || endpoints[ep].recvRefs == 0 {
+            freeReplyPort(portIdx)
+            vfsUnlock(daif)
+            return errPipe
+        }
+        if !processPrepareBlockOnFutex() { freeReplyPort(portIdx); vfsUnlock(daif); return errInvalid }
+        vfsUnlock(daif)
+        processYieldAfterPreparedFutexBlock()
+    }
+}
+
+/// ipc_reply_recv(fd, &msg) -> request byte count: the server hot loop verb —
+/// reply to the previous request (named by msg.reply_port; skipped when it is the
+/// 0 sentinel on the first turn), then block for the next request. The reply
+/// deposits ≤ endpointMsgCap bytes (± one moved handle) into the named port and
+/// wakes its parked caller. The receive phase mirrors ipc_recv (QW2 park/wake) and
+/// additionally writes the new request's reply-port token to *out_reply_port so
+/// the server can reply to it next turn. A stale/forged token is rejected with
+/// errInvalid; errPipe when every sender closes first.
+func vfsIpcReplyRecv(fd: Int, msgVA: UInt) -> Int {
+    let proc = currentVFSProcess()
+
+    guard let m = userReadableBuffer(msgVA, ipcReplyRecvMsgSize) else { return errInvalid }
+    let replyTokenIn = le64(m, 0)
+    let replyBuf = UInt(le64(m, 8))
+    let replyLen = Int(le64(m, 16))
+    let recvBuf = UInt(le64(m, 24))
+    let recvCap = Int(le64(m, 32))
+    let outHandleVA = UInt(le64(m, 40))
+    let outReplyPortVA = UInt(le64(m, 48))
+    let replyHandleFd = Int(Int32(bitPattern: le32(m, 56)))
+    if replyLen < 0 || recvCap < 0 { return errInvalid }
+    guard let outHandle = userWritableBuffer(outHandleVA, 4) else { return errInvalid }
+    guard let outReplyPort = userWritableBuffer(outReplyPortVA, 8) else { return errInvalid }
+
+    // Validate the recv end (server identity) and pin its description for the block.
+    let borrowed = borrowDescriptionForFD(proc, fd)
+    if borrowed.err != 0 { return borrowed.err }
+    let entry = borrowed.entry
+    let desc = borrowed.desc
+    let descIndex = borrowed.descIndex
+    defer { releaseBorrowedDescription(descIndex) }
+    guard entry.rights.contains(.read) else { return errBadFD }
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return errInvalid }
+    let ep = desc.node
+
+    // ---- Reply phase: deposit the reply for the previous request, wake caller --
+    if replyTokenIn != 0 {
+        let daif = vfsLock()
+        let pr = decodeReplyPort(replyTokenIn)
+        // The port must exist, await a reply, have a live caller, and belong to
+        // the endpoint this server actually receives on — so a server cannot
+        // reply to another endpoint's caller, and a stale/forged token is refused.
+        guard pr >= 0, !replyPorts[pr].hasReply, replyPorts[pr].callerSlot >= 0,
+              replyPorts[pr].endpoint == ep else {
+            vfsUnlock(daif)
+            return errInvalid
+        }
+        if replyHandleFd >= 0 {
+            guard validFD(proc, replyHandleFd), replyHandleFd != fd else { vfsUnlock(daif); return errBadFD }
+            let moved = fdEntry(proc, replyHandleFd)
+            guard moved.rights.contains(.transfer) else { vfsUnlock(daif); return errAccess }
+        }
+        let rn = min(replyLen, endpointMsgCap)
+        if rn > 0 {
+            guard let s = userReadableBuffer(replyBuf, UInt(rn)) else { vfsUnlock(daif); return errInvalid }
+            let dst = UnsafeMutablePointer<UInt8>(bitPattern: replyPorts[pr].bufPtr)!
+            for i in 0..<rn { dst[i] = s[i] }
+        }
+        replyPorts[pr].replyLen = rn
+        if replyHandleFd >= 0 {
+            replyPorts[pr].handle = fdEntry(proc, replyHandleFd)
+            replyPorts[pr].hasHandle = true
+            setFDEntry(proc, replyHandleFd, HandleEntry())   // move, no release
+        }
+        replyPorts[pr].hasReply = true
+        let waker = replyPorts[pr].callerSlot
+        vfsUnlock(daif)
+        processWakeFromFutex(waker)
+    }
+
+    // ---- Receive phase: block for the next request (mirrors vfsIpcRecv) --------
+    enable_irq()
+    while true {
+        let daif = vfsLock()
+        if ep < 0 || ep >= maxEndpoints || !endpoints[ep].inUse {
+            vfsUnlock(daif)
+            return errInvalid
+        }
+        if endpoints[ep].hasMsg {
+            let n = min(endpoints[ep].msgLen, recvCap)
+            var newfd: Int32 = -1
+            var installed = -1
+            if endpoints[ep].hasHandle {
+                if !entry.rights.contains(.transfer) { vfsUnlock(daif); return errAccess }
+                installed = allocFDInProcess(proc, from: 0)
+                if installed == -1 { vfsUnlock(daif); return errNoSpace }
+            }
+            if n > 0 {
+                guard let dst = userWritableBuffer(recvBuf, UInt(n)) else { vfsUnlock(daif); return errInvalid }
+                let s = UnsafePointer<UInt8>(bitPattern: endpoints[ep].bufPtr)!
+                for i in 0..<n { dst[i] = s[i] }
+            }
+            if endpoints[ep].hasHandle {
+                setFDEntry(proc, installed, endpoints[ep].handle)
+                newfd = Int32(installed)
+            }
+            UnsafeMutableRawPointer(outHandle).storeBytes(of: newfd, toByteOffset: 0, as: Int32.self)
+            // Hand the server this request's reply-port token (0 if it arrived via
+            // plain ipc_send, which has no reply port).
+            UnsafeMutableRawPointer(outReplyPort).storeBytes(of: endpoints[ep].replyToken, toByteOffset: 0, as: UInt64.self)
+            endpoints[ep].handle = HandleEntry()
+            endpoints[ep].hasHandle = false
+            endpoints[ep].hasMsg = false
+            endpoints[ep].msgLen = 0
+            endpoints[ep].replyToken = 0
+            vfsUnlock(daif)
+            return n
+        }
+        if endpoints[ep].sendRefs == 0 {
+            vfsUnlock(daif)
+            return errPipe
+        }
+        let meSlot = Int32(processCurrentSlot())
+        if meSlot >= 0 && ipcRecordWaiter(ep, meSlot) {
+            if !processPrepareBlockOnFutex() {
+                ipcClearWaiterSlot(ep, meSlot)
+                vfsUnlock(daif)
+                return errInvalid
+            }
+            vfsUnlock(daif)
+            processYieldAfterPreparedFutexBlock()
+        } else {
             vfsUnlock(daif)
             processYieldForIO()
         }

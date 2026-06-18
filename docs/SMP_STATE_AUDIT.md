@@ -375,6 +375,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/vfs/vfs.swift:confineNodes`
 - `kernel/vfs/vfs.swift:cwdNodes`
 - `kernel/vfs/vfs.swift:devices`
+- `kernel/vfs/vfs.swift:endpointRecvWaiters`
 - `kernel/vfs/vfs.swift:endpoints`
 - `kernel/vfs/vfs.swift:eventCounters`
 - `kernel/vfs/vfs.swift:handles`
@@ -383,6 +384,7 @@ manifest entries left behind after globals move or disappear.
 - `kernel/vfs/vfs.swift:nodes`
 - `kernel/vfs/vfs.swift:openDescriptions`
 - `kernel/vfs/vfs.swift:pipes`
+- `kernel/vfs/vfs.swift:replyPorts`
 - `kernel/vfs/vfs.swift:vfsLockAcquireCount`
 - `kernel/vfs/vfs.swift:vfsLockContentionCount`
 - `kernel/vfs/vfs.swift:vfsLockWord`

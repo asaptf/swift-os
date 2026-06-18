@@ -97,6 +97,8 @@
 #define SYS_SYNC           88
 #define SYS_RECV           89
 #define SYS_REBOOT         90
+#define SYS_IPC_CALL       91
+#define SYS_IPC_REPLY_RECV 92
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -243,6 +245,53 @@ static inline long ipc_recv(int fd, void *buf, unsigned long cap, int *out_handl
     m.cap = cap;
     m.out_handle_fd = (unsigned long)out_handle_fd;
     return __syscall3(SYS_IPC_RECV, fd, (long)&m, 0);
+}
+
+// QW1: synchronous request/reply IPC over a transient kernel reply port — the
+// L4/seL4-family call / reply_recv verbs in our 256-byte byte-message model.
+// ipc_call sends `len` bytes from `buf` (and, if handle_fd >= 0, moves that
+// handle) on an endpoint SEND end, then BLOCKS until the server replies; the
+// reply bytes land in reply_buf (≤ reply_cap), any replied handle's new fd in
+// *out_handle_fd (else -1), and the reply byte count is returned.
+// ipc_reply_recv is the server hot loop: it replies to the previous request named
+// by `reply_port` (pass 0 on the first turn / to skip the reply), then blocks for
+// the next request, returning its bytes and writing the new request's reply token
+// to *out_reply_port so the server can reply to it next turn. The msg-struct field
+// order/offsets are byte-for-byte the kernel's LE parse in vfs.swift (u64 fields
+// lead so the trailing int needs no struct padding). Negative errno on error.
+static inline long ipc_call(int fd, const void *buf, unsigned long len, int handle_fd,
+                            void *reply_buf, unsigned long reply_cap, int *out_handle_fd) {
+    struct {
+        unsigned long buf; unsigned long len;
+        unsigned long reply_buf; unsigned long reply_cap;
+        unsigned long out_handle_fd; int handle_fd;
+    } m;
+    m.buf = (unsigned long)buf;
+    m.len = len;
+    m.reply_buf = (unsigned long)reply_buf;
+    m.reply_cap = reply_cap;
+    m.out_handle_fd = (unsigned long)out_handle_fd;
+    m.handle_fd = handle_fd;
+    return __syscall3(SYS_IPC_CALL, fd, (long)&m, 0);
+}
+static inline long ipc_reply_recv(int fd, unsigned long reply_port,
+                                  const void *reply_buf, unsigned long reply_len, int reply_handle_fd,
+                                  void *recv_buf, unsigned long recv_cap, int *out_handle_fd,
+                                  unsigned long *out_reply_port) {
+    struct {
+        unsigned long reply_port; unsigned long reply_buf; unsigned long reply_len;
+        unsigned long recv_buf; unsigned long recv_cap;
+        unsigned long out_handle_fd; unsigned long out_reply_port; int reply_handle_fd;
+    } m;
+    m.reply_port = reply_port;
+    m.reply_buf = (unsigned long)reply_buf;
+    m.reply_len = reply_len;
+    m.recv_buf = (unsigned long)recv_buf;
+    m.recv_cap = recv_cap;
+    m.out_handle_fd = (unsigned long)out_handle_fd;
+    m.out_reply_port = (unsigned long)out_reply_port;
+    m.reply_handle_fd = reply_handle_fd;
+    return __syscall3(SYS_IPC_REPLY_RECV, fd, (long)&m, 0);
 }
 
 static inline long lseek(int fd, long offset, int whence) {

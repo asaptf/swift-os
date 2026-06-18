@@ -3262,6 +3262,7 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
     vfsProcessCloseAll(slot: slot)
     futexForgetSlot(slot)
     ipcForgetSlot(slot)  // QW2: drop any endpoint waiter record for this slot
+    replyPortForgetSlot(slot)  // QW1: reclaim any reply port this caller parked on
     pWait[slot] = waitNone
     pWakeTick[slot] = 0
     pExit[slot] = 128 + sig
@@ -3581,6 +3582,7 @@ func processExit(_ code: Int) {
         recordS5eThreadExit(me)
         futexForgetSlot(me)
         ipcForgetSlot(me)  // QW2: drop any endpoint waiter record for this slot
+        replyPortForgetSlot(me)  // QW1: reclaim any reply port this thread parked on
         pState[me] = pUnused
         clearProcessSchedulerSlot(me)
         yieldToScheduler()
