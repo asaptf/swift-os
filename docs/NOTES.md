@@ -6610,3 +6610,66 @@ is reparented to the kernel and later exits — and asserts that live process sl
 PMM frames, and endpoint slots all return to baseline. PASS single-core **and**
 `-smp 4` (slots 0→0, frames 60901→60901, endpoints 0→0). `reclaim OK` (was FAIL);
 `make smp-test` still PASS; `make build` clean (no new warnings).
+
+### QW2 — blocking IPC park/wake (DONE, 2026-06-18)
+
+**Goal.** Replace the `vfsIpcRecv` busy-spin with a true L4/seL4-family
+rendezvous: a receiver that finds an empty endpoint parks its process slot
+in a fixed-size waiter table and is woken directly by `ipc_send` (or by the
+last sender closing), instead of cycling through the run queue on every timer
+tick.
+
+**Kernel (`kernel/vfs/vfs.swift`).** A module-level
+`endpointRecvWaiters[maxEndpoints × maxRecvWaitersPerEndpoint]` array (4
+slots per endpoint, `Int32`, allocation-free, always under `vfsLock`) replaces
+the busy-loop:
+
+- `ipcRecordWaiter` / `ipcClearWaiterSlot` / `ipcClearEndpointWaiters` /
+  `ipcWakeWaiters` helpers — all under `vfsLock`.
+- `ipcForgetSlot(_ slot: Int)` — mirrors `futexForgetSlot`; drops a dying
+  slot from every endpoint's waiter list so a reused slot cannot be spuriously
+  woken.
+- **`vfsIpcRecv` loop** — under `vfsLock`, if no message and senders are alive,
+  records `processCurrentSlot()` in the waiter table, calls
+  `processPrepareBlockOnFutex()` (sets `pBlocked`) **before releasing the
+  lock**, then `vfsUnlock` + `processYieldAfterPreparedFutexBlock()`. This is
+  the same lock-discipline as the futex park/wake backend and closes the
+  lost-wakeup window on SMP. If the per-endpoint waiter table is full, falls
+  back to the old `vfsUnlock + processYieldForIO()` path (correctness
+  preserved, no wake guarantee for the overflow case). Spurious wakes are safe
+  — the loop always re-validates `hasMsg`/`sendRefs` under lock.
+- **`vfsIpcSend`** — calls `ipcWakeWaiters(ep)` after `endpoints[ep].hasMsg =
+  true` (still under `vfsLock`).
+- **`releaseDescription` EOF wake** — when a send-end description is released
+  and `sendRefs` transitions to 0, `ipcWakeWaiters(ep)` is called; the woken
+  receiver re-checks `sendRefs == 0` and returns `errPipe`.
+- **`resetEndpointSlotForReuse`** — calls `ipcClearEndpointWaiters(ep)` so a
+  reused slot cannot inherit stale waiter records.
+
+**Process teardown (`kernel/user/process.swift`).** `ipcForgetSlot(slot/me)`
+is called from both teardown paths that already call `futexForgetSlot` —
+`processRemoteTerminate` and the thread-exit branch in `processExit` — so a
+slot freed before delivery cannot be woken after reuse.
+
+**No ABI changes.** Same syscall numbers, same message layouts (SEND 20 bytes,
+RECV 24 bytes), same userland headers. The change is purely internal and
+invisible to userland except that `ipc_recv` no longer burns CPU while
+waiting.
+
+**Lock ordering.** `vfsLock → processRunQueueLock(cpu)` (via
+`markProcessReadyOnHomeCpu` inside `processWakeFromFutex`). The reverse
+ordering (`processRunQueueLock → vfsLock`) does not exist anywhere in the
+codebase, so no deadlock is possible.
+
+**Acceptance.** New `make qw2-blocking-ipc-test` (`tests/qw2_blocking_ipc_test.sh`
++ `userland/qw2_ipc.c`). Two scenarios exercised at `-smp 4`:
+1. **Recv-then-send**: child prints `QW2-RECV-PARKED`, parks on `ipc_recv`
+   before any message; parent sleeps 200 ms and sends 5 bytes; child receives
+   and prints `QW2-RECV-OK 5`.
+2. **EOF wake**: child closes its own copy of the send end, parks on `ipc_recv`;
+   parent closes the send end → `sendRefs` reaches 0 → child wakes with
+   `errPipe (-32)` and prints `QW2-EOF-OK`.
+Final marker `QW2 OK`. Running at `-smp 4` means a lost cross-CPU wakeup
+causes the child to hang and the await to time out.
+PASS at `-smp 4`; `make ipc-socket-transfer-test` (C4b) and `make smp-test`
+still PASS; `make build` clean.
