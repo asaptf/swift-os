@@ -372,6 +372,173 @@ func updateStoreStagePayload() -> Int {
     return 0
 }
 
+// --- OS-3b: streamed staging of a base image into the inactive slot ----------
+//
+// The reflash-free path: /bin/swupdate downloads a signed SWSYS bundle to /data,
+// verifies it in userland (signature + monotonic version), then streams the base
+// image half into the INACTIVE A/B slot through this capability-gated, single-
+// owner sequence — begin / write* / commit — which is the ONLY privileged way to
+// write a slot (not a general FS write). Unlike updateStoreStagePayload (U1f-2b),
+// the source is a userland buffer, not an attached payload disk, so it works on a
+// live box with no extra disk. Power-fail-safe: the slot bytes are written and
+// flushed in full before the single manifest write-back marks the slot present
+// (the active slot is never touched — activation is a separate step). Mirrors the
+// pkg-store stream syscalls (kernel/pkg/store.swift).
+
+private let stageChunkMax = 64 * 1024     // max bytes per write syscall
+
+private var stageActive = false
+private var stageOwnerPid: Int = -1
+private var stageTargetSlot = -1
+private var stageSlotBaseByte: UInt64 = 0    // absolute byte offset of the slot on the store
+private var stageDeclaredBytes: UInt64 = 0   // declared base-image length
+private var stageDeclaredVersion: UInt64 = 0 // monotonic system version of this image
+private var stageWritten: UInt64 = 0
+private var stageFirst = InlineArray<64, UInt8>(repeating: 0) // header bytes for commit checks
+private var stageFirstCount = 0
+
+@inline(__always) private func stageReset() {
+    stageActive = false
+    stageOwnerPid = -1
+    stageTargetSlot = -1
+    stageSlotBaseByte = 0
+    stageDeclaredBytes = 0
+    stageDeclaredVersion = 0
+    stageWritten = 0
+    stageFirstCount = 0
+}
+
+/// OS-3b begin: validate the request and reserve the inactive slot for streaming.
+/// `version` is the monotonic OS version of the image; it must exceed the store's
+/// anti-rollback floor. `totalBytes` is the image length; it must fit the slot.
+/// capConsole-gated. Returns 0, or a negative errno. Syscall 83 (/bin/swupdate via
+/// the swos bridge). Does NOT mutate the manifest — only commit does.
+func updateStoreStageBegin(version: UInt64, totalBytes: UInt64) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if updateStoreActiveSlot < 0 { return Errno.noDev.code }
+    if !virtioBlkAvailable() || !virtioBlkIsUpdateStore() { return Errno.noDev.code }
+    guard let (chosen, _) = updateStoreReadChosen() else { return Errno.io.code }
+
+    let target = 1 - updateStoreActiveSlot
+    if target < 0 || target >= SwosbootFormat.slotCount { return Errno.noEntry.code }
+    let slotCapBytes = chosen.slot(target).lengthSectors &* 512
+    if totalBytes == 0 || totalBytes > slotCapBytes { return Errno.fileTooBig.code }
+
+    // Anti-rollback: a freshly staged image must be strictly newer than the floor
+    // (the highest version confirmed healthy). Refuse 0 (the floor's own value).
+    if version == 0 || version <= chosen.minSystemVersion { return Errno.perm.code }
+
+    stageReset()
+    stageActive = true
+    stageOwnerPid = processCurrentPid()
+    stageTargetSlot = target
+    stageSlotBaseByte = chosen.slotByteOffset(target)
+    stageDeclaredBytes = totalBytes
+    stageDeclaredVersion = version
+    return 0
+}
+
+/// OS-3b write: append `count` bytes from the userland buffer at `bufVA` to the
+/// inactive slot at the current cursor (read-modify-write tolerates any chunking).
+/// capConsole-gated, single-owner. Returns 0, or a negative errno. Syscall 84.
+func updateStoreStageWrite(bufVA: UInt, count: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !stageActive || stageOwnerPid != processCurrentPid() { return Errno.again.code }
+    if count == 0 { return 0 }
+    if count > UInt(stageChunkMax) { stageReset(); return Errno.invalid.code }
+    let remaining = stageDeclaredBytes - stageWritten
+    if UInt64(count) > remaining { stageReset(); return Errno.invalid.code }
+    guard let src = userReadableBuffer(bufVA, count) else { stageReset(); return Errno.fault.code }
+
+    // Capture the first 64 bytes for the commit-time header check.
+    var i = 0
+    while i < Int(count) && stageFirstCount < 64 {
+        stageFirst[stageFirstCount] = src[i]
+        stageFirstCount += 1
+        i += 1
+    }
+
+    let rc = virtioBlkStoreWriteRange(stageSlotBaseByte &+ stageWritten, UnsafeRawPointer(src), UInt32(count))
+    if rc != 0 { stageReset(); return Errno.io.code }
+    stageWritten &+= UInt64(count)
+    return 0
+}
+
+/// OS-3b commit: require the full image was written, confirm it begins with a
+/// signed v3 SWOSBASE header whose length matches what was declared, flush the
+/// slot durably, then mark the slot present + UNTRIED with a bumped generation and
+/// the staged system version recorded — persisted via the double-buffered manifest
+/// write-back. The active slot is untouched; the operator runs /bin/swos-activate
+/// next. capConsole-gated, single-owner. Returns 0, or a negative errno. Syscall 85.
+func updateStoreStageCommit() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !stageActive || stageOwnerPid != processCurrentPid() { return Errno.again.code }
+    if stageWritten != stageDeclaredBytes { stageReset(); return Errno.invalid.code }
+
+    // Header check: signed v3 SWOSBASE, and its self-described length
+    // (dataOffset + payloadLen, which equals a packfs image's exact byte size)
+    // matches the declared byte count — the same header shape U1f-2b validates.
+    var headerOK = false
+    withUnsafeBytes(of: &stageFirst) { raw in
+        let p = raw.baseAddress!
+        if stageFirstCount >= 64 {
+            let magic: StaticString = "SWOSBASE"
+            var m = true
+            magic.withUTF8Buffer { mm in
+                var i = 0
+                while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != mm[i] { m = false }; i += 1 }
+            }
+            let total = usLoad64(p, 48) &+ usLoad64(p, 56)
+            headerOK = m && usLoad32(p, 8) == 3 && total > 0 && total == stageDeclaredBytes
+        }
+    }
+    if !headerOK { stageReset(); return Errno.invalid.code }
+
+    // Durability: the slot bytes must hit stable media before the manifest names
+    // them, so a crash can never leave a present slot half-written.
+    if virtioBlkFlush() != 0 { stageReset(); return Errno.io.code }
+
+    guard let (chosen, chosenLBA) = updateStoreReadChosen() else { stageReset(); return Errno.io.code }
+    let target = stageTargetSlot
+    let version = stageDeclaredVersion
+    var updated = chosen
+    if target == 0 {
+        updated.slot0.present = true
+        updated.slot0.state = SwosbootFormat.stateUntried
+        updated.slot0.attemptCount = 0
+        updated.slot0.generation &+= 1
+        updated.slot0.systemVersion = version
+    } else {
+        updated.slot1.present = true
+        updated.slot1.state = SwosbootFormat.stateUntried
+        updated.slot1.attemptCount = 0
+        updated.slot1.generation &+= 1
+        updated.slot1.systemVersion = version
+    }
+    updated.sequence = chosen.sequence &+ 1
+    if !updateStoreWriteBack(updated, currentLBA: chosenLBA) { stageReset(); return Errno.io.code }
+
+    uartPuts("update-store: staged base image (")
+    uartPutUInt(stageDeclaredBytes)
+    uartPuts(" bytes, version ")
+    uartPutUInt(version)
+    uartPuts(") into slot ")
+    updateStoreLogSlot(target)
+    uartPuts("\n")
+    stageReset()
+    return 0
+}
+
+/// OS-3b abort: discard an in-progress stage. The inactive slot may hold partial
+/// bytes but is not marked present, so it is harmless. capConsole-gated. Syscall 86.
+func updateStoreStageAbort() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !stageActive { return 0 }
+    if stageOwnerPid != processCurrentPid() { return Errno.again.code }
+    stageReset()
+    return 0
+}
+
 /// U1f: report an A/B update payload disk attached alongside the store, by
 /// reading its sector-0 header through the secondary virtio-blk path and
 /// checking it is a signed v3 SWOSBASE base image. This proves the multi-device

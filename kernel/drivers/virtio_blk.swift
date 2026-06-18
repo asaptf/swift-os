@@ -778,6 +778,19 @@ func virtioBlkSelectPayload() -> UInt64 {
 func virtioBlkReselectStore() {
     if blkStoreDevice >= 0 { _ = blkSelectDevice(blkStoreDevice) }
 }
+// OS-3b: write `buf` to [byteOff, byteOff+len) on the update-store disk
+// (read-modify-write for partial sectors), bounds-checked against the store
+// capacity. Used by the capability-gated slot-staging path to fill the inactive
+// A/B slot from a userland buffer. `byteOff` is absolute on the store disk (the
+// caller adds the slot's base offset). Restores the served device afterward.
+func virtioBlkStoreWriteRange(_ byteOff: UInt64, _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
+    if blkStoreDevice < 0 { return -1 }
+    let cap = blkDeviceCapacity[blkStoreDevice] * UInt64(SECTOR_SIZE)
+    if byteOff + UInt64(len) > cap { return -2 }
+    let rc = virtioBlkWriteRangeToDevice(blkStoreDevice, byteOff, buf, len)
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
 
 // --- ESP/GPT boot disk (U1g-4) ----------------------------------------------
 // True if a GPT/ESP boot disk is attached on virtio-mmio (the loader's disk).

@@ -100,6 +100,10 @@
 #define SYS_IPC_CALL       91
 #define SYS_IPC_REPLY_RECV 92
 #define SYS_IPC_BADGE      93
+#define SYS_UPDATE_STAGE_BEGIN  94
+#define SYS_UPDATE_STAGE_WRITE  95
+#define SYS_UPDATE_STAGE_COMMIT 96
+#define SYS_UPDATE_STAGE_ABORT  97
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -556,6 +560,27 @@ static inline int kernel_activate(void) {
 // -5 EIO).
 static inline int kernel_confirm(void) {
     return (int)__syscall3(SYS_KERNEL_CONFIRM, 0, 0, 0);
+}
+
+// OS-3b: stream a signed base image into the inactive A/B slot. begin reserves
+// the slot ('version' is the monotonic OS version, which must exceed the store's
+// anti-rollback floor; 'total' is the image length, which must fit the slot);
+// write appends bytes; commit validates the SWOSBASE header + flushes + marks the
+// slot present/untried; abort discards. All need CAP_CONSOLE. 0 on success;
+// negative errno (-1 EPERM incl. anti-rollback, -19 ENODEV not store-booted,
+// -27 EFBIG too big, -22 EINVAL bad request/header, -14 EFAULT bad buffer,
+// -11 EAGAIN no active stage / wrong owner, -5 EIO write/flush failure).
+static inline int update_stage_begin(unsigned long version, unsigned long total) {
+    return (int)__syscall3(SYS_UPDATE_STAGE_BEGIN, (long)version, (long)total, 0);
+}
+static inline int update_stage_write(const void *buf, unsigned long count) {
+    return (int)__syscall3(SYS_UPDATE_STAGE_WRITE, (long)buf, (long)count, 0);
+}
+static inline int update_stage_commit(void) {
+    return (int)__syscall3(SYS_UPDATE_STAGE_COMMIT, 0, 0, 0);
+}
+static inline int update_stage_abort(void) {
+    return (int)__syscall3(SYS_UPDATE_STAGE_ABORT, 0, 0, 0);
 }
 
 // Export a serialized tail of the kernel log ring into buf. Returns bytes

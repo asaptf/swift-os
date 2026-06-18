@@ -94,6 +94,10 @@ private let sysReboot: UInt = 90          // reboot(cmd) — 0=SYSTEM_RESET, 1=S
 private let sysIpcCall: UInt = 91         // ipc_call(fd, &msg) — send + block for reply (QW1)
 private let sysIpcReplyRecv: UInt = 92    // ipc_reply_recv(fd, &msg) — reply then receive (QW1)
 private let sysIpcBadge: UInt = 93        // ipc_badge(fd, badge) — stamp a server-chosen client tag (QW4)
+private let sysUpdateStageBegin: UInt = 94 // update_stage_begin(version, total) — reserve inactive A/B slot for streaming (OS-3b); needs capConsole
+private let sysUpdateStageWrite: UInt = 95 // update_stage_write(buf, count) — append base-image bytes to the inactive slot (OS-3b); needs capConsole
+private let sysUpdateStageCommit: UInt = 96 // update_stage_commit() — validate, flush, mark slot present+untried (OS-3b); needs capConsole
+private let sysUpdateStageAbort: UInt = 97 // update_stage_abort() — discard an in-progress stage (OS-3b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -336,6 +340,14 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = espActivateOtherKernel() // U1g-5d: capConsole-gated kernel-slot flip via kernel-state
     } else if number == sysKernelConfirm {
         result = espConfirmBootedKernel() // U1g-5c: capConsole-gated kernel-slot health-confirm
+    } else if number == sysUpdateStageBegin {
+        result = updateStoreStageBegin(version: UInt64(frame[0]), totalBytes: UInt64(frame[1])) // OS-3b
+    } else if number == sysUpdateStageWrite {
+        result = updateStoreStageWrite(bufVA: frame[0], count: frame[1]) // OS-3b
+    } else if number == sysUpdateStageCommit {
+        result = updateStoreStageCommit() // OS-3b
+    } else if number == sysUpdateStageAbort {
+        result = updateStoreStageAbort() // OS-3b
     } else if number == sysLogRead {
         result = syscallLogRead(buffer: frame[0], capacity: frame[1], maxCount: frame[2])
     } else if number == sysLogStats {

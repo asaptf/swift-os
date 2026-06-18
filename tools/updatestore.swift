@@ -48,7 +48,7 @@ private func putLE64(_ buf: inout [UInt8], _ off: Int, _ v: UInt64) {
 private func buildManifest(active: Int, fallback: Int,
                            slot0LBA: UInt64, slot0Sectors: UInt64, slot0Gen: UInt32,
                            slot1LBA: UInt64, slot1Sectors: UInt64, slot1Gen: UInt32,
-                           sequence: UInt32) -> [UInt8] {
+                           sequence: UInt32, minSystemVersion: UInt64 = 0) -> [UInt8] {
     var m = [UInt8](repeating: 0, count: SwosbootFormat.manifestSize)
     let magic = Array("SWOSBOOT".utf8)
     for i in 0..<8 { m[i] = magic[i] }
@@ -58,6 +58,9 @@ private func buildManifest(active: Int, fallback: Int,
     putLE32(&m, 20, UInt32(active))
     putLE32(&m, 24, UInt32(fallback))
     putLE32(&m, 28, sequence)
+    // OS-3: anti-rollback floor (default 0). Slot system_version fields stay 0;
+    // the kernel records them when it stages a versioned image.
+    putLE64(&m, SwosbootFormat.minSystemVersionOffset, minSystemVersion)
 
     func writeSlot(_ index: Int, lba: UInt64, len: UInt64, gen: UInt32) {
         let o = SwosbootFormat.slotTableOffset + index * SwosbootFormat.slotEntrySize
@@ -80,8 +83,15 @@ private func buildManifest(active: Int, fallback: Int,
 struct UpdateStoreTool {
     static func main() {
         let args = CommandLine.arguments
-        guard args.count == 5 else {
-            fail("usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image>")
+        guard args.count == 5 || args.count == 7 else {
+            fail("usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image> [--min-version N]")
+        }
+        var minSystemVersion: UInt64 = 0
+        if args.count == 7 {
+            guard args[5] == "--min-version", let v = UInt64(args[6]) else {
+                fail("usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image> [--min-version N]")
+            }
+            minSystemVersion = v
         }
         let outPath = args[1]
         let activeArg = args[2].uppercased()
@@ -106,7 +116,7 @@ struct UpdateStoreTool {
         let manifest = buildManifest(active: active, fallback: fallback,
                                      slot0LBA: slot0LBA, slot0Sectors: slot0Sectors, slot0Gen: 1,
                                      slot1LBA: slot1LBA, slot1Sectors: slot1Sectors, slot1Gen: 2,
-                                     sequence: 1)
+                                     sequence: 1, minSystemVersion: minSystemVersion)
 
         // Self-check: the bytes we wrote must parse back through the shared core.
         let parsed = manifest.withUnsafeBytes {

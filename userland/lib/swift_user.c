@@ -240,6 +240,19 @@ int swiftos_kernel_confirm(void) {
     return kernel_confirm();
 }
 
+int swiftos_update_stage_begin(unsigned long version, unsigned long total) {
+    return update_stage_begin(version, total);
+}
+int swiftos_update_stage_write(const void *buf, unsigned long count) {
+    return update_stage_write(buf, count);
+}
+int swiftos_update_stage_commit(void) {
+    return update_stage_commit();
+}
+int swiftos_update_stage_abort(void) {
+    return update_stage_abort();
+}
+
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
     struct security_info si;
     int rc = security_info(&si);

@@ -90,6 +90,14 @@ int  swiftos_kernel_activate(void);
 // U1g-5c: mark the booted ESP kernel slot healthy (CONFIRMED). Needs
 // CAP_CONSOLE. 0 on success; negative on error.
 int  swiftos_kernel_confirm(void);
+// OS-3b: stream a signed base image into the inactive A/B slot from a userland
+// buffer (begin/write*/commit/abort). 'version' is the monotonic OS version
+// (must exceed the store's anti-rollback floor), 'total' the image length.
+// All need CAP_CONSOLE. 0 on success; negative errno on error.
+int  swiftos_update_stage_begin(unsigned long version, unsigned long total);
+int  swiftos_update_stage_write(const void *buf, unsigned long count);
+int  swiftos_update_stage_commit(void);
+int  swiftos_update_stage_abort(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 // Fetch the effective AND real security identity (any out-param may be NULL).
