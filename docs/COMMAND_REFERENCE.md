@@ -1537,6 +1537,9 @@ are not the primary operator interface.
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |
+| `orphandemo` | QW3 orphan-zombie reaper: a parent exits leaving running children, which are reparented and reaped without leaking process slots or endpoints. | Yes, for process-teardown diagnostics. | `make orphan-reap-test` |
+| `qw2-ipc` | QW2 blocking IPC: a receiver parks on an empty endpoint and is woken by `ipc_send` or by the last sender closing (EOF). | Yes, for IPC park/wake diagnostics. | `make qw2-blocking-ipc-test` |
+| `ipc-call-test` | QW1 synchronous request/reply IPC: `ipc_call`/`ipc_reply_recv` over a kernel reply port — correlated replies, a handle round-tripped both ways, and EINVAL/EPIPE error paths. | Yes, for synchronous-IPC diagnostics. | `make ipc-call-test` |
 
 Prefer the commands in the earlier sections for normal use. Use these diagnostic
 commands when validating a specific milestone or investigating a regression.
