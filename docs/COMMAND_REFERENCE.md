@@ -451,6 +451,15 @@ Notes:
 - The mode must be octal.
 - The current implementation is for tmpfs metadata, not for mutating the packed
   read-only base image.
+- **Mode bits are metadata, not an access gate.** They are stored and shown by
+  `ls -l`, but they do not restrict who may read, write, or execute the file.
+  Read/write access is decided by process capabilities (`capFsRead`,
+  `capTmpWrite`) and per-handle rights, not by the `rwx` bits. In particular
+  `chmod 600 /tmp/secret` does **not** hide the file from another process that
+  holds `capFsRead`. The only bit the kernel acts on is the execute bit
+  (`0o111`), which is checked at `exec`, plus the setuid bit on signed base-image
+  binaries. See [SECURITY_GUIDE.md](SECURITY_GUIDE.md) and
+  [CAPABILITIES.md](CAPABILITIES.md).
 
 Acceptance coverage: `tests/swift_chmodown_test.sh`.
 
@@ -472,6 +481,9 @@ Notes:
 
 - Owner names are not parsed. Use a numeric principal ID.
 - Seeded principal IDs are listed in [USER_GUIDE.md](USER_GUIDE.md).
+- Like `chmod`, the owner field is metadata for `ls -l`, not an access gate;
+  it does not by itself grant or deny access. The owner principal is consulted
+  by the setuid-on-exec path for signed base-image binaries.
 
 Acceptance coverage: `tests/swift_chmodown_test.sh`.
 

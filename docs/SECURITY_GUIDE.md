@@ -104,6 +104,7 @@ architecture.
 | Limit | Meaning |
 | --- | --- |
 | Coarse capability bits | `capFsRead` covers the readable namespace; it is not yet `fs:read:/one/subtree` |
+| Mode and owner are metadata, not an access gate | `chmod`/`chown` change what `ls -l` reports, but read/write access is decided by capabilities and per-handle rights. `chmod 600` does not hide a file from a process holding `capFsRead`. Only the execute bit (at `exec`) and the setuid bit on signed base binaries are acted on by the kernel |
 | No production password policy | Passwords are salted SHA-256, not a memory-hard KDF |
 | No target-side account management | Accounts are edited in `base/etc/swos/passwd` and repacked into the image |
 | No persistent user data store | `/tmp` is scratch; reboot clears it |

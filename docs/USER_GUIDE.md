@@ -149,6 +149,11 @@ chown 2 /tmp/mode-sample
 ls -l /tmp/mode-sample
 ```
 
+The mode and owner you set here are metadata shown by `ls -l`; they are not an
+access gate. Read and write access is decided by process capabilities
+(`capFsRead`, `capTmpWrite`) and per-handle rights, so `chmod 600` does not hide
+a file from a process that holds `capFsRead`. See [SECURITY_GUIDE.md](SECURITY_GUIDE.md).
+
 Writes to the base image fail by design:
 
 ```sh
