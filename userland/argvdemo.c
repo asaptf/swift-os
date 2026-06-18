@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     if (argc >= 2 && streq(argv[1], "endpointcheck")) {
         char b[8];
         int received = -2;
-        long r = ipc_send(3, "W", 1, -1);
+        long r = ipc_send(3, "W", 1, -1, SWIFTOS_RIGHTS_ALL_INHERIT);
         if (r == -9) {
             puts_raw("C4A-ENDPOINT-WRITE-DENY-OK err=-9\n");
         } else {
@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        r = ipc_send(5, "T", 1, 6);
+        r = ipc_send(5, "T", 1, 6, SWIFTOS_RIGHTS_ALL_INHERIT);
         if (r == -13) {
             puts_raw("C4A-ENDPOINT-SEND-XFER-DENY-OK err=-13\n");
         } else {

@@ -630,7 +630,7 @@ if ((info.kind != SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
     return -22;
 }
 
-long sent = ipc_send(command_endpoint, "DEVH", 4, dev_fd);
+long sent = ipc_send(command_endpoint, "DEVH", 4, dev_fd, SWIFTOS_RIGHTS_ALL_INHERIT);
 if (sent < 0) {
     close(dev_fd);
     return (int)sent;
@@ -896,7 +896,8 @@ endpoint_create(ends); // ends[0] = send end, ends[1] = recv end
 `ipc_send` and `ipc_recv` use small message structs hidden by the inline wrappers:
 
 ```c
-long ipc_send(int fd, const void *buf, unsigned long len, int handle_fd);
+long ipc_send(int fd, const void *buf, unsigned long len, int handle_fd,
+              unsigned int requested_rights);
 long ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd);
 ```
 
@@ -908,6 +909,11 @@ Behavior:
 - Endpoint receive requires read rights.
 - Moving or importing a handle through an endpoint requires transfer rights where
   enforced by the endpoint policy.
+- **Rights attenuation (QW5).** The handle installed in the receiver gets
+  `effective = held ∩ requested_rights` — a fresh, attenuated handle. A grant can
+  only narrow the sender's authority, never widen it. Pass
+  `SWIFTOS_RIGHTS_ALL_INHERIT` to grant everything held (the identity intersection).
+  `requested_rights` is ignored when `handle_fd < 0`.
 
 Example:
 
@@ -916,7 +922,7 @@ int ep[2];
 endpoint_create(ep);
 
 int fd = open("/etc/hostname", O_RDONLY);
-ipc_send(ep[0], "H", 1, fd);
+ipc_send(ep[0], "H", 1, fd, SWIFTOS_RIGHTS_ALL_INHERIT); // grant all held rights
 
 char byte;
 int received = -1;

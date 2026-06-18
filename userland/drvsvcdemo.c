@@ -180,7 +180,7 @@ static int run_device_handoff(int command_fd, int event_fd, struct device_expect
     c5f_metadata_rights_seen = 1;
     puts_raw("drvsvc: C5f device grant rights metadata-only\n");
 
-    if (ipc_send(command_fd, "DEVH", 4, dev_fd) != 0) {
+    if (ipc_send(command_fd, "DEVH", 4, dev_fd, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         close(dev_fd);
         puts_raw("drvsvc: device grant send failed\n");
         return 0;
@@ -271,7 +271,7 @@ static int run_generation(int gen) {
     puts_raw(gen == 1 ? "drvsvc: generation 1 ready\n"
                       : "drvsvc: generation 2 ready\n");
 
-    if (ipc_send(supervisor_to_service[0], "PING", 4, -1) != 0) {
+    if (ipc_send(supervisor_to_service[0], "PING", 4, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("drvsvc: ping send failed\n");
         return 0;
     }
@@ -293,7 +293,7 @@ static int run_generation(int gen) {
         return 0;
     }
 
-    if (ipc_send(supervisor_to_service[0], "STOP", 4, -1) != 0) {
+    if (ipc_send(supervisor_to_service[0], "STOP", 4, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("drvsvc: stop send failed\n");
         return 0;
     }

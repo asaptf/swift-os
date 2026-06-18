@@ -2935,7 +2935,7 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
 //         off 24: out_badge (u64 user VA → u32; 0 = don't report) — QW4
 // QW4 grew the recv struct 24→32. The kernel always reads 32 bytes; the ipc_recv
 // wrapper passes a zero out_badge VA, so old callers are byte-for-byte compatible.
-private let ipcSendMsgSize: UInt = 20  // buf(8) + len(8) + handle_fd(4)
+private let ipcSendMsgSize: UInt = 24  // buf(8) + len(8) + handle_fd(4) + requested_rights(4)
 private let ipcRecvMsgSize: UInt = 32  // buf(8) + cap(8) + out_handle_fd(8) + out_badge(8)
 
 private func handleNamesEndpoint(_ entry: HandleEntry, endpoint ep: Int) -> Bool {
@@ -2988,6 +2988,10 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     let buf = UInt(le64(m, 0))
     let len = Int(le64(m, 8))
     let handleFd = Int(Int32(bitPattern: le32(m, 16)))
+    // QW5: rights the sender is willing to grant. The handle that crosses gets
+    // held ∩ requested — monotonic attenuation, never widening. The all-ones
+    // sentinel inherits every held right (the pre-QW5 behavior).
+    let requested = Rights(rawValue: le32(m, 20))
     if len < 0 { return errInvalid }
 
     // The handle (if any) must be a distinct, valid fd before we commit the message.
@@ -3009,7 +3013,15 @@ func vfsIpcSend(fd: Int, msgVA: UInt) -> Int {
     endpoints[ep].badge = sender.badge
 
     if handleFd >= 0 {
-        endpoints[ep].handle = fdEntry(proc, handleFd) // copy the entry...
+        // QW5: install a FRESH, attenuated copy of the source entry. The .transfer
+        // precondition above guarantees the source could move at all; the
+        // intersection only narrows what crosses and can never conjure a right
+        // (e.g. .transfer or .write) the sender did not already hold.
+        // QW5: the field could later be packed as (rights<<32)|handle_fd for a
+        // single-register fast path; the msg struct carries both today.
+        var moved = fdEntry(proc, handleFd)             // copy the entry...
+        moved.rights = attenuate(moved.rights, to: requested) // ...narrow to held ∩ requested
+        endpoints[ep].handle = moved
         endpoints[ep].hasHandle = true
         setFDEntry(proc, handleFd, HandleEntry())       // ...then clear the source (move, no release)
     }

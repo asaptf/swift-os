@@ -71,7 +71,7 @@ int main(void) {
     sleep_100ms();
     sleep_100ms();
     const char msg[] = "hello";
-    if (ipc_send(ep[0], msg, 5, -1) != 0) {
+    if (ipc_send(ep[0], msg, 5, -1, SWIFTOS_RIGHTS_ALL_INHERIT) != 0) {
         puts_raw("qw2-ipc: ipc_send failed\n");
         return 1;
     }
