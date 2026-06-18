@@ -41,6 +41,7 @@ BUILD     := build
 MODEL_DIR := models
 QEMU_DTB  := $(BUILD)/virt.dtb
 QEMU_DTB_SMP4 := $(BUILD)/virt-smp4.dtb
+QEMU_DTB_2048 := $(BUILD)/virt-2048.dtb
 QEMU_DTB_GICV3 := $(BUILD)/virt-gicv3-smp2.dtb
 QEMU_DTB_ADDR := 0x4FF00000
 BASE_IMG  := $(BUILD)/base.img
@@ -174,6 +175,7 @@ SWIFT_SRCS := \
 	kernel/smp/topology.swift \
 	kernel/log/log.swift \
 	kernel/timer/generic_timer.swift \
+	kernel/power/power.swift \
 	kernel/sched/scheduler.swift \
 	kernel/sched/futex.swift \
 	kernel/syscall/syscall.swift \
@@ -332,6 +334,18 @@ USER_ENVCHILD_ELF := $(BUILD)/envchild.elf
 # compiles all objects; scripts/link-node.sh does the freestanding final link).
 # The heavy build runs out-of-band; `make` only stages the resulting binary.
 USER_NODE_ELF := $(BUILD)/node.elf
+# Packing the ~57 MB node.elf into base.img bloats every image build/sign and the
+# disk every QEMU test loads, for a binary only the node/npm tests use. So it is
+# OPT-IN: `make base-image INCLUDE_NODE=1` (or `make node-test`) stages /bin/node;
+# default builds skip it. Future: ship node as an installable package instead.
+INCLUDE_NODE ?= 0
+ifeq ($(INCLUDE_NODE),1)
+NODE_BASE_ELFS := $(USER_NODE_ELF)
+NODE_PACK_CMD := cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node
+else
+NODE_BASE_ELFS :=
+NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
+endif
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -401,7 +415,7 @@ USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 USER_ACME_ELF := $(BUILD)/acme.elf
 BASE_EXEC_ELFS := \
 	$(USER_ACME_ELF) \
-	$(USER_NODE_ELF) \
+	$(NODE_BASE_ELFS) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
 	$(USER_LLMD_ELF) \
@@ -515,6 +529,11 @@ $(QEMU_DTB): | $(BUILD)/.dir
 
 $(QEMU_DTB_SMP4): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -smp 4 -m 256M -nographic
+
+# 2 GiB device tree for the node/npm harness — V8 wants the larger RAM window
+# advertised so its heap reservations have headroom.
+$(QEMU_DTB_2048): | $(BUILD)/.dir
+	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -m 2048M -nographic
 
 # H1: a GICv3, -smp 2 device tree for the direct-boot harness — the interrupt
 # controller the Hetzner ARM VM presents (and what `-M virt,gic-version=3` emits).
@@ -2016,6 +2035,26 @@ $(NGINX_BIN): $(OPENSSL_DEV) $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a
 node-configure-probe: $(SYSROOT)/lib/libc.a ports/lang/nodejs/Port.json scripts/build-node.sh
 	./scripts/build-node.sh
 
+# node-test / npm-test: opt-in runtime checks for the cross-built Node binary.
+# They are deliberately NOT part of `make test` and NOT default `base-image`
+# prerequisites — node.elf is ~57 MB and packing it bloats every image build/sign
+# and the disk QEMU loads. These targets force a node-inclusive repack
+# (INCLUDE_NODE=1) and use the 2 GiB DTB for V8 heap headroom. node.elf must
+# already exist (built out-of-band in Docker; see the $(USER_NODE_ELF) guard).
+# `rm -f $(BASE_IMG)` guarantees the repack happens even when a default
+# (node-less) image is newer than node.elf, which make's mtime check would
+# otherwise treat as up-to-date.
+.PHONY: node-test npm-test
+node-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NODE=1
+	NODE_DTB=$(QEMU_DTB_2048) bash tests/node_test.sh
+
+npm-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NODE=1
+	NODE_DTB=$(QEMU_DTB_2048) bash tests/npm_test.sh
+
 ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/catalog.json $(PORT_RECIPE_FILES) $(PORT_BUILD_SCRIPTS)
 	./scripts/build-ports-seed-repo.sh
 
@@ -2183,7 +2222,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe
 	cp $(USER_EPOLLPROBE_ELF) $(BASE_ROOT)/bin/epollprobe
-	cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node
+	$(NODE_PACK_CMD)
 	cp $(USER_UVWAKEPROBE_ELF) $(BASE_ROOT)/bin/uvwakeprobe
 	cp $(USER_UVSEMPROBE_ELF) $(BASE_ROOT)/bin/uvsemprobe
 	cp $(USER_UVRWLOCKPROBE_ELF) $(BASE_ROOT)/bin/uvrwlockprobe
