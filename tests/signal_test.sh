@@ -90,6 +90,7 @@ for marker in \
   "signalprobe: sigaction ignore/old OK" \
   "signalprobe: custom handler frame OK" \
   "signalprobe: child SIGTERM status OK" \
+  "signalprobe: multi-signal default terminate OK" \
   "SIGNALPROBE-OK"; do
   if grep -qF "$marker" <<<"$clean"; then
     echo "PASS: $marker"

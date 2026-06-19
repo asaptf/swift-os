@@ -7271,3 +7271,27 @@ rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
 oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
+
+### TH9 — multi-signal default-terminate coverage + a corrected audit claim (DONE, 2026-06-19)
+
+`signal_test` exercised the default-terminate path for exactly one signal
+(SIGTERM). The audit worried that "only SIGINT/TERM/PIPE are delivered;
+SIGSEGV/SIGKILL etc. are defined but never delivered." Reading `processKill`
+(kernel/user/process.swift) shows that claim is too strong: `kill(otherPid, sig)`
+to a process that is NOT currently on-CPU takes a DIRECT teardown
+(`pExit = 128 + sig`) for ANY valid signal — the SIGINT/TERM/PIPE restriction is
+only on the *async-pending* delivery path (`signalDeliverToForeground/CurrentFrame`,
+i.e. Ctrl-C and raise-to-foreground). So `kill(child, SIGKILL|SIGSEGV)` already
+terminates correctly.
+
+`userland/signalprobe.c` now forks a nanosleeping child and kills it with SIGINT,
+SIGKILL, and SIGSEGV in turn, asserting each yields `WIFSIGNALED` with
+`WTERMSIG == sig` (the 128+signo status). Non-vacuous: a signal that failed to
+terminate would hang `waitpid` and the probe would never print SIGNALPROBE-OK.
+Verified `make signal-test` PASS. An exploratory in-kernel change to add SIGKILL to
+the async-delivery list was reverted — it has no reachable test (the direct-teardown
+and self-kill paths already handle SIGKILL), so shipping it would be an unverified
+no-op. Genuinely open signal items (left for a focused milestone): `kill` of a
+process running on ANOTHER CPU returns EBUSY (no remote teardown), and per-process
+(vs process-global) dispositions. Remaining audit tracks: datafs crash injection,
+SMP atomic contention, driver fault injection.
