@@ -1504,6 +1504,28 @@ cubestore-test: | $(BUILD)/.dir
 		-o $(BUILD)/cubestore_test
 	$(BUILD)/cubestore_test
 
+# SC1a: Raft consensus core (transport-agnostic, deterministic) over a simulated
+# message bus, driving a trivial replicated state machine. The Raft core reuses
+# cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
+# only the simulator + test harness use Foundation. Covers cases 1,4-8,11. SC1b
+# wires cubestore in as the state machine (cases 2,3,9,10).
+.PHONY: raft-test
+RAFT_CORE = \
+	swiftcube/cubestore/Crc32.swift \
+	swiftcube/cubestore/Model.swift \
+	swiftcube/cubestore/ByteIO.swift \
+	swiftcube/cubestore/StorageSink.swift \
+	swiftcube/raft/RaftTypes.swift \
+	swiftcube/raft/Random.swift \
+	swiftcube/raft/RaftStorage.swift \
+	swiftcube/raft/RaftNode.swift
+raft-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) $(RAFT_CORE) \
+		swiftcube/raft/tests/Simulator.swift \
+		swiftcube/raft/tests/raft_test.swift \
+		-o $(BUILD)/raft_test
+	$(BUILD)/raft_test
+
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
 	$(BUILD)/phase1_roadmap_test
