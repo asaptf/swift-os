@@ -98,6 +98,9 @@ private let sysUpdateStageBegin: UInt = 94 // update_stage_begin(version, total)
 private let sysUpdateStageWrite: UInt = 95 // update_stage_write(buf, count) — append base-image bytes to the inactive slot (OS-3b); needs capConsole
 private let sysUpdateStageCommit: UInt = 96 // update_stage_commit() — validate, flush, mark slot present+untried (OS-3b); needs capConsole
 private let sysUpdateStageAbort: UInt = 97 // update_stage_abort() — discard an in-progress stage (OS-3b); needs capConsole
+private let sysSpawnHandlesAsync: UInt = 98 // spawn_handles_async(path, argv, specs, count) — non-blocking C2 spawn → child pid (LA1)
+private let sysNameRegister: UInt = 99     // name_register(name, endpoint_fd) — publish a recv-end endpoint under a name (LA1); needs capConsole
+private let sysNameLookup: UInt = 100      // name_lookup(name) → fresh send-end fd — capability grant-by-lookup (LA1)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -362,6 +365,25 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = syscallRandom(buffer: frame[0], capacity: frame[1])
     } else if number == sysReboot {
         result = powerControl(command: frame[0]) // 90: capConsole-gated reboot/poweroff
+    } else if number == sysSpawnHandlesAsync {
+        // LA1: non-blocking explicit-handle spawn. Same C2 handle-inheritance ABI
+        // as spawn_handles, but returns the child pid immediately (no block/wait/
+        // reap) so a persistent supervisor can drive the child over IPC and reap
+        // it itself via waitpid.
+        let ex = execResolve(frame[0])
+        if ex.addr == 0 {
+            result = Errno.noEntry.code
+        } else {
+            let (packed, packedLen, argc) = packUserArgv(frame[1])
+            result = processSpawnChildWithHandlesAsync(ex.addr, ex.len, packed: packed,
+                                                       packedLen: packedLen, argc: argc,
+                                                       specsVA: frame[2], specCount: frame[3],
+                                                       setuid: ex.setuid, setuidOwner: ex.owner)
+        }
+    } else if number == sysNameRegister {
+        result = vfsNameRegister(nameVA: frame[0], fd: Int(bitPattern: frame[1]))
+    } else if number == sysNameLookup {
+        result = vfsNameLookup(nameVA: frame[0])
     } else {
         result = Errno.noSys.code
     }

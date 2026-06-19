@@ -104,6 +104,9 @@
 #define SYS_UPDATE_STAGE_WRITE  95
 #define SYS_UPDATE_STAGE_COMMIT 96
 #define SYS_UPDATE_STAGE_ABORT  97
+#define SYS_SPAWN_HANDLES_ASYNC 98
+#define SYS_NAME_REGISTER       99
+#define SYS_NAME_LOOKUP         100
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -368,6 +371,27 @@ static inline long spawn_handles(const char *path, char *const argv[],
                       (long)handles, (long)handle_count);
 }
 
+// LA1: non-blocking variant of spawn_handles. Same explicit-handle ABI, but the
+// child runs concurrently and this returns the child pid immediately (negative on
+// error) instead of blocking until it exits. The caller reaps it with waitpid.
+static inline long spawn_handles_async(const char *path, char *const argv[],
+                                       const struct swiftos_spawn_handle *handles,
+                                       size_t handle_count) {
+    return __syscall4(SYS_SPAWN_HANDLES_ASYNC, (long)path, (long)argv,
+                      (long)handles, (long)handle_count);
+}
+
+// LA1 name registry. name_register publishes the RECV end of an endpoint under a
+// short name (privileged, needs CAP_CONSOLE); name_lookup resolves a name and
+// installs a fresh SEND-end handle into the caller, returning the new fd (or
+// -ENOENT). See docs/CAPABILITIES.md / kernel/vfs/vfs.swift.
+static inline int name_register(const char *name, int endpoint_fd) {
+    return (int)__syscall3(SYS_NAME_REGISTER, (long)name, endpoint_fd, 0);
+}
+static inline int name_lookup(const char *name) {
+    return (int)__syscall3(SYS_NAME_LOOKUP, (long)name, 0, 0);
+}
+
 static inline int getpid(void) {
     return (int)__syscall3(SYS_GETPID, 0, 0, 0);
 }
@@ -485,6 +509,10 @@ static inline int pkg_stream_abort(void) {
     return (int)__syscall3(SYS_PKG_STREAM_ABORT, 0, 0, 0);
 }
 
+// Guarded so the identical declaration in swift_user.h (the Swift-imported
+// bridge header) does not clash when both headers are included together (LA1).
+#ifndef SWIFTOS_DEVICE_INFO_T
+#define SWIFTOS_DEVICE_INFO_T
 struct swiftos_device_info {
     unsigned int kind;
     unsigned int bus;
@@ -496,6 +524,7 @@ struct swiftos_device_info {
     unsigned int claimed;
     char name[24];
 };
+#endif
 
 static inline int device_claim(const char *name, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_CLAIM, (long)name, (long)info, 0);

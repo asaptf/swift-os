@@ -61,6 +61,69 @@ int  swiftos_pty_set_foreground(int fd, int pid);
 int  swiftos_pipe(int fds[2]);
 long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles,
                                unsigned long handle_count);
+
+// LA1: IPC + endpoint + fork + device + name-registry bridge for native Swift
+// services (the documented low-level bridge exception to Swift-by-default — these
+// just forward to the C-only inline syscalls in syscall.h). See
+// userland/lib/userland_service.swift and userland/svc-*.swift.
+
+// Device grant metadata (must stay byte-identical to syscall.h's struct).
+#ifndef SWIFTOS_DEVICE_INFO_T
+#define SWIFTOS_DEVICE_INFO_T
+struct swiftos_device_info {
+    unsigned int kind;
+    unsigned int bus;
+    unsigned long mmio_base;
+    unsigned long mmio_len;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned int generation;
+    unsigned int claimed;
+    char name[24];
+};
+#endif
+
+// Device kind/bus/flag constants (mirror syscall.h; identical macro values).
+#define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_BUS_PSEUDO        1u
+#define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
+#define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
+#define SWIFTOS_DEVICE_FLAG_DISCOVERED    (1u << 1)
+#define SWIFTOS_DEVICE_FLAG_MMIO_GRANT    (1u << 2)
+#define SWIFTOS_DEVICE_FLAG_IRQ_GRANT     (1u << 3)
+#define SWIFTOS_DEVICE_FLAG_DMA_GRANT     (1u << 4)
+#define SWIFTOS_DEVICE_FLAG_HARDWARE_AUTHORITY \
+    (SWIFTOS_DEVICE_FLAG_MMIO_GRANT | SWIFTOS_DEVICE_FLAG_IRQ_GRANT | SWIFTOS_DEVICE_FLAG_DMA_GRANT)
+
+// Create an IPC endpoint pair; ends[0] = send end, ends[1] = recv end. 0 on success.
+int  swiftos_endpoint_create(int ends[2]);
+// Send `len` bytes on an endpoint send end and, if handle_fd >= 0, transfer that
+// handle to the peer (granting every right the sender holds). 0 on success, else <0.
+long swiftos_ipc_send(int fd, const void *buf, unsigned long len, int handle_fd);
+// Receive one message (blocking): copy up to `cap` bytes into buf, store any
+// transferred handle's new fd in *out_handle_fd (-1 if none). Returns the byte
+// count, or a negative errno.
+long swiftos_ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd);
+// Fork the calling process (COW): 0 in the child, the child pid in the parent,
+// negative on error.
+int  swiftos_fork(void);
+// Claim / inspect / discover an opaque device grant (metadata-only authority).
+// claim needs CAP_CONSOLE and returns an fd; info/discover return 0 or <0.
+int  swiftos_device_claim(const char *name, struct swiftos_device_info *info);
+// Named _query (not _info) to avoid clashing with the struct tag when imported
+// into Swift, which shares one namespace for types and functions.
+int  swiftos_device_query(int fd, struct swiftos_device_info *info);
+int  swiftos_device_discover(int index, struct swiftos_device_info *info);
+// LA1 name registry: publish the recv end of an endpoint under a short name
+// (needs CAP_CONSOLE), or resolve a name to a fresh send-end fd (negative /
+// -ENOENT on failure).
+int  swiftos_name_register(const char *name, int endpoint_fd);
+int  swiftos_name_lookup(const char *name);
+// Non-blocking explicit-handle spawn (LA1): the child runs concurrently and this
+// returns its pid immediately (negative on error); reap it with swiftos_waitpid.
+long swiftos_spawn_handles_async(const char *path, void *argv, const void *handles,
+                                 unsigned long handle_count);
 // Read directory entries (kernel dirent layout) into buf; returns bytes used.
 long swiftos_getdents(int fd, void *buf, unsigned long count);
 // Stat a path. Fills the provided fields (any may be NULL). Returns 0 on success.

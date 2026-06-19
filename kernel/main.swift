@@ -358,6 +358,20 @@ private func runDriverServiceDemo() {
     uartPuts("\n")
 }
 
+// LA1: the persistent native-Swift supervisor + UserlandService successor to the
+// C5 demo. Runs after the C5 demo releases the input device. Bounded generations
+// so it doubles as a boot self-test; the supervisor exits with the LA1 OK marker.
+private func runUserlandServiceDemo() {
+    uartPuts("swift-os LA1: persistent Swift supervisor + userland service\n")
+    let (img, sz) = demoImage("/bin/svc-supervisor")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["svc-supervisor"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("LA1 supervisor demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1325,6 +1339,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runExecDemo()
         runFdOpsDemo()
         runDriverServiceDemo()
+        runUserlandServiceDemo()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

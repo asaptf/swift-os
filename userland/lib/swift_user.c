@@ -175,6 +175,52 @@ long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles
                       (long)handle_count);
 }
 
+// ---- LA1: IPC / endpoint / fork / device / name-registry bridge -----------
+
+int swiftos_endpoint_create(int ends[2]) {
+    return endpoint_create(ends);
+}
+
+long swiftos_ipc_send(int fd, const void *buf, unsigned long len, int handle_fd) {
+    // Grant every right held on the moved handle (the move-everything sentinel),
+    // matching the pre-QW5 behavior the C demo relies on.
+    return ipc_send(fd, buf, len, handle_fd, SWIFTOS_RIGHTS_ALL_INHERIT);
+}
+
+long swiftos_ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd) {
+    return ipc_recv(fd, buf, cap, out_handle_fd);
+}
+
+int swiftos_fork(void) {
+    return fork();
+}
+
+int swiftos_device_claim(const char *name, struct swiftos_device_info *info) {
+    return device_claim(name, info);
+}
+
+int swiftos_device_query(int fd, struct swiftos_device_info *info) {
+    return device_info(fd, info);
+}
+
+int swiftos_device_discover(int index, struct swiftos_device_info *info) {
+    return device_discover(index, info);
+}
+
+int swiftos_name_register(const char *name, int endpoint_fd) {
+    return name_register(name, endpoint_fd);
+}
+
+int swiftos_name_lookup(const char *name) {
+    return name_lookup(name);
+}
+
+long swiftos_spawn_handles_async(const char *path, void *argv, const void *handles,
+                                 unsigned long handle_count) {
+    return spawn_handles_async(path, (char *const *)argv,
+                               (const struct swiftos_spawn_handle *)handles, handle_count);
+}
+
 long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }

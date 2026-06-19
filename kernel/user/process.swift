@@ -2942,6 +2942,29 @@ func processSpawnChildWithHandles(_ image: UInt, _ size: UInt, packed: UInt, pac
                                             setuid: setuid, setuidOwner: setuidOwner)
 }
 
+/// spawn_handles_async(path) child (LA1): like processSpawnChildWithHandles but
+/// it does NOT block the caller or reap the child — createProcess already marks
+/// the child runnable, so we just return its pid immediately. A persistent
+/// supervisor uses this to keep running (driving the child over IPC, then
+/// reaping it with waitpid) instead of blocking inside the spawn.
+func processSpawnChildWithHandlesAsync(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
+                                       argc: Int, specsVA: UInt, specCount: UInt,
+                                       setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
+    let parent = currentProcessSlot()
+    guard parent >= 0 else { return Errno.invalid.code }
+    let valid = vfsValidateHandleInheritance(parent: parent, inherit: .explicit,
+                                             specsVA: specsVA, specCount: specCount)
+    if valid < 0 { return valid }
+    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
+                              parent: parent, inherit: .explicit,
+                              inheritSpecsVA: specsVA, inheritSpecCount: specCount)
+    if child < 0 { return Errno.again.code } // EAGAIN
+    if setuid {
+        pSecurity[child] = securityApplySetuid(pSecurity[child], owner: setuidOwner)
+    }
+    return child + 1 // pid (mirrors processCurrentPid / processWaitpid's slot+1 convention)
+}
+
 func processCurrentPid() -> Int {
     let current = currentProcessSlot()
     return current >= 0 ? current + 1 : 0
