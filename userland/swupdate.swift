@@ -50,15 +50,11 @@ private let pBaked: StaticString = "/usr/share/nginx/html"
 // Baked site-signing public key — the trust anchor for SWSITE bundles (SU-B).
 private let pSiteRootPub: StaticString = "/etc/swupdate/site-root.pub"
 
-// SWSITE signed-bundle layout (must match tools/sitepack.swift).
-private let sigSize = 64           // leading Ed25519 detached signature
-private let hdrSize = 64           // body header
-private let entrySize = 24         // per-entry record
-// Inode budget: datafs holds 256 inodes total across current+next+prev (~3x the
-// site) plus /data overhead, so cap a single site's entry count well under 256/3.
-private let maxSiteEntries = 64
+// SWSITE signed-bundle layout constants and pure parsers (sigSize, hdrSize,
+// entrySize, maxSiteEntries, siteMagic, le32, magicMatches, safeName,
+// swsiteParseEntries, parseIPv4Bytes, parseHTTPSURL, httpBody) live in
+// userland/lib/swsite.swift so they can be host-tested without QEMU.
 private let maxBundleBytes = 8 * 1024 * 1024
-private let siteMagic: StaticString = "SWSITE01"
 
 // ---- small helpers ---------------------------------------------------------
 
@@ -309,11 +305,6 @@ private func seed() -> Int32 {
 
 // ---- signed bundle apply (SU-B) --------------------------------------------
 
-private func le32(_ b: [UInt8], _ off: Int) -> Int {
-    Int(UInt32(b[off]) | (UInt32(b[off + 1]) << 8)
-        | (UInt32(b[off + 2]) << 16) | (UInt32(b[off + 3]) << 24))
-}
-
 // Read an entire file into memory, refusing anything larger than `maxBytes`.
 private func readFileFully(_ path: [CChar], _ maxBytes: Int) -> [UInt8]? {
     let fd = sOpen(path, oRdOnly)
@@ -338,31 +329,6 @@ private func readFileFully(_ path: [CChar], _ maxBytes: Int) -> [UInt8]? {
 private func loadPubkey() -> [UInt8]? {
     guard let raw = readFileFully(cz(pSiteRootPub), 64), raw.count == 32 else { return nil }
     return raw
-}
-
-private func magicMatches(_ b: [UInt8], _ at: Int) -> Bool {
-    let n = siteMagic.utf8CodeUnitCount
-    var i = 0
-    while i < n { if b[at + i] != siteMagic.utf8Start[i] { return false }; i += 1 }
-    return true
-}
-
-// A relative entry name must stay within the docroot: no absolute paths and no
-// ".." traversal. Defense-in-depth; sitepack only emits clean relative names.
-private func safeName(_ name: [UInt8]) -> Bool {
-    if name.isEmpty { return false }
-    if name[0] == 0x2F { return false }                 // leading '/'
-    var i = 0
-    while i + 1 < name.count {
-        // reject "/.." and a leading ".." (the only ways to escape upward)
-        if name[i] == 0x2E && name[i + 1] == 0x2E {
-            let prevSlash = (i == 0) || name[i - 1] == 0x2F
-            let nextEndOrSlash = (i + 2 == name.count) || name[i + 2] == 0x2F
-            if prevSlash && nextEndOrSlash { return false }
-        }
-        i += 1
-    }
-    return true
 }
 
 // Write `len` bytes of `bundle` starting at `off` to fd, fully.
@@ -417,54 +383,37 @@ private func applyBundleBytes(_ bundle: [UInt8]) -> Int32 {
     var k = 0
     while k < 32 { if sha[k] != bundle[bodyOff + 32 + k] { put("swupdate: payload sha256 mismatch\n"); return 1 }; k += 1 }
 
-    // 4. Layout bounds (body-relative offsets).
-    let entryCount = le32(bundle, bodyOff + 12)
-    let stringsOff = le32(bundle, bodyOff + 16)
-    let stringsLen = le32(bundle, bodyOff + 20)
-    let blobsOff = le32(bundle, bodyOff + 24)
-    let blobsLen = le32(bundle, bodyOff + 28)
-    if entryCount < 1 || entryCount > maxSiteEntries {
-        put("swupdate: bundle entry count out of range (inode budget)\n"); return 1
-    }
-    let entriesEnd = hdrSize + entryCount * entrySize
-    if entriesEnd > stringsOff || stringsOff + stringsLen > blobsOff
-        || blobsOff + blobsLen > bodyLen {
-        put("swupdate: bundle layout out of bounds\n"); return 1
+    // 4. Validate the layout + every entry name (bounds, inode budget, no path
+    //    traversal) before touching the filesystem. swsiteParseEntries is pure and
+    //    host-tested (tests/swsite_test.swift); a bad bundle returns an error here.
+    let (entries, layoutErr) = swsiteParseEntries(bundle)
+    switch layoutErr {
+    case .ok: break
+    case .entryCountRange: put("swupdate: bundle entry count out of range (inode budget)\n"); return 1
+    case .layoutBounds:    put("swupdate: bundle layout out of bounds\n"); return 1
+    case .badEntryName:    put("swupdate: bad entry name\n"); return 1
+    case .badEntryBlob:    put("swupdate: bad entry blob\n"); return 1
+    case .unsafeName:      put("swupdate: unsafe entry name — rejected\n"); return 1
     }
 
-    // 5. Stage into a fresh /data/www/next.
+    // 5. Stage the validated entries into a fresh /data/www/next.
     _ = sMkdir(cz(pWww))
     deleteTree(cz(pNext))
     if sMkdir(cz(pNext)) < 0 && statMode(cz(pNext)) == nil {
         put("swupdate: cannot create staging dir\n"); return 1
     }
-    var i = 0
-    while i < entryCount {
-        let e = bodyOff + hdrSize + i * entrySize
-        let nameOff = le32(bundle, e + 0)
-        let nameLen = le32(bundle, e + 4)
-        let blobOff = le32(bundle, e + 8)
-        let blobLen = le32(bundle, e + 12)
-        let type = le32(bundle, e + 16)
-        if nameLen < 1 || nameOff + nameLen > stringsLen { put("swupdate: bad entry name\n"); return 1 }
-        if type == 0 && blobOff + blobLen > blobsLen { put("swupdate: bad entry blob\n"); return 1 }
-        var name: [UInt8] = []
-        var j = 0
-        let nameBase = bodyOff + stringsOff + nameOff
-        while j < nameLen { name.append(bundle[nameBase + j]); j += 1 }
-        if !safeName(name) { put("swupdate: unsafe entry name — rejected\n"); return 1 }
-        let dst = joinPath(cz(pNext), name)
-        if type == 1 {
+    for entry in entries {
+        let dst = joinPath(cz(pNext), entry.name)
+        if entry.isDir {
             if sMkdir(dst) < 0 && statMode(dst) == nil { put("swupdate: mkdir failed in staging\n"); return 1 }
         } else {
             let fd = sOpen(dst, oWrOnly | oCreat | oTrunc)
             if fd < 0 { put("swupdate: cannot create file in staging\n"); return 1 }
-            let ok = writeBlob(fd, bundle, bodyOff + blobsOff + blobOff, blobLen)
+            let ok = writeBlob(fd, bundle, entry.blobFileOff, entry.blobLen)
             _ = swiftos_fsync(fd)
             _ = swiftos_close(fd)
             if !ok { put("swupdate: write failed in staging\n"); return 1 }
         }
-        i += 1
     }
     syncData()
 
@@ -522,58 +471,6 @@ private func fillRandom(_ buf: UnsafeMutableRawPointer, _ n: Int) {
         buf.storeBytes(of: UInt8((z >> 24) & 0xFF), toByteOffset: i, as: UInt8.self)
         i += 1
     }
-}
-
-// Parse a dotted-decimal IPv4 from raw bytes, or nil.
-private func parseIPv4Bytes(_ b: [UInt8]) -> UInt32? {
-    var octets = [UInt32](repeating: 0, count: 4)
-    var idx = 0, cur: UInt32 = 0, digits = 0, i = 0
-    while true {
-        let ch: UInt8 = i < b.count ? b[i] : 0
-        if ch >= 0x30 && ch <= 0x39 {
-            cur = cur * 10 + UInt32(ch - 0x30)
-            if cur > 255 { return nil }
-            digits += 1
-        } else if ch == 0x2E || ch == 0 {
-            if digits == 0 || idx > 3 { return nil }
-            octets[idx] = cur; idx += 1; cur = 0; digits = 0
-            if ch == 0 { break }
-        } else { return nil }
-        i += 1
-    }
-    if idx != 4 { return nil }
-    return (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]
-}
-
-// Parse "https://host[:port]/path" from a C string into (host, port, path).
-private func parseHTTPSURL(_ url: UnsafeMutablePointer<CChar>)
-    -> (host: [UInt8], port: UInt16, path: [UInt8])? {
-    var u: [UInt8] = []
-    var i = 0
-    while url[i] != 0 { u.append(UInt8(bitPattern: url[i])); i += 1 }
-    let scheme: [UInt8] = Array("https://".utf8)
-    if u.count < scheme.count { return nil }
-    var k = 0
-    while k < scheme.count { if u[k] != scheme[k] { return nil }; k += 1 }
-    var p = scheme.count
-    var host: [UInt8] = []
-    while p < u.count && u[p] != 0x3A && u[p] != 0x2F { host.append(u[p]); p += 1 }   // until ':' or '/'
-    if host.isEmpty { return nil }
-    var port: UInt16 = 443
-    if p < u.count && u[p] == 0x3A {
-        p += 1
-        var v = 0
-        while p < u.count && u[p] >= 0x30 && u[p] <= 0x39 { v = v * 10 + Int(u[p] - 0x30); p += 1 }
-        if v < 1 || v > 65535 { return nil }
-        port = UInt16(v)
-    }
-    var path: [UInt8] = []
-    if p < u.count && u[p] == 0x2F {
-        while p < u.count { path.append(u[p]); p += 1 }
-    } else {
-        path.append(0x2F)   // "/"
-    }
-    return (host, port, path)
 }
 
 // Fetch the body of GET https://host:port/path over TLS 1.3 into memory.
@@ -663,31 +560,6 @@ private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8]) ->
         if client.lastError != 0 { break }
     }
     return resp
-}
-
-// Split an HTTP response: require a 2xx status, return the body bytes.
-private func httpBody(_ resp: [UInt8]) -> [UInt8]? {
-    // Status line: "HTTP/1.x SP code ...". Accept 200.
-    if resp.count < 12 { return nil }
-    // Find " 200 " in the first line.
-    var sp = 0
-    while sp < resp.count && resp[sp] != 0x20 { sp += 1 }
-    if sp + 4 > resp.count { return nil }
-    if !(resp[sp + 1] == 0x32 && resp[sp + 2] == 0x30 && resp[sp + 3] == 0x30) {
-        put("swupdate: server did not return 200\n"); return nil
-    }
-    // Body starts after the first CRLFCRLF.
-    var i = 0
-    while i + 3 < resp.count {
-        if resp[i] == 0x0D && resp[i + 1] == 0x0A && resp[i + 2] == 0x0D && resp[i + 3] == 0x0A {
-            var body: [UInt8] = []
-            var j = i + 4
-            while j < resp.count { body.append(resp[j]); j += 1 }
-            return body
-        }
-        i += 1
-    }
-    return nil
 }
 
 private func site(_ url: UnsafeMutablePointer<CChar>) -> Int32 {

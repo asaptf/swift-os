@@ -7028,3 +7028,35 @@ QEMU can't catch every HW path, so `swupdate site` should also be run on the rea
 User-facing docs: `swupdate` in `docs/COMMAND_REFERENCE.md`, `sitepack` in
 `docs/HOST_TOOL_REFERENCE.md`, and the operator runbook "Update The Hosted Static
 Site (Reflash-Free)" in `docs/UPDATE_GUIDE.md`.
+
+### SU-T — fast host coverage for the SWSITE trust path (DONE, 2026-06-19)
+
+SU-A/B/C shipped with QEMU acceptance gates only (`site-{seed,bundle,update}-test`),
+which are slow, not in `make test`, and only exercise the happy path plus a
+signature flip. The trust-critical parsing — the byte-for-byte SWSITE layout shared
+between the host packer and the on-box reader, and the path-traversal defense — had
+no fast, hostile-input coverage. Two additions close that, both host-only (no QEMU,
+sub-second, wired into `make test`):
+
+- **`make sitepack-test`** (`tests/sitepack_test.swift`) is an INDEPENDENT third
+  implementation of the SWSITE reader: it packs the fixtures with `sitepack create`,
+  re-parses the bundle from scratch, and reconstructs the tree byte-for-byte —
+  catching any drift from the layout `swupdate` reads. It then drives `sitepack
+  verify` against a flipped signature, a flipped payload byte, the wrong pubkey, and
+  a truncated file, asserting each is rejected.
+- **`make swsite-test`** (`tests/swsite_test.swift`) unit-tests the device-side
+  parsers directly. To make them testable without the syscall/crypto/TLS deps, the
+  pure logic moved out of `userland/swupdate.swift` into a new freestanding module
+  **`userland/lib/swsite.swift`** (added to `SWUPDATE_SWIFT_SRCS`): the layout/
+  inode-budget validator `swsiteParseEntries`, `safeName`, `le32`/`magicMatches`,
+  and the SU-C `parseHTTPSURL`/`parseIPv4Bytes`/`httpBody`. `applyBundleBytes` now
+  calls `swsiteParseEntries` and maps its `SWSiteLayoutError` to the same operator
+  messages, so behavior is unchanged. The test hits hostile input the integration
+  tests never produce: `../`/absolute/`..`-component entry names (rejected as
+  `.unsafeName`), entry counts of 0 and > the 64 inode budget, offsets that run past
+  the buffer, malformed/non-https/bad-port URLs, and non-200 / headerless HTTP.
+
+The on-box behavior path (`apply-local`/`site`) is still covered by the SU-B/SU-C
+QEMU gates; SU-T only adds fast pure-logic coverage underneath them. Re-run
+`make build && make site-bundle-test site-update-test` once on the embedded
+toolchain to confirm the `swsite.swift` split still links and boots.
