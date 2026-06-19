@@ -221,6 +221,10 @@ long swiftos_spawn_handles_async(const char *path, void *argv, const void *handl
                                (const struct swiftos_spawn_handle *)handles, handle_count);
 }
 
+long swiftos_run(const char *path, char *const *argv) {
+    return spawn(path, argv);
+}
+
 long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }

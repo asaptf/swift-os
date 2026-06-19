@@ -124,6 +124,11 @@ int  swiftos_name_lookup(const char *name);
 // returns its pid immediately (negative on error); reap it with swiftos_waitpid.
 long swiftos_spawn_handles_async(const char *path, void *argv, const void *handles,
                                  unsigned long handle_count);
+// Synchronously run `path` with a NULL-terminated argv (fork + exec + wait;
+// stdin/stdout/stderr inherited). Returns the child's exit status, negative on
+// error. Used by /bin/crond to launch scheduled jobs — argv[0] selects the
+// busybox applet when path is /bin/sh (see kernel/user/exec.swift execResolve).
+long swiftos_run(const char *path, char *const *argv);
 // Read directory entries (kernel dirent layout) into buf; returns bytes used.
 long swiftos_getdents(int fd, void *buf, unsigned long count);
 // Stat a path. Fills the provided fields (any may be NULL). Returns 0 on success.

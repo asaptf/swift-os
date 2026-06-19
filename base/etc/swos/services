@@ -1,2 +1,5 @@
 # swift-os boot services. One allowlisted token per line.
+# crond is available but opt-in: add `crond` (or `crond-supervised`) below to run
+# the cron daemon at boot. It is left off by default so an empty schedule costs
+# no resident process — see /etc/crontab and /bin/crond.
 sshd

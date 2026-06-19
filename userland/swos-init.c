@@ -33,6 +33,7 @@ enum service_kind {
     SERVICE_SSHD6 = 3,
     SERVICE_SSHD6_ONCE = 4,
     SERVICE_NGINX = 5,
+    SERVICE_CROND = 6,
 };
 
 struct supervised_service {
@@ -76,6 +77,9 @@ static void print_uint(unsigned int v) {
 }
 
 static const char *service_name(enum service_kind kind) {
+    if (kind == SERVICE_CROND) {
+        return "crond";
+    }
     if (kind == SERVICE_NGINX) {
         return "nginx";
     }
@@ -120,6 +124,12 @@ static int start_service(enum service_kind kind) {
         return -1;
     }
     if (pid == 0) {
+        if (kind == SERVICE_CROND) {
+            char *argvc[] = { "crond", 0 };
+            execve("/bin/crond", argvc, 0);
+            puts_raw("swos-init: exec /bin/crond failed\n");
+            _exit(127);
+        }
         if (kind == SERVICE_NGINX) {
             char *argvn[] = { "nginx", "-c", "/usr/etc/nginx/nginx-prod.conf", 0 };
             execve("/sbin/nginx", argvn, 0);
@@ -199,6 +209,10 @@ static void run_service_token(char *tok) {
         (void)start_service(SERVICE_NGINX);
     } else if (streq(tok, "nginx-supervised")) {
         add_supervised_service(SERVICE_NGINX);
+    } else if (streq(tok, "crond") || streq(tok, "/bin/crond")) {
+        (void)start_service(SERVICE_CROND);
+    } else if (streq(tok, "crond-supervised")) {
+        add_supervised_service(SERVICE_CROND);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);

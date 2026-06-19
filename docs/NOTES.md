@@ -7271,3 +7271,39 @@ rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
 oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
+
+### CR1 — native Swift cron daemon `/bin/crond` (DONE, 2026-06-19)
+
+A long-running userland service that runs commands on a schedule, built entirely
+on existing primitives (no kernel change): the PL031 wall clock (`time()`), the
+monotonic scheduler tick (`sysinfo`), `nanosleep`, and a new thin synchronous
+spawn bridge `swiftos_run` (= `spawn`, fork+exec+wait with stdio inherited) in
+`userland/lib/swift_user.{h,c}`. `userland/crond.swift` parses a hybrid crontab —
+the classic five fields (with `*`, lists, ranges, `*/step`, dow 0/7 = Sunday, and
+Vixie dom/dow OR semantics) plus `@reboot/@hourly/@daily/@weekly/@monthly/@yearly`
+and `@every <dur>` (e.g. `30s`, `1h30m`). Sources merge `/etc/crontab` (signed
+base default) then `/data/crond/crontab` (durable override); an explicit path arg
+overrides both. Calendar jobs match the wall clock at minute granularity (guarded
+once/minute); `@every` jobs use the monotonic tick (immune to RTC absence). Each
+fired job runs as `/bin/sh -c "<command>"` (kernel maps `/bin/sh` → busybox).
+Acceptance: `tests/crond_test.sh` (`make crond-test`, in `make test`) drives a
+baked `/etc/crontab.test` and proves @reboot fires once, @every fires repeatedly,
+and the jobs durably append to `/data/crond/last-run`.
+
+Two deliberate v1 limitations, recorded not hidden:
+
+- **Synchronous reap.** The kernel `processWaitpid` ignores its `options` arg —
+  there is no `WNOHANG`. So crond runs each fired job to completion (blocking)
+  rather than reaping asynchronously; a job that never exits stalls the scheduler.
+  Fine for short cron jobs; revisit if/when the kernel grows `WNOHANG`.
+- **Opt-in, not auto-started.** crond is NOT in the default `/etc/swos/services`
+  (the `SERVICE_CROND` token + `crond`/`crond-supervised` exist for admins who add
+  it). Reason, measured: auto-starting an idle crond as a permanent resident
+  process trimmed kernel image-load headroom enough that loading a *large* binary
+  afterwards (e.g. `/bin/kv`, which links the Unicode tables) intermittently failed
+  to exec — `make kv-test` flipped from PASS to FAIL with crond in services, and
+  back to PASS without it (`maxProc = 16`, 256 MiB). Leaving crond off by default
+  keeps the boot path and headroom identical to before and matches the project's
+  minimalism value (an empty schedule should cost no resident process). The token
+  path was verified manually (`swos-init: started crond pid 3` → `crond: starting`)
+  but is not in automated CI to avoid re-introducing the headroom regression.

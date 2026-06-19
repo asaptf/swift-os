@@ -1,0 +1,6 @@
+# Test crontab for tests/crond_test.sh (CR1 acceptance). NOT used at boot — the
+# default `crond` service reads /etc/crontab, never this file. It exercises the
+# scheduler end to end: an @reboot job that fires once at start, and an @every
+# job that fires repeatedly and appends a durable line to /data on each run.
+@reboot echo crond:reboot-marker
+@every 3s echo crond:tick; echo crond:durable >> /data/crond/last-run
