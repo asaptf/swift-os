@@ -565,6 +565,43 @@ struct NetTest {
         be32set(inBuf, o, 0x08080808); o += 4      // 8.8.8.8
         check(dnsParseResponse(inBuf, o, id: 0x1234) == 0x0808_0808, "DNS CNAME-then-A returns the A record")
 
+        // --- 24. malformed / adversarial names must TERMINATE, never hang -----
+        // A self-referential compression pointer: the question name at offset 12 is
+        // a pointer to offset 12. A resolver that *followed* pointers would loop
+        // forever (the classic decompression-bomb DoS); dnsSkipName only skips the
+        // 2-byte pointer and advances, so the parse must terminate. The test merely
+        // RUNNING to completion is the proof it does not hang; we also confirm it
+        // still locates the A record after the cyclic name.
+        be16set(inBuf, 0, 0x1234); be16set(inBuf, 2, 0x8180)
+        be16set(inBuf, 4, 1); be16set(inBuf, 6, 1); be16set(inBuf, 8, 0); be16set(inBuf, 10, 0)
+        o = 12
+        be16set(inBuf, o, 0xC00C); o += 2          // question name → pointer to itself (offset 12)
+        be16set(inBuf, o, dnsTypeA); o += 2
+        be16set(inBuf, o, dnsClassIN); o += 2
+        be16set(inBuf, o, 0xC00C); o += 2          // answer name → pointer (cycle if followed)
+        be16set(inBuf, o, dnsTypeA); o += 2
+        be16set(inBuf, o, dnsClassIN); o += 2
+        be32set(inBuf, o, 300); o += 4
+        be16set(inBuf, o, 4); o += 2
+        be32set(inBuf, o, 0x0A00_0001); o += 4     // 10.0.0.1
+        check(dnsParseResponse(inBuf, o, id: 0x1234) == 0x0A00_0001,
+              "DNS self-referential pointer name terminates and still finds the A")
+
+        // --- 25. a label whose length runs past the message end → 0 -----------
+        craftDNSHeader(0x1234, flags: 0x8180, an: 1)
+        b8set(inBuf, qend, 63)                      // claims a 63-byte label, but the buffer ends here
+        check(dnsParseResponse(inBuf, qend + 1, id: 0x1234) == 0, "DNS over-long label past end rejected")
+
+        // --- 26. reserved label-length bits (0x80, not a pointer, len > 63) → 0
+        craftDNSHeader(0x1234, flags: 0x8180, an: 1)
+        b8set(inBuf, qend, 0x80)                    // top bit set but not 0xC0 → malformed
+        check(dnsParseResponse(inBuf, qend + 1, id: 0x1234) == 0, "DNS reserved-bits label rejected")
+
+        // --- 27. a compression pointer truncated to one byte at the end → 0 ---
+        craftDNSHeader(0x1234, flags: 0x8180, an: 1)
+        b8set(inBuf, qend, 0xC0)                    // pointer high byte with no low byte
+        check(dnsParseResponse(inBuf, qend + 1, id: 0x1234) == 0, "DNS truncated pointer rejected")
+
         // =====================================================================
         // IPv6 (aggressive host unit coverage for wire format + checksums)
         // These tests exist *before* full NetStack IPv6 dispatch / NDP / sockets

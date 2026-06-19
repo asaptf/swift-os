@@ -7224,3 +7224,25 @@ finishes booting would PSCI-reset → fault → reset … in an invisible loop. 
   build + console-login boot still PASS (the guard/healthy-reset don't perturb a
   normal boot). Remaining audit tracks: datafs crash injection, SMP atomic
   contention, futex/signal races, driver fault injection, DNS pointer-loop.
+
+### TH7 — DNS compression-pointer DoS: verified safe by design + armored (DONE, 2026-06-19)
+
+The audit (P2 net) flagged that `dnsSkipName` "could infinite-loop on a
+compression-pointer cycle" — the classic DNS decompression-bomb DoS. On inspection
+this is a **false alarm for our implementation**: the in-kernel resolver
+(kernel/net/dns.swift) never *follows* compression pointers — `dnsSkipName` treats a
+0xC0 pointer as a 2-byte terminator and returns, and `dnsParseResponse` locates the
+A record by walking fixed-size answer records, reading the RDATA directly. Every
+loop strictly advances (label by ≥1, answer index by 1) or returns -1 on overrun, so
+a cyclic/forward pointer can never loop. No bug, no fix — but the property was
+untested.
+
+Added four adversarial cases to `tests/net_test.swift` (section 24–27) that pin it:
+a question name that is a **self-referential pointer** (the test merely completing
+is the proof it terminates — a follow-the-pointer parser would hang here) which must
+still find the A record after it; a label whose length runs past the message end; a
+reserved-bits label (0x80, not a pointer, len > 63); and a compression pointer
+truncated to one byte at the end — each must return 0, not hang or over-read. Proven
+non-vacuous (a forced-wrong expectation makes `check` print FAIL). Host-only, already
+in `make test`. Remaining audit tracks: datafs crash injection, SMP atomic
+contention, futex/signal races, driver fault injection.
