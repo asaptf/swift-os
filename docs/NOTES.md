@@ -7246,3 +7246,28 @@ truncated to one byte at the end — each must return 0, not hang or over-read. 
 non-vacuous (a forced-wrong expectation makes `check` print FAIL). Host-only, already
 in `make test`. Remaining audit tracks: datafs crash injection, SMP atomic
 contention, futex/signal races, driver fault injection.
+
+### TH8 — direct-futex boundary probe + an unreachable-boundary finding (DONE, 2026-06-19)
+
+pthread already drives futex on the happy path; nothing tested SYS_FUTEX directly
+at its boundaries. `userland/futexprobe.c` (`make futex-test`, run at `-smp 4` so
+the wait/wake handoff crosses CPUs) covers, via raw `svc` syscalls:
+  - **val-mismatch fast path** — FUTEX_WAIT with `*uaddr != val` returns 0 at once,
+    never blocking;
+  - **wake-empty** — FUTEX_WAKE on an address with no waiters wakes nobody (0),
+    never faults;
+  - **multi-waiter wake / no lost wakeup** — N threads FUTEX_WAIT on one word, then
+    setting it + one FUTEX_WAKE releases every one. Robust by construction: the word
+    is set *before* the wake, so a not-yet-parked waiter still exits via the fast
+    path, and the join can only hang if a genuinely-parked waiter's wakeup is LOST.
+
+**Finding — the 16-slot queue-full EAGAIN path is effectively unreachable.**
+`futexWaitOn` returns EAGAIN when its 16-entry wait table is full, but a probe that
+tries to fill it discovered `pthread_create` fails at ~the 13th thread:
+`maxProc = 16` (kernel/user/process.swift) caps total processes/threads, and the
+live system already holds several, so you exhaust thread slots *before* the 16-slot
+futex table — the EAGAIN branch is defensive/dead under the current cap. Recorded
+rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
+oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
+tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
+injection.
