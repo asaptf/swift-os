@@ -41,6 +41,7 @@ specific audience.
 | Administer accounts, capabilities, base configuration, packages, and services | [Administration Guide](ADMINISTRATION_GUIDE.md) |
 | Look up command syntax, examples, limits, and acceptance coverage | [Command Reference](COMMAND_REFERENCE.md) |
 | Look up host-side package, repository, ports, static-host, hosted URL, image, and model tools | [Host Tool Reference](HOST_TOOL_REFERENCE.md) |
+| Decide where a setting lives and how to change it when `/etc` is read-only | [Settings Guide](SETTINGS_GUIDE.md) |
 | Find build, boot, test, QEMU, board, and guest defaults | [Configuration Reference](CONFIGURATION_REFERENCE.md) |
 | Choose, run, interpret, and add validation tests | [Testing Guide](TESTING_GUIDE.md) |
 | Operate boot profiles, networking workflows, driver-service smoke, package overlays, and verification gates | [Operations Guide](OPERATIONS_GUIDE.md) |
@@ -103,6 +104,7 @@ discoverable.
 | Reuse package-manager session prompts and milestone prompts | [Package Manager Session Prompts](PACKAGE_MANAGER_SESSION_PROMPTS.md) |
 | Review the current seed ports catalog and recipe validation rules | [Ports Seed Catalog](../ports/README.md) |
 | Review the machine-checked SMP mutable-state inventory | [SMP Mutable State Audit](SMP_STATE_AUDIT.md) |
+| Reproduce the bare-metal Hetzner Cloud ARM VM bring-up | [Hetzner Deployment](HETZNER_DEPLOYMENT.md) |
 | Pick up the latest handoff notes for the next engineering session | [Next Session](NEXT_SESSION.md) |
 
 ## Documentation Contract

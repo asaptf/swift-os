@@ -205,6 +205,8 @@ operators, AI hosting operators, support engineers, and security reviewers.
 - [Host Tool Reference](docs/HOST_TOOL_REFERENCE.md): host-side package,
   repository, ports catalog, static-host, hosted URL, base-image, and
   model-bundle tools.
+- [Settings Guide](docs/SETTINGS_GUIDE.md): where each setting lives across the
+  base image, `/data`, and `/tmp`, and how to change it when `/etc` is read-only.
 - [Configuration Reference](docs/CONFIGURATION_REFERENCE.md): build variables,
   boot profiles, QEMU/test knobs, artifacts, and seeded guest defaults.
 - [Testing Guide](docs/TESTING_GUIDE.md): choose focused gates, run the full
@@ -275,6 +277,8 @@ operators, AI hosting operators, support engineers, and security reviewers.
   mutable-state inventory.
 - [Next Session](docs/NEXT_SESSION.md): current handoff notes for the next
   engineering session.
+- [Hetzner Deployment](docs/HETZNER_DEPLOYMENT.md): bare-metal bring-up handoff
+  for a Hetzner Cloud ARM (CAX) VM running SwiftOS as the actual OS.
 
 ## Architecture
 

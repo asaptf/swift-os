@@ -33,14 +33,17 @@ Use this with:
 | UEFI disk image | `build/swift-os.img` |
 | Guest init | `/bin/swos-init`, falling back to `/bin/console-login` |
 | Login shell | `/bin/busybox` `ash` |
-| Writable guest storage | `/tmp` tmpfs only |
+| Writable guest storage | `/tmp` tmpfs (ephemeral) and `/data` datafs (persistent, when a data disk is attached) |
 | Package overlay fixture | `build/pkghello-payload.img` |
 | Package-store fixture | `build/pkgstore-pkghello.img` |
 | LLM model files | `stories260K.bin` and `tok512.bin` staged directly under `/models`; verified `stories15M` serving generations staged under `/models/stories15M` |
 
-The target is static and intentionally small. There is no Linux syscall ABI, no
-dynamic loader, and no persistent writable guest filesystem in the current
-product profile.
+The target is static and intentionally small. There is no Linux syscall ABI and
+no dynamic loader. Writable guest state is split by lifetime: ephemeral `/tmp`
+(tmpfs) and the persistent `/data` tier (datafs, on a dedicated virtio-blk disk).
+There is still no general-purpose persistent writable *root* filesystem — the
+base image stays immutable. To decide where a given setting belongs, see
+[SETTINGS_GUIDE.md](SETTINGS_GUIDE.md).
 
 ## Choose A Configuration Change
 
@@ -405,6 +408,7 @@ deploy host-key, KEX, and login key material is intentionally omitted.
 | `/www` | `build/base.img` | No | Immutable across boot |
 | `/models` | `build/base.img` | No | Immutable across boot |
 | `/tmp` | tmpfs | Yes, with `capTmpWrite` | Lost on reboot |
+| `/data` | datafs on a virtio-blk data disk | Yes, with `fsync` durability | Persists across reboot when a `SWDATAFS` disk is attached |
 | `/usr/bin/pkghello` | package overlay fixture | No | Present only when overlay is attached |
 
 To change installed base files, edit `base/` or staged userland sources, then
@@ -627,7 +631,10 @@ These are intentional current limits:
 
 - No Linux ABI mode.
 - No dynamic loader.
-- No persistent writable filesystem.
+- No general-purpose persistent writable *root* filesystem. The base image stays
+  immutable; persistent state goes on the narrow `/data` tier (datafs), which has
+  no journaling and relies on honest `fsync` plus application journaling for
+  crash-safety. See [SETTINGS_GUIDE.md](SETTINGS_GUIDE.md).
 - No public hosted package channel, package upgrade, remove, rollback,
   or version-constraint solver. Local
   `pkg install FILE` and signed `pkg repo set`/`pkg update [URL]`/
