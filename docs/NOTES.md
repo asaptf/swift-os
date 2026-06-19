@@ -7298,12 +7298,43 @@ Two deliberate v1 limitations, recorded not hidden:
   Fine for short cron jobs; revisit if/when the kernel grows `WNOHANG`.
 - **Opt-in, not auto-started.** crond is NOT in the default `/etc/swos/services`
   (the `SERVICE_CROND` token + `crond`/`crond-supervised` exist for admins who add
-  it). Reason, measured: auto-starting an idle crond as a permanent resident
-  process trimmed kernel image-load headroom enough that loading a *large* binary
-  afterwards (e.g. `/bin/kv`, which links the Unicode tables) intermittently failed
-  to exec — `make kv-test` flipped from PASS to FAIL with crond in services, and
-  back to PASS without it (`maxProc = 16`, 256 MiB). Leaving crond off by default
-  keeps the boot path and headroom identical to before and matches the project's
-  minimalism value (an empty schedule should cost no resident process). The token
-  path was verified manually (`swos-init: started crond pid 3` → `crond: starting`)
-  but is not in automated CI to avoid re-introducing the headroom regression.
+  it). It is off by default because a *second* resident daemon exposes a latent
+  kernel fragility (see the CR2 finding below); leaving it off keeps the boot path
+  identical to before and matches the project's minimalism value (an empty
+  schedule should cost no resident process).
+
+### CR2 — finding: a second resident daemon hangs the console under stress (OPEN, 2026-06-19)
+
+Attempting to enable crond auto-start (so it could, e.g., renew ACME certs on a
+`@daily` schedule) surfaced a reproducible failure that is **not** crond-specific
+and is **not** what it first looked like.
+
+Symptom: with crond resident AND `make kv-test`'s long churn session running, the
+interactive shell stops acting on console input *after* `/bin/kv` exits — the next
+line (`echo BACK-IN-SHELL`) is echoed by the tty (that happens at IRQ level) but is
+never executed. Clean correlation: kv-test is 3/3 PASS with only `sshd` resident,
+and consistently FAILS with one extra resident process; short interactive sessions
+with crond resident always pass.
+
+Disproven causes (each ruled out with a measurement, not a guess):
+  - **Not memory / image-load headroom** (my initial wrong label): `/bin/kv` is
+    213 pages, smaller than busybox (278 pages) which is already staged at boot, so
+    its load reuses the grow-only ELF staging buffer (`exec.swift` `elfBuf`) with no
+    fresh contiguous allocation.
+  - **Not kernel-heap exhaustion**: crond's periodic syscalls (`sysinfo`/`time`/
+    `nanosleep`) allocate nothing from the bump heap.
+  - **Not process-slot exhaustion, not a fork/exec failure**: instrumented every
+    `-1`/`(0,0,0)` return in `createProcess`/`buildExecImage`/`processFork` — none
+    fired; the post-kv `echo` exec is never even attempted.
+  - **Not a stuck reap**: instrumented the `processWaitpid` park loop — it never
+    spins; the shell is not blocked waiting for kv.
+  - **Not boot-start vs shell-start, not wakeup frequency** (a 30 s crond loop
+    fails identically), **not test flakiness** (3/3 without crond).
+
+So the shell's input is delivered to the cooked tty buffer but never consumed/acted
+on once a second resident process exists and the system has been stressed — pointing
+at a latent **tty-input-routing / scheduler** fragility (the cooked console buffer in
+`kernel/tty/tty.swift` has no per-process foreground arbitration; `ttyRead` is a
+shared first-come buffer). Root-causing it is a focused kernel investigation, not a
+crond change. Until then crond stays opt-in and auto-start is deferred. The debug
+instrumentation used to reach this conclusion was reverted (diagnostic only).
