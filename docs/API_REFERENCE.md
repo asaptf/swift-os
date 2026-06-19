@@ -287,6 +287,16 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 91 | `ipc_call` | `fd`, `msg*` | reply bytes or negative error (send + block for reply) |
 | 92 | `ipc_reply_recv` | `fd`, `msg*` | request bytes or negative error (reply then receive) |
 | 93 | `ipc_badge` | `fd`, `badge` | 0 or negative error (stamp a server-chosen client tag on a send-end endpoint handle) |
+| 94 | `update_stage_begin` | `version`, `total` | 0 or negative error (reserve the inactive A/B slot for streaming; needs `capConsole`) |
+| 95 | `update_stage_write` | `buf`, `count` | bytes accepted or negative error (append base-image bytes to the inactive slot; needs `capConsole`) |
+| 96 | `update_stage_commit` | none | 0 or negative error (validate + flush the staged slot present/untried; needs `capConsole`) |
+| 97 | `update_stage_abort` | none | 0 or negative error (discard an in-progress stage; needs `capConsole`) |
+| 98 | `spawn_handles_async` | `path`, `argv`, `specs`, `count` | child pid or negative error (non-blocking explicit-handle spawn) |
+| 99 | `name_register` | `name`, `endpoint_fd` | 0 or negative error (publish a recv-end endpoint under a name; needs `capConsole`) |
+| 100 | `name_lookup` | `name` | fresh send-end fd or negative error (capability grant-by-lookup) |
+| 101 | `shmring_create` | `pages` | channel id or negative error (full-duplex shared-memory SPSC ring; needs `capNet`) |
+| 102 | `shmring_map` | `id` | base user VA or negative error (map a channel's pages read/write) |
+| 103 | `shmring_close` | `id` | 0 or negative error (drop the creator's base reference to a channel) |
 
 Notes:
 
@@ -995,6 +1005,35 @@ Behavior:
   unbadged); pass `out_badge = NULL` to skip reporting. Plain `ipc_recv` is exactly
   `ipc_recv_badged(..., NULL)` — it carries a zero out-badge VA, so the recv msg
   struct is a fixed 32 bytes for every caller.
+
+### Shared-memory ring (`shmring_create` / `shmring_map` / `shmring_close`)
+
+LA3 adds a single-producer/single-consumer shared-memory data path for IPC that
+moves payloads with no syscall per record — the prerequisite for relocating the
+network stack to a userland service, and reusable by the Node.js / AI data
+planes. A channel owns N physically-contiguous pages laid out as a full-duplex
+pair of rings (ring0 in the first half, ring1 in the second); two processes map
+the same pages and exchange length-prefixed records by reserving/committing and
+peeking/releasing against the shared cursors. Ordering is enforced by the cursor
+publish/consume barriers (the producer publishes `tail` with release ordering,
+the consumer reads it with acquire ordering); there are no locks on the data
+path. The sans-IO ring core is `kernel/ipc/shmring.swift` — the same file the
+kernel, the host unit test, and the userland side compile.
+
+```c
+long shmring_create(unsigned long pages); // -> channel id (needs capNet)
+long shmring_map(int id);                 // -> base user VA (or negative errno)
+int  shmring_close(int id);               // drop the creator's base reference
+```
+
+The native-Swift bridges are `swiftos_shmring_create`, `swiftos_shmring_map`,
+and `swiftos_shmring_close`; the userland ring uses `swiftos_atomic_load` /
+`swiftos_atomic_store` (SEQ_CST) to publish and consume the cursors across
+processes. Page lifetime rides the PMM reference count: `create` takes the base
+reference, each `map` bumps it, process teardown drops it, and `close` (or owner
+exit) drops the base reference — frames free on the last drop, so a peer that
+still maps the channel keeps it alive until it too exits. Syscalls 101–103; see
+`/bin/shmringprobe` and `tests/shmring_test.sh` (`make shmring-test`).
 
 ## Memory API
 

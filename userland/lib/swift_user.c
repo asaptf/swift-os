@@ -1003,6 +1003,15 @@ unsigned int swiftos_atomic_load(unsigned int *p) {
     return __atomic_load_n(p, __ATOMIC_SEQ_CST);
 }
 
+void swiftos_atomic_store(unsigned int *p, unsigned int v) {
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+
 unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta) {
     return __atomic_fetch_add(p, delta, __ATOMIC_SEQ_CST);
 }
+
+// LA3 shared-memory ring bridges (thin forwards to the C-only syscall wrappers).
+long swiftos_shmring_create(unsigned long pages) { return shmring_create(pages); }
+long swiftos_shmring_map(int id) { return shmring_map(id); }
+int  swiftos_shmring_close(int id) { return shmring_close(id); }

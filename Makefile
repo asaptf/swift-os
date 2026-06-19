@@ -174,6 +174,8 @@ SWIFT_SRCS := \
 	kernel/net/tcp.swift \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
+	kernel/ipc/shmring.swift \
+	kernel/ipc/shmring_chan.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/crypto/sha256.swift \
 	kernel/crypto/sysrng.swift \
@@ -462,6 +464,7 @@ USER_QW5_RIGHTSXFER_ELF := $(BUILD)/qw5-rightsxfer.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
 USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
 USER_SVC_INPUT_ELF := $(BUILD)/svc-input.elf
+USER_SHMRINGPROBE_ELF := $(BUILD)/shmringprobe.elf
 USER_SVC_SUPERVISOR_ELF := $(BUILD)/svc-supervisor.elf
 USER_PKG_ELF := $(BUILD)/pkg.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
@@ -491,6 +494,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SSHD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
+	$(USER_SHMRINGPROBE_ELF) \
 	$(USER_QW4_BADGE_ELF) \
 	$(USER_QW5_RIGHTSXFER_ELF) \
 	$(USER_DRVINPUTD_ELF) \
@@ -742,6 +746,12 @@ $(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_servic
 $(BUILD)/user_svc-supervisor.o: userland/svc-supervisor.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-supervisor.swift -o $@
 
+# LA3: the shmring probe reuses the kernel's sans-IO ring core (the same file the
+# kernel and host unit test compile), built -D SHMRING_USER so its cursor
+# accessors use the SEQ_CST userland atomics for cross-process ordering.
+$(BUILD)/user_shmringprobe.o: userland/shmringprobe.swift kernel/ipc/shmring.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -D SHMRING_USER -c userland/shmringprobe.swift kernel/ipc/shmring.swift -o $@
+
 $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ps.swift -o $@
 
@@ -992,6 +1002,9 @@ $(USER_SVC_INPUT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/
 
 $(USER_SVC_SUPERVISOR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o -o $@
+
+$(USER_SHMRINGPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o -o $@
 
 $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o -o $@
@@ -1502,6 +1515,13 @@ stability-coverage-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/stability_coverage_test.swift -o $(BUILD)/stability_coverage_test
 	$(BUILD)/stability_coverage_test
 
+# LA3 shared-memory ring: the host unit test for the sans-IO core, then the
+# in-QEMU full-duplex round-trip at -smp 4 (parent/child over mapped pages).
+shmring-test: build $(QEMU_DTB_SMP4) disk base-image | $(BUILD)/.dir
+	$(HOST_SWIFTC) -D SHMRING_HOST tests/shmring_test.swift kernel/ipc/shmring.swift -o $(BUILD)/shmring_test
+	$(BUILD)/shmring_test
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
+
 test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
@@ -1533,6 +1553,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	FDT_TEST=$(BUILD)/fdt_test ./tests/qemu_virt_hardware_map_test.sh
 	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/ipv6.swift kernel/net/icmp.swift kernel/net/icmp6.swift kernel/net/udp.swift kernel/net/dhcp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
+	$(HOST_SWIFTC) -D SHMRING_HOST tests/shmring_test.swift kernel/ipc/shmring.swift -o $(BUILD)/shmring_test
+	$(BUILD)/shmring_test
 	$(HOST_SWIFTC) tests/crypto_test.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/crypto_test
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
@@ -1615,6 +1637,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/sshd_deploy_preflight_test.sh
 	./tests/hetzner_deploy_bundle_test.sh
 	bash ./tests/net_zero_copy_throughput_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
@@ -2668,6 +2691,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
+	cp $(USER_SHMRINGPROBE_ELF) $(BASE_ROOT)/bin/shmringprobe
 	cp $(USER_QW4_BADGE_ELF) $(BASE_ROOT)/bin/qw4-badge
 	cp $(USER_QW5_RIGHTSXFER_ELF) $(BASE_ROOT)/bin/qw5-rightsxfer
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
