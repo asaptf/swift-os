@@ -7303,7 +7303,7 @@ Two deliberate v1 limitations, recorded not hidden:
   identical to before and matches the project's minimalism value (an empty
   schedule should cost no resident process).
 
-### CR2 — finding: a second resident daemon hangs the console under stress (OPEN, 2026-06-19)
+### CR2 — a second resident daemon hangs the serial console (ROOT-CAUSED, fix deferred, 2026-06-19)
 
 Attempting to enable crond auto-start (so it could, e.g., renew ACME certs on a
 `@daily` schedule) surfaced a reproducible failure that is **not** crond-specific
@@ -7331,10 +7331,27 @@ Disproven causes (each ruled out with a measurement, not a guess):
   - **Not boot-start vs shell-start, not wakeup frequency** (a 30 s crond loop
     fails identically), **not test flakiness** (3/3 without crond).
 
-So the shell's input is delivered to the cooked tty buffer but never consumed/acted
-on once a second resident process exists and the system has been stressed — pointing
-at a latent **tty-input-routing / scheduler** fragility (the cooked console buffer in
-`kernel/tty/tty.swift` has no per-process foreground arbitration; `ttyRead` is a
-shared first-come buffer). Root-causing it is a focused kernel investigation, not a
-crond change. Until then crond stays opt-in and auto-start is deferred. The debug
-instrumentation used to reach this conclusion was reverted (diagnostic only).
+**Root cause (confirmed by a per-tick process-table dump at the hang):** the
+console shell sits in `pBlocked` with `pWait = waitAny` — i.e. blocked in
+`wait(-1)` — while its only live child is crond. The chain is structural:
+`swos-init` (pid1, slot 0) forks the daemons and then `execve`s `/bin/console-login`
+→ the interactive shell, so **pid1 *becomes* the shell and inherits the daemons as
+its children**. busybox ash issues a blocking `wait(-1)` that returns only when some
+child exits. A long-lived daemon child (crond) never exits, so `wait(-1)` blocks
+forever and the shell never reads the next console line. Without crond, sshd exits
+on this NIC-less test path, the child set empties, `wait(-1)` returns `ECHILD`, and
+the shell continues — which is exactly why only a *second, never-exiting* daemon
+child trips it.
+
+Scope: this bites the **serial-console interactive shell** only. Production access
+is via sshd (session shells are children of sshd, not of pid1), and the serial
+console normally just sits at the login prompt, so a real box is unaffected — but
+the console tests run commands directly, which is why auto-start breaks them.
+
+Fix direction (deferred — an init-model change with boot-path/test-breakage risk):
+make `swos-init` a persistent reaping init that forks `/bin/console-login` as a
+*child* (siblings with the daemons) instead of `execve`-handoff, so the interactive
+shell never parents daemons. This touches the kernel's `M12c: session ended` restart
+semantics (kernel/main.swift) that every console test depends on, so it needs its
+own milestone. Until then crond stays opt-in. Diagnostic instrumentation (process
+dump, alloc/exec/waitpid failure logs) was reverted — it was diagnostic only.
