@@ -7129,3 +7129,24 @@ Non-vacuous: if escalation leaked WRITE the child prints `QW5: FAIL ... rights w
 widened` and `QW5: PASS` never appears. Verified in QEMU (`make
 qw5-rights-intersection-test`, PASS). Next IPC milestones: QW1 reply-port
 double-reply/forgery/generation-after-free, QW4 stale-badge-on-reuse.
+
+### TH3 — QW1 reply-port: a double reply to a used token is rejected (DONE, 2026-06-19)
+
+`ipc_call_test` proved a *bogus* reply-port token (0xDEADBEEF, out of range) is
+rejected EINVAL, but not the sharper capability case: a **real, previously valid**
+token replayed after it was already answered. That is what the generation counter
++ `!hasReply` guard exist to stop (decodeReplyPort + vfs.swift:3334) — a server
+must not be able to reply twice, nor reuse a consumed/stale token to wake a caller
+a second time.
+
+`userland/ipc_call_test.c` gains Scenario 4: a dedicated server receives req1
+(captures tok1), replies to it while receiving req2 (tok2), then attempts a
+**second** reply to tok1 and asserts it returns EINVAL (the reply phase refuses it
+before blocking), then replies to tok2 so the caller is released and exits with the
+verdict. The caller issues two correlated `ipc_call`s; the sequence is
+self-synchronizing (each call blocks for its reply), so it is robust at `-smp 4`.
+Non-vacuous: a honored double reply makes the server print `double-reply NOT
+rejected` / the caller print `double-reply scenario FAILED`, both caught by the
+test script, and `IPC-CALL OK` never appears. Verified in QEMU at `-smp 4` (`make
+ipc-call-test`, PASS). Remaining IPC items: cross-endpoint reply (the `endpoint ==
+ep` guard), generation-after-slot-reuse, and QW4 stale-badge-on-reuse.
