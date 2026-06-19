@@ -294,9 +294,10 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 98 | `spawn_handles_async` | `path`, `argv`, `specs`, `count` | child pid or negative error (non-blocking explicit-handle spawn) |
 | 99 | `name_register` | `name`, `endpoint_fd` | 0 or negative error (publish a recv-end endpoint under a name; needs `capConsole`) |
 | 100 | `name_lookup` | `name` | fresh send-end fd or negative error (capability grant-by-lookup) |
-| 101 | `shmring_create` | `pages` | channel id or negative error (full-duplex shared-memory SPSC ring; needs `capNet`) |
-| 102 | `shmring_map` | `id` | base user VA or negative error (map a channel's pages read/write) |
-| 103 | `shmring_close` | `id` | 0 or negative error (drop the creator's base reference to a channel) |
+| 101 | `device_mmap` | `fd`, `len` | base user VA or negative error (map a claimed device's MMIO window; gated on the grant's `.map` right) |
+| 102 | `shmring_create` | `pages` | channel id or negative error (full-duplex shared-memory SPSC ring; needs `capNet`) |
+| 103 | `shmring_map` | `id` | base user VA or negative error (map a channel's pages read/write) |
+| 104 | `shmring_close` | `id` | 0 or negative error (drop the creator's base reference to a channel) |
 
 Notes:
 
@@ -1032,7 +1033,7 @@ and `swiftos_shmring_close`; the userland ring uses `swiftos_atomic_load` /
 processes. Page lifetime rides the PMM reference count: `create` takes the base
 reference, each `map` bumps it, process teardown drops it, and `close` (or owner
 exit) drops the base reference — frames free on the last drop, so a peer that
-still maps the channel keeps it alive until it too exits. Syscalls 101–103; see
+still maps the channel keeps it alive until it too exits. Syscalls 102–104; see
 `/bin/shmringprobe` and `tests/shmring_test.sh` (`make shmring-test`).
 
 ## Memory API

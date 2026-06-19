@@ -107,9 +107,10 @@
 #define SYS_SPAWN_HANDLES_ASYNC 98
 #define SYS_NAME_REGISTER       99
 #define SYS_NAME_LOOKUP         100
-#define SYS_SHMRING_CREATE      101
-#define SYS_SHMRING_MAP         102
-#define SYS_SHMRING_CLOSE       103
+#define SYS_DEVICE_MMAP         101
+#define SYS_SHMRING_CREATE      102
+#define SYS_SHMRING_MAP         103
+#define SYS_SHMRING_CLOSE       104
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -555,6 +556,20 @@ static inline int device_info(int fd, struct swiftos_device_info *info) {
 
 static inline int device_discover(int index, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
+}
+
+// LA2: map the MMIO window of the device claimed on `fd` into this process,
+// gated on the grant's `.map` right. `len` is clamped to the window length
+// (0 means the whole window). Returns a pointer to the window base (Device-nGnRE,
+// EL0 read/write), or MAP_FAILED on error (e.g. the grant lacks `.map`, or the
+// device is not mappable -> EACCES). The raw syscall returns a base VA or a small
+// negative errno, which we convert to MAP_FAILED exactly like mmap().
+static inline void *device_mmap(int fd, unsigned long len) {
+    long r = __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
+    if (r < 0 && r >= -4095) {
+        return MAP_FAILED;
+    }
+    return (void *)r;
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

@@ -411,6 +411,7 @@ USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_DEVICEAUTHDEMO_ELF := $(BUILD)/deviceauthdemo.elf
+USER_DEVICEMMAPPROBE_ELF := $(BUILD)/devicemmapprobe.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
@@ -576,6 +577,7 @@ BASE_EXEC_ELFS := \
 	$(USER_S4STRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
 	$(USER_DEVICEAUTHDEMO_ELF) \
+	$(USER_DEVICEMMAPPROBE_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
@@ -595,6 +597,7 @@ build: $(KERNEL_ELF)
 .PHONY: sshd-deploy-preflight-test
 .PHONY: hetzner-deploy-bundle-test
 .PHONY: netinfo-test
+.PHONY: device-mmio-map-test
 
 $(QEMU_DTB): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -m 256M -nographic
@@ -731,6 +734,9 @@ $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h use
 
 $(BUILD)/user_deviceauthdemo.o: userland/deviceauthdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/deviceauthdemo.c -o $@
+
+$(BUILD)/user_devicemmapprobe.o: userland/devicemmapprobe.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/devicemmapprobe.c -o $@
 
 $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
@@ -990,6 +996,9 @@ $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/use
 
 $(USER_DEVICEAUTHDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o -o $@
+
+$(USER_DEVICEMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_devicemmapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_devicemmapprobe.o -o $@
 
 $(USER_IDENTITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o -o $@
@@ -1692,6 +1701,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/llm_serve_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
+	$(MAKE) device-mmio-map-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -2088,6 +2098,13 @@ device-authority-cap-test: build $(QEMU_DTB) base-image
 	./tests/device_authority_cap_test.sh
 
 c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test
+
+# LA2: device-MMIO-map authority. Boots the base image with a virtio-input window
+# present and asserts the capConsole probe maps it and reads its registers, plus
+# the EACCES refusals. Runs single-core and under -smp 4.
+device-mmio-map-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/device_mmio_map_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/device_mmio_map_test.sh
 
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
@@ -2640,6 +2657,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_DEVICEAUTHDEMO_ELF) $(BASE_ROOT)/bin/deviceauthdemo
+	cp $(USER_DEVICEMMAPPROBE_ELF) $(BASE_ROOT)/bin/devicemmapprobe
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
