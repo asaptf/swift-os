@@ -11,12 +11,14 @@ and reuses cubestore's seams verbatim — `Bytes`, `ByteWriter`/`ByteReader`,
 `cubeCrc32`, and the `AppendLog` / `SnapshotStore` durability protocols — so the
 **committed Raft log _is_ cubestore's durability log** (see "one log" below).
 
-**Scope.** SC1a lands the consensus core + the deterministic simulator + the
-safety/liveness suite (cases 1, 4–8, 11) against a trivial state machine. Wiring
-cubestore in as the real state machine (CAS-at-apply, ReadIndex, forwarding —
-cases 2, 3, 9, 10) is **SC1b**. There is no network here: SC2 adds the TCP/TLS
-transport, client RPC, and worker-node join. Membership is **static 3-node**;
-dynamic membership / joint consensus is deferred.
+**Scope.** SC1a landed the consensus core + the deterministic simulator + the
+safety/liveness suite (cases 1, 4–8, 11) against a trivial state machine. SC1b
+wires **cubestore** in as the real state machine (`swiftcube/store/`) — writes go
+through Raft (propose → commit → apply), compare-and-apply is evaluated at apply,
+ReadIndex serves linearizable reads, and writes submitted to a follower are
+forwarded to the leader (cases 2, 3, 9, 10). There is no network here: SC2 adds
+the TCP/TLS transport, client RPC, and worker-node join. Membership is **static
+3-node**; dynamic membership / joint consensus is deferred.
 
 ## The algorithm (`RaftNode`)
 
@@ -125,15 +127,37 @@ asserts the Raft **safety** properties continuously, not just "it worked":
   entry, and applied command sequences are prefixes of one another;
 - **liveness** — progress resumes within bounded ticks after a heal.
 
+## State-machine integration (SC1b, `swiftcube/store/`)
+
+`CubeStateMachine` conforms to `RaftStateMachine` and wraps an SC0 `CubeStore`
+running over a **discard** log + an in-memory snapshot (its own WAL retired):
+
+- A committed `.normal` entry decodes to a `WriteRequest` `{conditions, ops}` and
+  is applied via `cubestore.compareAndApply` — so a plain batch and a CAS share one
+  path, and the accept/reject verdict is **deterministic at apply** (identical on
+  every node). A committed write that commits advances the cubestore revision by
+  exactly 1; `.noop` entries are ignored (no revision bump).
+- The proposing node records the per-index `CASResult`, so the leader reports the
+  single agreed outcome to the client.
+- `snapshot()` serializes the cubestore keyspace at the applied revision (this *is*
+  the Raft snapshot shipped by InstallSnapshot); `restore(...)` rebuilds cubestore
+  from it.
+- **ReadIndex** (`RaftNode.requestRead`): the leader stamps a fresh heartbeat
+  `round`, and the read is served only once a quorum echoes that round (current
+  leadership confirmed) and the state machine has applied the recorded read index.
+  A partitioned ex-leader never gets the quorum echo, so it cannot serve stale
+  committed data — it fails (the driver then forwards). Lease-based fast reads and
+  stale follower reads are out of scope.
+- **Forwarding:** a write submitted to a non-leader follows the node's `leaderId`
+  hint to the leader (in-sim routing here; the client-facing forwarding RPC is SC2).
+
 ## Seams left for later milestones
 
-- **SC1b (state-machine integration):** swap the trivial SM for cubestore — apply
-  `.normal` entries as write batches (revision +1), `.noop` ignored;
-  `compareAndApply` evaluated at apply; serve `watch`/`range`/`get` from applied
-  state; **ReadIndex** linearizable reads (heartbeat-confirm leadership before
-  serving); leader **forwarding** of writes submitted to a follower.
 - **SC2 (network):** replace the simulated bus with a TCP/TLS transport + message
-  framing, the client-facing RPC server, and worker-node join. The `Envelope`
-  `{from, to, message}` shape and the `takeMessages`/`step` seam wrap unchanged.
+  framing, the client-facing RPC server (client reads/writes + watch streams), and
+  worker-node join. The `Envelope` `{from, to, message}` shape and the
+  `takeMessages`/`step` seam wrap unchanged; client forwarding becomes a real RPC.
 - **Dynamic membership / joint consensus:** add configuration-change entries and a
   two-phase joint configuration; SC1 is static 3-node only.
+- **datafs durability:** point `SinkRaftStorage` at the swift-os datafs `AppendLog`
+  / `SnapshotStore` (honest `fsync`) instead of the host file/in-memory sinks.

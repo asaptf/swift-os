@@ -71,6 +71,9 @@ struct AppendEntries: Equatable {
     var prevLogTerm: Term
     var entries: [RaftEntry]
     var leaderCommit: LogIndex
+    /// Heartbeat round tag, echoed by the follower, used by the leader's ReadIndex
+    /// confirmation to prove it still commands a quorum at the current term.
+    var round: UInt64 = 0
 }
 
 struct AppendEntriesResp: Equatable {
@@ -81,6 +84,8 @@ struct AppendEntriesResp: Equatable {
     /// probing). 0 is never a valid hint (the log is 1-based).
     var matchIndex: LogIndex
     var conflictIndex: LogIndex
+    /// The `round` from the AppendEntries this responds to (ReadIndex proof).
+    var round: UInt64 = 0
 }
 
 /// Single-shot snapshot transfer. SC1's simulated bus delivers whole blobs, so

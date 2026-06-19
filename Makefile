@@ -1507,24 +1507,43 @@ cubestore-test: | $(BUILD)/.dir
 # SC1a: Raft consensus core (transport-agnostic, deterministic) over a simulated
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
-# only the simulator + test harness use Foundation. Covers cases 1,4-8,11. SC1b
-# wires cubestore in as the state machine (cases 2,3,9,10).
-.PHONY: raft-test
-RAFT_CORE = \
+# only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
+.PHONY: raft-test store-test
+# Seams shared with cubestore (compiled once per test target to avoid duplicate
+# symbols when both cores are linked together).
+CUBESTORE_SEAMS = \
 	swiftcube/cubestore/Crc32.swift \
 	swiftcube/cubestore/Model.swift \
 	swiftcube/cubestore/ByteIO.swift \
-	swiftcube/cubestore/StorageSink.swift \
+	swiftcube/cubestore/StorageSink.swift
+RAFT_ONLY = \
 	swiftcube/raft/RaftTypes.swift \
 	swiftcube/raft/Random.swift \
+	swiftcube/raft/StateMachine.swift \
 	swiftcube/raft/RaftStorage.swift \
 	swiftcube/raft/RaftNode.swift
+RAFT_CORE = $(CUBESTORE_SEAMS) $(RAFT_ONLY)
 raft-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) $(RAFT_CORE) \
 		swiftcube/raft/tests/Simulator.swift \
 		swiftcube/raft/tests/raft_test.swift \
 		-o $(BUILD)/raft_test
 	$(BUILD)/raft_test
+
+# SC1b: cubestore wired in as the Raft replicated state machine — writes go
+# through Raft (propose → commit → apply), compare-and-apply evaluated at apply,
+# ReadIndex linearizable reads, talk-to-any forwarding. The committed Raft log is
+# the durability log (cubestore's SC0 WAL retired; cubestore runs over a discard
+# log here). Reuses the full cubestore core + the raft core + the simulator.
+# Covers cases 2,3,9,10.
+store-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) $(CUBESTORE_CORE) $(RAFT_ONLY) \
+		swiftcube/store/WriteRequest.swift \
+		swiftcube/store/CubeStateMachine.swift \
+		swiftcube/raft/tests/Simulator.swift \
+		swiftcube/store/tests/store_test.swift \
+		-o $(BUILD)/store_test
+	$(BUILD)/store_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test

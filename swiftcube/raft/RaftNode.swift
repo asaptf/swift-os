@@ -60,6 +60,17 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
     // Leader state, parallel to `peers`.
     private var nextIndex: [LogIndex] = []
     private var matchIndex: [LogIndex] = []
+    /// Highest heartbeat round each peer has acknowledged (ReadIndex proof).
+    private var ackedRound: [UInt64] = []
+
+    // ReadIndex (linearizable reads). A read is confirmed once a quorum of peers
+    // has acked a heartbeat round issued at/after the request — proving current
+    // leadership — at which point the recorded `readIndex` may be served.
+    private var heartbeatRound: UInt64 = 0
+    private var nextReadId: UInt64 = 1
+    private struct PendingRead { var id: UInt64; var readIndex: LogIndex; var round: UInt64 }
+    private var pendingReads: [PendingRead] = []
+    private var readReady: [(id: UInt64, index: LogIndex)] = []
 
     // Output buffers drained by the driver.
     private var outbox: [Envelope] = []
@@ -78,6 +89,7 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         self.lastEmitted = storage.lastIncludedIndex
         self.nextIndex = [LogIndex](repeating: storage.lastIndex + 1, count: peers.count)
         self.matchIndex = [LogIndex](repeating: 0, count: peers.count)
+        self.ackedRound = [UInt64](repeating: 0, count: peers.count)
         resetElectionTimer()
     }
 
@@ -103,6 +115,9 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
     func takeSnapshotToApply() -> (index: LogIndex, data: Bytes)? {
         defer { snapshotToApply = nil }; return snapshotToApply
     }
+    /// Drain reads that have been confirmed linearizable: each `readIndex` is safe
+    /// to serve once the state machine has applied up to it. Cleared by the call.
+    func takeReadReady() -> [(id: UInt64, index: LogIndex)] { defer { readReady.removeAll() }; return readReady }
 
     // MARK: - Inputs
 
@@ -113,6 +128,7 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
             heartbeatElapsed += 1
             if heartbeatElapsed >= cfg.heartbeatInterval {
                 heartbeatElapsed = 0
+                heartbeatRound += 1                 // a fresh round each heartbeat
                 for p in peers { sendAppend(to: p) }
             }
         } else {
@@ -140,6 +156,23 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
     func compact(throughIndex idx: LogIndex, snapshotData data: Bytes) {
         guard idx <= commitIndex else { return }
         storage.compact(throughIndex: idx, snapshotData: data)
+    }
+
+    /// Request a linearizable read (ReadIndex). Records the current commit index
+    /// and triggers a heartbeat round; the read surfaces via `takeReadReady()`
+    /// only once a quorum confirms current leadership, so a partitioned ex-leader
+    /// never serves stale data. Returns the read id, or nil if not leader (the
+    /// driver then forwards). The caller serves the read against state at/after
+    /// `readIndex` once the state machine has applied that far.
+    func requestRead() -> UInt64? {
+        guard role == .leader else { return nil }
+        let id = nextReadId; nextReadId += 1
+        heartbeatRound += 1
+        let round = heartbeatRound
+        pendingReads.append(PendingRead(id: id, readIndex: commitIndex, round: round))
+        for p in peers { sendAppend(to: p) }   // carries the fresh round
+        tryConfirmReads()                       // single-node: self is the quorum
+        return id
     }
 
     /// Consume one inbound message from `from`.
@@ -202,6 +235,8 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         leaderId = id
         nextIndex = [LogIndex](repeating: storage.lastIndex + 1, count: peers.count)
         matchIndex = [LogIndex](repeating: 0, count: peers.count)
+        ackedRound = [UInt64](repeating: 0, count: peers.count)   // reads need fresh acks
+        pendingReads.removeAll()
         heartbeatElapsed = 0
         // A no-op at the new term lets the leader commit at its own term (the
         // leader-completeness requirement). The state machine ignores .noop.
@@ -231,13 +266,13 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         send(to: peer, .appendEntries(AppendEntries(
             term: storage.currentTerm, leader: id,
             prevLogIndex: prev, prevLogTerm: prevTerm,
-            entries: es, leaderCommit: commitIndex)))
+            entries: es, leaderCommit: commitIndex, round: heartbeatRound)))
     }
 
     private func handleAppendEntries(_ m: AppendEntries) {
         if m.term < storage.currentTerm {
             send(to: m.leader, .appendEntriesResp(AppendEntriesResp(
-                term: storage.currentTerm, success: false, matchIndex: 0, conflictIndex: 0)))
+                term: storage.currentTerm, success: false, matchIndex: 0, conflictIndex: 0, round: m.round)))
             return
         }
         // Valid leader for this (or a newer) term: adopt it, reset our timer.
@@ -247,7 +282,7 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         if m.prevLogIndex > storage.lastIndex {
             send(to: m.leader, .appendEntriesResp(AppendEntriesResp(
                 term: storage.currentTerm, success: false, matchIndex: 0,
-                conflictIndex: storage.lastIndex + 1)))
+                conflictIndex: storage.lastIndex + 1, round: m.round)))
             return
         }
         if m.prevLogIndex >= storage.lastIncludedIndex,
@@ -256,7 +291,7 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
             var ci = m.prevLogIndex
             while ci > storage.lastIncludedIndex + 1, storage.term(at: ci - 1) == t { ci -= 1 }
             send(to: m.leader, .appendEntriesResp(AppendEntriesResp(
-                term: storage.currentTerm, success: false, matchIndex: 0, conflictIndex: ci)))
+                term: storage.currentTerm, success: false, matchIndex: 0, conflictIndex: ci, round: m.round)))
             return
         }
 
@@ -280,12 +315,15 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         }
         send(to: m.leader, .appendEntriesResp(AppendEntriesResp(
             term: storage.currentTerm, success: true,
-            matchIndex: max(lastNew, storage.lastIncludedIndex), conflictIndex: 0)))
+            matchIndex: max(lastNew, storage.lastIncludedIndex), conflictIndex: 0, round: m.round)))
     }
 
     private func handleAppendEntriesResp(from: NodeId, _ m: AppendEntriesResp) {
         if m.term > storage.currentTerm { becomeFollower(term: m.term, leader: nil); return }
         guard role == .leader, m.term == storage.currentTerm, let k = peerIndex(from) else { return }
+        // The peer responded at our term → it acknowledges us as leader for this
+        // round (success or log-mismatch alike): a ReadIndex confirmation signal.
+        if m.round > ackedRound[k] { ackedRound[k] = m.round }
         if m.success {
             if m.matchIndex > matchIndex[k] { matchIndex[k] = m.matchIndex }
             nextIndex[k] = matchIndex[k] + 1
@@ -294,6 +332,7 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
             nextIndex[k] = max(1, m.conflictIndex)
             sendAppend(to: from)       // retry immediately with the hint
         }
+        tryConfirmReads()
     }
 
     // MARK: - Snapshot transfer
@@ -359,7 +398,22 @@ final class RaftNode<Log: AppendLog, Snap: SnapshotStore> {
         role = .follower
         leaderId = leader
         votesGranted.removeAll()
+        pendingReads.removeAll()        // pending reads fail; the driver forwards
         resetElectionTimer()
+    }
+
+    /// Promote any pending read whose round has been acked by a quorum (current
+    /// leadership confirmed) to `readReady`.
+    private func tryConfirmReads() {
+        guard role == .leader else { pendingReads.removeAll(); return }
+        var stillPending: [PendingRead] = []
+        for r in pendingReads {
+            var count = 1                                  // self
+            for ar in ackedRound where ar >= r.round { count += 1 }
+            if count >= quorum { readReady.append((r.id, r.readIndex)) }
+            else { stillPending.append(r) }
+        }
+        pendingReads = stillPending
     }
 
     private func resetElectionTimer() {

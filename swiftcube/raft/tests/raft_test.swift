@@ -14,6 +14,12 @@
 
 import Foundation
 
+/// SC1a drives the trivial `KVStateMachine`; this exposes its applied command
+/// list for the assertions below.
+extension Replica {
+    var applied: [Bytes] { (sm as! KVStateMachine).appliedPayloads }
+}
+
 @main
 struct RaftTest {
     static var failed = false
@@ -37,7 +43,7 @@ struct RaftTest {
     @discardableResult
     static func waitAppliedAtLeast(_ c: Cluster, _ count: Int, maxTicks: Int = 300) -> Bool {
         c.run(maxTicks: maxTicks, until: {
-            c.replicasUp().allSatisfy { $0.sm.appliedPayloads.count >= count }
+            c.replicasUp().allSatisfy { $0.applied.count >= count }
         })
     }
 
@@ -64,7 +70,7 @@ struct RaftTest {
         check(l.id == 1 && l.node.currentTerm >= 1, "1: lone node becomes leader")
         _ = l.node.propose(b("hello"))
         c.run(3)
-        check(l.sm.appliedPayloads == [b("hello")], "1: single node commits + applies its write")
+        check(l.applied == [b("hello")], "1: single node commits + applies its write")
         check(c.violations.isEmpty, "1: no safety violation (\(c.violations.first ?? ""))")
     }
 
@@ -84,11 +90,11 @@ struct RaftTest {
 
         _ = l2.node.propose(b("c"))                  // writes continue
         let ok = c.run(maxTicks: 200, until: {
-            c.replicasUp().allSatisfy { $0.sm.appliedPayloads.count >= 3 }
+            c.replicasUp().allSatisfy { $0.applied.count >= 3 }
         })
         check(ok, "4: writes continue under the new leader")
         for r in c.replicasUp() {
-            check(r.sm.appliedPayloads == [b("a"), b("b"), b("c")],
+            check(r.applied == [b("a"), b("b"), b("c")],
                   "4: no committed entry lost on node \(r.id)")
         }
         check(c.violations.isEmpty, "4: no safety violation (\(c.violations.first ?? ""))")
@@ -112,7 +118,7 @@ struct RaftTest {
         // The ex-leader appends a doomed write it can never commit (no quorum).
         _ = l1.node.propose(b("w2-doomed"))
         c.run(40)
-        check(!l1.sm.appliedPayloads.contains(b("w2-doomed")), "5: minority leader cannot commit w2")
+        check(!l1.applied.contains(b("w2-doomed")), "5: minority leader cannot commit w2")
 
         // Majority elects a fresh leader and makes progress.
         let gotNew = c.run(maxTicks: 200, until: {
@@ -124,20 +130,20 @@ struct RaftTest {
         check(gotNew && l2.node.currentTerm > l1.node.currentTerm, "5: new leader at a higher term")
         _ = l2.node.propose(b("w3"))
         let majProgress = c.run(maxTicks: 200, until: {
-            majority.allSatisfy { c.replica($0).sm.appliedPayloads.contains(b("w3")) }
+            majority.allSatisfy { c.replica($0).applied.contains(b("w3")) }
         })
         check(majProgress, "5: majority commits w3 while partitioned")
 
         // Heal → ex-leader steps down, drops w2, catches up. No divergence.
         c.bus.heal()
         let converged = c.run(maxTicks: 300, until: {
-            let want = c.replica(l2.id).sm.appliedPayloads
-            return c.replicasUp().allSatisfy { $0.sm.appliedPayloads == want }
+            let want = c.replica(l2.id).applied
+            return c.replicasUp().allSatisfy { $0.applied == want }
         })
         check(converged, "5: all nodes converge after heal")
-        check(c.replicasUp().allSatisfy { !$0.sm.appliedPayloads.contains(b("w2-doomed")) },
+        check(c.replicasUp().allSatisfy { !$0.applied.contains(b("w2-doomed")) },
               "5: the uncommitted w2 is overwritten everywhere")
-        check(c.replica(l1.id).sm.appliedPayloads == [b("w1"), b("w3")], "5: ex-leader caught up to w1,w3")
+        check(c.replica(l1.id).applied == [b("w1"), b("w3")], "5: ex-leader caught up to w1,w3")
         check(c.leaders().count <= 1, "5: at most one leader after heal")
         check(c.violations.isEmpty, "5: no safety violation (\(c.violations.first ?? ""))")
     }
@@ -151,16 +157,16 @@ struct RaftTest {
 
         for k in 0..<5 { _ = l.node.propose(b("k\(k)")) }
         let majOk = c.run(maxTicks: 200, until: {
-            c.replicasUp().allSatisfy { $0.sm.appliedPayloads.count >= 5 }
+            c.replicasUp().allSatisfy { $0.applied.count >= 5 }
         })
         check(majOk, "6: majority commits the 5 writes with one node down")
 
         c.setDown(behind, false)                     // bring it back
         let caughtUp = c.run(maxTicks: 300, until: {
-            c.replica(behind).sm.appliedPayloads.count >= 5
+            c.replica(behind).applied.count >= 5
         })
         check(caughtUp, "6: the lagging follower converges")
-        check(c.replica(behind).sm.appliedPayloads == c.replica(l.id).sm.appliedPayloads,
+        check(c.replica(behind).applied == c.replica(l.id).applied,
               "6: caught-up follower matches the leader's applied state")
         check(c.violations.isEmpty, "6: no safety violation (\(c.violations.first ?? ""))")
     }
@@ -185,11 +191,11 @@ struct RaftTest {
         // re-elects and re-applies them from the recovered log.
         for r in c.replicas { r.restart() }
         let reElected = c.run(maxTicks: 300, until: {
-            c.leader() != nil && c.replicasUp().allSatisfy { $0.sm.appliedPayloads.count >= 2 }
+            c.leader() != nil && c.replicasUp().allSatisfy { $0.applied.count >= 2 }
         })
         check(reElected, "7: cluster recovers, re-elects, and re-applies committed writes")
         for r in c.replicasUp() {
-            check(r.sm.appliedPayloads == [b("p"), b("q")], "7: node \(r.id) recovered committed state")
+            check(r.applied == [b("p"), b("q")], "7: node \(r.id) recovered committed state")
         }
         check(c.violations.isEmpty, "7: no safety violation across restart (\(c.violations.first ?? ""))")
     }
@@ -204,14 +210,14 @@ struct RaftTest {
 
         for k in 0..<6 { _ = l.node.propose(b("s\(k)")) }
         let majOk = c.run(maxTicks: 200, until: {
-            c.replicasUp().allSatisfy { $0.sm.appliedPayloads.count >= 6 }
+            c.replicasUp().allSatisfy { $0.applied.count >= 6 }
         })
         check(majOk, "8: majority commits 6 writes with one node down")
 
         // Compact the up nodes through their applied index → the entries the
         // down node still needs are gone from the leader's log.
         for r in c.replicasUp() {
-            r.node.compact(throughIndex: r.node.commitIndex, snapshotData: r.sm.snapshotBytes())
+            r.node.compact(throughIndex: r.node.commitIndex, snapshotData: r.sm.snapshot())
         }
         check(l.node.lastIncludedIndex > 0, "8: leader compacted its log")
 
@@ -221,12 +227,12 @@ struct RaftTest {
         c.run(5)
         c.setDown(behind, false)                     // must catch up via InstallSnapshot
         let caughtUp = c.run(maxTicks: 400, until: {
-            c.replica(behind).sm.appliedPayloads.count >= 6
+            c.replica(behind).applied.count >= 6
         })
         check(caughtUp, "8: lagging follower converges via snapshot install")
         check(c.replica(behind).node.lastIncludedIndex > 0, "8: follower adopted a snapshot")
-        let want = c.replica(l.id).sm.appliedPayloads
-        check(c.replicasUp().allSatisfy { $0.sm.appliedPayloads == want },
+        let want = c.replica(l.id).applied
+        check(c.replicasUp().allSatisfy { $0.applied == want },
               "8: state-machine state identical across all nodes")
         check(c.violations.isEmpty, "8: no safety violation (\(c.violations.first ?? ""))")
     }
@@ -252,7 +258,7 @@ struct RaftTest {
         let a = runScenario(0xD1CE)
         let d = runScenario(0xD1CE)
         check(a.trace == d.trace, "11: identical event trace for the same (seed, scenario)")
-        check(a.replicas.map { $0.sm.appliedPayloads } == d.replicas.map { $0.sm.appliedPayloads },
+        check(a.replicas.map { $0.applied } == d.replicas.map { $0.applied },
               "11: identical applied state for the same (seed, scenario)")
         // A different seed must diverge somewhere (sanity: the trace is seed-sensitive).
         let e = runScenario(0xBEEF)

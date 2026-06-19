@@ -42,14 +42,13 @@ final class MemSnapshotStore: SnapshotStore {
 
 // MARK: - Trivial replicated state machine
 
-/// An ordered log of applied `.normal` command payloads. Idempotent by index, so
-/// re-emitted entries after a restart are no-ops. Snapshots round-trip the state.
-final class KVStateMachine {
+/// An ordered log of applied `.normal` command payloads — the trivial state
+/// machine for the SC1a cases. Idempotent by index, so re-emitted entries after a
+/// restart are no-ops. Snapshots round-trip the state.
+final class KVStateMachine: RaftStateMachine {
     private(set) var lastAppliedIndex: LogIndex = 0
     private(set) var appliedPayloads: [Bytes] = []
 
-    /// Apply a committed entry. Returns true on first application (ignores
-    /// already-applied indices and consensus `.noop`s for the command sequence).
     @discardableResult
     func apply(_ e: RaftEntry) -> Bool {
         guard e.index > lastAppliedIndex else { return false }
@@ -58,15 +57,15 @@ final class KVStateMachine {
         return true
     }
 
-    func snapshotBytes() -> Bytes {
+    func snapshot() -> Bytes {
         var w = ByteWriter()
         w.u32(UInt32(appliedPayloads.count))
         for p in appliedPayloads { w.blob(p) }
         return w.bytes
     }
 
-    func restore(index: LogIndex, data: Bytes) {
-        lastAppliedIndex = index
+    func restore(fromIndex: LogIndex, _ data: Bytes) {
+        lastAppliedIndex = fromIndex
         var r = ByteReader(data)
         var out: [Bytes] = []
         if let n = r.u32() {
@@ -76,7 +75,7 @@ final class KVStateMachine {
         appliedPayloads = out
     }
 
-    func reset() { lastAppliedIndex = 0; appliedPayloads = [] }
+    func digest() -> Bytes { snapshot() }
 }
 
 // MARK: - One replica (node + storage + state machine + sinks)
@@ -88,16 +87,21 @@ final class Replica {
     let snap = MemSnapshotStore()
     var storage: SimStorage
     var node: SimNode
-    let sm = KVStateMachine()
+    private let makeSM: () -> RaftStateMachine
+    var sm: RaftStateMachine
     var down = false
     /// First-application trace (index, term, kind) for safety auditing.
     var applyTrace: [(index: LogIndex, term: Term, kind: EntryKind)] = []
+    /// Linearizable reads confirmed on this node (ReadIndex), drained from the node.
+    var readyReads: [(id: UInt64, index: LogIndex)] = []
 
-    init(_ cfg: RaftConfig) {
+    init(_ cfg: RaftConfig, makeSM: @escaping () -> RaftStateMachine) {
         self.id = cfg.id
         self.cfg = cfg
+        self.makeSM = makeSM
         self.storage = SimStorage.open(log: log, snapshot: snap)
         self.node = SimNode(config: cfg, storage: storage)
+        self.sm = makeSM()
     }
 
     /// Simulate a crash + restart: rebuild volatile node state and the state
@@ -105,11 +109,15 @@ final class Replica {
     func restart() {
         storage = SimStorage.open(log: log, snapshot: snap)
         node = SimNode(config: cfg, storage: storage)
-        sm.reset()
+        sm = makeSM()
+        readyReads.removeAll()
         if storage.hasSnapshot {
-            sm.restore(index: storage.lastIncludedIndex, data: storage.snapshotData)
+            sm.restore(fromIndex: storage.lastIncludedIndex, storage.snapshotData)
         }
     }
+
+    /// The confirmed `readIndex` for a pending read id, if any.
+    func confirmedReadIndex(_ id: UInt64) -> LogIndex? { readyReads.first { $0.id == id }?.index }
 }
 
 // MARK: - Message bus (drop / delay / reorder / partition / heal)
@@ -183,13 +191,15 @@ final class Cluster {
     private var committedAt: [LogIndex: (term: Term, data: Bytes)] = [:]
 
     init(members: [NodeId], seed: UInt64,
-         electionTimeout: ClosedRange<Int> = 10...20, heartbeat: Int = 1) {
+         electionTimeout: ClosedRange<Int> = 10...20, heartbeat: Int = 1,
+         makeSM: @escaping () -> RaftStateMachine = { KVStateMachine() }) {
         self.bus = MessageBus(seed: seed ^ 0xB05_5EED)
         self.replicas = members.map { id in
             Replica(RaftConfig(id: id, members: members,
                                electionTimeoutMin: electionTimeout.lowerBound,
                                electionTimeoutMax: electionTimeout.upperBound,
-                               heartbeatInterval: heartbeat, seed: seed))
+                               heartbeatInterval: heartbeat, seed: seed),
+                    makeSM: makeSM)
         }
     }
 
@@ -240,22 +250,58 @@ final class Cluster {
 
     private func applyReady(_ r: Replica) {
         if let snap = r.node.takeSnapshotToApply() {
-            r.sm.restore(index: snap.index, data: snap.data)
+            r.sm.restore(fromIndex: snap.index, snap.data)
         }
         for e in r.node.takeCommitted() where r.sm.apply(e) {
             r.applyTrace.append((e.index, e.term, e.kind))
             trace.append("A@\(tick) n=\(r.id) i=\(e.index)")
             recordCommitted(e)
         }
+        r.readyReads.append(contentsOf: r.node.takeReadReady())
     }
 
-    // MARK: proposing
+    // MARK: proposing / forwarding / reads
 
     /// Propose on the current leader (sanity / direct path). Returns the index.
     @discardableResult
     func proposeOnLeader(_ data: Bytes) -> LogIndex? {
         guard let l = leader() else { return nil }
         return l.node.propose(data)
+    }
+
+    /// Submit a write to any node; if it is not the leader, follow its `leaderId`
+    /// hint to route to the leader (the in-sim form of "talk-to-any" forwarding —
+    /// the client-facing forwarding RPC is SC2). Returns the index the leader
+    /// assigned, or nil if no leader is currently reachable.
+    @discardableResult
+    func submitWrite(to nodeId: NodeId, _ data: Bytes) -> LogIndex? {
+        var current = nodeId
+        for _ in 0..<replicas.count {
+            let r = replica(current)
+            if r.down { return nil }
+            if r.node.isLeader { return r.node.propose(data) }
+            guard let hint = r.node.leaderId, hint != current else { return nil }
+            current = hint
+        }
+        return nil
+    }
+
+    /// Perform a linearizable (ReadIndex) read on `nodeId`: confirm leadership via
+    /// a heartbeat round, then serve once the state machine has applied the read
+    /// index. Returns nil if `nodeId` is not the leader or leadership cannot be
+    /// confirmed within `maxTicks` (e.g. a partitioned ex-leader) — the caller
+    /// then forwards or fails rather than returning stale data.
+    func linearizableRead<T>(on nodeId: NodeId, maxTicks: Int, _ serve: (Replica) -> T) -> T? {
+        let r = replica(nodeId)
+        guard let id = r.node.requestRead() else { return nil }    // not leader → forward
+        var n = 0
+        while n < maxTicks {
+            if let idx = r.confirmedReadIndex(id), r.sm.lastAppliedIndex >= idx {
+                return serve(r)
+            }
+            step(); n += 1
+        }
+        return nil
     }
 
     // MARK: auditing
@@ -286,13 +332,13 @@ final class Cluster {
                 checkLogMatch(replicas[a], replicas[b])
             }
         }
-        // State-machine safety: applied command sequences are prefixes of one another.
+        // State-machine safety: two nodes that have applied the same number of
+        // entries must be in byte-identical state (deterministic apply).
         for a in 0..<replicas.count {
             for b in (a + 1)..<replicas.count {
-                let pa = replicas[a].sm.appliedPayloads, pb = replicas[b].sm.appliedPayloads
-                let n = min(pa.count, pb.count)
-                if Array(pa.prefix(n)) != Array(pb.prefix(n)) {
-                    violations.append("state-machine safety: nodes \(replicas[a].id)/\(replicas[b].id) applied divergent sequences")
+                let sa = replicas[a].sm, sb = replicas[b].sm
+                if sa.lastAppliedIndex == sb.lastAppliedIndex && sa.digest() != sb.digest() {
+                    violations.append("state-machine safety: nodes \(replicas[a].id)/\(replicas[b].id) diverge at applied index \(sa.lastAppliedIndex)")
                 }
             }
         }
