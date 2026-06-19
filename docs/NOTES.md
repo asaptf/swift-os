@@ -7104,3 +7104,28 @@ coreutils` boot tests still exec real ELFs. Remaining audit findings (datafs cra
 injection, A/B wrong-key, IPC capability boundaries, SMP atomics, futex/signal,
 driver malformed-device, DNS pointer-loop, panic-loop guard) are queued as later
 TH milestones.
+
+### TH2 — QW5 capability attenuation: the escalation direction (DONE, 2026-06-19)
+
+`qw5_rights_intersection_test` only proved the *downgrade* direction — a sender
+holding READ|WRITE|TRANSFER granting only READ|TRANSFER. That shows narrowing
+*works*, not that widening is *impossible*, which is the actual security property
+(monotonic attenuation: `moved.rights = attenuate(held, to: requested)` =
+intersection, kernel/vfs/vfs.swift:3008). A bug that honored `requested` directly,
+or flipped intersection to union, would have passed the old test.
+
+`userland/qw5_rightsxfer.c` now runs three scenarios through one helper and only
+prints `QW5: PASS` after all three pass:
+  1. downgrade — hold R|W|T, request R|T -> receiver loses WRITE (unchanged);
+  2. escalation — hold only R|T (open `/dev/zero` **O_RDONLY**), request R|W|T ->
+     WRITE must NOT appear (a right the sender never held can't be conjured);
+  3. all-inherit — hold only R|T, request `SWIFTOS_RIGHTS_ALL_INHERIT` (0xFFFFFFFF)
+     -> receiver still gets only R|T.
+Each receiver asserts a read of /dev/zero succeeds but a write is DENIED (the
+kernel checks the WRITE right before /dev/zero's accept-everything write), and the
+sender's source fd is invalidated (move, not copy). O_RDONLY yields READ|TRANSFER
+(posixRights always adds .transfer, so the move is permitted; vfs.swift:1256).
+Non-vacuous: if escalation leaked WRITE the child prints `QW5: FAIL ... rights were
+widened` and `QW5: PASS` never appears. Verified in QEMU (`make
+qw5-rights-intersection-test`, PASS). Next IPC milestones: QW1 reply-port
+double-reply/forgery/generation-after-free, QW4 stale-badge-on-reuse.
