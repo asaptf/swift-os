@@ -7194,3 +7194,33 @@ signed-image-test` added (deps build + base-image, which provide basepack +
 base-root). Verified in QEMU, PASS. Remaining audit tracks: datafs crash injection,
 SMP atomic contention, futex/signal races, driver fault injection, DNS pointer-loop,
 panic-loop guard.
+
+### TH6 — panic auto-reboot loop guard (real fix + test, DONE, 2026-06-19)
+
+`panicReboot` (kernel/power/power.swift) auto-rebooted a faulted kernel forever:
+nothing counted consecutive panic-reboots, so a kernel that faults again before it
+finishes booting would PSCI-reset → fault → reset … in an invisible loop. The audit
+(G1) flagged the missing guard; this adds it and proves it end to end.
+
+- **Fix.** A small cookie (magic + count) in a fixed, reset-surviving RAM cell at
+  `0x4007_0000` — the gap between RAM base and the kernel image (PHYS_BASE =
+  ramBase + 0x80000), below the `-kernel` reload and below the PMM-managed region,
+  so neither the image reload nor the allocator clobbers it. `panicReboot` bumps the
+  count (flushed past the cache with `dc_cvac`/`dsb_sy` so it survives on real
+  caching HW too); once it reaches `maxConsecutivePanicReboots` (3) it HALTS for an
+  operator instead of resetting. `panicLoopMarkHealthyBoot()` clears the counter at
+  the steady-state milestone (start of `runInit`), so an isolated *post-healthy*
+  runtime fault reboots-and-recovers as before — only a tight *pre-healthy* loop
+  trips the limit. The cell is RAM-only: a faulted kernel still never touches disk.
+- **Test.** `make panic-loop-test` builds a test-only kernel variant via a recursive
+  make with `EXTRA_SWIFT_DEFS="-D PANIC_LOOP_INJECT"` (a new empty-by-default knob in
+  SWIFT_FLAGS; production kernel.elf is untouched and carries no injector). The
+  `#if PANIC_LOOP_INJECT` hook faults on every boot, early in kernelMain (after
+  PSCI/MMU/heap, before any interactive stage). `tests/panic_loop_test.sh` boots it
+  WITHOUT `-no-reboot` so PSCI SYSTEM_RESET actually warm-resets (one QEMU process,
+  serial accumulates) and asserts exactly 3 injections then the halt marker — which
+  also proves the cookie survives the warm reset (otherwise the count would never
+  accumulate and it would loop forever). Verified: panic-loop-test PASS, production
+  build + console-login boot still PASS (the guard/healthy-reset don't perturb a
+  normal boot). Remaining audit tracks: datafs crash injection, SMP atomic
+  contention, futex/signal races, driver fault injection, DNS pointer-loop.
