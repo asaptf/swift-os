@@ -17,7 +17,7 @@
 // cache maintenance go through the io.h C bridge; everything else is Swift.
 
 // virtio-mmio identity registers used only by the device scan; the control-plane
-// registers (status/features/queue/notify/ISR/config) live behind VirtioTransport.
+// registers (status/features/queue/notify/ISR/config) live behind VirtioTransportOps.
 private let R_MAGIC: UInt   = 0x000
 private let R_VERSION: UInt = 0x004
 private let R_DEVID: UInt   = 0x008
@@ -25,7 +25,7 @@ private let R_DEVID: UInt   = 0x008
 private let VIRTIO_MAGIC: UInt32 = 0x74726976   // "virt"
 private let VIRTIO_ID_NET: UInt32 = 1
 
-// Device status bits (passed through VirtioTransport.setStatus).
+// Device status bits (passed through the transport's setStatus).
 private let S_ACK: UInt32    = 1
 private let S_DRV: UInt32    = 2
 private let S_DRVOK: UInt32  = 4
@@ -52,11 +52,16 @@ private struct NetQueue {
     var lastUsed: UInt16 = 0
 }
 
-// H4: the NIC binds over VirtioTransport — virtio-mmio on QEMU `virt`, or
-// virtio-pci on `-cpu max` / the Hetzner ARM VM. Only the device control plane
-// (status/features/queue setup/notify/ISR/MAC) goes through the transport; the
-// virtqueue ring + buffer-pool management below is transport-agnostic.
-private var netXport = VirtioTransport(mmio: 0)
+// H4/QW7: the NIC binds over a VirtioTransportOps conformer — virtio-mmio on QEMU
+// `virt`, or virtio-pci on `-cpu max` / the Hetzner ARM VM. Bring-up runs through a
+// generic parameter (see bringUp), so the dense control plane monomorphizes with no
+// `isPci` branch. But TX/RX drain ring the doorbell and ack the ISR long after
+// bring-up, so the active transport is retained: both concrete transports (one
+// stays unused) plus the discriminant, never an `any VirtioTransportOps`. Written
+// once at boot before EL0/secondaries, then only read; SMP-safe.
+private var netMmioXport = VirtioMmioTransport(0)
+private var netPciXport = VirtioPciTransport(VirtioPciDevice())
+private var netIsPci = false
 private var netActive = false
 private var netMac = MAC()
 private var rxq = NetQueue()
@@ -80,6 +85,16 @@ private var netRxHeldTotal: UInt64 = 0
 private var netTxSubmittedTotal: UInt64 = 0
 private var netTxCompletedTotal: UInt64 = 0
 private var netZeroCopyReported: UInt64 = 0
+
+// Ring a queue doorbell / ack the ISR on the active transport (one branch on the
+// boot-resolved discriminant, see netMmioXport/netPciXport above). Used by the
+// post-bring-up TX/RX drain paths; bring-up itself stays generic.
+private func netNotify(_ q: UInt16) {
+    if netIsPci { netPciXport.notify(queue: q) } else { netMmioXport.notify(queue: q) }
+}
+private func netAckInterrupt() {
+    if netIsPci { netPciXport.ackInterrupt() } else { netMmioXport.ackInterrupt() }
+}
 
 // --- cache maintenance ------------------------------------------------------
 private func netClean(_ pa: UInt, _ n: Int) {
@@ -172,7 +187,7 @@ func virtioNetReleaseRxBuffer(_ id: Int) {
     rxHeld[id] = false
     recycleRxDescriptor(id)
     cleanRing(rxq)
-    netXport.notify(queue: 0)
+    netNotify(0)
 }
 
 func virtioNetRxFramePointer(ref id: Int, offset: Int) -> UnsafeRawPointer {
@@ -198,7 +213,7 @@ func virtioNetTxDrain() -> Int {
     }
     if done > netTxDrainBatchMax { netTxDrainBatchMax = done }
     netTxCompletedTotal += UInt64(done)
-    netXport.ackInterrupt()
+    netAckInterrupt()
     return done
 }
 
@@ -248,30 +263,33 @@ func virtioNetMaybeReportZeroCopy() {
 }
 
 // --- bring-up ---------------------------------------------------------------
-private func setupQueue(_ idx: UInt16, _ q: inout NetQueue) -> Bool {
-    let size = netXport.setupQueue(idx, requested: UInt32(NET_QSZ),
-                                   desc: UInt64(q.ringBase + OFF_DESC),
-                                   avail: UInt64(q.ringBase + OFF_AVAIL),
-                                   used: UInt64(q.ringBase + OFF_USED))
+private func setupQueue<T: VirtioTransportOps>(_ idx: UInt16, _ q: inout NetQueue,
+                                               _ xport: inout T) -> Bool {
+    let size = xport.setupQueue(idx, requested: UInt32(NET_QSZ),
+                                desc: UInt64(q.ringBase + OFF_DESC),
+                                avail: UInt64(q.ringBase + OFF_AVAIL),
+                                used: UInt64(q.ringBase + OFF_USED))
     if size == 0 { return false }
     q.qnum = size
     return true
 }
 
-private func bringUp(_ xport: VirtioTransport) -> Bool {
-    netXport = xport
+// Generic over the transport so the whole control plane monomorphizes for the
+// discovered kind — this is where the per-call `isPci` branching used to live. The
+// caller retains the (mutated, queue notify-addrs resolved) transport on success.
+private func bringUp<T: VirtioTransportOps>(_ xport: inout T) -> Bool {
     netActive = false
-    netXport.reset()
-    netXport.setStatus(S_ACK)
-    netXport.setStatus(S_ACK | S_DRV)
+    xport.reset()
+    xport.setStatus(S_ACK)
+    xport.setStatus(S_ACK | S_DRV)
 
-    let dev = netXport.deviceFeatures()
+    let dev = xport.deviceFeatures()
     if (dev & (UInt64(1) << 32)) == 0 { return false }     // VIRTIO_F_VERSION_1 required
     let haveMac = (dev & (UInt64(1) << 5)) != 0            // VIRTIO_NET_F_MAC
     var want: UInt64 = UInt64(1) << 32
     if haveMac { want |= UInt64(1) << 5 }
-    netXport.setDriverFeatures(want)
-    if !netXport.setFeaturesOk() { return false }
+    xport.setDriverFeatures(want)
+    if !xport.setFeaturesOk() { return false }
 
     let rxRing = pmm_alloc_page()
     let txRing = pmm_alloc_page()
@@ -291,8 +309,8 @@ private func bringUp(_ xport: VirtioTransport) -> Bool {
     netTxCompletedTotal = 0
     netZeroCopyReported = 0
 
-    if !setupQueue(0, &rxq) { return false }   // receiveq
-    if !setupQueue(1, &txq) { return false }   // transmitq
+    if !setupQueue(0, &rxq, &xport) { return false }   // receiveq
+    if !setupQueue(1, &txq, &xport) { return false }   // transmitq
 
     var k = 0
     while k < NET_QSZ {
@@ -303,8 +321,8 @@ private func bringUp(_ xport: VirtioTransport) -> Bool {
     }
 
     if haveMac {
-        let lo = netXport.configRead32(0)      // virtio_net_config.mac[0..3]
-        let hi = netXport.configRead32(4)      // .mac[4..5]
+        let lo = xport.configRead32(0)      // virtio_net_config.mac[0..3]
+        let hi = xport.configRead32(4)      // .mac[4..5]
         netMac = MAC(UInt8(lo & 0xFF), UInt8((lo >> 8) & 0xFF),
                      UInt8((lo >> 16) & 0xFF), UInt8((lo >> 24) & 0xFF),
                      UInt8(hi & 0xFF), UInt8((hi >> 8) & 0xFF))
@@ -312,7 +330,7 @@ private func bringUp(_ xport: VirtioTransport) -> Bool {
         netMac = MAC(0x52, 0x54, 0x00, 0x12, 0x34, 0x56)   // QEMU's default
     }
 
-    netXport.setStatus(S_ACK | S_DRV | S_FEATOK | S_DRVOK)
+    xport.setStatus(S_ACK | S_DRV | S_FEATOK | S_DRVOK)
     netActive = true
 
     // Pre-fill the RX ring: descriptor i → RX buffer i, device-writable.
@@ -328,7 +346,7 @@ private func bringUp(_ xport: VirtioTransport) -> Bool {
     k = 0
     while k < Int(rxq.qnum) { availAdd(&rxq, descIdx: UInt16(k)); k += 1 }
     netClean(rxq.ringBase + OFF_AVAIL, availBytes(rxq))
-    netXport.notify(queue: 0)                  // kick the receive queue
+    xport.notify(queue: 0)                      // kick the receive queue
     return true
 }
 
@@ -348,10 +366,12 @@ func virtioNetInit() -> Bool {
         if mmio_read32(m + R_MAGIC) != VIRTIO_MAGIC { continue }
         if mmio_read32(m + R_VERSION) != 2 { continue }       // modern only
         if mmio_read32(m + R_DEVID) != VIRTIO_ID_NET { continue }
-        if bringUp(VirtioTransport(mmio: m)) { return true }
+        var t = VirtioMmioTransport(m)
+        if bringUp(&t) { netMmioXport = t; netIsPci = false; return true }
     }
     if let dev = virtioPciFindDevice(deviceType: VIRTIO_ID_NET) {
-        if bringUp(VirtioTransport(pci: dev)) { return true }
+        var t = VirtioPciTransport(dev)
+        if bringUp(&t) { netPciXport = t; netIsPci = true; return true }
     }
     netActive = false
     return false
@@ -400,7 +420,7 @@ func virtioNetTxSubmit(frameLen: Int) {
     txState[idx] = 2
     txInFlight += 1
     netTxSubmittedTotal += 1
-    netXport.notify(queue: 1)
+    netNotify(1)
 }
 
 /// Drain every RX frame the device has completed, feeding each through `stack`.
@@ -481,9 +501,9 @@ func virtioNetPoll(_ stack: inout NetStack) -> RxOutcome {
     if batch > netRxBatchMax { netRxBatchMax = batch }
     if recycled > 0 {
         cleanRing(rxq)
-        netXport.notify(queue: 0)
+        netNotify(0)
     }
     _ = virtioNetTxDrain()
-    netXport.ackInterrupt()
+    netAckInterrupt()
     return agg
 }
