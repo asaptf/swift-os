@@ -60,6 +60,18 @@ private let maxSiteEntries = 64
 private let maxBundleBytes = 8 * 1024 * 1024
 private let siteMagic: StaticString = "SWSITE01"
 
+// OS-4: baked image-signing public key — the trust anchor for SWSYS OS bundles
+// (the same key, IMG_SIGNING_PUB, the kernel uses for base/kernel images). The
+// `os` subcommand verifies a SWSYS bundle against it before staging the base
+// image into the inactive A/B slot. The bundle format lives in
+// userland/lib/sysbundle.swift (shared with the host packer tools/syspack.swift).
+private let pOsRootPub: StaticString = "/etc/swupdate/os-root.pub"
+// A SWSYS bundle carries a full kernel + full base image; allow a large fetch.
+// (Held in memory for the Ed25519 verify, which needs the whole body contiguous;
+// a streaming/prehashed verify for very large bases is future work.)
+private let maxOsBundleBytes = 96 * 1024 * 1024
+private let osStageChunk = 64 * 1024
+
 // ---- small helpers ---------------------------------------------------------
 
 private func put(_ s: StaticString) {
@@ -577,7 +589,7 @@ private func parseHTTPSURL(_ url: UnsafeMutablePointer<CChar>)
 }
 
 // Fetch the body of GET https://host:port/path over TLS 1.3 into memory.
-private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8]) -> [UInt8]? {
+private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8], maxBytes: Int) -> [UInt8]? {
     let fd = swiftos_socket_stream()
     if fd < 0 { put("swupdate: socket failed\n"); return nil }
     if swiftos_connect(fd, ip, port) != 0 { put("swupdate: connect failed\n"); _ = swiftos_close(fd); return nil }
@@ -658,7 +670,7 @@ private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8]) ->
             let bp = buf.assumingMemoryBound(to: UInt8.self)
             var j = 0
             while j < n { resp.append(bp[j]); j += 1 }
-            if resp.count > maxBundleBytes + 65536 { put("swupdate: response too large\n"); return nil }
+            if resp.count > maxBytes + 65536 { put("swupdate: response too large\n"); return nil }
         }
         if client.lastError != 0 { break }
     }
@@ -704,17 +716,125 @@ private func site(_ url: UnsafeMutablePointer<CChar>) -> Int32 {
         ip = hostC.withUnsafeBufferPointer { swiftos_resolve($0.baseAddress!, 0, 0) }
         if ip == 0 { put("swupdate: cannot resolve host\n"); return 1 }
     }
-    guard let resp = httpsGet(ip: ip, port: port, host: host, path: path) else { return 1 }
+    guard let resp = httpsGet(ip: ip, port: port, host: host, path: path, maxBytes: maxBundleBytes) else { return 1 }
     guard let body = httpBody(resp), body.count >= sigSize + hdrSize else {
         put("swupdate: fetch did not return a bundle\n"); return 1
     }
     return applyBundleBytes(body)
 }
 
+// ---- OS self-update (OS-4): SWSYS kernel+base bundle ------------------------
+//
+// `swupdate os <url>` / `swupdate os-apply-local <file>` apply a signed SWSYS
+// system-update bundle (tools/syspack.swift): verify its Ed25519 signature and
+// payload SHA against the baked OS-signing key, then stream the *base* image half
+// into the INACTIVE A/B slot via the capability-gated kernel staging syscalls
+// (OS-3b) and promote that slot for the next boot. The kernel enforces the
+// monotonic anti-rollback floor at stage-begin, so an older (even validly signed)
+// bundle is refused. The kernel half rides in the bundle for forward
+// compatibility but is not yet written to the ESP — coordinated kernel staging is
+// the deferred boot-path work; the base half alone is a complete, testable update.
+
+private func loadOsPubkey() -> [UInt8]? {
+    guard let raw = readFileFully(cz(pOsRootPub), 64), raw.count == 32 else { return nil }
+    return raw
+}
+
+// Verify a SWSYS bundle, then stream its base image into the inactive slot and
+// activate it. Returns 0 on success; nonzero (with a message) on any rejection.
+private func applyOsBundleBytes(_ bundle: [UInt8]) -> Int32 {
+    guard let pub = loadOsPubkey() else {
+        put("swupdate: missing/invalid OS-signing key\n"); return 1
+    }
+    // 1. Authenticity + integrity + format (the kernel re-checks anti-rollback).
+    let result = bundle.withUnsafeBytes { bb in
+        pub.withUnsafeBytes { pb in
+            verifySysBundle(bb.baseAddress!, bundle.count, publicKey: pb.baseAddress!, minVersion: 0)
+        }
+    }
+    let hdr: SysBundleHeader
+    switch result {
+    case .ok(let h): hdr = h
+    case .badSize: put("swupdate: os bundle too small\n"); return 1
+    case .badSignature: put("swupdate: os bundle signature INVALID — rejected\n"); return 1
+    case .badMagic: put("swupdate: bad os bundle magic\n"); return 1
+    case .badFormatVersion: put("swupdate: unsupported os bundle format version\n"); return 1
+    case .badLayout: put("swupdate: os bundle layout out of bounds\n"); return 1
+    case .badPayloadSha: put("swupdate: os bundle payload sha256 mismatch\n"); return 1
+    case .tooOld: put("swupdate: os bundle below the anti-rollback floor — rejected\n"); return 1
+    }
+
+    // 2. Reserve the inactive slot (kernel enforces version > floor + slot fit).
+    let baseFileOff = sigSize + hdr.baseOff   // base bytes within the whole bundle
+    let brc = swiftos_update_stage_begin(UInt(hdr.systemVersion), UInt(hdr.baseLen))
+    if brc != 0 {
+        if brc == -1 { put("swupdate: os update refused — anti-rollback (version not newer) or missing CAP_CONSOLE\n") }
+        else if brc == -19 { put("swupdate: not booted from an A/B update store\n") }
+        else if brc == -27 { put("swupdate: base image too large for the inactive slot\n") }
+        else { put("swupdate: os stage begin failed\n") }
+        return 1
+    }
+
+    // 3. Stream the base image into the slot.
+    var off = 0
+    var wroteOK = true
+    bundle.withUnsafeBytes { raw in
+        let basep = raw.baseAddress!.advanced(by: baseFileOff)
+        while off < hdr.baseLen {
+            var n = hdr.baseLen - off
+            if n > osStageChunk { n = osStageChunk }
+            if swiftos_update_stage_write(basep.advanced(by: off), UInt(n)) != 0 { wroteOK = false; break }
+            off += n
+        }
+    }
+    if !wroteOK {
+        _ = swiftos_update_stage_abort()
+        put("swupdate: os stage write failed\n"); return 1
+    }
+
+    // 4. Commit (kernel validates the SWOSBASE header + flushes), then activate.
+    if swiftos_update_stage_commit() != 0 {
+        put("swupdate: os stage commit rejected (base is not a signed v3 image)\n"); return 1
+    }
+    if swiftos_update_activate() != 0 {
+        put("swupdate: base image staged but activate failed — run /bin/swos-activate\n"); return 1
+    }
+    put("swupdate: OS base image staged + activated; reboot to boot the new system (on trial)\n")
+    return 0
+}
+
+private func osApplyLocal(_ path: [CChar]) -> Int32 {
+    guard let bundle = readFileFully(path, maxOsBundleBytes) else {
+        put("swupdate: cannot read os bundle file\n"); return 1
+    }
+    return applyOsBundleBytes(bundle)
+}
+
+private func osUpdate(_ url: UnsafeMutablePointer<CChar>) -> Int32 {
+    guard let (host, port, path) = parseHTTPSURL(url) else {
+        put("swupdate: usage: swupdate os https://host[:port]/path\n"); return 2
+    }
+    var ip: UInt32 = 0
+    if let v = parseIPv4Bytes(host) {
+        ip = v
+    } else {
+        var hostC = host.map { CChar(bitPattern: $0) }
+        hostC.append(0)
+        ip = hostC.withUnsafeBufferPointer { swiftos_resolve($0.baseAddress!, 0, 0) }
+        if ip == 0 { put("swupdate: cannot resolve host\n"); return 1 }
+    }
+    guard let resp = httpsGet(ip: ip, port: port, host: host, path: path, maxBytes: maxOsBundleBytes) else { return 1 }
+    guard let body = httpBody(resp), body.count >= SysBundleFormat.sigSize + SysBundleFormat.headerSize else {
+        put("swupdate: fetch did not return an os bundle\n"); return 1
+    }
+    return applyOsBundleBytes(body)
+}
+
 // ---- entry point -----------------------------------------------------------
 
 private func usage() {
     put("usage: swupdate seed | swupdate apply-local <bundle.swsite> | swupdate site <https-url>\n")
+    put("       swupdate os <https-url> | swupdate os-apply-local <bundle.swsys>\n")
 }
 
 @_cdecl("main")
@@ -740,6 +860,18 @@ func main(_ argc: Int32,
     if cstrEq(cmdp, "site") {
         guard argc >= 3, let p = argv[2] else { usage(); return 2 }
         return site(p)
+    }
+    if cstrEq(cmdp, "os") {
+        guard argc >= 3, let p = argv[2] else { usage(); return 2 }
+        return osUpdate(p)
+    }
+    if cstrEq(cmdp, "os-apply-local") {
+        guard argc >= 3, let p = argv[2] else { usage(); return 2 }
+        var path: [CChar] = []
+        var i = 0
+        while p[i] != 0 { path.append(p[i]); i += 1 }
+        path.append(0)
+        return osApplyLocal(path)
     }
     usage()
     return 2
