@@ -19,6 +19,13 @@
 // Scenario 3 (server dies without replying → EPIPE): a blocked ipc_call whose
 // server exits without replying must fail EPIPE (-32), not hang or panic.
 //
+// Scenario 4 (double reply → EINVAL): a server that replies to a reply-port token
+// it has ALREADY answered must be rejected with EINVAL (-22). The kernel frees /
+// ages the port once the first reply is consumed (decodeReplyPort + the !hasReply
+// guard), so a consumed/stale token can never wake a caller a second time. This is
+// the capability-boundary case the original bogus-token scenario did not cover: a
+// *real, previously valid* token replayed after use.
+//
 // Emitting "IPC-CALL OK: ..." signals full acceptance.
 
 #include "lib/syscall.h"
@@ -80,6 +87,38 @@ static int server_loop(int recv_fd) {
             reply_h = -1;
         }
     }
+}
+
+// Scenario 4 server: prove a SECOND reply to an already-answered reply-port token
+// is rejected with EINVAL. Receives req1 (tok1), replies to it (consuming tok1)
+// while receiving req2 (tok2), then attempts a second reply to tok1 — which must
+// be refused at once — and finally replies to tok2 so the caller is released.
+static int doublereply_server(int recv_fd) {
+    char in[64];
+    int in_h = -1;
+    unsigned long tok1 = 0, tok2 = 0, td = 0;
+    char rb[4];
+
+    long n = ipc_reply_recv(recv_fd, 0, rb, 0, -1, in, sizeof(in), &in_h, &tok1);
+    if (n < 0) { puts_raw("ipc-call: dr recv1 failed\n"); return 1; }
+
+    in_h = -1;
+    n = ipc_reply_recv(recv_fd, tok1, "A", 1, -1, in, sizeof(in), &in_h, &tok2);
+    if (n < 0) { puts_raw("ipc-call: dr recv2 failed\n"); return 1; }
+
+    // tok1 is answered+consumed. A second reply to it must fail immediately (the
+    // reply phase returns EINVAL before blocking for a receive).
+    int rh = -1;
+    char dump[8];
+    long r = ipc_reply_recv(recv_fd, tok1, "X", 1, -1, dump, sizeof(dump), &rh, &td);
+    int rejected = (r == ERR_INVAL);
+    if (!rejected) puts_raw("ipc-call: double-reply NOT rejected\n");
+
+    // Release req2's caller with a real reply to tok2, then block until the
+    // endpoint is torn down (EOF) and exit carrying the verdict.
+    in_h = -1;
+    ipc_reply_recv(recv_fd, tok2, "B", 1, -1, in, sizeof(in), &in_h, &td);
+    return rejected ? 0 : 1;
 }
 
 int main(void) {
@@ -181,6 +220,31 @@ int main(void) {
         int st2 = 0;
         waitpid(dead, &st2, 0);
         close(epe[0]);
+    }
+
+    // ---- Scenario 4: a double reply to an answered token is rejected (EINVAL) --
+    {
+        int ep4[2];
+        if (endpoint_create(ep4) != 0) { puts_raw("ipc-call: endpoint_create ep4 failed\n"); return 1; }
+        int srv4 = fork();
+        if (srv4 < 0) { puts_raw("ipc-call: fork 4 failed\n"); return 1; }
+        if (srv4 == 0) { close(ep4[0]); _exit(doublereply_server(ep4[1])); }
+        close(ep4[1]);
+
+        char rep[8];
+        int oh = -1;
+        char q1 = '1', q2 = '2';
+        long r1 = ipc_call(ep4[0], &q1, 1, -1, rep, sizeof(rep), &oh);   // -> "A"
+        long r2 = ipc_call(ep4[0], &q2, 1, -1, rep, sizeof(rep), &oh);   // -> "B"
+        close(ep4[0]);                 // EOF -> server's final recv returns, it exits
+        int st4 = 0;
+        waitpid(srv4, &st4, 0);
+        if (r1 == 1 && r2 == 1 && ((st4 >> 8) & 0xff) == 0) {
+            puts_raw("ipc-call: double-reply to a used token rejected EINVAL\n");
+        } else {
+            puts_raw("ipc-call: double-reply scenario FAILED\n");
+            return 1;
+        }
     }
 
     puts_raw("IPC-CALL OK: synchronous request/reply over reply port\n");

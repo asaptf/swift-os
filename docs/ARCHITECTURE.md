@@ -125,6 +125,7 @@ Runtime layout:
 ```
 active read-only base FS
   + RAM tmpfs scratch
+  + persistent /data tier (datafs)
   + VFS namespace
 ```
 
@@ -169,6 +170,27 @@ Writable runtime state lives in tmpfs:
 - per-cell private scratch later.
 
 tmpfs is intentionally ephemeral. Data loss on reboot is acceptable by design.
+
+### Persistent /data tier (datafs)
+
+State that must survive reboot but is not system policy lives on the persistent
+`/data` tier (datafs, delivered by the D-series):
+
+- a writable virtio-blk "data" disk, identified by the sector-0 magic `SWDATAFS`;
+- a small inode-table + block-bitmap filesystem (one index block per file), with
+  no journaling;
+- crash-safety relies on honest `fsync`/`fdatasync`/`sync` flushing to disk plus
+  the application's own journaling (as SQLite's rollback journal does), not on FS
+  journaling;
+- mounted at `/data` only after the base image is verified, so the immutable base
+  stays the trust root.
+
+This is the home for the SQLite database backing the hosted site, the active site
+content under `/data/www/current`, and persistent application configuration. It
+is deliberately *not* a general-purpose POSIX filesystem; the base image remains
+the only system-configuration surface. See
+[SETTINGS_GUIDE.md](SETTINGS_GUIDE.md) for the operator decision path and the
+D-series in [NOTES.md](NOTES.md) for the implementation history.
 
 ### Persistent update store
 

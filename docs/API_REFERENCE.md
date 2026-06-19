@@ -1402,6 +1402,7 @@ int swiftos_pipe(int fds[2]);
 
 ```c
 int swiftos_open(const char *path, int flags);
+int swiftos_fsync(int fd);
 long swiftos_lseek(int fd, long offset, int whence);
 int swiftos_ftruncate(int fd, long length);
 long swiftos_getcwd(char *buf, unsigned long size);
@@ -1416,6 +1417,10 @@ int swiftos_rename(const char *oldpath, const char *newpath);
 int swiftos_chmod(const char *path, unsigned int mode);
 int swiftos_chown(const char *path, unsigned int owner);
 ```
+
+`swiftos_fsync` flushes an open file's data to stable media for datafs (`/data`)
+durability, returning 0 on success. The mutation helpers (`swiftos_mkdir`
+through `swiftos_chown`) apply to tmpfs only; the base image is read-only.
 
 ### Package Store
 
@@ -1442,6 +1447,20 @@ int swiftos_kernel_stage(void);
 int swiftos_kernel_activate(void);
 int swiftos_kernel_confirm(void);
 ```
+
+### Power Control
+
+```c
+int swiftos_reboot(void);
+int swiftos_poweroff(void);
+```
+
+Both need `CAP_CONSOLE` (the boot/admin context). The kernel flushes `/data`
+(`sync`) and issues PSCI `SYSTEM_RESET` (`swiftos_reboot`) or `SYSTEM_OFF`
+(`swiftos_poweroff`); on success the machine resets or powers off and the call
+never returns. They return a negative value on failure (`-1` EPERM for a
+non-console principal, `-38` ENOSYS when no PSCI conduit is present). These back
+`/bin/reboot` and `/bin/shutdown`.
 
 ### Logging
 

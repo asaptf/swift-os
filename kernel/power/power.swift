@@ -103,10 +103,65 @@ private func busyWaitTicks(_ count: UInt64) {
     while read_cntpct_el0() &- start < count {}
 }
 
+// ---- panic-loop guard ------------------------------------------------------
+//
+// Without a guard, a kernel that faults again before it finishes booting would
+// PSCI-reset, fault, reset, … forever — a headless box stuck in an invisible
+// reboot loop. We count CONSECUTIVE panic auto-reboots in a small cookie and, once
+// the count reaches the limit, HALT instead of resetting so an operator can step
+// in. The counter is cleared at a healthy boot milestone (panicLoopMarkHealthyBoot),
+// so an isolated runtime panic — one that reboots and then boots fine — never
+// accumulates; only a tight pre-healthy loop does.
+//
+// The cookie lives in RAM, never on disk (a faulted kernel must not touch /data),
+// at a fixed physical address in the gap between RAM base and the kernel image
+// (PHYS_BASE = ramBase + 0x80000): below the loaded image and below the PMM-managed
+// region, so neither the `-kernel` reload nor the allocator clobbers it, and it
+// survives a warm PSCI reset. It is flushed past the cache before the reset so it
+// also persists on real caching hardware.
+private let panicCookieAddr: UInt = 0x4007_0000              // ramBase + 0x70000, in the pre-image gap
+private let panicCookieMagic: UInt64 = 0x5041_4E49_4332_4C50 // "PANIC2LP"
+private let maxConsecutivePanicReboots: UInt32 = 3
+
+private func panicCookieLoad() -> UInt32 {
+    let p = UnsafeRawPointer(bitPattern: panicCookieAddr)!
+    if p.load(fromByteOffset: 0, as: UInt64.self) != panicCookieMagic { return 0 }
+    return p.load(fromByteOffset: 8, as: UInt32.self)
+}
+
+private func panicCookieWrite(magic: UInt64, count: UInt32) {
+    let p = UnsafeMutableRawPointer(bitPattern: panicCookieAddr)!
+    p.storeBytes(of: magic, toByteOffset: 0, as: UInt64.self)
+    p.storeBytes(of: count, toByteOffset: 8, as: UInt32.self)
+    dsb_sy()
+    dc_cvac(panicCookieAddr)   // clean the line to PoC so the reset preserves it
+    dsb_sy()
+}
+
+/// Clear the consecutive-panic counter. Call once at a healthy boot milestone:
+/// reaching it means we are not in an immediate panic loop, so a later fault
+/// starts counting fresh rather than tripping the limit on its first reboot.
+func panicLoopMarkHealthyBoot() {
+    panicCookieWrite(magic: 0, count: 0)   // invalidate the magic
+}
+
 /// Panic auto-reboot: print a per-second countdown to the console, then reset.
 /// Called from the EL1 fault handler so a wedged server recovers on its own.
 /// Never returns (it resets, or halts if PSCI is unavailable).
 func panicReboot(seconds: UInt64) -> Never {
+    // Loop guard: bump the consecutive-panic counter (persisted across the reset).
+    // Once we have auto-rebooted from a panic this many times without a healthy
+    // boot in between, stop cycling and halt for an operator instead of looping.
+    let panicCount = panicCookieLoad() &+ 1
+    panicCookieWrite(magic: panicCookieMagic, count: panicCount)
+    if panicCount >= maxConsecutivePanicReboots {
+        uartPuts("panic: ")
+        uartPutUInt(UInt64(panicCount))
+        uartPuts(" consecutive auto-reboots; halting to break the loop\n")
+        klog(.panic, "power", "panic-reboot loop limit reached — halting", UInt64(panicCount))
+        while true { wfi() }
+    }
+
     let frequency = read_cntfrq_el0()
     if frequency == 0 || platform.psciMethod == platformPsciMethodNone {
         // No timebase or no PSCI conduit: we cannot count down or reset. Halt.

@@ -7028,3 +7028,221 @@ QEMU can't catch every HW path, so `swupdate site` should also be run on the rea
 User-facing docs: `swupdate` in `docs/COMMAND_REFERENCE.md`, `sitepack` in
 `docs/HOST_TOOL_REFERENCE.md`, and the operator runbook "Update The Hosted Static
 Site (Reflash-Free)" in `docs/UPDATE_GUIDE.md`.
+
+### SU-T — fast host coverage for the SWSITE trust path (DONE, 2026-06-19)
+
+SU-A/B/C shipped with QEMU acceptance gates only (`site-{seed,bundle,update}-test`),
+which are slow, not in `make test`, and only exercise the happy path plus a
+signature flip. The trust-critical parsing — the byte-for-byte SWSITE layout shared
+between the host packer and the on-box reader, and the path-traversal defense — had
+no fast, hostile-input coverage. Two additions close that, both host-only (no QEMU,
+sub-second, wired into `make test`):
+
+- **`make sitepack-test`** (`tests/sitepack_test.swift`) is an INDEPENDENT third
+  implementation of the SWSITE reader: it packs the fixtures with `sitepack create`,
+  re-parses the bundle from scratch, and reconstructs the tree byte-for-byte —
+  catching any drift from the layout `swupdate` reads. It then drives `sitepack
+  verify` against a flipped signature, a flipped payload byte, the wrong pubkey, and
+  a truncated file, asserting each is rejected.
+- **`make swsite-test`** (`tests/swsite_test.swift`) unit-tests the device-side
+  parsers directly. To make them testable without the syscall/crypto/TLS deps, the
+  pure logic moved out of `userland/swupdate.swift` into a new freestanding module
+  **`userland/lib/swsite.swift`** (added to `SWUPDATE_SWIFT_SRCS`): the layout/
+  inode-budget validator `swsiteParseEntries`, `safeName`, `le32`/`magicMatches`,
+  and the SU-C `parseHTTPSURL`/`parseIPv4Bytes`/`httpBody`. `applyBundleBytes` now
+  calls `swsiteParseEntries` and maps its `SWSiteLayoutError` to the same operator
+  messages, so behavior is unchanged. The test hits hostile input the integration
+  tests never produce: `../`/absolute/`..`-component entry names (rejected as
+  `.unsafeName`), entry counts of 0 and > the 64 inode budget, offsets that run past
+  the buffer, malformed/non-https/bad-port URLs, and non-200 / headerless HTTP.
+
+The on-box behavior path (`apply-local`/`site`) is still covered by the SU-B/SU-C
+QEMU gates; SU-T only adds fast pure-logic coverage underneath them. Re-run
+`make build && make site-bundle-test site-update-test` once on the embedded
+toolchain to confirm the `swsite.swift` split still links and boots.
+
+## TH-series — aggressive coverage of untested trust boundaries (post-M13)
+
+A three-agent audit of test coverage (QW-series + kernel core + concurrency/
+durability/drivers/net) found that the suite proves the code works on the happy
+path but barely exercises adversarial/negative input. The TH-series adds fast
+host unit tests (and, where they surface a real bug, the minimal fix) for the
+highest-risk untested boundaries, one milestone at a time.
+
+### TH1 — ELF loader + copyin/copyout hostile-input coverage (DONE, 2026-06-19)
+
+The EL0 trust boundary — `kernel/user/elf.swift:elfLoad` (parses attacker-supplied
+ET_EXEC images from disk/the package store) and `kernel/user/user_access.swift`
+(every syscall's copyin/copyout guard) — had **zero negative tests**; both ran only
+on trusted binaries / well-behaved processes inside QEMU.
+
+- **Real bug found + fixed in `elfLoad`.** Three bounds used `a + b > size`-style
+  checks where `a`/`b` are attacker-controlled u64 fields (`e_phoff + table`,
+  `p_offset + p_filesz`, `p_vaddr + p_memsz`). Embedded Swift's `+` **traps on
+  overflow**, so a crafted ELF with a near-`UInt.max` field crashed EL1 — a DoS on
+  any box handed a bad binary. Rewrote all three overflow-safe (compare against the
+  remaining space; guard `pVaddr+pMemsz` before forming `vaEnd`). Behavior for valid
+  images is unchanged.
+- **`tests/elf_loader_test.swift`** (`make elf-loader-test`) links `elfLoad` against
+  a fake address space + PMM (real host frames, so copy-to-user actually writes) and
+  asserts: a valid image loads (entry, page count, perms, bytes copied), and reject
+  for truncated/bad-magic/ELFCLASS32/big-endian/non-ET_EXEC/wrong-machine, phdr
+  table past EOF, `p_filesz` past EOF, `filesz>memsz`, the three **integer-overflow**
+  fields, PMM exhaustion, plus the "executable wins" shared-page upgrade and an empty
+  PT_LOAD skip. Proven non-vacuous: built against the pre-fix loader it dies with
+  **SIGTRAP** on the overflow cases.
+- **`tests/user_access_test.swift`** (`make user-access-test`) pins the copyin/copyout
+  guards against a fake mapping: kernel-range / low-device / past-window VAs, `count >
+  Int.max`, ranges overrunning the window, unmapped pages, a range straddling a
+  mapped→unmapped boundary, the writable/COW-resolve path, and `userCString` NULL/
+  bad-maxLen/kernel-range — all without dereferencing a fake VA. (These guards were
+  already correct; the test is regression armor.)
+
+Both are host-only (sub-second, wired into `make test`). Validated on the embedded
+toolchain: `make build` compiles the fixed loader and `console-login` + `swift-
+coreutils` boot tests still exec real ELFs. Remaining audit findings (datafs crash
+injection, A/B wrong-key, IPC capability boundaries, SMP atomics, futex/signal,
+driver malformed-device, DNS pointer-loop, panic-loop guard) are queued as later
+TH milestones.
+
+### TH2 — QW5 capability attenuation: the escalation direction (DONE, 2026-06-19)
+
+`qw5_rights_intersection_test` only proved the *downgrade* direction — a sender
+holding READ|WRITE|TRANSFER granting only READ|TRANSFER. That shows narrowing
+*works*, not that widening is *impossible*, which is the actual security property
+(monotonic attenuation: `moved.rights = attenuate(held, to: requested)` =
+intersection, kernel/vfs/vfs.swift:3008). A bug that honored `requested` directly,
+or flipped intersection to union, would have passed the old test.
+
+`userland/qw5_rightsxfer.c` now runs three scenarios through one helper and only
+prints `QW5: PASS` after all three pass:
+  1. downgrade — hold R|W|T, request R|T -> receiver loses WRITE (unchanged);
+  2. escalation — hold only R|T (open `/dev/zero` **O_RDONLY**), request R|W|T ->
+     WRITE must NOT appear (a right the sender never held can't be conjured);
+  3. all-inherit — hold only R|T, request `SWIFTOS_RIGHTS_ALL_INHERIT` (0xFFFFFFFF)
+     -> receiver still gets only R|T.
+Each receiver asserts a read of /dev/zero succeeds but a write is DENIED (the
+kernel checks the WRITE right before /dev/zero's accept-everything write), and the
+sender's source fd is invalidated (move, not copy). O_RDONLY yields READ|TRANSFER
+(posixRights always adds .transfer, so the move is permitted; vfs.swift:1256).
+Non-vacuous: if escalation leaked WRITE the child prints `QW5: FAIL ... rights were
+widened` and `QW5: PASS` never appears. Verified in QEMU (`make
+qw5-rights-intersection-test`, PASS). Next IPC milestones: QW1 reply-port
+double-reply/forgery/generation-after-free, QW4 stale-badge-on-reuse.
+
+### TH3 — QW1 reply-port: a double reply to a used token is rejected (DONE, 2026-06-19)
+
+`ipc_call_test` proved a *bogus* reply-port token (0xDEADBEEF, out of range) is
+rejected EINVAL, but not the sharper capability case: a **real, previously valid**
+token replayed after it was already answered. That is what the generation counter
++ `!hasReply` guard exist to stop (decodeReplyPort + vfs.swift:3334) — a server
+must not be able to reply twice, nor reuse a consumed/stale token to wake a caller
+a second time.
+
+`userland/ipc_call_test.c` gains Scenario 4: a dedicated server receives req1
+(captures tok1), replies to it while receiving req2 (tok2), then attempts a
+**second** reply to tok1 and asserts it returns EINVAL (the reply phase refuses it
+before blocking), then replies to tok2 so the caller is released and exits with the
+verdict. The caller issues two correlated `ipc_call`s; the sequence is
+self-synchronizing (each call blocks for its reply), so it is robust at `-smp 4`.
+Non-vacuous: a honored double reply makes the server print `double-reply NOT
+rejected` / the caller print `double-reply scenario FAILED`, both caught by the
+test script, and `IPC-CALL OK` never appears. Verified in QEMU at `-smp 4` (`make
+ipc-call-test`, PASS). Remaining IPC items: cross-endpoint reply (the `endpoint ==
+ep` guard), generation-after-slot-reuse, and QW4 stale-badge-on-reuse.
+
+### TH4 — QW4 badge: per-message tracking + slot-reuse hygiene (DONE, 2026-06-19)
+
+`qw4_badge_test` proved badges distinguish clients, but used three *separate*
+endpoint pairs — so it never exercised the badge's lifecycle on a single endpoint:
+the per-message update/clear and the freed-slot reset (`endpoints[ep].badge = 0` on
+recv at vfs.swift:3102/3397; `Endpoint()` zeroing on slot reuse). `userland/
+qw4_badge.c` adds two single-endpoint checks:
+  - **mixed** — re-stamp one send handle A1 -> 0 -> B2 and confirm each recv reports
+    the *current* badge (catches a "sticky" endpoint badge that fails to update or
+    clear between messages);
+  - **reuse** — badge an endpoint, exchange a message, close it (freeing its slot),
+    then create a fresh endpoint (which reuses the slot) and confirm an unbadged
+    send reports 0 (the freed slot's badge must not bleed into its reuse).
+New markers `QW4-BADGE-MIXED-OK` / `QW4-BADGE-REUSE-CLEAN-OK` are asserted by the
+test script; a sticky or bled badge makes the program exit before printing them and
+the run fails. Verified in QEMU (`make qw4-badge-test`, PASS).
+
+**IPC/capability track complete** (TH2 QW5 escalation, TH3 QW1 double-reply, TH4
+QW4 badge). Still open from the audit: cross-endpoint reply + generation-after-reuse
+(QW1), and the non-IPC tracks — A/B wrong-key, datafs crash injection, SMP atomic
+contention, futex/signal races, driver fault injection, DNS pointer-loop, and the
+panic-loop guard.
+
+### TH5 — signed base image: a valid signature by the WRONG key is refused (DONE, 2026-06-19)
+
+`signed_image_test` proved a base image is refused when a SIGNED byte is flipped
+(Case A) and a file is rejected when its payload is flipped (Case B) — but both only
+break *well-formedness*. Neither tested the actual forgery threat: an image that is
+well-formed and carries a *valid, internally consistent* Ed25519 signature, just by
+a key the kernel does not trust. A trust anchor that checked only signature
+well-formedness (not the key) would have shipped undetected.
+
+New Case C re-packs the SAME `build/base-root` with `basepack` under a random
+attacker seed (`dd /dev/urandom`, 32 bytes — any 32 bytes is a valid Ed25519 seed),
+producing a valid v3 signed image by an untrusted key. It asserts the forged image
+differs from the trusted `base.img` (the seed took effect), boots it, and requires
+`vfs: base image signature INVALID` with no `M11c: read-only base mounted` marker —
+the kernel's compiled-in trust root (`trust_root.S` incbin of `image_trust_root.bin`)
+rejects the wrong key exactly like a corrupt signature. Standalone `make
+signed-image-test` added (deps build + base-image, which provide basepack +
+base-root). Verified in QEMU, PASS. Remaining audit tracks: datafs crash injection,
+SMP atomic contention, futex/signal races, driver fault injection, DNS pointer-loop,
+panic-loop guard.
+
+### TH6 — panic auto-reboot loop guard (real fix + test, DONE, 2026-06-19)
+
+`panicReboot` (kernel/power/power.swift) auto-rebooted a faulted kernel forever:
+nothing counted consecutive panic-reboots, so a kernel that faults again before it
+finishes booting would PSCI-reset → fault → reset … in an invisible loop. The audit
+(G1) flagged the missing guard; this adds it and proves it end to end.
+
+- **Fix.** A small cookie (magic + count) in a fixed, reset-surviving RAM cell at
+  `0x4007_0000` — the gap between RAM base and the kernel image (PHYS_BASE =
+  ramBase + 0x80000), below the `-kernel` reload and below the PMM-managed region,
+  so neither the image reload nor the allocator clobbers it. `panicReboot` bumps the
+  count (flushed past the cache with `dc_cvac`/`dsb_sy` so it survives on real
+  caching HW too); once it reaches `maxConsecutivePanicReboots` (3) it HALTS for an
+  operator instead of resetting. `panicLoopMarkHealthyBoot()` clears the counter at
+  the steady-state milestone (start of `runInit`), so an isolated *post-healthy*
+  runtime fault reboots-and-recovers as before — only a tight *pre-healthy* loop
+  trips the limit. The cell is RAM-only: a faulted kernel still never touches disk.
+- **Test.** `make panic-loop-test` builds a test-only kernel variant via a recursive
+  make with `EXTRA_SWIFT_DEFS="-D PANIC_LOOP_INJECT"` (a new empty-by-default knob in
+  SWIFT_FLAGS; production kernel.elf is untouched and carries no injector). The
+  `#if PANIC_LOOP_INJECT` hook faults on every boot, early in kernelMain (after
+  PSCI/MMU/heap, before any interactive stage). `tests/panic_loop_test.sh` boots it
+  WITHOUT `-no-reboot` so PSCI SYSTEM_RESET actually warm-resets (one QEMU process,
+  serial accumulates) and asserts exactly 3 injections then the halt marker — which
+  also proves the cookie survives the warm reset (otherwise the count would never
+  accumulate and it would loop forever). Verified: panic-loop-test PASS, production
+  build + console-login boot still PASS (the guard/healthy-reset don't perturb a
+  normal boot). Remaining audit tracks: datafs crash injection, SMP atomic
+  contention, futex/signal races, driver fault injection, DNS pointer-loop.
+
+### TH7 — DNS compression-pointer DoS: verified safe by design + armored (DONE, 2026-06-19)
+
+The audit (P2 net) flagged that `dnsSkipName` "could infinite-loop on a
+compression-pointer cycle" — the classic DNS decompression-bomb DoS. On inspection
+this is a **false alarm for our implementation**: the in-kernel resolver
+(kernel/net/dns.swift) never *follows* compression pointers — `dnsSkipName` treats a
+0xC0 pointer as a 2-byte terminator and returns, and `dnsParseResponse` locates the
+A record by walking fixed-size answer records, reading the RDATA directly. Every
+loop strictly advances (label by ≥1, answer index by 1) or returns -1 on overrun, so
+a cyclic/forward pointer can never loop. No bug, no fix — but the property was
+untested.
+
+Added four adversarial cases to `tests/net_test.swift` (section 24–27) that pin it:
+a question name that is a **self-referential pointer** (the test merely completing
+is the proof it terminates — a follow-the-pointer parser would hang here) which must
+still find the A record after it; a label whose length runs past the message end; a
+reserved-bits label (0x80, not a pointer, len > 63); and a compression pointer
+truncated to one byte at the end — each must return 0, not hang or over-read. Proven
+non-vacuous (a forced-wrong expectation makes `check` print FAIL). Host-only, already
+in `make test`. Remaining audit tracks: datafs crash injection, SMP atomic
+contention, futex/signal races, driver fault injection.

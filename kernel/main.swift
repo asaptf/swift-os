@@ -757,6 +757,9 @@ private func runVirtioNetProbe() {
 }
 
 private func runInit() {
+    // We reached steady state — clear the consecutive-panic counter so an isolated
+    // later fault starts counting fresh instead of inheriting this boot's history.
+    panicLoopMarkHealthyBoot()
     uartPuts("swift-os M12c: starting swos-init\n")
     // Keep the system usable: when a session ends, start a fresh login rather
     // than leaving the VM idle. The image is (re)loaded each iteration because
@@ -984,6 +987,16 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         while true {}
     }
     uartPuts("M1 probe: raw heap allocation ok\n")
+
+#if PANIC_LOOP_INJECT
+    // Test-only fault injector (the panic-loop-test kernel variant): auto-reboot on
+    // every boot, here — after PSCI/MMU/heap are up but long before the steady-state
+    // healthy-boot marker (panicLoopMarkHealthyBoot in runInit) and any interactive
+    // stage — so the panic-loop guard must bound the consecutive reboots and halt
+    // rather than cycle forever. Never compiled into a production kernel.
+    uartPuts("panic-loop-test: injecting an early panic\n")
+    panicReboot(seconds: 0)
+#endif
 
     let swiftRaw = UnsafeMutableRawPointer.allocate(byteCount: 24, alignment: 16)
     swiftRaw.storeBytes(of: UInt64(0x1234_5678_90AB_CDEF), as: UInt64.self)

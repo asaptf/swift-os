@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-// qw5_rightsxfer.c — QW5 rights-intersection on IPC handle transfer smoke.
+// qw5_rightsxfer.c — QW5 rights = held ∩ requested on IPC handle transfer.
 //
-// The parent opens /dev/zero O_RDWR (a handle holding READ|WRITE|TRANSFER), then
-// ipc_sends it over a C4 endpoint requesting only READ|TRANSFER — deliberately
-// dropping WRITE. The kernel installs a fresh handle attenuated to held ∩
-// requested, so the child receives READ|TRANSFER. The child proves (a) a read
-// through the received fd succeeds (READ survived), (b) a write fails (WRITE was
-// attenuated away), and the parent proves (c) its source fd was invalidated
-// (move semantics). Monotonic attenuation: a grant can only ever narrow, never
-// widen, the sender's authority.
+// Attenuation must be MONOTONIC: a grant can only ever narrow the sender's
+// authority, never widen it. Three scenarios prove both directions of that
+// invariant over a C4 endpoint handle move:
+//   1. downgrade  — hold READ|WRITE|TRANSFER, request only READ|TRANSFER  ->
+//                   the receiver LOSES write (the requested mask narrowed it).
+//   2. escalation — hold only READ|TRANSFER (O_RDONLY), request READ|WRITE|
+//                   TRANSFER -> write must NOT appear: asking for a right the
+//                   sender never held cannot conjure it. THIS is the security
+//                   property; the old test only proved direction 1.
+//   3. all-inherit— hold only READ|TRANSFER, request SWIFTOS_RIGHTS_ALL_INHERIT
+//                   (0xFFFFFFFF) -> the receiver still gets only READ|TRANSFER.
+//
+// In every case the receiver must be able to read /dev/zero (READ survived) but
+// be DENIED a write — the kernel checks the WRITE right before /dev/zero's
+// accept-everything write path, so a denied write proves the right is absent,
+// not silently swallowed. The sender's source fd must also be invalidated (the
+// transfer is a move, not a copy).
 
 #include "lib/syscall.h"
 #include "lib/fs.h"
@@ -17,79 +26,73 @@
 
 int puts_raw(const char *s);
 
-int main(void) {
+// Run one transfer scenario. The parent opens /dev/zero with `open_flags` (which
+// fixes the rights it HOLDS), then moves the handle requesting `requested`. The
+// child asserts a read succeeds and a write is denied. Prints `ok_msg` and
+// returns 0 on success; prints a QW5: FAIL line and returns 1 otherwise.
+static int run_scenario(const char *ok_msg, int open_flags, unsigned long requested) {
     int ep[2];
-    if (endpoint_create(ep) != 0) {
-        puts_raw("QW5: FAIL endpoint_create\n");
-        return 1;
-    }
+    if (endpoint_create(ep) != 0) { puts_raw("QW5: FAIL endpoint_create\n"); return 1; }
 
     int pid = fork();
-    if (pid < 0) {
-        puts_raw("QW5: FAIL fork\n");
-        return 1;
-    }
+    if (pid < 0) { puts_raw("QW5: FAIL fork\n"); return 1; }
 
     if (pid == 0) {
-        // Child: receive the moved-and-attenuated handle on the recv end.
+        // Child: receive the moved-and-attenuated handle, then probe its rights.
+        // It runs inside run_scenario, so it must _exit, never return into main.
         close(ep[0]);
         char buf[16];
         int rh = -1;
         long n = ipc_recv(ep[1], buf, sizeof(buf), &rh);
-        if (n < 0 || rh < 0) {
-            puts_raw("QW5: FAIL child recv (no handle arrived)\n");
-            return 1;
-        }
-        // (a) READ survived the intersection — reading /dev/zero returns bytes.
+        if (n < 0 || rh < 0) { puts_raw("QW5: FAIL child recv (no handle arrived)\n"); _exit(1); }
         char rb[4];
-        long r = read(rh, rb, sizeof(rb));
-        if (r < 0) {
-            puts_raw("QW5: FAIL child read denied (READ should survive)\n");
-            return 1;
+        if (read(rh, rb, sizeof(rb)) < 0) {
+            puts_raw("QW5: FAIL child read denied (READ should survive)\n"); _exit(1);
         }
-        puts_raw("QW5: child read OK\n");
-        // (b) WRITE was attenuated away — the write must be rejected for lack of
-        // the right, not silently discarded by /dev/zero.
-        long w = write(rh, "x", 1);
-        if (w >= 0) {
-            puts_raw("QW5: FAIL child write allowed (WRITE should be attenuated)\n");
-            return 1;
+        // WRITE may be present only if the sender HELD it AND requested it. In
+        // scenarios 2 and 3 the sender never held it, so this must be denied.
+        if (write(rh, "x", 1) >= 0) {
+            puts_raw("QW5: FAIL child write allowed (rights were widened!)\n"); _exit(1);
         }
-        puts_raw("QW5: child write denied as expected\n");
         close(rh);
-        return 0;
+        _exit(0);
     }
 
-    // Parent: open a handle that holds READ|WRITE|TRANSFER, then hand the peer
-    // strictly fewer rights — READ|TRANSFER, dropping WRITE.
+    // Parent: hold a /dev/zero handle (rights fixed by open_flags), then move it.
     close(ep[1]);
-    int xf = open("/dev/zero", O_RDWR);
-    if (xf < 0) {
-        puts_raw("QW5: FAIL parent open /dev/zero\n");
-        return 1;
+    int xf = open("/dev/zero", open_flags);
+    if (xf < 0) { puts_raw("QW5: FAIL parent open /dev/zero\n"); return 1; }
+    if (ipc_send(ep[0], "Q5", 2, xf, requested) != 0) {
+        puts_raw("QW5: FAIL parent ipc_send\n"); return 1;
     }
-    if (ipc_send(ep[0], "Q5", 2, xf,
-                 SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_TRANSFER) != 0) {
-        puts_raw("QW5: FAIL parent ipc_send\n");
-        return 1;
-    }
-    // (c) Move semantics: the source fd is cleared, not duplicated. A read through
-    // it must now fail with EBADF rather than leak the original authority.
+    // Move semantics: the source fd is cleared, not duplicated.
     char probe;
-    long moved = read(xf, &probe, 1);
-    if (moved != ERR_BADFD) {
-        puts_raw(moved >= 0 ? "QW5: FAIL parent source fd still readable (leak)\n"
-                            : "QW5: FAIL parent source fd unexpected error\n");
-        return 1;
+    if (read(xf, &probe, 1) != ERR_BADFD) {
+        puts_raw("QW5: FAIL parent source fd still readable (move leaked)\n"); return 1;
     }
-    puts_raw("QW5: parent source fd invalidated\n");
 
     int status = 0;
-    int waited = waitpid(pid, &status, 0);
-    if (waited != pid || ((status >> 8) & 0xff) != 0) {
-        puts_raw("QW5: FAIL child reported a failed assertion\n");
-        return 1;
+    if (waitpid(pid, &status, 0) != pid || ((status >> 8) & 0xff) != 0) {
+        puts_raw("QW5: FAIL child reported a failed assertion\n"); return 1;
     }
+    close(ep[0]);
+    puts_raw(ok_msg);
+    return 0;
+}
+
+int main(void) {
+    // 1. Downgrade: hold READ|WRITE|TRANSFER, grant only READ|TRANSFER.
+    if (run_scenario("QW5: downgrade narrowed away WRITE\n", O_RDWR,
+                     SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_TRANSFER) != 0) return 1;
+
+    // 2. Escalation: hold only READ|TRANSFER (O_RDONLY), but REQUEST WRITE too.
+    //    The intersection must not conjure a right the sender never held.
+    if (run_scenario("QW5: escalation request for +WRITE denied\n", O_RDONLY,
+                     SWIFTOS_RIGHT_READ | SWIFTOS_RIGHT_WRITE | SWIFTOS_RIGHT_TRANSFER) != 0) return 1;
+
+    // 3. Ask for EVERYTHING (ALL_INHERIT) while holding only READ|TRANSFER.
+    if (run_scenario("QW5: ALL_INHERIT yields only held rights\n", O_RDONLY,
+                     SWIFTOS_RIGHTS_ALL_INHERIT) != 0) return 1;
 
     puts_raw("QW5: PASS\n");
     return 0;

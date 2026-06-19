@@ -8,6 +8,15 @@
 // Each received badge must equal the one stamped. A third, *unbadged* send
 // (no ipc_badge call) must report badge == 0. This is the structural
 // confused-deputy defense in docs/CAPABILITIES.md §4.2.
+//
+// Two further checks exercise the badge's per-message and slot lifecycle on a
+// SINGLE endpoint (the original test used three separate pairs):
+//   - mixed: re-stamp one send handle A1 -> 0 -> B2 and confirm each recv reports
+//     the CURRENT badge, catching a "sticky" endpoint badge that fails to update
+//     or clear between messages;
+//   - reuse: badge an endpoint, exchange a message, close it, then create a fresh
+//     endpoint (which reuses the freed slot) and confirm an unbadged send reports
+//     0 — the freed slot's badge must not bleed into its reuse.
 
 #include "lib/syscall.h"
 
@@ -26,6 +35,43 @@ static int send_recv(int sfd, int rfd, const char *msg, int len,
     if (n != len) { return -1; }
     *out_badge = badge;
     return 0;
+}
+
+// Mixed badged/unbadged/re-badged on ONE endpoint: re-stamp the send handle
+// between messages and confirm each recv reports the current badge. Returns 0 on
+// success, 1 on a badge mismatch, -1 on a setup error.
+static int test_mixed_one_endpoint(void) {
+    int ep[2];
+    if (endpoint_create(ep) != 0) return -1;
+    unsigned int b = 0;
+    int rc = 1;
+    if (ipc_badge(ep[0], BADGE_A) == 0 && send_recv(ep[0], ep[1], "m1", 2, &b) == 0 && b == BADGE_A &&
+        ipc_badge(ep[0], 0u)     == 0 && send_recv(ep[0], ep[1], "m2", 2, &b) == 0 && b == 0 &&
+        ipc_badge(ep[0], BADGE_B) == 0 && send_recv(ep[0], ep[1], "m3", 2, &b) == 0 && b == BADGE_B) {
+        rc = 0;
+    }
+    close(ep[0]); close(ep[1]);
+    return rc;
+}
+
+// Stale badge after slot reuse: badge a send handle A1, exchange a message, close
+// the endpoint (freeing its slot), then create a fresh endpoint (which reuses the
+// slot) and confirm an UNBADGED send reports 0. Returns 0/1/-1 as above.
+static int test_badge_slot_reuse(void) {
+    int ep1[2];
+    if (endpoint_create(ep1) != 0) return -1;
+    unsigned int b = 0;
+    int armed = (ipc_badge(ep1[0], BADGE_A) == 0 &&
+                 send_recv(ep1[0], ep1[1], "r1", 2, &b) == 0 && b == BADGE_A);
+    close(ep1[0]); close(ep1[1]);              // free the slot; its badge must not linger
+    if (!armed) return 1;
+
+    int ep2[2];
+    if (endpoint_create(ep2) != 0) return -1;  // reuses the just-freed slot
+    int rc = 1;
+    if (send_recv(ep2[0], ep2[1], "r2", 2, &b) == 0) rc = (b == 0) ? 0 : 1;
+    close(ep2[0]); close(ep2[1]);
+    return rc;
 }
 
 int main(void) {
@@ -83,6 +129,22 @@ int main(void) {
         return 1;
     }
     puts_raw("QW4-BADGE-UNBADGED-ZERO-OK\n");
+
+    int mres = test_mixed_one_endpoint();
+    if (mres != 0) {
+        puts_raw(mres > 0 ? "qw4-badge: mixed-on-one-endpoint badge mismatch\n"
+                          : "qw4-badge: mixed-on-one-endpoint setup failed\n");
+        return 1;
+    }
+    puts_raw("QW4-BADGE-MIXED-OK\n");
+
+    int rres = test_badge_slot_reuse();
+    if (rres != 0) {
+        puts_raw(rres > 0 ? "qw4-badge: stale badge bled across slot reuse\n"
+                          : "qw4-badge: slot-reuse setup failed\n");
+        return 1;
+    }
+    puts_raw("QW4-BADGE-REUSE-CLEAN-OK\n");
 
     close(epA[0]); close(epA[1]);
     close(epB[0]); close(epB[1]);

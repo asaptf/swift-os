@@ -134,8 +134,13 @@ See [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ### Where does writable data go?
 
-Current writable guest storage is `/tmp`, backed by RAM. It is lost on reboot.
-There is no general persistent writable root filesystem yet.
+Writable guest state is split by lifetime. Ephemeral scratch goes to `/tmp`,
+backed by RAM and lost on reboot. State that must survive reboot — application
+databases, hosted site content under `/data/www/current`, persistent app config
+— goes on the `/data` tier (datafs), a writable virtio-blk disk mounted when
+attached. The base image (including `/etc`) stays immutable; there is no
+general-purpose persistent writable *root* filesystem. See
+[SETTINGS_GUIDE.md](SETTINGS_GUIDE.md) for which tier a given setting belongs to.
 
 ### How do I verify a build?
 

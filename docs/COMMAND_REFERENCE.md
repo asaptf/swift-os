@@ -998,6 +998,38 @@ Notes:
 
 Acceptance coverage: `tests/dns_test.sh`.
 
+### `acme`
+
+Obtain an HTTPS certificate end to end from an ACME (RFC 8555) directory over the
+in-tree TLS 1.3 stack, driving directory → newNonce → newAccount → newOrder →
+authz → http-01 → finalize → certificate. A fresh P-256 account key and
+certificate key are generated; the issued PEM chain and key are written under the
+state directory and `fsync`ed for durability.
+
+```text
+acme <ip> <port> <dir-path> <domain> <webroot> <statedir> [--force] [--ca <pem>]
+```
+
+Examples:
+
+```sh
+/bin/acme 10.0.2.2 14010 /directory site.swos /data/www /data/acme
+/bin/acme 10.0.2.2 14010 /directory site.swos /data/www /data/acme --force
+```
+
+Notes:
+
+- The ACME directory is reached at `https://<ip>:<port><dir-path>`.
+- `webroot` is the served directory; the http-01 token file is written under
+  `<webroot>/.well-known/acme-challenge/<token>`.
+- `statedir` holds the persistent `account.key` and per-domain `cert.pem` /
+  `key.pem`. An existing certificate is kept unless `--force` is given.
+- `--ca <pem>` enables TLS server-certificate verification against the given
+  roots. Without it the client does not verify the server certificate — fine for
+  the mock/Pebble harness, not for production trust.
+
+Acceptance coverage: `tests/acme_mock_test.sh`, `tests/acme_persist_test.sh`, `tests/acme_verify_test.sh`.
+
 ## Interactive And Application Commands
 
 ### `calc`
@@ -1146,6 +1178,8 @@ diagnostic fixtures than stable application interfaces.
 | `swos-kstage` | `swos-kstage` | Copy the active ESP kernel slot image into the inactive kernel slot and verify it. | `tests/uefi_kstage_test.sh` |
 | `swos-kactivate` | `swos-kactivate` | Select the inactive ESP kernel slot in loader-managed `kernel-state` for the next boot. | `tests/uefi_kactivate_test.sh` |
 | `swos-kconfirm` | `swos-kconfirm` | Mark the booted ESP kernel slot confirmed healthy. | `tests/uefi_kconfirm_test.sh` |
+| `reboot` | `reboot` | Flush `/data` and warm-reboot the machine via PSCI `SYSTEM_RESET`. Needs `capConsole`; a non-console principal is refused. | `tests/reboot_test.sh` |
+| `shutdown` | `shutdown` | Flush `/data` and power the machine off via PSCI `SYSTEM_OFF` (QEMU `virt` exits). Needs `capConsole`; a non-console principal is refused. | `tests/reboot_test.sh` |
 
 ### `swos-init`
 
