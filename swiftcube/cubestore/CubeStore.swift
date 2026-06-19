@@ -40,7 +40,7 @@ final class CubeStore<Log: AppendLog, Snap: SnapshotStore> {
     /// latest snapshot (if any), then replay WAL records with revision greater
     /// than it. A torn trailing record is detected, discarded, and the log is
     /// durably truncated to the last good boundary.
-    static func open(log: Log, snapshot: Snap) throws -> CubeStore {
+    static func open(log: Log, snapshot: Snap) throws(CubeError) -> CubeStore {
         let store = CubeStore(log: log, snapshot: snapshot)
 
         if let latest = snapshot.latest() {
@@ -196,7 +196,7 @@ final class CubeStore<Log: AppendLog, Snap: SnapshotStore> {
     /// Throws `.compacted` if fromRevision precedes the compaction floor.
     @discardableResult
     func watchRange(_ start: Bytes, _ end: Bytes?, fromRevision: Revision,
-                    _ callback: @escaping (Event) -> Void) throws -> WatchHandle {
+                    _ callback: @escaping (Event) -> Void) throws(CubeError) -> WatchHandle {
         if fromRevision < compactedRevision { throw CubeError.compacted(compactedRevision) }
         let id = nextWatcherId
         nextWatcherId += 1
@@ -209,13 +209,16 @@ final class CubeStore<Log: AppendLog, Snap: SnapshotStore> {
             w.deliver(event)
         }
         watchers.append(w)
-        return WatchHandle { [weak self] in self?.removeWatcher(id) }
+        // `unowned(unsafe)` (not `weak`) so the core also compiles under Embedded
+        // Swift, which forbids `weak`. Safe because the store outlives its watch
+        // handles — a handle's cancel only runs while the store is alive.
+        return WatchHandle { [unowned(unsafe) self] in self.removeWatcher(id) }
     }
 
     /// Watch every key sharing `prefix`.
     @discardableResult
     func watchPrefix(_ prefix: Bytes, fromRevision: Revision,
-                     _ callback: @escaping (Event) -> Void) throws -> WatchHandle {
+                     _ callback: @escaping (Event) -> Void) throws(CubeError) -> WatchHandle {
         try watchRange(prefix, prefixEnd(prefix), fromRevision: fromRevision, callback)
     }
 

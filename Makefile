@@ -472,8 +472,13 @@ USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
 USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 USER_ACME_ELF := $(BUILD)/acme.elf
+# SC2: SwiftCube control-plane daemon + node agent (swiftcube/).
+USER_SCTLD_ELF := $(BUILD)/sctld.elf
+USER_SLET_ELF := $(BUILD)/slet.elf
 BASE_EXEC_ELFS := \
 	$(USER_ACME_ELF) \
+	$(USER_SCTLD_ELF) \
+	$(USER_SLET_ELF) \
 	$(NODE_BASE_ELFS) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
@@ -878,6 +883,28 @@ TLS_SWIFT_SRCS := userland/lib/tls13.swift userland/lib/x509.swift userland/lib/
 $(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) -o $@
 
+# SC2: /bin/sctld + /bin/slet — the SwiftCube control plane compiled into Embedded
+# Swift userland. One source set (cubestore core + control plane + the swift-os TLS
+# 1.3 record/key-schedule + crypto modules) feeds both ELFs; --gc-sections trims
+# each to what its main references. The control plane is Foundation-free; the host
+# control-test (make control-test) links the SAME control sources under host Swift.
+SC2_CONTROL_SRCS := \
+	swiftcube/cubestore/Crc32.swift swiftcube/cubestore/Model.swift swiftcube/cubestore/ByteIO.swift \
+	swiftcube/cubestore/MVCCIndex.swift swiftcube/cubestore/StorageSink.swift swiftcube/cubestore/WALCodec.swift \
+	swiftcube/cubestore/SnapshotCodec.swift swiftcube/cubestore/Watch.swift swiftcube/cubestore/CubeStore.swift \
+	swiftcube/control/Identity.swift swiftcube/control/Schema.swift swiftcube/control/Node.swift \
+	swiftcube/control/Token.swift swiftcube/control/Lease.swift swiftcube/control/RamStore.swift \
+	swiftcube/control/Wire.swift swiftcube/control/Rpc.swift swiftcube/control/MutualTLS.swift \
+	swiftcube/control/Channel.swift swiftcube/control/Controller.swift swiftcube/control/Agent.swift \
+	swiftcube/control/SC2Boot.swift \
+	userland/lib/tls13.swift userland/lib/asn1.swift userland/lib/x509.swift \
+	userland/lib/x509_verify.swift userland/lib/rsa.swift \
+	kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+$(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) -o $@
+
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
 # already includes sha256, so add only ed25519+sha512 on top of it. (Defined here,
@@ -1145,6 +1172,13 @@ $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/use
 
 $(USER_TLSGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o -o $@
+
+# SC2 daemons. Link the Embedded Unicode tables (String comparison/decoding), like
+# /bin/calc; --gc-sections trims them to the referenced data.
+$(USER_SCTLD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sctld.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sctld.o $(SWIFT_UNICODE_DATA) -o $@
+$(USER_SLET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_slet.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_slet.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_ACME_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o -o $@
@@ -1508,7 +1542,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test
+.PHONY: raft-test store-test control-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1544,6 +1578,37 @@ store-test: | $(BUILD)/.dir
 		swiftcube/store/tests/store_test.swift \
 		-o $(BUILD)/store_test
 	$(BUILD)/store_test
+
+# SC2: node join over mTLS — bootstrap tokens, CA-signed identity, TTL leases, the
+# leader-gated reaper, and the framed/resumable watch wire. Host acceptance (cases
+# 1-7) runs the full control plane over a loopback transport carrying a REAL
+# mutual-TLS handshake with an injected clock — no network, no wall clock. Reuses
+# the cubestore core + the swift-os TLS 1.3 record/key-schedule primitives + the
+# crypto modules (P-256/X25519/SHA-256/ChaCha20-Poly1305); the control plane is
+# Foundation-free, only the harness uses Foundation.
+CONTROL_CORE = \
+	swiftcube/control/Identity.swift \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Token.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/control/Wire.swift \
+	swiftcube/control/Rpc.swift \
+	swiftcube/control/MutualTLS.swift \
+	swiftcube/control/Channel.swift \
+	swiftcube/control/Controller.swift \
+	swiftcube/control/Agent.swift
+CONTROL_TLS_DEPS = \
+	userland/lib/tls13.swift userland/lib/asn1.swift userland/lib/x509.swift \
+	userland/lib/x509_verify.swift userland/lib/rsa.swift \
+	kernel/crypto/p256.swift kernel/crypto/sha256.swift \
+	kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+control-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		swiftcube/control/tests/control_test.swift \
+		-o $(BUILD)/control_test
+	$(BUILD)/control_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
@@ -1983,6 +2048,12 @@ acme-verify-test: build $(QEMU_DTB) base-image
 
 tls-verify-test:
 	./tests/tls_verify_test.sh
+
+# SC2: on-device node-join + lease-expiry acceptance (case 8). Boots /bin/sctld +
+# /bin/slet under Embedded Swift in QEMU and asserts the join → register →
+# heartbeat → reaper-expiry → watch lifecycle markers on the serial console.
+sc2-join-test: build $(QEMU_DTB) base-image
+	./tests/sc2_join_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
@@ -2765,6 +2836,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
 	cp $(USER_ACME_ELF) $(BASE_ROOT)/bin/acme
+	cp $(USER_SCTLD_ELF) $(BASE_ROOT)/bin/sctld
+	cp $(USER_SLET_ELF) $(BASE_ROOT)/bin/slet
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_SSH_ELF) $(BASE_ROOT)/bin/ssh
 	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd

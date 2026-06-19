@@ -42,7 +42,7 @@ enum SnapshotCodec {
         return out.bytes
     }
 
-    static func decode(_ bytes: Bytes) throws -> SnapshotData {
+    static func decode(_ bytes: Bytes) throws(CubeError) -> SnapshotData {
         var r = ByteReader(bytes)
         guard r.expect(header) else { throw CubeError.corrupt("snapshot: bad magic") }
         let payloadStart = r.offset
