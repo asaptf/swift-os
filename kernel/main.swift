@@ -372,6 +372,22 @@ private func runUserlandServiceDemo() {
     uartPuts("\n")
 }
 
+// LA2: device-MMIO-map authority probe. Runs as a capConsole boot principal:
+// claims the mappable virtio-input window, maps it via sys_device_mmap, and reads
+// the virtio identification registers through the Device-nGnRE mapping to prove
+// the path is live. Also exercises the EACCES refusal on the metadata-only
+// sibling grant. No-ops cleanly on boards without a virtio-input window.
+private func runDeviceMmioMapProbe() {
+    uartPuts("swift-os LA2: device MMIO map authority probe\n")
+    let (img, sz) = demoImage("/bin/devicemmapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["devicemmapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("LA2 device mmap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1340,6 +1356,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runFdOpsDemo()
         runDriverServiceDemo()
         runUserlandServiceDemo()
+        runDeviceMmioMapProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

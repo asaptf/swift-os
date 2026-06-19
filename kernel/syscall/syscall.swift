@@ -101,6 +101,7 @@ private let sysUpdateStageAbort: UInt = 97 // update_stage_abort() — discard a
 private let sysSpawnHandlesAsync: UInt = 98 // spawn_handles_async(path, argv, specs, count) — non-blocking C2 spawn → child pid (LA1)
 private let sysNameRegister: UInt = 99     // name_register(name, endpoint_fd) — publish a recv-end endpoint under a name (LA1); needs capConsole
 private let sysNameLookup: UInt = 100      // name_lookup(name) → fresh send-end fd — capability grant-by-lookup (LA1)
+private let sysDeviceMmap: UInt = 101      // device_mmap(fd, len) -> base VA — map a claimed device's MMIO window, gated on the grant's .map right (LA2)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -384,6 +385,12 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = vfsNameRegister(nameVA: frame[0], fd: Int(bitPattern: frame[1]))
     } else if number == sysNameLookup {
         result = vfsNameLookup(nameVA: frame[0])
+    } else if number == sysDeviceMmap {
+        // LA2: returns a base VA on success or a negative errno encoded in the
+        // UInt (in [-4095, -1]), exactly like sysMmap; the userland bridge maps
+        // that error range to MAP_FAILED.
+        frame[0] = processDeviceMmap(Int(bitPattern: frame[0]), frame[1])
+        return // result is an address, not an errno
     } else {
         result = Errno.noSys.code
     }

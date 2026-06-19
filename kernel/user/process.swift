@@ -3805,6 +3805,53 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     return base
 }
 
+/// LA2: map a claimed device's MMIO window into the caller, gated on the grant's
+/// `.map` right. Resolves `fd` to its window via vfsDeviceMmioWindow (which does
+/// the rights/flags checks under vfsLock), carves a VA region from the same
+/// descending mmap cursor anonymous mmap uses — so munmap and process teardown
+/// already reclaim it — and links the pages Device-nGnRE with NO PMM frames
+/// (addressSpaceMapDeviceForActiveCpuMask). `lenHint` is clamped to the window
+/// length (0 means "the whole window"). Because the virtio-mmio transport stride
+/// is sub-page (0x200), the window base need not be page-aligned: we map the
+/// 4 KiB page(s) covering [base, base+len) and return a VA pointing at the exact
+/// register base (page VA + intra-page offset), like an mmap of a device offset.
+/// Returns the base VA, or a negative errno encoded in the UInt (like processMmap).
+func processDeviceMmap(_ fd: Int, _ lenHint: UInt) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) } // EINVAL
+    let w = vfsDeviceMmioWindow(fd: fd)
+    if w.err != 0 { return err(w.err) }
+    if w.len == 0 { return err(-22) }
+    let pageSize = PageAllocator.pageSize
+    let want = (lenHint == 0 || lenHint > w.len) ? w.len : lenHint
+    if want == 0 { return err(-22) }
+
+    let pageBase = w.base & ~(pageSize - 1)
+    let pageOffset = w.base - pageBase
+    let pages = roundUpPages(pageOffset + want)
+    let bytes = pages * pageSize
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+    if !anonVmaAdd(me, base, pages) { return err(-12) }
+
+    let rc = addressSpaceMapDeviceForActiveCpuMask(pTtbr0[me],
+                                                   base,
+                                                   pageBase,
+                                                   pages,
+                                                   processAddressSpaceActiveCpuMaskForSlot(me))
+    if rc != 0 {
+        anonVmasDeactivateOverlap(me, base, pages)
+        return err(Int(rc))
+    }
+    pMmapTop[me] = base
+    // Account the mapped pages so munmap's symmetric decrement stays balanced.
+    // These are device pages, not RAM; munmap/teardown "free" them via a PMM
+    // range-guarded no-op, never returning MMIO to the frame allocator.
+    pResPages[me] += Int(pages)
+    return base + pageOffset
+}
+
 /// I2b: service a demand fault on a lazily-reserved file-backed region. Returns
 /// true if `faultVA` fell in such a region and the missing page was mapped in
 /// read-only from disk; false otherwise (the caller treats that as a real fault,

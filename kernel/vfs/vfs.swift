@@ -191,6 +191,11 @@ private struct DeviceGrant {
     var flags: UInt32 = 0
     var generation: UInt32 = 0
     var ownerProc = -1
+    // LA2: kernel-only — claimable by name but omitted from the device_discover
+    // ordinal enumeration. Used for the mappable alias over an already-discovered
+    // virtio-mmio window so it is not surfaced as a second, distinct piece of
+    // hardware (and so the C5 discovery-exhaustion contract is unchanged).
+    var discoverable = true
 }
 
 private let maxFDs = 512
@@ -228,6 +233,10 @@ private let deviceBusPseudo: UInt32 = 1
 private let deviceBusVirtioMmio: UInt32 = 2
 private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
 private let deviceFlagDiscovered: UInt32 = 1 << 1
+// LA2: this grant authorizes mapping the device's MMIO window (sys_device_mmap),
+// so a claim yields a `.map` right. Mirrors SWIFTOS_DEVICE_FLAG_MMIO_GRANT in
+// userland/lib/syscall.h. Mutually exclusive with deviceFlagNoMmioGrant.
+private let deviceFlagMmioGrant: UInt32 = 1 << 2
 // LA1: a tiny in-kernel name registry — the capability-microkernel NameServer
 // split. A privileged publisher (capConsole) registers the RECV end of an
 // endpoint under a short name; the registry pins that endpoint by holding an
@@ -766,7 +775,8 @@ private func vfsVerifyNodeContent(_ node: Int) -> Bool {
 private func registerDevice(_ slot: Int, _ name: StaticString,
                             kind: UInt32, bus: UInt32,
                             mmioBase: UInt = 0, mmioLen: UInt = 0,
-                            irq: UInt32 = 0, flags: UInt32) {
+                            irq: UInt32 = 0, flags: UInt32,
+                            discoverable: Bool = true) {
     if slot < 0 || slot >= maxDevices { return }
     devices[slot] = DeviceGrant(inUse: true, claimed: false,
                                 namePtr: UInt(bitPattern: name.utf8Start),
@@ -774,7 +784,8 @@ private func registerDevice(_ slot: Int, _ name: StaticString,
                                 kind: kind, bus: bus,
                                 mmioBase: mmioBase, mmioLen: mmioLen,
                                 irq: irq, flags: flags,
-                                generation: 0, ownerProc: -1)
+                                generation: 0, ownerProc: -1,
+                                discoverable: discoverable)
 }
 
 private func resetDeviceRegistry() {
@@ -787,6 +798,22 @@ private func resetDeviceRegistry() {
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
                        flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
+        // LA2: a second grant over the SAME virtio-input transport window, this
+        // one mappable (deviceFlagMmioGrant, no deviceFlagNoMmioGrant), so a
+        // capConsole claimer obtains a `.map` right and can sys_device_mmap the
+        // window Device-nGnRE. This aliases hardware the kernel's polled keyboard
+        // driver also touches; the MMIO-map path only needs to read the read-only
+        // identification registers (MagicValue/Version/DeviceID), so the two
+        // mappings coexist. Per-window ownership arbitration (one owner, kernel
+        // driver vs userland) is later LA-series work; reusing an existing window
+        // here avoids inventing hardware (see LA2 prompt).
+        registerDevice(1, "virtio-input-mmio.0",
+                       kind: deviceKindVirtioInput,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: input.mmioBase,
+                       mmioLen: input.mmioLen,
+                       flags: deviceFlagMmioGrant | deviceFlagDiscovered,
+                       discoverable: false)
     } else {
         registerDevice(0, "pseudo-input.0",
                        kind: deviceKindPseudoInput,
@@ -1284,8 +1311,16 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
     return r
 }
 
-private func deviceRights() -> Rights {
-    deviceMetadataGrantRights()
+// LA2: rights for a freshly claimed device grant. A device with a real MMIO
+// window that is not explicitly inert (deviceFlagNoMmioGrant clear, mmioLen != 0)
+// is mappable, so its grant carries `.map` (deviceMmioGrantRights). Every other
+// device stays metadata-only (inspect + transfer), exactly as before LA2 — so
+// the C5f metadata-only contract still holds for virtio-input.0 and pseudo-input.
+private func deviceRights(_ dev: Int) -> Rights {
+    if devices[dev].mmioLen != 0 && (devices[dev].flags & deviceFlagNoMmioGrant) == 0 {
+        return deviceMmioGrantRights()
+    }
+    return deviceMetadataGrantRights()
 }
 
 private func discardUninstalledDescription(_ d: Int) {
@@ -1933,7 +1968,7 @@ func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
     devices[dev].generation &+= 1
     openDescriptions[d].kind = .device
     openDescriptions[d].node = dev
-    installDescription(proc, fd, d, rights: deviceRights())
+    installDescription(proc, fd, d, rights: deviceRights(dev))
     if let outBuf = out { writeDeviceInfoLocked(dev, outBuf) }
     return fd
 }
@@ -1947,7 +1982,7 @@ func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
     defer { vfsUnlock(daif) }
 
     var ordinal = 0
-    for dev in 0..<maxDevices where devices[dev].inUse {
+    for dev in 0..<maxDevices where devices[dev].inUse && devices[dev].discoverable {
         if ordinal == index {
             writeDeviceInfoLocked(dev, out)
             return 0
@@ -1974,6 +2009,32 @@ func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
     guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return Errno.invalid.code }
     writeDeviceInfoLocked(dev, out)
     return 0
+}
+
+// LA2: resolve `fd` to its device grant's MMIO window for sys_device_mmap. The
+// handle must be a `.device` carrying `.map` (else EACCES), and the named device
+// must be mappable (deviceFlagNoMmioGrant clear, mmioLen != 0). Reads mmioBase/
+// mmioLen under vfsLock, like every other registry access. On success returns
+// (0, base, len); on failure a negative errno in `err` and zeros.
+func vfsDeviceMmioWindow(fd: Int) -> (err: Int, base: UInt, len: UInt) {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return (Errno.badFD.code, 0, 0) }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .device else { return (Errno.badFD.code, 0, 0) }
+    guard hasRights(entry.rights, .map) else { return (Errno.access.code, 0, 0) }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return (Errno.badFD.code, 0, 0) }
+    let desc = openDescriptions[d]
+    guard desc.kind == .device else { return (Errno.badFD.code, 0, 0) }
+    let dev = desc.node
+    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return (Errno.invalid.code, 0, 0) }
+    // Defense in depth: a `.map` grant should only exist on a mappable device,
+    // but re-check the device's own flags before handing out hardware authority.
+    if (devices[dev].flags & deviceFlagNoMmioGrant) != 0 { return (Errno.access.code, 0, 0) }
+    if devices[dev].mmioLen == 0 { return (Errno.access.code, 0, 0) }
+    return (0, devices[dev].mmioBase, devices[dev].mmioLen)
 }
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {

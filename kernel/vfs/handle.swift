@@ -133,3 +133,15 @@ func deviceGrantHasHardwareAuthorityRights(_ r: Rights) -> Bool {
     r.contains(.read) || r.contains(.write) || r.contains(.execute) ||
     r.contains(.map) || r.contains(.duplicate) || r.contains(.setattr)
 }
+
+// LA2: a device grant that additionally authorizes mapping the device's MMIO
+// window into the owner's address space (sys_device_mmap), gated on `.map`.
+// Unlike deviceMetadataGrantRights() this grant DOES carry hardware authority:
+// deviceGrantHasHardwareAuthorityRights() therefore returns true for it, by
+// design. The metadata-only helper stays the default for grants that must remain
+// inert (a device flagged deviceFlagNoMmioGrant, or one with no MMIO window).
+func deviceMmioGrantRights() -> Rights {
+    var r = deviceMetadataGrantRights()
+    r.insert(.map)
+    return r
+}
