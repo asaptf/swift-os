@@ -7150,3 +7150,26 @@ rejected` / the caller print `double-reply scenario FAILED`, both caught by the
 test script, and `IPC-CALL OK` never appears. Verified in QEMU at `-smp 4` (`make
 ipc-call-test`, PASS). Remaining IPC items: cross-endpoint reply (the `endpoint ==
 ep` guard), generation-after-slot-reuse, and QW4 stale-badge-on-reuse.
+
+### TH4 — QW4 badge: per-message tracking + slot-reuse hygiene (DONE, 2026-06-19)
+
+`qw4_badge_test` proved badges distinguish clients, but used three *separate*
+endpoint pairs — so it never exercised the badge's lifecycle on a single endpoint:
+the per-message update/clear and the freed-slot reset (`endpoints[ep].badge = 0` on
+recv at vfs.swift:3102/3397; `Endpoint()` zeroing on slot reuse). `userland/
+qw4_badge.c` adds two single-endpoint checks:
+  - **mixed** — re-stamp one send handle A1 -> 0 -> B2 and confirm each recv reports
+    the *current* badge (catches a "sticky" endpoint badge that fails to update or
+    clear between messages);
+  - **reuse** — badge an endpoint, exchange a message, close it (freeing its slot),
+    then create a fresh endpoint (which reuses the slot) and confirm an unbadged
+    send reports 0 (the freed slot's badge must not bleed into its reuse).
+New markers `QW4-BADGE-MIXED-OK` / `QW4-BADGE-REUSE-CLEAN-OK` are asserted by the
+test script; a sticky or bled badge makes the program exit before printing them and
+the run fails. Verified in QEMU (`make qw4-badge-test`, PASS).
+
+**IPC/capability track complete** (TH2 QW5 escalation, TH3 QW1 double-reply, TH4
+QW4 badge). Still open from the audit: cross-endpoint reply + generation-after-reuse
+(QW1), and the non-IPC tracks — A/B wrong-key, datafs crash injection, SMP atomic
+contention, futex/signal races, driver fault injection, DNS pointer-loop, and the
+panic-loop guard.

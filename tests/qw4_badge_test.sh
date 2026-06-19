@@ -110,6 +110,10 @@ grep -qF "QW4-BADGE-B2-OK" <<<"$clean" \
   || { echo "FAIL: client B badge (0xB2) not reported by ipc_recv_badged" >&2; ok=0; }
 grep -qF "QW4-BADGE-UNBADGED-ZERO-OK" <<<"$clean" \
   || { echo "FAIL: unbadged send did not report badge == 0" >&2; ok=0; }
+grep -qF "QW4-BADGE-MIXED-OK" <<<"$clean" \
+  || { echo "FAIL: mixed badged/unbadged on one endpoint did not track the per-message badge" >&2; ok=0; }
+grep -qF "QW4-BADGE-REUSE-CLEAN-OK" <<<"$clean" \
+  || { echo "FAIL: a stale badge bled across endpoint slot reuse" >&2; ok=0; }
 grep -qF "QW4 OK: badges distinguish clients on a shared endpoint" <<<"$clean" \
   || { echo "FAIL: final QW4 marker missing" >&2; ok=0; }
 
