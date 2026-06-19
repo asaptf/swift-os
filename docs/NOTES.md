@@ -7060,3 +7060,47 @@ The on-box behavior path (`apply-local`/`site`) is still covered by the SU-B/SU-
 QEMU gates; SU-T only adds fast pure-logic coverage underneath them. Re-run
 `make build && make site-bundle-test site-update-test` once on the embedded
 toolchain to confirm the `swsite.swift` split still links and boots.
+
+## TH-series — aggressive coverage of untested trust boundaries (post-M13)
+
+A three-agent audit of test coverage (QW-series + kernel core + concurrency/
+durability/drivers/net) found that the suite proves the code works on the happy
+path but barely exercises adversarial/negative input. The TH-series adds fast
+host unit tests (and, where they surface a real bug, the minimal fix) for the
+highest-risk untested boundaries, one milestone at a time.
+
+### TH1 — ELF loader + copyin/copyout hostile-input coverage (DONE, 2026-06-19)
+
+The EL0 trust boundary — `kernel/user/elf.swift:elfLoad` (parses attacker-supplied
+ET_EXEC images from disk/the package store) and `kernel/user/user_access.swift`
+(every syscall's copyin/copyout guard) — had **zero negative tests**; both ran only
+on trusted binaries / well-behaved processes inside QEMU.
+
+- **Real bug found + fixed in `elfLoad`.** Three bounds used `a + b > size`-style
+  checks where `a`/`b` are attacker-controlled u64 fields (`e_phoff + table`,
+  `p_offset + p_filesz`, `p_vaddr + p_memsz`). Embedded Swift's `+` **traps on
+  overflow**, so a crafted ELF with a near-`UInt.max` field crashed EL1 — a DoS on
+  any box handed a bad binary. Rewrote all three overflow-safe (compare against the
+  remaining space; guard `pVaddr+pMemsz` before forming `vaEnd`). Behavior for valid
+  images is unchanged.
+- **`tests/elf_loader_test.swift`** (`make elf-loader-test`) links `elfLoad` against
+  a fake address space + PMM (real host frames, so copy-to-user actually writes) and
+  asserts: a valid image loads (entry, page count, perms, bytes copied), and reject
+  for truncated/bad-magic/ELFCLASS32/big-endian/non-ET_EXEC/wrong-machine, phdr
+  table past EOF, `p_filesz` past EOF, `filesz>memsz`, the three **integer-overflow**
+  fields, PMM exhaustion, plus the "executable wins" shared-page upgrade and an empty
+  PT_LOAD skip. Proven non-vacuous: built against the pre-fix loader it dies with
+  **SIGTRAP** on the overflow cases.
+- **`tests/user_access_test.swift`** (`make user-access-test`) pins the copyin/copyout
+  guards against a fake mapping: kernel-range / low-device / past-window VAs, `count >
+  Int.max`, ranges overrunning the window, unmapped pages, a range straddling a
+  mapped→unmapped boundary, the writable/COW-resolve path, and `userCString` NULL/
+  bad-maxLen/kernel-range — all without dereferencing a fake VA. (These guards were
+  already correct; the test is regression armor.)
+
+Both are host-only (sub-second, wired into `make test`). Validated on the embedded
+toolchain: `make build` compiles the fixed loader and `console-login` + `swift-
+coreutils` boot tests still exec real ELFs. Remaining audit findings (datafs crash
+injection, A/B wrong-key, IPC capability boundaries, SMP atomics, futex/signal,
+driver malformed-device, DNS pointer-loop, panic-loop guard) are queued as later
+TH milestones.

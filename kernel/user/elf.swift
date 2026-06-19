@@ -86,7 +86,12 @@ func elfLoad(_ ttbr0: UInt, _ image: UnsafeRawPointer?, _ size: UInt) -> UInt {
     let ePhentsize = base.load(fromByteOffset: 54, as: UInt16.self)
     let ePhnum = base.load(fromByteOffset: 56, as: UInt16.self)
 
-    if ePhoff + UInt64(ePhnum) * UInt64(ePhentsize) > UInt64(size) { return 0 }
+    // Overflow-safe bound: ePhoff is attacker-controlled, so never form
+    // `ePhoff + table` — Swift traps on UInt64 overflow, which a malformed image
+    // could use to crash EL1. Compare the table size against the space remaining
+    // after ePhoff instead (ePhnum*ePhentsize fits in UInt64; both are u16).
+    let phTableBytes = UInt64(ePhnum) * UInt64(ePhentsize)
+    if ePhoff > UInt64(size) || phTableBytes > UInt64(size) - ePhoff { return 0 }
 
     var i: UInt16 = 0
     while i < ePhnum {
@@ -100,7 +105,14 @@ func elfLoad(_ ttbr0: UInt, _ image: UnsafeRawPointer?, _ size: UInt) -> UInt {
         let pOffset = ph.load(fromByteOffset: 8, as: UInt64.self)
         let pVaddr = ph.load(fromByteOffset: 16, as: UInt64.self)
         let pFilesz = ph.load(fromByteOffset: 32, as: UInt64.self)
-        if pOffset + pFilesz > UInt64(size) || pFilesz > pMemsz { return 0 }
+        // Same overflow discipline: pOffset/pFilesz/pMemsz are attacker-controlled.
+        if pOffset > UInt64(size) || pFilesz > UInt64(size) - pOffset
+            || pFilesz > pMemsz { return 0 }
+        // pVaddr + pMemsz (rounded up to a page) must not overflow the address
+        // space — otherwise forming vaEnd below would trap EL1. Reject such a
+        // segment; the legitimate user VA window is far below UInt.max.
+        if pMemsz > UInt64(UInt.max) - UInt64(ELF_PAGE) { return 0 }
+        if pVaddr > UInt64(UInt.max) - UInt64(ELF_PAGE) - pMemsz { return 0 }
 
         let perm = (pFlags & PF_X) != 0 ? Int32(VM_PERM_USER_CODE) : Int32(VM_PERM_USER_DATA)
         let vaStart = elfPageDown(UInt(pVaddr))
