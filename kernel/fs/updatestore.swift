@@ -189,6 +189,12 @@ func updateStoreConfirm() -> Int {
         updated.slot1.state = SwosbootFormat.stateConfirmed
         updated.slot1.attemptCount = 0
     }
+    // OS-5: closing the anti-rollback loop — once a slot is confirmed healthy, the
+    // floor rises to its system_version, so the box can no longer be staged back
+    // onto that-or-older (validly signed but superseded, possibly vulnerable) OS.
+    let confirmedVersion = chosen.slot(s).systemVersion
+    let bumpFloor = confirmedVersion > chosen.minSystemVersion
+    if bumpFloor { updated.minSystemVersion = confirmedVersion }
     updated.sequence = chosen.sequence &+ 1
     if !updateStoreWriteBack(updated, currentLBA: chosenLBA) {
         uartPuts("update-store: confirm write failed\n")
@@ -197,6 +203,11 @@ func updateStoreConfirm() -> Int {
     uartPuts("update-store: slot ")
     updateStoreLogSlot(s)
     uartPuts(" confirmed healthy\n")
+    if bumpFloor {
+        uartPuts("update-store: anti-rollback floor raised to ")
+        uartPutUInt(confirmedVersion)
+        uartPuts("\n")
+    }
     return 0
 }
 

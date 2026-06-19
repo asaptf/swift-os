@@ -830,11 +830,71 @@ private func osUpdate(_ url: UnsafeMutablePointer<CChar>) -> Int32 {
     return applyOsBundleBytes(body)
 }
 
+// ---- confirm (OS-5): health-confirm the booted slot ------------------------
+//
+// `swupdate confirm` marks the A/B slot booted this session healthy: it stops
+// accruing boot attempts and is never rolled back, and the kernel raises the
+// anti-rollback floor to this slot's version. `confirm --auto` only does so when
+// the box looks healthy (sshd + nginx are running) — so a trial boot that never
+// reaches a healthy state is left to the attempt-based rollback instead.
+
+// Substring match of `needle` within a NUL-terminated C string.
+private func cstrHas(_ hay: UnsafePointer<CChar>, _ needle: StaticString) -> Bool {
+    let nlen = needle.utf8CodeUnitCount
+    if nlen == 0 { return true }
+    var i = 0
+    while hay[i] != 0 {
+        var j = 0
+        while j < nlen && hay[i + j] != 0
+            && UInt8(bitPattern: hay[i + j]) == needle.utf8Start[j] { j += 1 }
+        if j == nlen { return true }
+        i += 1
+    }
+    return false
+}
+
+// True if a running process's name contains `needle`.
+private func serviceRunning(_ needle: StaticString) -> Bool {
+    let n = swiftos_ps_refresh()
+    if n <= 0 { return false }
+    var idx: Int32 = 0
+    while idx < n {
+        if let nm = swiftos_ps_name(idx), cstrHas(nm, needle) { return true }
+        idx += 1
+    }
+    return false
+}
+
+private func confirm(auto: Bool) -> Int32 {
+    if auto {
+        let sshUp = serviceRunning("sshd")
+        let webUp = serviceRunning("nginx")
+        if !(sshUp && webUp) {
+            put("swupdate: confirm --auto: services not healthy (need sshd + nginx running); leaving slot on trial\n")
+            return 1
+        }
+        put("swupdate: confirm --auto: sshd + nginx up\n")
+    }
+    // Confirm both halves; ENODEV (-19) just means that half is not an A/B store
+    // in this boot topology (e.g. no ESP kernel A/B on a store-only box).
+    let baseRc = swiftos_update_confirm()
+    let kernRc = swiftos_kernel_confirm()
+    if baseRc == 0 { put("swupdate: base A/B slot confirmed healthy\n") }
+    if kernRc == 0 { put("swupdate: kernel A/B slot confirmed healthy\n") }
+    if baseRc == 0 || kernRc == 0 { return 0 }
+    if baseRc == -1 || kernRc == -1 {
+        put("swupdate: confirm: permission denied (need CAP_CONSOLE)\n"); return 1
+    }
+    put("swupdate: confirm: not booted from an A/B update store\n")
+    return 1
+}
+
 // ---- entry point -----------------------------------------------------------
 
 private func usage() {
     put("usage: swupdate seed | swupdate apply-local <bundle.swsite> | swupdate site <https-url>\n")
     put("       swupdate os <https-url> | swupdate os-apply-local <bundle.swsys>\n")
+    put("       swupdate confirm [--auto]\n")
 }
 
 @_cdecl("main")
@@ -872,6 +932,11 @@ func main(_ argc: Int32,
         while p[i] != 0 { path.append(p[i]); i += 1 }
         path.append(0)
         return osApplyLocal(path)
+    }
+    if cstrEq(cmdp, "confirm") {
+        var auto = false
+        if argc >= 3, let a = argv[2], cstrEq(a, "--auto") { auto = true }
+        return confirm(auto: auto)
     }
     usage()
     return 2

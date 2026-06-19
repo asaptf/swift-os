@@ -48,7 +48,8 @@ private func putLE64(_ buf: inout [UInt8], _ off: Int, _ v: UInt64) {
 private func buildManifest(active: Int, fallback: Int,
                            slot0LBA: UInt64, slot0Sectors: UInt64, slot0Gen: UInt32,
                            slot1LBA: UInt64, slot1Sectors: UInt64, slot1Gen: UInt32,
-                           sequence: UInt32, minSystemVersion: UInt64 = 0) -> [UInt8] {
+                           sequence: UInt32, minSystemVersion: UInt64 = 0,
+                           slot0Version: UInt64 = 0, slot1Version: UInt64 = 0) -> [UInt8] {
     var m = [UInt8](repeating: 0, count: SwosbootFormat.manifestSize)
     let magic = Array("SWOSBOOT".utf8)
     for i in 0..<8 { m[i] = magic[i] }
@@ -62,7 +63,7 @@ private func buildManifest(active: Int, fallback: Int,
     // the kernel records them when it stages a versioned image.
     putLE64(&m, SwosbootFormat.minSystemVersionOffset, minSystemVersion)
 
-    func writeSlot(_ index: Int, lba: UInt64, len: UInt64, gen: UInt32) {
+    func writeSlot(_ index: Int, lba: UInt64, len: UInt64, gen: UInt32, version: UInt64) {
         let o = SwosbootFormat.slotTableOffset + index * SwosbootFormat.slotEntrySize
         putLE32(&m, o + 0, 1)                              // present
         putLE32(&m, o + 4, SwosbootFormat.stateUntried)    // state (U1b)
@@ -70,9 +71,10 @@ private func buildManifest(active: Int, fallback: Int,
         putLE64(&m, o + 16, len)                           // length_sectors
         putLE32(&m, o + 24, gen)                           // generation
         putLE32(&m, o + 28, 0)                             // attempt_count (U1b)
+        putLE64(&m, o + SwosbootFormat.slotSystemVersionOffset, version) // system_version (OS-3)
     }
-    writeSlot(0, lba: slot0LBA, len: slot0Sectors, gen: slot0Gen)
-    writeSlot(1, lba: slot1LBA, len: slot1Sectors, gen: slot1Gen)
+    writeSlot(0, lba: slot0LBA, len: slot0Sectors, gen: slot0Gen, version: slot0Version)
+    writeSlot(1, lba: slot1LBA, len: slot1Sectors, gen: slot1Gen, version: slot1Version)
 
     let crc = m.withUnsafeBytes { swosbootCrc32($0.baseAddress!, SwosbootFormat.crcOffset) }
     putLE32(&m, SwosbootFormat.crcOffset, crc)
@@ -83,15 +85,23 @@ private func buildManifest(active: Int, fallback: Int,
 struct UpdateStoreTool {
     static func main() {
         let args = CommandLine.arguments
-        guard args.count == 5 || args.count == 7 else {
-            fail("usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image> [--min-version N]")
-        }
+        let usageStr = "usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image>"
+            + " [--min-version N] [--slot-a-version N] [--slot-b-version N]"
+        guard args.count >= 5 else { fail(usageStr) }
+        // Optional `--flag N` pairs after the four positional args (OS-3/OS-5).
         var minSystemVersion: UInt64 = 0
-        if args.count == 7 {
-            guard args[5] == "--min-version", let v = UInt64(args[6]) else {
-                fail("usage: updatestore <out.img> <active:A|B> <slot-A-image> <slot-B-image> [--min-version N]")
+        var slot0Version: UInt64 = 0
+        var slot1Version: UInt64 = 0
+        var i = 5
+        while i < args.count {
+            guard i + 1 < args.count, let v = UInt64(args[i + 1]) else { fail(usageStr) }
+            switch args[i] {
+            case "--min-version": minSystemVersion = v
+            case "--slot-a-version": slot0Version = v
+            case "--slot-b-version": slot1Version = v
+            default: fail(usageStr)
             }
-            minSystemVersion = v
+            i += 2
         }
         let outPath = args[1]
         let activeArg = args[2].uppercased()
@@ -116,7 +126,8 @@ struct UpdateStoreTool {
         let manifest = buildManifest(active: active, fallback: fallback,
                                      slot0LBA: slot0LBA, slot0Sectors: slot0Sectors, slot0Gen: 1,
                                      slot1LBA: slot1LBA, slot1Sectors: slot1Sectors, slot1Gen: 2,
-                                     sequence: 1, minSystemVersion: minSystemVersion)
+                                     sequence: 1, minSystemVersion: minSystemVersion,
+                                     slot0Version: slot0Version, slot1Version: slot1Version)
 
         // Self-check: the bytes we wrote must parse back through the shared core.
         let parsed = manifest.withUnsafeBytes {
