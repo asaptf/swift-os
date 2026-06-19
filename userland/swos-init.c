@@ -325,9 +325,38 @@ int main(void) {
     if (supervision_requested) {
         return supervise_services_forever();
     }
-    puts_raw("swos-init: handoff to console-login\n");
-    char *argv[] = { "console-login", 0 };
-    execve("/bin/console-login", argv, 0);
-    puts_raw("swos-init: exec /bin/console-login failed\n");
-    return 1;
+    // Run the interactive console login as a CHILD (a sibling of the daemons),
+    // rather than execve-ing it in place. If swos-init *became* the shell (the
+    // old handoff), the shell would be the parent of sshd/crond, and busybox
+    // ash's blocking wait(-1) would hang forever on a never-exiting daemon child
+    // after a foreground command exits (see docs/NOTES.md, CR2). As a child the
+    // shell only ever parents its own foreground jobs. swos-init reaps any daemon
+    // that exits during the session, and when the login child ends it exits with
+    // that code — so slot0 exits and the kernel prints "M12c: session ended" and
+    // restarts init exactly as before.
+    puts_raw("swos-init: starting console-login session\n");
+    int login = fork();
+    if (login < 0) {
+        puts_raw("swos-init: fork console-login failed\n");
+        return 1;
+    }
+    if (login == 0) {
+        char *argv[] = { "console-login", 0 };
+        execve("/bin/console-login", argv, 0);
+        puts_raw("swos-init: exec /bin/console-login failed\n");
+        _exit(127);
+    }
+    for (;;) {
+        int status = 0;
+        int pid = waitpid(-1, &status, 0);
+        if (pid < 0) {
+            puts_raw("swos-init: session waitpid failed\n");
+            return 1;
+        }
+        if (pid == login) {
+            return (status >> 8) & 0xff;   // session over -> slot0 exits
+        }
+        // Otherwise a daemon (e.g. sshd) exited; it was reaped above. Keep
+        // serving the login session.
+    }
 }

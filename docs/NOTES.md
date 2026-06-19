@@ -7296,14 +7296,12 @@ Two deliberate v1 limitations, recorded not hidden:
   there is no `WNOHANG`. So crond runs each fired job to completion (blocking)
   rather than reaping asynchronously; a job that never exits stalls the scheduler.
   Fine for short cron jobs; revisit if/when the kernel grows `WNOHANG`.
-- **Opt-in, not auto-started.** crond is NOT in the default `/etc/swos/services`
-  (the `SERVICE_CROND` token + `crond`/`crond-supervised` exist for admins who add
-  it). It is off by default because a *second* resident daemon exposes a latent
-  kernel fragility (see the CR2 finding below); leaving it off keeps the boot path
-  identical to before and matches the project's minimalism value (an empty
-  schedule should cost no resident process).
+- **Auto-started at boot (since CR3).** crond is in the default `/etc/swos/services`
+  and started by swos-init as a child (sibling of the login shell). Enabling it
+  first exposed — then required fixing — the CR2 console-hang bug; see CR3 below.
+  Use `crond-supervised` to have it restarted on crash.
 
-### CR2 — a second resident daemon hangs the serial console (ROOT-CAUSED, fix deferred, 2026-06-19)
+### CR2 — a second resident daemon hangs the serial console (ROOT-CAUSED; FIXED in CR3, 2026-06-19)
 
 Attempting to enable crond auto-start (so it could, e.g., renew ACME certs on a
 `@daily` schedule) surfaced a reproducible failure that is **not** crond-specific
@@ -7348,10 +7346,28 @@ is via sshd (session shells are children of sshd, not of pid1), and the serial
 console normally just sits at the login prompt, so a real box is unaffected — but
 the console tests run commands directly, which is why auto-start breaks them.
 
-Fix direction (deferred — an init-model change with boot-path/test-breakage risk):
-make `swos-init` a persistent reaping init that forks `/bin/console-login` as a
-*child* (siblings with the daemons) instead of `execve`-handoff, so the interactive
-shell never parents daemons. This touches the kernel's `M12c: session ended` restart
-semantics (kernel/main.swift) that every console test depends on, so it needs its
-own milestone. Until then crond stays opt-in. Diagnostic instrumentation (process
-dump, alloc/exec/waitpid failure logs) was reverted — it was diagnostic only.
+Diagnostic instrumentation (process dump, alloc/exec/waitpid failure logs) was
+reverted — it was diagnostic only. Fixed in CR3, below.
+
+### CR3 — swos-init runs the login session as a child, not an exec-handoff (DONE, 2026-06-19)
+
+The fix for CR2. `userland/swos-init.c` no longer `execve`s `/bin/console-login`
+in place (which made pid1 *become* the interactive shell and inherit the daemons).
+The non-supervised path now `fork()`s console-login as a **child** — a sibling of
+sshd/crond — and loops on `waitpid(-1)`, reaping any daemon that exits while the
+session runs. When the login child (the shell, since console-login execs it in the
+same pid) exits, swos-init returns its code, so slot 0 still exits and the kernel
+still prints `M12c: session ended` and restarts init — the session-restart contract
+all ~60 console tests depend on is unchanged. The interactive shell now only ever
+parents its own foreground jobs, so busybox ash's `wait(-1)` can no longer block on
+a never-exiting daemon. The supervised path (`*-supervised` →
+`supervise_services_forever`) is untouched.
+
+This is the structural prerequisite for running more than one resident daemon with
+a usable serial console (the multi-daemon roadmap: ACME-renewal-via-cron, Node, the
+JVM, observability). Kernel unchanged; the change is entirely in swos-init.c.
+
+Verified: `make kv-test` (the CR2 canary) now PASS with crond auto-started, plus
+`crond-test` (now asserts auto-start), `console-login-test`, `busybox-test`,
+`calc-test`, `top-test` (-smp 4), and `sshd-supervision-test` (the untouched
+supervised path) all PASS.

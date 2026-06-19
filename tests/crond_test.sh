@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# crond_test.sh — CR1 acceptance for the native Swift cron daemon /bin/crond.
+# crond_test.sh — acceptance for the native Swift cron daemon /bin/crond (CR1)
+# and its boot auto-start as a swos-init child (CR3).
 #
 # Boots the packed base image with a writable, SWDATAFS-stamped /data disk and a
-# slirp NIC, then proves two things:
+# slirp NIC, then proves:
 #
-#   1. The default /etc/crontab (shipped, all comments) parses to zero jobs:
-#      a crond launched with no arguments logs "crond: loaded 0 job(s)".
+#   1. Auto-start (CR3): crond is in the default /etc/swos/services, so swos-init
+#      starts it at boot as a child (sibling of the login shell). The system crond
+#      logs "crond: starting" + "crond: loaded 0 job(s)" (the shipped /etc/crontab
+#      is all comments). Because the shell no longer parents the daemon, the
+#      console stays usable — exercised implicitly by reaching and using the shell.
 #
-#   2. Behavior: we launch a crond against a baked test crontab. It must
+#   2. Behavior (CR1): we launch a crond against a baked test crontab. It must
 #        - fire an @reboot job once at start (-> "crond:reboot-marker"),
 #        - fire an @every 3s job repeatedly (-> >=2 "crond:tick" lines),
 #        - run each job via `/bin/sh -c`, appending to /data/crond/last-run so
 #          the durable tier ends up with >=2 lines (proves real job execution +
 #          /data writes, not just scheduling).
-#
-# crond is opt-in (not in the default /etc/swos/services), so the test starts it
-# by hand from the login shell rather than relying on boot auto-start.
 #
 # A job runs as `/bin/sh -c "<command>"`, which the kernel maps to busybox; the
 # spawned job inherits crond's stdout, so its echoes reach the serial console.
@@ -117,12 +118,14 @@ send 'swordfish'
 await "Welcome to swift-os, root" 120     || fail "root login did not complete"
 await "built-in shell (ash)" 120          || fail "root shell did not start"
 
-# The default /etc/crontab is all comments -> a no-arg crond loads zero jobs.
-send '/bin/crond &'
-await "crond: loaded 0 job(s)" 30         || fail "default /etc/crontab did not parse to zero jobs"
-send 'kill %1 2>/dev/null'
+# CR3 auto-start: the system crond was started by swos-init at boot (it is in the
+# default /etc/swos/services) and parsed the all-comments /etc/crontab to zero
+# jobs. Reaching the shell at all proves the console did NOT hang on the resident
+# crond — the regression that motivated CR3.
+await "crond: starting" 30                || fail "system crond was not auto-started by swos-init"
+await "crond: loaded 0 job(s)" 30         || fail "system crond did not parse the idle /etc/crontab"
 
-# Launch a crond against the baked test crontab (/etc/crontab.test). It is
+# Launch a second crond against the baked test crontab (/etc/crontab.test). It is
 # read from the signed base image, so driving it needs only one short, quote-free
 # command over the fragile serial tty (writing a multi-line crontab byte by byte
 # over the console is unreliable). The @every job appends to /data on each run.
@@ -146,5 +149,5 @@ exec 3>&-
 stop_qemu
 QP=""
 
-echo "PASS: /bin/crond — default crontab parse + @reboot + @every + durable /data job output (CR1)"
+echo "PASS: /bin/crond — boot auto-start (CR3) + @reboot + @every + durable /data job output (CR1)"
 exit 0
