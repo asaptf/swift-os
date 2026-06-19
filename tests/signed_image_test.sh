@@ -10,6 +10,11 @@
 #         metadata signature intact, so the image mounts — but the first open
 #         of that file fails its signed content hash ("content hash mismatch")
 #         while the system keeps booting (fail-closed per file, not per boot).
+# Case C: an image re-packed and VALIDLY SIGNED by a DIFFERENT (attacker) Ed25519
+#         key — well-formed, signature internally consistent, but signed by a key
+#         the kernel's trust root does not match — must be refused at mount, same
+#         as Case A. This is the real forgery threat: cases A/B only break
+#         well-formedness, never test that the trust anchor checks the KEY.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,15 +23,22 @@ DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
+BASEPACK="$ROOT/build/basepack"
+BASE_ROOT="$ROOT/build/base-root"
+
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 not found" >&2; exit 2; }
+[[ -x "$BASEPACK" ]] || { echo "FAIL: $BASEPACK missing (make base-image)" >&2; exit 2; }
+[[ -d "$BASE_ROOT" ]] || { echo "FAIL: $BASE_ROOT missing (make base-image)" >&2; exit 2; }
 if [[ ! -f "$DTB" ]]; then
   ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 
 META_IMG="$(mktemp -t swiftos-sigmeta.XXXXXX)"
 DATA_IMG="$(mktemp -t swiftos-sigdata.XXXXXX)"
+WRONGKEY_IMG="$(mktemp -t swiftos-sigwrongkey.XXXXXX)"
+ATTACKER_SEED="$(mktemp -t swiftos-sigatkseed.XXXXXX)"
 LOG="$(mktemp -t swiftos-sig.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-sig-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-sig-in.XXXXXX)"
@@ -39,7 +51,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$META_IMG" "$DATA_IMG" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$META_IMG" "$DATA_IMG" "$WRONGKEY_IMG" "$ATTACKER_SEED" "$LOG" "$PIDFILE" "$INFIFO"' EXIT
 
 # Build the two corrupted copies. Case A flips a byte inside the entry table
 # (signed); case B flips the first payload byte of etc/motd (hashed, unsigned
@@ -156,8 +168,30 @@ else
 fi
 exec 3>&-; stop_qemu; QP=""
 
+# --- Case C: valid signature by the WRONG key -> mount refused ----------------
+# Re-pack the SAME root with an attacker-controlled random seed. The result is a
+# well-formed v3 image carrying a valid Ed25519 signature — but by a key the
+# kernel's compiled-in trust root does not match. A trust anchor that checked only
+# the signature's well-formedness (not the key) would accept this; the kernel must
+# refuse it at mount, exactly like the byte-flipped metadata of Case A.
+dd if=/dev/urandom of="$ATTACKER_SEED" bs=32 count=1 2>/dev/null
+if ! "$BASEPACK" "$BASE_ROOT" "$WRONGKEY_IMG" "$ATTACKER_SEED" >/dev/null 2>&1; then
+  echo "FAIL: basepack could not build the wrong-key image" >&2; exit 2
+fi
+# Sanity: the forged image must differ from the trusted one only by its signature
+# region, i.e. it is NOT byte-identical to the real signed base (different key).
+if cmp -s "$WRONGKEY_IMG" "$DISK"; then
+  echo "FAIL: wrong-key image is identical to the trusted image (seed not applied)" >&2; exit 2
+fi
+boot_with "$WRONGKEY_IMG"
+await "vfs: base image signature INVALID" 60 || fail "wrong-key (validly signed) image was not refused at mount"
+if grep -qF "M11c: read-only base mounted from disk" "$LOG"; then
+  fail "wrong-key image was mounted anyway"
+fi
+exec 3>&-; stop_qemu; QP=""
+
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: signed base image — tampered metadata refused at mount; tampered content rejected at first open (boot survives)"
+  echo "PASS: signed base image — tampered metadata + wrong-key signature refused at mount; tampered content rejected at first open (boot survives)"
   exit 0
 fi
 echo "--- serial (last boot) ---" >&2

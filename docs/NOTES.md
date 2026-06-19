@@ -7173,3 +7173,24 @@ QW4 badge). Still open from the audit: cross-endpoint reply + generation-after-r
 (QW1), and the non-IPC tracks — A/B wrong-key, datafs crash injection, SMP atomic
 contention, futex/signal races, driver fault injection, DNS pointer-loop, and the
 panic-loop guard.
+
+### TH5 — signed base image: a valid signature by the WRONG key is refused (DONE, 2026-06-19)
+
+`signed_image_test` proved a base image is refused when a SIGNED byte is flipped
+(Case A) and a file is rejected when its payload is flipped (Case B) — but both only
+break *well-formedness*. Neither tested the actual forgery threat: an image that is
+well-formed and carries a *valid, internally consistent* Ed25519 signature, just by
+a key the kernel does not trust. A trust anchor that checked only signature
+well-formedness (not the key) would have shipped undetected.
+
+New Case C re-packs the SAME `build/base-root` with `basepack` under a random
+attacker seed (`dd /dev/urandom`, 32 bytes — any 32 bytes is a valid Ed25519 seed),
+producing a valid v3 signed image by an untrusted key. It asserts the forged image
+differs from the trusted `base.img` (the seed took effect), boots it, and requires
+`vfs: base image signature INVALID` with no `M11c: read-only base mounted` marker —
+the kernel's compiled-in trust root (`trust_root.S` incbin of `image_trust_root.bin`)
+rejects the wrong key exactly like a corrupt signature. Standalone `make
+signed-image-test` added (deps build + base-image, which provide basepack +
+base-root). Verified in QEMU, PASS. Remaining audit tracks: datafs crash injection,
+SMP atomic contention, futex/signal races, driver fault injection, DNS pointer-loop,
+panic-loop guard.
