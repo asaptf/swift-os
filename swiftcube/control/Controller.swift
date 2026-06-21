@@ -67,6 +67,7 @@ final class Controller {
         case .watch:        handleWatch(&r, channel)
         case .put:          handlePut(&r, channel)
         case .range:        handleRange(&r, channel)
+        case .casPut:       handleCasPut(&r, channel)
         }
     }
 
@@ -190,6 +191,20 @@ final class Controller {
         let entries = store.range(req.start, req.end)
         let mapped = entries.map { (key: $0.key, value: $0.value, modRevision: $0.modRevision) }
         reply(channel, RangeResponse(entries: mapped, revision: store.revision).encode())
+    }
+
+    // MARK: - CAS-put (SC3 status reporting)
+
+    private func handleCasPut(_ r: inout ByteReader, _ channel: TLSChannel) {
+        guard requireAuth(channel) != nil else { return }
+        guard let req = CasPutRequest.decodeBody(&r) else {
+            reply(channel, ErrorResponse(status: .badRequest, message: "bad casput").encode()); return
+        }
+        let cond: Cond = req.expect == nil
+            ? .keyAbsent(key: req.key)
+            : .modRevisionEquals(key: req.key, req.expect!)
+        let res = store.compareAndApply(conditions: [cond], [.put(key: req.key, value: req.value)])
+        reply(channel, CasPutResponse(committed: res.committed, revision: res.revision).encode())
     }
 
     // MARK: - Reaper (leader-gated)

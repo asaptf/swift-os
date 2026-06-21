@@ -101,6 +101,10 @@ await "SC2: SELFTEST PASS" 240 || drive_fail "/bin/sctld self-test did not pass"
 # Run the node agent's identity self-check.
 send_line '/bin/slet'
 await "slet: node identity OK" 60 || drive_fail "/bin/slet identity self-check did not pass"
+# SC3: the reconcile loop + Cell seam compile into slet; the self-check runs the image
+# verifier + C6 adapter on-device. C6 is not implemented, so the adapter is a documented
+# stub and the real Cell path is deferred — assert that honest marker, not a faked Cell.
+await "slet: SC3 reconcile loop" 60 || drive_fail "/bin/slet SC3 cell-seam self-check did not run"
 
 exec 3>&-
 stop_qemu
@@ -117,7 +121,8 @@ for marker in \
   "SC2: lease expired, node-1 removed by reaper" \
   "SC2: watch observed node-1 delete" \
   "SC2: SELFTEST PASS" \
-  "slet: node identity OK"; do
+  "slet: node identity OK" \
+  "slet: SC3 reconcile loop"; do
   grep -qF "$marker" <<<"$clean" || { echo "FAIL: missing marker: $marker" >&2; ok=0; }
 done
 

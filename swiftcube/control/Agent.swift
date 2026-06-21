@@ -104,6 +104,29 @@ final class Agent {
         return HeartbeatResponse.decodeBody(&r)
     }
 
+    // MARK: - Range / Put / CAS-put (SC3 reconcile loop)
+
+    /// Range over `[start, end)` (end nil = open upper bound). Returns the entries and
+    /// the store revision they were read at, or nil on a transport/auth error.
+    func range(channel: TLSChannel, start: Bytes, end: Bytes?, _ pump: () -> Void) -> RangeResponse? {
+        let req = RangeRequest(start: start, end: end)
+        guard let frame = rpc(channel, req.encode(), pump),
+              let status = frame.first, status == RpcStatus.ok.rawValue else { return nil }
+        var r = ByteReader(frame); _ = r.u8()
+        return RangeResponse.decodeBody(&r)
+    }
+
+    /// Compare-and-put `key=value`, guarded on the key's current modRevision
+    /// (`expect == nil` ⇒ require the key absent). Returns the CAS outcome, or nil on a
+    /// transport/auth error.
+    func casPut(channel: TLSChannel, key: Bytes, value: Bytes, expect: Revision?, _ pump: () -> Void) -> CasPutResponse? {
+        let req = CasPutRequest(key: key, value: value, expect: expect)
+        guard let frame = rpc(channel, req.encode(), pump),
+              let status = frame.first, status == RpcStatus.ok.rawValue else { return nil }
+        var r = ByteReader(frame); _ = r.u8()
+        return CasPutResponse.decodeBody(&r)
+    }
+
     // MARK: - Watch
 
     /// Begin a watch from `fromRevision` (defaults to the agent's resume cursor).

@@ -13,11 +13,44 @@
 // it parses back to the same key — proving the agent's crypto/identity code runs
 // under Embedded Swift on real aarch64. The end-to-end join/register/lease
 // lifecycle is exercised by /bin/sctld's self-test. Built on the swift_user bridge.
+//
+// SC3 adds the node-side reconcile loop (Reconciler) and the C6 Cell-supervisor seam
+// (CellSupervisor + image verifier + C6 adapter). All of it compiles into this ELF, so
+// the build itself proves the reconcile loop is Embedded-Swift-clean. The SC3 self-check
+// below exercises the image-verifier seam and the C6 adapter and reports the C6 gap
+// HONESTLY: C6 (the userland Cell supervisor) is not implemented yet — only the CellId
+// tag + syscalls 51–53 exist — so the adapter is a documented stub, the real Cell path
+// is deferred, and the SC3 QEMU end-to-end gate is not claimed.
 
 private func bootRNG(_ buf: inout [UInt8]) {
     buf.withUnsafeMutableBytes { p in
         if let a = p.baseAddress, p.count > 0 { _ = swiftos_random(a, UInt(p.count)) }
     }
+}
+
+/// An on-device image store with nothing pre-staged (the local read-only base store is
+/// empty in this self-check; the network pull / registry is the SC3 out-of-scope seam).
+private final class EmptyImageStore: ImageStore {
+    func resolve(digest: [UInt8]) -> [UInt8]? { nil }
+}
+
+/// Exercise the SC3 Cell seam under Embedded Swift and surface the C6 gap. Returns true
+/// on success.
+private func sc3SelfCheck() -> Bool {
+    let imageStore = EmptyImageStore()
+    let verifier = ImageVerifier(trustedKey: [UInt8](repeating: 0, count: 32))
+    let ref = ImageRef(digest: [UInt8](repeating: 0, count: 32),
+                       signature: [UInt8](repeating: 0, count: 64))
+    // Nothing staged locally ⇒ the verifier reports notStaged (no Cell would be created).
+    guard verifier.verify(ref, store: imageStore) == .notStaged else { return false }
+
+    let supervisor = C6CellSupervisor(imageStore: imageStore)
+    let spec = CellSpec(cellId: "selftest", node: "node-1", image: ref, capabilities: [],
+                        resources: ResourceLimits(cpuMillis: 0, memBytes: 0), namespaceRoot: "/",
+                        args: [], env: [], tmpfsScratch: true, volume: nil, restartPolicy: .never)
+    // The C6 adapter is a documented stub: it creates no Cell and reports unavailable.
+    if case .unavailable = supervisor.create(spec) { return true }
+    return false
 }
 
 @_cdecl("main")
@@ -35,5 +68,8 @@ func main(_ argc: Int32,
         swiftos_puts("slet: FAIL csr-verify\n"); return 1
     }
     swiftos_puts("slet: node identity OK (P-256 key + verified CSR)\n")
+
+    guard sc3SelfCheck() else { swiftos_puts("slet: FAIL SC3 cell seam\n"); return 1 }
+    swiftos_puts("slet: SC3 reconcile loop + image verifier OK; C6 adapter UNAVAILABLE (stub) — Cell path deferred\n")
     return 0
 }

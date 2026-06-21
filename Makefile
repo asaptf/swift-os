@@ -900,10 +900,20 @@ SC2_CONTROL_SRCS := \
 	userland/lib/tls13.swift userland/lib/asn1.swift userland/lib/x509.swift \
 	userland/lib/x509_verify.swift userland/lib/rsa.swift \
 	kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+# SC3: the Cell-supervisor seam + slet reconcile loop. These compile into the on-device
+# `slet` ELF (proving the whole reconcile loop is Embedded-Swift-clean); the host
+# FakeCellSupervisor is test-only and is NOT listed here. Image verification reuses the
+# existing Ed25519 (+ SHA-512) image-trust primitives — no new signature scheme.
+SC3_SLET_SRCS := \
+	swiftcube/cell/CellSpec.swift swiftcube/cell/CellSupervisor.swift \
+	swiftcube/cell/ImageResolver.swift swiftcube/cell/C6Adapter.swift \
+	swiftcube/slet/Assignment.swift swiftcube/slet/StoreClient.swift swiftcube/slet/Reconciler.swift \
+	kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+
 $(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
-$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) -o $@
 
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
@@ -1542,7 +1552,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1609,6 +1619,29 @@ control-test: | $(BUILD)/.dir
 		swiftcube/control/tests/control_test.swift \
 		-o $(BUILD)/control_test
 	$(BUILD)/control_test
+
+# SC3: slet reconcile-loop host acceptance (cases 1–8). Links the cubestore core + the
+# SC2 control plane (the reconciler watches/CAS-writes over the same Agent/Controller
+# mTLS path used in case 8) + the SC3 Cell seam (interface + host fake + C6 stub) + the
+# Ed25519/SHA-256/SHA-512 image-trust primitives. The reconcile loop is Foundation-free;
+# only the harness uses Foundation. The on-device gate (case 9) is deferred — C6 is not
+# implemented; see swiftcube/cell/C6Adapter.swift.
+SC3_CELL_SRCS = \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/cell/ImageResolver.swift \
+	swiftcube/cell/C6Adapter.swift \
+	swiftcube/cell/FakeSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/StoreClient.swift \
+	swiftcube/slet/Reconciler.swift
+slet-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) \
+		swiftcube/slet/tests/slet_test.swift \
+		-o $(BUILD)/slet_test
+	$(BUILD)/slet_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test

@@ -73,11 +73,17 @@ Unary RPC payloads:
 
 ```
 request  = u8 opcode | body          # opcode: 1 join, 2 registerNode, 3 heartbeat,
-                                      #         4 watch, 5 put, 6 range
+                                      #         4 watch, 5 put, 6 range, 7 casPut (SC3)
 response = u8 status | body          # status: 0 ok, 1 badRequest, 2 unauthorized,
                                       #         3 tokenRejected, 4 notFound,
                                       #         5 compacted, 6 internalError
 ```
+
+`casPut` (SC3) is the wire form of cubestore's `compareAndApply`: `body = blob key |
+blob value | u8 hasExpect | u64 expect?` — write iff the key's modRevision equals
+`expect`, or (when `hasExpect == 0`) iff the key is absent. It backs `slet`'s "report
+Cell status via CAS, don't clobber" over the same mTLS API. The reply is
+`u8 status | u8 committed | u64 revision`.
 
 Identities are **never** in request bodies — the caller is the mTLS cert identity.
 All integers little-endian via cubestore `ByteIO`; byte strings are `u32`-length

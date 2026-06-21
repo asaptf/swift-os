@@ -19,6 +19,7 @@ enum RpcOp: UInt8 {
     case watch        = 4
     case put          = 5
     case range        = 6
+    case casPut       = 7   // SC3: compare-and-put for status reporting (don't clobber)
 }
 
 /// Response status codes (u8). 0 is success; the rest are typed failures the agent
@@ -99,6 +100,27 @@ struct PutRequest: Equatable {
     static func decodeBody(_ r: inout ByteReader) -> PutRequest? {
         guard let k = r.blob(), let v = r.blob() else { return nil }
         return PutRequest(key: k, value: v)
+    }
+}
+
+/// Compare-and-put: write `key=value` iff the key's current modRevision matches the
+/// expectation. `hasExpect == 0` means "key must be ABSENT" (create-only); otherwise
+/// the key's modRevision must equal `expect`. This is the wire form of cubestore's
+/// `compareAndApply` and backs SC3's "report status via CAS, don't clobber".
+struct CasPutRequest: Equatable {
+    var key: Bytes
+    var value: Bytes
+    var expect: Revision?     // nil = require absent
+    func encode() -> Bytes {
+        var w = ByteWriter(); w.u8(RpcOp.casPut.rawValue); w.blob(key); w.blob(value)
+        if let e = expect { w.u8(1); w.u64(e) } else { w.u8(0) }
+        return w.bytes
+    }
+    static func decodeBody(_ r: inout ByteReader) -> CasPutRequest? {
+        guard let k = r.blob(), let v = r.blob(), let has = r.u8() else { return nil }
+        var expect: Revision? = nil
+        if has == 1 { guard let e = r.u64() else { return nil }; expect = e }
+        return CasPutRequest(key: k, value: v, expect: expect)
     }
 }
 
@@ -193,6 +215,20 @@ struct PutResponse: Equatable {
     func encode() -> Bytes { var w = ByteWriter(); w.u8(RpcStatus.ok.rawValue); w.u64(revision); return w.bytes }
     static func decodeBody(_ r: inout ByteReader) -> PutResponse? {
         guard let rev = r.u64() else { return nil }; return PutResponse(revision: rev)
+    }
+}
+
+/// CAS-put outcome: whether the precondition held and the resulting revision. On a
+/// committed write the key's modRevision equals `revision` (each batch bumps by 1).
+struct CasPutResponse: Equatable {
+    var committed: Bool
+    var revision: Revision
+    func encode() -> Bytes {
+        var w = ByteWriter(); w.u8(RpcStatus.ok.rawValue); w.u8(committed ? 1 : 0); w.u64(revision); return w.bytes
+    }
+    static func decodeBody(_ r: inout ByteReader) -> CasPutResponse? {
+        guard let c = r.u8(), let rev = r.u64() else { return nil }
+        return CasPutResponse(committed: c != 0, revision: rev)
     }
 }
 
