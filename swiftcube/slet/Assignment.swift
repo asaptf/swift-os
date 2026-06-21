@@ -17,6 +17,11 @@
 // plus the full `CellSpec`, so a reconciler can both detect drift (spec changed) and
 // roll a deliberate update (generation changed). Foundation-free; little-endian ByteIO,
 // like every other cubestore record.
+//
+// SC4 adds a `revision` field: the Deployment revision this instance belongs to. SC3's
+// reconciler ignores it (drift is keyed on generation + image), but the scheduler stamps
+// it so SC9 can layer multi-revision rollout on top without another schema change. The
+// record is versioned: a v1 record (SC3 on the wire) decodes with `revision == 0`.
 
 // MARK: - Key schema
 
@@ -51,20 +56,30 @@ enum SletKeys {
 
 struct Assignment: Equatable {
     var generation: UInt64     // bumped by the scheduler to force a deliberate roll
+    var revision: UInt64       // SC4: the Deployment revision this instance belongs to (SC9 seam)
     var spec: CellSpec
+
+    /// `revision` defaults to 0 so SC3 call sites — and a decoded v1 record — keep working.
+    init(generation: UInt64, revision: UInt64 = 0, spec: CellSpec) {
+        self.generation = generation; self.revision = revision; self.spec = spec
+    }
 
     func encode() -> Bytes {
         var w = ByteWriter()
-        w.u8(1)                 // record version
+        w.u8(2)                 // record version (2: adds revision)
         w.u64(generation)
+        w.u64(revision)
         spec.encode(into: &w)
         return w.bytes
     }
 
     static func decode(_ bytes: Bytes) -> Assignment? {
         var r = ByteReader(bytes)
-        guard let ver = r.u8(), ver == 1, let gen = r.u64(), let spec = CellSpec.decode(&r) else { return nil }
-        return Assignment(generation: gen, spec: spec)
+        guard let ver = r.u8(), ver == 1 || ver == 2, let gen = r.u64() else { return nil }
+        var rev: UInt64 = 0
+        if ver >= 2 { guard let v = r.u64() else { return nil }; rev = v }
+        guard let spec = CellSpec.decode(&r) else { return nil }
+        return Assignment(generation: gen, revision: rev, spec: spec)
     }
 }
 

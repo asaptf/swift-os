@@ -1552,7 +1552,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test slet-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test scheduler-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1642,6 +1642,31 @@ slet-test: | $(BUILD)/.dir
 		swiftcube/slet/tests/slet_test.swift \
 		-o $(BUILD)/slet_test
 	$(BUILD)/slet_test
+
+# SC4: the spread+fit scheduler — the pure schedule() function (filter → score/spread →
+# fit → deterministic cellIds) plus the leader-gated reconcile loop that diffs its result
+# against /assignments and applies the delta via CAS. Pure control-plane logic, no kernel:
+# the host acceptance (cases 1–10) runs the loop against an in-process cubestore with an
+# injected clock. Reuses the cubestore core + the SC2 node/lease schema (for healthy-node
+# liveness) + the SC3 Cell spec/Assignment objects it produces. Foundation-free except the
+# harness; only kernel/crypto/sha256.swift is linked to satisfy the Schema seam.
+SC4_SCHED_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift
+scheduler-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SC4_SCHED_SRCS) \
+		swiftcube/sctld/scheduler/tests/scheduler_test.swift \
+		-o $(BUILD)/scheduler_test
+	$(BUILD)/scheduler_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
