@@ -96,9 +96,15 @@ private func nodeIndex(_ nodes: [WorkNode], _ id: String) -> Int? {
 // MARK: - The pure function
 
 /// Compute the desired Assignment set + pending list. Deterministic in `deployments`,
-/// `nodes`, `placements`; the result's `desired` is sorted by (node, cellId) and
-/// `pending` by (app, slot), so equal inputs yield byte-identical output.
-func schedule(deployments: [DeploymentSpec], nodes: [NodeView], placements: [Placement]) -> ScheduleResult {
+/// `nodes`, `placements`, `bindings`; the result's `desired` is sorted by (node, cellId)
+/// and `pending` by (app, slot), so equal inputs yield byte-identical output.
+///
+/// `bindings` (SC8) are the node-local sticky PV bindings: a stateful app (one whose
+/// template declares a persistent volume) gets stable-ordinal replicas, and an ordinal
+/// whose volume is already bound is PINNED to its node — placed only there, or left
+/// Pending if that node is down (its data is node-local; it is never re-placed elsewhere).
+func schedule(deployments: [DeploymentSpec], nodes: [NodeView], placements: [Placement],
+              bindings: [VolumeBinding] = []) -> ScheduleResult {
     // Only healthy nodes are placement targets, kept in id order for determinism.
     var work: [WorkNode] = []
     for n in nodes.sorted(by: { $0.id < $1.id }) where n.healthy {
@@ -116,7 +122,14 @@ func schedule(deployments: [DeploymentSpec], nodes: [NodeView], placements: [Pla
     var desired: [DesiredAssignment] = []
     var pending: [PendingPlacement] = []
     for dep in deployments.sorted(by: { $0.app < $1.app }) {
-        scheduleApp(dep, work: &work, live: live, desired: &desired, pending: &pending)
+        // A stateful app (its template declares a persistent volume) takes the sticky path:
+        // stable ordinals, pinned to bound nodes, Pending when a bound node is down.
+        if dep.template.volume != nil {
+            scheduleStatefulApp(dep, work: &work, live: live, bindings: bindings,
+                                desired: &desired, pending: &pending)
+        } else {
+            scheduleApp(dep, work: &work, live: live, desired: &desired, pending: &pending)
+        }
     }
 
     desired.sort { a, b in a.node != b.node ? a.node < b.node : a.cellId < b.cellId }
@@ -192,6 +205,93 @@ private func scheduleApp(_ dep: DeploymentSpec, work: inout [WorkNode], live: [P
         placed += 1
         slot += 1
     }
+}
+
+// MARK: - Per-app placement (stateful / sticky — SC8)
+
+/// Place a STATEFUL app: each ordinal `0..<replicas` is a stable identity with a dedicated
+/// node-local PV (SWIFTCUBE_DESIGN §7). The rules differ from the fungible path:
+///   • Identity is the ordinal itself (StatefulSet-style), not the lowest free slot — so a
+///     replica keeps its `(app, ordinal)` and its PV across generations/revisions (case 8).
+///   • An ordinal whose volume is already BOUND is PINNED: placed only on the bound node.
+///     If that node is down, the ordinal is left PENDING — never re-placed elsewhere, because
+///     the data is node-local and unavailable until the node returns (case 4).
+///   • An UNBOUND ordinal (first placement) is placed by fit+spread; `slet` then provisions
+///     the PV there and records the binding, which pins every later pass (case 1/3).
+///   • Scale-down drops the highest ordinals (≥ replicas); their PVs are RETAINED (the loop
+///     deletes only the Assignment — `slet`'s retain policy keeps the data).
+private func scheduleStatefulApp(_ dep: DeploymentSpec, work: inout [WorkNode], live: [Placement],
+                                 bindings: [VolumeBinding],
+                                 desired: inout [DesiredAssignment], pending: inout [PendingPlacement]) {
+    let R = Int(dep.replicas)
+    let mine = live.filter { $0.app == dep.app && $0.revision == dep.revision }
+    let active = mine.filter { !$0.terminalFailed }
+
+    // Seed this app's per-node replica count from surviving replicas (their resources are
+    // already deducted from `free` by the caller; we never re-deduct a survivor).
+    for i in 0..<work.count { work[i].appCount = 0 }
+    for p in active { if let i = nodeIndex(work, p.node) { work[i].appCount += 1 } }
+
+    for o in 0..<R {
+        let ordinal = UInt32(o)
+        let bound = bindings.first { $0.app == dep.app && $0.ordinal == ordinal }
+        let survivor = active.first { $0.slot == ordinal }   // current placement for this ordinal
+
+        if let b = bound {
+            // PINNED. The ordinal may live only on its bound node.
+            if let s = survivor, s.node == b.node {
+                keepStateful(s, dep: dep, desired: &desired)         // already there — no churn
+            } else if let i = nodeIndex(work, b.node),
+                      matchesSelector(work[i].labels, dep.nodeSelector), fits(work[i].free, dep.request) {
+                placeStateful(dep: dep, ordinal: ordinal, mine: mine, nodeIdx: i,
+                              work: &work, desired: &desired)        // (re)attach to the bound node
+            } else {
+                pending.append(PendingPlacement(app: dep.app, slot: ordinal,
+                    reason: statefulPendingReason(boundNode: b.node, work: work, dep: dep)))
+            }
+        } else {
+            // UNBOUND — first placement (or the binding has not been recorded by slet yet).
+            if let s = survivor, nodeIndex(work, s.node) != nil {
+                keepStateful(s, dep: dep, desired: &desired)         // keep where it landed; slet binds it
+            } else if let i = bestNode(dep: dep, work: work) {
+                placeStateful(dep: dep, ordinal: ordinal, mine: mine, nodeIdx: i,
+                              work: &work, desired: &desired)
+            } else {
+                pending.append(PendingPlacement(app: dep.app, slot: ordinal,
+                    reason: pendingReason(dep: dep, work: work)))
+            }
+        }
+    }
+}
+
+/// Keep a surviving stateful replica verbatim — same (ordinal, generation, node, cellId).
+private func keepStateful(_ s: Placement, dep: DeploymentSpec, desired: inout [DesiredAssignment]) {
+    let spec = dep.template.materialize(cellId: s.cellId, node: s.node)
+    desired.append(DesiredAssignment(node: s.node,
+        assignment: Assignment(generation: s.generation, revision: dep.revision, spec: spec)))
+}
+
+/// Place a stateful ordinal freshly on `work[nodeIdx]`, deducting its request and bumping
+/// the generation past any terminally failed prior generation of the same ordinal.
+private func placeStateful(dep: DeploymentSpec, ordinal: UInt32, mine: [Placement], nodeIdx: Int,
+                           work: inout [WorkNode], desired: inout [DesiredAssignment]) {
+    work[nodeIdx].free = minus(work[nodeIdx].free, dep.request)
+    work[nodeIdx].appCount += 1
+    var gen: UInt64 = 1
+    for p in mine where p.terminalFailed && p.slot == ordinal { gen = max(gen, p.generation + 1) }
+    let cellId = CellIdCodec.make(app: dep.app, revision: dep.revision, slot: ordinal, generation: gen)
+    let spec = dep.template.materialize(cellId: cellId, node: work[nodeIdx].id)
+    desired.append(DesiredAssignment(node: work[nodeIdx].id,
+        assignment: Assignment(generation: gen, revision: dep.revision, spec: spec)))
+}
+
+/// Why a pinned ordinal could not be placed on its bound node — distinguishes a down node
+/// (the common, expected case: unavailable until it returns) from a still-present node that
+/// no longer matches the selector or cannot fit.
+private func statefulPendingReason(boundNode: String, work: [WorkNode], dep: DeploymentSpec) -> String {
+    guard let i = nodeIndex(work, boundNode) else { return "bound node \(boundNode) down (PV is node-local)" }
+    if !matchesSelector(work[i].labels, dep.nodeSelector) { return "bound node \(boundNode) no longer matches nodeSelector" }
+    return "bound node \(boundNode) cannot fit the request"
 }
 
 // MARK: - Scoring

@@ -56,10 +56,24 @@ enum CellCreateResult: Equatable {
 /// A fencing hook for SC8 persistent volumes (SWIFTCUBE_DESIGN §7). On teardown the
 /// supervisor invokes this BEFORE releasing a volume handle, so no process of an old
 /// Cell can still write to the volume after a reschedule. SC3 leaves it a seam (the
-/// reconciler passes `nil`); SC8 supplies a real implementation. Class-bound for the
-/// same existential reason as the supervisor.
+/// reconciler passes `nil`); SC8 supplies a real implementation (the `VolumeManager`).
+/// Class-bound for the same existential reason as the supervisor.
 protocol VolumeFence: AnyObject {
     func fence(cellId: String, volume: VolumeMount)
+}
+
+/// The mount half of the SC8 fencing contract (SWIFTCUBE_DESIGN §7). Before a Cell that
+/// declares a persistent volume is (re)created, the reconciler asks the mounter to acquire
+/// the volume's SINGLE writer. `acquire` returns false when the volume is still held by a
+/// prior generation (its teardown/`fence` has not completed) or when this node's fencing
+/// token is stale (a partitioned controller rebound the volume elsewhere) — in either case
+/// the Cell must NOT be created this pass. This is the kernel-less, orchestrator-owned
+/// single-writer guarantee: there is no atomic kernel destroy-Cell op, so serialization is
+/// `slet`'s duty (CAPABILITIES §5.3). SC3 leaves it nil; SC8 supplies the `VolumeManager`.
+protocol VolumeMounter: AnyObject {
+    /// Provision-if-needed, bind-if-unbound, and acquire the single writer for the volume
+    /// the given Cell owns. Returns true iff the mount is granted; false ⇒ defer creation.
+    func acquire(cellId: String, volume: VolumeMount) -> Bool
 }
 
 /// The C6 Cell supervisor as seen by the cluster reconcile loop.

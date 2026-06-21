@@ -50,9 +50,25 @@ final class SchedulerLoop<Log: AppendLog, Snap: SnapshotStore> {
         let deployments = readDeployments()
         let nodes = readNodes()
         let placements = readPlacements(deployments: deployments)
-        let result = schedule(deployments: deployments, nodes: nodes, placements: placements)
+        let bindings = readBindings()
+        let result = schedule(deployments: deployments, nodes: nodes, placements: placements,
+                              bindings: bindings)
         applyAssignments(result.desired)
         applyPending(result.pending)
+    }
+
+    // MARK: - Read: PV bindings (SC8 — distilled from /volumes/<id>)
+
+    /// The node-local sticky bindings the scheduler pins on: every volume that a node has
+    /// bound (`bound`/`mounted`/`released` — a `deleted` tombstone is dropped). Written by
+    /// `slet` (the node authority); the scheduler only reads them to pin each ordinal.
+    private func readBindings() -> [VolumeBinding] {
+        var out: [VolumeBinding] = []
+        for e in store.prefix(VolumeKeys.volumesPrefix) {
+            guard let v = VolumeRecord.decode(e.value), v.state != .deleted, !v.node.isEmpty else { continue }
+            out.append(VolumeBinding(app: v.app, ordinal: v.ordinal, node: v.node))
+        }
+        return out
     }
 
     // MARK: - Read: Deployments

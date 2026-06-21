@@ -53,7 +53,8 @@ final class Reconciler {
     let imageStore: ImageStore
     let clock: CubeClock
     let cfg: ReconcilerConfig
-    let fence: VolumeFence?     // SC8 seam (nil in SC3)
+    let fence: VolumeFence?       // SC8 teardown seam (nil in SC3): release the PV on destroy
+    let mounter: VolumeMounter?   // SC8 create seam (nil in SC3): acquire the PV's single writer
 
     // SC5: the probe runner (nil ⇒ SC3 behavior, ready-when-running, no liveness restarts)
     // and the node's reachable address slet reports for ready Cells. The probe runner hits
@@ -72,11 +73,22 @@ final class Reconciler {
     init(node: String, store: StoreClient, supervisor: CellSupervisor,
          verifier: ImageVerifier, imageStore: ImageStore, clock: CubeClock,
          config: ReconcilerConfig = ReconcilerConfig(), fence: VolumeFence? = nil,
+         mounter: VolumeMounter? = nil,
          probeRunner: ProbeRunner? = nil, nodeAddress: String = "") {
         self.node = node; self.store = store; self.supervisor = supervisor
         self.verifier = verifier; self.imageStore = imageStore; self.clock = clock
-        self.cfg = config; self.fence = fence
+        self.cfg = config; self.fence = fence; self.mounter = mounter
         self.probeRunner = probeRunner; self.nodeAddress = nodeAddress
+    }
+
+    /// SC8 single-writer gate: before a Cell that declares a persistent volume is created,
+    /// acquire the volume's single writer through the mounter. Returns true when the Cell
+    /// may proceed — no volume, no mounter (SC3 behavior), or the mount was granted; false
+    /// ⇒ the volume is still held by a prior generation (its teardown/fence has not
+    /// completed) or this node's fencing token is stale, so creation must be deferred.
+    private func acquireVolume(cid: String, spec: CellSpec) -> Bool {
+        guard let m = mounter, let vol = spec.volume else { return true }
+        return m.acquire(cellId: cid, volume: vol)
     }
 
     private var assignmentsPrefix: Bytes { SletKeys.nodeAssignmentsPrefix(node) }
@@ -240,6 +252,15 @@ final class Reconciler {
                               lastStatusRev: nil, lastReportedBytes: []))
             return
         }
+        // SC8 single-writer gate: do not create until the PV is acquired (prior holder
+        // fenced, token current). Not terminal — a later pass retries once the volume frees.
+        guard acquireVolume(cid: cid, spec: spec) else {
+            upsert(CellRecord(cellId: cid, handle: nil, spec: spec, generation: asg.generation,
+                              restartCount: 0, startedAt: 0, nextRestartAt: 0, phase: .created,
+                              ready: false, message: "waiting for volume (single-writer fence)",
+                              terminal: false, lastStatusRev: nil, lastReportedBytes: []))
+            return
+        }
         switch supervisor.create(spec) {
         case .created(let h):
             upsert(CellRecord(cellId: cid, handle: h, spec: spec, generation: asg.generation,
@@ -293,6 +314,14 @@ final class Reconciler {
             rec.handle = nil; rec.spec = asg.spec; rec.generation = asg.generation
             rec.phase = .failed; rec.ready = false; rec.terminal = true
             rec.message = "image rejected: \(reason(v))"
+            upsert(rec); return
+        }
+        // SC8: the old generation was destroyed above (its fence released the PV); now
+        // re-acquire the single writer for the new generation before launching it.
+        guard acquireVolume(cid: cid, spec: asg.spec) else {
+            rec.handle = nil; rec.spec = asg.spec; rec.generation = asg.generation
+            rec.phase = .created; rec.ready = false; rec.terminal = false
+            rec.message = "waiting for volume (single-writer fence)"
             upsert(rec); return
         }
         switch supervisor.create(asg.spec) {
@@ -388,6 +417,14 @@ final class Reconciler {
         let shift = min(UInt64(rec.restartCount), 16)
         let backoff = min(cfg.backoffBaseSeconds << shift, cfg.backoffMaxSeconds)
         rec.nextRestartAt = now &+ backoff
+
+        // SC8: the dead generation was destroyed (fence released its PV); re-acquire the
+        // single writer before relaunching, so a restart never overlaps the old writer.
+        guard acquireVolume(cid: cid, spec: rec.spec) else {
+            rec.handle = nil; rec.phase = .created; rec.ready = false; rec.terminal = false
+            rec.message = "waiting for volume (single-writer fence)"
+            upsert(rec); return
+        }
 
         switch supervisor.create(rec.spec) {
         case .created(let h):

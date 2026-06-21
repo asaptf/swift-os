@@ -67,14 +67,15 @@ struct VolumeMount: Equatable {
     var name: String
     var mountPath: String
     var handleSlot: UInt32    // SC8 fills the real volume handle; 0 = unbound
+    var sizeBytes: UInt64 = 0 // SC8: requested size — best-effort accounting (datafs has no quota)
 
     func encode(into w: inout ByteWriter) {
-        w.blob(Array(name.utf8)); w.blob(Array(mountPath.utf8)); w.u32(handleSlot)
+        w.blob(Array(name.utf8)); w.blob(Array(mountPath.utf8)); w.u32(handleSlot); w.u64(sizeBytes)
     }
     static func decode(_ r: inout ByteReader) -> VolumeMount? {
-        guard let n = r.blob(), let p = r.blob(), let h = r.u32() else { return nil }
+        guard let n = r.blob(), let p = r.blob(), let h = r.u32(), let sz = r.u64() else { return nil }
         return VolumeMount(name: String(decoding: n, as: UTF8.self),
-                           mountPath: String(decoding: p, as: UTF8.self), handleSlot: h)
+                           mountPath: String(decoding: p, as: UTF8.self), handleSlot: h, sizeBytes: sz)
     }
 }
 

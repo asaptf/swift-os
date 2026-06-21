@@ -105,6 +105,11 @@ await "slet: node identity OK" 60 || drive_fail "/bin/slet identity self-check d
 # verifier + C6 adapter on-device. C6 is not implemented, so the adapter is a documented
 # stub and the real Cell path is deferred — assert that honest marker, not a faked Cell.
 await "slet: SC3 reconcile loop" 60 || drive_fail "/bin/slet SC3 cell-seam self-check did not run"
+# SC8: the persistent-volume object + datafs PV provisioning/binding/fencing compile into
+# slet; the self-check runs the VolumeRecord codec, the (app,ordinal) id derivation, and the
+# single-writer/fencing-token logic on-device. The live /data PV-into-Cell path needs C6
+# (no real Cell to mount into yet), so assert the honest deferred marker, not a faked PV.
+await "slet: SC8 PV record" 60 || drive_fail "/bin/slet SC8 volume-seam self-check did not run"
 
 exec 3>&-
 stop_qemu
@@ -122,7 +127,8 @@ for marker in \
   "SC2: watch observed node-1 delete" \
   "SC2: SELFTEST PASS" \
   "slet: node identity OK" \
-  "slet: SC3 reconcile loop"; do
+  "slet: SC3 reconcile loop" \
+  "slet: SC8 PV record"; do
   grep -qF "$marker" <<<"$clean" || { echo "FAIL: missing marker: $marker" >&2; ok=0; }
 done
 

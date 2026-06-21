@@ -931,11 +931,22 @@ SC7_SLET_SRCS := \
 	swiftcube/slet/proxy/NodeProxy.swift \
 	swiftcube/slet/proxy/NetProxyTransport.swift \
 	swiftcube/slet/resolver/Resolver.swift
+# SC8: the persistent-volume object + datafs PV provisioning/binding/fencing + the on-device
+# datafs binding. These compile into the `slet` ELF too (proving the volume path is Embedded-
+# Swift-clean); the host HostDirVolumeStore is test-only and is NOT listed here. The
+# VolumeManager conforms to the VolumeFence/VolumeMounter seams the reconciler drives. The live
+# datafs path (real /data over virtio-blk) is exercised once datafs + C6 yield a real stateful
+# Cell — the QEMU gate is deferred, like SC3/SC5/SC7.
+SC8_SLET_SRCS := \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/slet/volume/VolumeStore.swift \
+	swiftcube/slet/volume/VolumeManager.swift \
+	swiftcube/slet/volume/DatafsVolumeStore.swift
 
 $(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
-$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) $(SC8_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) $(SC8_SLET_SRCS) -o $@
 
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
@@ -1574,7 +1585,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test proxy-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test proxy-test volume-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1683,6 +1694,7 @@ SC4_SCHED_SRCS = \
 	swiftcube/cell/CellSpec.swift \
 	swiftcube/cell/CellSupervisor.swift \
 	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
 	swiftcube/sctld/scheduler/Deployment.swift \
 	swiftcube/sctld/scheduler/Schedule.swift \
 	swiftcube/sctld/scheduler/SchedulerLoop.swift
@@ -1793,6 +1805,40 @@ proxy-test: | $(BUILD)/.dir
 		swiftcube/slet/proxy/tests/proxy_test.swift \
 		-o $(BUILD)/proxy_test
 	$(BUILD)/proxy_test
+
+# SC8: node-local sticky persistent volumes on datafs + single-writer fencing. Host
+# acceptance (cases 1–8) drives the REAL SC8 logic against an in-process cubestore with a
+# HostDirVolumeStore (a host directory standing in for datafs, honest POSIX fsync) and an
+# injected clock: the VolumeManager provisions/binds/mounts/fences PVs and bumps the fencing
+# token, the leader-gated scheduler PINS each stateful ordinal to its bound node (Pending when
+# that node is down), and the SC3 reconcile loop + FakeCellSupervisor exercise the single-mount
+# gate end to end. Reuses the cubestore core + the SC2 control plane (the StoreClient read seam
+# pulls AgentStoreClient, so the TLS/crypto deps are linked as in slet-test) + the SC3 Cell seam
+# + the SC4 scheduler + the SC8 volume sources. The volume logic is Foundation-free; only the
+# HostDirVolumeStore (host datafs fake) and the harness use Foundation. The on-device datafs
+# binding (DatafsVolumeStore) compiles into the slet ELF; the QEMU gate (a real stateful Cell
+# writes /data, restarts, data survives, stays pinned) is conditional on datafs + C6 — deferred.
+# SC4 scheduler sources are listed here (NOT via a shared var) joined with the SC3 Cell seam,
+# de-duplicated against the cubestore/control cores; DatafsVolumeStore is on-device only.
+SC8_VOLUME_SRCS = \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/slet/volume/VolumeStore.swift \
+	swiftcube/slet/volume/VolumeManager.swift \
+	swiftcube/slet/volume/host/HostDirVolumeStore.swift
+# Scheduler core only — Node/Lease/Schema/RamStore come from CONTROL_CORE and the Cell
+# objects (CellSpec/Assignment/Probe) from SC3_CELL_SRCS, so listing them again would
+# duplicate symbols. Volume.swift comes from SC8_VOLUME_SRCS.
+SC8_SCHED_SRCS = \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift
+volume-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC8_SCHED_SRCS) $(SC8_VOLUME_SRCS) \
+		swiftcube/slet/volume/tests/volume_test.swift \
+		-o $(BUILD)/volume_test
+	$(BUILD)/volume_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test

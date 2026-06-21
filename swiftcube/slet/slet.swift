@@ -107,6 +107,47 @@ private func sc7SelfCheck() -> Bool {
     return true
 }
 
+/// Exercise the SC8 persistent-volume seam under Embedded Swift: the VolumeRecord byte codec
+/// round-trips, the `(app, ordinal)` volume id derives forward (from a slot) and back (from a
+/// running Cell's cellId) consistently, the fencing token / single-writer table behave, and
+/// the real datafs binding compiles into this ELF. No datafs I/O is performed (real `/data`
+/// provisioning + mounting needs a stateful Cell — gated on datafs + C6, like SC3). True on OK.
+private func sc8SelfCheck() -> Bool {
+    // The VolumeRecord rides the same little-endian codec as every cubestore object.
+    let rec = VolumeRecord(volumeId: "db--s0", name: "data", app: "db", ordinal: 0,
+                           node: "node-1", path: "/data/volumes/db--s0", sizeBytes: 1 << 30,
+                           mountPath: "/data", state: .bound, retain: .retain, fencingToken: 1)
+    guard let back = VolumeRecord.decode(rec.encode()), back == rec else { return false }
+
+    // Volume id is keyed by (app, ordinal) ONLY — stable across revisions and generations.
+    guard VolumeId.make(app: "db", ordinal: 0) == "db--s0",
+          VolumeId.forCellId("db--r1-s0-g1") == "db--s0",
+          VolumeId.forCellId("db--r2-s0-g7") == "db--s0",            // new rev/gen, same volume
+          VolumeId.forCellId("web-api--r3-s2-g1") == "web-api--s2"   // hyphenated app name
+    else { return false }
+
+    // The single-writer fencing logic over an in-process store + a never-provisioned datafs:
+    // a mount on an unprovisioned volume is refused (no overlap, honest about the missing PV).
+    final class NoDatafs: VolumeStore {
+        func path(volumeId: String) -> String { "/data/volumes/\(volumeId)" }
+        func provision(volumeId: String) -> VolumeIOResult { .failed(reason: "no datafs in self-check") }
+        func exists(volumeId: String) -> Bool { false }
+        func writeFile(volumeId: String, name: String, bytes: [UInt8]) -> VolumeIOResult { .failed(reason: "no datafs") }
+        func readFile(volumeId: String, name: String) -> [UInt8]? { nil }
+        func usedBytes(volumeId: String) -> UInt64 { 0 }
+        func remove(volumeId: String) -> VolumeIOResult { .ok }
+    }
+    let store = openRamCubeStore()
+    let mgr = VolumeManager(node: "node-1", store: LocalStoreClient(store), datafs: NoDatafs())
+    if mgr.acquire(cellId: "db--r1-s0-g1", volume: VolumeMount(name: "data", mountPath: "/data", handleSlot: 0)) {
+        return false   // datafs.provision failed ⇒ no binding ⇒ acquire must NOT be granted
+    }
+
+    // The real datafs binding instantiates (its file syscalls run on-device once /data exists).
+    _ = DatafsVolumeStore().path(volumeId: "db--s0")
+    return true
+}
+
 @_cdecl("main")
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
@@ -131,5 +172,8 @@ func main(_ argc: Int32,
 
     guard sc7SelfCheck() else { swiftos_puts("slet: FAIL SC7 east-west seam\n"); return 1 }
     swiftos_puts("slet: SC7 service registry + node-proxy + resolver OK; live L4 forwarding deferred with C6\n")
+
+    guard sc8SelfCheck() else { swiftos_puts("slet: FAIL SC8 volume seam\n"); return 1 }
+    swiftos_puts("slet: SC8 PV record + fencing token + datafs binding OK; live /data PV deferred with datafs+C6\n")
     return 0
 }
