@@ -1840,6 +1840,70 @@ volume-test: | $(BUILD)/.dir
 		-o $(BUILD)/volume_test
 	$(BUILD)/volume_test
 
+# SC9a: the manifest parser/validator + its mapping onto cubestore objects. Host acceptance
+# (case 1) golden-parses a §10 manifest into the typed `Manifest`, checks the mapping onto
+# DeploymentSpec/ServiceExpose/ServiceSpec, and rejects malformed manifests with clear errors.
+# The parser/validator (Yaml/Manifest/ManifestParser) is Foundation-free — `sctld` links the
+# same sources to re-validate a submitted manifest — and depends only on the cubestore ByteIO
+# core plus the typed objects it produces (Probe/CellSpec/Assignment/Volume/Deployment/Endpoint/
+# LBProvider/ExposeConfig/Service). Only the harness uses Foundation.
+.PHONY: manifest-test sctl-test sctl
+MANIFEST_SRCS = \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/lb/LBProvider.swift \
+	swiftcube/sctld/lb/ExposeConfig.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/manifest/Yaml.swift \
+	swiftcube/manifest/Manifest.swift \
+	swiftcube/manifest/ManifestParser.swift
+manifest-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) \
+		$(MANIFEST_SRCS) \
+		swiftcube/manifest/tests/manifest_test.swift \
+		-o $(BUILD)/manifest_test
+	$(BUILD)/manifest_test
+
+# SC9a: the `sctl` CLI command layer + the control-client transport seam. Host acceptance
+# (case 2) drives apply/get/describe/scale/delete + `rollout status` through the dispatcher over
+# a StoreControlClient backed by an in-process cubestore (the milestone's "fake control client"),
+# proving the round-trip: apply upserts objects and bumps the revision on a template change,
+# keeps it on a pure scale; get/scale/delete behave. The command layer + manifest are
+# Foundation-free; only the harness (and the host `sctl` main) use Foundation. The real
+# over-the-wire mTLS transport (WireControlClient) lands with the SC9b multi-node QEMU harness.
+SCTL_SRCS = \
+	$(MANIFEST_SRCS) \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/sctl/ControlClient.swift \
+	swiftcube/sctl/StoreControlClient.swift \
+	swiftcube/sctl/Config.swift \
+	swiftcube/sctl/Command.swift
+sctl-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SCTL_SRCS) \
+		swiftcube/sctl/tests/sctl_test.swift \
+		-o $(BUILD)/sctl_test
+	$(BUILD)/sctl_test
+
+# SC9a: build the host `sctl` binary (Mac/Linux). The command layer + manifest parser are the
+# Foundation-free SCTL_SRCS; main.swift + Config.swift + the POSIX cubestore sink are the host
+# shell. Single-node today via `sctl --local <statedir> <command>`; the remote mTLS transport is
+# the SC9b seam.
+sctl: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		swiftcube/cubestore/host/PosixFileSink.swift \
+		$(SCTL_SRCS) \
+		swiftcube/sctl/main.swift \
+		-o $(BUILD)/sctl
+	@echo "built $(BUILD)/sctl"
+
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
 	$(BUILD)/phase1_roadmap_test

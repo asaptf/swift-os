@@ -118,10 +118,20 @@ struct CellTemplate: Equatable {
     var volume: VolumeMount?
     var restartPolicy: RestartPolicy
 
+    // SC9 trailing section: the service identity, endpoint port, and readiness/liveness probes a
+    // manifest's `health:`/`ports:` blocks declare, carried through to every replica's CellSpec
+    // (the SC5 trailing section). Defaulted so SC3/SC4 call sites and pre-SC9 records are
+    // unaffected; encoded unconditionally and decoded EOF-tolerantly, exactly like CellSpec.
+    var service: String = ""
+    var port: UInt16 = 0
+    var readiness: ProbeSpec = ProbeSpec()
+    var liveness: ProbeSpec = ProbeSpec()
+
     func materialize(cellId: String, node: String) -> CellSpec {
         CellSpec(cellId: cellId, node: node, image: image, capabilities: capabilities,
                  resources: resources, namespaceRoot: namespaceRoot, args: args, env: env,
-                 tmpfsScratch: tmpfsScratch, volume: volume, restartPolicy: restartPolicy)
+                 tmpfsScratch: tmpfsScratch, volume: volume, restartPolicy: restartPolicy,
+                 service: service, port: port, readiness: readiness, liveness: liveness)
     }
 
     func encode(into w: inout ByteWriter) {
@@ -134,6 +144,12 @@ struct CellTemplate: Equatable {
         w.u8(tmpfsScratch ? 1 : 0)
         if let v = volume { w.u8(1); v.encode(into: &w) } else { w.u8(0) }
         w.u8(restartPolicy.rawValue)
+        // SC9 trailing section (see above). Appended after the v1 fields; a pre-SC9 record ends
+        // at restartPolicy and decodes with these defaulted.
+        w.blob(Array(service.utf8))
+        w.u32(UInt32(port))
+        readiness.encode(into: &w)
+        liveness.encode(into: &w)
     }
 
     static func decode(_ r: inout ByteReader) -> CellTemplate? {
@@ -150,9 +166,19 @@ struct CellTemplate: Equatable {
         var vol: VolumeMount? = nil
         if hasVol == 1 { guard let v = VolumeMount.decode(&r) else { return nil }; vol = v }
         guard let polB = r.u8(), let pol = RestartPolicy(rawValue: polB) else { return nil }
+        // SC9 trailing section: present ⇒ read service/port/readiness/liveness; absent (a pre-SC9
+        // record at EOF) ⇒ keep the defaults. `r.blob()` returns nil at EOF.
+        var service = ""; var port: UInt16 = 0
+        var readiness = ProbeSpec(); var liveness = ProbeSpec()
+        if let svcB = r.blob() {
+            service = String(decoding: svcB, as: UTF8.self)
+            guard let p = r.u32(), let rp = ProbeSpec.decode(&r), let lp = ProbeSpec.decode(&r) else { return nil }
+            port = UInt16(truncatingIfNeeded: p); readiness = rp; liveness = lp
+        }
         return CellTemplate(image: img, capabilities: caps, resources: res,
                             namespaceRoot: String(decoding: rootB, as: UTF8.self), args: args,
-                            env: env, tmpfsScratch: tmpfsB != 0, volume: vol, restartPolicy: pol)
+                            env: env, tmpfsScratch: tmpfsB != 0, volume: vol, restartPolicy: pol,
+                            service: service, port: port, readiness: readiness, liveness: liveness)
     }
 }
 
