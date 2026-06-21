@@ -6,10 +6,11 @@ lands in two reviewable passes:
 - **SC9a (this pass)** — the `sctl` CLI + the manifest parser/validator + the `apply`/`get`/
   `describe`/`scale`/`delete` round-trip. The `apply → schedule → run → ready → endpoint → LB`
   pipeline already works (SC3–SC7); SC9a adds the human entry point and validation on top.
-- **SC9b (next)** — the leader-gated rollout state machine (revisions, rolling/blue-green/canary,
-  automatic rollback) under `swiftcube/sctld/rollout/`, the remote mTLS `WireControlClient`, and the
-  multi-node QEMU end-to-end harness. The forward design is sketched at the end of this note so SC9b
-  has a spec.
+- **SC9b (landed)** — the leader-gated rollout state machine (revisions, rolling/blue-green/canary,
+  automatic rollback) under `swiftcube/sctld/rollout/` — see its
+  [FORMAT.md](../sctld/rollout/FORMAT.md). Still seam: the remote mTLS `WireControlClient`, the
+  data-plane consumption of `/traffic` (endpoints/LB weights), and the multi-node QEMU E2E (gated on
+  C6). `sctl rollout status`/`undo` now drive the real rollout objects.
 
 ## Components
 
@@ -100,34 +101,9 @@ client SC9a can drive end to end; a remote endpoint prints the gap and exits non
 pretend. The TLS primitives `sctl` will reuse are the same sans-I/O `MutualTLS` + `Channel` + `Agent`
 the node uses (`control/`), which already do a real P-256 mTLS handshake in host tests.
 
-## SC9b forward design (recorded, not built here)
+## The rollout state machine (SC9b)
 
-**`/rollouts/<app>`** — the rollout object: strategy, the ordered revision history (for `undo`), and
-per-revision `desired/updated/ready/available` counts + a phase. **Phases:**
-`Progressing → Complete`, or `Progressing → Failed` (deadline) with `RollingBack` while reverting.
-
-- **Rolling** (`maxSurge`/`maxUnavailable`): step new-revision replicas up within surge, **wait for
-  SC5 readiness**, step old-revision replicas down within unavailable; never fewer than
-  `desired − maxUnavailable` ready; converge to new=N, old=0.
-- **Blue-green**: bring the full new revision up alongside the old; once **all** new Cells are ready,
-  atomically switch `/endpoints` + the LB from old→new; then tear the old down. No mixed traffic.
-- **Canary**: bring a small new fraction up, route a traffic **percentage** via LB backend
-  **weights**, ramp to 100% while scaling the old down. *LB-weight gap to surface:* the SC6 nginx
-  provider tracks a ready backend pool but does not emit per-backend `weight=`; canary weighting
-  needs that knob (open-source nginx supports `weight` on `upstream` servers — a renderer change) or
-  an API provider (Hetzner/AWS) that programs weights directly.
-- **Automatic rollback**: a per-rollout **progress deadline** (`update.progressDeadlineSeconds`,
-  default 600s). If the new revision does not reach its ready target within the window (or trips a
-  failure threshold), abort and revert (new→0, old→N) and mark `Failed` — the old revision stays
-  serving throughout.
-
-The machine is **leader-only and level-triggered** like every other reconciler: each pass re-reads
-the world from cubestore and steps at most once, so a controller restart/reconnect resumes from
-store state without double-stepping.
-
-**Multi-node QEMU harness (SC9b, case 10):** multiple QEMU `virt` instances on a shared virtual net
-(`-netdev socket` mesh), `-smp` per node, one or more `sctld` controllers (SC2b) + `slet` per node;
-`sctl apply` from the host brings a service up, a new revision flips backends with no dropped
-requests, and a broken revision rolls back on its own. This gate is **conditional on C6** (the
-userland Cell supervisor — `slet`'s data plane) plus network + datafs; until C6 lands it is deferred
-and reported as a gap, and building the harness is itself part of SC9b.
+Strategies (rolling/blue-green/canary), the phase transitions, the automatic-rollback deadline, the
+per-revision `/schedrev` placement, and the multi-node QEMU harness are documented in the rollout
+[FORMAT.md](../sctld/rollout/FORMAT.md). The `update:` block parsed here is persisted on the
+DeploymentSpec, so the controller reads the strategy straight off `/apps/<app>/spec`.

@@ -75,8 +75,18 @@ final class SchedulerLoop<Log: AppendLog, Snap: SnapshotStore> {
 
     private func readDeployments() -> [DeploymentSpec] {
         var out: [DeploymentSpec] = []
+        // SC9b: per-revision rollout specs first. An app with any /schedrev entry is "managed" by
+        // the rollout controller — the scheduler places each of its revisions and ignores the app's
+        // /apps/<app>/spec (else the target revision would be double-counted at full replicas).
+        var managed: [String] = []
+        for e in store.prefix(SchedulerKeys.schedRevPrefix) {
+            guard let (app, _) = SchedulerKeys.parseSchedRev(e.key), let dep = DeploymentSpec.decode(e.value) else { continue }
+            out.append(dep)
+            if !managed.contains(app) { managed.append(app) }
+        }
         for e in store.prefix(SchedulerKeys.appsPrefix) {
-            guard SchedulerKeys.appOfSpecKey(e.key) != nil, let dep = DeploymentSpec.decode(e.value) else { continue }
+            guard let app = SchedulerKeys.appOfSpecKey(e.key), let dep = DeploymentSpec.decode(e.value) else { continue }
+            if managed.contains(app) { continue }   // managed by an active rollout
             out.append(dep)
         }
         return out

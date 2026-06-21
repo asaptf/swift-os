@@ -153,8 +153,36 @@ import Foundation
         let st = f.run(["rollout", "status", "web-api"])
         check(contains(st.output, "revision:  1") && contains(st.output, "ready:     2"),
               "2: rollout status shows revision + ready count (got \(st.output))")
-        check(contains(st.output, "Complete"), "2: 2/2 ready ⇒ Complete")
-        check(contains(f.run(["rollout", "undo", "web-api"]).output, "SC9b"), "2: undo surfaces the SC9b seam")
+        check(contains(st.output, "no active rollout"), "2: status without a rollout record is the derived view")
+
+        // With a real rollout record (SC9b) present, status reflects it and undo reverts to history.
+        let rec = RolloutRecord(app: "web-api", strategy: .canary, targetRevision: 2, replicas: 2,
+                                maxSurge: 1, maxUnavailable: 0, canarySteps: [50, 100], canaryIndex: 1,
+                                progressDeadlineSeconds: 600, startedAtSeconds: 0, phase: .progressing,
+                                revisions: [RevisionDesired(revision: 1, desired: 1), RevisionDesired(revision: 2, desired: 1)],
+                                weights: [TrafficShare(revision: 1, weight: 50), TrafficShare(revision: 2, weight: 50)],
+                                blueGreenSwitched: false, failedRevision: 0, history: [1, 2], message: "")
+        _ = f.client.put(RolloutKeys.rollout("web-api"), rec.encode())
+        // Seed r1's history snapshot so undo can recover it.
+        let r1 = SctlTest.depFor(app: "web-api", rev: 1, replicas: 2)
+        _ = f.client.put(RolloutKeys.history(app: "web-api", rev: 1), r1.encode())
+        let st2 = f.run(["rollout", "status", "web-api"])
+        check(contains(st2.output, "canary") && contains(st2.output, "r2:50%") && contains(st2.output, "Progressing"),
+              "2: rollout status reflects the real record (got \(st2.output))")
+        let undo = f.run(["rollout", "undo", "web-api"])
+        check(undo.exitCode == 0 && contains(undo.output, "revision 1"), "2: undo reverts to the prior revision")
+        check(f.dep("web-api")?.revision == 1, "2: undo rewrote the desired spec to r1")
+    }
+
+    /// A minimal DeploymentSpec for seeding history in tests.
+    static func depFor(app: String, rev: UInt64, replicas: UInt32) -> DeploymentSpec {
+        let tmpl = CellTemplate(image: ImageRef(digest: [UInt8](repeating: 1, count: 32), signature: []),
+                                capabilities: [], resources: ResourceLimits(cpuMillis: 100, memBytes: 64 << 20),
+                                namespaceRoot: "/", args: ["/bin/app"], env: [], tmpfsScratch: true,
+                                volume: nil, restartPolicy: .always, service: app, port: 8080)
+        return DeploymentSpec(app: app, replicas: replicas, revision: rev,
+                              request: ResourceLimits(cpuMillis: 100, memBytes: 64 << 20),
+                              nodeSelector: [], pinHint: "", template: tmpl)
     }
 
     // MARK: - delete

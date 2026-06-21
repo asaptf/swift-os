@@ -23,10 +23,40 @@
 enum SchedulerKeys {
     static let appsPrefix: Bytes    = Array("/apps/".utf8)
     static let pendingPrefix: Bytes = Array("/pending/".utf8)
+    // SC9b: the rollout controller's per-revision scheduler input. When any `/schedrev/<app>/<rev>`
+    // exists for an app, the scheduler places those revisions (sharing capacity, SC9 surge) and
+    // ignores `/apps/<app>/spec`; with none, it uses `/apps/<app>/spec` (the SC4 direct path). The
+    // key lives here (the scheduler's input contract), not in the rollout module, so SC4 has no
+    // dependency on SC9b.
+    static let schedRevPrefix: Bytes = Array("/schedrev/".utf8)
 
     /// `/apps/<app>/spec` — the Deployment object for one app.
     static func appSpec(_ app: String) -> Bytes {
         appsPrefix + Array(app.utf8) + Array("/spec".utf8)
+    }
+
+    /// `/schedrev/<app>/<rev>` — a single revision's DeploymentSpec during a managed rollout.
+    static func schedRev(app: String, rev: UInt64) -> Bytes {
+        schedRevPrefix + Array(app.utf8) + Array("/".utf8) + Array("\(rev)".utf8)
+    }
+    /// The range prefix for one app's per-revision specs: `/schedrev/<app>/`.
+    static func appSchedRevPrefix(_ app: String) -> Bytes {
+        schedRevPrefix + Array(app.utf8) + Array("/".utf8)
+    }
+    /// Split a `/schedrev/<app>/<rev>` key into (app, rev). The app may contain hyphens, not '/'.
+    static func parseSchedRev(_ key: Bytes) -> (app: String, rev: UInt64)? {
+        let pfx = schedRevPrefix
+        guard key.count > pfx.count else { return nil }
+        for i in 0..<pfx.count where key[i] != pfx[i] { return nil }
+        var slash = -1
+        var i = pfx.count
+        while i < key.count { if key[i] == 0x2F { slash = i; break }; i += 1 }
+        guard slash > pfx.count, slash + 1 < key.count else { return nil }
+        let app = String(decoding: key[pfx.count..<slash], as: UTF8.self)
+        var v: UInt64 = 0; var any = false
+        for c in key[(slash + 1)...] { guard c >= 0x30 && c <= 0x39 else { return nil }; v = v &* 10 &+ UInt64(c - 0x30); any = true }
+        guard any else { return nil }
+        return (app, v)
     }
 
     /// The app name from a `/apps/<app>/spec` key, or nil if it is not such a key.
@@ -182,6 +212,46 @@ struct CellTemplate: Equatable {
     }
 }
 
+// MARK: - Rollout (update) strategy — carried on the Deployment so the SC9b rollout controller
+// reads it straight off /apps/<app>/spec. Defined here (not in the manifest module) because it is
+// part of the persisted DeploymentSpec; the SC9a manifest parser populates it.
+
+/// Which rollout strategy a revision change uses. The state machine is SC9b; the block is parsed,
+/// validated, and persisted in SC9a so it is available the moment a rollout is needed.
+enum RolloutStrategy: UInt8, Equatable {
+    case rolling   = 0
+    case blueGreen = 1
+    case canary    = 2
+}
+
+/// The `update:` block. `maxSurge`/`maxUnavailable` apply to rolling; `canaryStepPercents` is the
+/// canary weight ramp (e.g. [25, 50, 100]); `progressDeadlineSeconds` is the rollback window the
+/// SC9b state machine arms. Fields not relevant to the chosen strategy keep their defaults.
+struct UpdateStrategy: Equatable {
+    var strategy: RolloutStrategy = .rolling
+    var maxSurge: UInt32 = 1
+    var maxUnavailable: UInt32 = 0
+    var canaryStepPercents: [UInt32] = []
+    var progressDeadlineSeconds: UInt32 = 600
+
+    func encode(into w: inout ByteWriter) {
+        w.u8(strategy.rawValue)
+        w.u32(maxSurge)
+        w.u32(maxUnavailable)
+        w.u32(UInt32(canaryStepPercents.count)); for p in canaryStepPercents { w.u32(p) }
+        w.u32(progressDeadlineSeconds)
+    }
+    static func decode(_ r: inout ByteReader) -> UpdateStrategy? {
+        guard let s = r.u8(), let strat = RolloutStrategy(rawValue: s), let surge = r.u32(),
+              let unavail = r.u32(), let n = r.u32() else { return nil }
+        var steps: [UInt32] = []; var i: UInt32 = 0
+        while i < n { guard let p = r.u32() else { return nil }; steps.append(p); i += 1 }
+        guard let deadline = r.u32() else { return nil }
+        return UpdateStrategy(strategy: strat, maxSurge: surge, maxUnavailable: unavail,
+                              canaryStepPercents: steps, progressDeadlineSeconds: deadline)
+    }
+}
+
 // MARK: - DeploymentSpec (desired state)
 
 struct DeploymentSpec: Equatable {
@@ -192,30 +262,37 @@ struct DeploymentSpec: Equatable {
     var nodeSelector: [String]         // required "key=value" labels (node must have all)
     var pinHint: String                // SC8 seam: a node id to pin to; "" = unpinned
     var template: CellTemplate
+    var update: UpdateStrategy = UpdateStrategy()   // SC9: the rollout strategy (SC9b consumes it)
 
     func encode() -> Bytes {
         var w = ByteWriter()
-        w.u8(1)                         // record version
+        w.u8(2)                         // record version (2: adds the update strategy)
         w.blob(Array(app.utf8))
         w.u32(replicas)
         w.u64(revision)
         request.encode(into: &w)
         w.u32(UInt32(nodeSelector.count)); for s in nodeSelector { w.blob(Array(s.utf8)) }
         w.blob(Array(pinHint.utf8))
+        // `update` precedes `template`: the template's own SC9 trailing section is greedy-to-EOF,
+        // so nothing may follow it. A v1 record had no update block (decode defaults it).
+        update.encode(into: &w)
         template.encode(into: &w)
         return w.bytes
     }
 
     static func decode(_ bytes: Bytes) -> DeploymentSpec? {
         var r = ByteReader(bytes)
-        guard let ver = r.u8(), ver == 1, let appB = r.blob(), let reps = r.u32(),
+        guard let ver = r.u8(), ver == 1 || ver == 2, let appB = r.blob(), let reps = r.u32(),
               let rev = r.u64(), let req = ResourceLimits.decode(&r), let nSel = r.u32() else { return nil }
         var sel: [String] = []; var i: UInt32 = 0
         while i < nSel { guard let b = r.blob() else { return nil }; sel.append(String(decoding: b, as: UTF8.self)); i += 1 }
-        guard let pinB = r.blob(), let tmpl = CellTemplate.decode(&r) else { return nil }
+        guard let pinB = r.blob() else { return nil }
+        var update = UpdateStrategy()
+        if ver >= 2 { guard let u = UpdateStrategy.decode(&r) else { return nil }; update = u }
+        guard let tmpl = CellTemplate.decode(&r) else { return nil }
         return DeploymentSpec(app: String(decoding: appB, as: UTF8.self), replicas: reps,
                               revision: rev, request: req, nodeSelector: sel,
-                              pinHint: String(decoding: pinB, as: UTF8.self), template: tmpl)
+                              pinHint: String(decoding: pinB, as: UTF8.self), template: tmpl, update: update)
     }
 }
 

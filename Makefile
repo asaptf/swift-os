@@ -1881,6 +1881,7 @@ SCTL_SRCS = \
 	swiftcube/control/Schema.swift \
 	swiftcube/control/Node.swift \
 	swiftcube/control/RamStore.swift \
+	swiftcube/sctld/rollout/Rollout.swift \
 	swiftcube/sctl/ControlClient.swift \
 	swiftcube/sctl/StoreControlClient.swift \
 	swiftcube/sctl/Config.swift \
@@ -1891,6 +1892,38 @@ sctl-test: | $(BUILD)/.dir
 		swiftcube/sctl/tests/sctl_test.swift \
 		-o $(BUILD)/sctl_test
 	$(BUILD)/sctl_test
+
+# SC9b: the leader-gated rollout state machine — the pure stepper (rolling/blue-green/canary +
+# automatic rollback) and the level-triggered controller that drives per-revision desired counts
+# (/schedrev, placed by the reused SC4 scheduler), traffic weights (/traffic), and status/history
+# (/rollouts). Host acceptance (cases 3–9 + a real-scheduler integration check) drives the
+# controller against an in-process cubestore with an injected clock and a simulated cluster (the
+# /status/cells readiness signal). Reuses the cubestore core + the SC2 node/lease schema + the SC3
+# Cell objects + the SC4 scheduler. The rollout logic is Foundation-free; only the harness uses
+# Foundation; only kernel/crypto/sha256.swift is linked to satisfy the Schema seam.
+.PHONY: rollout-test
+ROLLOUT_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift \
+	swiftcube/sctld/rollout/Rollout.swift \
+	swiftcube/sctld/rollout/RolloutPlan.swift \
+	swiftcube/sctld/rollout/RolloutController.swift
+rollout-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(ROLLOUT_SRCS) \
+		swiftcube/sctld/rollout/tests/rollout_test.swift \
+		-o $(BUILD)/rollout_test
+	$(BUILD)/rollout_test
 
 # SC9a: build the host `sctl` binary (Mac/Linux). The command layer + manifest parser are the
 # Foundation-free SCTL_SRCS; main.swift + Config.swift + the POSIX cubestore sink are the host

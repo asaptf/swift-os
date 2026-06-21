@@ -262,35 +262,65 @@ func deleteObject(kind: String, name: String, client: ControlClient) -> CommandR
 func rollout(_ args: [String], client: ControlClient) -> CommandResult {
     guard let sub = args.first else { return CommandResult.err("rollout requires status|undo|pause|resume <app>") }
     let rest = Array(args.dropFirst())
+    guard let app = rest.first else { return CommandResult.err("rollout \(sub) requires <app>") }
     switch sub {
     case "status":
-        guard let app = rest.first else { return CommandResult.err("rollout status requires <app>") }
-        guard let kv = client.get(SchedulerKeys.appSpec(app)), let d = DeploymentSpec.decode(kv.value) else {
-            return CommandResult.err("deployment/\(app) not found")
-        }
-        // Ready endpoints currently routed for this service (SC5 output).
-        var ready = 0
-        if let ekv = client.get(EndpointKeys.endpoints(app)), let set = EndpointSet.decode(ekv.value) {
-            ready = set.endpoints.count
-        }
-        // Live assignments for the current revision (SC4 output).
-        var current = 0
-        for akv in client.range(prefix: SletKeys.assignmentsPrefix) {
-            guard let a = Assignment.decode(akv.value) else { continue }
-            if a.revision == d.revision && a.spec.service == app { current += 1 }
-        }
-        var s = "rollout \(app):\n"
-        s += "  revision:  \(d.revision)\n"
-        s += "  desired:   \(d.replicas)\n"
-        s += "  scheduled: \(current)\n"
-        s += "  ready:     \(ready)\n"
-        s += "  phase:     \(ready >= Int(d.replicas) ? "Complete" : "Progressing") (read-only — rollout controller is SC9b)"
-        return CommandResult.ok(s)
-    case "undo", "pause", "resume":
-        return CommandResult.err("rollout \(sub) needs the rollout state machine — SC9b")
+        return rolloutStatus(app, client: client)
+    case "undo":
+        return rolloutUndoCmd(app, client: client)
+    case "pause", "resume":
+        return CommandResult.err("rollout \(sub) is a noted seam (needs a paused flag on the rollout record)")
     default:
         return CommandResult.err("unknown rollout subcommand '\(sub)'")
     }
+}
+
+/// Read the real rollout record (SC9b) when present; fall back to a derived view for an app with no
+/// rollout yet (only a direct Deployment).
+private func rolloutStatus(_ app: String, client: ControlClient) -> CommandResult {
+    if let rk = client.get(RolloutKeys.rollout(app)), let rec = RolloutRecord.decode(rk.value) {
+        var ready = 0
+        if let ekv = client.get(EndpointKeys.endpoints(app)), let set = EndpointSet.decode(ekv.value) { ready = set.endpoints.count }
+        var s = "rollout \(app):\n"
+        s += "  strategy:  \(strategyName(rec.strategy))\n"
+        s += "  revision:  \(rec.targetRevision)\n"
+        s += "  replicas:  \(rec.replicas)\n"
+        s += "  phase:     \(rec.phase.name)\n"
+        s += "  revisions: " + rec.revisions.map { "r\($0.revision)=\($0.desired)" }.joined(separator: " ") + "\n"
+        s += "  traffic:   " + rec.weights.map { "r\($0.revision):\($0.weight)%" }.joined(separator: " ") + "\n"
+        s += "  ready:     \(ready)\n"
+        s += "  history:   " + rec.history.map { "r\($0)" }.joined(separator: " ")
+        if !rec.message.isEmpty { s += "\n  message:   \(rec.message)" }
+        return CommandResult.ok(s)
+    }
+    guard let kv = client.get(SchedulerKeys.appSpec(app)), let d = DeploymentSpec.decode(kv.value) else {
+        return CommandResult.err("deployment/\(app) not found")
+    }
+    var ready = 0
+    if let ekv = client.get(EndpointKeys.endpoints(app)), let set = EndpointSet.decode(ekv.value) { ready = set.endpoints.count }
+    var s = "rollout \(app):\n  revision:  \(d.revision)\n  desired:   \(d.replicas)\n  ready:     \(ready)\n"
+    s += "  phase:     \(ready >= Int(d.replicas) ? "Complete" : "Progressing") (no active rollout)"
+    return CommandResult.ok(s)
+}
+
+/// Revert the desired Deployment to the prior revision from the rollout history (the same operation
+/// the controller's `rolloutUndo` performs, expressed over the ControlClient).
+private func rolloutUndoCmd(_ app: String, client: ControlClient) -> CommandResult {
+    guard let rk = client.get(RolloutKeys.rollout(app)), let rec = RolloutRecord.decode(rk.value) else {
+        return CommandResult.err("no rollout history for \(app)")
+    }
+    var prior: UInt64? = nil
+    for h in rec.history where h != rec.targetRevision { prior = h }
+    guard let target = prior, let hk = client.get(RolloutKeys.history(app: app, rev: target)),
+          let spec = DeploymentSpec.decode(hk.value) else {
+        return CommandResult.err("no prior revision to undo to for \(app)")
+    }
+    client.put(SchedulerKeys.appSpec(app), spec.encode())
+    return CommandResult.ok("deployment/\(app) rolling back to revision \(target)")
+}
+
+private func strategyName(_ s: RolloutStrategy) -> String {
+    switch s { case .rolling: return "rolling"; case .blueGreen: return "blue-green"; case .canary: return "canary" }
 }
 
 // MARK: - Formatting / arg helpers

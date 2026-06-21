@@ -26,26 +26,8 @@
 //   • The rollout `revision` is NOT set here — `sctl apply` assigns it (bump on a template change,
 //     keep it on a pure scale), since revision identity is an apply-time concern (SC9b consumes it).
 
-// MARK: - Update strategy
-
-/// Which rollout strategy a revision change uses. The rolling/blue-green/canary *state machine* is
-/// SC9b; SC9 parses, validates, and carries the block so apply records it for the controller.
-enum RolloutStrategy: UInt8, Equatable {
-    case rolling   = 0
-    case blueGreen = 1
-    case canary    = 2
-}
-
-/// The `update:` block. `maxSurge`/`maxUnavailable` apply to rolling; `canaryStepPercents` is the
-/// canary weight ramp (e.g. [10, 50, 100]); `progressDeadlineSeconds` is the rollback window the
-/// SC9b state machine arms. Fields not relevant to the chosen strategy keep their defaults.
-struct UpdateStrategy: Equatable {
-    var strategy: RolloutStrategy = .rolling
-    var maxSurge: UInt32 = 1
-    var maxUnavailable: UInt32 = 0
-    var canaryStepPercents: [UInt32] = []
-    var progressDeadlineSeconds: UInt32 = 600
-}
+// `RolloutStrategy` / `UpdateStrategy` are defined in the scheduler layer (Deployment.swift) because
+// they are persisted on `DeploymentSpec`; the parser populates them here.
 
 // MARK: - Sub-objects
 
@@ -162,7 +144,7 @@ extension Manifest {
         template.liveness = health.liveness
         return DeploymentSpec(app: app, replicas: replicas, revision: revision, request: request,
                               nodeSelector: placement.nodeSelector, pinHint: placement.pinHint,
-                              template: template)
+                              template: template, update: update)
     }
 
     /// The east-west service registration written to /svcspec/<app>.
