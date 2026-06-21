@@ -1559,7 +1559,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1720,6 +1720,35 @@ endpoints-test: | $(BUILD)/.dir
 		swiftcube/sctld/endpoints/tests/endpoints_test.swift \
 		-o $(BUILD)/endpoints_test
 	$(BUILD)/endpoints_test
+
+# SC6: the LB provider interface + the nginx provider (pure renderer + validate→swap→reload
+# applier) + the leader-gated, debounced, level-triggered LB programmer loop. Host acceptance
+# (cases 1–10) drives the loop and the provider against an in-process cubestore with an injected
+# clock: a FakeApplier models validate-before-swap + atomic-swap (so the provider is tested with
+# no real nginx in CI), a FakeProvider counts reconciles (so the loop's leader gate / debounce /
+# backoff are tested independent of rendering). Reuses the cubestore core + the SC2 clock seam +
+# the SC5 endpoints object (the backend pool). The renderer/provider/loop are Foundation-free;
+# only the NginxApplier seam (shells out to a local nginx) and the harness use Foundation. The
+# on-device gate (program a real nginx, curl through the listener to a Cell) is conditional on a
+# ported nginx + real Cells (C6) — deferred, not claimed. Only kernel/crypto/sha256.swift is
+# linked to satisfy the Schema clock seam transitively.
+SC6_LB_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/lb/LBProvider.swift \
+	swiftcube/sctld/lb/ExposeConfig.swift \
+	swiftcube/sctld/lb/LBLoop.swift \
+	swiftcube/sctld/lb/nginx/NginxRenderer.swift \
+	swiftcube/sctld/lb/nginx/ConfigApplier.swift \
+	swiftcube/sctld/lb/nginx/NginxProvider.swift \
+	swiftcube/sctld/lb/nginx/NginxApplier.swift
+lb-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SC6_LB_SRCS) \
+		swiftcube/sctld/lb/tests/lb_test.swift \
+		-o $(BUILD)/lb_test
+	$(BUILD)/lb_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
