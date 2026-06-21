@@ -79,6 +79,34 @@ private func sc5SelfCheck() -> Bool {
     return !runner.isTracked("selftest")
 }
 
+/// Exercise the SC7 east-west seam under Embedded Swift: the Service record byte codec
+/// round-trips, the deterministic vIP/port allocator is correct, the balancer round-robins, and
+/// the real NetProxyTransport compiles into this ELF. No network I/O is performed (the live L4
+/// forward needs real Cells over virtio-net — gated on C6, like SC3/SC5). Returns true on success.
+private func sc7SelfCheck() -> Bool {
+    // The Service record rides the same little-endian codec as every cubestore object.
+    let svc = Service(name: "web", selector: "web", servicePort: 8080,
+                      clusterIP: "10.96.0.0", proxyPort: 30000, allocIndex: 0)
+    guard let back = Service.decode(svc.encode()), back == svc else { return false }
+
+    // The allocator maps slot → (vIP, proxyPort) deterministically.
+    let alloc = ServiceAllocator()
+    guard alloc.clusterIP(0) == "10.96.0.0", alloc.clusterIP(1) == "10.96.0.1",
+          alloc.proxyPort(0) == 30000, alloc.proxyPort(2) == 30002 else { return false }
+
+    // The balancer round-robins across a ready set and advances its cursor.
+    let eps = [Endpoint(cellId: "a", address: "10.0.0.1", port: 8080),
+               Endpoint(cellId: "b", address: "10.0.0.2", port: 8080)]
+    let bal = Balancer()
+    let (o0, c1) = bal.order(ready: eps, cursor: 0)
+    let (o1, _) = bal.order(ready: eps, cursor: c1)
+    guard o0.first?.cellId == "a", o1.first?.cellId == "b" else { return false }
+
+    // The real transport instantiates (its socket calls are exercised on-device once Cells exist).
+    _ = NetProxyTransport()
+    return true
+}
+
 @_cdecl("main")
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
@@ -100,5 +128,8 @@ func main(_ argc: Int32,
 
     guard sc5SelfCheck() else { swiftos_puts("slet: FAIL SC5 probe seam\n"); return 1 }
     swiftos_puts("slet: SC5 probe runner + NetProbe OK; live http/tcp probing deferred with C6\n")
+
+    guard sc7SelfCheck() else { swiftos_puts("slet: FAIL SC7 east-west seam\n"); return 1 }
+    swiftos_puts("slet: SC7 service registry + node-proxy + resolver OK; live L4 forwarding deferred with C6\n")
     return 0
 }

@@ -916,11 +916,26 @@ SC3_SLET_SRCS := \
 SC5_SLET_SRCS := \
 	swiftcube/slet/probes/Probe.swift swiftcube/slet/probes/ProbeRunner.swift \
 	swiftcube/slet/probes/NetProbe.swift
+# SC7: the east-west service registry object + the userspace node-proxy (target manager + L4
+# forwarder + load balancer) + the node-local resolver + the on-device real transport. These
+# compile into the `slet` ELF too (proving the whole node-proxy is Embedded-Swift-clean); the
+# host FakeTransport is test-only and is NOT listed here. NetProxyTransport is the real L4
+# transport over the SC2 socket bridge — exercised on-device once C6 yields real Cells (the
+# QEMU east-west gate is deferred, like SC3/SC5). Endpoint.swift is the SC5 endpoints object
+# the proxy reads from /endpoints, so it is listed here (it is not otherwise in the slet ELF).
+SC7_SLET_SRCS := \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/slet/proxy/ProxyTransport.swift \
+	swiftcube/slet/proxy/Balancer.swift \
+	swiftcube/slet/proxy/NodeProxy.swift \
+	swiftcube/slet/proxy/NetProxyTransport.swift \
+	swiftcube/slet/resolver/Resolver.swift
 
 $(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
-$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) -o $@
 
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
@@ -1559,7 +1574,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test proxy-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1749,6 +1764,35 @@ lb-test: | $(BUILD)/.dir
 		swiftcube/sctld/lb/tests/lb_test.swift \
 		-o $(BUILD)/lb_test
 	$(BUILD)/lb_test
+
+# SC7: the east-west service registry + userspace node-proxy. Host acceptance (cases 1–9) drives
+# the real SC7 control logic against an in-process cubestore: the SC5 endpoints loop + the SC7
+# service reconciler populate /endpoints + /services, a Resolver turns a name into the node-local
+# proxy address, and a NodeProxy load-balances accepted connections across the ready endpoints over
+# an in-memory ProxyTransport (FakeTransport + fake backend servers — so bytes flow end-to-end with
+# no kernel and no real sockets, the FakeProber/FakeApplier pattern). Reuses the cubestore core +
+# the SC2 control plane (the StoreClient/LocalStoreClient read seam pulls AgentStoreClient, so the
+# TLS/crypto deps are linked as in slet-test) + the SC3 Cell status object + the SC5 endpoints
+# object/loop + the SC7 service/proxy/resolver sources. The proxy/reconciler/resolver are
+# Foundation-free; only the harness uses Foundation. The on-device gate (two real Cells, A connects
+# to B by service name over virtio-net) is conditional on C6 + real Cells — deferred, not claimed;
+# the real transport (NetProxyTransport over swiftos sockets) compiles into the slet ELF.
+SC7_SVC_SRCS = \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/endpoints/EndpointsLoop.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/sctld/services/ServiceReconciler.swift \
+	swiftcube/slet/proxy/ProxyTransport.swift \
+	swiftcube/slet/proxy/Balancer.swift \
+	swiftcube/slet/proxy/NodeProxy.swift \
+	swiftcube/slet/resolver/Resolver.swift
+proxy-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC7_SVC_SRCS) \
+		swiftcube/slet/proxy/tests/proxy_test.swift \
+		-o $(BUILD)/proxy_test
+	$(BUILD)/proxy_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
