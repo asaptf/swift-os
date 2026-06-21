@@ -55,15 +55,28 @@ final class Reconciler {
     let cfg: ReconcilerConfig
     let fence: VolumeFence?     // SC8 seam (nil in SC3)
 
+    // SC5: the probe runner (nil ⇒ SC3 behavior, ready-when-running, no liveness restarts)
+    // and the node's reachable address slet reports for ready Cells. The probe runner hits
+    // `nodeAddress` on each probe's port; the endpoints loop reads `nodeAddress` from status.
+    // SC7 refines this to a per-Cell node-IP + mapped port.
+    let probeRunner: ProbeRunner?
+    let nodeAddress: String
+
     private var cells: [CellRecord] = []
     private(set) var watchRevision: Revision = 0
 
+    /// Exit code the reconciler attributes to a liveness-probe failure when it routes the
+    /// Cell through the restart machinery (distinct from a real crash exit, for the message).
+    private let livenessFailureExit: Int32 = 137  // SIGKILL-ish: the supervisor would kill a wedged Cell
+
     init(node: String, store: StoreClient, supervisor: CellSupervisor,
          verifier: ImageVerifier, imageStore: ImageStore, clock: CubeClock,
-         config: ReconcilerConfig = ReconcilerConfig(), fence: VolumeFence? = nil) {
+         config: ReconcilerConfig = ReconcilerConfig(), fence: VolumeFence? = nil,
+         probeRunner: ProbeRunner? = nil, nodeAddress: String = "") {
         self.node = node; self.store = store; self.supervisor = supervisor
         self.verifier = verifier; self.imageStore = imageStore; self.clock = clock
         self.cfg = config; self.fence = fence
+        self.probeRunner = probeRunner; self.nodeAddress = nodeAddress
     }
 
     private var assignmentsPrefix: Bytes { SletKeys.nodeAssignmentsPrefix(node) }
@@ -149,8 +162,69 @@ final class Reconciler {
         // 4. Supervise running Cells (crash detection → restart per policy + backoff).
         for cid in cellIds() { supervise(cid: cid) }
 
-        // 5. Report status for everything we still track.
+        // 5. Probe pass (SC5): readiness gates `ready`; liveness failure restarts the Cell.
+        runProbes()
+
+        // 6. Report status for everything we still track.
         for cid in cellIds() { report(cid: cid) }
+    }
+
+    // MARK: - Probe pass (SC5)
+
+    /// One probe pass: keep the runner's tracked set in sync with the running Cells, fire any
+    /// due probes, then fold the verdicts back — readiness into `ready` (no restart), liveness
+    /// into the restart machinery. A no-op when no `ProbeRunner` is configured (SC3 behavior).
+    private func runProbes() {
+        guard let pr = probeRunner else { return }
+
+        // Sync tracking: a running, non-terminal Cell with an active probe is tracked with its
+        // current address/specs/startedAt; everything else is untracked (so a reaped/failed/
+        // restarted-away Cell stops being probed and its readiness can no longer hold).
+        for cid in cellIds() {
+            guard let i = idx(cid) else { continue }
+            let rec = cells[i]
+            if rec.handle != nil && !rec.terminal && rec.phase == .running && hasActiveProbe(rec) {
+                if !pr.isTracked(cid) {
+                    pr.track(cellId: cid, address: nodeAddress, readiness: rec.spec.readiness,
+                             liveness: rec.spec.liveness, startedAt: rec.startedAt)
+                }
+            } else if pr.isTracked(cid) {
+                pr.untrack(cid)
+            }
+        }
+
+        pr.run()
+
+        // Apply verdicts. Readiness only moves the `ready` bit; liveness routes through the
+        // restart machinery (the fresh generation re-enters its readiness window, so it is out
+        // of endpoints while it restarts).
+        for cid in cellIds() {
+            guard let v = pr.verdict(cid), let i = idx(cid) else { continue }
+            if v.hasReadinessProbe && cells[i].ready != v.ready {
+                var rec = cells[i]
+                rec.ready = v.ready
+                rec.message = v.ready ? "ready" : "not ready (readiness probe failing)"
+                upsert(rec)
+            }
+            if v.livenessFailed {
+                pr.untrack(cid)                                   // reset state for the new generation
+                applyRestartPolicy(cid: cid, exitCode: livenessFailureExit)
+                if let j = idx(cid), cells[j].handle != nil, cells[j].phase == .running {
+                    var rec = cells[j]
+                    rec.message = "restarted (liveness probe failed)"
+                    if rec.spec.readiness.isActive { rec.ready = false }  // re-prove readiness
+                    upsert(rec)
+                    if hasActiveProbe(rec) {
+                        pr.track(cellId: cid, address: nodeAddress, readiness: rec.spec.readiness,
+                                 liveness: rec.spec.liveness, startedAt: rec.startedAt)
+                    }
+                }
+            }
+        }
+    }
+
+    private func hasActiveProbe(_ rec: CellRecord) -> Bool {
+        rec.spec.readiness.isActive || rec.spec.liveness.isActive
     }
 
     // MARK: - Create / adopt / recreate / reap
@@ -334,9 +408,14 @@ final class Reconciler {
     private func report(cid: String) {
         guard let i = idx(cid) else { return }
         let rec = cells[i]
+        // SC5: report the reachable endpoint only for a Cell that actually holds a live
+        // generation; a terminal/torn-down Cell reports an empty address so the endpoints
+        // loop cannot keep it (readiness already gates this, but be explicit).
+        let addr = (rec.handle != nil && !rec.terminal) ? nodeAddress : ""
         let st = CellStatusRecord(cellId: cid, node: node, phase: rec.phase, ready: rec.ready,
                                   restartCount: rec.restartCount, imageDigest: rec.spec.image.digest,
-                                  startedAtSeconds: rec.startedAt, message: rec.message)
+                                  startedAtSeconds: rec.startedAt, message: rec.message,
+                                  service: rec.spec.service, address: addr, port: rec.spec.port)
         let val = st.encode()
         if val == rec.lastReportedBytes { return }   // nothing changed; skip the write
         let key = SletKeys.status(cid)

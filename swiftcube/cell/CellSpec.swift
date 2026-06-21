@@ -93,6 +93,12 @@ struct CellSpec: Equatable {
     var volume: VolumeMount?        // optional PV slot (SC8 seam)
     var restartPolicy: RestartPolicy
 
+    // SC5 trailing section (defaulted so SC3/SC4 call sites and v1 records are unaffected).
+    var service: String = ""        // the service this Cell backs (service = app for now)
+    var port: UInt16 = 0            // the Cell's exposed/endpoint port (the manifest container port)
+    var readiness: ProbeSpec = ProbeSpec()  // readiness probe (gates endpoints; never restarts)
+    var liveness: ProbeSpec = ProbeSpec()   // liveness probe (failure ⇒ restart)
+
     func encode(into w: inout ByteWriter) {
         w.blob(Array(cellId.utf8))
         w.blob(Array(node.utf8))
@@ -108,6 +114,12 @@ struct CellSpec: Equatable {
         w.u8(tmpfsScratch ? 1 : 0)
         if let v = volume { w.u8(1); v.encode(into: &w) } else { w.u8(0) }
         w.u8(restartPolicy.rawValue)
+        // SC5 trailing section. A v1 record ends above; this is appended unconditionally so
+        // there is one canonical form, and `decode` tolerates its absence (EOF ⇒ defaults).
+        w.blob(Array(service.utf8))
+        w.u32(UInt32(port))
+        readiness.encode(into: &w)
+        liveness.encode(into: &w)
     }
 
     static func decode(_ r: inout ByteReader) -> CellSpec? {
@@ -127,11 +139,21 @@ struct CellSpec: Equatable {
         var vol: VolumeMount? = nil
         if hasVol == 1 { guard let v = VolumeMount.decode(&r) else { return nil }; vol = v }
         guard let polB = r.u8(), let pol = RestartPolicy(rawValue: polB) else { return nil }
+        // SC5 trailing section: present ⇒ read service/port/readiness/liveness; absent
+        // (a v1 record at EOF) ⇒ keep the defaults. `r.blob()` returns nil at EOF.
+        var service = ""; var port: UInt16 = 0
+        var readiness = ProbeSpec(); var liveness = ProbeSpec()
+        if let svcB = r.blob() {
+            service = String(decoding: svcB, as: UTF8.self)
+            guard let p = r.u32(), let rp = ProbeSpec.decode(&r), let lp = ProbeSpec.decode(&r) else { return nil }
+            port = UInt16(truncatingIfNeeded: p); readiness = rp; liveness = lp
+        }
         return CellSpec(cellId: String(decoding: cidB, as: UTF8.self),
                         node: String(decoding: nodeB, as: UTF8.self),
                         image: img, capabilities: caps, resources: res,
                         namespaceRoot: String(decoding: rootB, as: UTF8.self),
                         args: args, env: env, tmpfsScratch: tmpfsB != 0, volume: vol,
-                        restartPolicy: pol)
+                        restartPolicy: pol, service: service, port: port,
+                        readiness: readiness, liveness: liveness)
     }
 }

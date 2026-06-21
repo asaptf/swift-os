@@ -53,6 +53,32 @@ private func sc3SelfCheck() -> Bool {
     return false
 }
 
+/// Exercise the SC5 probe seam under Embedded Swift: the ProbeSpec byte codec round-trips,
+/// the on-device NetProbe's pure parsers are correct, and the ProbeRunner tracks/untracks.
+/// No network I/O is performed (the real http/tcp path needs real Cells over virtio-net —
+/// gated on C6, like SC3). Returns true on success.
+private func sc5SelfCheck() -> Bool {
+    // ProbeSpec round-trips through the same little-endian codec it rides in CellSpec on.
+    let rp = ProbeSpec(kind: .http, port: 8080, httpPath: "/healthz", periodSeconds: 1,
+                       timeoutSeconds: 1, initialDelaySeconds: 0, successThreshold: 1, failureThreshold: 3)
+    var w = ByteWriter(); rp.encode(into: &w)
+    var r = ByteReader(w.bytes)
+    guard let back = ProbeSpec.decode(&r), back == rp else { return false }
+
+    // The on-device prober's pure parsers: dotted-quad → host-order u32, and HTTP status.
+    guard NetProbe.parseIPv4("10.0.2.15") == 0x0A00_020F else { return false }
+    guard NetProbe.statusIs2xx3xx(Array("HTTP/1.0 200 OK".utf8), count: 15) else { return false }
+    guard !NetProbe.statusIs2xx3xx(Array("HTTP/1.0 503 NO".utf8), count: 15) else { return false }
+
+    // The runner tracks and untracks a Cell (no probe fires — both specs inactive).
+    let runner = ProbeRunner(prober: NetProbe(), clock: ManualClock(0))
+    runner.track(cellId: "selftest", address: "10.0.2.15", readiness: ProbeSpec(),
+                 liveness: ProbeSpec(), startedAt: 0)
+    guard runner.isTracked("selftest") else { return false }
+    runner.untrack("selftest")
+    return !runner.isTracked("selftest")
+}
+
 @_cdecl("main")
 func main(_ argc: Int32,
           _ argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?,
@@ -71,5 +97,8 @@ func main(_ argc: Int32,
 
     guard sc3SelfCheck() else { swiftos_puts("slet: FAIL SC3 cell seam\n"); return 1 }
     swiftos_puts("slet: SC3 reconcile loop + image verifier OK; C6 adapter UNAVAILABLE (stub) — Cell path deferred\n")
+
+    guard sc5SelfCheck() else { swiftos_puts("slet: FAIL SC5 probe seam\n"); return 1 }
+    swiftos_puts("slet: SC5 probe runner + NetProbe OK; live http/tcp probing deferred with C6\n")
     return 0
 }

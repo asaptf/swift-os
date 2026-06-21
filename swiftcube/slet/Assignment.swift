@@ -95,9 +95,18 @@ struct CellStatusRecord: Equatable {
     var startedAtSeconds: UInt64  // when the current generation launched (0 if none)
     var message: String           // human-readable reason (e.g. image rejection)
 
+    // SC5 additions (v2): the service this Cell backs and its reachable endpoint, so the
+    // endpoints loop can group ready Cells into /endpoints/<service> without re-deriving
+    // anything. `address` is whatever slet reports as the Cell's reachable host (SC7 fills
+    // the real node-IP+mapped-port); `service` defaults to the app. v1 records decode with
+    // these empty/zero.
+    var service: String = ""
+    var address: String = ""
+    var port: UInt16 = 0
+
     func encode() -> Bytes {
         var w = ByteWriter()
-        w.u8(1)                  // record version
+        w.u8(2)                  // record version (2: adds service/address/port)
         w.blob(Array(cellId.utf8))
         w.blob(Array(node.utf8))
         Self.encodePhase(phase, into: &w)
@@ -106,19 +115,30 @@ struct CellStatusRecord: Equatable {
         w.blob(imageDigest)
         w.u64(startedAtSeconds)
         w.blob(Array(message.utf8))
+        w.blob(Array(service.utf8))
+        w.blob(Array(address.utf8))
+        w.u32(UInt32(port))
         return w.bytes
     }
 
     static func decode(_ bytes: Bytes) -> CellStatusRecord? {
         var r = ByteReader(bytes)
-        guard let ver = r.u8(), ver == 1, let cidB = r.blob(), let nodeB = r.blob(),
+        guard let ver = r.u8(), ver == 1 || ver == 2, let cidB = r.blob(), let nodeB = r.blob(),
               let phase = decodePhase(&r), let readyB = r.u8(), let rc = r.u32(),
               let dig = r.blob(), let started = r.u64(), let msgB = r.blob() else { return nil }
+        var service = ""; var address = ""; var port: UInt16 = 0
+        if ver >= 2 {
+            guard let svcB = r.blob(), let addrB = r.blob(), let p = r.u32() else { return nil }
+            service = String(decoding: svcB, as: UTF8.self)
+            address = String(decoding: addrB, as: UTF8.self)
+            port = UInt16(truncatingIfNeeded: p)
+        }
         return CellStatusRecord(cellId: String(decoding: cidB, as: UTF8.self),
                                 node: String(decoding: nodeB, as: UTF8.self),
                                 phase: phase, ready: readyB != 0, restartCount: rc,
                                 imageDigest: dig, startedAtSeconds: started,
-                                message: String(decoding: msgB, as: UTF8.self))
+                                message: String(decoding: msgB, as: UTF8.self),
+                                service: service, address: address, port: port)
     }
 
     // Phase wire form: u8 tag (+ i32 exit code for .dead).

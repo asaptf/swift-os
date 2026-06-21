@@ -909,11 +909,18 @@ SC3_SLET_SRCS := \
 	swiftcube/cell/ImageResolver.swift swiftcube/cell/C6Adapter.swift \
 	swiftcube/slet/Assignment.swift swiftcube/slet/StoreClient.swift swiftcube/slet/Reconciler.swift \
 	kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+# SC5: the probe runner (state machine + spec) and the on-device http/tcp prober. These
+# compile into the `slet` ELF too (proving the probe loop is Embedded-Swift-clean); the host
+# FakeProber is test-only and is NOT listed here. NetProbe is the real prober over the SC2
+# socket bridge — exercised on-device once C6 yields real Cells (gate deferred, like SC3).
+SC5_SLET_SRCS := \
+	swiftcube/slet/probes/Probe.swift swiftcube/slet/probes/ProbeRunner.swift \
+	swiftcube/slet/probes/NetProbe.swift
 
 $(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
-$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) -o $@
 
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
@@ -1552,7 +1559,7 @@ cubestore-test: | $(BUILD)/.dir
 # message bus, driving a trivial replicated state machine. The Raft core reuses
 # cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
 # only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
-.PHONY: raft-test store-test control-test slet-test scheduler-test sc2-join-test
+.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test sc2-join-test
 # Seams shared with cubestore (compiled once per test target to avoid duplicate
 # symbols when both cores are linked together).
 CUBESTORE_SEAMS = \
@@ -1627,6 +1634,8 @@ control-test: | $(BUILD)/.dir
 # only the harness uses Foundation. The on-device gate (case 9) is deferred — C6 is not
 # implemented; see swiftcube/cell/C6Adapter.swift.
 SC3_CELL_SRCS = \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/slet/probes/ProbeRunner.swift \
 	swiftcube/cell/CellSpec.swift \
 	swiftcube/cell/CellSupervisor.swift \
 	swiftcube/cell/ImageResolver.swift \
@@ -1655,6 +1664,7 @@ SC4_SCHED_SRCS = \
 	swiftcube/control/Node.swift \
 	swiftcube/control/Lease.swift \
 	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
 	swiftcube/cell/CellSpec.swift \
 	swiftcube/cell/CellSupervisor.swift \
 	swiftcube/slet/Assignment.swift \
@@ -1667,6 +1677,49 @@ scheduler-test: | $(BUILD)/.dir
 		swiftcube/sctld/scheduler/tests/scheduler_test.swift \
 		-o $(BUILD)/scheduler_test
 	$(BUILD)/scheduler_test
+
+# SC5a: the probe runner — readiness/liveness state machine (thresholds, initialDelay,
+# timeout-as-failure) wired into the reconcile loop (readiness→status.ready, liveness→
+# restart). Host acceptance (cases 1–6, 9) drives the reconciler with a FakeProber + the
+# SC3 FakeCellSupervisor and an injected clock — no kernel, no network, no wall clock.
+# Reuses the cubestore core + the SC2 control plane (store client/CAS) + the SC3 Cell seam
+# + the SC5 probe sources + the Ed25519/SHA-256/SHA-512 image-trust primitives. The probe
+# loop is Foundation-free; only the harness uses Foundation. The on-device gate (a Cell
+# becoming ready via an http probe over virtio-net) is deferred — C6 is not implemented.
+# Probe.swift + ProbeRunner.swift come in via $(SC3_CELL_SRCS) (CellSpec references ProbeSpec;
+# Reconciler holds a ProbeRunner), so only the test-only FakeProber is added here — listing
+# the others twice would duplicate symbols.
+SC5_PROBE_SRCS = \
+	swiftcube/slet/probes/FakeProber.swift
+probe-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC5_PROBE_SRCS) \
+		swiftcube/slet/probes/tests/probe_test.swift \
+		-o $(BUILD)/probe_test
+	$(BUILD)/probe_test
+
+# SC5b: the endpoints loop — leader-gated, level-triggered, ready-only. Host acceptance
+# (cases 1/2, 7, 8, 10) drives the loop against an in-process cubestore with synthetic Cell
+# statuses (as slet reports them) and checks the deterministic sorted /endpoints/<service>
+# output, leader-only writes, no-churn convergence, and ready→endpoint add/remove. Reuses
+# the cubestore core + the RAM store + the SC3 status/Cell objects + the SC5 probe spec
+# (CellSpec decode references it) + the SC5 endpoints sources. Only kernel/crypto/sha256 is
+# linked to satisfy the Schema seam transitively. Foundation only in the harness.
+SC5_ENDPOINTS_SRCS = \
+	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/endpoints/EndpointsLoop.swift
+endpoints-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) \
+		$(SC5_ENDPOINTS_SRCS) \
+		swiftcube/sctld/endpoints/tests/endpoints_test.swift \
+		-o $(BUILD)/endpoints_test
+	$(BUILD)/endpoints_test
 
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
