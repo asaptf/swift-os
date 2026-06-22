@@ -20,6 +20,11 @@
 //   7  empty set: zero ready endpoints → connections fast-fail (refused), no hang
 //   8  vIP/port allocation: deterministic + stable per service; leader-only writes (2-controller sim)
 //   9  session affinity: a client's connections stick to one backend within the window
+//  10  explicit spec overrides a synthesized service (operator pins port/selector)
+//  11  reclamation: a no-longer-desired service is deleted, its slot freed and reused, kept
+//      services keep their allocation
+//  12  resolver misses: an unregistered name → nil; a registered name → full ServiceAddr
+//      (incl. clusterIP); a service that disappears resolves to nil again (level-triggered)
 
 import Foundation
 
@@ -120,9 +125,12 @@ final class FakeTransport: ProxyTransport {
         case7_emptyFastFail()
         case8_allocation()
         case9_affinity()
+        case10_explicitOverride()
+        case11_reclamation()
+        case12_resolverMisses()
 
         if failed { FileHandle.standardError.write(Data("proxy-test: FAILED\n".utf8)); exit(1) }
-        print("proxy-test: all SC7 east-west cases (1–9) passed")
+        print("proxy-test: all SC7 east-west cases (1–12) passed")
     }
 
     // MARK: - Fixture
@@ -385,6 +393,75 @@ final class FakeTransport: ProxyTransport {
             served2.insert(String(decoding: resp, as: UTF8.self).split(separator: ":").first.map(String.init) ?? "")
         }
         check(served2.count == 1, "9: a second client key also sticks to one backend")
+    }
+
+    // MARK: - Case 10: explicit spec overrides a synthesized service
+
+    static func case10_explicitOverride() {
+        let f = Fixture()
+        // B has ready endpoints on 8080 (would synthesize servicePort 8080, selector "B")...
+        f.setEndpoints("B", [ep("b0", "10.0.0.1", 8080)])
+        // ...but an operator pins an explicit spec: a different port and selector.
+        _ = f.store.apply([.put(key: ServiceKeys.svcSpec("B"),
+                                value: ServiceSpec(name: "B", selector: "backend", servicePort: 9090).encode())])
+        f.reconcileServices()
+
+        guard let b = svc(f, "B") else { check(false, "10: service B materialized"); return }
+        check(b.servicePort == 9090, "10: explicit spec wins on servicePort (got \(b.servicePort), not the synthesized 8080)")
+        check(b.selector == "backend", "10: explicit spec wins on selector (got \"\(b.selector)\")")
+
+        // Exactly one /services/B is written (the explicit spec did not create a second).
+        var count = 0
+        for e in f.store.prefix(ServiceKeys.servicesPrefix) where ServiceKeys.nameOfServiceKey(e.key) == "B" { count += 1 }
+        check(count == 1, "10: a single materialized service for B (got \(count))")
+    }
+
+    // MARK: - Case 11: reclamation — delete a no-longer-desired service, free + reuse its slot
+
+    static func case11_reclamation() {
+        let f = Fixture()
+        for n in ["alpha", "bravo", "charlie"] {
+            _ = f.store.apply([.put(key: ServiceKeys.svcSpec(n), value: ServiceSpec(name: n, servicePort: 80).encode())])
+        }
+        f.reconcileServices()
+        check(svc(f, "alpha")!.allocIndex == 0 && svc(f, "bravo")!.allocIndex == 1 && svc(f, "charlie")!.allocIndex == 2,
+              "11: initial deterministic allocation 0/1/2")
+
+        // bravo is no longer desired (its spec is removed; it has no endpoints to synthesize from).
+        _ = f.store.apply([.delete(key: ServiceKeys.svcSpec("bravo"))])
+        f.reconcileServices()
+        check(svc(f, "bravo") == nil, "11: a no-longer-desired service is deleted from /services")
+        check(svc(f, "alpha")!.allocIndex == 0 && svc(f, "charlie")!.allocIndex == 2,
+              "11: kept services keep their allocation across the deletion")
+
+        // A new service reuses bravo's freed slot (lowest free), not the next-highest.
+        _ = f.store.apply([.put(key: ServiceKeys.svcSpec("delta"), value: ServiceSpec(name: "delta", servicePort: 80).encode())])
+        f.reconcileServices()
+        guard let delta = svc(f, "delta") else { check(false, "11: delta materialized"); return }
+        check(delta.allocIndex == 1, "11: a new service reuses the freed slot (got index \(delta.allocIndex), expected 1)")
+        check(delta.proxyPort == 30001 && delta.clusterIP == "10.96.0.1", "11: derived port/vIP follow the reused slot")
+        check(svc(f, "alpha")!.allocIndex == 0 && svc(f, "charlie")!.allocIndex == 2, "11: existing services still stable")
+    }
+
+    // MARK: - Case 12: resolver misses + level-triggered disappearance
+
+    static func case12_resolverMisses() {
+        let f = Fixture()
+        let r = f.resolver()
+        check(r.resolve("nope") == nil, "12: an unregistered service resolves to nil")
+
+        // Register an explicit service; resolve returns the full address incl. the recorded vIP.
+        _ = f.store.apply([.put(key: ServiceKeys.svcSpec("api"),
+                                value: ServiceSpec(name: "api", servicePort: 8080).encode())])
+        f.reconcileServices()
+        guard let addr = r.resolve("api") else { check(false, "12: registered service resolves"); return }
+        check(addr.host == "127.0.0.1" && addr.port == 30000, "12: proxy host/port from the allocation")
+        check(addr.servicePort == 8080 && addr.clusterIP == "10.96.0.0", "12: servicePort + recorded clusterIP carried through")
+
+        // Level-triggered: remove the service and it resolves to nil again (no stale cache).
+        _ = f.store.apply([.delete(key: ServiceKeys.svcSpec("api"))])
+        f.reconcileServices()
+        check(r.resolve("api") == nil, "12: a disappeared service resolves to nil (level-triggered)")
     }
 
     // MARK: - helpers
