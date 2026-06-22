@@ -7394,3 +7394,34 @@ no-op. Genuinely open signal items (left for a focused milestone): `kill` of a
 process running on ANOTHER CPU returns EBUSY (no remote teardown), and per-process
 (vs process-global) dispositions. Remaining audit tracks: datafs crash injection,
 SMP atomic contention, driver fault injection.
+
+### V-TS1 — system trust store + verify-by-default for /bin/tlsget (DONE, 2026-06-22)
+
+The X.509 chain/signature verifier (tls13.swift `enableVerification`, x509.swift,
+x509_verify.swift, rsa.swift, p256.swift) already existed and is opt-in. V-TS1
+closes the remaining "MITM-open by default" gap for the general HTTPS client:
+
+  - **System trust store shipped in the base image:** `base/etc/ssl/cert.pem` =
+    the ISRG Root X1 (RSA) + X2 (ECDSA) roots (Let's Encrypt's anchors), extracted
+    from the Mozilla bundle. Committed (~3.4 KB) so the base builds deterministically
+    with no network; it's the trust anchor for our ACME-issued certs and the LE API.
+    A full Mozilla bundle for arbitrary-host HTTPS remains the `ca-certificates`
+    package (follow-up).
+  - **Shared loader** `userland/lib/truststore.swift`: `loadSystemTrustRoots()` /
+    `loadTrustRootsFile()` read a PEM CA file → DER roots (via `pemReadCertificates`).
+  - **/bin/tlsget verifies by default:** loads the system store, requires the
+    server chain to anchor to it, checks the CertificateVerify signature, and
+    requires `host` in the leaf SAN + validity. New flags: `--cafile <pem>` to
+    override the store, `--insecure`/`-k` to opt out (bring-up only).
+
+Acceptance: `make tls-truststore-test` (in `make test`) — host openssl s_server with
+a leaf signed by a test CA (SAN IP:10.0.2.2); guest proves (A) default verify loads
+the 2 ISRG roots and REJECTS the off-store leaf, (B) `--cafile <testCA>` completes
+the handshake, (C) `--insecure` completes. `tls_test.sh` (A4 bring-up) now passes
+`--insecure` since it targets a throwaway self-signed cert.
+
+Deferred follow-ups (V-TS2): make `/bin/acme` and `swupdate os` verify against the
+system store by default (today acme verifies only with explicit `--ca`; the ACME
+mock tests rely on that). SNI is still not sent by the TLS client (tls13.swift) —
+needed for multi-cert/real virtual hosts; single-cert servers (and the tests) work
+without it. Real Let's Encrypt e2e needs a public domain (pairs with the H6 deploy).

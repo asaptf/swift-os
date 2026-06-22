@@ -8,8 +8,8 @@
 #
 # Host server: openssl s_server, TLS 1.3 only, single ciphersuite
 # TLS_CHACHA20_POLY1305_SHA256 (the one suite tls13.swift implements), with a
-# throwaway self-signed cert (/bin/tlsget does NOT verify certificates — cert
-# verification is deliberately deferred; see userland/lib/tls13.swift). `-www`
+# throwaway self-signed cert. This test runs /bin/tlsget with --insecure (cert
+# verification is covered separately by tls_truststore_test.sh). `-www`
 # makes the server answer `GET /` with an HTTP status page, so we can assert on
 # the decrypted body the guest prints.
 #
@@ -138,7 +138,10 @@ require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
 require_await "Welcome to swift-os, root" 40
 require_await "built-in shell (ash)" 60
-send_line "/bin/tlsget 10.0.2.2 $PORT"
+# --insecure: this test exercises the TLS 1.3 record/handshake machinery against a
+# throwaway self-signed cert; certificate verification is covered by
+# tls_truststore_test.sh / tls_verify_test.sh instead.
+send_line "/bin/tlsget --insecure 10.0.2.2 $PORT"
 await "HTTP/1.0 200 ok" 90 || true
 exec 3>&-
 stop_all

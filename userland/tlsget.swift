@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // tlsget.swift — native Swift `/bin/tlsget`: a minimal HTTPS (TLS 1.3) client.
 //
-// Usage: tlsget [ip] [port] [host]
-//   ip    dotted-decimal IPv4 of the server   (default 10.0.2.2 — slirp host)
-//   port  TCP port                             (default 443)
-//   host  Host: header / SNI-less name shown   (default "localhost")
+// Usage: tlsget [--insecure|-k] [--cafile <pem>] [ip] [port] [host]
+//   ip       dotted-decimal IPv4 of the server  (default 10.0.2.2 — slirp host)
+//   port     TCP port                           (default 443)
+//   host     Host: header AND the name the server certificate must match
+//            (default "localhost")
+//   --cafile override the trust store (PEM CA roots; default /etc/ssl/cert.pem)
+//   --insecure / -k  skip certificate verification (development only)
 //
 // It opens a TCP stream (socket → connect, like /bin/tcpget), then drives the
 // sans-IO TLS 1.3 engine in userland/lib/tls13.swift over swiftos_read/write:
@@ -13,15 +16,33 @@
 // The crypto + tls13 sources are compiled INTO this ELF (see the Makefile rule),
 // so the same TLS code is exercised here and by the host tls_handshake_test.
 //
-// ⚠️  NO CERTIFICATE VERIFICATION. tls13.swift accepts ANY server certificate
-//     (chain, signature, name and expiry are all unchecked) — confidentiality
-//     against a passive eavesdropper only, NOT authentication. X.509 verification
-//     is deliberately deferred to a later track; see the tls13.swift header. This
-//     tool exists to bring the TLS 1.3 record/handshake machinery up end-to-end.
+// Certificate verification is ON by default: the server's chain is validated
+// against the system trust store (/etc/ssl/cert.pem), its CertificateVerify
+// signature is checked, and `host` must appear in the leaf SAN and be valid now.
+// Pass --insecure to fall back to the unauthenticated (eavesdropper-only) mode.
 
 private func printUInt(_ v: UInt) {
     if v >= 10 { printUInt(v / 10) }
     swiftos_putc(UInt8(0x30 + (v % 10)))
+}
+
+// Compare a NUL-terminated C string to a literal, byte for byte.
+private func cstrEq(_ p: UnsafePointer<CChar>, _ lit: StaticString) -> Bool {
+    let n = lit.utf8CodeUnitCount
+    var i = 0
+    while i < n {
+        if p[i] == 0 || UInt8(bitPattern: p[i]) != lit.utf8Start[i] { return false }
+        i += 1
+    }
+    return p[i] == 0
+}
+
+// A Swift String from a NUL-terminated C string.
+private func cString(_ p: UnsafePointer<CChar>) -> String {
+    var b = [UInt8]()
+    var i = 0
+    while p[i] != 0 { b.append(UInt8(bitPattern: p[i])); i += 1 }
+    return String(decoding: b, as: UTF8.self)
 }
 
 /// Parse a dotted-decimal IPv4 (e.g. "10.0.2.2") into host order, or nil.
@@ -85,12 +106,27 @@ func main(_ argc: Int32,
 
     var ip: UInt32 = 0x0A00_0202     // 10.0.2.2 (slirp host alias)
     var port: UInt16 = 443
-    if argc >= 2, let a = argv?[1], let parsed = parseIPv4(a) { ip = parsed }
-    if argc >= 3, let a = argv?[2] {
+    var insecure = false
+    var caArg: UnsafePointer<CChar>? = nil
+    var pos: [UnsafePointer<CChar>] = []
+    var ai = 1
+    while ai < Int(argc) {
+        guard let a = argv?[ai] else { ai += 1; continue }
+        let ap = UnsafePointer(a)
+        if cstrEq(ap, "--insecure") || cstrEq(ap, "-k") { insecure = true; ai += 1 }
+        else if cstrEq(ap, "--cafile") {
+            if ai + 1 < Int(argc), let v = argv?[ai + 1] { caArg = UnsafePointer(v) }
+            ai += 2
+        } else { pos.append(ap); ai += 1 }
+    }
+    if pos.count >= 1, let parsed = parseIPv4(pos[0]) { ip = parsed }
+    if pos.count >= 2 {
+        let a = pos[1]
         var v: UInt = 0, i = 0
         while a[i] >= 0x30 && a[i] <= 0x39 { v = v * 10 + UInt(a[i] - 0x30); i += 1 }
         if v > 0 && v <= 65535 { port = UInt16(v) }
     }
+    let hostStr = pos.count >= 3 ? cString(pos[2]) : "localhost"
 
     // ---- TCP connect (active open) ----
     let fd = swiftos_socket_stream()
@@ -102,6 +138,25 @@ func main(_ argc: Int32,
 
     // ---- TLS 1.3 handshake (sans-IO engine driven over the socket) ----
     let client = TLS13Client()
+
+    // Certificate verification (on by default). Validate the server chain against
+    // the system trust store (or --cafile) and require `host` in the leaf SAN.
+    if insecure {
+        swiftos_puts("tlsget: WARNING insecure mode — server certificate NOT verified\n")
+    } else {
+        let roots = caArg != nil ? loadTrustRootsFile(caArg!) : loadSystemTrustRoots()
+        if roots.isEmpty {
+            swiftos_puts("tlsget: no trust roots (use --insecure to skip verification)\n")
+            _ = swiftos_close(fd); return 1
+        }
+        client.enableVerification(rootsDER: roots,
+                                  hostname: hostStr,
+                                  now: unixToYYYYMMDDHHMMSS(UInt64(swiftos_time())))
+        swiftos_puts("tlsget: verifying against ")
+        printUInt(UInt(roots.count))
+        swiftos_puts(" trust root(s)\n")
+    }
+
     var sk = [UInt8](repeating: 0, count: 32)
     var ch = [UInt8](repeating: 0, count: 32)
     sk.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
@@ -174,11 +229,7 @@ func main(_ argc: Int32,
     // Minimal request; Connection: close lets the server end the body with EOF.
     var req = [UInt8]()
     req.append(contentsOf: Array("GET / HTTP/1.1\r\nHost: ".utf8))
-    if argc >= 4, let h = argv?[3] {
-        var i = 0; while h[i] != 0 { req.append(UInt8(bitPattern: h[i])); i += 1 }
-    } else {
-        req.append(contentsOf: Array("localhost".utf8))
-    }
+    req.append(contentsOf: Array(hostStr.utf8))
     req.append(contentsOf: Array("\r\nConnection: close\r\n\r\n".utf8))
     req.withUnsafeBytes { client.sendAppData($0.baseAddress!, $0.count) }
     if !flushOut() { swiftos_puts("tlsget: write failed\n"); _ = swiftos_close(fd); return 1 }
