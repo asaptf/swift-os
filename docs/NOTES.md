@@ -7425,3 +7425,33 @@ system store by default (today acme verifies only with explicit `--ca`; the ACME
 mock tests rely on that). SNI is still not sent by the TLS client (tls13.swift) —
 needed for multi-cert/real virtual hosts; single-cert servers (and the tests) work
 without it. Real Let's Encrypt e2e needs a public domain (pairs with the H6 deploy).
+
+### V-TS2 — SNI + verify-by-default for /bin/acme (DONE, 2026-06-22)
+
+Extends V-TS1's "verify by default" from tlsget to the ACME client, and teaches the
+TLS client to send SNI.
+
+  - **SNI (RFC 6066) in tls13.swift:** the ClientHello now carries a server_name
+    extension built from `expectHostname` (set by `enableVerification`), but ONLY
+    for a real DNS name — a bare IP literal is skipped (RFC 6066 forbids IP SNI,
+    and all the IP-based tests stay byte-identical, so no regression). Real virtual-
+    hosted servers (incl. the Let's Encrypt API) now get the right certificate.
+    Smoke-covered host-side by `tls_verify_test.sh` (its driver connects with a DNS
+    hostname, so SNI is now on the wire); a dedicated QEMU SNI e2e needs a DNS-named
+    TLS server (deferred).
+  - **/bin/acme verifies by default:** without `--ca` it loads the system trust
+    store (/etc/ssl/cert.pem); `--ca <file>` overrides the roots; new `--insecure`
+    disables it (mock/bring-up only). The ACME server's TLS identity is the real
+    integrity anchor for the directory/nonce/challenge flow, so this matters for
+    real LE.
+
+Tests: `acme_verify_test.sh` gains a third case — default (no flag) verification
+against the system store REJECTS the self-signed mock (a 2nd "FAIL directory"),
+proving verify-on-by-default. `acme_mock_test.sh` and `acme_persist_test.sh` (which
+target the self-signed mock) now pass `--insecure`. All of acme-verify/mock/persist,
+tls-truststore, tls-test, tls-verify PASS.
+
+Deferred (V-TS3): make `swupdate os`/site HTTPS fetch verify by default — it's
+defense-in-depth (SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS) and
+touches os-update/site-update/site-bundle tests, so it's its own step. Real Let's
+Encrypt e2e still needs a public domain (pairs with H6).

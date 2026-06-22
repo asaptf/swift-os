@@ -421,6 +421,16 @@ final class TLS13Client {
 
     // MARK: ClientHello
 
+    // A SNI host_name must be a DNS name, not an IP literal (RFC 6066 §3). Bare
+    // IPv4/IPv6 connect targets (used by the tests) have no ASCII letter; treat
+    // anything containing a letter as a DNS name worth sending.
+    private func hostnameIsDNSName(_ s: String) -> Bool {
+        for b in s.utf8 {
+            if (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A) { return true }
+        }
+        return false
+    }
+
     private func emitClientHello(randomCH: UnsafeRawPointer) {
         // Build the ClientHello body, then wrap it in a handshake header and a
         // plaintext record. Extensions: supported_versions(TLS1.3),
@@ -454,6 +464,19 @@ final class TLS13Client {
         // key_share (51): one entry: group x25519, our 32-byte public key.
         e16(51); e16(2 + 2 + 2 + 32); e16(2 + 2 + 32); e16(0x001d); e16(32)
         for b in ephPublic { ext.append(b) }
+
+        // server_name (0, RFC 6066): send SNI for a real DNS hostname (not a bare
+        // IP literal, which RFC 6066 forbids) when verifying, so a virtual-hosted
+        // server returns the certificate for `expectHostname`.
+        if verifyEnabled && hostnameIsDNSName(expectHostname) {
+            let h = Array(expectHostname.utf8)
+            e16(0)                    // extension_type = server_name
+            e16(2 + 1 + 2 + h.count)  // extension_data length
+            e16(1 + 2 + h.count)      // ServerNameList length
+            e8(0)                     // NameType = host_name
+            e16(h.count)              // HostName length
+            for b in h { ext.append(b) }
+        }
 
         u16(ext.count)
         ch.append(contentsOf: ext)
