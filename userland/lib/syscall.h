@@ -108,6 +108,9 @@
 #define SYS_NAME_REGISTER       99
 #define SYS_NAME_LOOKUP         100
 #define SYS_DEVICE_MMAP         101
+#define SYS_SHMRING_CREATE      102
+#define SYS_SHMRING_MAP         103
+#define SYS_SHMRING_CLOSE       104
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -340,6 +343,22 @@ static inline long ipc_reply_recv(int fd, unsigned long reply_port,
     m.out_reply_port = (unsigned long)out_reply_port;
     m.reply_handle_fd = reply_handle_fd;
     return __syscall3(SYS_IPC_REPLY_RECV, fd, (long)&m, 0);
+}
+
+// LA3 shared-memory ring (data-plane IPC). shmring_create reserves a full-duplex
+// channel of `pages` contiguous pages (even, 2..8) and returns its id (needs the
+// net capability); shmring_map maps a channel's pages read/write into the caller
+// and returns the base VA (or a negative errno); shmring_close drops the
+// creator's base reference. Records cross via the mapped pages with no syscall in
+// the reserve/commit/peek/release path — see kernel/ipc/shmring.swift.
+static inline long shmring_create(unsigned long pages) {
+    return __syscall3(SYS_SHMRING_CREATE, (long)pages, 0, 0);
+}
+static inline long shmring_map(int id) {
+    return __syscall3(SYS_SHMRING_MAP, id, 0, 0);
+}
+static inline int shmring_close(int id) {
+    return (int)__syscall3(SYS_SHMRING_CLOSE, id, 0, 0);
 }
 
 static inline long lseek(int fd, long offset, int whence) {

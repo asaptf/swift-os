@@ -341,8 +341,18 @@ int swiftos_mprotect(unsigned long addr, unsigned long len, int prot);
 // succeeded iff that equals `expected`. Used to build a futex mutex in Swift.
 unsigned int swiftos_atomic_cas(unsigned int *p, unsigned int expected, unsigned int desired);
 unsigned int swiftos_atomic_swap(unsigned int *p, unsigned int desired);
-// Atomic load / fetch-add on a 32-bit word.
+// Atomic load / store / fetch-add on a 32-bit word (SEQ_CST). The shared-memory
+// ring (kernel/ipc/shmring.swift, built -D SHMRING_USER) uses load/store to
+// publish and consume its cursors with acquire/release ordering across processes.
 unsigned int swiftos_atomic_load(unsigned int *p);
+void         swiftos_atomic_store(unsigned int *p, unsigned int v);
 unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta);
+
+// LA3 shared-memory ring. create returns a channel id (needs CAP_NET); map
+// returns the base VA of the channel's pages mapped into this process (0 / a
+// small negative on failure); close drops the creator's base reference.
+long swiftos_shmring_create(unsigned long pages);
+long swiftos_shmring_map(int id);
+int  swiftos_shmring_close(int id);
 
 #endif // SWIFTOS_USER_SWIFT_USER_H

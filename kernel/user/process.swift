@@ -2350,6 +2350,10 @@ private func reapProcess(_ slot: Int) {
         address_space_destroy(pTtbr0[slot])
         pTtbr0[slot] = 0
     }
+    // LA3: drop the base references of any shared-memory ring channels this
+    // process created. address_space_destroy above already dropped this slot's
+    // per-mapping references, so frames now free unless a peer still maps them.
+    shmRingReapOwner(slot)
     clearSignalFrameState(slot)
     processSignalClearAllPending(slot)
     if pKstack[slot] != 0 {
@@ -3802,6 +3806,50 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     let base = pMmapTop[me] - bytes
     if !fileVmaAdd(me, base, pages, diskImage, UInt(diskOff), mapLen, prot) { return err(-12) }
     pMmapTop[me] = base
+    return base
+}
+
+/// LA3: map `pages` physically-contiguous, channel-owned frames starting at
+/// `basePA` read/write into the CURRENT process's descending mmap arena. Each
+/// frame's PMM reference count is bumped first, so process teardown
+/// (address_space_destroy / munmap -> releaseUserFrame -> pmm_frame_release) only
+/// DROPS a reference; the shmring channel table holds the base reference and
+/// frees the frames itself (kernel/ipc/shmring_chan.swift). Returns the base user
+/// VA, or a negative errno encoded in the UInt.
+///
+/// A process that maps a ring and THEN forks does not share it with the child:
+/// addressSpaceClone COW-marks writable leaves, so the child gets a private copy
+/// on first write. Each process maps the channel by id independently — the
+/// create-then-map-by-id model the syscall ABI is built around.
+func processMapSharedFrames(_ basePA: UInt, _ pages: UInt) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) }       // EINVAL
+    if pages == 0 { return err(-22) }
+    let bytes = pages * PageAllocator.pageSize
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) }  // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+    let activeMask = processAddressSpaceActiveCpuMaskForSlot(me)
+    var i: UInt = 0
+    while i < pages {
+        let va = base + i * PageAllocator.pageSize
+        let pa = basePA + i * PageAllocator.pageSize
+        pmmFrameRef(pa)   // this process now shares the channel-owned frame
+        if addressSpaceMapForActiveCpuMask(pTtbr0[me], va, pa,
+                                           Int32(VM_PERM_USER_DATA), activeMask) != 0 {
+            pmmFrameRelease(pa)   // undo the ref for the page we failed to link
+            if i > 0 {
+                // Roll back the pages already linked: munmap drops each frame's
+                // ref (the table's base ref persists), so nothing is freed early.
+                _ = addressSpaceMunmapForActiveCpuMask(pTtbr0[me], base, i, activeMask)
+                pResPages[me] -= Int(i)
+            }
+            return err(-12)
+        }
+        i += 1
+    }
+    pMmapTop[me] = base
+    pResPages[me] += Int(pages)
     return base
 }
 

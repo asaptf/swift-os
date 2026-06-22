@@ -102,6 +102,9 @@ private let sysSpawnHandlesAsync: UInt = 98 // spawn_handles_async(path, argv, s
 private let sysNameRegister: UInt = 99     // name_register(name, endpoint_fd) — publish a recv-end endpoint under a name (LA1); needs capConsole
 private let sysNameLookup: UInt = 100      // name_lookup(name) → fresh send-end fd — capability grant-by-lookup (LA1)
 private let sysDeviceMmap: UInt = 101      // device_mmap(fd, len) -> base VA — map a claimed device's MMIO window, gated on the grant's .map right (LA2)
+private let sysShmRingCreate: UInt = 102   // shmring_create(pages) → channel id — shared-memory SPSC ring (LA3); needs capNet
+private let sysShmRingMap: UInt = 103      // shmring_map(id) → base user VA (or negative errno) — map a channel's pages (LA3)
+private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the creator's base reference to a channel (LA3)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -391,6 +394,22 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         // that error range to MAP_FAILED.
         frame[0] = processDeviceMmap(Int(bitPattern: frame[0]), frame[1])
         return // result is an address, not an errno
+    } else if number == sysShmRingCreate {
+        // LA3: gate on capNet — the shared-memory ring is the net-service data
+        // path's prerequisite (and reusable by the Node/AI data planes, which run
+        // with the net capability). Bad pages args are rejected inside.
+        if (processCurrentCaps() & capNet) == 0 {
+            result = Errno.perm.code
+        } else {
+            result = shmRingChannelCreate(pages: frame[0])
+        }
+    } else if number == sysShmRingMap {
+        // Returns a base VA on success or a negative errno encoded in the UInt,
+        // exactly like mmap; the userland bridge maps that to a failure.
+        frame[0] = shmRingChannelMap(id: Int(bitPattern: frame[0]))
+        return
+    } else if number == sysShmRingClose {
+        result = shmRingChannelClose(id: Int(bitPattern: frame[0]))
     } else {
         result = Errno.noSys.code
     }
