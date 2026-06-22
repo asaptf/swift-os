@@ -7455,3 +7455,30 @@ Deferred (V-TS3): make `swupdate os`/site HTTPS fetch verify by default — it's
 defense-in-depth (SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS) and
 touches os-update/site-update/site-bundle tests, so it's its own step. Real Let's
 Encrypt e2e still needs a public domain (pairs with H6).
+
+### V-TS3 — verify-by-default for swupdate HTTPS (DONE, 2026-06-22)
+
+Completes "verify by default everywhere": after tlsget (V-TS1) and acme (V-TS2),
+`/bin/swupdate`'s HTTPS fetch (`os <url>` SWSYS and `site <url>` SWSITE) now verifies
+the server certificate against the system trust store (/etc/ssl/cert.pem) too.
+
+  - `httpsGet` calls `enableVerification` (system roots + the URL host + now) unless
+    a global `--insecure` arg is present (parsed once in main). This is defense-in-
+    depth: the SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS, so the
+    integrity guarantee does not depend on it — but a hostile mirror can no longer
+    feed bytes over an unauthenticated channel.
+  - Makefile: `userland/lib/asn1.swift` + `userland/lib/truststore.swift` added to
+    `SWUPDATE_SWIFT_SRCS` for the trust-store loader.
+
+Tests: `os_update_test.sh` and `site_update_test.sh` target self-signed mock servers,
+so their `swupdate os/site` invocations now pass `--insecure` (the SWSYS/SWSITE
+signature checks are what those tests exercise). PASS: os-update, site-update,
+site-bundle (apply-local, unaffected). The verify-on default path shares the exact
+`enableVerification` call covered by tls-truststore/acme-verify, so it is covered by
+construction (a swupdate-specific TLS-reject test would need an in-store cert, which
+is impossible offline — deferred with the real-LE e2e).
+
+With V-TS1–V-TS3, every outbound TLS client (tlsget, acme, swupdate) authenticates
+the server against the system trust store by default. Remaining: real Let's Encrypt
+e2e (public domain, pairs with H6); a dedicated QEMU SNI e2e (needs a DNS-named TLS
+server — SNI is currently covered host-side by tls-verify + by construction).

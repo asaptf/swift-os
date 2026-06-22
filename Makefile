@@ -957,7 +957,7 @@ $(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_S
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
 # already includes sha256, so add only ed25519+sha512 on top of it. (Defined here,
 # after TLS_SWIFT_SRCS, so the prerequisite list expands non-empty.)
-SWUPDATE_SWIFT_SRCS := $(TLS_SWIFT_SRCS) kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swsite.swift userland/lib/sysbundle.swift
+SWUPDATE_SWIFT_SRCS := $(TLS_SWIFT_SRCS) kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swsite.swift userland/lib/sysbundle.swift userland/lib/asn1.swift userland/lib/truststore.swift
 $(BUILD)/user_swupdate.o: userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) -o $@
 
