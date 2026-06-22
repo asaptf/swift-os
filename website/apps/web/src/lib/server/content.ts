@@ -6,7 +6,8 @@ import {
 	defaultQuickstart,
 	defaultGlossary,
 	defaultArticles,
-	defaultFaqs
+	defaultFaqs,
+	defaultSwiftcube
 } from '$lib/content/defaults';
 import type {
 	Home,
@@ -17,7 +18,8 @@ import type {
 	Article,
 	Capability,
 	RoadmapItem,
-	Faq
+	Faq,
+	SwiftcubePage
 } from '$lib/content/types';
 
 type Fetch = typeof fetch;
@@ -110,4 +112,21 @@ export async function getArticle(slug: string, fetchFn: Fetch): Promise<Article 
 export async function getFaqs(fetchFn: Fetch): Promise<Faq[]> {
 	const faqs = await getCollection<Faq>('faqs', fetchFn, { sort: 'order:asc' });
 	return has(faqs) ? (faqs as Faq[]) : defaultFaqs;
+}
+
+export async function getSwiftcube(fetchFn: Fetch): Promise<SwiftcubePage> {
+	const data = await getSingle<Partial<SwiftcubePage>>('swiftcube-page', fetchFn);
+	if (!data) return defaultSwiftcube;
+	return {
+		...defaultSwiftcube,
+		...data,
+		badges: has(data.badges) ? (data.badges as SwiftcubePage['badges']) : defaultSwiftcube.badges,
+		cellParts: has(data.cellParts) ? (data.cellParts as SwiftcubePage['cellParts']) : defaultSwiftcube.cellParts,
+		removed: has(data.removed) ? (data.removed as string[]) : defaultSwiftcube.removed,
+		lifecycle: has(data.lifecycle) ? (data.lifecycle as string[]) : defaultSwiftcube.lifecycle,
+		differentiators: has(data.differentiators) ? (data.differentiators as SwiftcubePage['differentiators']) : defaultSwiftcube.differentiators,
+		components: has(data.components) ? (data.components as SwiftcubePage['components']) : defaultSwiftcube.components,
+		features: has(data.features) ? (data.features as SwiftcubePage['features']) : defaultSwiftcube.features,
+		milestones: has(data.milestones) ? (data.milestones as SwiftcubePage['milestones']) : defaultSwiftcube.milestones
+	};
 }

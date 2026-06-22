@@ -9,6 +9,7 @@
 		{ href: '/quickstart', label: 'Quickstart' },
 		{ href: '/docs', label: 'Docs' },
 		{ href: '/architecture', label: 'Architecture' },
+		{ href: '/swiftcube', label: 'SwiftCube' },
 		{ href: '/design', label: 'Design' }
 	];
 
