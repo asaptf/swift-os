@@ -2970,6 +2970,7 @@ W int utimes(const char *p, const struct timeval tv[2]) { (void)p; (void)tv; ret
 W int utime(const char *p, const struct utimbuf *t) { (void)p; (void)t; return 0; }
 W int creat(const char *p, mode_t m) { return open(p, O_WRONLY | O_CREAT | O_TRUNC, m); }
 W int sched_yield(void) { return 0; }  // single EL0 CPU: cooperative, no-op yield
+W pid_t getsid(pid_t p) { (void)p; return 0; }  // no sessions yet
 W mode_t umask(mode_t m) { (void)m; return 0; }
 W FILE *popen(const char *cmd, const char *mode) {
     (void)cmd; (void)mode; errno = ENOSYS; return 0;
