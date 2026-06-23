@@ -81,7 +81,7 @@ await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 # Launch zsh; --no-rcs skips all startup files (none exist anyway).
 send_line '/bin/zsh --no-rcs'
@@ -105,7 +105,7 @@ await 'SH2_FUNC_OK' 15 || drive_fail "function definition/call failed"
 
 # 5. Exit.
 send_line 'exit'
-await 'built-in shell (ash)' 30 || await 'swift-os login:' 20 || true
+await 'M12c: shell ready' 30 || await 'swift-os login:' 20 || true
 send_line 'exit'
 await 'M12c: session ended' 30 || true
 

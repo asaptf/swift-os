@@ -137,7 +137,7 @@ require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
 require_await "Welcome to swift-os, root" 40
-require_await "built-in shell (ash)" 60
+require_await "M12c: shell ready" 60
 # --insecure: this test exercises the TLS 1.3 record/handshake machinery against a
 # throwaway self-signed cert; certificate verification is covered by
 # tls_truststore_test.sh / tls_verify_test.sh instead.

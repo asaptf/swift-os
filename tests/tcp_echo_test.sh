@@ -109,7 +109,7 @@ send_line 'root'
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-await "built-in shell (ash)" 60 || drive_fail "root shell did not start"
+await "M12c: shell ready" 60 || drive_fail "root shell did not start"
 send_line '/bin/tcpecho'
 
 # Wait for the guest to listen, then connect + send a line from the host.

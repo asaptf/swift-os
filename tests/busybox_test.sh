@@ -113,7 +113,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
-await "built-in shell (ash)" 30 || drive_fail "busybox ash did not start"
+await "M12c: shell ready" 30 || drive_fail "busybox ash did not start"
 send_line 'echo M8-BUSYBOX-OK'
 await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"
 send_line 'ls /'
@@ -133,7 +133,7 @@ QP=""
 
 ok=1
 clean="$(sed 's/\r//' "$LOG")"
-grep -qF "built-in shell (ash)" <<<"$clean" || { echo "FAIL: no busybox ash banner" >&2; ok=0; }
+grep -qF "M12c: shell ready" <<<"$clean" || { echo "FAIL: no busybox ash banner" >&2; ok=0; }
 grep -qF "M8-BUSYBOX-OK" <<<"$clean"        || { echo "FAIL: echo applet" >&2; ok=0; }
 grep -qF "readme.txt" <<<"$clean"           || { echo "FAIL: ls applet (dir listing)" >&2; ok=0; }
 grep -qF "Welcome to swift-os." <<<"$clean" || { echo "FAIL: cat applet" >&2; ok=0; }
