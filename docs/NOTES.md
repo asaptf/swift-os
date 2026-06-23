@@ -3,6 +3,195 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## SH2 zsh port (2026-06-23)
+
+Cross-build **zsh 5.9** for swift-os: static AArch64 binary with built-in ZLE
+(line editor, history, tab-completion), arrays, extended parameter expansion,
+functions, arithmetic. `zsh.elf` → `/bin/zsh`.
+
+- **Build:** `make zsh` → `scripts/build-zsh.sh`. Same swiftos-cc CC-wrapper
+  pattern as SH1. Link flags include `-lncurses` for ZLE terminal operations.
+  `zsh_cv_*` variables override cross-compile probes.
+- **Configure flags:** `--disable-dynamic --disable-multibyte --disable-pcre
+  --disable-cap --disable-gdbm --with-term-lib=ncurses --with-fndir=no
+  --with-site-fndir=no`. `--disable-multibyte` avoids wide-char conversion that
+  newlib's bare-metal libc may not fully support. `--disable-dynamic` compiles
+  all modules statically into the binary (no dlopen needed).
+- **Post-configure module trim:** `config.modules` entries for
+  `zsh/net/socket`, `zsh/net/tcp`, `zsh/langinfo`, `zsh/system` are forced to
+  `link=no load=no` — these use syscalls beyond what our stubs fully implement.
+- **Source patch** (`Src/main.c`): `setenv("TERM","vt100",0)`,
+  `setenv("HOME","/tmp",0)`, `setenv("ZDOTDIR","/tmp",0)` inserted before
+  `return zsh_main(argc, argv)` — same bare-env pattern as SH1/MC1.
+- **compat additions:**
+  - `userland/compat/stubs.c`: added weak `getlogin()` (returns "root") and
+    `getlogin_r()` — zsh uses these for `$LOGNAME`/`$USER`.
+- **Job control:** compiled in (no `--disable-job-control` flag in zsh), but
+  effectively limited: `setpgid`/`tcsetpgrp` are no-op stubs and `SIGTSTP` is
+  not delivered by the kernel. `Ctrl-Z` does nothing. Follow-up: same kernel
+  signal work that unblocks bash job control.
+- **Test:** `make zsh-test` → `tests/zsh_test.sh`. Boots, runs
+  `/bin/zsh --no-rcs`, asserts: `$ZSH_VERSION` (SH2_VER=5.9), array length
+  (SH2_ARR=3), arithmetic (SH2_ARITH=42), function call (SH2_FUNC_OK).
+
+## SH1 bash port (2026-06-23)
+
+Cross-build **GNU bash 5.2.37** for swift-os: static AArch64 binary with bundled
+readline + ncurses for interactive line-editing, history, and tab-completion.
+`bash.elf` → `/bin/bash`.
+
+- **Build:** `make bash` → `scripts/build-bash.sh`. CC-wrapper pattern (same as
+  build-mc.sh). Link flags: `--start-group -lc -lm -lgcc -lncurses --end-group`.
+  `bash_cv_*` variables override all `AC_TRY_RUN` configure probes that cannot
+  execute on the host when cross-compiling.
+- **Configure flags:** `--with-included-readline --with-curses --without-job-control
+  --without-bash-malloc --disable-nls --without-gdbm`. Job control is disabled
+  because the kernel lacks `setpgid`/`tcsetpgrp`/SIGTSTP delivery (C-arc + signal
+  follow-up work). All other interactive features work.
+- **Source patch** (`shell.c main()`): `setenv("TERM","vt100",0)` +
+  `setenv("HOME","/tmp",0)` + default `PS1` at the top of `main()` — baked
+  binaries run with an empty environment; without `TERM` readline aborts; without
+  `HOME` bash cannot write history. Same pattern as MC1.
+- **compat additions:**
+  - `userland/compat/signal.h`: added `SIGCONT`(18), `SIGTSTP`(20), `SIGTTIN`(21),
+    `SIGTTOU`(22), `SIGWINCH`(28), `NSIG`(64), `SIGRTMIN`/`SIGRTMAX` — these POSIX
+    signals are absent from bare-metal newlib but bash and readline reference them.
+  - `userland/compat/stubs.c`: added weak `times()` (zero struct tms; for bash's
+    `time` builtin) and weak `confstr()` (EINVAL; bash probes `_CS_PATH`).
+- **Test:** `make bash-test` → `tests/bash_test.sh`. Boots, logs in, runs
+  `/bin/bash --norc --noprofile`, asserts: `$BASH_VERSION` (SH1_VER=5.2), arithmetic
+  expansion (SH1_ARITH=42), for-loop (SH1_LOOP_A/B/C), pipeline (SH1_PIPE_OK).
+- **Job control (follow-up):** `Ctrl-Z`/`fg`/`bg` need kernel `setpgid`, `setsid`,
+  `tcsetpgrp`, SIGTSTP/SIGCONT delivery — tracked as part of the signal-completion
+  work in the roadmap. Stubs for these functions already exist in stubs.c and return
+  success/0, so bash starts without errors even now.
+
+## MC1 Midnight Commander port (2026-06-23)
+
+Final step of the arc: cross-build **GNU Midnight Commander 4.8.31** against the
+NC1 ncurses + GL1 glib in the sysroot, and prove the TUI renders on the serial
+console. `mc.elf` is a 1.5 MB static AArch64 binary → `/bin/mc`.
+
+- **Build:** `make mc` → `scripts/build-mc.sh`. Uses a `swiftos-cc` CC-wrapper
+  (like build-nginx.sh) that appends the freestanding crt0/stubs + `-lc -lm -lgcc
+  -lz` group on every link — MC's autoconf macros rewrite `LIBS` on link probes
+  and otherwise drop libc. pkg-config is faked to answer only for glib so optional
+  deps (ext2fs etc.) auto-disable. Lean configure: `--with-screen=ncurses
+  --without-x --without-subshell --without-gpm-mouse --disable-vfs --disable-nls
+  --disable-charset --without-internal-edit --disable-background --disable-tests`.
+- **Test:** `make mc-test` → `tests/mc_test.sh` (also in `make test`). Boots,
+  runs `/bin/mc`, asserts MC drew its ncurses UI (the boxed startup notice /
+  menu), dismisses it, then quits via MC's ESC-then-`0` (= F10). PASS.
+- **Source patches** (applied by build-mc.sh, documented):
+  1. `lib/tty/tty-ncurses.h` force-`#define ENABLE_SHADOWS 1` → disabled: dialog
+     drop-shadows call ncurses *widechar* (`cchar_t`/`getcchar`/`mvadd_wchnstr`)
+     which our 8-bit NC1 ncurses lacks. Shadows are cosmetic.
+  2. `src/main.c`: default `TERM=vt100` and `HOME=/tmp` at the top of `main()` —
+     baked binaries inherit an empty environment, so without these MC aborts on
+     "TERM unset" and then "Cannot create /.config/mc directory". `/tmp` is the
+     writable tmpfs (kernel/vfs/vfs.swift), so `~/.config/mc` lands there.
+- **compat additions** (also needed at link/compile): `mntent.h` gained `MOUNTED`
+  + MNTTYPE/MNTOPT names (gnulib mountlist one-arg-getmntent path; stubs already
+  report an empty mount list); new `sys/vfs.h` forwarding to `sys/statfs.h` (MC
+  fsusage includes `<sys/vfs.h>` for `struct statfs`); `getsid()` stub in stubs.c.
+- **No skin file shipped.** MC uses its compiled-in default skin (one-time
+  "Default skin has been loaded" notice). Shipping `misc/skins/default.ini`
+  instead makes MC's skin parser **segfault** (NULL deref, FAR_EL1=0) on a
+  monochrome terminal — a real MC-on-mono bug; the built-in skin is the working
+  path. Filesystem free-space (statfs) and mount list are empty stubs.
+- **Carry-over for real use:** colors (mono vt100 only), the skin-parser crash,
+  and a system-wide `TERM`/`HOME` at the login-exec path (vs. the per-binary
+  defaults patched in here) are follow-ups, not blockers for the TUI proof.
+
+## GL1 GLib port (2026-06-23)
+
+Second step of the Midnight Commander arc (MC requires GLib). Cross-build static
+**GLib 2.56.4 core** for swift-os and prove it boots.
+
+- **Build:** `make glib` → `scripts/build-glib.sh` (autotools cross-build, glib-core
+  only — no gobject/libffi, no gio library, no gmodule). Installs
+  `sysroot/aarch64-elf/lib/libglib-2.0.a` + `include/glib-2.0/...` +
+  `lib/glib-2.0/include/glibconfig.h`, and builds `build/glibdemo.elf` → `/bin/glibdemo`.
+- **Test:** `make glib-test` → `tests/glib_test.sh` (also in `make test`). Boots
+  base.img, runs `/bin/glibdemo`. PASS:
+  `GLIBDEMO-OK str="hello swift-os" list=3 map=value array_sum=10 utf8=1 mono=yes glib=2.56.4`
+  (GString/GList/GHashTable/GArray/g_utf8_validate/**g_get_monotonic_time**).
+- **Why 2.56.4:** last clean autotools series (2.58 last with autotools, 2.60+ meson-only).
+  Cross-compiling meson to bare-metal newlib is far harder.
+- **No pkg-config on host:** `PKG_CHECK_MODULES` bypassed by exporting `ZLIB_CFLAGS/LIBS`
+  and `LIBFFI_CFLAGS/LIBS` directly (`PKG_CONFIG=true`). libffi is never linked (gobject
+  not built). zlib consumed from `build/zlib-root` (run `scripts/build-zlib.sh` first).
+- **newlib/compat gaps filled (all in `userland/compat`, weak in stubs.c):**
+  - `iconv`/`iconv_open`/`iconv_close` — minimal charset conversion (UTF-8 identity +
+    Latin1↔UTF-8; passthrough otherwise). newlib's iconv is not built in.
+  - gettext family (`gettext`/`dgettext`/`ngettext`/`textdomain`/`bindtextdomain`/…) —
+    passthrough no-ops + new `libintl.h`. GLib 2.56 has no `--disable-nls`.
+  - `nl_langinfo(CODESET)` → "UTF-8" (so GLib treats text as UTF-8).
+  - DNS resolver stubs `res_query`/`res_search`/`res_init`/`dn_expand` + new `resolv.h`
+    and `arpa/nameser.h` (gio configure probes them; unused at runtime).
+  - `creat`, `sched_yield`, `utime` (+ new `utime.h`).
+  - `MSG_OOB`/`MSG_DONTROUTE` added to `compat/sys/socket.h` (GLib reads MSG_* values).
+- **Cross-build gotchas (carry-over for any GLib-era port):**
+  - GCC 16 defaults to **C23** where `bool` is a keyword → GLib 2.56's `bool` identifier
+    breaks. Build with `-std=gnu11`.
+  - newlib gates `pthread_rwlock_t`/`pthread_barrier_t` types behind feature macros →
+    pass `-D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
+    -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS` (mirrors what
+    `compat/pthread.h` does, but needed on the command line because glib headers pull
+    `<sys/types.h>` → `_pthreadtypes.h` before the `compat/pthread.h` wrapper runs).
+  - newlib omits `SSIZE_MAX` → `-DSSIZE_MAX=__LONG_MAX__` (giochannel needs it).
+  - libtool rejects building the convenience `.la` libs with raw `crt0/sys/stubs.o` in
+    LDFLAGS → `make` uses a libtool-friendly `LDFLAGS="-static -L… -L…"`; the runtime
+    objects are only for the final demo link and configure's link probes.
+  - configure cross run-test cache vars seeded (`glib_cv_*`, `gt_cv_func_gnugettext*_libc=yes`).
+- **Carry-over for MC1:** MC links `glib-2.0` only (gmodule X11/aspell-gated, off). MC core
+  is now the easiest remaining piece.
+
+## NC1 ncurses port (2026-06-22)
+
+First step of the Midnight Commander arc: cross-build a static **ncurses 6.5**
+(`20240427`) for swift-os and prove the curses stack on the serial console.
+
+- **Build:** `make ncurses` → `scripts/build-ncurses.sh` (autotools cross-build,
+  modeled on `build-pcre2.sh`; busybox-style direct tarball download, no swport
+  package — NC1 only needs a baked binary + a sysroot dev lib). Installs
+  `sysroot/aarch64-elf/lib/libncurses.a` + `include/{curses.h,ncurses.h,term.h,…}`
+  for MC later, and builds `build/ncdemo.elf` → `/bin/ncdemo`.
+- **Test:** `make ncurses-test` → `tests/ncurses_test.sh` (also in `make test`).
+  Boots base.img, runs `/bin/ncdemo`; asserts `NCDEMO-START` and
+  `NCDEMO-OK rows=24 cols=80` (markers printed after `endwin()` so the harness
+  never parses escape sequences). PASS.
+- **No terminfo DB on disk:** entries are baked into `libncurses.a` via
+  `--with-fallbacks=vt100,ansi,linux,xterm,dumb`. `setupterm` resolves them with
+  zero filesystem access (`--disable-db-install --disable-home-terminfo`).
+- **Host tic/infocmp must be ≥ source version.** Fallback C source is generated
+  by running `tic`/`infocmp` over ncurses 6.5's `terminfo.src`. Apple's
+  `/usr/bin/tic` is 6.0 and fails on a 6.5 entry (`mintty`). The script prefers
+  the homebrew ncurses (`$(brew --prefix ncurses)/bin/tic`, 6.6) via
+  `--with-tic-path`/`--with-infocmp-path`. Override with `NCURSES_TIC=` if needed.
+- **Cross-build cache vars** (configure runs compile-AND-run probes that can't
+  execute on the host) seeded in the script: `cf_cv_working_poll=yes` (mandatory
+  — `poll()` genuinely works on the swift-os tty), `cf_cv_func_nanosleep=yes`,
+  `cf_cv_func_mkstemp=yes`, `cf_cv_type_of_bool=unsigned`, `cf_cv_typeof_chtype=long`,
+  `cf_cv_typeof_mmask_t=long`, `cf_cv_sizechange=yes`, `cf_cv_working_chmod=yes`,
+  `ac_cv_func_fork_works=yes`, `ac_cv_func_vfork_works=yes`,
+  `ac_cv_func_memcmp_working=yes`.
+- **8-bit, not widec** (`--disable-widec`): newlib has no `setlocale`/locale.
+  MC prefers ncursesw for UTF-8; revisit at MC1 if needed (8-bit MC is fine on a
+  no-locale serial box).
+- **compat/termios.h additions** (required to compile ncurses; the kernel ignores
+  `c_cflag`/most `c_iflag`, so these are values-only): `c_cflag` size masks
+  `CSIZE`/`CS5`/`CS6`/`CS7`; `c_iflag` `IGNPAR`/`PARMRK`/`IXANY`/`IMAXBEL` (Linux
+  layout, matching the existing flags).
+- **`ncdemo.c` is C, not Swift** (project prefers Swift): the curses API is almost
+  all C preprocessor macros (`getch`, `box`, `COLS`, `LINES`, `stdscr`) with no
+  linkable symbols, so a Swift caller would need a per-macro shim. For a
+  third-party C library a tiny C driver is the honest bridge (cf. busybox/sqlite).
+- **Carry-over risk for MC:** arrow/function keys depend on ncurses' `ESCDELAY`
+  ESC-vs-sequence disambiguation, which on swift-os must run over `poll()` (no
+  `O_NONBLOCK`/`FIONREAD`). `ncdemo` only reads a plain `q`, so this is validated
+  at MC1, not here.
+
 ## USB1 xHCI controller bring-up + device detection (2026-06-17)
 
 - First step toward a real USB keyboard (today's keyboard is virtio-input). USB

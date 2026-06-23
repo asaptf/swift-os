@@ -104,7 +104,7 @@ require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
 require_await "Welcome to swift-os, root" 40
-require_await "built-in shell (ash)" 60
+require_await "M12c: shell ready" 60
 # --insecure: this test targets a self-signed mock; cert verification (now on by
 # default) is covered by acme_verify_test.sh instead.
 send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /tmp/acmestate --insecure"

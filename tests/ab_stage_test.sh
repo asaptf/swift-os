@@ -117,7 +117,7 @@ to_shell() {
   send $'root\n'
   await "Password:" 90 || return 1
   send $'swordfish\n'
-  await "built-in shell (ash)" 120 || return 1
+  await "M12c: shell ready" 120 || return 1
   return 0
 }
 

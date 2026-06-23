@@ -43,7 +43,9 @@ struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov; in
 #define IPPROTO_IP   0
 #define IPPROTO_TCP  6
 #define IPPROTO_UDP  17
+#define MSG_OOB      1
 #define MSG_PEEK     2
+#define MSG_DONTROUTE 4
 #define MSG_DONTWAIT 0x40
 #define MSG_TRUNC    0x20
 #define MSG_CTRUNC   0x08

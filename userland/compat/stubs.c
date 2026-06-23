@@ -54,6 +54,9 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <syslog.h>
+#include <iconv.h>
+#include <langinfo.h>
+#include <utime.h>
 
 #define W __attribute__((weak))
 
@@ -2964,6 +2967,10 @@ W int symlink(const char *target, const char *linkpath) {
     (void)target; (void)linkpath; errno = ENOSYS; return -1;
 }
 W int utimes(const char *p, const struct timeval tv[2]) { (void)p; (void)tv; return 0; }
+W int utime(const char *p, const struct utimbuf *t) { (void)p; (void)t; return 0; }
+W int creat(const char *p, mode_t m) { return open(p, O_WRONLY | O_CREAT | O_TRUNC, m); }
+W int sched_yield(void) { return 0; }  // single EL0 CPU: cooperative, no-op yield
+W pid_t getsid(pid_t p) { (void)p; return 0; }  // no sessions yet
 W mode_t umask(mode_t m) { (void)m; return 0; }
 W FILE *popen(const char *cmd, const char *mode) {
     (void)cmd; (void)mode; errno = ENOSYS; return 0;
@@ -3096,4 +3103,156 @@ W char *realpath(const char *p, char *resolved) {
     if (!out) { return 0; }
     size_t i = 0; while (p[i] && i < 1023) { out[i] = p[i]; i++; } out[i] = 0;
     return out;
+}
+
+// ---- iconv: minimal charset conversion (newlib's iconv is not built in) ----
+// swift-os runs UTF-8 on the serial console; GLib/MC convert mostly UTF-8<->UTF-8
+// (identity) or UTF-8<->Latin1/ASCII. We classify the charset names and handle
+// those cases; anything unrecognized is a byte-for-byte passthrough. This is
+// enough to build and run GLib (GL1); broader charset matrices can come later.
+enum { CC_PASS = 0, CC_UTF8, CC_LATIN1, CC_ASCII };
+
+static int compat_iconv_class(const char *name) {
+    if (!name) return CC_PASS;
+    char b[32]; size_t i = 0;
+    for (; name[i] && name[i] != '/' && i < sizeof(b) - 1; i++) {
+        char c = name[i];
+        b[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+    }
+    b[i] = 0;
+    if (!strcmp(b, "UTF-8") || !strcmp(b, "UTF8")) return CC_UTF8;
+    if (!strcmp(b, "ISO-8859-1") || !strcmp(b, "ISO8859-1") || !strcmp(b, "LATIN1")) return CC_LATIN1;
+    if (!strcmp(b, "ASCII") || !strcmp(b, "US-ASCII") || !strcmp(b, "ANSI_X3.4-1968")) return CC_ASCII;
+    return CC_PASS;
+}
+
+typedef struct { int from, to; } compat_iconv_state;
+
+W iconv_t iconv_open(const char *tocode, const char *fromcode) {
+    compat_iconv_state *s = (compat_iconv_state *)malloc(sizeof(*s));
+    if (!s) { errno = ENOMEM; return (iconv_t)-1; }
+    s->from = compat_iconv_class(fromcode);
+    s->to = compat_iconv_class(tocode);
+    return (iconv_t)s;
+}
+
+W int iconv_close(iconv_t cd) {
+    if (cd && cd != (iconv_t)-1) free(cd);
+    return 0;
+}
+
+W size_t iconv(iconv_t cd, char **inbuf, size_t *inleft, char **outbuf, size_t *outleft) {
+    compat_iconv_state *s = (compat_iconv_state *)cd;
+    if (!inbuf || !*inbuf) return 0;   // reset/flush request: stateless, nothing to do
+    int from = s ? s->from : CC_PASS, to = s ? s->to : CC_PASS;
+    int latin1_to_utf8 = (from == CC_LATIN1 && to == CC_UTF8);
+    int utf8_to_8bit   = (from == CC_UTF8 && (to == CC_LATIN1 || to == CC_ASCII));
+    const unsigned char *ip = (const unsigned char *)*inbuf;
+    unsigned char *op = (unsigned char *)*outbuf;
+    size_t nonrev = 0;
+    int err = 0;
+    while (*inleft > 0) {
+        if (latin1_to_utf8) {
+            unsigned c = ip[0];
+            if (c < 0x80) {
+                if (*outleft < 1) { err = E2BIG; break; }
+                *op++ = (unsigned char)c; (*outleft)--;
+            } else {
+                if (*outleft < 2) { err = E2BIG; break; }
+                *op++ = (unsigned char)(0xC0 | (c >> 6));
+                *op++ = (unsigned char)(0x80 | (c & 0x3F));
+                *outleft -= 2;
+            }
+            ip += 1; (*inleft)--;
+        } else if (utf8_to_8bit) {
+            unsigned char c = ip[0]; unsigned cp; size_t n;
+            if (c < 0x80) { cp = c; n = 1; }
+            else if ((c & 0xE0) == 0xC0) { if (*inleft < 2) { err = EINVAL; break; } cp = ((c & 0x1Fu) << 6) | (ip[1] & 0x3Fu); n = 2; }
+            else if ((c & 0xF0) == 0xE0) { if (*inleft < 3) { err = EINVAL; break; } cp = 0xFFFD; n = 3; }
+            else if ((c & 0xF8) == 0xF0) { if (*inleft < 4) { err = EINVAL; break; } cp = 0xFFFD; n = 4; }
+            else { err = EILSEQ; break; }
+            if (*outleft < 1) { err = E2BIG; break; }
+            *op++ = (unsigned char)(cp < 0x100 ? cp : '?'); (*outleft)--;
+            if (cp >= 0x100) nonrev++;
+            ip += n; *inleft -= n;
+        } else {
+            if (*outleft < 1) { err = E2BIG; break; }
+            *op++ = *ip++; (*outleft)--; (*inleft)--;
+        }
+    }
+    *inbuf = (char *)ip; *outbuf = (char *)op;
+    if (err) { errno = err; return (size_t)-1; }
+    return nonrev;
+}
+
+// ---- nl_langinfo: report a UTF-8 locale so GLib treats text as UTF-8 -------
+W char *nl_langinfo(nl_item item) {
+    if (item == CODESET) return (char *)"UTF-8";
+    return (char *)"";
+}
+
+// ---- gettext: passthrough no-ops (no message catalogs on swift-os) ---------
+// GLib and other ports require the GNU gettext API at build time; we have no
+// locale/catalog machinery, so translation functions just return the msgid.
+W char *gettext(const char *msgid) { return (char *)msgid; }
+W char *dgettext(const char *domain, const char *msgid) { (void)domain; return (char *)msgid; }
+W char *dcgettext(const char *domain, const char *msgid, int category) {
+    (void)domain; (void)category; return (char *)msgid;
+}
+W char *ngettext(const char *msgid1, const char *msgid2, unsigned long n) {
+    return (char *)(n == 1 ? msgid1 : msgid2);
+}
+W char *dngettext(const char *domain, const char *msgid1, const char *msgid2, unsigned long n) {
+    (void)domain; return (char *)(n == 1 ? msgid1 : msgid2);
+}
+W char *dcngettext(const char *domain, const char *msgid1, const char *msgid2,
+                   unsigned long n, int category) {
+    (void)domain; (void)category; return (char *)(n == 1 ? msgid1 : msgid2);
+}
+W char *textdomain(const char *domain) { return (char *)(domain ? domain : "messages"); }
+W char *bindtextdomain(const char *domain, const char *dir) { (void)domain; return (char *)dir; }
+W char *bind_textdomain_codeset(const char *domain, const char *codeset) {
+    (void)domain; return (char *)codeset;
+}
+
+// ---- DNS resolver: stubs (swift-os has no in-kernel DNS resolver) ----------
+// GLib's gio resolver requires res_query() etc. to link at configure time. We
+// have no resolver, so these fail cleanly; gio's resolver is never exercised on
+// swift-os (MC and friends use glib core, not gio name resolution).
+W int res_init(void) { return 0; }
+W int res_query(const char *dname, int klass, int type, unsigned char *answer, int anslen) {
+    (void)dname; (void)klass; (void)type; (void)answer; (void)anslen; errno = ENOSYS; return -1;
+}
+W int res_search(const char *dname, int klass, int type, unsigned char *answer, int anslen) {
+    (void)dname; (void)klass; (void)type; (void)answer; (void)anslen; errno = ENOSYS; return -1;
+}
+W int dn_expand(const unsigned char *msg, const unsigned char *eom,
+                const unsigned char *comp_dn, char *exp_dn, int length) {
+    (void)msg; (void)eom; (void)comp_dn; (void)exp_dn; (void)length; errno = ENOSYS; return -1;
+}
+
+/* ── bash / shell stubs ─────────────────────────────────────────────────── */
+
+/* times() — used by bash's `time` builtin and POSIX shell timing.
+   Newlib on bare metal may return -1/ENOSYS; provide a weak zero-filled
+   fallback so the builtin compiles and shows 0s/0s rather than erroring. */
+#include <sys/times.h>
+W clock_t times(struct tms *buf) {
+    if (buf) memset(buf, 0, sizeof(*buf));
+    return 0;
+}
+
+/* confstr() — bash probes _CS_PATH for the default PATH string.
+   Returning 0 (not found) is safe; bash falls back to its compiled-in PATH. */
+#include <unistd.h>
+W size_t confstr(int name, char *buf, size_t len) {
+    (void)name; (void)buf; (void)len; errno = EINVAL; return 0;
+}
+
+/* getlogin / getlogin_r — zsh uses for $LOGNAME / $USER. No utmp on this
+   platform; always report "root" which is the only user today. */
+W char *getlogin(void) { return (char *)"root"; }
+W int getlogin_r(char *buf, size_t bufsize) {
+    if (!buf || bufsize < 5) { errno = ERANGE; return ERANGE; }
+    memcpy(buf, "root", 5); return 0;
 }
