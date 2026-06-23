@@ -85,6 +85,35 @@ func updateStoreInit() {
     var active = chosen.activeSlot
     var fallback = chosen.fallbackSlot
 
+    // OS-1: single coordinated A/B selector. When an ESP kernel-state names the
+    // slot the loader booted the kernel from, put the base on that SAME slot, so
+    // kernel and base never drift. The loader owns health/rollback for the
+    // coordinated generation (its attempt counter + rollback flip the slot the
+    // kernel boots, which the base then follows on the next boot), so here we only
+    // *select* — no attempt-counting or rollback write-back. A no-op on a
+    // store-only box with no ESP (espBootedKernelSlot returns -1), preserving the
+    // standalone U1d path below.
+    let espSlot = espBootedKernelSlot()
+    if espSlot >= 0 && espSlot < SwosbootFormat.slotCount && manifest.slot(espSlot).present {
+        active = espSlot
+        fallback = 1 - espSlot
+        updateStoreActiveSlot = active
+        virtioBlkSetBaseByteOffset(manifest.slotByteOffset(active))
+        if fallback != active && manifest.slot(fallback).present {
+            virtioBlkSetFallbackByteOffset(manifest.slotByteOffset(fallback))
+        }
+        uartPuts("update-store: base slot ")
+        updateStoreLogSlot(active)
+        uartPuts(" coordinated with ESP kernel slot ")
+        updateStoreLogSlot(espSlot)
+        uartPuts(" (single selector) gen ")
+        uartPutUInt(UInt64(manifest.slot(active).generation))
+        uartPuts(" ")
+        updateStoreLogState(manifest.slot(active).state)
+        uartPuts("\n")
+        return
+    }
+
     // U1d: attempt-based rollback. An unconfirmed active slot that has used up
     // its boot attempts is presumed unhealthy (it booted but was never confirmed
     // via /bin/swos-confirm); mark it FAILED and switch to the known-good

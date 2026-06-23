@@ -137,3 +137,46 @@ the **delivery + coordination + anti-rollback** layer the prompt actually asks f
    wastes ESP space) vs (b) a real FAT32 cluster allocator (general, more code).
 
 3. **Bundle contents:** full kernel+base every time first; add delta later — OK?
+
+## OS-1 design (coordinated selector) — decided + topology finding
+
+**Finding (post OS-2..OS-5):** kernel A/B and base A/B currently live in *disjoint*
+topologies — they never coexist, so there was nothing to "coordinate" yet:
+- **UEFI/GPT disk-boot** (real-HW path): kernel A/B on the ESP (kernelA/B.bin +
+  signed `kernel-boot` + writable `kernel-state`, loader selects + rolls back).
+  The base is a **single** `base.img` (a readonly virtio-blk disk, or an ESP
+  ramdisk) — **no base A/B**.
+- **store-boot** (`-kernel` + virtio-blk SWOSBOOT store): base A/B (OS-2..OS-5).
+  Kernel comes via `-kernel` — **no kernel A/B**.
+
+**Decision (chosen): variant B — converge the topologies.** In UEFI-boot, attach
+the SWOSBOOT store (OS-2..OS-5) as the base disk, and make the **ESP `kernel-state`
+the single A/B authority** that drives both halves. The kernel reads the slot the
+loader actually booted (`kernel-state.lastBooted`, *not* `active` — active is the
+next-boot selection; lastBooted is what's running) and puts the base on that same
+slot. One selector (`kernel-state`, which the loader already owns + rolls back)
+moves kernel + base together.
+
+Key constraints discovered:
+- `vfsInit()`→`updateStoreInit()` runs *before* `espProbe()`, so the kernel reads
+  kernel-state **on demand** (`espBootedKernelSlot()` does the ESP detour), not
+  from a probe-populated global.
+- **Rollback ownership:** the loader owns health/rollback for the coordinated
+  generation (its attempt counter flips the booted kernel slot; the base follows
+  on the next boot). So in the coordinated path the kernel only *selects* — it does
+  **not** run the standalone U1d attempt-counting/rollback or write the SWOSBOOT
+  boot-state. The U1d path stays intact for store-only (no-ESP) boxes.
+
+**Sub-steps:**
+- **OS-1a (done):** `espBootedKernelSlot()` + coordinated base selection in
+  `updateStoreInit` (Swift-only; no-op without an ESP). Test
+  `os_coordinate_test.sh`: under AAVMF, base follows the loader-booted kernel slot
+  for both A and B (proving ESP kernel-state is authority over the store's own
+  `active`). Store-boot tests unaffected (no ESP).
+- **OS-1b:** make `make disk` attach the store as the base disk by default (so the
+  real-HW image carries base A/B), and `swupdate os` flip the single ESP selector
+  (kernel-state) to activate both halves at once.
+- **OS-1c:** new-kernel write into a padded ESP slot (the kernel half of a SWSYS
+  bundle), so a single update moves both kernel and base.
+- **Real-HW gate:** verify the whole flow on the Hetzner box via Console (QEMU
+  can't catch the HW boot/driver bugs — the netPump lesson).
