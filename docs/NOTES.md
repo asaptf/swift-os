@@ -2963,6 +2963,53 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   `make test` now runs it alongside `c5-test` and `device-mmio-map-test`, all of
   which stay green (the legacy demos were retargeted onto `virtio-input-meta.0`).
 
+### C5i — virtio-input driver runs entirely in userland; kernel exits the device (DONE, 2026-06-23)
+
+- **Kernel exits the device.** After `vfsInit()`, the kernel queries
+  `vfsVirtioInputUserlandOwned()` (true when a virtio-input window exists and was
+  registered mappable — the C5h policy) and, if so, skips `virtioKbdInit()` and the
+  per-tick `virtioKbdDrain()`. The skip is a single early-init flag
+  (`kernelPolledKbdActive`), not a per-tick registry walk. The interactive-console
+  boot decision still keys off device *presence*, so a graphical session
+  (virtio-keyboard + framebuffer) still boots straight to the shell. Marker:
+  `virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)`.
+- **VA→PA decision (Option A).** Userland virtqueue memory is normal RAM the device
+  addresses physically, but `mmap` hands back virtual addresses. Added
+  `SYS_virt_to_phys(va, handle_fd) -> pa` (syscall 105), gated by reusing
+  `vfsDeviceMmioWindow` — the caller must own a mappable device grant on `handle_fd`,
+  so only an actual device owner can resolve physical addresses (it cannot translate
+  arbitrary memory). The kernel walks the caller's TTBR0 via `addressSpaceTranslate`.
+  Anonymous `mmap` is eager (frames mapped immediately), so the PA is live right
+  after allocation. Chosen over kernel-allocated PA/VA pairs or bounce buffers for
+  simplicity; the device-handle gate keeps it from being an ambient VA→PA oracle.
+- **Userland driver.** `/bin/svc-input` now brings the event virtqueue up entirely
+  from EL0: reset → ACK → DRIVER → negotiate `VIRTIO_F_VERSION_1` → `FEATURES_OK` →
+  size queue 0 → allocate one zero-filled ring page (single-page split-queue layout
+  identical to the former kernel driver) → resolve its PA via `virt_to_phys` →
+  program `QUEUE_DESC/DRIVER/DEVICE` physical addresses → `QUEUE_READY` → offer 8
+  device-writable event buffers → `DRIVER_OK` → kick `QUEUE_NOTIFY`. Register and
+  ring access go through new volatile C bridges in `swift_user.c`
+  (`swiftos_mmio_read/write{16,32,64}`, `swiftos_dmb`) — the low-level MMIO/DMA
+  ordering Embedded Swift cannot express directly. `virtioInputPollOnce` is a bounded
+  used-ring drain (the persistent tight poll loop + tty delivery is C5j); in the
+  headless self-test no key events are generated, so it decodes zero bytes.
+- **Recovery shape.** The supervisor now performs the device handoff in *every*
+  generation, so gen 2 is a genuine kill → restart → re-claim → re-map → re-init of
+  the live device (each new driver instance resets the device first, so re-init is
+  clean). Emits `C5i OK: userland virtio-input driver initialized and recovered`.
+- **What this intentionally drops at C5i.** The kernel no longer feeds virtio-input
+  keystrokes to the tty, so the *graphical-window* keyboard is dead between/after the
+  bounded driver self-test. Headless and serial-console tests are unaffected — they
+  drive input over the PL011 UART, not virtio-input (no test uses QEMU `sendkey`).
+  C5j restores interactive keyboard by having the userland driver inject decoded
+  bytes into the kernel tty.
+- **Acceptance.** `make c5-userland-driver-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires the kernel-skip marker, virtio feature
+  negotiation + queue-ready in both generations, the restart marker, and the C5i OK
+  line; it forbids any `device_mmap`/`virt_to_phys`/queue-init failure and panics.
+  Wired into `make test`; `c5-test`, `device-mmio-map-test`, and `c5-mmio-grant-test`
+  stay green.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

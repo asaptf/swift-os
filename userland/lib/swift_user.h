@@ -121,6 +121,23 @@ int  swiftos_device_discover(int index, struct swiftos_device_info *info);
 // grant is metadata-only). Returning a raw long keeps the Swift caller simple:
 // test `< 0` for failure, otherwise reinterpret the value as the base pointer.
 long swiftos_device_mmap(int fd, unsigned long len);
+// C5i: resolve a VA in this process to its physical address, for a userland device
+// driver programming DMA/virtqueue registers. Gated on `handle_fd` being a mappable
+// device grant the caller owns. Returns the PA (>= RAM base) or a negative errno.
+long swiftos_virt_to_phys(unsigned long va, int handle_fd);
+
+// C5i: volatile MMIO/DMA-ring accessors — the low-level bridge Embedded Swift
+// cannot express directly (a plain UnsafePointer load/store is not guaranteed
+// volatile). Used by the userland virtio-input driver to touch device registers
+// and the shared virtqueue. swiftos_dmb is a full data memory barrier (dsb sy),
+// ordering ring writes before a device notification (and notifications before
+// used-ring reads).
+unsigned int swiftos_mmio_read32(unsigned long addr);
+void         swiftos_mmio_write32(unsigned long addr, unsigned int value);
+unsigned short swiftos_mmio_read16(unsigned long addr);
+void         swiftos_mmio_write16(unsigned long addr, unsigned short value);
+void         swiftos_mmio_write64(unsigned long addr, unsigned long value);
+void         swiftos_dmb(void);
 // LA1 name registry: publish the recv end of an endpoint under a short name
 // (needs CAP_CONSOLE), or resolve a name to a fresh send-end fd (negative /
 // -ENOENT on failure).

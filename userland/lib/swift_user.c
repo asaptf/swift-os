@@ -213,6 +213,33 @@ long swiftos_device_mmap(int fd, unsigned long len) {
     return __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
 }
 
+long swiftos_virt_to_phys(unsigned long va, int handle_fd) {
+    return virt_to_phys(va, handle_fd);
+}
+
+// Volatile MMIO/ring accessors (C5i). volatile guarantees the access is not
+// elided or reordered by the compiler; on the Device-nGnRE register window the
+// memory type also prevents hardware reordering. For the virtqueue (normal RAM)
+// swiftos_dmb provides the device-visibility ordering.
+unsigned int swiftos_mmio_read32(unsigned long addr) {
+    return *(volatile unsigned int *)addr;
+}
+void swiftos_mmio_write32(unsigned long addr, unsigned int value) {
+    *(volatile unsigned int *)addr = value;
+}
+unsigned short swiftos_mmio_read16(unsigned long addr) {
+    return *(volatile unsigned short *)addr;
+}
+void swiftos_mmio_write16(unsigned long addr, unsigned short value) {
+    *(volatile unsigned short *)addr = value;
+}
+void swiftos_mmio_write64(unsigned long addr, unsigned long value) {
+    *(volatile unsigned long *)addr = value;
+}
+void swiftos_dmb(void) {
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
 int swiftos_name_register(const char *name, int endpoint_fd) {
     return name_register(name, endpoint_fd);
 }

@@ -833,6 +833,24 @@ private func resetDeviceRegistry() {
     }
 }
 
+// C5i: does a discovered virtio-input device carry the mappable MMIO grant, i.e.
+// is it owned by the userland driver service rather than the in-kernel polled
+// driver? Queried once after vfsInit() so the kernel can skip virtioKbdInit() and
+// the per-tick poll. True only when a real virtio-input window exists AND it was
+// registered mappable (the C5h registry policy). Read under vfsLock like the rest.
+func vfsVirtioInputUserlandOwned() -> Bool {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    for dev in 0..<maxDevices where devices[dev].inUse {
+        if devices[dev].kind == deviceKindVirtioInput &&
+           (devices[dev].flags & deviceFlagMmioGrant) != 0 &&
+           (devices[dev].flags & deviceFlagNoMmioGrant) == 0 {
+            return true
+        }
+    }
+    return false
+}
+
 func vfsInit() {
     withUnsafeMutablePointer(to: &vfsLockWord) { word in
         smpAtomicStore(word, 0)

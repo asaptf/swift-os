@@ -460,6 +460,27 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 - Non-goals: C5h does not remove the in-kernel polled driver, does not add IRQ or
   DMA authority, and does not yet make the userland driver feed the TTY.
 
+### C5i — virtio-input driver runs entirely in userland; kernel exits the device (DONE, 2026-06-23)
+
+- The kernel skips `virtioKbdInit()` and the per-tick drain when the registry shows
+  a mappable virtio-input grant (queried once via `vfsVirtioInputUserlandOwned()`),
+  so the device is driven only from EL0. `/bin/svc-input` brings the event virtqueue
+  up entirely in userland (reset → features → queue setup → DRIVER_OK → kick).
+- VA→PA for virtqueue setup uses **Option A**: a new `SYS_virt_to_phys(va, handle_fd)`
+  (syscall 105) gated on owning a mappable device grant, so only an actual device
+  owner can resolve physical addresses. Volatile MMIO/ring access uses new
+  `swiftos_mmio_*`/`swiftos_dmb` C bridges. Poll strategy stays polled (no userland
+  IRQ delivery yet); the C5i self-test does a bounded used-ring drain.
+- The supervisor hands the device to every generation, so a kill+restart genuinely
+  re-claims, re-maps, and re-initializes the live device — recovery, not just first
+  init. Acceptance: `make c5-userland-driver-test`
+  (`C5i OK: userland virtio-input driver initialized and recovered`).
+- Intentional transitional regression: the kernel no longer feeds virtio-input
+  keystrokes to the tty, so the graphical-window keyboard is dead until C5j restores
+  it via userland tty injection. Serial/headless input (PL011 UART) is unaffected.
+- Non-goals: C5i does not deliver IRQs to userland, does not make the driver a
+  persistent forever-running service, and does not yet feed the tty.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

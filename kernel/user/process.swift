@@ -3900,6 +3900,25 @@ func processDeviceMmap(_ fd: Int, _ lenHint: UInt) -> UInt {
     return base + pageOffset
 }
 
+/// C5i: resolve a userland virtual address to its physical address, for a userland
+/// device driver programming DMA/virtqueue registers (which take physical addresses).
+/// Gated on `handleFd` naming a mappable device grant this process owns: we reuse
+/// vfsDeviceMmioWindow, which validates `.device` kind + `.map` right under vfsLock,
+/// so only an actual device owner can resolve PAs (it cannot translate arbitrary
+/// memory without first holding hardware-mapping authority). Returns the physical
+/// address (>= RAM base), or a negative errno encoded in the UInt (like processMmap).
+func processVirtToPhys(_ va: UInt, _ handleFd: Int) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) } // EINVAL
+    // Authority gate: caller must hold a mappable device grant on handleFd.
+    let w = vfsDeviceMmioWindow(fd: handleFd)
+    if w.err != 0 { return err(w.err) }
+    let pa = addressSpaceTranslate(pTtbr0[me], va)
+    if pa == 0 { return err(-22) } // EINVAL: the VA is not mapped
+    return pa
+}
+
 /// I2b: service a demand fault on a lazily-reserved file-backed region. Returns
 /// true if `faultVA` fell in such a region and the missing page was mapped in
 /// read-only from disk; false otherwise (the caller treats that as a real fault,

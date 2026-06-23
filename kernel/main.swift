@@ -908,10 +908,16 @@ func irqHandler() {
     }
 }
 
+// C5i: set once at boot. False when the userland driver service owns virtio-input
+// (the kernel never called virtioKbdInit), so the per-tick drain is skipped
+// entirely rather than calling into a dormant getchar each tick.
+private var kernelPolledKbdActive = false
+
 /// Drain any keystrokes from the virtio-input keyboard into the tty line
 /// discipline, exactly as the UART IRQ feeds serial input. No-op when there is
-/// no keyboard device (the getchar returns -1 immediately).
+/// no keyboard device, or (C5i) when the userland driver owns it.
 private func virtioKbdDrain() {
+    if !kernelPolledKbdActive { return }
     while true {
         let b = virtioKbdGetchar()
         if b < 0 { break }
@@ -1246,7 +1252,21 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
-    let inputKeyboard = virtioKbdInit() > 0
+    // C5i: the userland virtio-input driver service owns the device when the
+    // registry handed out a mappable MMIO grant (C5h policy). In that case the
+    // kernel must NOT bring up its in-kernel polled driver over the same window —
+    // the device is driven from EL0. This is an early-init decision (one query),
+    // not a per-tick check: kernelPolledKbdActive gates both init and the drain.
+    let userlandOwnsKbd = vfsVirtioInputUserlandOwned()
+    if userlandOwnsKbd {
+        uartPuts("virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)\n")
+    }
+    kernelPolledKbdActive = userlandOwnsKbd ? false : (virtioKbdInit() > 0)
+    // `inputKeyboard` reflects the PRESENCE of a window keyboard for the
+    // interactive-console boot decision below, independent of whether the kernel
+    // or the userland driver owns it — so a graphical session still boots straight
+    // to the shell when a virtio keyboard + framebuffer are present.
+    let inputKeyboard = userlandOwnsKbd || kernelPolledKbdActive
     // Take the "boot straight into swos-init / services" path (skipping the
     // serial-only milestone demo sequence) when a human is at a graphical window
     // (keyboard + framebuffer), OR when a virtio-gpu scanout console is the only
