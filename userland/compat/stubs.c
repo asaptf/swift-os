@@ -3230,3 +3230,21 @@ W int dn_expand(const unsigned char *msg, const unsigned char *eom,
                 const unsigned char *comp_dn, char *exp_dn, int length) {
     (void)msg; (void)eom; (void)comp_dn; (void)exp_dn; (void)length; errno = ENOSYS; return -1;
 }
+
+/* ── bash / shell stubs ─────────────────────────────────────────────────── */
+
+/* times() — used by bash's `time` builtin and POSIX shell timing.
+   Newlib on bare metal may return -1/ENOSYS; provide a weak zero-filled
+   fallback so the builtin compiles and shows 0s/0s rather than erroring. */
+#include <sys/times.h>
+W clock_t times(struct tms *buf) {
+    if (buf) memset(buf, 0, sizeof(*buf));
+    return 0;
+}
+
+/* confstr() — bash probes _CS_PATH for the default PATH string.
+   Returning 0 (not found) is safe; bash falls back to its compiled-in PATH. */
+#include <unistd.h>
+W size_t confstr(int name, char *buf, size_t len) {
+    (void)name; (void)buf; (void)len; errno = EINVAL; return 0;
+}
