@@ -207,6 +207,12 @@ int swiftos_device_discover(int index, struct swiftos_device_info *info) {
     return device_discover(index, info);
 }
 
+long swiftos_device_mmap(int fd, unsigned long len) {
+    // Raw syscall (not the device_mmap() inline) so the Swift caller sees the
+    // exact base VA or negative errno instead of MAP_FAILED.
+    return __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
+}
+
 int swiftos_name_register(const char *name, int endpoint_fd) {
     return name_register(name, endpoint_fd);
 }

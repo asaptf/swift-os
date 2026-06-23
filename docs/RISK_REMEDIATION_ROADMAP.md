@@ -438,6 +438,28 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   and virtio-mmio facts, plus a `.swpkg` header-integrity negative test for
   package artifact trust fields.
 
+### C5h — MMIO authority grant reaches the supervised userland driver (DONE, 2026-06-23)
+
+- First slice of "C5 proper": real hardware authority leaves the kernel through the
+  supervised capability-transfer path. `virtio-input.0` is now registered with
+  `deviceFlagMmioGrant | deviceFlagDiscovered` (no `deviceFlagNoMmioGrant`), so a
+  `capConsole` claim yields a `.map` right. The LA1 supervisor claims it and
+  transfers the grant over IPC to `/bin/svc-input`, which `sys_device_mmap`s the
+  window and verifies the virtio magic/device-id registers through the userland
+  mapping.
+- Registry decision: `virtio-input.0` carries the real grant going forward; the
+  former mappable alias `virtio-input-mmio.0` is removed and replaced by an inert,
+  discoverable `virtio-input-meta.0` that preserves the metadata-only negative-path
+  coverage (legacy `drvsvcdemo`/`drvinputd` and the LA2 `devicemmapprobe` EACCES
+  refusal). See `docs/NOTES.md` (C5h) for the full rationale.
+- Acceptance: `make c5-mmio-grant-test` requires
+  `C5h OK: MMIO 0x<base> mapped from userland, MAGIC verified`; `make c5-test` and
+  `make device-mmio-map-test` stay green. The kernel's polled keyboard driver still
+  owns the device at C5h (both read the same read-only ID registers); the kernel
+  exit is C5i and userland TTY injection is C5j.
+- Non-goals: C5h does not remove the in-kernel polled driver, does not add IRQ or
+  DMA authority, and does not yet make the userland driver feed the TTY.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

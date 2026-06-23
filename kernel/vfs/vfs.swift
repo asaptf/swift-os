@@ -796,28 +796,35 @@ private func resetDeviceRegistry() {
     for i in 0..<maxDevices { devices[i] = DeviceGrant() }
     let input = virtioInputDiscoverGrant()
     if input.found {
+        // C5h: virtio-input.0 now carries the REAL MMIO grant (deviceFlagMmioGrant,
+        // no deviceFlagNoMmioGrant). A capConsole claim of it yields a `.map` right,
+        // so the supervised userland driver service (/bin/svc-input), receiving the
+        // grant over IPC handle transfer, can sys_device_mmap the window Device-nGnRE
+        // and read the device's identification/queue registers directly. This is the
+        // metadata-only -> hardware-authority transition for the discoverable
+        // virtio-input grant. The kernel's polled keyboard driver still touches the
+        // same window read-only at C5h; the two mappings coexist (ownership handoff
+        // is C5i). See docs/NOTES.md.
         registerDevice(0, "virtio-input.0",
                        kind: deviceKindVirtioInput,
                        bus: deviceBusVirtioMmio,
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
-                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
-        // LA2: a second grant over the SAME virtio-input transport window, this
-        // one mappable (deviceFlagMmioGrant, no deviceFlagNoMmioGrant), so a
-        // capConsole claimer obtains a `.map` right and can sys_device_mmap the
-        // window Device-nGnRE. This aliases hardware the kernel's polled keyboard
-        // driver also touches; the MMIO-map path only needs to read the read-only
-        // identification registers (MagicValue/Version/DeviceID), so the two
-        // mappings coexist. Per-window ownership arbitration (one owner, kernel
-        // driver vs userland) is later LA-series work; reusing an existing window
-        // here avoids inventing hardware (see LA2 prompt).
-        registerDevice(1, "virtio-input-mmio.0",
+                       flags: deviceFlagMmioGrant | deviceFlagDiscovered)
+        // C5h: an inert sibling over the SAME transport window, metadata-only
+        // (deviceFlagNoMmioGrant), discoverable. It preserves the metadata-only
+        // negative-path coverage that virtio-input.0 used to provide before it
+        // became mappable: the legacy C5 driver demo (drvsvcdemo/drvinputd) claims
+        // and transfers THIS grant to prove authority stays withheld, and the LA2
+        // devicemmapprobe claims it to prove sys_device_mmap is refused with EACCES
+        // on a no-MMIO grant. (Replaces the former mappable virtio-input-mmio.0
+        // alias, whose mappable role virtio-input.0 now fills.)
+        registerDevice(1, "virtio-input-meta.0",
                        kind: deviceKindVirtioInput,
                        bus: deviceBusVirtioMmio,
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
-                       flags: deviceFlagMmioGrant | deviceFlagDiscovered,
-                       discoverable: false)
+                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
     } else {
         registerDevice(0, "pseudo-input.0",
                        kind: deviceKindPseudoInput,

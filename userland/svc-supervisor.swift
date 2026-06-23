@@ -34,9 +34,13 @@ let rightRead: UInt32 = 1 << 0
 let rightWrite: UInt32 = 1 << 1
 let rightTransfer: UInt32 = 1 << 5
 
-// Device flag bits (mirror syscall.h) for the metadata-only authority check.
+// Device flag bits (mirror syscall.h). C5h: the supervised driver now receives
+// real MMIO authority on virtio-input.0, so the MMIO grant (1<<2) is expected, not
+// withheld; only the still-unimplemented IRQ (1<<3) and DMA (1<<4) grants must stay
+// absent. The pseudo-input fallback carries deviceFlagNoMmioGrant and no IRQ/DMA.
 let supDevFlagNoMmioGrant: UInt32 = 1 << 0
-let supDevFlagHardwareAuthority: UInt32 = (1 << 2) | (1 << 3) | (1 << 4) // MMIO|IRQ|DMA
+let supDevFlagMmioGrant: UInt32 = 1 << 2
+let supDevFlagIrqDmaAuthority: UInt32 = (1 << 3) | (1 << 4)
 
 func putSpec(_ sp: UnsafeMutableRawPointer, _ idx: Int, _ src: Int32, _ dst: Int32, _ rights: UInt32) {
     let base = idx * 16
@@ -96,10 +100,15 @@ func sendDeviceHandle(_ fd: Int32, _ devFd: Int32) -> Bool {
     return ok
 }
 
-func deviceAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
-    return info.irq == 0 &&
-           (info.flags & supDevFlagNoMmioGrant) != 0 &&
-           (info.flags & supDevFlagHardwareAuthority) == 0
+// C5h: accept the real MMIO grant (or the inert pseudo fallback), but still reject
+// any IRQ/DMA authority and a bound IRQ number — those remain unimplemented.
+func deviceAuthorityAcceptable(_ info: swiftos_device_info) -> Bool {
+    if info.irq != 0 { return false }
+    if (info.flags & supDevFlagIrqDmaAuthority) != 0 { return false }
+    // Exactly one of: mappable MMIO grant (real virtio-input) or no-MMIO (pseudo).
+    let mmio = (info.flags & supDevFlagMmioGrant) != 0
+    let noMmio = (info.flags & supDevFlagNoMmioGrant) != 0
+    return mmio != noMmio
 }
 
 // Spawn /bin/svc-input concurrently with the inherited endpoint ends (cmdRecv→fd3,
@@ -151,7 +160,7 @@ func deviceHandoff(_ cmdSend: Int32, _ replyRecv: Int32, _ gen: Int, _ usedVirti
         swiftos_puts("svc-supervisor: device claim failed\n")
         return false
     }
-    if info.claimed != 1 || !deviceAuthorityWithheld(info) {
+    if info.claimed != 1 || !deviceAuthorityAcceptable(info) {
         _ = swiftos_close(devFd)
         swiftos_puts("svc-supervisor: device info mismatch\n")
         return false
@@ -183,7 +192,7 @@ func reclaimDevice(_ usedVirtio: Bool) -> Bool {
         swiftos_puts("svc-supervisor: reclaim claim failed\n")
         return false
     }
-    if info.claimed != 1 || !deviceAuthorityWithheld(info) {
+    if info.claimed != 1 || !deviceAuthorityAcceptable(info) {
         _ = swiftos_close(fd)
         swiftos_puts("svc-supervisor: reclaim info mismatch\n")
         return false

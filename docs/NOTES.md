@@ -2922,6 +2922,47 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   userland. It freezes the existing `capConsole` device-authority minting
   boundary as an executable regression test.
 
+### C5h — MMIO authority grant reaches the supervised userland driver (DONE, 2026-06-23)
+
+- **The transition.** This is the metadata-only → hardware-authority step for the
+  *discoverable* virtio-input grant. `resetDeviceRegistry()` now registers
+  `virtio-input.0` with `deviceFlagMmioGrant | deviceFlagDiscovered` (the
+  `deviceFlagNoMmioGrant` bit is gone), so a `capConsole` claim of it yields a
+  `.map` right (`deviceMmioGrantRights`). The LA1 supervisor (`/bin/svc-supervisor`)
+  claims it and transfers the grant over IPC to the restartable driver service
+  (`/bin/svc-input`), which `sys_device_mmap`s the window Device-nGnRE and reads the
+  virtio identification registers (MagicValue@0x00, DeviceID@0x08) through the
+  *userland* mapping — the first real hardware authority to leave the kernel via the
+  supervised capability-transfer path (LA2's `devicemmapprobe` proved the map path,
+  but from a one-shot boot probe, not the supervised service).
+- **Decision — which name carries the real grant.** `virtio-input.0` is the
+  mappable, discoverable grant going forward. The former mappable alias
+  `virtio-input-mmio.0` (LA2's non-discoverable pre-position) is **removed**; its
+  role is now filled by `virtio-input.0` itself. To preserve the metadata-only
+  negative-path coverage that `virtio-input.0` used to provide, a new inert sibling
+  `virtio-input-meta.0` (`deviceFlagNoMmioGrant | deviceFlagDiscovered`, same
+  transport window) is registered: the legacy C5 demo (`drvsvcdemo`/`drvinputd`)
+  claims and transfers *it* to keep proving authority stays withheld, and the LA2
+  `devicemmapprobe` claims it to keep proving `sys_device_mmap` is refused with
+  `EACCES` on a no-MMIO grant. With a real virtio-input window present there are now
+  two discoverable grants, so the demo's discovery-exhaustion check moved from
+  index 1 to index 2.
+- **Userland wiring.** Added `swiftos_device_mmap(fd, len)` to the Swift bridge
+  (`swift_user.h`/`.c`) — it returns the raw base VA or a negative errno so the Swift
+  caller is simple. `svc-input`'s validation now requires the MMIO grant for a real
+  virtio-input device and only rejects the still-unimplemented IRQ/DMA grants;
+  `svc-supervisor`'s authority check does the same. The kernel's polled keyboard
+  driver still owns and reads the same window at C5h — both touch read-only ID
+  registers, so the two mappings coexist (kernel exit is C5i).
+- **Acceptance.** `make c5-mmio-grant-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires
+  `C5h OK: MMIO 0x<base> mapped from userland, MAGIC verified` plus the surrounding
+  LA1 lifecycle, and forbids any `svc-input`/`svc-supervisor` failure or panic. The
+  reported address is the physical window base (deterministic), not the per-run
+  mapped VA. Headless boards fall back to `pseudo-input.0` (no MMIO window to map).
+  `make test` now runs it alongside `c5-test` and `device-mmio-map-test`, all of
+  which stay green (the legacy demos were retargeted onto `virtio-input-meta.0`).
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

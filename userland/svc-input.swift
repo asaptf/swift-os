@@ -67,27 +67,84 @@ func deviceNameEquals(_ info: swiftos_device_info, _ expected: StaticString) -> 
     return ok
 }
 
-// Authority must be withheld: no IRQ, the no-MMIO-grant flag set, and none of the
-// hardware-authority (MMIO/IRQ/DMA) grant bits present. Mirrors drvinputd.c.
-func hardwareAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
+// C5h: the virtio-input.0 grant now carries real MMIO authority (deviceFlagMmioGrant),
+// which this driver uses to map and probe the device. So the MMIO grant is no longer
+// withheld — only the IRQ and DMA grants (1<<3, 1<<4), which remain unimplemented,
+// must still be absent (along with a bound IRQ number). The pseudo-input fallback,
+// which carries deviceFlagNoMmioGrant, also satisfies this.
+func irqDmaAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
     return info.irq == 0 &&
-           (info.flags & devFlagNoMmioGrant) != 0 &&
-           (info.flags & devFlagHardwareAuthority) == 0
+           (info.flags & (devFlagIrqGrant | devFlagDmaGrant)) == 0
 }
 
 func validDeviceInfo(_ info: swiftos_device_info) -> Bool {
     if info.claimed != 1 { return false }
-    if !hardwareAuthorityWithheld(info) { return false }
+    if !irqDmaAuthorityWithheld(info) { return false }
+    // C5h: a real virtio-input grant must now advertise the mappable MMIO grant.
     let realVirtio = info.kind == devKindVirtioInput &&
                      info.bus == devBusVirtioMmio &&
                      info.mmio_base != 0 && info.mmio_len != 0 &&
                      (info.flags & devFlagDiscovered) != 0 &&
+                     (info.flags & devFlagMmioGrant) != 0 &&
                      deviceNameEquals(info, "virtio-input.0")
     if realVirtio { return true }
+    // Headless fallback: the metadata-only pseudo device (no MMIO window to map).
     return info.kind == devKindPseudoInput &&
            info.bus == devBusPseudo &&
            info.mmio_base == 0 && info.mmio_len == 0 &&
+           (info.flags & devFlagNoMmioGrant) != 0 &&
            deviceNameEquals(info, "pseudo-input.0")
+}
+
+// virtio-mmio identification registers, by byte offset from the window base.
+let vioR_MAGIC: Int = 0x00
+let vioR_DEVID: Int = 0x08
+let vioMagic: UInt32 = 0x74726976   // "virt"
+let vioDevIdInput: UInt32 = 18
+
+// Print a UInt as "0x"-prefixed hex (no leading-zero padding), stack-only.
+func putHex(_ v: UInt) {
+    swiftos_puts("0x")
+    if v == 0 { swiftos_putc(UInt8(ascii: "0")); return }
+    var started = false
+    var shift = 60
+    while shift >= 0 {
+        let nyb = UInt8((v >> UInt(shift)) & 0xf)
+        if nyb != 0 || started {
+            started = true
+            swiftos_putc(nyb < 10 ? UInt8(ascii: "0") + nyb
+                                  : UInt8(ascii: "a") + (nyb - 10))
+        }
+        shift -= 4
+    }
+}
+
+// C5h: map the granted MMIO window and verify the virtio identification registers
+// through it, proving real hardware authority reached userland over the IPC grant.
+// Returns true on success (also emitting the C5h OK marker), false on any failure.
+func probeMmioGrant(_ fd: Int32, _ info: swiftos_device_info) -> Bool {
+    let r = swiftos_device_mmap(fd, UInt(info.mmio_len))
+    if r < 0 {
+        swiftos_puts("svc-input: device_mmap failed\n")
+        return false
+    }
+    let base = UInt(bitPattern: Int(r))
+    let regs = UnsafeRawPointer(bitPattern: base)!
+    let magic = regs.load(fromByteOffset: vioR_MAGIC, as: UInt32.self)
+    let devid = regs.load(fromByteOffset: vioR_DEVID, as: UInt32.self)
+    if magic != vioMagic {
+        swiftos_puts("svc-input: MMIO magic mismatch\n")
+        return false
+    }
+    if devid != vioDevIdInput {
+        swiftos_puts("svc-input: MMIO device-id mismatch\n")
+        return false
+    }
+    // Report the physical window base (deterministic), not the per-run mapped VA.
+    swiftos_puts("C5h OK: MMIO ")
+    putHex(info.mmio_base)
+    swiftos_puts(" mapped from userland, MAGIC verified\n")
+    return true
 }
 
 // The service. Implements only handle(); run() is inherited from UserlandService.
@@ -127,6 +184,16 @@ struct InputService: UserlandService {
             swiftos_puts("svc-input: device grant accepted gen ")
             swiftos_putc(UInt8(ascii: "0") + UInt8(gen))
             swiftos_putc(UInt8(ascii: "\n"))
+            // C5h: if this is the real mappable virtio-input grant, exercise the
+            // hardware authority — map the MMIO window and verify the device's
+            // identification registers through the userland mapping.
+            if (info.flags & devFlagMmioGrant) != 0 {
+                if !probeMmioGrant(deviceFd, info) {
+                    _ = swiftos_close(deviceFd)
+                    deviceFd = -1
+                    return -(1 + 1)
+                }
+            }
             return putGenMsg(reply, "DEVACK", gen)
         }
         if count == 4 && cmd4Equals(command, "STOP") {

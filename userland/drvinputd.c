@@ -43,13 +43,15 @@ static void gen_msg(char out[10], const char *prefix, int gen) {
     out[i] = (char)('0' + gen);
 }
 
+// C5h: this metadata-only smoke now validates the inert virtio-input-meta.0 grant
+// (the mappable virtio-input.0 went to the userland driver service /bin/svc-input).
 static int is_real_virtio_input(const struct swiftos_device_info *info) {
     return info->kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
            info->mmio_base != 0 &&
            info->mmio_len != 0 &&
            (info->flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0 &&
-           cstr_eq(info->name, "virtio-input.0");
+           cstr_eq(info->name, "virtio-input-meta.0");
 }
 
 static int hardware_authority_withheld(const struct swiftos_device_info *info) {

@@ -115,6 +115,12 @@ int  swiftos_device_claim(const char *name, struct swiftos_device_info *info);
 // into Swift, which shares one namespace for types and functions.
 int  swiftos_device_query(int fd, struct swiftos_device_info *info);
 int  swiftos_device_discover(int index, struct swiftos_device_info *info);
+// C5h: map the MMIO window of the device claimed on `fd` into this process,
+// gated on the grant's `.map` right (deviceFlagMmioGrant). Returns the mapped
+// base VA (>= 0) on success, or a small negative errno (e.g. -13 EACCES when the
+// grant is metadata-only). Returning a raw long keeps the Swift caller simple:
+// test `< 0` for failure, otherwise reinterpret the value as the base pointer.
+long swiftos_device_mmap(int fd, unsigned long len);
 // LA1 name registry: publish the recv end of an endpoint under a short name
 // (needs CAP_CONSOLE), or resolve a name to a fresh send-end fd (negative /
 // -ENOENT on failure).
