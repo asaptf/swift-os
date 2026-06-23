@@ -3,6 +3,37 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## SH2 zsh port (2026-06-23)
+
+Cross-build **zsh 5.9** for swift-os: static AArch64 binary with built-in ZLE
+(line editor, history, tab-completion), arrays, extended parameter expansion,
+functions, arithmetic. `zsh.elf` → `/bin/zsh`.
+
+- **Build:** `make zsh` → `scripts/build-zsh.sh`. Same swiftos-cc CC-wrapper
+  pattern as SH1. Link flags include `-lncurses` for ZLE terminal operations.
+  `zsh_cv_*` variables override cross-compile probes.
+- **Configure flags:** `--disable-dynamic --disable-multibyte --disable-pcre
+  --disable-cap --disable-gdbm --with-term-lib=ncurses --with-fndir=no
+  --with-site-fndir=no`. `--disable-multibyte` avoids wide-char conversion that
+  newlib's bare-metal libc may not fully support. `--disable-dynamic` compiles
+  all modules statically into the binary (no dlopen needed).
+- **Post-configure module trim:** `config.modules` entries for
+  `zsh/net/socket`, `zsh/net/tcp`, `zsh/langinfo`, `zsh/system` are forced to
+  `link=no load=no` — these use syscalls beyond what our stubs fully implement.
+- **Source patch** (`Src/main.c`): `setenv("TERM","vt100",0)`,
+  `setenv("HOME","/tmp",0)`, `setenv("ZDOTDIR","/tmp",0)` inserted before
+  `return zsh_main(argc, argv)` — same bare-env pattern as SH1/MC1.
+- **compat additions:**
+  - `userland/compat/stubs.c`: added weak `getlogin()` (returns "root") and
+    `getlogin_r()` — zsh uses these for `$LOGNAME`/`$USER`.
+- **Job control:** compiled in (no `--disable-job-control` flag in zsh), but
+  effectively limited: `setpgid`/`tcsetpgrp` are no-op stubs and `SIGTSTP` is
+  not delivered by the kernel. `Ctrl-Z` does nothing. Follow-up: same kernel
+  signal work that unblocks bash job control.
+- **Test:** `make zsh-test` → `tests/zsh_test.sh`. Boots, runs
+  `/bin/zsh --no-rcs`, asserts: `$ZSH_VERSION` (SH2_VER=5.9), array length
+  (SH2_ARR=3), arithmetic (SH2_ARITH=42), function call (SH2_FUNC_OK).
+
 ## SH1 bash port (2026-06-23)
 
 Cross-build **GNU bash 5.2.37** for swift-os: static AArch64 binary with bundled

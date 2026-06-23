@@ -3248,3 +3248,11 @@ W clock_t times(struct tms *buf) {
 W size_t confstr(int name, char *buf, size_t len) {
     (void)name; (void)buf; (void)len; errno = EINVAL; return 0;
 }
+
+/* getlogin / getlogin_r — zsh uses for $LOGNAME / $USER. No utmp on this
+   platform; always report "root" which is the only user today. */
+W char *getlogin(void) { return (char *)"root"; }
+W int getlogin_r(char *buf, size_t bufsize) {
+    if (!buf || bufsize < 5) { errno = ERANGE; return ERANGE; }
+    memcpy(buf, "root", 5); return 0;
+}
