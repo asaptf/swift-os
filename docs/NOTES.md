@@ -3,6 +3,51 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## NC1 ncurses port (2026-06-22)
+
+First step of the Midnight Commander arc: cross-build a static **ncurses 6.5**
+(`20240427`) for swift-os and prove the curses stack on the serial console.
+
+- **Build:** `make ncurses` → `scripts/build-ncurses.sh` (autotools cross-build,
+  modeled on `build-pcre2.sh`; busybox-style direct tarball download, no swport
+  package — NC1 only needs a baked binary + a sysroot dev lib). Installs
+  `sysroot/aarch64-elf/lib/libncurses.a` + `include/{curses.h,ncurses.h,term.h,…}`
+  for MC later, and builds `build/ncdemo.elf` → `/bin/ncdemo`.
+- **Test:** `make ncurses-test` → `tests/ncurses_test.sh` (also in `make test`).
+  Boots base.img, runs `/bin/ncdemo`; asserts `NCDEMO-START` and
+  `NCDEMO-OK rows=24 cols=80` (markers printed after `endwin()` so the harness
+  never parses escape sequences). PASS.
+- **No terminfo DB on disk:** entries are baked into `libncurses.a` via
+  `--with-fallbacks=vt100,ansi,linux,xterm,dumb`. `setupterm` resolves them with
+  zero filesystem access (`--disable-db-install --disable-home-terminfo`).
+- **Host tic/infocmp must be ≥ source version.** Fallback C source is generated
+  by running `tic`/`infocmp` over ncurses 6.5's `terminfo.src`. Apple's
+  `/usr/bin/tic` is 6.0 and fails on a 6.5 entry (`mintty`). The script prefers
+  the homebrew ncurses (`$(brew --prefix ncurses)/bin/tic`, 6.6) via
+  `--with-tic-path`/`--with-infocmp-path`. Override with `NCURSES_TIC=` if needed.
+- **Cross-build cache vars** (configure runs compile-AND-run probes that can't
+  execute on the host) seeded in the script: `cf_cv_working_poll=yes` (mandatory
+  — `poll()` genuinely works on the swift-os tty), `cf_cv_func_nanosleep=yes`,
+  `cf_cv_func_mkstemp=yes`, `cf_cv_type_of_bool=unsigned`, `cf_cv_typeof_chtype=long`,
+  `cf_cv_typeof_mmask_t=long`, `cf_cv_sizechange=yes`, `cf_cv_working_chmod=yes`,
+  `ac_cv_func_fork_works=yes`, `ac_cv_func_vfork_works=yes`,
+  `ac_cv_func_memcmp_working=yes`.
+- **8-bit, not widec** (`--disable-widec`): newlib has no `setlocale`/locale.
+  MC prefers ncursesw for UTF-8; revisit at MC1 if needed (8-bit MC is fine on a
+  no-locale serial box).
+- **compat/termios.h additions** (required to compile ncurses; the kernel ignores
+  `c_cflag`/most `c_iflag`, so these are values-only): `c_cflag` size masks
+  `CSIZE`/`CS5`/`CS6`/`CS7`; `c_iflag` `IGNPAR`/`PARMRK`/`IXANY`/`IMAXBEL` (Linux
+  layout, matching the existing flags).
+- **`ncdemo.c` is C, not Swift** (project prefers Swift): the curses API is almost
+  all C preprocessor macros (`getch`, `box`, `COLS`, `LINES`, `stdscr`) with no
+  linkable symbols, so a Swift caller would need a per-macro shim. For a
+  third-party C library a tiny C driver is the honest bridge (cf. busybox/sqlite).
+- **Carry-over risk for MC:** arrow/function keys depend on ncurses' `ESCDELAY`
+  ESC-vs-sequence disambiguation, which on swift-os must run over `poll()` (no
+  `O_NONBLOCK`/`FIONREAD`). `ncdemo` only reads a plain `q`, so this is validated
+  at MC1, not here.
+
 ## USB1 xHCI controller bring-up + device detection (2026-06-17)
 
 - First step toward a real USB keyboard (today's keyboard is virtio-input). USB
