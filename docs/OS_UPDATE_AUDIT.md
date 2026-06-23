@@ -173,9 +173,17 @@ Key constraints discovered:
   `os_coordinate_test.sh`: under AAVMF, base follows the loader-booted kernel slot
   for both A and B (proving ESP kernel-state is authority over the store's own
   `active`). Store-boot tests unaffected (no ESP).
-- **OS-1b:** make `make disk` attach the store as the base disk by default (so the
-  real-HW image carries base A/B), and `swupdate os` flip the single ESP selector
-  (kernel-state) to activate both halves at once.
+- **OS-1b (done):** `swupdate os` flips the single ESP selector (kernel_activate)
+  when an ESP is present — so kernel + base activate together — else falls back to
+  the SWOSBOOT selector on a store-only box. Also fixed the base *read* path
+  (`vfsImageReadRange`): when an A/B store is in use the base is read from the
+  selected store slot, not the loader's RAM ramdisk (the firmware-staged single
+  base.img) — without this the coordinated slot was selected but reads bypassed it.
+  Test `os_coordinate_activate_test.sh` (AAVMF + ESP + store, no network): boot ->
+  shell -> `swupdate os-apply-local <tiny SWSYS>` -> base staged into slot B + ESP
+  selector flipped to B. PASS; OS-1a / store-boot / UEFI-plain-base all still PASS.
+  NOT yet done: making `make disk` carry a store base by default (the real-HW image
+  layout — deferred to the real-HW batch with the Console check).
 - **OS-1c:** new-kernel write into a padded ESP slot (the kernel half of a SWSYS
   bundle), so a single update moves both kernel and base.
 - **Real-HW gate:** verify the whole flow on the Hetzner box via Console (QEMU

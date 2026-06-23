@@ -378,13 +378,16 @@ SITE_TEST_PACK_CMD := true
 endif
 
 # OS-3b: a tiny signed SWOSBASE image baked under /usr/share/swupdate-test so
-# os-stage-test has a valid image to stream into the inactive A/B slot. Opt-in via
-# INCLUDE_OS_STAGE_TEST=1 so production images carry no test fixtures.
+# os-stage-test has a valid image to stream into the inactive A/B slot. OS-1b: a
+# tiny signed SWSYS bundle (kernel stub + that base) for os-coordinate-activate-test
+# (swupdate os-apply-local, no network). Opt-in via INCLUDE_OS_STAGE_TEST=1 so
+# production images carry no test fixtures.
 TEST_BASE_IMG := $(BUILD)/test-base.img
+TEST_OS_BUNDLE := $(BUILD)/test-os.swsys
 INCLUDE_OS_STAGE_TEST ?= 0
 ifeq ($(INCLUDE_OS_STAGE_TEST),1)
-OS_STAGE_DEPS := $(TEST_BASE_IMG)
-OS_STAGE_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swupdate-test; cp $(TEST_BASE_IMG) $(BASE_ROOT)/usr/share/swupdate-test/test-base.img
+OS_STAGE_DEPS := $(TEST_BASE_IMG) $(TEST_OS_BUNDLE)
+OS_STAGE_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swupdate-test; cp $(TEST_BASE_IMG) $(BASE_ROOT)/usr/share/swupdate-test/test-base.img; cp $(TEST_OS_BUNDLE) $(BASE_ROOT)/usr/share/swupdate-test/os.swsys
 else
 OS_STAGE_DEPS :=
 OS_STAGE_PACK_CMD := true
@@ -573,7 +576,7 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf
 
-.PHONY: build run debug gdb test docs-test errno-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: uvkeyonce-test
@@ -1653,6 +1656,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_kconfirm_test.sh
 	./tests/uefi_krollback_test.sh
 	$(MAKE) os-coordinate-test
+	$(MAKE) os-coordinate-activate-test
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -1799,6 +1803,15 @@ os-confirm-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 # without the firmware. Needs the ESP staging (uefi), base image, store + kernelboot.
 os-coordinate-test: build uefi base-image updatestore kernelboot
 	./tests/os_coordinate_test.sh
+
+# OS-1b: `swupdate os` flips the single ESP selector (kernel-state) so kernel +
+# base activate together. Boots a UEFI/ESP disk + SWOSBOOT store under AAVMF,
+# reaches a shell, and runs `swupdate os-apply-local` on a baked tiny SWSYS bundle
+# (no network). Needs the fixtures (INCLUDE_OS_STAGE_TEST=1). SKIPs without AAVMF.
+os-coordinate-activate-test: build uefi updatestore $(TEST_BASE_IMG) $(TEST_OS_BUNDLE)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
+	./tests/os_coordinate_activate_test.sh
 
 # Power control: /bin/reboot issues PSCI SYSTEM_RESET (machine resets), /bin/shutdown
 # issues PSCI SYSTEM_OFF (QEMU exits), and both are capConsole-gated. The reset path
@@ -2220,6 +2233,12 @@ $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift 
 # os-stage-test streams into the inactive A/B slot. Signed with the image key.
 $(TEST_BASE_IMG): $(BASEPACK) $(IMG_SIGNING_SEED) tests/fixtures/test-base/README.txt Makefile | $(BUILD)/.dir
 	$(BASEPACK) tests/fixtures/test-base $@ $(IMG_SIGNING_SEED)
+
+# OS-1b: a tiny signed SWSYS bundle (kernel stub + the test base, version 2) for
+# the no-network coordinated-activate test. The kernel half is a stand-in (only
+# the base half is applied today); both halves use the tiny SWOSBASE fixture.
+$(TEST_OS_BUNDLE): $(SYSPACK) $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	$(SYSPACK) create $(TEST_BASE_IMG) $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED)
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@

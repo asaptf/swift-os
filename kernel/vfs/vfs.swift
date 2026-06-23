@@ -492,8 +492,12 @@ private func readPackedImageHeader(_ hdr: UnsafePointer<UInt8>)
 
 func vfsImageReadRange(_ image: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
     if image == vfsActiveBaseImage {
-        // H3: serve the read-only base from the RAM image the UEFI loader staged
-        // (no block driver), falling back to virtio-blk on the QEMU `-kernel` path.
+        // OS-1: when an A/B update store is in use, the base lives in the selected
+        // (coordinated) store slot — read it from the store, not the loader's RAM
+        // ramdisk (which is the firmware-staged single base.img, used only when no
+        // store is present). H3: otherwise serve from the RAM image the UEFI loader
+        // staged (no block driver), falling back to virtio-blk on the `-kernel` path.
+        if virtioBlkUsingStore() { return virtioBlkReadRange(byteOff, buf, len) }
         if ramdiskAvailable() { return ramdiskReadRange(byteOff, buf, len) }
         return virtioBlkReadRange(byteOff, buf, len)
     }
