@@ -3,6 +3,50 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## GL1 GLib port (2026-06-23)
+
+Second step of the Midnight Commander arc (MC requires GLib). Cross-build static
+**GLib 2.56.4 core** for swift-os and prove it boots.
+
+- **Build:** `make glib` → `scripts/build-glib.sh` (autotools cross-build, glib-core
+  only — no gobject/libffi, no gio library, no gmodule). Installs
+  `sysroot/aarch64-elf/lib/libglib-2.0.a` + `include/glib-2.0/...` +
+  `lib/glib-2.0/include/glibconfig.h`, and builds `build/glibdemo.elf` → `/bin/glibdemo`.
+- **Test:** `make glib-test` → `tests/glib_test.sh` (also in `make test`). Boots
+  base.img, runs `/bin/glibdemo`. PASS:
+  `GLIBDEMO-OK str="hello swift-os" list=3 map=value array_sum=10 utf8=1 mono=yes glib=2.56.4`
+  (GString/GList/GHashTable/GArray/g_utf8_validate/**g_get_monotonic_time**).
+- **Why 2.56.4:** last clean autotools series (2.58 last with autotools, 2.60+ meson-only).
+  Cross-compiling meson to bare-metal newlib is far harder.
+- **No pkg-config on host:** `PKG_CHECK_MODULES` bypassed by exporting `ZLIB_CFLAGS/LIBS`
+  and `LIBFFI_CFLAGS/LIBS` directly (`PKG_CONFIG=true`). libffi is never linked (gobject
+  not built). zlib consumed from `build/zlib-root` (run `scripts/build-zlib.sh` first).
+- **newlib/compat gaps filled (all in `userland/compat`, weak in stubs.c):**
+  - `iconv`/`iconv_open`/`iconv_close` — minimal charset conversion (UTF-8 identity +
+    Latin1↔UTF-8; passthrough otherwise). newlib's iconv is not built in.
+  - gettext family (`gettext`/`dgettext`/`ngettext`/`textdomain`/`bindtextdomain`/…) —
+    passthrough no-ops + new `libintl.h`. GLib 2.56 has no `--disable-nls`.
+  - `nl_langinfo(CODESET)` → "UTF-8" (so GLib treats text as UTF-8).
+  - DNS resolver stubs `res_query`/`res_search`/`res_init`/`dn_expand` + new `resolv.h`
+    and `arpa/nameser.h` (gio configure probes them; unused at runtime).
+  - `creat`, `sched_yield`, `utime` (+ new `utime.h`).
+  - `MSG_OOB`/`MSG_DONTROUTE` added to `compat/sys/socket.h` (GLib reads MSG_* values).
+- **Cross-build gotchas (carry-over for any GLib-era port):**
+  - GCC 16 defaults to **C23** where `bool` is a keyword → GLib 2.56's `bool` identifier
+    breaks. Build with `-std=gnu11`.
+  - newlib gates `pthread_rwlock_t`/`pthread_barrier_t` types behind feature macros →
+    pass `-D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
+    -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS` (mirrors what
+    `compat/pthread.h` does, but needed on the command line because glib headers pull
+    `<sys/types.h>` → `_pthreadtypes.h` before the `compat/pthread.h` wrapper runs).
+  - newlib omits `SSIZE_MAX` → `-DSSIZE_MAX=__LONG_MAX__` (giochannel needs it).
+  - libtool rejects building the convenience `.la` libs with raw `crt0/sys/stubs.o` in
+    LDFLAGS → `make` uses a libtool-friendly `LDFLAGS="-static -L… -L…"`; the runtime
+    objects are only for the final demo link and configure's link probes.
+  - configure cross run-test cache vars seeded (`glib_cv_*`, `gt_cv_func_gnugettext*_libc=yes`).
+- **Carry-over for MC1:** MC links `glib-2.0` only (gmodule X11/aspell-gated, off). MC core
+  is now the easiest remaining piece.
+
 ## NC1 ncurses port (2026-06-22)
 
 First step of the Midnight Commander arc: cross-build a static **ncurses 6.5**
