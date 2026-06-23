@@ -2718,15 +2718,29 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 # uses the writable kernel-state file for mutable active-slot selection. Both
 # slots are the same image for now; A/B differentiation comes with staging a new
 # kernel into the inactive slot. make-disk.sh copies these into the GPT image.
-$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
+# OS-1c: fixed-size (padded) ESP kernel slots. A slot file is the kernel image
+# zero-padded to KERNEL_SLOT_BYTES so the box can later overwrite it IN PLACE with
+# a different-size new kernel (the FAT writer does same-size-in-place only), and so
+# the per-slot signed manifest entry covers a fixed-length region. The loader loads
+# the whole padded file; trailing zeros are harmless (the kernel zeroes its own BSS
+# and the base ramdisk is allocated elsewhere). Host (here) and the on-box installer
+# pad identically so the SHA-256 over the padded slot matches.
+KERNEL_SLOT_BYTES := 4194304   # 4 MiB
+$(BUILD)/kernel-slot.bin: $(KERNEL_BIN) Makefile | $(BUILD)/.dir
+	@ksz=$$(wc -c < $(KERNEL_BIN)); if [ $$ksz -gt $(KERNEL_SLOT_BYTES) ]; then \
+	  echo "kernel.bin $$ksz B exceeds the $(KERNEL_SLOT_BYTES) B slot" >&2; exit 1; fi
+	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(KERNEL_SLOT_BYTES) 2>/dev/null
+	dd if=$(KERNEL_BIN) of=$@ conv=notrunc 2>/dev/null
+
+$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	$(KERNELBOOT) $@ A $(BUILD)/kernel-slot.bin $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 
 # H3: stage the packed read-only base image on the ESP so the loader can read it
 # into RAM and hand the kernel a ramdisk (the path for boards whose boot disk —
