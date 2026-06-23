@@ -3217,9 +3217,13 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     pAddressSpaceCpuMask[slot] = 0
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
-    // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
-    // needs shared stdout; full fd-table aliasing is a follow-up — see NOTES).
-    vfsProcessInit(slot: slot, parent: creator)
+    // rt-a: a thread SHARES the creator's fd table, cwd, and confinement (POSIX
+    // threads share descriptors). vfsThreadAttach aliases this slot to the
+    // creator's VFS group instead of snapshotting a private copy — so an fd one
+    // thread opens (e.g. libuv's async-wake eventfd) is visible to all of them.
+    // A private snapshot diverged: a wakeup written by one thread never reached
+    // the fd another polled, deadlocking multithreaded runtimes (node -e).
+    vfsThreadAttach(slot: slot, leader: creator)
     if s5eThreadPlacementActive {
         let home = processNextS5eThreadHomeCpu()
         recordS5eThreadCreate(creator: creator, slot: slot, homeCpu: home)
