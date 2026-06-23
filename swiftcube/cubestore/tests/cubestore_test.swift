@@ -6,8 +6,10 @@
 // SC0 acceptance cases: MVCC put/get/delete, range/prefix + as-of reads,
 // revision monotonicity, atomic batches, compare-and-apply, live watch + cancel,
 // watch-from-past replay, compaction, WAL recovery, snapshot+truncate recovery,
-// and torn-record recovery. Pass `--bench` for the optional microbench (kept off
-// the pass/fail path). Mirrors tests/handle_test.swift's harness style.
+// and torn-record recovery — plus two direct codec-integrity cases (12: WAL bad-CRC
+// + strict-prefix recovery; 13: snapshot bad-magic/bad-CRC/truncation). Pass `--bench`
+// for the optional microbench (kept off the pass/fail path). Mirrors
+// tests/handle_test.swift's harness style.
 //
 // The sink files live under a fresh temp directory per recovery case so reopen
 // exercises real on-disk recovery with an honest fsync.
@@ -55,6 +57,8 @@ struct CubestoreTest {
         case9_walRecovery()
         case10_snapshotRecovery()
         case11_tornRecordRecovery()
+        case12_walCodecIntegrity()
+        case13_snapshotCodecIntegrity()
 
         if CommandLine.arguments.contains("--bench") { microbench() }
 
@@ -62,7 +66,7 @@ struct CubestoreTest {
             FileHandle.standardError.write(Data("cubestore-test: FAILED\n".utf8))
             exit(1)
         }
-        print("cubestore-test: all 11 cases passed")
+        print("cubestore-test: all 13 cases passed")
     }
 
     // 1. put/get/delete; Entry carries correct create/mod/version.
@@ -283,6 +287,76 @@ struct CubestoreTest {
         let s3 = openStore(dir)
         check(s3.revision == 3 && s3.get(b("k4"))?.value == b("d"),
               "11: appends after a torn-tail repair recover cleanly")
+    }
+
+    // 12. WAL codec integrity (direct, no filesystem): round-trip; a bad-CRC record
+    //     (intact length, flipped byte) is discarded — exercising the CRC-mismatch branch
+    //     that case 11's byte-truncation does not reach — and recovery is a STRICT prefix
+    //     (a good record after a corrupt one is not recovered).
+    static func case12_walCodecIntegrity() {
+        let r1 = WALCodec.encodeRecord(revision: 1, ops: [.put(key: b("a"), value: b("1"))])
+        let r2 = WALCodec.encodeRecord(revision: 2, ops: [.delete(key: b("a")),
+                                                          .put(key: b("c"), value: b("3"))])
+
+        // Round-trip: header + both records → both decode, whole stream consumed.
+        let good = WALCodec.header + r1 + r2
+        let s = WALCodec.decodeAll(good)
+        check(s.records.count == 2 && s.consumed == good.count, "12: round-trip decodes all records")
+        check(s.records[0].revision == 1 && s.records[0].ops == [.put(key: b("a"), value: b("1"))],
+              "12: first record body recovered")
+        check(s.records[1].revision == 2 && s.records[1].ops.count == 2, "12: multi-op record recovered")
+
+        // Flip the final byte (r2's CRC) — length is intact, so this is a pure CRC mismatch.
+        var crcFlip = good
+        crcFlip[crcFlip.count - 1] ^= 0xFF
+        let sc = WALCodec.decodeAll(crcFlip)
+        check(sc.records.count == 1, "12: bad-CRC record discarded (got \(sc.records.count))")
+        check(sc.consumed == WALCodec.header.count + r1.count, "12: consumed marks the last good boundary")
+
+        // Corrupt the FIRST record's body: the good r2 after it must NOT be recovered.
+        var firstFlip = good
+        firstFlip[WALCodec.header.count + 5] ^= 0xFF              // a byte inside r1's body
+        let sf = WALCodec.decodeAll(firstFlip)
+        check(sf.records.isEmpty && sf.consumed == WALCodec.header.count,
+              "12: recovery is a strict prefix — nothing after the first corrupt record")
+
+        // A stream without the magic header yields no records.
+        let noHeader = WALCodec.decodeAll(b("not-a-wal-stream"))
+        check(noHeader.records.isEmpty && noHeader.consumed == 0, "12: missing header → no records")
+    }
+
+    // 13. Snapshot codec integrity (direct): round-trip; bad magic, a flipped payload byte
+    //     (bad CRC), and a truncated tail all throw .corrupt rather than returning junk.
+    static func case13_snapshotCodecIntegrity() {
+        let snap = SnapshotData(revision: 7, compactedRevision: 3, entries: [
+            Entry(key: b("/a"), value: b("1"), createRevision: 1, modRevision: 5, version: 2),
+            Entry(key: b("/b"), value: b("2"), createRevision: 4, modRevision: 4, version: 1),
+        ])
+        let bytes = SnapshotCodec.encode(snap)
+
+        // Round-trip.
+        guard let back = try? SnapshotCodec.decode(bytes) else { check(false, "13: round-trip decode"); return }
+        check(back.revision == 7 && back.compactedRevision == 3 && back.entries.count == 2,
+              "13: snapshot header + entry count recovered")
+        check(back.entries[0].key == b("/a") && back.entries[0].modRevision == 5 && back.entries[0].version == 2,
+              "13: entry metadata recovered")
+
+        func rejects(_ corrupt: Bytes, _ label: String) {
+            var threw = false
+            do { _ = try SnapshotCodec.decode(corrupt) } catch { threw = true }
+            check(threw, label)
+        }
+
+        // Bad magic.
+        var badMagic = bytes; badMagic[0] ^= 0xFF
+        rejects(badMagic, "13: bad magic rejected")
+
+        // Flip a payload byte → CRC mismatch.
+        var crcFlip = bytes; crcFlip[12] ^= 0xFF                 // inside the payload, past the 8-byte header
+        rejects(crcFlip, "13: flipped payload byte caught by CRC")
+
+        // Truncated tail (drop the trailing CRC) → corrupt.
+        rejects(Array(bytes[0..<(bytes.count - 2)]), "13: truncated snapshot rejected")
     }
 
     // Optional microbench (off the pass/fail path): put ops/sec + watch fan-out.
