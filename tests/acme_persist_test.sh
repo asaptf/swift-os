@@ -96,7 +96,7 @@ boot_and_login() {
   await "M7 tty: running; press Ctrl-C" 40 "$log" || return 1; printf '\003' >&3
   await "swift-os login:" 40 "$log" || return 1; send_line 'root'
   await "Password:" 30 "$log" || return 1; send_line 'swordfish'
-  await "built-in shell (ash)" 60 "$log" || return 1
+  await "M12c: shell ready" 60 "$log" || return 1
 }
 
 # --insecure: this test targets a self-signed mock and checks persistence, not TLS

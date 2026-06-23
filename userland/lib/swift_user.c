@@ -428,9 +428,17 @@ int swiftos_pkg_stream_abort(void) {
     return pkg_stream_abort();
 }
 
+/* Return the basename of path (pointer into the same string, no allocation). */
+static const char *shell_basename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+    return *base ? base : path;
+}
+
 int swiftos_exec_shell(const char *path) {
-    char arg0[] = "sh";
-    char *argv[] = { arg0, 0 };
+    char *argv[] = { (char *)shell_basename(path), 0 };
     return execve(path, argv, 0);
 }
 
@@ -443,8 +451,7 @@ int swiftos_pty_spawn_shell(const char *path, int slave_fd) {
     dup2(slave_fd, 1);
     dup2(slave_fd, 2);
     for (int fd = 3; fd < 32; fd++) close(fd);
-    char arg0[] = "sh";
-    char *argv[] = { arg0, 0 };
+    char *argv[] = { (char *)shell_basename(path), 0 };
     execve(path, argv, 0);
     __syscall3(SYS_EXIT, 127, 0, 0);     // exec failed
     return 0;                            // unreachable

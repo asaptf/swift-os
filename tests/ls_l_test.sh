@@ -110,7 +110,7 @@ send_line 'root'
 await_count "Password:" 1 60 || drive_fail "timed out waiting for root password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-await_count "built-in shell (ash)" 1 60 || drive_fail "root shell did not start"
+await_count "M12c: shell ready" 1 60 || drive_fail "root shell did not start"
 send_line 'ls -l /'
 await_regex 'drwxr-xr-x +[0-9]+ +root +root .* bin' 20 || drive_fail "root ls -l / did not list /bin"
 send_line 'ls -l /bin'
@@ -124,7 +124,7 @@ send_line 'user'
 await_count "Password:" 2 60 || drive_fail "timed out waiting for user password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, user" 60 || drive_fail "user login did not complete"
-await_count "built-in shell (ash)" 2 60 || drive_fail "user shell did not start"
+await_count "M12c: shell ready" 2 60 || drive_fail "user shell did not start"
 send_line 'mkdir /tmp/d; ls -l /tmp'
 await_regex 'drwxr-xr-x +[0-9]+ +user +user .* d$' 20 || drive_fail "user ls -l /tmp did not list /tmp/d"
 send_line 'exit'

@@ -53,7 +53,7 @@ to_shell() {
   send $'tty-line\n'; await "M7 tty: running; press Ctrl-C" 60 || return 1
   send $'\003'; await "swift-os login:" 120 || return 1
   send $'root\n'; await "Password:" 90 || return 1
-  send $'swordfish\n'; await "built-in shell (ash)" 150 || return 1
+  send $'swordfish\n'; await "M12c: shell ready" 150 || return 1
   return 0
 }
 run_until() { local cmd="$1" marker="$2" tries="${3:-5}" max="${4:-25}" i; for (( i=0; i<tries; i++ )); do send "$cmd"$'\n'; await "$marker" "$max" && return 0; done; return 1; }

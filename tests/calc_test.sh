@@ -126,7 +126,7 @@ await "swift-os login:" 90 || drive_fail "login prompt did not appear"
 printf 'root\n' >&3
 await "Password:" 90 || drive_fail "password prompt did not appear"
 printf 'swordfish\n' >&3
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 printf '/bin/calc\n' >&3
 await "swift-os calc" 120 || drive_fail "calc did not start"
 await "for commands" 30 || drive_fail "calc prompt did not become ready"

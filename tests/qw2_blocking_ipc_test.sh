@@ -97,7 +97,7 @@ await "swift-os login:" 90
 send_line 'root'
 await "Password:" 30
 send_line 'swordfish'
-await "built-in shell (ash)" 120
+await "M12c: shell ready" 120
 
 # Run the blocking IPC demo at -smp 4. QW2-RECV-PARKED must appear first
 # (child reaches recv before the parent sends), then the recv/EOF results.

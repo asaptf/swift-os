@@ -13,7 +13,7 @@
 #   - a small payload file (/etc/motd, < 1 sector)          -> motd content
 #   - busybox.elf (~1.1 MB ≈ 18 of the 64 KiB multi-sector chunks), loaded by
 #     execResolve via virtioBlkReadRange in one call: the ash shell only launches
-#     if that large, multi-chunk read is byte-exact -> "built-in shell (ash)"
+#     if that large, multi-chunk read is byte-exact -> "M12c: shell ready"
 #
 # A regression in the multi-sector logic (off-by-one sector count, chunk-boundary
 # copy slip, capacity clamp) corrupts one of these and the matching marker never
@@ -91,7 +91,7 @@ if await "M7 tty: type a line then Enter" 60; then
   send $'root\n'
   await "Password:" 90 || fail "no password prompt"
   send $'swordfish\n'
-  await "built-in shell (ash)" 120 || fail "busybox shell did not launch (large multi-chunk ELF read corrupted)"
+  await "M12c: shell ready" 120 || fail "busybox shell did not launch (large multi-chunk ELF read corrupted)"
   send $'cat /etc/motd\n'
   await "Welcome to swift-os." 30 || fail "shell could not read /etc/motd"
 else

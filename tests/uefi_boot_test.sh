@@ -100,7 +100,7 @@ if wait_for "swift-os login:" 480; then
     wait_for "Password:" 240 || true
     send_text $'swordfish\n'
 fi
-if wait_for "built-in shell (ash)" 480; then
+if wait_for "M12c: shell ready" 480; then
     send_text $'echo M10\'\'-UEFI-OK\n'
     wait_for "M10-UEFI-OK" 240 || true
     send_text $'ls /\n'
@@ -186,7 +186,7 @@ check "[I] smp: S4b OK: VFS lock boundary stayed balanced"
 check "[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
 check "[I] smp: S4d OK: package-store lock boundary stayed balanced"
 check "[I] smp: S4e OK: network lock boundary stayed balanced"
-check "built-in shell (ash)"                  # busybox came up
+check "M12c: shell ready"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }

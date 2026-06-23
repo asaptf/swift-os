@@ -114,7 +114,7 @@ exec 3<>"$INFIFO"
 # This throwaway disk intentionally carries only busybox, guard fixtures, and
 # test files. With no /bin/ttydemo or /bin/console-login, init falls back
 # directly to raw ash.
-await "built-in shell (ash)" 90 || drive_fail "busybox shell did not start"
+await "M12c: shell ready" 90 || drive_fail "busybox shell did not start"
 send_line 'cat /etc/motd'
 await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
 send_line 'ls /'

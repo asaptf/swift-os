@@ -263,7 +263,7 @@ await "swift-os login:" 90 || drive_fail "console-login prompt did not appear af
 send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 send_line "/bin/netinfo --check --require-static6"
 await "netinfo: check ok" 90 || drive_fail "/bin/netinfo deploy check did not complete in deploy image"
 

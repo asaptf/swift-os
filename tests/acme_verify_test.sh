@@ -71,7 +71,7 @@ require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
-require_await "built-in shell (ash)" 60
+require_await "M12c: shell ready" 60
 
 paste_pem /tmp/ca.pem  "$W/cert.pem"
 paste_pem /tmp/bad.pem "$W/bad.pem"

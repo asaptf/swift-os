@@ -71,7 +71,7 @@ await "swift-os login:" 90 || drive_fail "no login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "no password prompt"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 # 0) runtime entropy probe: does SYS_RANDOM-backed /dev/urandom yield bytes?
 send_line 'head -c 8 /dev/urandom | od -An -tx1'

@@ -59,7 +59,7 @@ to_shell() {
   send $'tty-line\n'; await "M7 tty: running; press Ctrl-C" 40 || return 1
   send $'\003'; await "swift-os login:" 90 || return 1
   send $'root\n'; await "Password:" 90 || return 1
-  send $'swordfish\n'; await "built-in shell (ash)" 120 || return 1
+  send $'swordfish\n'; await "M12c: shell ready" 120 || return 1
   return 0
 }
 run_until() {  # run_until "cmd" "marker" [tries] [maxsec]
