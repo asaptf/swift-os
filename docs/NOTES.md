@@ -3,6 +3,38 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## SH1 bash port (2026-06-23)
+
+Cross-build **GNU bash 5.2.37** for swift-os: static AArch64 binary with bundled
+readline + ncurses for interactive line-editing, history, and tab-completion.
+`bash.elf` → `/bin/bash`.
+
+- **Build:** `make bash` → `scripts/build-bash.sh`. CC-wrapper pattern (same as
+  build-mc.sh). Link flags: `--start-group -lc -lm -lgcc -lncurses --end-group`.
+  `bash_cv_*` variables override all `AC_TRY_RUN` configure probes that cannot
+  execute on the host when cross-compiling.
+- **Configure flags:** `--with-included-readline --with-curses --without-job-control
+  --without-bash-malloc --disable-nls --without-gdbm`. Job control is disabled
+  because the kernel lacks `setpgid`/`tcsetpgrp`/SIGTSTP delivery (C-arc + signal
+  follow-up work). All other interactive features work.
+- **Source patch** (`shell.c main()`): `setenv("TERM","vt100",0)` +
+  `setenv("HOME","/tmp",0)` + default `PS1` at the top of `main()` — baked
+  binaries run with an empty environment; without `TERM` readline aborts; without
+  `HOME` bash cannot write history. Same pattern as MC1.
+- **compat additions:**
+  - `userland/compat/signal.h`: added `SIGCONT`(18), `SIGTSTP`(20), `SIGTTIN`(21),
+    `SIGTTOU`(22), `SIGWINCH`(28), `NSIG`(64), `SIGRTMIN`/`SIGRTMAX` — these POSIX
+    signals are absent from bare-metal newlib but bash and readline reference them.
+  - `userland/compat/stubs.c`: added weak `times()` (zero struct tms; for bash's
+    `time` builtin) and weak `confstr()` (EINVAL; bash probes `_CS_PATH`).
+- **Test:** `make bash-test` → `tests/bash_test.sh`. Boots, logs in, runs
+  `/bin/bash --norc --noprofile`, asserts: `$BASH_VERSION` (SH1_VER=5.2), arithmetic
+  expansion (SH1_ARITH=42), for-loop (SH1_LOOP_A/B/C), pipeline (SH1_PIPE_OK).
+- **Job control (follow-up):** `Ctrl-Z`/`fg`/`bg` need kernel `setpgid`, `setsid`,
+  `tcsetpgrp`, SIGTSTP/SIGCONT delivery — tracked as part of the signal-completion
+  work in the roadmap. Stubs for these functions already exist in stubs.c and return
+  success/0, so bash starts without errors even now.
+
 ## MC1 Midnight Commander port (2026-06-23)
 
 Final step of the arc: cross-build **GNU Midnight Commander 4.8.31** against the
