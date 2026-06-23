@@ -44,27 +44,16 @@ func rtcNow() -> UInt64 {
     return UInt64(mmio_read32(base))
 }
 
-private var netPumpTickAccum: UInt64 = 0
-
 func timerHandleTick() {
     systemTicks += 1
     smpRecordTimerTickForCurrentCpu()
     // Per-tick logging is silenced (it spammed the console once we run at a high
     // tick rate for preemption). systemTicks remains available for accounting.
-
-    // Drive the network stack from the timer (~50 Hz) so TCP timers — TIME_WAIT
-    // decay, SYN_RCVD timeout — and dead-socket reclaim advance even when no
-    // process is making socket syscalls. Without this, a connection burst can
-    // fill the socket table and stall it until syscall activity resumes. netPump
-    // takes the IRQ-disabling net spinlock (no self-deadlock: a CPU holding it
-    // has IRQs masked, so its own timer cannot fire) and no-ops before the NIC
-    // is up.
-    netPumpTickAccum &+= 1
-    let pumpEvery: UInt64 = timerHz >= 50 ? UInt64(timerHz) / 50 : 1
-    if netPumpTickAccum >= pumpEvery {
-        netPumpTickAccum = 0
-        netPump()
-    }
+    //
+    // NOTE: do NOT drive netPump() from here. Pumping the NIC from the timer IRQ
+    // passed every QEMU/TCG check but corrupted virtio-net on the real Ampere
+    // Altra/KVM box (networking died: ping loss, sshd accept-loop). The net
+    // stack is driven from socket syscalls only.
 
     // Rearm the timer. Rescheduling is driven from irqHandler AFTER the GIC EOI,
     // so a context switch never strands an active interrupt at the controller.

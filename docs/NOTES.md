@@ -7271,3 +7271,214 @@ rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
 oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
+
+### CR1 — native Swift cron daemon `/bin/crond` (DONE, 2026-06-19)
+
+A long-running userland service that runs commands on a schedule, built entirely
+on existing primitives (no kernel change): the PL031 wall clock (`time()`), the
+monotonic scheduler tick (`sysinfo`), `nanosleep`, and a new thin synchronous
+spawn bridge `swiftos_run` (= `spawn`, fork+exec+wait with stdio inherited) in
+`userland/lib/swift_user.{h,c}`. `userland/crond.swift` parses a hybrid crontab —
+the classic five fields (with `*`, lists, ranges, `*/step`, dow 0/7 = Sunday, and
+Vixie dom/dow OR semantics) plus `@reboot/@hourly/@daily/@weekly/@monthly/@yearly`
+and `@every <dur>` (e.g. `30s`, `1h30m`). Sources merge `/etc/crontab` (signed
+base default) then `/data/crond/crontab` (durable override); an explicit path arg
+overrides both. Calendar jobs match the wall clock at minute granularity (guarded
+once/minute); `@every` jobs use the monotonic tick (immune to RTC absence). Each
+fired job runs as `/bin/sh -c "<command>"` (kernel maps `/bin/sh` → busybox).
+Acceptance: `tests/crond_test.sh` (`make crond-test`, in `make test`) drives a
+baked `/etc/crontab.test` and proves @reboot fires once, @every fires repeatedly,
+and the jobs durably append to `/data/crond/last-run`.
+
+Two deliberate v1 limitations, recorded not hidden:
+
+- **Synchronous reap.** The kernel `processWaitpid` ignores its `options` arg —
+  there is no `WNOHANG`. So crond runs each fired job to completion (blocking)
+  rather than reaping asynchronously; a job that never exits stalls the scheduler.
+  Fine for short cron jobs; revisit if/when the kernel grows `WNOHANG`.
+- **Auto-started at boot (since CR3).** crond is in the default `/etc/swos/services`
+  and started by swos-init as a child (sibling of the login shell). Enabling it
+  first exposed — then required fixing — the CR2 console-hang bug; see CR3 below.
+  Use `crond-supervised` to have it restarted on crash.
+
+### CR2 — a second resident daemon hangs the serial console (ROOT-CAUSED; FIXED in CR3, 2026-06-19)
+
+Attempting to enable crond auto-start (so it could, e.g., renew ACME certs on a
+`@daily` schedule) surfaced a reproducible failure that is **not** crond-specific
+and is **not** what it first looked like.
+
+Symptom: with crond resident AND `make kv-test`'s long churn session running, the
+interactive shell stops acting on console input *after* `/bin/kv` exits — the next
+line (`echo BACK-IN-SHELL`) is echoed by the tty (that happens at IRQ level) but is
+never executed. Clean correlation: kv-test is 3/3 PASS with only `sshd` resident,
+and consistently FAILS with one extra resident process; short interactive sessions
+with crond resident always pass.
+
+Disproven causes (each ruled out with a measurement, not a guess):
+  - **Not memory / image-load headroom** (my initial wrong label): `/bin/kv` is
+    213 pages, smaller than busybox (278 pages) which is already staged at boot, so
+    its load reuses the grow-only ELF staging buffer (`exec.swift` `elfBuf`) with no
+    fresh contiguous allocation.
+  - **Not kernel-heap exhaustion**: crond's periodic syscalls (`sysinfo`/`time`/
+    `nanosleep`) allocate nothing from the bump heap.
+  - **Not process-slot exhaustion, not a fork/exec failure**: instrumented every
+    `-1`/`(0,0,0)` return in `createProcess`/`buildExecImage`/`processFork` — none
+    fired; the post-kv `echo` exec is never even attempted.
+  - **Not a stuck reap**: instrumented the `processWaitpid` park loop — it never
+    spins; the shell is not blocked waiting for kv.
+  - **Not boot-start vs shell-start, not wakeup frequency** (a 30 s crond loop
+    fails identically), **not test flakiness** (3/3 without crond).
+
+**Root cause (confirmed by a per-tick process-table dump at the hang):** the
+console shell sits in `pBlocked` with `pWait = waitAny` — i.e. blocked in
+`wait(-1)` — while its only live child is crond. The chain is structural:
+`swos-init` (pid1, slot 0) forks the daemons and then `execve`s `/bin/console-login`
+→ the interactive shell, so **pid1 *becomes* the shell and inherits the daemons as
+its children**. busybox ash issues a blocking `wait(-1)` that returns only when some
+child exits. A long-lived daemon child (crond) never exits, so `wait(-1)` blocks
+forever and the shell never reads the next console line. Without crond, sshd exits
+on this NIC-less test path, the child set empties, `wait(-1)` returns `ECHILD`, and
+the shell continues — which is exactly why only a *second, never-exiting* daemon
+child trips it.
+
+Scope: this bites the **serial-console interactive shell** only. Production access
+is via sshd (session shells are children of sshd, not of pid1), and the serial
+console normally just sits at the login prompt, so a real box is unaffected — but
+the console tests run commands directly, which is why auto-start breaks them.
+
+Diagnostic instrumentation (process dump, alloc/exec/waitpid failure logs) was
+reverted — it was diagnostic only. Fixed in CR3, below.
+
+### CR3 — swos-init runs the login session as a child, not an exec-handoff (DONE, 2026-06-19)
+
+The fix for CR2. `userland/swos-init.c` no longer `execve`s `/bin/console-login`
+in place (which made pid1 *become* the interactive shell and inherit the daemons).
+The non-supervised path now `fork()`s console-login as a **child** — a sibling of
+sshd/crond — and loops on `waitpid(-1)`, reaping any daemon that exits while the
+session runs. When the login child (the shell, since console-login execs it in the
+same pid) exits, swos-init returns its code, so slot 0 still exits and the kernel
+still prints `M12c: session ended` and restarts init — the session-restart contract
+all ~60 console tests depend on is unchanged. The interactive shell now only ever
+parents its own foreground jobs, so busybox ash's `wait(-1)` can no longer block on
+a never-exiting daemon. The supervised path (`*-supervised` →
+`supervise_services_forever`) is untouched.
+
+This is the structural prerequisite for running more than one resident daemon with
+a usable serial console (the multi-daemon roadmap: ACME-renewal-via-cron, Node, the
+JVM, observability). Kernel unchanged; the change is entirely in swos-init.c.
+
+Verified: `make kv-test` (the CR2 canary) now PASS with crond auto-started, plus
+`crond-test` (now asserts auto-start), `console-login-test`, `busybox-test`,
+`calc-test`, `top-test` (-smp 4), and `sshd-supervision-test` (the untouched
+supervised path) all PASS.
+### TH9 — multi-signal default-terminate coverage + a corrected audit claim (DONE, 2026-06-19)
+
+`signal_test` exercised the default-terminate path for exactly one signal
+(SIGTERM). The audit worried that "only SIGINT/TERM/PIPE are delivered;
+SIGSEGV/SIGKILL etc. are defined but never delivered." Reading `processKill`
+(kernel/user/process.swift) shows that claim is too strong: `kill(otherPid, sig)`
+to a process that is NOT currently on-CPU takes a DIRECT teardown
+(`pExit = 128 + sig`) for ANY valid signal — the SIGINT/TERM/PIPE restriction is
+only on the *async-pending* delivery path (`signalDeliverToForeground/CurrentFrame`,
+i.e. Ctrl-C and raise-to-foreground). So `kill(child, SIGKILL|SIGSEGV)` already
+terminates correctly.
+
+`userland/signalprobe.c` now forks a nanosleeping child and kills it with SIGINT,
+SIGKILL, and SIGSEGV in turn, asserting each yields `WIFSIGNALED` with
+`WTERMSIG == sig` (the 128+signo status). Non-vacuous: a signal that failed to
+terminate would hang `waitpid` and the probe would never print SIGNALPROBE-OK.
+Verified `make signal-test` PASS. An exploratory in-kernel change to add SIGKILL to
+the async-delivery list was reverted — it has no reachable test (the direct-teardown
+and self-kill paths already handle SIGKILL), so shipping it would be an unverified
+no-op. Genuinely open signal items (left for a focused milestone): `kill` of a
+process running on ANOTHER CPU returns EBUSY (no remote teardown), and per-process
+(vs process-global) dispositions. Remaining audit tracks: datafs crash injection,
+SMP atomic contention, driver fault injection.
+
+### V-TS1 — system trust store + verify-by-default for /bin/tlsget (DONE, 2026-06-22)
+
+The X.509 chain/signature verifier (tls13.swift `enableVerification`, x509.swift,
+x509_verify.swift, rsa.swift, p256.swift) already existed and is opt-in. V-TS1
+closes the remaining "MITM-open by default" gap for the general HTTPS client:
+
+  - **System trust store shipped in the base image:** `base/etc/ssl/cert.pem` =
+    the ISRG Root X1 (RSA) + X2 (ECDSA) roots (Let's Encrypt's anchors), extracted
+    from the Mozilla bundle. Committed (~3.4 KB) so the base builds deterministically
+    with no network; it's the trust anchor for our ACME-issued certs and the LE API.
+    A full Mozilla bundle for arbitrary-host HTTPS remains the `ca-certificates`
+    package (follow-up).
+  - **Shared loader** `userland/lib/truststore.swift`: `loadSystemTrustRoots()` /
+    `loadTrustRootsFile()` read a PEM CA file → DER roots (via `pemReadCertificates`).
+  - **/bin/tlsget verifies by default:** loads the system store, requires the
+    server chain to anchor to it, checks the CertificateVerify signature, and
+    requires `host` in the leaf SAN + validity. New flags: `--cafile <pem>` to
+    override the store, `--insecure`/`-k` to opt out (bring-up only).
+
+Acceptance: `make tls-truststore-test` (in `make test`) — host openssl s_server with
+a leaf signed by a test CA (SAN IP:10.0.2.2); guest proves (A) default verify loads
+the 2 ISRG roots and REJECTS the off-store leaf, (B) `--cafile <testCA>` completes
+the handshake, (C) `--insecure` completes. `tls_test.sh` (A4 bring-up) now passes
+`--insecure` since it targets a throwaway self-signed cert.
+
+Deferred follow-ups (V-TS2): make `/bin/acme` and `swupdate os` verify against the
+system store by default (today acme verifies only with explicit `--ca`; the ACME
+mock tests rely on that). SNI is still not sent by the TLS client (tls13.swift) —
+needed for multi-cert/real virtual hosts; single-cert servers (and the tests) work
+without it. Real Let's Encrypt e2e needs a public domain (pairs with the H6 deploy).
+
+### V-TS2 — SNI + verify-by-default for /bin/acme (DONE, 2026-06-22)
+
+Extends V-TS1's "verify by default" from tlsget to the ACME client, and teaches the
+TLS client to send SNI.
+
+  - **SNI (RFC 6066) in tls13.swift:** the ClientHello now carries a server_name
+    extension built from `expectHostname` (set by `enableVerification`), but ONLY
+    for a real DNS name — a bare IP literal is skipped (RFC 6066 forbids IP SNI,
+    and all the IP-based tests stay byte-identical, so no regression). Real virtual-
+    hosted servers (incl. the Let's Encrypt API) now get the right certificate.
+    Smoke-covered host-side by `tls_verify_test.sh` (its driver connects with a DNS
+    hostname, so SNI is now on the wire); a dedicated QEMU SNI e2e needs a DNS-named
+    TLS server (deferred).
+  - **/bin/acme verifies by default:** without `--ca` it loads the system trust
+    store (/etc/ssl/cert.pem); `--ca <file>` overrides the roots; new `--insecure`
+    disables it (mock/bring-up only). The ACME server's TLS identity is the real
+    integrity anchor for the directory/nonce/challenge flow, so this matters for
+    real LE.
+
+Tests: `acme_verify_test.sh` gains a third case — default (no flag) verification
+against the system store REJECTS the self-signed mock (a 2nd "FAIL directory"),
+proving verify-on-by-default. `acme_mock_test.sh` and `acme_persist_test.sh` (which
+target the self-signed mock) now pass `--insecure`. All of acme-verify/mock/persist,
+tls-truststore, tls-test, tls-verify PASS.
+
+Deferred (V-TS3): make `swupdate os`/site HTTPS fetch verify by default — it's
+defense-in-depth (SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS) and
+touches os-update/site-update/site-bundle tests, so it's its own step. Real Let's
+Encrypt e2e still needs a public domain (pairs with H6).
+
+### V-TS3 — verify-by-default for swupdate HTTPS (DONE, 2026-06-22)
+
+Completes "verify by default everywhere": after tlsget (V-TS1) and acme (V-TS2),
+`/bin/swupdate`'s HTTPS fetch (`os <url>` SWSYS and `site <url>` SWSITE) now verifies
+the server certificate against the system trust store (/etc/ssl/cert.pem) too.
+
+  - `httpsGet` calls `enableVerification` (system roots + the URL host + now) unless
+    a global `--insecure` arg is present (parsed once in main). This is defense-in-
+    depth: the SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS, so the
+    integrity guarantee does not depend on it — but a hostile mirror can no longer
+    feed bytes over an unauthenticated channel.
+  - Makefile: `userland/lib/asn1.swift` + `userland/lib/truststore.swift` added to
+    `SWUPDATE_SWIFT_SRCS` for the trust-store loader.
+
+Tests: `os_update_test.sh` and `site_update_test.sh` target self-signed mock servers,
+so their `swupdate os/site` invocations now pass `--insecure` (the SWSYS/SWSITE
+signature checks are what those tests exercise). PASS: os-update, site-update,
+site-bundle (apply-local, unaffected). The verify-on default path shares the exact
+`enableVerification` call covered by tls-truststore/acme-verify, so it is covered by
+construction (a swupdate-specific TLS-reject test would need an in-store cert, which
+is impossible offline — deferred with the real-LE e2e).
+
+With V-TS1–V-TS3, every outbound TLS client (tlsget, acme, swupdate) authenticates
+the server against the system trust store by default. Remaining: real Let's Encrypt
+e2e (public domain, pairs with H6); a dedicated QEMU SNI e2e (needs a DNS-named TLS
+server — SNI is currently covered host-side by tls-verify + by construction).

@@ -1,0 +1,16 @@
+# /etc/crontab — swift-os default schedule (read by /bin/crond).
+#
+# Syntax: five fields then a command, or an @shortcut.
+#   min hour dom mon dow  command
+#   *    = every value          a,b  = list
+#   a-b  = range               */n  = step
+# Shortcuts: @reboot @hourly @daily @weekly @monthly @yearly @every <dur>
+#   (<dur> = 30s, 5m, 2h, 1h30m, …)
+#
+# Jobs run as `/bin/sh -c "<command>"`. Times are UTC (the box has no timezone).
+# Put machine-local edits in /data/crond/crontab — it is merged on top of this
+# file and survives reboot. crond re-reads both only at (re)start.
+#
+# No jobs are enabled by default. Examples:
+#   0  3 * * *   /bin/acme renew          # renew TLS certs daily at 03:00 UTC
+#   @hourly      /bin/sh -c 'sync'        # flush /data hourly

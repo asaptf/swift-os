@@ -2350,6 +2350,10 @@ private func reapProcess(_ slot: Int) {
         address_space_destroy(pTtbr0[slot])
         pTtbr0[slot] = 0
     }
+    // LA3: drop the base references of any shared-memory ring channels this
+    // process created. address_space_destroy above already dropped this slot's
+    // per-mapping references, so frames now free unless a peer still maps them.
+    shmRingReapOwner(slot)
     clearSignalFrameState(slot)
     processSignalClearAllPending(slot)
     if pKstack[slot] != 0 {
@@ -2940,6 +2944,29 @@ func processSpawnChildWithHandles(_ image: UInt, _ size: UInt, packed: UInt, pac
                                             argc: argc, inherit: .explicit,
                                             specsVA: specsVA, specCount: specCount,
                                             setuid: setuid, setuidOwner: setuidOwner)
+}
+
+/// spawn_handles_async(path) child (LA1): like processSpawnChildWithHandles but
+/// it does NOT block the caller or reap the child — createProcess already marks
+/// the child runnable, so we just return its pid immediately. A persistent
+/// supervisor uses this to keep running (driving the child over IPC, then
+/// reaping it with waitpid) instead of blocking inside the spawn.
+func processSpawnChildWithHandlesAsync(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt,
+                                       argc: Int, specsVA: UInt, specCount: UInt,
+                                       setuid: Bool = false, setuidOwner: UInt32 = 0) -> Int {
+    let parent = currentProcessSlot()
+    guard parent >= 0 else { return Errno.invalid.code }
+    let valid = vfsValidateHandleInheritance(parent: parent, inherit: .explicit,
+                                             specsVA: specsVA, specCount: specCount)
+    if valid < 0 { return valid }
+    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
+                              parent: parent, inherit: .explicit,
+                              inheritSpecsVA: specsVA, inheritSpecCount: specCount)
+    if child < 0 { return Errno.again.code } // EAGAIN
+    if setuid {
+        pSecurity[child] = securityApplySetuid(pSecurity[child], owner: setuidOwner)
+    }
+    return child + 1 // pid (mirrors processCurrentPid / processWaitpid's slot+1 convention)
 }
 
 func processCurrentPid() -> Int {
@@ -3780,6 +3807,97 @@ func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     if !fileVmaAdd(me, base, pages, diskImage, UInt(diskOff), mapLen, prot) { return err(-12) }
     pMmapTop[me] = base
     return base
+}
+
+/// LA3: map `pages` physically-contiguous, channel-owned frames starting at
+/// `basePA` read/write into the CURRENT process's descending mmap arena. Each
+/// frame's PMM reference count is bumped first, so process teardown
+/// (address_space_destroy / munmap -> releaseUserFrame -> pmm_frame_release) only
+/// DROPS a reference; the shmring channel table holds the base reference and
+/// frees the frames itself (kernel/ipc/shmring_chan.swift). Returns the base user
+/// VA, or a negative errno encoded in the UInt.
+///
+/// A process that maps a ring and THEN forks does not share it with the child:
+/// addressSpaceClone COW-marks writable leaves, so the child gets a private copy
+/// on first write. Each process maps the channel by id independently — the
+/// create-then-map-by-id model the syscall ABI is built around.
+func processMapSharedFrames(_ basePA: UInt, _ pages: UInt) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) }       // EINVAL
+    if pages == 0 { return err(-22) }
+    let bytes = pages * PageAllocator.pageSize
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) }  // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+    let activeMask = processAddressSpaceActiveCpuMaskForSlot(me)
+    var i: UInt = 0
+    while i < pages {
+        let va = base + i * PageAllocator.pageSize
+        let pa = basePA + i * PageAllocator.pageSize
+        pmmFrameRef(pa)   // this process now shares the channel-owned frame
+        if addressSpaceMapForActiveCpuMask(pTtbr0[me], va, pa,
+                                           Int32(VM_PERM_USER_DATA), activeMask) != 0 {
+            pmmFrameRelease(pa)   // undo the ref for the page we failed to link
+            if i > 0 {
+                // Roll back the pages already linked: munmap drops each frame's
+                // ref (the table's base ref persists), so nothing is freed early.
+                _ = addressSpaceMunmapForActiveCpuMask(pTtbr0[me], base, i, activeMask)
+                pResPages[me] -= Int(i)
+            }
+            return err(-12)
+        }
+        i += 1
+    }
+    pMmapTop[me] = base
+    pResPages[me] += Int(pages)
+    return base
+}
+
+/// LA2: map a claimed device's MMIO window into the caller, gated on the grant's
+/// `.map` right. Resolves `fd` to its window via vfsDeviceMmioWindow (which does
+/// the rights/flags checks under vfsLock), carves a VA region from the same
+/// descending mmap cursor anonymous mmap uses — so munmap and process teardown
+/// already reclaim it — and links the pages Device-nGnRE with NO PMM frames
+/// (addressSpaceMapDeviceForActiveCpuMask). `lenHint` is clamped to the window
+/// length (0 means "the whole window"). Because the virtio-mmio transport stride
+/// is sub-page (0x200), the window base need not be page-aligned: we map the
+/// 4 KiB page(s) covering [base, base+len) and return a VA pointing at the exact
+/// register base (page VA + intra-page offset), like an mmap of a device offset.
+/// Returns the base VA, or a negative errno encoded in the UInt (like processMmap).
+func processDeviceMmap(_ fd: Int, _ lenHint: UInt) -> UInt {
+    func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
+    let me = currentProcessSlot()
+    guard me >= 0 else { return err(-22) } // EINVAL
+    let w = vfsDeviceMmioWindow(fd: fd)
+    if w.err != 0 { return err(w.err) }
+    if w.len == 0 { return err(-22) }
+    let pageSize = PageAllocator.pageSize
+    let want = (lenHint == 0 || lenHint > w.len) ? w.len : lenHint
+    if want == 0 { return err(-22) }
+
+    let pageBase = w.base & ~(pageSize - 1)
+    let pageOffset = w.base - pageBase
+    let pages = roundUpPages(pageOffset + want)
+    let bytes = pages * pageSize
+    if pMmapTop[me] < userMmapFloor + bytes { return err(-12) } // ENOMEM: arena full
+    let base = pMmapTop[me] - bytes
+    if !anonVmaAdd(me, base, pages) { return err(-12) }
+
+    let rc = addressSpaceMapDeviceForActiveCpuMask(pTtbr0[me],
+                                                   base,
+                                                   pageBase,
+                                                   pages,
+                                                   processAddressSpaceActiveCpuMaskForSlot(me))
+    if rc != 0 {
+        anonVmasDeactivateOverlap(me, base, pages)
+        return err(Int(rc))
+    }
+    pMmapTop[me] = base
+    // Account the mapped pages so munmap's symmetric decrement stays balanced.
+    // These are device pages, not RAM; munmap/teardown "free" them via a PMM
+    // range-guarded no-op, never returning MMIO to the frame allocator.
+    pResPages[me] += Int(pages)
+    return base + pageOffset
 }
 
 /// I2b: service a demand fault on a lazily-reserved file-backed region. Returns

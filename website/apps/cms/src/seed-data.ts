@@ -253,3 +253,158 @@ The flagship profile is application and AI hosting. A native HTTP server and a n
 Boot defers optional drivers, services, and diagnostics until after the first shell runs, and favors packed precomputed metadata over probing loops. Every boot starts from the same known-good, signed image — so a boot is reproducible, and \`/tmp\` being volatile is a feature, not a limitation. Both the direct \`-kernel\` path and the UEFI/GPT path are tested on every change, on 1 CPU and \`-smp 4\`.`
   }
 ];
+
+// SwiftCube — mirrors apps/web/src/lib/content/defaults.ts (defaultSwiftcube).
+// Verified against the swiftcube/ subtree (SC0–SC9b committed with host tests).
+export const swiftcubePage = {
+  eyebrow: 'Companion project · cluster orchestration',
+  titleHtml: 'SwiftCube — the orchestrator for <span class="accent-word">swift-os</span> fleets.',
+  leadHtml:
+    'A Swift-everywhere control plane that schedules applications onto swift-os nodes, keeps desired state reconciled, and programs your load balancers. A simplified-but-complete analogue of Kubernetes — except it does the one thing that makes it fast: <strong style="color:var(--text)">it removes the container abstraction instead of optimizing it.</strong>',
+  badges: [
+    { label: 'instance = Cell, not a container', variant: 'accent' },
+    { label: 'single-binary control plane', variant: 'muted' },
+    { label: 'Raft · linearizable', variant: 'muted' },
+    { label: 'built through SC9b · host-tested', variant: 'ok' }
+  ],
+  coreHeading: 'A deployed instance is a Cell — not a container.',
+  coreSubHtml:
+    'The headline idea. SwiftCube does not run containers; it schedules swift-os <span class="gloss" data-gloss="cell">Cells</span>, the kernel\'s own capability-based isolation domain.',
+  coreProseHtml:
+    'A Cell already bundles everything an orchestrated workload needs — so there is nothing left to assemble at deploy time. No container runtime to start, no image to layer, no union filesystem to stack, no daemon to talk to. Because the substrate is the kernel itself, an instance doesn\'t <em>boot</em> — it\'s admitted, in <strong style="color:var(--text)">milliseconds.</strong>',
+  cellTagline: 'instance = Cell, not a container.',
+  cellParts: [
+    { name: 'base image', desc: 'read-only · content-addressed · deduplicated' },
+    { name: 'scratch', desc: 'private RAM (tmpfs) · vanishes on stop' },
+    { name: 'capabilities', desc: 'explicit kernel rights · no root' },
+    { name: 'resource domain', desc: 'accounted · cpu + memory limits' },
+    { name: 'VFS namespace', desc: 'private filesystem view' },
+    { name: 'lifecycle', desc: 'created → running → stopping → dead' }
+  ],
+  removed: ['container runtime', 'image layering', 'union filesystem', 'a daemon'],
+  kept: 'millisecond start',
+  archHeading: 'How the control plane is wired.',
+  archSubHtml:
+    '<code>sctld</code> is a single binary — API, scheduler, reconcilers, LB programmer, and an embedded <code>cubestore</code> — running as a 3-node Raft quorum. Each node runs a <code>slet</code>.',
+  lifecycle: [
+    '<code>sctl apply</code> writes a Deployment — forwarded to the Raft leader and committed.',
+    'The scheduler loop expands it into N Assignments — spread across nodes, fit by cpu/mem.',
+    'Each node\'s <code>slet</code> watches its assignments and makes local reality match — creating, supervising, or reaping Cells — then reports status back.',
+    'The endpoints loop watches healthy Cells and programs the external load balancers.'
+  ],
+  lifecycleFootHtml:
+    '<strong style="color:var(--text)">Self-healing falls out for free</strong> — when a node\'s lease expires, its assignments are re-placed elsewhere.',
+  archCalloutHtml:
+    '<strong>One process, no extra hop.</strong> Because <code>cubestore</code> lives in-process with the reconcile loops, SwiftCube skips the apiserver↔etcd network hop Kubernetes pays. A 3-node Raft group gives linearizable writes; a minority partition goes read-only. v1 nodes are swift-os only.',
+  diffHeading: 'Two things make it different.',
+  diffLead: 'Both fall out of building on the Cell substrate rather than on top of a container runtime.',
+  differentiators: [
+    {
+      tag: '01 · substrate',
+      title: 'Cells instead of containers',
+      bodyHtml:
+        'An instance is a kernel isolation domain, not a packaged process tree. The read-only base is shared across every replica; only the RAM scratch is per-instance.',
+      bullets: [
+        'Millisecond start — no runtime to spin up',
+        'Shared read-only base, deduplicated on the node',
+        'Per-instance RAM scratch, gone on stop'
+      ]
+    },
+    {
+      tag: '02 · authority',
+      title: 'Capabilities instead of root-in-container',
+      bodyHtml:
+        'A workload\'s identity <em>is</em> its capability set. You don\'t grant a uid and hope; you enumerate exactly the kernel rights it holds — nothing ambient, nothing implied.',
+      chips: [
+        { label: 'net.listen:8080' },
+        { label: 'fs.read:/etc/app' },
+        { label: 'root', off: true }
+      ]
+    }
+  ],
+  manifestHeading: 'Declare it. SwiftCube reconciles it.',
+  manifestLead:
+    'A flat, compose-like manifest — no <code>apiVersion</code>/<code>kind</code>/<code>spec</code> wrapper. Apply it; the control loops pull reality toward it.',
+  manifestYaml: `# SwiftCube manifest — flat, compose-like (SWIFTCUBE_DESIGN §10)
+app: edge-api
+image: registry.local/edge-api@sha256:9f2c…         # content-addressed, read-only
+replicas: 3
+command: [ /bin/edge-api, --serve ]
+update: { strategy: canary, canarySteps: [25, 50, 100], progressDeadlineSeconds: 300 }
+resources: { cpu: 500m, memory: 256Mi }              # request == limit in v1
+ports:
+  - name: http
+    container: 8080
+    expose: { via: lb, provider: nginx, listen: 443, protocol: https, tlsCertRef: edge-api-tls }
+env: { LOG_LEVEL: info }
+secrets: [ db-password ]                             # from cubestore, mounted in tmpfs
+volumes:
+  - { name: state, mount: /var/lib/edge-api, persistent: true, size: 1Gi }   # node-local, fenced
+capabilities: [ net.listen:8080, fs.read:/etc/edge-api ]   # identity IS the capability set
+health:
+  readiness: { http: /health, port: 8080, period: 1s, failureThreshold: 3 }
+  liveness:  { http: /livez,  port: 8080, period: 5s }
+placement: { spread: node, nodeSelector: { zone: eu-central } }`,
+  applyCmd: '$ sctl --local ./state apply -f edge-api.yaml',
+  applyOut: 'deployment/edge-api created (revision 1, replicas 3)',
+  readCmd: '$ sctl --local ./state get deployments',
+  readOut: `NAME      REPLICAS  REVISION  STRATEGY-REQ
+edge-api  3         1         cpu=500m/mem=256Mi
+
+$ sctl --local ./state rollout status edge-api
+rollout edge-api:
+  strategy:  canary
+  revision:  2
+  replicas:  3
+  phase:     Progressing
+  revisions: r1=1 r2=2
+  traffic:   r1:50% r2:50%
+  ready:     3
+  history:   r1 r2`,
+  manifestCalloutHtml:
+    '<strong>Apply just commits intent.</strong> Cell admission, traffic shifting, and LB programming happen asynchronously in <code>sctld</code>\'s reconcile loops — watch them land with <code>rollout status</code>.',
+  componentsHeading: 'Four pieces. Everything Swift.',
+  componentsLead:
+    'If you know Kubernetes, you already know the shape — SwiftCube just collapses it into far less moving machinery.',
+  components: [
+    { name: 'sctl', what: 'The command-line client. Runs on Mac, Linux, and Windows.', note: 'apply manifests · inspect state · drive rollouts', k8s: 'kubectl' },
+    { name: 'sctld', what: 'The control plane, as a single binary.', note: 'consensus + watch + reconcile loops in one process — zero-copy framing between them', k8s: 'apiserver + scheduler + controller-manager' },
+    { name: 'cubestore', what: 'Embedded MVCC key-value store with watch.', note: 'the source of truth — linearizable writes, streaming watches', k8s: 'etcd' },
+    { name: 'slet', what: 'The node agent. Lives on every swift-os node and drives Cells.', note: 'admits, starts, and reaps Cells · reports node truth back', k8s: 'kubelet' }
+  ],
+  componentsCapHtml:
+    'A 3-controller quorum gives you fault tolerance; <code>cubestore</code> living in-process with the reconcile loops is what removes the network hop Kubernetes pays between apiserver and etcd.',
+  featuresHeading: 'What it does for the fleet.',
+  featuresLead:
+    'The orchestration surface you\'d expect — built directly on the Cell substrate and one consistent store.',
+  features: [
+    { icon: 'reconcile', title: 'Reconciliation-driven', bodyHtml: 'Declarative by default. Control loops pull reality toward desired state, so self-healing isn\'t a feature — it\'s the normal operating mode.' },
+    { icon: 'consistency', title: 'Strong consistency', bodyHtml: 'One Raft group, linearizable writes, leader forwarding. A 3-controller quorum keeps the cluster\'s truth single and correct.' },
+    { icon: 'rollout', title: 'Automatic rollouts', bodyHtml: 'Rolling, blue-green, and canary — every step gated on readiness, with automatic rollback the moment a gate fails.' },
+    { icon: 'volume', title: 'Sticky volumes', bodyHtml: 'Node-local persistent volumes with fencing for stateful workloads — the instance comes back to its data, never to a torn write.' },
+    { icon: 'secure', title: 'Secure by construction', bodyHtml: 'mTLS everywhere, RBAC on the API, and secrets envelope-encrypted then delivered via tmpfs — never written to disk on the node.' },
+    { icon: 'profile', title: 'Built for the flagship profile', bodyHtml: 'Fits swift-os\'s application &amp; AI-hosting profile cleanly — long-running services and inference workloads, scheduled as Cells.' }
+  ],
+  framingHeading: 'Where it actually stands.',
+  framingLead:
+    'In the swift-os tradition: we tell you what\'s real. SwiftCube is built through milestone SC9b, host-tested, and single-node <code>sctl --local</code> works today.',
+  framingWarnHtml:
+    '<strong>Real today, not yet a fleet product.</strong> The full SC0–SC9 ladder is implemented and host-tested; you can apply a manifest, watch a canary roll out, and read rollout state on a single node right now. Treat any speed language as a design target of the architecture, not a benchmark sheet.',
+  framingTipHtml:
+    '<strong>The honest advantage.</strong> Not "faster than X." It\'s that consensus, watch, and the reconcile loops run in <em>one process</em> with zero-copy framing — and that the instance is a Cell, so there\'s no runtime to start.',
+  scopeHtml:
+    '<strong style="color:var(--text)">v1 scope:</strong> swift-os nodes only. The whole speed thesis depends on the Cell substrate — so SwiftCube doesn\'t pretend to orchestrate anything else yet. Remaining seams: production mTLS accept-loop, image registry, RBAC/secrets delivery, full multi-node in QEMU.',
+  ladderTitle: 'Milestone ladder · SC0–SC9 · all complete',
+  milestones: [
+    { id: 'SC0', text: 'cubestore — single-node MVCC KV + watch + WAL/snapshot', done: true },
+    { id: 'SC1', text: 'Raft consensus — elections, replication, quorum of 3, leader forwarding', done: true },
+    { id: 'SC2', text: 'node join — bootstrap token, mTLS, TTL leases', done: true },
+    { id: 'SC3', text: 'slet — reconcile loop driving the C6 Cell supervisor', done: true },
+    { id: 'SC4', text: 'scheduler — Deployment → Assignments (spread + fit)', done: true },
+    { id: 'SC5', text: 'readiness/liveness probes → ready-only endpoints loop', done: true },
+    { id: 'SC6', text: 'LB provider interface + nginx backend', done: true },
+    { id: 'SC7', text: 'east-west — service registry + userspace node-proxy', done: true },
+    { id: 'SC8', text: 'node-local sticky PVs on datafs + single-writer fencing', done: true },
+    { id: 'SC9', text: 'sctl CLI + manifest parser + rollout state machine (rolling/blue-green/canary + rollback)', done: true }
+  ]
+};

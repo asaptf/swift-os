@@ -4,14 +4,14 @@
 // QEMU and cloud hypervisors expose hardware/runtime entropy through virtio-rng
 // (device type 4). SSHD needs that before its KEX ephemeral material can be
 // treated as VM-deployable rather than image-seeded development randomness.
-// The driver binds over `VirtioTransport`: virtio-mmio on QEMU `virt`, or
+// The driver binds over `VirtioTransportOps`: virtio-mmio on QEMU `virt`, or
 // virtio-pci on `-cpu max` / the Hetzner ARM VM (H2). Only the device control
 // plane goes through the transport; the virtqueue ring memory is identical.
 
 private let VIRTIO_ID_RNG: UInt32 = 4
 
 // virtio-mmio identity registers (only what the MMIO discovery scan needs; the
-// control-plane registers live behind VirtioTransport now).
+// control-plane registers live behind VirtioTransportOps now).
 private let R_MAGIC: UInt = 0x000
 private let R_DEVID: UInt = 0x008
 private let VIRTIO_MAGIC: UInt32 = 0x74726976   // "virt"
@@ -26,7 +26,15 @@ private let OFF_DESC: UInt = 0x000
 private let OFF_AVAIL: UInt = 0x080
 private let OFF_USED: UInt = 0x100
 
-private var rngXport = VirtioTransport(mmio: 0)
+// Post-bring-up doorbell/ack state. The control plane runs generically (see
+// rngBringUp), but virtioRngRequest must ring the queue-0 doorbell and ack the
+// ISR long after bring-up, so the active transport has to be retained. We keep
+// both concrete transports (one stays unused) plus the discriminant rather than
+// an `any VirtioTransportOps` — the doorbell/ack calls stay monomorphized.
+// Written once at boot before EL0, then only read; SMP-safe.
+private var rngMmioXport = VirtioMmioTransport(0)
+private var rngPciXport = VirtioPciTransport(VirtioPciDevice())
+private var rngIsPci = false
 private var rngActive = false
 private var rngRingBase: UInt = 0
 private var rngDataBase: UInt = 0
@@ -85,29 +93,10 @@ private func rngUsedLen() -> UInt32 {
     UnsafeRawPointer(bitPattern: rngRingBase + OFF_USED + 4)!.load(fromByteOffset: 4, as: UInt32.self)
 }
 
-// Locate a virtio-rng device: prefer virtio-mmio (the QEMU `virt` default), fall
-// back to virtio-pci (the GICv3 / Hetzner profile). Returns nil if neither.
-private func rngFindTransport() -> VirtioTransport? {
-    var i: UInt32 = 0
-    while i < platform.virtioMmioCount {
-        let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
-        if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
-           mmio_read32(m + R_DEVID) == VIRTIO_ID_RNG {
-            return VirtioTransport(mmio: m)
-        }
-        i += 1
-    }
-    if let dev = virtioPciFindDevice(deviceType: VIRTIO_ID_RNG) {
-        return VirtioTransport(pci: dev)
-    }
-    return nil
-}
-
-func virtioRngInit() -> Bool {
-    rngActive = false
-    guard let xport = rngFindTransport() else { return false }
-    rngXport = xport
-
+// Generic bring-up: reset the device, negotiate VERSION_1, set up queue 0, and
+// flip on DRIVER_OK. Generic over the transport so it monomorphizes for whichever
+// kind was discovered — this is where the per-call `isPci` branching used to live.
+private func rngBringUp<T: VirtioTransportOps>(_ xport: inout T) -> Bool {
     if rngRingBase == 0 {
         let r = pmm_alloc_page()
         if r == 0 { return false }
@@ -123,24 +112,55 @@ func virtioRngInit() -> Bool {
     rngAvailIdx = 0
     rngLastUsed = 0
 
-    rngXport.reset()
-    rngXport.setStatus(VIRTIO_STATUS_ACK)
-    rngXport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
-    if !rngXport.negotiateVersion1() { return false }
+    xport.reset()
+    xport.setStatus(VIRTIO_STATUS_ACK)
+    xport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
+    if !xport.negotiateVersion1() { return false }
 
     let da = UInt64(rngRingBase + OFF_DESC)
     let aa = UInt64(rngRingBase + OFF_AVAIL)
     let ua = UInt64(rngRingBase + OFF_USED)
-    let size = rngXport.setupQueue(0, requested: UInt32(RNG_QSZ), desc: da, avail: aa, used: ua)
+    let size = xport.setupQueue(0, requested: UInt32(RNG_QSZ), desc: da, avail: aa, used: ua)
     if size == 0 { return false }
     rngQn = size
     rngClean(rngRingBase + OFF_AVAIL, 16)
     rngClean(rngRingBase + OFF_USED, 16)
 
-    rngXport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER |
-                       VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK)
-    rngActive = true
+    xport.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER |
+                    VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK)
     return true
+}
+
+// Ring the queue-0 doorbell / ack the ISR on the active transport (one branch on
+// the boot-resolved discriminant, see rngMmioXport/rngPciXport above).
+private func rngNotify() {
+    if rngIsPci { rngPciXport.notify(queue: 0) } else { rngMmioXport.notify(queue: 0) }
+}
+private func rngAckInterrupt() {
+    if rngIsPci { rngPciXport.ackInterrupt() } else { rngMmioXport.ackInterrupt() }
+}
+
+// Locate a virtio-rng device and bring it up: prefer virtio-mmio (the QEMU `virt`
+// default), then virtio-pci (the GICv3 / Hetzner profile). The discovered concrete
+// transport is bound generically, then retained for the post-bring-up doorbell.
+func virtioRngInit() -> Bool {
+    rngActive = false
+    var i: UInt32 = 0
+    while i < platform.virtioMmioCount {
+        let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
+        if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
+           mmio_read32(m + R_DEVID) == VIRTIO_ID_RNG {
+            var t = VirtioMmioTransport(m)
+            if rngBringUp(&t) { rngMmioXport = t; rngIsPci = false; rngActive = true; return true }
+            return false
+        }
+        i += 1
+    }
+    if let dev = virtioPciFindDevice(deviceType: VIRTIO_ID_RNG) {
+        var t = VirtioPciTransport(dev)
+        if rngBringUp(&t) { rngPciXport = t; rngIsPci = true; rngActive = true; return true }
+    }
+    return false
 }
 
 func virtioRngAvailable() -> Bool { rngActive }
@@ -149,7 +169,7 @@ func virtioRngAvailable() -> Bool { rngActive }
 /// "none"). Used by the H2 acceptance probe / boot log.
 func virtioRngTransportName() -> StaticString {
     if !rngActive { return "none" }
-    return rngXport.isPci ? "pci" : "mmio"
+    return rngIsPci ? "pci" : "mmio"
 }
 
 private func virtioRngRequest(_ maxBytes: Int) -> Int {
@@ -162,7 +182,7 @@ private func virtioRngRequest(_ maxBytes: Int) -> Int {
     rngInvalidate(rngDataBase, want)
     rngAvailAdd()
     rngClean(rngRingBase + OFF_AVAIL, 16)
-    rngXport.notify(queue: 0)
+    rngNotify()
 
     var spins = 0
     while true {
@@ -177,7 +197,7 @@ private func virtioRngRequest(_ maxBytes: Int) -> Int {
     if got > want { got = want }
     rngLastUsed &+= 1
     rngInvalidate(rngDataBase, got)
-    rngXport.ackInterrupt()
+    rngAckInterrupt()
     return got > 0 ? got : Errno.io.code
 }
 

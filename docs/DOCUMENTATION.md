@@ -63,6 +63,8 @@ specific audience.
 | Find API recipes, call the EL0 syscall ABI, or use the Swift bridge directly | [API Reference](API_REFERENCE.md) |
 | Understand the system architecture and non-goals | [Architecture](ARCHITECTURE.md) |
 | Understand handles, capabilities, and the isolation roadmap | [Capabilities](CAPABILITIES.md) |
+| Read the recorded per-process namespace generalization (record-only design note) | [Namespace Design](NAMESPACE_DESIGN.md) |
+| Read the recorded SwiftCube orchestrator design (record-only design note) | [SwiftCube Design](SWIFTCUBE_DESIGN.md) |
 | Understand the immutable base image | [Base Image](BASE_IMAGE.md) |
 | Understand the A/B update-store image, target commands, and rollback flow | [Update Store](UPDATE_STORE.md) |
 | Build, inspect, boot, test, and troubleshoot package, repository, ports, and static-host artifacts | [Package Guide](PACKAGE_GUIDE.md) |

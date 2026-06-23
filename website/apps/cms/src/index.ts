@@ -1,7 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import * as seed from './seed-data';
 
-const SINGLES = ['home', 'live-proof', 'status-page', 'quickstart-page'];
+const SINGLES = ['home', 'live-proof', 'status-page', 'quickstart-page', 'swiftcube-page'];
 const COLLECTIONS = ['capability', 'roadmap-item', 'glossary-term', 'article', 'faq'];
 
 async function grantPublicRead(strapi: Core.Strapi) {
@@ -50,6 +50,7 @@ export default {
 			await seedSingle(strapi, 'api::live-proof.live-proof', seed.liveProof);
 			await seedSingle(strapi, 'api::status-page.status-page', seed.statusPage);
 			await seedSingle(strapi, 'api::quickstart-page.quickstart-page', seed.quickstartPage);
+			await seedSingle(strapi, 'api::swiftcube-page.swiftcube-page', seed.swiftcubePage);
 
 			await seedCollection(strapi, 'api::capability.capability', seed.capabilities);
 			await seedCollection(strapi, 'api::roadmap-item.roadmap-item', seed.roadmapItems);

@@ -358,6 +358,36 @@ private func runDriverServiceDemo() {
     uartPuts("\n")
 }
 
+// LA1: the persistent native-Swift supervisor + UserlandService successor to the
+// C5 demo. Runs after the C5 demo releases the input device. Bounded generations
+// so it doubles as a boot self-test; the supervisor exits with the LA1 OK marker.
+private func runUserlandServiceDemo() {
+    uartPuts("swift-os LA1: persistent Swift supervisor + userland service\n")
+    let (img, sz) = demoImage("/bin/svc-supervisor")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["svc-supervisor"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("LA1 supervisor demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// LA2: device-MMIO-map authority probe. Runs as a capConsole boot principal:
+// claims the mappable virtio-input window, maps it via sys_device_mmap, and reads
+// the virtio identification registers through the Device-nGnRE mapping to prove
+// the path is live. Also exercises the EACCES refusal on the metadata-only
+// sibling grant. No-ops cleanly on boards without a virtio-input window.
+private func runDeviceMmioMapProbe() {
+    uartPuts("swift-os LA2: device MMIO map authority probe\n")
+    let (img, sz) = demoImage("/bin/devicemmapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["devicemmapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("LA2 device mmap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1325,6 +1355,8 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runExecDemo()
         runFdOpsDemo()
         runDriverServiceDemo()
+        runUserlandServiceDemo()
+        runDeviceMmioMapProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

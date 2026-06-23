@@ -68,6 +68,11 @@ private let pOsRootPub: StaticString = "/etc/swupdate/os-root.pub"
 private let maxOsBundleBytes = 96 * 1024 * 1024
 private let osStageChunk = 64 * 1024
 
+// TLS opt-out: set by a `--insecure` argument. HTTPS cert verification (against
+// the system trust store) is on by default; --insecure is for mock/bring-up
+// servers only. See httpsGet().
+private var gInsecure = false
+
 // ---- small helpers ---------------------------------------------------------
 
 private func put(_ s: StaticString) {
@@ -493,6 +498,22 @@ private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8], ma
     defer { _ = swiftos_close(fd) }
 
     let client = TLS13Client()
+    // TLS server-certificate verification is ON by default, anchored at the system
+    // trust store (/etc/ssl/cert.pem). The SWSYS/SWSITE payloads are Ed25519-signed
+    // regardless, so this is defense-in-depth; --insecure disables it for mock/
+    // bring-up servers.
+    if !gInsecure {
+        let roots = loadSystemTrustRoots()
+        if roots.isEmpty {
+            put("swupdate: no trust roots (need /etc/ssl/cert.pem or --insecure)\n")
+            return nil
+        }
+        var hostBytes: [UInt8] = []
+        for b in host { if b == 0 { break }; hostBytes.append(b) }
+        client.enableVerification(rootsDER: roots,
+                                  hostname: String(decoding: hostBytes, as: UTF8.self),
+                                  now: unixToYYYYMMDDHHMMSS(UInt64(swiftos_time())))
+    }
     var sk = [UInt8](repeating: 0, count: 32)
     var ch = [UInt8](repeating: 0, count: 32)
     sk.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
@@ -792,6 +813,10 @@ func main(_ argc: Int32,
         usage()
         return 2
     }
+    // Global TLS opt-out: any `--insecure` arg disables HTTPS cert verification
+    // for this run (mock servers / bring-up only). On by default otherwise.
+    var ti = 2
+    while ti < Int(argc) { if let a = argv[ti], cstrEq(a, "--insecure") { gInsecure = true }; ti += 1 }
     if cstrEq(cmdp, "seed") {
         return seed()
     }

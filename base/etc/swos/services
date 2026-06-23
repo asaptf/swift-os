@@ -1,2 +1,5 @@
 # swift-os boot services. One allowlisted token per line.
+# swos-init runs each as a child (a sibling of the login shell) and reaps them;
+# use `crond-supervised` instead of `crond` to have it restarted if it crashes.
 sshd
+crond

@@ -7,7 +7,7 @@ import { getArticles } from '$lib/server/content';
  * Prerendered for the static build; dynamic for the Node build. */
 export const prerender = process.env.ADAPTER === 'static';
 
-const STATIC_PATHS = ['/', '/status', '/quickstart', '/try', '/architecture', '/docs', '/design', '/articles', '/faq'];
+const STATIC_PATHS = ['/', '/status', '/quickstart', '/try', '/architecture', '/swiftcube', '/docs', '/design', '/articles', '/faq'];
 
 export const GET: RequestHandler = async ({ url, fetch }) => {
 	const base = (env.PUBLIC_SITE_URL || url.origin).replace(/\/$/, '');

@@ -150,3 +150,90 @@ export interface Faq {
 	answerHtml: string;
 	category?: string;
 }
+
+/* ---- SwiftCube page ----
+ * The companion cluster-orchestrator page. Editable prose + structured lists
+ * live in the CMS; the topology and Cell-anatomy diagrams stay in the Svelte
+ * component (like /architecture), since they are layout, not copy. */
+
+export interface SwiftcubeBadge {
+	label: string;
+	variant: StatusVariant;
+}
+
+export interface SwiftcubeCellPart {
+	name: string; // e.g. "base image"
+	desc: string; // e.g. "read-only · content-addressed · deduplicated"
+}
+
+export interface SwiftcubeDiff {
+	tag: string; // e.g. "01 · substrate"
+	title: string;
+	bodyHtml: string;
+	bullets?: string[]; // optional "→" list
+	chips?: { label: string; off?: boolean }[]; // optional capability chips
+}
+
+export interface SwiftcubeComponent {
+	name: string; // sctl, sctld, cubestore, slet
+	what: string; // html
+	note: string; // sub-note under the name cell
+	k8s: string; // Kubernetes analogue
+}
+
+export interface SwiftcubeMilestone {
+	id: string; // SC0 … SC9
+	text: string;
+	done: boolean;
+}
+
+export interface SwiftcubePage {
+	eyebrow: string;
+	titleHtml: string;
+	leadHtml: string;
+	badges: SwiftcubeBadge[];
+	// 01 · instance = Cell
+	coreHeading: string;
+	coreSubHtml: string;
+	coreProseHtml: string;
+	cellTagline: string;
+	cellParts: SwiftcubeCellPart[];
+	removed: string[];
+	kept: string;
+	// 02 · architecture / lifecycle
+	archHeading: string;
+	archSubHtml: string;
+	lifecycle: string[]; // html steps
+	lifecycleFootHtml: string;
+	archCalloutHtml: string;
+	// 03 · differentiators
+	diffHeading: string;
+	diffLead: string;
+	differentiators: SwiftcubeDiff[];
+	// 04 · manifest
+	manifestHeading: string;
+	manifestLead: string;
+	manifestYaml: string;
+	applyCmd: string;
+	applyOut: string;
+	readCmd: string;
+	readOut: string;
+	manifestCalloutHtml: string;
+	// 05 · components
+	componentsHeading: string;
+	componentsLead: string;
+	components: SwiftcubeComponent[];
+	componentsCapHtml: string;
+	// 06 · features
+	featuresHeading: string;
+	featuresLead: string;
+	features: Feature[];
+	// 07 · honest framing
+	framingHeading: string;
+	framingLead: string;
+	framingWarnHtml: string;
+	framingTipHtml: string;
+	scopeHtml: string;
+	ladderTitle: string;
+	milestones: SwiftcubeMilestone[];
+}

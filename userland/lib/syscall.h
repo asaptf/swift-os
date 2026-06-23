@@ -104,6 +104,13 @@
 #define SYS_UPDATE_STAGE_WRITE  95
 #define SYS_UPDATE_STAGE_COMMIT 96
 #define SYS_UPDATE_STAGE_ABORT  97
+#define SYS_SPAWN_HANDLES_ASYNC 98
+#define SYS_NAME_REGISTER       99
+#define SYS_NAME_LOOKUP         100
+#define SYS_DEVICE_MMAP         101
+#define SYS_SHMRING_CREATE      102
+#define SYS_SHMRING_MAP         103
+#define SYS_SHMRING_CLOSE       104
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -338,6 +345,22 @@ static inline long ipc_reply_recv(int fd, unsigned long reply_port,
     return __syscall3(SYS_IPC_REPLY_RECV, fd, (long)&m, 0);
 }
 
+// LA3 shared-memory ring (data-plane IPC). shmring_create reserves a full-duplex
+// channel of `pages` contiguous pages (even, 2..8) and returns its id (needs the
+// net capability); shmring_map maps a channel's pages read/write into the caller
+// and returns the base VA (or a negative errno); shmring_close drops the
+// creator's base reference. Records cross via the mapped pages with no syscall in
+// the reserve/commit/peek/release path — see kernel/ipc/shmring.swift.
+static inline long shmring_create(unsigned long pages) {
+    return __syscall3(SYS_SHMRING_CREATE, (long)pages, 0, 0);
+}
+static inline long shmring_map(int id) {
+    return __syscall3(SYS_SHMRING_MAP, id, 0, 0);
+}
+static inline int shmring_close(int id) {
+    return (int)__syscall3(SYS_SHMRING_CLOSE, id, 0, 0);
+}
+
 static inline long lseek(int fd, long offset, int whence) {
     return __syscall3(SYS_LSEEK, fd, offset, whence);
 }
@@ -366,6 +389,27 @@ static inline long spawn_handles(const char *path, char *const argv[],
                                  size_t handle_count) {
     return __syscall4(SYS_SPAWN_HANDLES, (long)path, (long)argv,
                       (long)handles, (long)handle_count);
+}
+
+// LA1: non-blocking variant of spawn_handles. Same explicit-handle ABI, but the
+// child runs concurrently and this returns the child pid immediately (negative on
+// error) instead of blocking until it exits. The caller reaps it with waitpid.
+static inline long spawn_handles_async(const char *path, char *const argv[],
+                                       const struct swiftos_spawn_handle *handles,
+                                       size_t handle_count) {
+    return __syscall4(SYS_SPAWN_HANDLES_ASYNC, (long)path, (long)argv,
+                      (long)handles, (long)handle_count);
+}
+
+// LA1 name registry. name_register publishes the RECV end of an endpoint under a
+// short name (privileged, needs CAP_CONSOLE); name_lookup resolves a name and
+// installs a fresh SEND-end handle into the caller, returning the new fd (or
+// -ENOENT). See docs/CAPABILITIES.md / kernel/vfs/vfs.swift.
+static inline int name_register(const char *name, int endpoint_fd) {
+    return (int)__syscall3(SYS_NAME_REGISTER, (long)name, endpoint_fd, 0);
+}
+static inline int name_lookup(const char *name) {
+    return (int)__syscall3(SYS_NAME_LOOKUP, (long)name, 0, 0);
 }
 
 static inline int getpid(void) {
@@ -485,6 +529,10 @@ static inline int pkg_stream_abort(void) {
     return (int)__syscall3(SYS_PKG_STREAM_ABORT, 0, 0, 0);
 }
 
+// Guarded so the identical declaration in swift_user.h (the Swift-imported
+// bridge header) does not clash when both headers are included together (LA1).
+#ifndef SWIFTOS_DEVICE_INFO_T
+#define SWIFTOS_DEVICE_INFO_T
 struct swiftos_device_info {
     unsigned int kind;
     unsigned int bus;
@@ -496,6 +544,7 @@ struct swiftos_device_info {
     unsigned int claimed;
     char name[24];
 };
+#endif
 
 static inline int device_claim(const char *name, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_CLAIM, (long)name, (long)info, 0);
@@ -507,6 +556,20 @@ static inline int device_info(int fd, struct swiftos_device_info *info) {
 
 static inline int device_discover(int index, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
+}
+
+// LA2: map the MMIO window of the device claimed on `fd` into this process,
+// gated on the grant's `.map` right. `len` is clamped to the window length
+// (0 means the whole window). Returns a pointer to the window base (Device-nGnRE,
+// EL0 read/write), or MAP_FAILED on error (e.g. the grant lacks `.map`, or the
+// device is not mappable -> EACCES). The raw syscall returns a base VA or a small
+// negative errno, which we convert to MAP_FAILED exactly like mmap().
+static inline void *device_mmap(int fd, unsigned long len) {
+    long r = __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
+    if (r < 0 && r >= -4095) {
+        return MAP_FAILED;
+    }
+    return (void *)r;
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

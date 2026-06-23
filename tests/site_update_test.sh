@@ -98,8 +98,11 @@ ssh_common=( -F /dev/null -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=8
   -o Ciphers=chacha20-poly1305@openssh.com -o MACs=hmac-sha2-256 )
 
 ssh_swupdate() {  # ssh_swupdate URLPATH -> sets $ssh_rc
+  # --insecure: the mock site server uses a self-signed cert outside the system
+  # trust store; the SWSITE bundle is Ed25519-signed regardless (what this test
+  # checks). TLS verify-by-default is covered by tls_truststore_test.sh.
   "$SSH" "${ssh_common[@]}" -i "$KEY_ALLOW" root@127.0.0.1 \
-    "/bin/swupdate site https://10.0.2.2:$TLS_PORT/$1" >"$WORK/sshout" 2>"$WORK/ssherr"
+    "/bin/swupdate site https://10.0.2.2:$TLS_PORT/$1 --insecure" >"$WORK/sshout" 2>"$WORK/ssherr"
   ssh_rc=$?
 }
 

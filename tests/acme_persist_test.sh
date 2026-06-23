@@ -99,7 +99,9 @@ boot_and_login() {
   await "built-in shell (ash)" 60 "$log" || return 1
 }
 
-ACMECMD="/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /data/acme"
+# --insecure: this test targets a self-signed mock and checks persistence, not TLS
+# trust; cert verification (now on by default) is covered by acme_verify_test.sh.
+ACMECMD="/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /data/acme --insecure"
 
 # ---- boot 1: issue + persist ----
 LOG1="$WORK/boot1.log"

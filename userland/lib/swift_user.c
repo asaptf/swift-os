@@ -175,6 +175,56 @@ long swiftos_spawn_handles_raw(const char *path, void *argv, const void *handles
                       (long)handle_count);
 }
 
+// ---- LA1: IPC / endpoint / fork / device / name-registry bridge -----------
+
+int swiftos_endpoint_create(int ends[2]) {
+    return endpoint_create(ends);
+}
+
+long swiftos_ipc_send(int fd, const void *buf, unsigned long len, int handle_fd) {
+    // Grant every right held on the moved handle (the move-everything sentinel),
+    // matching the pre-QW5 behavior the C demo relies on.
+    return ipc_send(fd, buf, len, handle_fd, SWIFTOS_RIGHTS_ALL_INHERIT);
+}
+
+long swiftos_ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd) {
+    return ipc_recv(fd, buf, cap, out_handle_fd);
+}
+
+int swiftos_fork(void) {
+    return fork();
+}
+
+int swiftos_device_claim(const char *name, struct swiftos_device_info *info) {
+    return device_claim(name, info);
+}
+
+int swiftos_device_query(int fd, struct swiftos_device_info *info) {
+    return device_info(fd, info);
+}
+
+int swiftos_device_discover(int index, struct swiftos_device_info *info) {
+    return device_discover(index, info);
+}
+
+int swiftos_name_register(const char *name, int endpoint_fd) {
+    return name_register(name, endpoint_fd);
+}
+
+int swiftos_name_lookup(const char *name) {
+    return name_lookup(name);
+}
+
+long swiftos_spawn_handles_async(const char *path, void *argv, const void *handles,
+                                 unsigned long handle_count) {
+    return spawn_handles_async(path, (char *const *)argv,
+                               (const struct swiftos_spawn_handle *)handles, handle_count);
+}
+
+long swiftos_run(const char *path, char *const *argv) {
+    return spawn(path, argv);
+}
+
 long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }
@@ -957,6 +1007,15 @@ unsigned int swiftos_atomic_load(unsigned int *p) {
     return __atomic_load_n(p, __ATOMIC_SEQ_CST);
 }
 
+void swiftos_atomic_store(unsigned int *p, unsigned int v) {
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+
 unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta) {
     return __atomic_fetch_add(p, delta, __ATOMIC_SEQ_CST);
 }
+
+// LA3 shared-memory ring bridges (thin forwards to the C-only syscall wrappers).
+long swiftos_shmring_create(unsigned long pages) { return shmring_create(pages); }
+long swiftos_shmring_map(int id) { return shmring_map(id); }
+int  swiftos_shmring_close(int id) { return shmring_close(id); }

@@ -191,6 +191,11 @@ private struct DeviceGrant {
     var flags: UInt32 = 0
     var generation: UInt32 = 0
     var ownerProc = -1
+    // LA2: kernel-only — claimable by name but omitted from the device_discover
+    // ordinal enumeration. Used for the mappable alias over an already-discovered
+    // virtio-mmio window so it is not surfaced as a second, distinct piece of
+    // hardware (and so the C5 discovery-exhaustion contract is unchanged).
+    var discoverable = true
 }
 
 private let maxFDs = 512
@@ -228,6 +233,26 @@ private let deviceBusPseudo: UInt32 = 1
 private let deviceBusVirtioMmio: UInt32 = 2
 private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
 private let deviceFlagDiscovered: UInt32 = 1 << 1
+// LA2: this grant authorizes mapping the device's MMIO window (sys_device_mmap),
+// so a claim yields a `.map` right. Mirrors SWIFTOS_DEVICE_FLAG_MMIO_GRANT in
+// userland/lib/syscall.h. Mutually exclusive with deviceFlagNoMmioGrant.
+private let deviceFlagMmioGrant: UInt32 = 1 << 2
+// LA1: a tiny in-kernel name registry — the capability-microkernel NameServer
+// split. A privileged publisher (capConsole) registers the RECV end of an
+// endpoint under a short name; the registry pins that endpoint by holding an
+// extra description ref so it survives the publisher closing its fd. A looker-up
+// is granted a fresh SEND-end handle to the same endpoint — explicit grant by
+// lookup, never ambient. Bounded fixed-size table (no heap growth on the hot
+// path), touched only under vfsLock like the rest of the shared VFS state.
+private struct NameEntry {
+    var inUse = false
+    var nameLen = 0
+    var recvDesc = -1   // pinned recv-end OpenDescription index (holds a +1 ref)
+}
+private let maxServiceNames = 8
+private let serviceNameCap = 16
+private var serviceNames = [NameEntry](repeating: NameEntry(), count: maxServiceNames)
+private var serviceNameBytes = [UInt8](repeating: 0, count: maxServiceNames * serviceNameCap)
 private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // C3: the subtree a process is confined to — object-scoped fs authority. 0 means
 // unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
@@ -754,7 +779,8 @@ private func vfsVerifyNodeContent(_ node: Int) -> Bool {
 private func registerDevice(_ slot: Int, _ name: StaticString,
                             kind: UInt32, bus: UInt32,
                             mmioBase: UInt = 0, mmioLen: UInt = 0,
-                            irq: UInt32 = 0, flags: UInt32) {
+                            irq: UInt32 = 0, flags: UInt32,
+                            discoverable: Bool = true) {
     if slot < 0 || slot >= maxDevices { return }
     devices[slot] = DeviceGrant(inUse: true, claimed: false,
                                 namePtr: UInt(bitPattern: name.utf8Start),
@@ -762,7 +788,8 @@ private func registerDevice(_ slot: Int, _ name: StaticString,
                                 kind: kind, bus: bus,
                                 mmioBase: mmioBase, mmioLen: mmioLen,
                                 irq: irq, flags: flags,
-                                generation: 0, ownerProc: -1)
+                                generation: 0, ownerProc: -1,
+                                discoverable: discoverable)
 }
 
 private func resetDeviceRegistry() {
@@ -775,6 +802,22 @@ private func resetDeviceRegistry() {
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
                        flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
+        // LA2: a second grant over the SAME virtio-input transport window, this
+        // one mappable (deviceFlagMmioGrant, no deviceFlagNoMmioGrant), so a
+        // capConsole claimer obtains a `.map` right and can sys_device_mmap the
+        // window Device-nGnRE. This aliases hardware the kernel's polled keyboard
+        // driver also touches; the MMIO-map path only needs to read the read-only
+        // identification registers (MagicValue/Version/DeviceID), so the two
+        // mappings coexist. Per-window ownership arbitration (one owner, kernel
+        // driver vs userland) is later LA-series work; reusing an existing window
+        // here avoids inventing hardware (see LA2 prompt).
+        registerDevice(1, "virtio-input-mmio.0",
+                       kind: deviceKindVirtioInput,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: input.mmioBase,
+                       mmioLen: input.mmioLen,
+                       flags: deviceFlagMmioGrant | deviceFlagDiscovered,
+                       discoverable: false)
     } else {
         registerDevice(0, "pseudo-input.0",
                        kind: deviceKindPseudoInput,
@@ -1272,8 +1315,16 @@ private func endpointRights(read: Bool, write: Bool) -> Rights {
     return r
 }
 
-private func deviceRights() -> Rights {
-    deviceMetadataGrantRights()
+// LA2: rights for a freshly claimed device grant. A device with a real MMIO
+// window that is not explicitly inert (deviceFlagNoMmioGrant clear, mmioLen != 0)
+// is mappable, so its grant carries `.map` (deviceMmioGrantRights). Every other
+// device stays metadata-only (inspect + transfer), exactly as before LA2 — so
+// the C5f metadata-only contract still holds for virtio-input.0 and pseudo-input.
+private func deviceRights(_ dev: Int) -> Rights {
+    if devices[dev].mmioLen != 0 && (devices[dev].flags & deviceFlagNoMmioGrant) == 0 {
+        return deviceMmioGrantRights()
+    }
+    return deviceMetadataGrantRights()
 }
 
 private func discardUninstalledDescription(_ d: Int) {
@@ -1783,6 +1834,17 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                             }
                         }
 
+                        // LA1: the name registry pins each published endpoint's
+                        // recv description with a held ref (so it outlives the
+                        // publisher's fd). That ref is real — account for it here
+                        // or the refCount audit below would see an "extra" ref.
+                        for s in 0..<maxServiceNames where serviceNames[s].inUse {
+                            let d = serviceNames[s].recvDesc
+                            if d < 0 || d >= maxOpenDescriptions { return false }
+                            if !openDescriptions[d].inUse { return false }
+                            descRefs[d] += 1
+                        }
+
                         for d in 0..<maxOpenDescriptions {
                             let desc = openDescriptions[d]
                             if desc.inUse {
@@ -1910,7 +1972,7 @@ func vfsDeviceClaim(name nameVA: UInt, info infoVA: UInt) -> Int {
     devices[dev].generation &+= 1
     openDescriptions[d].kind = .device
     openDescriptions[d].node = dev
-    installDescription(proc, fd, d, rights: deviceRights())
+    installDescription(proc, fd, d, rights: deviceRights(dev))
     if let outBuf = out { writeDeviceInfoLocked(dev, outBuf) }
     return fd
 }
@@ -1924,7 +1986,7 @@ func vfsDeviceDiscover(index: Int, info infoVA: UInt) -> Int {
     defer { vfsUnlock(daif) }
 
     var ordinal = 0
-    for dev in 0..<maxDevices where devices[dev].inUse {
+    for dev in 0..<maxDevices where devices[dev].inUse && devices[dev].discoverable {
         if ordinal == index {
             writeDeviceInfoLocked(dev, out)
             return 0
@@ -1951,6 +2013,32 @@ func vfsDeviceInfo(fd: Int, info infoVA: UInt) -> Int {
     guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return Errno.invalid.code }
     writeDeviceInfoLocked(dev, out)
     return 0
+}
+
+// LA2: resolve `fd` to its device grant's MMIO window for sys_device_mmap. The
+// handle must be a `.device` carrying `.map` (else EACCES), and the named device
+// must be mappable (deviceFlagNoMmioGrant clear, mmioLen != 0). Reads mmioBase/
+// mmioLen under vfsLock, like every other registry access. On success returns
+// (0, base, len); on failure a negative errno in `err` and zeros.
+func vfsDeviceMmioWindow(fd: Int) -> (err: Int, base: UInt, len: UInt) {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return (Errno.badFD.code, 0, 0) }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .device else { return (Errno.badFD.code, 0, 0) }
+    guard hasRights(entry.rights, .map) else { return (Errno.access.code, 0, 0) }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return (Errno.badFD.code, 0, 0) }
+    let desc = openDescriptions[d]
+    guard desc.kind == .device else { return (Errno.badFD.code, 0, 0) }
+    let dev = desc.node
+    guard dev >= 0 && dev < maxDevices && devices[dev].inUse else { return (Errno.invalid.code, 0, 0) }
+    // Defense in depth: a `.map` grant should only exist on a mappable device,
+    // but re-check the device's own flags before handing out hardware authority.
+    if (devices[dev].flags & deviceFlagNoMmioGrant) != 0 { return (Errno.access.code, 0, 0) }
+    if devices[dev].mmioLen == 0 { return (Errno.access.code, 0, 0) }
+    return (0, devices[dev].mmioBase, devices[dev].mmioLen)
 }
 
 func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
@@ -2864,6 +2952,110 @@ private func allocEndpoint() -> Int {
 }
 
 /// endpoint_create(int ends[2]) -> 0; ends[0] = send end, ends[1] = recv end.
+// ---- LA1 name registry helpers (all callers hold vfsLock) ----------------
+
+private func cstrLenU8(_ s: UnsafePointer<UInt8>, max: Int) -> Int {
+    var i = 0
+    while i < max && s[i] != 0 { i += 1 }
+    return i
+}
+
+private func serviceNameMatches(_ slot: Int, _ name: UnsafePointer<UInt8>, _ len: Int) -> Bool {
+    if !serviceNames[slot].inUse || serviceNames[slot].nameLen != len { return false }
+    let base = slot * serviceNameCap
+    for i in 0..<len where serviceNameBytes[base + i] != name[i] { return false }
+    return true
+}
+
+private func findServiceNameSlot(_ name: UnsafePointer<UInt8>, _ len: Int) -> Int {
+    for i in 0..<maxServiceNames where serviceNameMatches(i, name, len) { return i }
+    return -1
+}
+
+private func allocServiceNameSlot() -> Int {
+    for i in 0..<maxServiceNames where !serviceNames[i].inUse { return i }
+    return -1
+}
+
+/// name_register(name, endpoint_fd) -> 0 (LA1). Publish the RECV end of an
+/// endpoint under a short name so a child can resolve the service without a
+/// hard-coded path. Privileged (capConsole), like device_claim — only init / the
+/// supervisor may publish. The registry pins the endpoint with an extra
+/// description ref so it outlives the publisher's fd; re-registering the same name
+/// updates the entry and releases the previous pin. SMP-safe under vfsLock.
+func vfsNameRegister(nameVA: UInt, fd: Int) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    guard let name = userCString(nameVA, maxLen: serviceNameCap) else { return Errno.invalid.code }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    let nlen = cstrLenU8(name, max: serviceNameCap)
+    if nlen == 0 { return Errno.invalid.code }
+    guard validFD(proc, fd) else { return Errno.badFD.code }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .endpoint else { return Errno.invalid.code }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse else { return Errno.badFD.code }
+    let desc = openDescriptions[d]
+    guard desc.kind == .endpoint, desc.pipeEnd == endpointRecvEnd else { return Errno.invalid.code }
+
+    var slot = findServiceNameSlot(name, nlen)
+    if slot >= 0 {
+        // Re-registering an existing name. If it already names this exact
+        // description there is nothing to do; otherwise drop the old pin first.
+        if serviceNames[slot].recvDesc == d { return 0 }
+        releaseDescription(serviceNames[slot].recvDesc)
+    } else {
+        slot = allocServiceNameSlot()
+        if slot < 0 { return Errno.noSpace.code }
+    }
+    retainDescription(d) // pin: the endpoint survives the publisher closing its fd
+    // Transfer ownership to the registry: clear ownerProc so the QW3 owner-death
+    // backstop (releaseEndpointsOwnedBy) does not tear the endpoint down when the
+    // publisher exits — the registry pin alone now governs its lifetime, until the
+    // name is overwritten/released. (A published service endpoint is owned by the
+    // kernel name registry, not the publishing process.)
+    endpoints[desc.node].ownerProc = -1
+    serviceNames[slot].inUse = true
+    serviceNames[slot].nameLen = nlen
+    serviceNames[slot].recvDesc = d
+    let base = slot * serviceNameCap
+    for i in 0..<nlen { serviceNameBytes[base + i] = name[i] }
+    return 0
+}
+
+/// name_lookup(name) -> fd (LA1). Resolve a registered service name and install a
+/// FRESH SEND-end handle to its endpoint into the caller's fd table, returning the
+/// new fd (Errno.noEntry if unknown). This is the explicit grant-by-lookup path:
+/// the caller receives only a send capability (write+transfer), never the recv
+/// authority. Ungated — a published name is meant to be reachable and a send cap
+/// only lets the holder send. SMP-safe under vfsLock.
+func vfsNameLookup(nameVA: UInt) -> Int {
+    guard let name = userCString(nameVA, maxLen: serviceNameCap) else { return Errno.invalid.code }
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    let nlen = cstrLenU8(name, max: serviceNameCap)
+    if nlen == 0 { return Errno.invalid.code }
+    let slot = findServiceNameSlot(name, nlen)
+    if slot < 0 { return Errno.noEntry.code }
+    let rd = serviceNames[slot].recvDesc
+    guard rd >= 0 && rd < maxOpenDescriptions && openDescriptions[rd].inUse else { return Errno.noEntry.code }
+    let ep = openDescriptions[rd].node
+    guard ep >= 0 && ep < maxEndpoints && endpoints[ep].inUse else { return Errno.noEntry.code }
+
+    let fd = allocFDInProcess(proc, from: 0)
+    if fd < 0 { return Errno.noSpace.code }
+    let sd = allocDescription()
+    if sd < 0 { return Errno.noSpace.code }
+    openDescriptions[sd].kind = .endpoint
+    openDescriptions[sd].node = ep
+    openDescriptions[sd].pipeEnd = endpointSendEnd
+    endpoints[ep].sendRefs += 1 // mint a new send end (balanced when this fd closes)
+    installDescription(proc, fd, sd, rights: endpointRights(read: false, write: true))
+    return fd
+}
+
 func vfsEndpointCreate(endsVA: UInt) -> Int {
     guard let out = userWritableBuffer(endsVA, 8) else { return Errno.invalid.code }
     let proc = currentVFSProcess()
