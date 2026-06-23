@@ -259,21 +259,46 @@ static int read_file_into(EFI_FILE_PROTOCOL *f, UINT64 dst, UINT64 size) {
 // *active/*fallback/*gen and hashA/hashB. Returns 0 for absent / malformed /
 // unsigned (v1/v2 — a signature is required) / bad-signature manifests; the
 // caller then boots the embedded blob rather than honor an untrusted selection.
-#define SWOSKERN_BODY_LEN 104
+//
+// OS-1c (Option A): v4 carries an INDEPENDENT Ed25519 signature per slot, over
+//   "SWOSKSLT" || u32 slot_index || u64 size || u8[32] sha256   (52 bytes)
+// so each slot is trusted on its own — a new kernel can be installed into one
+// slot (with its host-signed entry) without re-signing the other. *validA/*validB
+// report which slots verified; an invalid slot is skipped (the loader rolls back
+// to the other still-signed slot, or the embedded blob if neither verifies).
+#define V4_SLOT_A_OFF 24
+#define V4_SLOT_B_OFF 128
+#define V4_TOTAL_LEN 232
+
+// Verify a slot entry's signature. `m` points at the entry: u64 size, u8[32]
+// sha256, u8[64] sig. Reconstructs the 52-byte per-slot message and checks it.
+static int verify_slot_sig(const UINT8 *m, UINT32 index) {
+    UINT8 msg[52];
+    static const char tag[8] = { 'S','W','O','S','K','S','L','T' };
+    for (int i = 0; i < 8; i++) msg[i] = (UINT8)tag[i];
+    msg[8]  = (UINT8)(index & 0xFF);  msg[9]  = (UINT8)((index >> 8) & 0xFF);
+    msg[10] = (UINT8)((index >> 16) & 0xFF); msg[11] = (UINT8)((index >> 24) & 0xFF);
+    for (int i = 0; i < 8; i++)  msg[12 + i] = m[i];      // size (u64, LE, as stored)
+    for (int i = 0; i < 32; i++) msg[20 + i] = m[8 + i];  // sha256
+    return ed25519_verify(m + 40, msg, 52, efi_image_signing_pubkey);
+}
+
 static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
                                 int *active, int *fallback, UINT32 *gen,
-                                UINT8 hashA[32], UINT8 hashB[32]) {
+                                UINT8 hashA[32], UINT8 hashB[32],
+                                int *validA, int *validB) {
+    *validA = 0; *validB = 0;
     EFI_FILE_PROTOCOL *f = 0;
     UINT64 sz = 0;
     if (!open_esp_file(image_handle, st, KERNEL_MANIFEST_PATH, &f, &sz)) {
         return 0;
     }
     UINT8 buf[256];
-    if (sz < SWOSKERN_BODY_LEN + 64 || sz > sizeof(buf)) { f->Close(f); return 0; }
+    if (sz < V4_TOTAL_LEN || sz > sizeof(buf)) { f->Close(f); return 0; }
     UINTN n = (UINTN)sz;
     EFI_STATUS rs = f->Read(f, &n, buf);
     f->Close(f);
-    if (rs != EFI_SUCCESS || n < SWOSKERN_BODY_LEN + 64) {
+    if (rs != EFI_SUCCESS || n < V4_TOTAL_LEN) {
         return 0;
     }
     static const char magic[8] = { 'S','W','O','S','K','E','R','N' };
@@ -281,13 +306,8 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
         if (buf[i] != (UINT8)magic[i]) return 0;
     }
     UINT32 version = ld32(buf + 8);
-    if (version != 3) {
-        puts16(st, "UEFI: kernel manifest is unsigned (version != 3), ignoring\r\n");
-        return 0;
-    }
-    // Authenticity: the 64-byte signature at offset 104 must verify over the body.
-    if (!ed25519_verify(buf + SWOSKERN_BODY_LEN, buf, SWOSKERN_BODY_LEN, efi_image_signing_pubkey)) {
-        puts16(st, "UEFI: kernel manifest signature INVALID\r\n");
+    if (version != 4) {
+        puts16(st, "UEFI: kernel manifest is not v4 (per-slot signed), ignoring\r\n");
         return 0;
     }
     UINT32 a = ld32(buf + 12), fb = ld32(buf + 16);
@@ -296,9 +316,14 @@ static int read_kernel_manifest(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st,
     *fallback = (int)fb;
     *gen = ld32(buf + 20);
     for (int i = 0; i < 32; i++) {
-        hashA[i] = buf[32 + i];
-        hashB[i] = buf[72 + i];
+        hashA[i] = buf[V4_SLOT_A_OFF + 8 + i];
+        hashB[i] = buf[V4_SLOT_B_OFF + 8 + i];
     }
+    // Authenticity: verify each slot's signature independently.
+    *validA = verify_slot_sig(buf + V4_SLOT_A_OFF, 0);
+    *validB = verify_slot_sig(buf + V4_SLOT_B_OFF, 1);
+    if (!*validA) puts16(st, "UEFI: kernel slot A signature INVALID\r\n");
+    if (!*validB) puts16(st, "UEFI: kernel slot B signature INVALID\r\n");
     return 1;
 }
 
@@ -581,7 +606,8 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
     int active = 0, fallback = 1;
     UINT32 kgen = 0;
     UINT8 hashA[32], hashB[32];
-    int trusted = read_kernel_manifest(image_handle, st, &active, &fallback, &kgen, hashA, hashB);
+    int validA = 0, validB = 0;
+    int trusted = read_kernel_manifest(image_handle, st, &active, &fallback, &kgen, hashA, hashB, &validA, &validB);
 
     UINTN ksize = 0;
     int loaded_slot = -1;
@@ -632,10 +658,16 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *st) {
             puts16(st, fallback == 0 ? "A\r\n" : "B\r\n");
         }
 
-        UINT64 sz = load_slot(image_handle, st, first, first == 0 ? hashA : hashB);
-        if (sz) {
-            loaded_slot = first; ksize = (UINTN)sz;
-        } else if (second != first) {
+        // Only consider a slot whose per-slot signature verified (OS-1c): an
+        // invalid-sig slot is skipped so the loader rolls back to the other.
+        int firstValid = (first == 0) ? validA : validB;
+        int secondValid = (second == 0) ? validA : validB;
+        UINT64 sz = 0;
+        if (firstValid) {
+            sz = load_slot(image_handle, st, first, first == 0 ? hashA : hashB);
+            if (sz) { loaded_slot = first; ksize = (UINTN)sz; }
+        }
+        if (loaded_slot < 0 && second != first && secondValid) {
             puts16(st, "UEFI: kernel slot unusable, trying slot ");
             puts16(st, second == 0 ? "A\r\n" : "B\r\n");
             sz = load_slot(image_handle, st, second, second == 0 ? hashA : hashB);
