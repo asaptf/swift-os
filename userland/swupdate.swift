@@ -689,11 +689,25 @@ private func applyOsBundleBytes(_ bundle: [UInt8]) -> Int32 {
     if swiftos_update_stage_commit() != 0 {
         put("swupdate: os stage commit rejected (base is not a signed v3 image)\n"); return 1
     }
-    if swiftos_update_activate() != 0 {
-        put("swupdate: base image staged but activate failed — run /bin/swos-activate\n"); return 1
+    // 5. Coordinated activate (OS-1). When an ESP kernel-state is present it is the
+    // single A/B authority: flip it so the loader boots the other kernel slot and
+    // the base follows it on the next boot — kernel + base activate together. On a
+    // store-only box (no ESP) kernel_activate returns ENODEV; fall back to flipping
+    // the SWOSBOOT base selector directly.
+    let krc = swiftos_kernel_activate()
+    if krc == 0 {
+        put("swupdate: OS staged + ESP selector flipped (kernel+base activate together); reboot to boot the new system (on trial)\n")
+        return 0
     }
-    put("swupdate: OS base image staged + activated; reboot to boot the new system (on trial)\n")
-    return 0
+    if krc == -19 {   // ENODEV: no ESP — store-only box
+        if swiftos_update_activate() != 0 {
+            put("swupdate: base image staged but activate failed — run /bin/swos-activate\n"); return 1
+        }
+        put("swupdate: OS base image staged + activated; reboot to boot the new system (on trial)\n")
+        return 0
+    }
+    put("swupdate: base image staged but ESP selector flip failed — run /bin/swos-kactivate\n")
+    return 1
 }
 
 private func osApplyLocal(_ path: [CChar]) -> Int32 {

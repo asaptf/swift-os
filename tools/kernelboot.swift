@@ -8,17 +8,28 @@
 //
 // Layout (little-endian):
 //   0   u8[8] "SWOSKERN"
-//   8   u32   version = 3          (v2 = per-slot SHA-256; v3 = + Ed25519 sig)
-//   12  u32   active   (0 = slot A, 1 = slot B)
+//   8   u32   version = 4          (v3 = one Ed25519 sig over both slots;
+//                                   v4 = an INDEPENDENT Ed25519 sig PER slot)
+//   12  u32   active   (0 = slot A, 1 = slot B)   — default; kernel-state overrides
 //   16  u32   fallback (0/1)
 //   20  u32   generation
-//   24  u64   slotA_size           32  u8[32] slotA_sha256
-//   64  u64   slotB_size           72  u8[32] slotB_sha256   (104-byte body)
-//   104 u8[64] Ed25519 signature over bytes [0,104)          (168 bytes total)
+//   24  u64   slotA_size    32  u8[32] slotA_sha256   64  u8[64] slotA_sig
+//   128 u64   slotB_size   136  u8[32] slotB_sha256  168  u8[64] slotB_sig
+//   232 bytes total
+//
+// OS-1c (Option A): each slot's signature is over a per-slot message
+//   "SWOSKSLT" || u32 slot_index || u64 size || u8[32] sha256       (52 bytes)
+// so a slot can be replaced independently — the box can install a new kernel into
+// the inactive slot (writing that slot's host-signed entry from a SWSYS bundle)
+// without re-signing, and the loader trusts each slot only if ITS signature is
+// valid. The active/fallback/generation header is NOT signed: runtime selection
+// lives in the (SHA-256-protected, self-managed) kernel-state, and flipping it can
+// at worst boot the other still-signed slot or loop — a DoS, never a code-integrity
+// bypass, matching the SWOSBOOT trust posture.
 //
 // The signature uses the image-signing key (the same root the kernel embeds);
-// the loader verifies it against its compiled-in copy before trusting slot
-// metadata. Host-authored at image build for now.
+// the loader verifies each slot against its compiled-in copy. Host-authored at
+// image build for now.
 //
 // Usage: kernelboot <out> <active:A|B> <kernelA-file> <kernelB-file> <signing-seed> [generation]
 
@@ -68,31 +79,42 @@ struct KernelBootTool {
         let hashA = sha256Of(ka)
         let hashB = sha256Of(kb)
 
-        var body = [UInt8]()
-        body.append(contentsOf: Array("SWOSKERN".utf8)) // 0
-        body.append(contentsOf: le32(3))                // 8: version
-        body.append(contentsOf: le32(active))           // 12
-        body.append(contentsOf: le32(fallback))         // 16
-        body.append(contentsOf: le32(generation))       // 20
-        body.append(contentsOf: le64(UInt64(ka.count))) // 24: slotA_size
-        body.append(contentsOf: hashA)                  // 32: slotA_sha256
-        body.append(contentsOf: le64(UInt64(kb.count))) // 64: slotB_size
-        body.append(contentsOf: hashB)                  // 72: slotB_sha256
-        precondition(body.count == 104)
-
-        // Ed25519 signature over the 104-byte body, image-signing key.
-        var sig = [UInt8](repeating: 0, count: 64)
-        body.withUnsafeBytes { msg in
-            seed.withUnsafeBytes { sk in
-                sig.withUnsafeMutableBytes { out in
-                    ed25519Sign(message: msg.baseAddress!, 104, seed: sk.baseAddress!,
-                                signature: out.baseAddress!)
+        // Per-slot signed message: "SWOSKSLT" || u32 index || u64 size || sha256.
+        // The loader reconstructs this identically before verifying the slot's sig.
+        func slotSig(_ index: UInt32, _ size: Int, _ hash: [UInt8]) -> [UInt8] {
+            var msg = [UInt8]()
+            msg.append(contentsOf: Array("SWOSKSLT".utf8))
+            msg.append(contentsOf: le32(index))
+            msg.append(contentsOf: le64(UInt64(size)))
+            msg.append(contentsOf: hash)
+            precondition(msg.count == 52)
+            var sig = [UInt8](repeating: 0, count: 64)
+            msg.withUnsafeBytes { m in
+                seed.withUnsafeBytes { sk in
+                    sig.withUnsafeMutableBytes { out in
+                        ed25519Sign(message: m.baseAddress!, 52, seed: sk.baseAddress!,
+                                    signature: out.baseAddress!)
+                    }
                 }
             }
+            return sig
         }
+        let sigA = slotSig(0, ka.count, hashA)
+        let sigB = slotSig(1, kb.count, hashB)
 
-        var bytes = body
-        bytes.append(contentsOf: sig)                   // 104: signature
+        var bytes = [UInt8]()
+        bytes.append(contentsOf: Array("SWOSKERN".utf8))  // 0
+        bytes.append(contentsOf: le32(4))                 // 8: version
+        bytes.append(contentsOf: le32(active))            // 12
+        bytes.append(contentsOf: le32(fallback))          // 16
+        bytes.append(contentsOf: le32(generation))        // 20
+        bytes.append(contentsOf: le64(UInt64(ka.count)))  // 24: slotA_size
+        bytes.append(contentsOf: hashA)                   // 32: slotA_sha256
+        bytes.append(contentsOf: sigA)                    // 64: slotA_sig
+        bytes.append(contentsOf: le64(UInt64(kb.count)))  // 128: slotB_size
+        bytes.append(contentsOf: hashB)                   // 136: slotB_sha256
+        bytes.append(contentsOf: sigB)                    // 168: slotB_sig
+        precondition(bytes.count == 232)
 
         do {
             try Data(bytes).write(to: URL(fileURLWithPath: outPath))
@@ -100,7 +122,7 @@ struct KernelBootTool {
             fail("\(error)")
         }
         let hexA = hashA.prefix(4).map { String(format: "%02x", $0) }.joined()
-        print("kernelboot: wrote \(bytes.count) bytes (signed v3), active slot \(activeArg) "
+        print("kernelboot: wrote \(bytes.count) bytes (signed v4, per-slot), active slot \(activeArg) "
             + "(gen \(generation)), slotA \(ka.count)B sha256 \(hexA).., slotB \(kb.count)B")
     }
 }
