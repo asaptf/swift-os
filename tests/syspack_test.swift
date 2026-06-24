@@ -48,19 +48,22 @@ private func sha256Of(_ b: [UInt8]) -> [UInt8] {
 // Build a SWSYS body. Knobs let each test corrupt exactly one field; the body is
 // then signed so the signature stays valid and only that field is at fault.
 private func makeBody(version: UInt64,
-                      kernel: [UInt8], base: [UInt8],
+                      kernel: [UInt8], base: [UInt8], kmanifest: [UInt8],
                       magic: String = "SWSYS001",
-                      formatVersion: UInt32 = 1,
+                      formatVersion: UInt32 = 2,
                       kernelOffOverride: Int? = nil,
                       kernelLenOverride: Int? = nil,
+                      kmanifestLenOverride: Int? = nil,
                       corruptSha: Bool = false) -> [UInt8] {
-    let headerSize = 72
+    let headerSize = 80
     let kernelOff = headerSize
     let baseOff = kernelOff + kernel.count
+    let kmOff = baseOff + base.count
 
     var payload = [UInt8]()
     payload.append(contentsOf: kernel)
     payload.append(contentsOf: base)
+    payload.append(contentsOf: kmanifest)
     var sha = sha256Of(payload)
     if corruptSha { sha[0] ^= 0xFF }
 
@@ -74,7 +77,9 @@ private func makeBody(version: UInt64,
     putLE32(&body, 28, UInt32(kernelLenOverride ?? kernel.count))
     putLE32(&body, 32, UInt32(baseOff))
     putLE32(&body, 36, UInt32(base.count))
-    for i in 0..<32 { body[40 + i] = sha[i] }
+    putLE32(&body, 40, UInt32(kmOff))
+    putLE32(&body, 44, UInt32(kmanifestLenOverride ?? kmanifest.count))
+    for i in 0..<32 { body[48 + i] = sha[i] }
     body.append(contentsOf: payload)
     return body
 }
@@ -109,17 +114,19 @@ struct SysPackTest {
     }
 
     static func main() {
-        let kernel = [UInt8](repeating: 0xAB, count: 5000)   // stand-in kernel image
+        let kernel = [UInt8](repeating: 0xAB, count: 5000)   // stand-in (padded) kernel image
         let base = [UInt8](repeating: 0xCD, count: 9000)     // stand-in base image
+        let kmanifest = [UInt8](repeating: 0xEE, count: 232) // stand-in v4 SWOSKERN manifest
 
         // 1. Well-formed bundle verifies OK and round-trips fields.
-        let good = signed(makeBody(version: 5, kernel: kernel, base: base))
+        let good = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest))
         switch verify(good) {
         case .ok(let h):
             check(h.systemVersion == 5, "round-trip systemVersion")
-            check(h.formatVersion == 1, "round-trip formatVersion")
-            check(h.kernelOff == 72 && h.kernelLen == 5000, "round-trip kernel region")
-            check(h.baseOff == 72 + 5000 && h.baseLen == 9000, "round-trip base region")
+            check(h.formatVersion == 2, "round-trip formatVersion")
+            check(h.kernelOff == 80 && h.kernelLen == 5000, "round-trip kernel region")
+            check(h.baseOff == 80 + 5000 && h.baseLen == 9000, "round-trip base region")
+            check(h.kmanifestOff == 80 + 5000 + 9000 && h.kmanifestLen == 232, "round-trip kernel-manifest region")
         default: check(false, "well-formed bundle should verify OK")
         }
 
@@ -136,28 +143,33 @@ struct SysPackTest {
         check(isBadSignature(verify(badSig)), "corrupt signature must be rejected")
 
         // 3c. Bad magic, re-signed so only magic is at fault -> badMagic.
-        let badMagic = signed(makeBody(version: 5, kernel: kernel, base: base, magic: "XXXXX001"))
+        let badMagic = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest, magic: "XXXXX001"))
         check(isBadMagic(verify(badMagic)), "bad magic must be rejected")
 
         // 3d. Bad format version, re-signed -> badFormatVersion.
-        let badFmt = signed(makeBody(version: 5, kernel: kernel, base: base, formatVersion: 99))
+        let badFmt = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest, formatVersion: 99))
         check(isBadFormatVersion(verify(badFmt)), "unknown format version must be rejected")
 
         // 3e. Out-of-bounds kernel region, re-signed -> badLayout.
-        let badLayout = signed(makeBody(version: 5, kernel: kernel, base: base,
+        let badLayout = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest,
                                         kernelLenOverride: 10_000_000))
         check(isBadLayout(verify(badLayout)), "out-of-bounds layout must be rejected")
 
         // 3f. Kernel offset inside the header, re-signed -> badLayout.
-        let badLayout2 = signed(makeBody(version: 5, kernel: kernel, base: base,
+        let badLayout2 = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest,
                                          kernelOffOverride: 8))
         check(isBadLayout(verify(badLayout2)), "kernel offset inside header must be rejected")
 
         // 3g. Payload sha mismatch, re-signed -> badPayloadSha.
-        let badSha = signed(makeBody(version: 5, kernel: kernel, base: base, corruptSha: true))
+        let badSha = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest, corruptSha: true))
         check(isBadPayloadSha(verify(badSha)), "payload sha mismatch must be rejected")
 
-        // 3h. A wrong signing key must be rejected (sign with the dev seed, verify
+        // 3h. Wrong-size kernel manifest region (v4 manifest is fixed at 232 B) -> badLayout.
+        let badManifestLen = signed(makeBody(version: 5, kernel: kernel, base: base, kmanifest: kmanifest,
+                                             kmanifestLenOverride: 100))
+        check(isBadLayout(verify(badManifestLen)), "wrong-size kernel manifest must be rejected")
+
+        // 3i. A wrong signing key must be rejected (sign with the dev seed, verify
         //     against a different pubkey).
         let otherPub = (0..<32).map { UInt8(($0 + 7) & 0xFF) }
         let wrongKey = good.withUnsafeBytes { bb in

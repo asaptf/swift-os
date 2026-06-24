@@ -2494,7 +2494,7 @@ os-stage-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 # from a host TLS server (slirp 10.0.2.2), verifies it, and stages the base image
 # into the inactive slot + activates it; anti-rollback + bad-signature rejected.
 # Needs python3 + openssl (SKIPs without them). base-image carries os-root.pub.
-os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_IMG)
+os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_IMG) $(BUILD)/kernel-slot.bin
 	./tests/os_update_test.sh
 
 # OS-5: health-confirm + anti-rollback floor bump. swupdate confirm marks the
@@ -3078,11 +3078,12 @@ $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift 
 $(TEST_BASE_IMG): $(BASEPACK) $(IMG_SIGNING_SEED) tests/fixtures/test-base/README.txt Makefile | $(BUILD)/.dir
 	$(BASEPACK) tests/fixtures/test-base $@ $(IMG_SIGNING_SEED)
 
-# OS-1b: a tiny signed SWSYS bundle (kernel stub + the test base, version 2) for
-# the no-network coordinated-activate test. The kernel half is a stand-in (only
-# the base half is applied today); both halves use the tiny SWOSBASE fixture.
-$(TEST_OS_BUNDLE): $(SYSPACK) $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
-	$(SYSPACK) create $(TEST_BASE_IMG) $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED)
+# OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
+# SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
+# coordinated-activate test. The base half is applied by os-coordinate-activate-test;
+# the kernel half + manifest are what OS-1c-3b's `swupdate os` installs.
+$(TEST_OS_BUNDLE): $(SYSPACK) $(BUILD)/kernel-slot.bin $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	$(SYSPACK) create $(BUILD)/kernel-slot.bin $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED) --slot-bytes $(KERNEL_SLOT_BYTES)
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
