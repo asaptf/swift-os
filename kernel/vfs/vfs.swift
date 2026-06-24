@@ -3895,6 +3895,16 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let next = base + offset
     if next < 0 { return Errno.invalid.code }
     file.offset = next
+    // Directories track their read position with a separate getdents cursor
+    // (file.dirCursor), not the byte offset. Keep it in sync on an absolute
+    // seek so rewinddir() (lseek(fd, 0, SEEK_SET)) and seekdir() (lseek to a
+    // telldir offset) actually reposition the stream. Without this, a rewind
+    // left dirCursor past the end and the next getdents returned nothing — mc's
+    // local_opendir() does a probe readdir() then rewinddir(), so it saw every
+    // directory as empty (and crashed on "/" once ".." was dropped). Only
+    // SEEK_SET is synced: a directory's byte offset isn't advanced by getdents,
+    // so SEEK_CUR/SEEK_END would carry a stale base.
+    if whence == 0 && nodes[node].isDir { file.dirCursor = next }
     openDescriptions[d] = file
     return next
 }
