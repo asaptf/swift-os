@@ -63,8 +63,9 @@ func main(_ argc: Int32,
     if fd < 0 { put("swos-kinstall: cannot open kernel image file\n"); return 1 }
     defer { _ = swiftos_close(fd) }
 
+    // begin returns the inactive slot index (0/1) on success, negative errno on error.
     let brc = swiftos_kernel_install_begin()
-    if brc != 0 {
+    if brc < 0 {
         if brc == -1 { put("swos-kinstall: rejected — need CAP_CONSOLE\n") }
         else if brc == -19 { put("swos-kinstall: no ESP/GPT boot disk\n") }
         else if brc == -22 { put("swos-kinstall: inactive slot is not the expected fixed size\n") }

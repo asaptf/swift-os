@@ -728,15 +728,17 @@ private func kernelInstallBeginInner() -> Int {
 
 /// OS-1c-2b begin: reserve the inactive ESP kernel slot for a streamed install and
 /// record its FAT chain cursor. capConsole-gated. Does NOT mutate the manifest —
-/// only commit does. Returns 0, or a negative errno. Syscall 101 (/bin/swos-kinstall).
+/// only commit does. Returns the TARGET slot index (0 or 1) on success, so the
+/// caller can supply that slot's per-slot signed entry to commit; or a negative
+/// errno on failure. Syscall 107 (/bin/swos-kinstall, /bin/swupdate os).
 func kernelInstallBegin() -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
     if !virtioBlkHasEsp() { return Errno.noDev.code }
     if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return Errno.noDev.code }
     let rc = kernelInstallBeginInner()
     virtioBlkReselectServed()
-    if rc != 0 { kinstallReset() }
-    return rc
+    if rc != 0 { kinstallReset(); return rc }
+    return kinstallTargetSlot   // 0 = slot A, 1 = slot B
 }
 
 /// OS-1c-2b write: append `count` bytes from the userland buffer at `bufVA` to the
