@@ -1,5 +1,9 @@
 # swift-os boot services. One allowlisted token per line.
 # swos-init runs each as a child (a sibling of the login shell) and reaps them;
 # use `crond-supervised` instead of `crond` to have it restarted if it crashes.
+# inputd is the C5j userland virtio-input driver: it owns the keyboard the kernel
+# no longer drives and injects keystrokes into the tty. On a board with no
+# virtio-input device it exits cleanly (a no-op), so it is safe to list always.
+inputd
 sshd
 crond

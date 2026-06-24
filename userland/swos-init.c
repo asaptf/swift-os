@@ -34,6 +34,7 @@ enum service_kind {
     SERVICE_SSHD6_ONCE = 4,
     SERVICE_NGINX = 5,
     SERVICE_CROND = 6,
+    SERVICE_INPUTD = 7,   // C5j: persistent userland virtio-input driver
 };
 
 struct supervised_service {
@@ -82,6 +83,9 @@ static const char *service_name(enum service_kind kind) {
     }
     if (kind == SERVICE_NGINX) {
         return "nginx";
+    }
+    if (kind == SERVICE_INPUTD) {
+        return "inputd";
     }
     if (kind == SERVICE_SSHD_ONCE) {
         return "sshd-once";
@@ -134,6 +138,12 @@ static int start_service(enum service_kind kind) {
             char *argvn[] = { "nginx", "-c", "/usr/etc/nginx/nginx-prod.conf", 0 };
             execve("/sbin/nginx", argvn, 0);
             puts_raw("swos-init: exec /sbin/nginx failed\n");
+            _exit(127);
+        }
+        if (kind == SERVICE_INPUTD) {
+            char *argvi[] = { "inputd", 0 };
+            execve("/bin/inputd", argvi, 0);
+            puts_raw("swos-init: exec /bin/inputd failed\n");
             _exit(127);
         }
         char *argv4[] = { "sshd", 0 };
@@ -213,6 +223,8 @@ static void run_service_token(char *tok) {
         (void)start_service(SERVICE_CROND);
     } else if (streq(tok, "crond-supervised")) {
         add_supervised_service(SERVICE_CROND);
+    } else if (streq(tok, "inputd") || streq(tok, "/bin/inputd")) {
+        (void)start_service(SERVICE_INPUTD);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);

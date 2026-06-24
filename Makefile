@@ -469,6 +469,7 @@ USER_QW5_RIGHTSXFER_ELF := $(BUILD)/qw5-rightsxfer.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
 USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
 USER_SVC_INPUT_ELF := $(BUILD)/svc-input.elf
+USER_INPUTD_ELF := $(BUILD)/inputd.elf
 USER_SHMRINGPROBE_ELF := $(BUILD)/shmringprobe.elf
 USER_SVC_SUPERVISOR_ELF := $(BUILD)/svc-supervisor.elf
 USER_PKG_ELF := $(BUILD)/pkg.elf
@@ -510,6 +511,7 @@ BASE_EXEC_ELFS := \
 	$(USER_DRVINPUTD_ELF) \
 	$(USER_DRVSVCDEMO_ELF) \
 	$(USER_SVC_INPUT_ELF) \
+	$(USER_INPUTD_ELF) \
 	$(USER_SVC_SUPERVISOR_ELF) \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
@@ -599,7 +601,7 @@ BASE_EXEC_ELFS := \
 	$(BUILD)/bash.elf
 
 .PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test
-.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: virtio-transport-test
@@ -759,13 +761,18 @@ $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Mak
 $(BUILD)/user_console-login.o: userland/console-login.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/console-login.swift kernel/crypto/sha256.swift -o $@
 
-# LA1: svc-input compiles with the reusable UserlandService template; the
-# supervisor is a standalone program (it is the service's client, not a service).
-$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift -o $@
+# LA1/C5i: svc-input compiles with the reusable UserlandService template plus the
+# shared userland virtio-input driver core; the supervisor is a standalone program
+# (it is the service's client, not a service).
+$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift -o $@
 
 $(BUILD)/user_svc-supervisor.o: userland/svc-supervisor.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-supervisor.swift -o $@
+
+# C5j: persistent userland virtio-input driver, sharing the driver core with svc-input.
+$(BUILD)/user_inputd.o: userland/inputd.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/inputd.swift userland/lib/virtio_input_user.swift -o $@
 
 # LA3: the shmring probe reuses the kernel's sans-IO ring core (the same file the
 # kernel and host unit test compile), built -D SHMRING_USER so its cursor
@@ -1094,6 +1101,9 @@ $(USER_SVC_INPUT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/
 
 $(USER_SVC_SUPERVISOR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o -o $@
+
+$(USER_INPUTD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o -o $@
 
 $(USER_SHMRINGPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o -o $@
@@ -2203,6 +2213,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(MAKE) device-mmio-map-test
 	$(MAKE) c5-mmio-grant-test
 	$(MAKE) c5-userland-driver-test
+	$(MAKE) c5-tty-inject-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -2673,6 +2684,13 @@ c5-mmio-grant-test: build $(QEMU_DTB_SMP4) base-image
 # across a supervisor-driven kill+restart. Runs under -smp 4.
 c5-userland-driver-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_userland_driver_test.sh
+
+# C5j: the persistent userland driver (/bin/inputd, launched by swos-init) injects
+# decoded virtio-input keystrokes into the kernel tty (SYS_tty_inject), restoring
+# interactive keyboard. The test QMP send-key's a character into the virtio device
+# and asserts it reaches the login prompt via the userland driver. Runs under -smp 4.
+c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
 
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
@@ -3292,6 +3310,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
 	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
 	cp $(USER_SVC_INPUT_ELF) $(BASE_ROOT)/bin/svc-input
+	cp $(USER_INPUTD_ELF) $(BASE_ROOT)/bin/inputd
 	cp $(USER_SVC_SUPERVISOR_ELF) $(BASE_ROOT)/bin/svc-supervisor
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox

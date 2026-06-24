@@ -132,6 +132,11 @@ long swiftos_virt_to_phys(unsigned long va, int handle_fd);
 // and the shared virtqueue. swiftos_dmb is a full data memory barrier (dsb sy),
 // ordering ring writes before a device notification (and notifications before
 // used-ring reads).
+// C5j: inject one byte into the kernel tty input (as if typed on the console).
+// Needs CAP_CONSOLE; returns 0, or -1 (EPERM) without it. Used by the userland
+// virtio-input driver to feed decoded keystrokes to the line discipline.
+int swiftos_tty_inject(unsigned char byte);
+
 unsigned int swiftos_mmio_read32(unsigned long addr);
 void         swiftos_mmio_write32(unsigned long addr, unsigned int value);
 unsigned short swiftos_mmio_read16(unsigned long addr);

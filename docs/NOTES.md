@@ -3010,6 +3010,56 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   Wired into `make test`; `c5-test`, `device-mmio-map-test`, and `c5-mmio-grant-test`
   stay green.
 
+### C5j — userland driver injects keystrokes into the tty; interactive keyboard restored (DONE, 2026-06-24)
+
+- **Closes the C5i gap.** C5i moved the virtio-input driver to userland but left the
+  kernel no longer feeding keystrokes to the tty. C5j adds `SYS_tty_inject(byte)`
+  (syscall 106, capConsole-gated) — the userland driver's path to the line
+  discipline. The kernel calls the same `ttyOnInput` entry the UART IRQ uses, so an
+  injected byte is echoed and delivered to a blocked `ttyRead` exactly like typed
+  serial input (no new wake path needed — `ttyRead` polls `cookedCount()` under
+  `wfi` and preemption picks it up).
+- **Capability decision: capConsole (ambient).** Gated on the capConsole capability
+  the input driver already holds as a boot-principal child of swos-init — matching
+  the existing `device_claim`/`reboot` gating. (The capability-handle alternative —
+  a `HandleKind.tty` write handle passed via spawn_handles — was considered and
+  deferred; it is the more capability-correct direction for a later pass.)
+- **Persistent driver `/bin/inputd`.** A new long-running service that owns the
+  virtio-input device end to end: claims `virtio-input.0` (capConsole), maps the MMIO
+  window, brings the virtqueue up (shared `virtio_input_user.swift` core, factored
+  out of svc-input), then runs a forever poll loop — drain the used ring, decode
+  evdev key presses to ASCII (US keymap mirrored from the old kernel driver, Shift
+  tracked), `tty_inject` each byte, and `nanosleep(1ms)` to yield. On a board with no
+  virtio-input window the claim fails and inputd exits 0 cleanly, so it is safe to
+  list unconditionally in `/etc/swos/services`.
+- **Integration.** `swos-init` gained a `SERVICE_INPUTD` kind and an `inputd` token;
+  `inputd` is listed first in `/etc/swos/services`, so it comes up before
+  console-login and the keyboard is live at the login prompt. This means every boot
+  that reaches swos-init now launches inputd — a no-op without a keyboard, harmless
+  with one (the boot self-tests claim+release the device before swos-init runs).
+- **Acceptance.** `make c5-tty-inject-test` (`-smp 4`, virtio-keyboard) boots to the
+  login prompt, then QMP `send-key`s "guest<Enter>" INTO the virtio-input device (not
+  the serial line). inputd decodes the keys and feeds them to the tty; the test
+  asserts `inputd: virtio-input driver ready`, `C5j OK: TTY bytes injected from
+  userland driver`, and that console-login advanced to the `Password:` prompt —
+  proving the injected bytes (including the newline) drove a full username line read
+  through the line discipline. Needs python3 for the QMP socket; SKIPs without it.
+  `make run` interactive keyboard works again through the same path.
+- **SMP note.** inputd's `tty_inject` now feeds `ttyOnInput` from an EL0 process,
+  concurrently with the UART IRQ — the same lockless multi-source pattern the kernel
+  already had (UART IRQ + the former timer-tick virtio drain). Input is low-rate;
+  a tty input lock is left for a later hardening pass.
+
+### C5 proper — DONE (C5h + C5i + C5j, 2026-06-24)
+
+With C5h (MMIO grant to the supervised driver), C5i (kernel exits the device,
+userland owns the virtqueue), and C5j (userland driver feeds the tty), "C5 proper"
+is complete: real hardware authority left the kernel through the capability path, an
+EL0 driver fully owns the virtio-input device, and interactive keyboard works again —
+the kernel runs no virtio-input driver at all. Next steps: network serviceization
+(move the net stack toward a restartable userland service, reusing the device-grant +
+shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

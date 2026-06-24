@@ -96,47 +96,9 @@ func validDeviceInfo(_ info: swiftos_device_info) -> Bool {
            deviceNameEquals(info, "pseudo-input.0")
 }
 
-// virtio-mmio register offsets, by byte offset from the window base (mirrors the
-// in-kernel virtio_input.swift the userland driver replaces).
-let vioR_MAGIC: UInt      = 0x00
-let vioR_DEVID: UInt      = 0x08
-let vioR_DEVFEAT: UInt    = 0x10
-let vioR_DEVFEATSEL: UInt = 0x14
-let vioR_DRVFEAT: UInt    = 0x20
-let vioR_DRVFEATSEL: UInt = 0x24
-let vioR_QSEL: UInt       = 0x30
-let vioR_QNUMMAX: UInt    = 0x34
-let vioR_QNUM: UInt       = 0x38
-let vioR_QREADY: UInt     = 0x44
-let vioR_QNOTIFY: UInt    = 0x50
-let vioR_STATUS: UInt     = 0x70
-let vioR_QDESCL: UInt     = 0x80
-let vioR_QDESCH: UInt     = 0x84
-let vioR_QDRVL: UInt      = 0x90
-let vioR_QDRVH: UInt      = 0x94
-let vioR_QDEVL: UInt      = 0xa0
-let vioR_QDEVH: UInt      = 0xa4
-
-let vioMagic: UInt32 = 0x74726976   // "virt"
-let vioDevIdInput: UInt32 = 18
-
-let vioS_ACK: UInt32    = 1
-let vioS_DRV: UInt32    = 2
-let vioS_DRVOK: UInt32  = 4
-let vioS_FEATOK: UInt32 = 8
-
-// Single-page split-virtqueue layout (one mmap page covers all three rings plus
-// the event-buffer pool), identical to the kernel driver so the proven offsets
-// carry over. Queue size 8; each input event buffer is 8 bytes
-// (struct virtio_input_event { __le16 type; __le16 code; __le32 value; }).
-let vioQSize = 8
-let vioDescBytes = 16
-let vioEvBytes = 8
-let vioOFF_DESC: UInt  = 0x000
-let vioOFF_AVAIL: UInt = 0x080
-let vioOFF_USED: UInt  = 0x100
-let vioOFF_EVBUF: UInt = 0x200
-let vioVIRTQ_DESC_F_WRITE: UInt16 = 2
+// The virtio-input driver core (register/ring constants, VirtioQueue, the init
+// handshake, used-ring + event accessors) lives in the shared
+// userland/lib/virtio_input_user.swift, also used by the C5j persistent /bin/inputd.
 
 // Print a UInt as "0x"-prefixed hex (no leading-zero padding), stack-only.
 func putHex(_ v: UInt) {
@@ -183,122 +145,21 @@ func probeMmioGrant(_ fd: Int32, _ info: swiftos_device_info) -> UInt {
     return base
 }
 
-// C5i: bring the virtio-input event virtqueue up entirely from userland — the
-// driver the kernel no longer runs. `mmio` is the mapped register window;
-// `deviceFd` is the mappable grant (needed to resolve the ring's physical address
-// via virt_to_phys). On success returns the ring VA + physical base and the
-// negotiated queue size; on failure returns ringVA == 0.
-struct VirtioQueue {
-    var ringVA: UInt = 0
-    var ringPA: UInt = 0
-    var qn: UInt32 = 0
-    var availIdx: UInt16 = 0
-    var lastUsed: UInt16 = 0
-}
-
-func ringWrite16(_ va: UInt, _ off: UInt, _ v: UInt16) { swiftos_mmio_write16(va + off, v) }
-func ringWrite32(_ va: UInt, _ off: UInt, _ v: UInt32) { swiftos_mmio_write32(va + off, v) }
-func ringRead16(_ va: UInt, _ off: UInt) -> UInt16 { swiftos_mmio_read16(va + off) }
-
-func virtioInputInit(_ mmio: UInt, _ deviceFd: Int32) -> VirtioQueue {
-    var q = VirtioQueue()
-
-    // 1. Reset and acknowledge.
-    swiftos_mmio_write32(mmio + vioR_STATUS, 0)
-    swiftos_mmio_write32(mmio + vioR_STATUS, vioS_ACK)
-    swiftos_mmio_write32(mmio + vioR_STATUS, vioS_ACK | vioS_DRV)
-
-    // 2. Negotiate features: accept only VIRTIO_F_VERSION_1 (feature bit 32 ==
-    //    word 1, bit 0). Read DEVICE_FEATURES word 1 for completeness, then offer
-    //    just VERSION_1 back and clear word 0.
-    swiftos_mmio_write32(mmio + vioR_DEVFEATSEL, 1)
-    _ = swiftos_mmio_read32(mmio + vioR_DEVFEAT)
-    swiftos_mmio_write32(mmio + vioR_DRVFEATSEL, 1); swiftos_mmio_write32(mmio + vioR_DRVFEAT, 1)
-    swiftos_mmio_write32(mmio + vioR_DRVFEATSEL, 0); swiftos_mmio_write32(mmio + vioR_DRVFEAT, 0)
-    swiftos_mmio_write32(mmio + vioR_STATUS, vioS_ACK | vioS_DRV | vioS_FEATOK)
-    if (swiftos_mmio_read32(mmio + vioR_STATUS) & vioS_FEATOK) == 0 {
-        swiftos_puts("svc-input: FEATURES_OK rejected\n")
-        return q
-    }
-
-    // 3. Select queue 0, size it.
-    swiftos_mmio_write32(mmio + vioR_QSEL, 0)
-    let maxq = swiftos_mmio_read32(mmio + vioR_QNUMMAX)
-    if maxq == 0 {
-        swiftos_puts("svc-input: queue unavailable\n")
-        return q
-    }
-    q.qn = maxq < UInt32(vioQSize) ? maxq : UInt32(vioQSize)
-    swiftos_mmio_write32(mmio + vioR_QNUM, q.qn)
-
-    // 4. Allocate one zero-filled page for desc/avail/used + the event-buffer pool
-    //    and resolve its physical base (anonymous mmap is eager, so the PA is live).
-    let ringVA = swiftos_mmap(4096, Int32(SWIFTOS_PROT_READ | SWIFTOS_PROT_WRITE))
-    if ringVA == 0 {
-        swiftos_puts("svc-input: ring mmap failed\n")
-        return q
-    }
-    let pa = swiftos_virt_to_phys(ringVA, deviceFd)
-    if pa < 0 {
-        swiftos_puts("svc-input: virt_to_phys failed\n")
-        _ = swiftos_munmap(ringVA, 4096)
-        return q
-    }
-    q.ringVA = ringVA
-    q.ringPA = UInt(bitPattern: Int(pa))
-
-    // 5. Descriptors: each receive buffer is device-writable (the device fills in
-    //    input events). addr is a PHYSICAL address into the same ring page.
-    var i: UInt32 = 0
-    while i < q.qn {
-        let d = ringVA + vioOFF_DESC + UInt(Int(i) * vioDescBytes)
-        let bufPA = q.ringPA + vioOFF_EVBUF + UInt(Int(i) * vioEvBytes)
-        swiftos_mmio_write64(d + 0, UInt(bufPA))
-        swiftos_mmio_write32(d + 8, UInt32(vioEvBytes))
-        swiftos_mmio_write16(d + 12, vioVIRTQ_DESC_F_WRITE)
-        swiftos_mmio_write16(d + 14, 0)
-        i += 1
-    }
-
-    // 6. Program the queue's physical ring addresses and mark it ready.
-    let descPA = q.ringPA + vioOFF_DESC
-    let availPA = q.ringPA + vioOFF_AVAIL
-    let usedPA = q.ringPA + vioOFF_USED
-    swiftos_mmio_write32(mmio + vioR_QDESCL, UInt32(descPA & 0xFFFF_FFFF)); swiftos_mmio_write32(mmio + vioR_QDESCH, UInt32(descPA >> 32))
-    swiftos_mmio_write32(mmio + vioR_QDRVL,  UInt32(availPA & 0xFFFF_FFFF)); swiftos_mmio_write32(mmio + vioR_QDRVH,  UInt32(availPA >> 32))
-    swiftos_mmio_write32(mmio + vioR_QDEVL,  UInt32(usedPA & 0xFFFF_FFFF)); swiftos_mmio_write32(mmio + vioR_QDEVH,  UInt32(usedPA >> 32))
-    swiftos_mmio_write32(mmio + vioR_QREADY, 1)
-
-    // 7. Offer every buffer to the device, then go live and kick.
-    i = 0
-    while i < q.qn { ringWrite16(ringVA, vioOFF_AVAIL + 4 + UInt(Int(i) * 2), UInt16(i)); i += 1 }
-    q.availIdx = UInt16(q.qn)
-    ringWrite16(ringVA, vioOFF_AVAIL + 2, q.availIdx)
-    swiftos_dmb()
-    swiftos_mmio_write32(mmio + vioR_STATUS, vioS_ACK | vioS_DRV | vioS_FEATOK | vioS_DRVOK)
-    swiftos_mmio_write32(mmio + vioR_QNOTIFY, 0)
-    return q
-}
-
-// C5i: one bounded drain pass over the used ring. Decodes any pending input events
-// and refills their descriptors. Returns the number of EV_KEY press bytes decoded
-// (0 in the headless self-test, where no key events are generated). The persistent
-// tight poll loop + tty delivery is C5j; here it proves the used-ring read path.
+// C5i: one bounded drain pass over the used ring, using the shared used-ring/event
+// accessors. Counts EV_KEY press events and refills their descriptors. Returns the
+// number decoded (0 in the headless self-test, where no key events are generated).
+// The persistent tight poll loop + tty delivery is C5j (/bin/inputd); here it just
+// proves the used-ring read path is live.
 func virtioInputPollOnce(_ mmio: UInt, _ q: inout VirtioQueue) -> Int {
-    swiftos_dmb()
-    let uidx = ringRead16(q.ringVA, vioOFF_USED + 2)
+    let uidx = virtioUsedIndex(q)
     var decoded = 0
     while q.lastUsed != uidx {
-        let slot = Int(q.lastUsed % UInt16(q.qn))
-        let id = swiftos_mmio_read32(q.ringVA + vioOFF_USED + 4 + UInt(slot * 8)) % q.qn
-        let ev = q.ringVA + vioOFF_EVBUF + UInt(Int(id) * vioEvBytes)
-        let type = ringRead16(q.ringVA, (ev - q.ringVA) + 0)
-        let value = swiftos_mmio_read32(ev + 4)
-        if type == 1 && (value == 1 || value == 2) { decoded += 1 } // EV_KEY press/repeat
-        // Hand the buffer back to the device.
-        ringWrite16(q.ringVA, vioOFF_AVAIL + 4 + UInt((Int(q.availIdx) % Int(q.qn)) * 2), UInt16(id))
-        q.availIdx &+= 1
-        ringWrite16(q.ringVA, vioOFF_AVAIL + 2, q.availIdx)
+        let id = virtioUsedElemId(q, Int(q.lastUsed % UInt16(q.qn)))
+        if virtioEventType(q, id) == evKEY {
+            let v = virtioEventValue(q, id)
+            if v == 1 || v == 2 { decoded += 1 }
+        }
+        virtioRefill(&q, id)
         q.lastUsed &+= 1
     }
     if decoded > 0 { swiftos_dmb(); swiftos_mmio_write32(mmio + vioR_QNOTIFY, 0) }

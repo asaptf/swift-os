@@ -481,6 +481,30 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
 - Non-goals: C5i does not deliver IRQs to userland, does not make the driver a
   persistent forever-running service, and does not yet feed the tty.
 
+### C5j — userland driver injects keystrokes into the tty; interactive keyboard restored (DONE, 2026-06-24)
+
+- Adds `SYS_tty_inject(byte)` (syscall 106), gated on **capConsole** (the ambient
+  option; the capability-handle alternative was deferred). It feeds the same
+  `ttyOnInput` line-discipline entry the UART IRQ uses, so injected bytes reach a
+  blocked `ttyRead` like typed serial input.
+- New persistent `/bin/inputd`, launched by swos-init (`SERVICE_INPUTD` + an `inputd`
+  token in `/etc/swos/services`): it owns virtio-input, runs a forever poll loop that
+  decodes evdev key presses (shared `virtio_input_user.swift` core) and injects each
+  byte into the tty, yielding 1 ms between polls. A no-op (clean exit) on boards with
+  no virtio-input device, so it is safe to list unconditionally.
+- Acceptance: `make c5-tty-inject-test` QMP `send-key`s "guest<Enter>" into the
+  virtio device and asserts `C5j OK: TTY bytes injected from userland driver` plus
+  console-login advancing to the `Password:` prompt (a full username line read driven
+  by injected keys). `make run` interactive keyboard works again.
+
+### C5 proper — DONE (2026-06-24)
+
+C5h + C5i + C5j complete "C5 proper": real hardware authority reaches a supervised
+EL0 driver, the kernel exits the virtio-input device entirely (userland owns the
+virtqueue), and the userland driver feeds the tty so interactive keyboard works. Next
+high-leverage steps: network serviceization (a restartable userland net service
+reusing the device-grant + shmring plumbing) or C6 Cells.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

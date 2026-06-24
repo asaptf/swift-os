@@ -112,6 +112,7 @@
 #define SYS_SHMRING_MAP         103
 #define SYS_SHMRING_CLOSE       104
 #define SYS_VIRT_TO_PHYS        105
+#define SYS_TTY_INJECT          106
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -581,6 +582,14 @@ static inline void *device_mmap(int fd, unsigned long len) {
 // -22 EINVAL if `va` is not mapped).
 static inline long virt_to_phys(unsigned long va, int handle_fd) {
     return __syscall3(SYS_VIRT_TO_PHYS, (long)va, handle_fd, 0);
+}
+
+// C5j: inject one byte into the kernel tty input, as if typed on the console — the
+// path a userland input driver uses to feed decoded keystrokes to the line
+// discipline (and thus to console-login / the foreground program). Needs
+// CAP_CONSOLE. Returns 0, or -1 (EPERM) without the capability.
+static inline int tty_inject(unsigned char byte) {
+    return (int)__syscall3(SYS_TTY_INJECT, (long)byte, 0, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

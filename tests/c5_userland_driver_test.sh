@@ -74,10 +74,10 @@ C5i OK: userland virtio-input driver initialized and recovered"
 
 FORBIDS="panic:
 svc-input: device_mmap failed
-svc-input: virt_to_phys failed
-svc-input: ring mmap failed
-svc-input: FEATURES_OK rejected
-svc-input: queue unavailable
+virtio-input: virt_to_phys failed
+virtio-input: ring mmap failed
+virtio-input: FEATURES_OK rejected
+virtio-input: queue unavailable
 svc-input: MMIO magic mismatch
 svc-input: device info mismatch
 svc-supervisor: device claim failed
