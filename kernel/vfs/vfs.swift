@@ -229,6 +229,7 @@ private let eventAllowedFlags = eventFlagSemaphore | oNonblock | oCloexec
 private let eventMaxCounter = UInt64.max - 1
 private let deviceKindPseudoInput: UInt32 = 1
 private let deviceKindVirtioInput: UInt32 = 2
+private let deviceKindVirtioNet: UInt32 = 3   // NS1: network-serviceization grant
 private let deviceBusPseudo: UInt32 = 1
 private let deviceBusVirtioMmio: UInt32 = 2
 private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
@@ -830,6 +831,28 @@ private func resetDeviceRegistry() {
                        kind: deviceKindPseudoInput,
                        bus: deviceBusPseudo,
                        flags: deviceFlagNoMmioGrant)
+    }
+    // NS1: publish a mappable grant for the virtio-net transport window, the first
+    // step of network serviceization. A capConsole claimer obtains a `.map` right
+    // and can sys_device_mmap the window to read the device identity + config
+    // (e.g. the MAC) from userland. This COEXISTS with the in-kernel net driver,
+    // which keeps owning and operating the NIC (sshd/nginx/DHCP depend on it): the
+    // grant only authorizes mapping, and the userland probe reads read-only
+    // registers. NOT discoverable: it is claimed by name (claim-by-name needs no
+    // device_discover), and keeping it out of the discovery enumeration preserves
+    // the legacy C5 driver demo's "exactly the input devices are discoverable"
+    // contract. Making the NIC discoverable (for a userland net service that
+    // enumerates NICs) is deferred to a later NS milestone, together with
+    // generalizing that demo's discovery bound. Slot 2 keeps the input slots intact.
+    let net = virtioNetDiscoverGrant()
+    if net.found {
+        registerDevice(2, "virtio-net.0",
+                       kind: deviceKindVirtioNet,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: net.mmioBase,
+                       mmioLen: net.mmioLen,
+                       flags: deviceFlagMmioGrant,
+                       discoverable: false)
     }
 }
 

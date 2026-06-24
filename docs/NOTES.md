@@ -3091,6 +3091,44 @@ the kernel runs no virtio-input driver at all. Next steps: network serviceizatio
 (move the net stack toward a restartable userland service, reusing the device-grant +
 shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
 
+### NS1 — virtio-net MMIO grant reaches userland (DONE, 2026-06-24)
+
+- **First step of network serviceization.** The flagship app/AI-hosting profile
+  wants the net stack to eventually be a restartable userland service. NS1 proves
+  the NIC's MMIO authority can reach userland the same way the virtio-input grant
+  did (C5h), reusing the C5 plumbing (device grant + `device_mmap`, and later
+  `virt_to_phys` + shmring). It is strictly **additive and non-disruptive**: the
+  in-kernel net driver keeps owning and operating the NIC (sshd/nginx/DHCP depend on
+  it), unlike C5 where the kernel could hand off the device entirely.
+- **Registry.** `resetDeviceRegistry()` discovers the virtio-net transport window
+  (`virtioNetDiscoverGrant()`, a read-only scan for a modern DEVID=1 mmio device)
+  and registers `virtio-net.0` at slot 2 with `deviceFlagMmioGrant` — mappable, so a
+  capConsole claim yields a `.map` right. New device kind `deviceKindVirtioNet` (3).
+- **Decision — NOT discoverable.** The grant is claimed by name, so it is registered
+  non-discoverable (`discoverable: false`, no `deviceFlagDiscovered`). This keeps the
+  legacy C5 driver demo's "exactly the input devices are discoverable" contract
+  intact — making the NIC a third `device_discover` entry trips that demo's
+  exhaustion check (verified: it exits 1 when the NIC is discoverable). A later NS
+  milestone can make the NIC discoverable for a net service that enumerates NICs,
+  together with generalizing that demo's discovery bound.
+- **Probe.** `/bin/netmmapprobe` (Swift) runs at boot as a capConsole principal AFTER
+  the kernel NIC is up: claims `virtio-net.0`, `device_mmap`s the window, verifies
+  MagicValue + DeviceID==1, and reads the 6-byte MAC from device config space
+  (offset 0x100) — proving device-specific config registers are reachable from
+  userland, not just the generic identity words. Reading these registers does not
+  change device state, so it is safe alongside the live NIC.
+- **Acceptance.** `make ns1-net-grant-test` (`-smp 4`, virtio-net/slirp) requires
+  `NS1 OK: virtio-net MMIO mapped from userland, MAC 52:54:00:12:34:56, DEVID
+  verified` AND the kernel net stack staying up (`net-a OK: ICMP echo reply from
+  10.0.2.2`) — coexistence end to end. Wired into `make test`; the C5 demo exits 0
+  with the NIC present. No-op clean exit on boards with no virtio-net window.
+- **Next (NS2/NS3).** NS2: a userland virtio-net driver that does real TX/RX on a
+  *dedicated/secondary* NIC (QEMU can attach two), proving an EL0 NIC driver works
+  end to end without disturbing the primary kernel-owned NIC (reuses `virt_to_phys`
+  for the TX/RX virtqueues). NS3: a minimal restartable userland net service over a
+  shmring data plane, supervised like svc-input. Full replacement of the in-kernel
+  TCP/socket stack stays a long-horizon epic, deliberately out of the NS1–NS3 scope.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

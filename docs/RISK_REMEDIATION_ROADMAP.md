@@ -505,6 +505,35 @@ virtqueue), and the userland driver feeds the tty so interactive keyboard works.
 high-leverage steps: network serviceization (a restartable userland net service
 reusing the device-grant + shmring plumbing) or C6 Cells.
 
+## Network serviceization (NS series)
+
+Move the in-kernel net stack toward a restartable userland service, reusing the C5
+plumbing (device grant + `device_mmap` + `virt_to_phys` + shmring). Strictly
+incremental and non-disruptive: the in-kernel net driver keeps serving sshd/nginx/
+DHCP until a userland service can fully replace it. NS1–NS3 prove the architecture on
+a path that does not touch the live primary NIC; full replacement of the in-kernel
+TCP/socket stack is a separate long-horizon epic, out of NS1–NS3 scope.
+
+### NS1 — virtio-net MMIO grant reaches userland (DONE, 2026-06-24)
+
+- `resetDeviceRegistry()` publishes a mappable `virtio-net.0` grant
+  (`deviceFlagMmioGrant`, kind `deviceKindVirtioNet`) for the virtio-net transport
+  window, claimed by name (non-discoverable, to keep the legacy C5 demo's discovery
+  contract intact). `/bin/netmmapprobe` claims it, maps the window, and reads the
+  device identity + config MAC from userland — coexisting with the live kernel NIC.
+- Acceptance: `make ns1-net-grant-test` requires `NS1 OK: virtio-net MMIO mapped from
+  userland, MAC … DEVID verified` plus the kernel net stack staying up (ICMP echo).
+- Non-goals: NS1 does not run a userland NIC driver, does not touch the kernel net
+  path, and does not move any socket/TCP logic.
+
+### NS2 / NS3 — planned
+
+- NS2: a userland virtio-net driver doing real TX/RX on a dedicated/secondary NIC
+  (reusing `virt_to_phys` for the TX/RX virtqueues), proving an EL0 NIC driver works
+  end to end without disturbing the primary kernel-owned NIC.
+- NS3: a minimal restartable userland net service over a shmring data plane,
+  supervised like svc-input — the restartable-service shape for networking.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

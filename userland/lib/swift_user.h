@@ -86,6 +86,7 @@ struct swiftos_device_info {
 // Device kind/bus/flag constants (mirror syscall.h; identical macro values).
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_NET   3u
 #define SWIFTOS_DEVICE_BUS_PSEUDO        1u
 #define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
 #define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)

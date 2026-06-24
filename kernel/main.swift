@@ -388,6 +388,22 @@ private func runDeviceMmioMapProbe() {
     uartPuts("\n")
 }
 
+// NS1: network-serviceization probe. Runs as a capConsole boot principal AFTER the
+// in-kernel NIC is up: claims the mappable virtio-net grant, maps the transport
+// window, and reads the device identity + config MAC through it — proving the NIC's
+// MMIO authority reaches userland without disturbing the live kernel net driver.
+// No-ops cleanly on boards without a virtio-net window.
+private func runNetMmioProbe() {
+    uartPuts("swift-os NS1: virtio-net MMIO grant probe\n")
+    let (img, sz) = demoImage("/bin/netmmapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netmmapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS1 net mmap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1377,6 +1393,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runDriverServiceDemo()
         runUserlandServiceDemo()
         runDeviceMmioMapProbe()
+        runNetMmioProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
