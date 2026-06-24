@@ -7640,3 +7640,47 @@ With V-TS1–V-TS3, every outbound TLS client (tlsget, acme, swupdate) authentic
 the server against the system trust store by default. Remaining: real Let's Encrypt
 e2e (public domain, pairs with H6); a dedicated QEMU SNI e2e (needs a DNS-named TLS
 server — SNI is currently covered host-side by tls-verify + by construction).
+
+### RSY1 — rsync 3.4.1 port: build + `rsync --version` in QEMU (DONE, 2026-06-23)
+
+First slice of the `rsync` port (catalog Tier 1, difficulty L). Scope R1 is build +
+version banner only; local-filesystem sync and rsync-over-TCP/ssh transport are
+follow-up packages (RSY2+).
+
+- Packaged like `curl`: `ports/net/rsync/Port.json` (rsync 3.4.1, sha256-pinned) +
+  `scripts/build-rsync.sh` + a `ports/catalog.json` entry (`status: packages`) +
+  the `ports-rsync-repo-fixture` Makefile target. Cross-built as a static AArch64
+  ELF against newlib + `userland/compat`, bundled popt and zlib; OpenSSL,
+  xxhash/zstd/lz4, iconv, locale, IPv6, ACLs, xattrs, and SIMD/asm disabled. The
+  build asserts no undefined symbols and an AArch64 ELF, then `swport recipe
+  package`/`repo-fixture` produce a signed `rsync.swpkg`.
+- rsync 3.4.x references `openat()` in `secure_relative_open()` (syscall.c) via the
+  `O_NOFOLLOW`/`O_DIRECTORY`/`AT_FDCWD` macro path — independent of `HAVE_OPENAT`,
+  which the cross-build leaves undefined. SwiftOS has no dirfd-relative (`*at`)
+  syscalls, and `execlp()` is also missing from newlib. Both are satisfied by a
+  rsync-local link shim (`userland/rsync/swiftos/at_compat.c`), deliberately kept
+  out of the shared `userland/compat` ABI: a broadly-detected `openat` there would
+  flip other ports' (e.g. nginx) configure detection toward a dirfd path-walk
+  SwiftOS can't service. `AT_FDCWD` degrades to `open()`; a real dirfd returns
+  ENOSYS (an RSY2 concern, never reached by `--version`). `execlp` is a varargs
+  wrapper over the compat `execvp`.
+- Known runtime gaps (acceptable per the catalog): symlinks unsupported (no
+  `symlink`/`readlink` syscalls), hardlinks degrade (`link()` -> EMLINK), mtime
+  preservation is a no-op (`utimes`).
+
+Gate `make rsync-test` (`tests/rsync_test.sh`): builds `rsync.swpkg`, publishes a
+one-package repo signed with the trusted `PKGREPO_SEED_HEX`, serves it over QEMU
+user-net HTTP, boots SwiftOS, logs in, `pkg update` + `pkg install rsync`, then
+asserts the `version 3.4.1` banner and the packaged marker. PASS.
+
+Two unrelated fixes were needed to build a bootable base image for the gate on a
+macOS host:
+- `scripts/build-bash.sh` read `$BASH_VERSION` as its version override — a bash
+  builtin the shell sets to its own version (macOS host bash 3.2.57), so it fetched
+  a non-existent tarball (404). Renamed the override to `$BASH_PORT_VERSION`.
+- The SH1 bash port still does not cross-compile here (newlib lacks `sigjmp_buf`;
+  configure mis-sets `RLIMTYPE`), and `bash.elf` was an unconditional base-image
+  bake. Added an opt-out `INCLUDE_BASH ?= 1` gate (mirrors `INCLUDE_NODE`); default
+  preserves the bake, and `rsync-test` builds with `INCLUDE_BASH=0` since rsync only
+  needs the OS to boot under busybox ash + pkg + networking. Fixing the bash
+  cross-build remains an SH1 follow-up.
