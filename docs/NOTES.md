@@ -3403,8 +3403,50 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   confines its processes to a namespace root (C6c), enforces a resource cap +
   enumerate + teardown lifecycle (C6d), and hosts a real isolated service end to end
   (C6e). Remaining Cell work (future): richer limits (handle/CPU caps, intra-member
-  page enforcement), nested cells, and lifting a production service (the hosted site /
-  a model server) into a cell.
+  page enforcement → now C7a), nested cells, and lifting a production service (the
+  hosted site / a model server) into a cell.
+
+### C7a — intra-member resident-page cap enforcement (DONE, 2026-06-24)
+
+- **Goal.** Close the first C6d gap: the resident-page cap was a *spawn-time-only*
+  guard (refuse a NEW member once the cell aggregate hit the ceiling). A single
+  existing member could still grow its OWN heap/mmap past the cap, because the
+  per-process resident-page growth syscalls never consulted the cap. C7a makes the
+  cap a true ceiling on the cell *aggregate*, enforced wherever resident pages grow.
+- **One guard helper.** `processCellGrowthAllowed(slot, addPages)` in
+  `process.swift`: returns true if committing `addPages` more resident pages to the
+  member keeps its cell at/under the cap. The common case pays almost nothing — a
+  member of `globalCell` (the default tag) short-circuits on a single integer compare,
+  with **no vfsLock and no aggregate scan**; an uncapped cell short-circuits on the
+  cap lookup. Only a member of an explicitly capped cell takes the lock + bounded scan
+  (`vfsCellPageCap` + `processCellResidentPages`, exactly what the C6d spawn path
+  already does), on the slow memory-growth path where the cost is dwarfed by page
+  allocation.
+- **Growth sites guarded** (each refuses *before* allocating, with a clean errno):
+  `processSbrk` (heap grow → -1), both `processMmap` commit paths (carve + MAP_FIXED →
+  ENOMEM), `processMprotect`'s anon-commit path (all-or-nothing pre-count → ENOMEM),
+  and `processMapSharedFrames` (ring map → ENOMEM). Out of scope (documented): the
+  demand-paged file-fault path (`processHandleFileFault`) has no clean errno return,
+  and `processDeviceMmap` is hardware-authority-gated — both still *charge* the cell
+  and show in `cell_stat`, but the hard refusal lives on the anonymous-growth syscalls
+  a normal cell service uses to balloon.
+- **Bridge.** Added `swiftos_sbrk(incr)` (we had only `sbrk(0)`/`heap_break`) so a
+  Swift workload can drive deterministic, page-granular heap growth.
+- **Probe `/bin/cellgrowprobe` + workload `/bin/cellgrower`.** The supervisor caps a
+  cell at 48 resident pages and launches one grower (granted only barrier-read +
+  stdout + a signal pipe). The grower `sbrk()`s a page at a time until the kernel
+  refuses (the cap bites mid-member), confirms a fresh anon `mmap` is **also** refused
+  (cross-path: both routes hit the same guard), then signals it is capped-out + alive.
+  The supervisor asserts `cell_stat.residentPages <= cap` (the aggregate never
+  exceeds), reaps the grower, then proves an uncapped (global) member — itself — grows
+  well past `cap` pages unaffected.
+- **Acceptance.** `make c7-cell-pagecap-test` (single-core + `-smp 4`) requires the
+  `sbrk refused`/`mmap also refused`/`within cap`/`uncapped … unaffected` markers +
+  `C7a OK`, with no `C7a FAIL`/`CELLGROWER FAIL`/`panic:`. The whole C6 arc and the C3
+  confinement markers stay green. Wired into `make test`.
+- **Next (C7b).** Per-cell handle cap (refuse handle allocation past a `handleCap`
+  with EMFILE), then the persistent restart/FDIR cell supervisor (C7c) and lifting a
+  real in-tree service into a cell (C7d).
 
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 

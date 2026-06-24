@@ -867,6 +867,13 @@ unsigned long swiftos_heap_break(void) {
     return (unsigned long)sbrk(0);
 }
 
+// Grow (or shrink) the process heap by `incr` bytes. Returns the previous break,
+// or (unsigned long)-1 on failure (e.g. a C7a cell resident-page cap refusing the
+// grow). Lets a Swift workload drive deterministic, page-granular heap growth.
+unsigned long swiftos_sbrk(long incr) {
+    return (unsigned long)sbrk(incr);
+}
+
 // ---- misc runtime shims ----------------------------------------------------
 
 // Embedded Swift's print()/String output lowers to putchar.

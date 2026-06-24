@@ -36,6 +36,9 @@ int swiftos_chown(const char *path, unsigned int owner);
 unsigned long swiftos_time(void);
 // Current program break (sbrk(0)) — for reporting bounded heap growth.
 unsigned long swiftos_heap_break(void);
+// Grow/shrink the heap by `incr` bytes; returns the previous break or (unsigned
+// long)-1 on failure (e.g. a cell resident-page cap refusing the grow).
+unsigned long swiftos_sbrk(long incr);
 // Format Unix seconds as UTC "YYYY-MM-DD HH:MM:SS" into out (>= 20 bytes).
 void swiftos_fmt_time(unsigned long t, char *out);
 // Block the calling process for at least sec seconds + nsec nanoseconds

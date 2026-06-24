@@ -3510,6 +3510,27 @@ func processCellResidentPages(_ cellRaw: UInt32) -> Int {
     return pages
 }
 
+/// C7a: intra-member resident-page cap guard. C6d enforces a cell's `pageCap`
+/// only at spawn-into-cell time (refuse a NEW member past the ceiling), so a single
+/// member could still grow its own heap/mmap past the cap. This guard is consulted
+/// at every per-process resident-page GROWTH site (sbrk, anon mmap/mprotect commit,
+/// shared-frame map) so a capped cell's *aggregate* resident pages can never exceed
+/// its cap, no matter which member grows. Returns true if committing `addPages` more
+/// resident pages to process `slot` keeps the cell at or under its cap.
+///
+/// The common case pays almost nothing: a member of globalCell (the default tag)
+/// short-circuits on a single integer compare — no vfsLock, no aggregate scan. Only
+/// a member of an explicitly capped cell takes the lock + bounded scan, on the slow
+/// memory-growth path where the cost is already dwarfed by page allocation.
+func processCellGrowthAllowed(_ slot: Int, addPages: Int) -> Bool {
+    if addPages <= 0 { return true }
+    let cellRaw = pSecurity[slot].cell.raw
+    if cellRaw == globalCell.raw { return true }   // common case: no lock, no scan
+    let cap = vfsCellPageCap(cellRaw: cellRaw)
+    if cap <= 0 { return true }                    // uncapped cell — unaffected
+    return processCellResidentPages(cellRaw) + addPages <= cap
+}
+
 /// C6d: count the live processes tagged with a cell. cell_destroy uses this to
 /// refuse teardown while any member is still running (EBUSY).
 func processCellLiveCount(_ cellRaw: UInt32) -> Int {
@@ -3765,6 +3786,10 @@ func processSbrk(_ incr: Int) -> UInt {
     let oldTop = (old + mask) & ~mask
     let newTop = (newBreak + mask) & ~mask
     if newTop > oldTop {
+        // C7a: refuse a heap grow that would push this member's cell over its cap.
+        if !processCellGrowthAllowed(me, addPages: Int((newTop - oldTop) / PageAllocator.pageSize)) {
+            return fail
+        }
         let activeMask = processAddressSpaceActiveCpuMaskForSlot(me)
         var va = oldTop
         while va < newTop {
@@ -3849,6 +3874,11 @@ func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UI
 
         if !anonVmaContains(me, addr, pages) { return err(-22) }
         let live = mappedPageCount(pTtbr0[me], addr, pages)
+        // C7a: a fixed commit that re-protects PROT_NONE pages grows the resident
+        // set by (pages - live); refuse if that would push the cell over its cap.
+        if prot != PROT_NONE && !processCellGrowthAllowed(me, addPages: Int(pages) - live) {
+            return err(-12) // ENOMEM
+        }
         let unmapRc = addressSpaceMunmapForActiveCpuMask(pTtbr0[me],
                                                          addr,
                                                          pages,
@@ -3880,6 +3910,12 @@ func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UI
     if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 {
         anonVmasDeactivateOverlap(me, base, pages)
         return err(-22)
+    }
+
+    // C7a: refuse a committing mmap that would push this member's cell over its cap.
+    if !processCellGrowthAllowed(me, addPages: Int(pages)) {
+        anonVmasDeactivateOverlap(me, base, pages)
+        return err(-12) // ENOMEM
     }
 
     let rc = addressSpaceMmapForActiveCpuMask(pTtbr0[me],
@@ -3942,6 +3978,9 @@ func processMapSharedFrames(_ basePA: UInt, _ pages: UInt) -> UInt {
     if pages == 0 { return err(-22) }
     let bytes = pages * PageAllocator.pageSize
     if pMmapTop[me] < userMmapFloor + bytes { return err(-12) }  // ENOMEM: arena full
+    // C7a: mapping a shared ring grows this member's resident set by `pages`; refuse
+    // if that would push the cell over its cap (before any frame is referenced).
+    if !processCellGrowthAllowed(me, addPages: Int(pages)) { return err(-12) }
     let base = pMmapTop[me] - bytes
     let activeMask = processAddressSpaceActiveCpuMaskForSlot(me)
     var i: UInt = 0
@@ -4162,6 +4201,16 @@ func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
     if (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 { return Errno.invalid.code }
 
     if anonVmaContains(me, addr, pages) {
+        // C7a: a commit (PROT_NONE -> mapped) grows the resident set by however many
+        // pages in the range are not yet backed; refuse up front if that would push
+        // this member's cell over its cap, so the commit is all-or-nothing.
+        var toCommit = 0
+        var j: UInt = 0
+        while j < pages {
+            if address_space_translate(pTtbr0[me], addr + j * PageAllocator.pageSize) == 0 { toCommit += 1 }
+            j += 1
+        }
+        if !processCellGrowthAllowed(me, addPages: toCommit) { return Errno.noMem.code }
         var committed = 0
         var i: UInt = 0
         while i < pages {

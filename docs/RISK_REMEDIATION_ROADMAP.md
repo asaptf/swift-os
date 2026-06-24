@@ -664,9 +664,30 @@ in-kernel `Cell` object** (CAPABILITIES.md §5). A cell has per-domain resource
 accounting (C6a), is created + launched into by handle (C6b), confines its processes
 to a namespace root (C6c), supports a resource cap + member enumeration + explicit
 teardown (C6d), and hosts a real isolated service end to end (C6e — the
-"one service per cell" shape). Remaining Cell work (future): richer limits (handle/CPU
-caps, intra-member page enforcement), nested cells, and lifting a production service
-(the hosted site / a model server) into a cell.
+"one service per cell" shape). Remaining Cell work hardens this into production-grade
+cells (the C7 arc): intra-member page enforcement (C7a, below), a per-cell handle cap
+(C7b), a persistent restart/FDIR cell supervisor (C7c), and lifting a real in-tree
+service into a cell (C7d).
+
+### C7a — intra-member resident-page cap enforcement (DONE, 2026-06-24)
+
+- Closes the first C6d gap: the resident-page cap was enforced only at spawn-into-cell
+  time (refuse a NEW member past the ceiling), so a single existing member could still
+  grow its own heap/mmap past the cap. C7a enforces the cap at the per-process
+  resident-page **growth** sites, so a capped cell's *aggregate* can never exceed it.
+- One guard helper `processCellGrowthAllowed(slot, addPages)` is consulted at the
+  growth sites (`processSbrk`, both `processMmap` commit paths, `processMprotect`
+  anon-commit, `processMapSharedFrames`), refusing with a clean errno (ENOMEM) before
+  allocating. The common case is zero-cost: a `globalCell` member short-circuits on one
+  integer compare (no lock, no scan); only a capped cell takes the lock + bounded scan.
+  Out of scope (documented): the demand-paged file-fault path and device MMIO map still
+  charge the cell but are not hard-refused — the refusal lives on the anonymous-growth
+  syscalls a service uses to balloon.
+- Acceptance: `make c7-cell-pagecap-test` — `/bin/cellgrowprobe` caps a cell, launches
+  `/bin/cellgrower` into it; the grower `sbrk`s until refused (cap bites mid-member),
+  confirms `mmap` is also refused (cross-path), and the supervisor asserts
+  `cell_stat.residentPages <= cap` while an uncapped global member grows past `cap`
+  pages unaffected. Single-core + `-smp 4`; wired into `make test`.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

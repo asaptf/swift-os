@@ -512,6 +512,21 @@ private func runCellServiceProbe() {
     uartPuts("\n")
 }
 
+// C7a: intra-member resident-page cap probe. A supervisor creates a capped cell,
+// launches /bin/cellgrower into it, and proves the grower cannot grow its OWN heap
+// (sbrk/mmap) past the cell's cap — the aggregate never exceeds the cap — while an
+// uncapped (global) member is unaffected. Runs single-core and under -smp 4.
+private func runCellPagecapProbe() {
+    uartPuts("swift-os C7a: intra-member resident-page cap probe\n")
+    let (img, sz) = demoImage("/bin/cellgrowprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellgrowprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C7a cell pagecap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1509,6 +1524,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellNamespaceProbe()
         runCellLifecycleProbe()
         runCellServiceProbe()
+        runCellPagecapProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
