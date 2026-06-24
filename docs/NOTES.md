@@ -3518,10 +3518,45 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
 - **Acceptance.** `make c7-cell-supervisor-test` (single-core + `-smp 4`) requires the
   gen-1-up / faulted / gen-2-up / fresh-CellId / accounting-reset / crash-loop-attempt
   ×3 / restart-cap markers + `C7c OK`, with no `C7c FAIL`/`panic:`. Wired into `make test`.
-- **Next (C7d).** Lift a REAL in-tree service into the supervised cell (candidate: a small
-  HTTP/echo/kv service over IPC or a TCP socket — not nginx/node/jvm, which need
-  network-built ports the worktree can't build offline), proving a real client round-trip
-  while fully cell-isolated, supervised restart recovery, and clean teardown.
+- **Next (C7d).** Lift a REAL in-tree service into the supervised cell.
+
+### C7d — a real in-tree service in a supervised cell (DONE, 2026-06-24)
+
+- **Goal + decision (the user's call).** The C7 payoff: lift an EXISTING real Swift
+  service into a supervised cell, unchanged. Service chosen: **`/bin/kv`** (the in-memory
+  key-value store — `Dictionary<String,String>` behind a class, a genuine program, not a
+  toy), hosted **over pipes** (offline, deterministic, no networking). HTTP-over-TCP and a
+  new KV-over-IPC service were the alternatives; pipes win on "lift an existing service
+  with the least new code, fully offline."
+- **Supervisor `/bin/cell-kv-supervisor`.** Assembles a cell { `/tmp` namespace root +
+  page cap + handle cap }, `cell_spawn`s `/bin/kv` into it with **exactly two handles** — a
+  stdin pipe read end (→ fd 0, commands) and a stdout pipe write end (→ fd 1, responses),
+  nothing else. Drives a real client round-trip over the pipes (`SET greeting …` → await
+  `OK` → `GET greeting` → the stored value); kv reads one line per `read()`, so the
+  supervisor awaits each response before sending the next command. Asserts isolation
+  (`cell_stat.handles` within the cap) + accounting (`processes == 1`). Then faults the
+  service (closes its stdin → EOF → it exits), detects the exit via `waitpid`, and
+  **restarts it in a fresh cell** (a different CellId, allocated before the old one is
+  reclaimed) whose store is **empty** — `GET greeting` → `(nil)`, proving a genuinely new
+  process, not the old one — serves another round-trip, reclaims gen 1, and tears gen 2
+  down cleanly.
+- **Caps must fit a real workload.** First cut used `pageCap = 96`; `/bin/kv` pulls in the
+  Embedded Swift String/Unicode tables + a Dictionary, blew past 96 pages, and C7a's
+  intra-member page cap correctly refused the allocation → the Swift runtime trapped
+  (`EL0 fault`, BRK). Lesson recorded: a real service must not be strangled by its host —
+  raised to `pageCap = 4096` (16 MB) + `handleCap = 16`, generous ceilings that bound the
+  cell without hitting normal operation (C7a/C7b already prove the caps bite at the edge).
+- **Acceptance.** `make c7-cell-realservice-test` (single-core + `-smp 4`) requires the
+  gen-1-up / round-trip-OK / isolated / gen-1-exit-detected / gen-2-fresh-cell /
+  fresh-state-`(nil)` / accounting-reset / clean-teardown markers + `C7d OK`, with no
+  `C7d FAIL`/`panic:`. Wired into `make test`.
+- **C7 arc complete (C7a–C7d).** Production-grade cells: the resident-page cap is enforced
+  intra-member (C7a), a per-cell handle cap exists (C7b), a persistent restart/FDIR cell
+  supervisor brings services up in fresh cells with bounded restarts (C7c), and a real
+  in-tree service (`/bin/kv`) runs isolated + supervised + restartable inside a cell (C7d).
+  Remaining future work: an optional per-cell CPU/tick budget (needs scheduler
+  integration), nested cells, and lifting a production service (the hosted site / a model
+  server) into a cell.
 
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 

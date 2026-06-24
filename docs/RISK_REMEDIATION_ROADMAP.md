@@ -719,6 +719,22 @@ service into a cell (C7d).
   accounting-reset / bounded-crash-loop markers + `C7c OK`. Single-core + `-smp 4`; wired
   into `make test`.
 
+### C7d — a real in-tree service in a supervised cell (DONE, 2026-06-24)
+
+- The C7 payoff: lift the EXISTING real service **`/bin/kv`** (in-memory key-value store)
+  into a supervised cell, unchanged, over pipes (chosen over HTTP/TCP and a new KV-over-IPC
+  service — offline, deterministic, least new code). **`/bin/cell-kv-supervisor`** assembles
+  a cell { `/tmp` root + page cap + handle cap }, `cell_spawn`s kv with exactly two handles
+  (stdin pipe + stdout pipe), drives a real `SET`/`GET` round-trip, asserts isolation +
+  accounting, faults it (closes stdin), detects the exit, restarts in a **fresh cell** whose
+  store is empty (`GET` → `(nil)`, proving a new process), then reclaims + tears down. Caps
+  are generous (pageCap 4096 / handleCap 16) so a real service is not strangled — C7a's
+  intra-member page cap correctly trapped kv at the first too-tight value (96), recorded as
+  the lesson.
+- Acceptance: `make c7-cell-realservice-test` — round-trip + isolation + fresh-cell restart
+  + fresh-state + clean teardown markers + `C7d OK`. Single-core + `-smp 4`; wired into
+  `make test`. **C7 arc complete (C7a–C7d).**
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

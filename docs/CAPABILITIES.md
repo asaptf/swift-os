@@ -621,6 +621,7 @@ M-series; naming it C1–C6 (capabilities) keeps it distinct from the M and net 
 | **C7a** | Intra-member resident-page cap enforcement (DONE, 2026-06-24) | Closes the C6d gap that the page cap was spawn-time-only: a single member could grow its own heap/mmap past the cap. A guard helper `processCellGrowthAllowed(slot, addPages)` is consulted at the per-process resident-page growth sites (`processSbrk`, both `processMmap` commit paths, `processMprotect` anon-commit, `processMapSharedFrames`), refusing with ENOMEM before allocating, so a capped cell's *aggregate* can never exceed its cap. Zero-cost for `globalCell` (one integer compare, no lock/scan). | `make c7-cell-pagecap-test`: `/bin/cellgrowprobe` caps a cell + launches `/bin/cellgrower`; the grower `sbrk`s until refused (cap bites mid-member), confirms `mmap` is also refused (cross-path), and `cell_stat.residentPages <= cap` while an uncapped global member grows past `cap` pages unaffected. Single-core + `-smp 4`. | Out of scope: demand-paged file faults + device MMIO map (charged but not hard-refused). Handle cap (C7b), persistent restart/FDIR supervisor (C7c), real service in a cell (C7d) remain. |
 | **C7b** | Per-cell handle cap (DONE, 2026-06-24) | The analogue of the page cap, **folded into `cell_create`** (symmetric, no new syscall): `cell_create(root, page_cap, handle_cap, out_cell_id)`; `CellSlot.handleCap`. Enforced at the user-facing handle constructors via an `allocUserFD` wrapper (open/dup/`handleDuplicate`/`F_DUPFD`/pipe/openpty/socketpair/endpoint/socket/accept) plus an inline `dup2` guard — a capped member minting a handle past the cell's aggregate count is refused with **EMFILE**. Delegation (spawn-grant install, IPC handle transfer) is NOT capped. Zero-cost for `globalCell`. | `make c7-cell-handlecap-test`: `/bin/cellhandleprobe` caps a cell + launches `/bin/cellopener`; the opener `open()`s until refused (EMFILE), `cell_stat.handles <= cap`, and an uncapped global member opens past `cap` handles unaffected. Single-core + `-smp 4`. | Persistent restart/FDIR supervisor (C7c), real service in a cell (C7d) remain. Optional CPU/tick budget deferred (needs scheduler integration). |
 | **C7c** | Persistent restart/FDIR cell supervisor (DONE, 2026-06-24) | A dedicated long-running **`/bin/cell-supervisor`** hosts **`/bin/cell-svc`** in a cell, detects its exit/crash via `waitpid`, tears the cell down (`cell_pids` → reap → `cell_destroy`), and restarts in a FRESH cell (a different CellId, allocated before the faulted one is reclaimed) with accounting reclaimed across generations and **bounded restarts** (3) so a crash loop halts. Each cell carries the C7a page cap + C7b handle cap. | `make c7-cell-supervisor-test`: gen 1 up (ping→pong) → faulted → gen 2 in a fresh CellId → gen 1 reclaimed; then a crash-looping service is restarted to the cap and halted. Single-core + `-smp 4`. | C7d (lift a real in-tree service into the supervised cell) remains. CPU/tick budget deferred. |
+| **C7d** | A real in-tree service in a supervised cell (DONE, 2026-06-24) | The C7 payoff: lift the EXISTING real service **`/bin/kv`** (in-memory KV store) into a supervised cell, unchanged, over pipes. **`/bin/cell-kv-supervisor`** assembles a cell { `/tmp` root + page cap + handle cap }, `cell_spawn`s kv with exactly two handles (stdin + stdout pipes), drives a real `SET`/`GET` round-trip, asserts isolation + accounting, faults it (closes stdin), detects the exit, restarts in a FRESH cell whose store is empty (`GET` → `(nil)`, proving a new process), then reclaims + tears down. Caps generous (4096/16) so a real service is not strangled. | `make c7-cell-realservice-test`: round-trip + isolation + fresh-cell restart + fresh-state + clean teardown + `C7d OK`. Single-core + `-smp 4`. | **C7 arc complete.** Optional CPU/tick budget, nested cells, and lifting a production service into a cell remain. |
 
 Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
 explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
@@ -644,12 +645,13 @@ dependencies for the remaining richer work.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** fully implemented. C1-C5f, C5 proper, the full C6a–C6e cell arc, and C7a–C7c
-  (intra-member page cap + per-cell handle cap + persistent restart/FDIR supervisor) exist
-  (accounting → creation → namespace → lifecycle → one-service-per-cell → hardened page +
-  handle caps → supervised restart). Richer IPC, an optional CPU budget, lifting a real
-  in-tree service into a supervised cell (C7d), nested cells, and lifting a production
-  service into a cell remain planned work.
+- **Not** fully implemented. C1-C5f, C5 proper, the full C6a–C6e cell arc, and the full
+  C7a–C7d arc (intra-member page cap + per-cell handle cap + persistent restart/FDIR
+  supervisor + a real in-tree service in a supervised cell) exist (accounting → creation →
+  namespace → lifecycle → one-service-per-cell → hardened page + handle caps → supervised
+  restart → real service hosted). Richer IPC, an optional per-cell CPU budget, nested
+  cells, and lifting a production service (the hosted site / a model server) into a cell
+  remain planned work.
 
 ---
 

@@ -557,6 +557,21 @@ private func runCellSupervisorProbe() {
     uartPuts("\n")
 }
 
+// C7d: lift a REAL in-tree service (/bin/kv) into a supervised cell. The supervisor
+// runs the real key-value store inside a cell with a restricted handle set + caps,
+// drives a live SET/GET round-trip over pipes, then faults it and restarts it in a
+// fresh cell (with fresh state), and tears down cleanly. Single-core and -smp 4.
+private func runCellKvSupervisorProbe() {
+    uartPuts("swift-os C7d: real service (/bin/kv) in a supervised cell probe\n")
+    let (img, sz) = demoImage("/bin/cell-kv-supervisor")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cell-kv-supervisor"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C7d cell kv-supervisor probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1557,6 +1572,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellPagecapProbe()
         runCellHandlecapProbe()
         runCellSupervisorProbe()
+        runCellKvSupervisorProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
