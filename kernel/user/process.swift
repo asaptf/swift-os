@@ -39,7 +39,19 @@ private let userHeapBase: UInt = 0xA000_0000
 // (away from the heap) mirrors the classic Linux mmap layout.
 private let userMmapTop: UInt = 0x4_0000_0000
 private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena grows down from the top
-private let maxProc = 16
+// Single source of truth for the number of EL0 process slots. Several tables are
+// keyed by process slot and MUST be sized identically (or they drift into silent
+// corruption): the process table here (`maxProc`), the per-process VFS handle /
+// cwd / confine tables (`maxVFSProcesses` in vfs.swift), and the futex wait table
+// (`maxFutexWaiters` in futex.swift — at most one parked waiter per thread, so it
+// is bounded by the slot count). These were three separate `16` literals; they now
+// all derive from this constant so the cap can be raised in one place without
+// reintroducing the drift. 64 is the hosting-profile default (~26 KB static per
+// slot, ~1.7 MB total — noise on the 4 GB hosting target); the embedded/appliance
+// profile can lower it here. See the "Process-table capacity" series in
+// docs/RISK_REMEDIATION_ROADMAP.md.
+let kMaxProcesses = 64
+private let maxProc = kMaxProcesses
 private let procNameMax = 16
 private let psInfoRecordSize = 32
 private let procStatRecordSize = 56 // richer per-process record for /bin/top

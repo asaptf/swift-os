@@ -20,7 +20,11 @@
 let futexWait = 0
 let futexWake = 1
 
-private let maxFutexWaiters = 16
+// Sized to the process-slot count: at most one thread per slot can be parked in
+// futex_wait at any instant, so the table can never legitimately overflow. The
+// queue-full EAGAIN branch below stays defensive (unreachable) as long as this
+// tracks kMaxProcesses rather than drifting behind it.
+private let maxFutexWaiters = kMaxProcesses
 
 // Parallel arrays: a waiter entry is (process slot, watched user VA).
 private var futexSlot = [Int](repeating: -1, count: maxFutexWaiters)
