@@ -321,7 +321,9 @@ private func fatCopyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UInt3
             withUnsafeMutableBytes(of: &buf) { raw in
                 let p = raw.baseAddress!
                 if virtioBlkReadCurrent(fatClusterLBA(vol, sc) + UInt64(s), p) != 0 { ok = false; return }
-                if virtioBlkWriteSector(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
+                // ESP-targeted write (the device is already selected): virtioBlkWriteSector
+                // would force the store device, mis-targeting in the coordinated topology.
+                if virtioBlkWriteCurrent(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
             }
             s += 1; done += 1
         }
@@ -458,7 +460,7 @@ private func espConfirmInner() -> Int {
         espSt32(p, kernelStateAttemptOff(confirmedSlot), 0)
         espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
         kernelStateRehash(p)
-        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(p)) != 0 { return }
         rc = 0
     }
     if rc != 0 { return rc }
@@ -559,7 +561,7 @@ private func espActivateInner() -> Int {
         espSt32(p, kernelStateLastBootedOff, kernelStateNoSlot)
         espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
         kernelStateRehash(p)
-        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(p)) != 0 { return }
         rc = 0
     }
     if rc != 0 { return rc }
