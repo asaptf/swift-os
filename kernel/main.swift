@@ -542,6 +542,21 @@ private func runCellHandlecapProbe() {
     uartPuts("\n")
 }
 
+// C7c: persistent restart/FDIR cell supervisor probe. A long-running supervisor hosts
+// a service inside a cell, detects its exit/crash via waitpid, tears the cell down and
+// restarts the service in a FRESH cell (new CellId), and bounds restarts so a crash
+// loop cannot fork-storm. Runs single-core and under -smp 4.
+private func runCellSupervisorProbe() {
+    uartPuts("swift-os C7c: persistent restart/FDIR cell supervisor probe\n")
+    let (img, sz) = demoImage("/bin/cell-supervisor")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cell-supervisor"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C7c cell supervisor probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1541,6 +1556,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellServiceProbe()
         runCellPagecapProbe()
         runCellHandlecapProbe()
+        runCellSupervisorProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

@@ -3487,6 +3487,42 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   bounded restarts, fresh CellId per generation), then lifting a real in-tree service
   into a cell (C7d). CPU/tick budget remains deferred (needs scheduler integration).
 
+### C7c — persistent restart/FDIR cell supervisor (DONE, 2026-06-24)
+
+- **Goal.** Turn the C6e one-shot "service in a cell" boot probe into a real, long-running
+  supervisor with fault detection, isolation, and recovery (FDIR): host a service inside
+  a cell for the lifetime of boot, and when it exits/crashes, tear the cell down and
+  restart the service in a **fresh** cell, with restarts **bounded** so a crash loop
+  can't fork-storm.
+- **Decisions (the user's call).** A dedicated **`/bin/cell-supervisor`** (not an
+  extension of the C5 `svc-supervisor`); **C7c demo first / C7d real** (C7c proves the
+  machinery with a small demo service, C7d lifts a real one); **CPU/tick budget deferred**
+  (needs scheduler integration; `cell_stat.cpuTicks` stays observability-only).
+- **Demo service `/bin/cell-svc`.** argv-selected mode so the supervisor can drive both
+  paths deterministically: `serve` replies `pong` to `ping` over the granted endpoints
+  and exits non-zero (7) on `die` (a simulated fault) / 0 on `stop`/EOF; `crash` exits 9
+  immediately (the crash-loop case). Granted only stdout + the two RPC endpoint ends.
+- **Supervisor `/bin/cell-supervisor`.** A `teardownCell` helper walks the job tree
+  (`cell_pids` → `waitpid` survivors → `cell_destroy`). Two phases:
+  - **Phase A (supervised restart recovery):** bring gen 1 up (health-checked with a
+    live `ping`→`pong`), fault it (`die` → non-zero exit detected via `waitpid`), then
+    bring gen 2 up in a **fresh cell allocated BEFORE the faulted one is reclaimed** — so
+    the new generation provably gets a **different CellId** (the supervisor never recycles
+    a faulted domain's tag under a live successor) — then reclaim gen 1 and assert its
+    accounting drops to zero while gen 2 is charged.
+  - **Phase B (bounded restart):** a `crash`-mode service is restarted up to
+    `maxRestarts = 3`, each generation a fresh cell, each reclaimed; then the supervisor
+    halts the loop instead of restarting forever.
+  Each cell is created with a page cap (64) + handle cap (16), so C7c also exercises the
+  C7a/C7b caps in a realistic supervised service.
+- **Acceptance.** `make c7-cell-supervisor-test` (single-core + `-smp 4`) requires the
+  gen-1-up / faulted / gen-2-up / fresh-CellId / accounting-reset / crash-loop-attempt
+  ×3 / restart-cap markers + `C7c OK`, with no `C7c FAIL`/`panic:`. Wired into `make test`.
+- **Next (C7d).** Lift a REAL in-tree service into the supervised cell (candidate: a small
+  HTTP/echo/kv service over IPC or a TCP socket — not nginx/node/jvm, which need
+  network-built ports the worktree can't build offline), proving a real client round-trip
+  while fully cell-isolated, supervised restart recovery, and clean teardown.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

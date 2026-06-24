@@ -704,6 +704,21 @@ service into a cell (C7d).
   `cell_stat.handles <= cap`, and an uncapped global member opens past `cap` handles
   unaffected. Single-core + `-smp 4`; wired into `make test`.
 
+### C7c — persistent restart/FDIR cell supervisor (DONE, 2026-06-24)
+
+- A dedicated long-running **`/bin/cell-supervisor`** that hosts **`/bin/cell-svc`** in a
+  cell, detects its exit/crash via `waitpid`, tears the cell down (`cell_pids` → reap →
+  `cell_destroy`), and restarts in a FRESH cell with bounded restarts. Phase A: gen 1 up
+  (ping→pong), faulted, gen 2 restarted in a **different CellId** (allocated before the
+  faulted one is reclaimed) with accounting reclaimed across generations. Phase B: a
+  crash-looping service is restarted up to a bounded cap (3), each generation reclaimed,
+  then the loop halts. Each cell carries the C7a page cap + C7b handle cap. (Chosen per
+  review: dedicated supervisor; demo service in C7c, real service in C7d; CPU budget
+  deferred.)
+- Acceptance: `make c7-cell-supervisor-test` — the gen-up / fault / fresh-CellId /
+  accounting-reset / bounded-crash-loop markers + `C7c OK`. Single-core + `-smp 4`; wired
+  into `make test`.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
