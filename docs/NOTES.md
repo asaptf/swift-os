@@ -3163,6 +3163,43 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   plane, supervised like svc-input — the restartable-service shape for networking.
   Full replacement of the in-kernel TCP/socket stack stays a long-horizon epic.
 
+### NS3 — restartable userland net service over a shmring data plane (DONE, 2026-06-24)
+
+- **Goal.** The restartable-service shape for networking — the network analog of the
+  C5 driver service. A supervised userland service owns a NIC and relays frames over a
+  zero-copy shmring (LA3) data plane, with kill+restart recovery, never touching the
+  kernel net stack.
+- **Service `/bin/netsvc`.** Claims the secondary NIC (virtio-net.1), brings it up via
+  the shared userland virtio-net core (`virtio_net_user.swift`, factored out of the NS2
+  probe), and maps a full-duplex shmring channel whose id its supervisor passes in argv.
+  Loop: consume a record from ring0 (client→service) and, if a frame (tag 1), TRANSMIT
+  it on the NIC; poll the NIC RX queue and PRODUCE received frames into ring1
+  (service→client). Control records (tag 0) carry `RDY` (announced on startup) and
+  `STP` (the supervisor's stop signal → exit 40+gen). Exits 0 if there is no secondary
+  NIC.
+- **Supervisor/client `/bin/netsvc-demo`.** Reads the secondary NIC's MAC read-only
+  (so the ARP request carries the correct sender hardware address — and to detect a
+  second NIC; skips cleanly if absent), creates the shmring channel
+  (`SYS_shmring_create`, capNet), and for two generations spawns netsvc
+  (`spawn_handles_async`, passing the channel id), waits for `RDY`, hands it an ARP
+  request frame over ring0, verifies slirp's ARP reply frame relayed back over ring1,
+  then stops + reaps it. Gen 2 proves a kill+restart recovers the service over the same
+  channel.
+- **shmring usage.** The channel is `shmring_create(2)` — two 4 KiB ring regions
+  (ring0 @ +0, ring1 @ +4096), driven by the sans-IO `shmRingReserve/Commit/Peek/
+  Release` core (kernel/ipc/shmring.swift compiled `-D SHMRING_USER`). The id is a
+  global table index, so passing it via argv lets the service map the same physical
+  frames — frames cross the rings with no syscall on the data path.
+- **Acceptance.** `make ns3-net-service-test` (`-smp 4`, two virtio-net/slirp devices)
+  requires the gen-1 + gen-2 `netsvc-demo: gen N relayed ARP reply, 10.0.2.2 is at
+  52:55:0a:00:02:02` markers, the restart marker, `NS3 OK`, and the primary kernel
+  NIC's ICMP echo (coexistence). Wired into `make test`.
+- **NS arc complete (NS1+NS2+NS3).** A userland driver can map a NIC, drive real
+  TX/RX, and run as a restartable service over a zero-copy data plane — all without
+  disturbing the live primary kernel NIC. Replacing the actual in-kernel TCP/socket
+  stack + the primary NIC path stays a separate long-horizon epic; real-HW cache
+  maintenance for userland DMA and userland IRQ delivery are the related hardening gaps.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

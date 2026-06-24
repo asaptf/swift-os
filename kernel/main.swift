@@ -420,6 +420,22 @@ private func runNetDriverProbe() {
     uartPuts("\n")
 }
 
+// NS3: restartable userland net service over a shmring data plane. The supervisor/
+// client (/bin/netsvc-demo) creates an shmring channel, spawns /bin/netsvc twice
+// (proving kill+restart recovery), and relays an ARP request/reply through the
+// service — which drives the secondary NIC entirely from EL0. No-ops cleanly when
+// there is no second NIC.
+private func runNetSvcDemo() {
+    uartPuts("swift-os NS3: restartable userland net service over shmring\n")
+    let (img, sz) = demoImage("/bin/netsvc-demo")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netsvc-demo"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS3 net service demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1411,6 +1427,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runDeviceMmioMapProbe()
         runNetMmioProbe()
         runNetDriverProbe()
+        runNetSvcDemo()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
