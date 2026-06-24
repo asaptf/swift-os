@@ -343,6 +343,10 @@ private var lastS5fRunAnySecondaryCpuMask: UInt64 = 0
 private var lastS5fRunAnyDispatchCount: UInt64 = 0
 private var lastS5fRunAnyExactCpuMatchCount: UInt64 = 0
 private var lastS5fRunAnyPolicySelectionCount: UInt64 = 0
+// Copies that exited with status 0 in the last run-any batch. Lets a caller
+// (e.g. the SMPRACE stress demo) confirm every concurrently-placed copy passed
+// its own self-check without parsing interleaved concurrent console output.
+private var lastS5fRunAnyExitOkCount: UInt64 = 0
 private var s5fRunAnyPlacementActive = false
 private var s5fNextPlacementCpu: UInt32 = 0
 private var s5fRunAnySlots = [Int](repeating: -1, count: maxProc)
@@ -1074,6 +1078,7 @@ private func resetLastS5fRunAnyTelemetry() {
     lastS5fRunAnyDispatchCount = 0
     lastS5fRunAnyExactCpuMatchCount = 0
     lastS5fRunAnyPolicySelectionCount = 0
+    lastS5fRunAnyExitOkCount = 0
     s5fRunAnyPlacementActive = false
     s5fNextPlacementCpu = 0
     for slot in 0..<maxProc {
@@ -2891,13 +2896,22 @@ func processRunS5fRunAnyPlacement(_ image: UInt, _ size: UInt,
         dispatchCount: dispatchCount,
         exactCpuMatchCount: exactCpuMatchCount)
 
+    var exitOkCount: UInt64 = 0
     idx = 0
     while idx < processCount {
-        reapProcess(s5fRunAnySlots[idx])
+        let slot = s5fRunAnySlots[idx]
+        if slot >= 0 && pExit[slot] == 0 {
+            exitOkCount &+= 1
+        }
+        reapProcess(slot)
         s5fRunAnySlots[idx] = -1
         idx += 1
     }
+    lastS5fRunAnyExitOkCount = exitOkCount
 }
+
+func processLastS5fRunAnyExitOkCount() -> UInt64 { lastS5fRunAnyExitOkCount }
+func processLastS5fRunAnyProcessCount() -> UInt64 { lastS5fRunAnyProcessCount }
 
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,
                                               packedLen: UInt, argc: Int,
