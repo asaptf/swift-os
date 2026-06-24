@@ -56,6 +56,7 @@ for _ in $(seq 1 30); do if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; th
 
 dtb_args=(); [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 await(){ local m="$1" mx="${2:-30}" n=0; while ((n<mx*10)); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
+await_count(){ local m="$1" want="$2" mx="${3:-30}" n=0 got; while ((n<mx*10)); do got="$(sed 's/\r//' "$LOG" 2>/dev/null|grep -cF "$m"||true)"; ((got>=want)) && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 require_await(){ await "$1" "$2" || { echo "FAIL: timeout: $1" >&2; sed 's/\r//' "$LOG"|tail -60 >&2; exit 1; }; }
 send_line(){ local l="$1" d="${ACME_CHAR_DELAY:-0.008}" i; for ((i=0;i<${#l};i++)); do printf '%s' "${l:i:1}" >&3; sleep "$d"; done; printf '\n' >&3; sleep "${ACME_SEND_DELAY:-0.06}"; }
 paste_pem(){ send_line "cat > $1 <<'PEMEOF'"; while IFS= read -r ln; do send_line "$ln"; done < "$2"; send_line "PEMEOF"; }
@@ -70,7 +71,7 @@ require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
-require_await "built-in shell (ash)" 60
+require_await "M12c: shell ready" 60
 
 paste_pem /tmp/ca.pem  "$W/cert.pem"
 paste_pem /tmp/bad.pem "$W/bad.pem"
@@ -81,15 +82,21 @@ await "acme: certificate obtained" 120 || true
 # Negative: trust an unrelated cert -> the directory TLS handshake must be rejected.
 send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www2 /tmp/state2 --ca /tmp/bad.pem"
 await "acme: FAIL directory" 60 || true
+# Default (no --ca/--insecure): verification is ON against the system trust store
+# (/etc/ssl/cert.pem = ISRG roots); the mock's self-signed cert does not chain to
+# them, so this must ALSO be rejected (second "FAIL directory").
+send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www3 /tmp/state3"
+await_count "acme: FAIL directory" 2 60 || true
 exec 3>&-; stop_all; QP=""; SPID=""
 
 clean="$(sed 's/\r//' "$LOG")"; ok=1
 grep -qF "acme: verification enabled" <<<"$clean" || { echo "FAIL: verification not enabled" >&2; ok=0; }
 grep -qF "acme: certificate obtained" <<<"$clean" || { echo "FAIL: verified flow did not obtain a cert" >&2; ok=0; }
-grep -qF "acme: FAIL directory"      <<<"$clean" || { echo "FAIL: untrusted CA was not rejected" >&2; ok=0; }
+# Two rejections: the wrong --ca root AND the default system-store path.
+[[ "$(grep -cF 'acme: FAIL directory' <<<"$clean")" -ge 2 ]] || { echo "FAIL: default verify (system store) did not reject the mock" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: /bin/acme --ca verifies the mock server (IP-SAN) and rejects an untrusted root"
+  echo "PASS: /bin/acme verifies by default (system store) + --ca; rejects untrusted roots"
   exit 0
 fi
 echo "--- acme region ---" >&2; sed -n '/acme:/,$p' <<<"$clean" | head -40 >&2

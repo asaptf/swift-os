@@ -359,7 +359,7 @@ func main(_ argc: Int32,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     if argc < 7 {
-        emitLine("acme: usage: acme <ip> <port> <dir-path> <domain> <webroot> <statedir> [--force]")
+        emitLine("acme: usage: acme <ip> <port> <dir-path> <domain> <webroot> <statedir> [--force] [--ca <file>] [--insecure]")
         return 2
     }
     let ipStr = String(decoding: cstr(argv?[1]), as: UTF8.self)
@@ -370,17 +370,22 @@ func main(_ argc: Int32,
     let statedir = cstr(argv?[6])
     var force = false
     var caPath: [UInt8]? = nil
+    var insecure = false
     var ai = 7
     while ai < Int(argc) {
         let arg = cstr(argv?[ai])
         if arg == a("--force") { force = true; ai += 1 }
         else if arg == a("--ca") && ai + 1 < Int(argc) { caPath = cstr(argv?[ai + 1]); ai += 2 }
+        else if arg == a("--insecure") { insecure = true; ai += 1 }
         else { ai += 1 }
     }
 
-    // --ca enables TLS server-certificate verification against the given roots.
-    if let cp = caPath {
-        guard let pem = readFile(cp, 1 << 18) else {
+    // TLS server-certificate verification is ON by default, anchored at the system
+    // trust store (/etc/ssl/cert.pem); --ca overrides the roots and --insecure
+    // disables it (bring-up / mock servers only).
+    if !insecure {
+        let caBytes = caPath ?? a("/etc/ssl/cert.pem")
+        guard let pem = readFile(caBytes, 1 << 18) else {
             emitLine("acme: FAIL read ca"); return 1
         }
         let roots = pemReadCertificates(pem)
@@ -389,6 +394,8 @@ func main(_ argc: Int32,
         gVerifyNow = unixToYYYYMMDDHHMMSS(UInt64(swiftos_time()))
         gVerifyEnabled = true
         emitLine("acme: verification enabled")
+    } else {
+        emitLine("acme: WARNING insecure — TLS certificate NOT verified")
     }
 
     // Persistent state layout under <statedir>: account.key, <domain>/{cert,key}.pem

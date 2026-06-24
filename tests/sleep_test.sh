@@ -91,7 +91,7 @@ await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 probe_host_start="$(date +%s)"
 send_line '/bin/sleepprobe'
 await_regex 'SLEEP_DELTA=[0-9]+' 120 || drive_fail "/bin/sleepprobe printed no SLEEP_DELTA line"

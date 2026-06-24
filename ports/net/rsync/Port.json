@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "name": "rsync",
+  "version": "3.4.1",
+  "revision": 1,
+  "category": "net",
+  "summary": "File synchronization tool for SwiftOS administration, backup, and deployment",
+  "homepage": "https://rsync.samba.org/",
+  "license": ["GPL-3.0-or-later"],
+  "maturity": "packages",
+  "source": {
+    "url": "https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz",
+    "sha256": "2924bcb3a1ed8b551fc101f740b9f0fe0a202b115027647cf69850d65fd88c52"
+  },
+  "target": {
+    "arch": "aarch64",
+    "os": "swift-os",
+    "abi": "swos-0",
+    "libc": "newlib-4.6-swos",
+    "linkage": "static"
+  },
+  "build": {
+    "system": "configure-make",
+    "args": [
+      "--host=aarch64-elf",
+      "--prefix=/usr",
+      "--with-included-popt",
+      "--with-included-zlib",
+      "--disable-openssl",
+      "--disable-xxhash",
+      "--disable-zstd",
+      "--disable-lz4",
+      "--disable-md5-asm",
+      "--disable-roll-asm",
+      "--disable-roll-simd",
+      "--disable-acl-support",
+      "--disable-xattr-support",
+      "--disable-iconv",
+      "--disable-iconv-open",
+      "--disable-locale",
+      "--disable-ipv6",
+      "--disable-md2man",
+      "--disable-debug",
+      "--with-nobody-user=nobody",
+      "--with-nobody-group=nogroup"
+    ],
+    "env": {
+      "AR": "aarch64-elf-ar",
+      "CC": "aarch64-elf-gcc",
+      "CPPFLAGS": "-isystem ${SWOS_ROOT}/userland/compat -isystem ${SYSROOT}/include",
+      "CFLAGS": "-ffreestanding -Os",
+      "LDFLAGS": "-static -nostartfiles -nostdlib -T ${SWOS_ROOT}/userland/user_newlib.ld -Wl,-z,max-page-size=4096 ${RUNTIME}/crt0_newlib.o ${RUNTIME}/newlib_syscalls.o ${RUNTIME}/compat_stubs.o -L${SYSROOT}/lib",
+      "LIBS": "-Wl,--start-group -lc -lm -lgcc -Wl,--end-group",
+      "RANLIB": "aarch64-elf-ranlib"
+    }
+  },
+  "install": {
+    "destdir": true,
+    "command": ["stage", "rsync", "stage-version-marker"]
+  },
+  "package": {
+    "depends": [],
+    "provides": ["rsync"],
+    "conflicts": [],
+    "files": [
+      { "from": "destdir/usr/bin/rsync", "to": "/usr/bin/rsync", "mode": "0755" },
+      { "from": "destdir/usr/share/rsync/swiftos-rsync.version", "to": "/usr/share/rsync/swiftos-rsync.version", "mode": "0644" }
+    ],
+    "capabilities": {
+      "default": [],
+      "services": ["tcp-client", "tcp-server"]
+    }
+  },
+  "test": {
+    "qemu": [
+      "/usr/bin/rsync --version"
+    ]
+  },
+  "notes": "First packaged rsync is a static AArch64 ELF built with bundled popt and zlib. Extended attributes, ACLs, OpenSSL, xxhash/zstd/lz4 compression, iconv, locale, IPv6, and SIMD/asm accelerators are disabled for the first package. Symlinks are unsupported by the SwiftOS VFS (no symlink/readlink syscalls) so -l/--links degrades; hardlinks (link() -> EMLINK) and mtime preservation (utimes is a no-op) are not yet honored. R1 ships build + 'rsync --version'; local-filesystem sync and rsync-over-TCP/ssh transport are follow-up packages."
+}

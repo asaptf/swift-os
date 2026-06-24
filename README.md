@@ -312,7 +312,9 @@ Key architectural decisions:
 - **Network:** in-kernel, virtio-net, sans-IO pure-Swift protocol core; capability-gated socket ABI.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for subsystem boundaries, driver strategy,
-long-horizon runtime constraints, and explicit non-goals.
+long-horizon runtime constraints, and explicit non-goals. See
+[docs/SWIFTCUBE_DESIGN.md](docs/SWIFTCUBE_DESIGN.md) for the recorded SwiftCube design — a
+record-only note for a Swift-native cluster orchestrator that schedules applications as Cells.
 
 ## Repository Map
 

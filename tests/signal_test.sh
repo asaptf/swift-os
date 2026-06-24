@@ -73,7 +73,7 @@ await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 send_line '/bin/signalprobe'
 await "SIGNALPROBE-OK" 120 || drive_fail "/bin/signalprobe did not report success"
 send_line 'exit'
@@ -90,6 +90,7 @@ for marker in \
   "signalprobe: sigaction ignore/old OK" \
   "signalprobe: custom handler frame OK" \
   "signalprobe: child SIGTERM status OK" \
+  "signalprobe: multi-signal default terminate OK" \
   "SIGNALPROBE-OK"; do
   if grep -qF "$marker" <<<"$clean"; then
     echo "PASS: $marker"

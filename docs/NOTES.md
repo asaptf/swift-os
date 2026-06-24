@@ -3,6 +3,150 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## SH2 zsh port (2026-06-23)
+
+Cross-build **zsh 5.9** for swift-os: static AArch64 binary with built-in ZLE
+(line editor, history, tab-completion), arrays, extended parameter expansion,
+functions, arithmetic. `zsh.elf` → `/bin/zsh`.
+
+- **Build:** `make zsh` → `scripts/build-zsh.sh`. Same swiftos-cc CC-wrapper
+  pattern as SH1. Link flags include `-lncurses` for ZLE terminal operations.
+  `zsh_cv_*` variables override cross-compile probes.
+- **Configure flags:** `--disable-dynamic --disable-multibyte --disable-pcre
+  --disable-cap --disable-gdbm --with-term-lib=ncurses --with-fndir=no
+  --with-site-fndir=no`. `--disable-multibyte` avoids wide-char conversion that
+  newlib's bare-metal libc may not fully support. `--disable-dynamic` compiles
+  all modules statically into the binary (no dlopen needed).
+- **Post-configure module trim:** `config.modules` entries for
+  `zsh/net/socket`, `zsh/net/tcp`, `zsh/langinfo`, `zsh/system` are forced to
+  `link=no load=no` — these use syscalls beyond what our stubs fully implement.
+- **Source patch** (`Src/main.c`): `setenv("TERM","vt100",0)`,
+  `setenv("HOME","/tmp",0)`, `setenv("ZDOTDIR","/tmp",0)` inserted before
+  `return zsh_main(argc, argv)` — same bare-env pattern as SH1/MC1.
+- **compat additions:**
+  - `userland/compat/stubs.c`: added weak `getlogin()` (returns "root") and
+    `getlogin_r()` — zsh uses these for `$LOGNAME`/`$USER`.
+- **Job control:** compiled in (no `--disable-job-control` flag in zsh), but
+  effectively limited: `setpgid`/`tcsetpgrp` are no-op stubs and `SIGTSTP` is
+  not delivered by the kernel. `Ctrl-Z` does nothing. Follow-up: same kernel
+  signal work that unblocks bash job control.
+- **Test:** `make zsh-test` → `tests/zsh_test.sh`. Boots, runs
+  `/bin/zsh --no-rcs`, asserts: `$ZSH_VERSION` (SH2_VER=5.9), array length
+  (SH2_ARR=3), arithmetic (SH2_ARITH=42), function call (SH2_FUNC_OK).
+
+## SH1 bash port (2026-06-23)
+
+Cross-build **GNU bash 5.2.37** for swift-os: static AArch64 binary with bundled
+readline + ncurses for interactive line-editing, history, and tab-completion.
+`bash.elf` → `/bin/bash`.
+
+- **Build:** `make bash` → `scripts/build-bash.sh`. CC-wrapper pattern (same as
+  build-mc.sh). Link flags: `--start-group -lc -lm -lgcc -lncurses --end-group`.
+  `bash_cv_*` variables override all `AC_TRY_RUN` configure probes that cannot
+  execute on the host when cross-compiling.
+- **Configure flags:** `--with-included-readline --with-curses --without-job-control
+  --without-bash-malloc --disable-nls --without-gdbm`. Job control is disabled
+  because the kernel lacks `setpgid`/`tcsetpgrp`/SIGTSTP delivery (C-arc + signal
+  follow-up work). All other interactive features work.
+- **Source patch** (`shell.c main()`): `setenv("TERM","vt100",0)` +
+  `setenv("HOME","/tmp",0)` + default `PS1` at the top of `main()` — baked
+  binaries run with an empty environment; without `TERM` readline aborts; without
+  `HOME` bash cannot write history. Same pattern as MC1.
+- **compat additions:**
+  - `userland/compat/signal.h`: added `SIGCONT`(18), `SIGTSTP`(20), `SIGTTIN`(21),
+    `SIGTTOU`(22), `SIGWINCH`(28), `NSIG`(64), `SIGRTMIN`/`SIGRTMAX` — these POSIX
+    signals are absent from bare-metal newlib but bash and readline reference them.
+  - `userland/compat/stubs.c`: added weak `times()` (zero struct tms; for bash's
+    `time` builtin) and weak `confstr()` (EINVAL; bash probes `_CS_PATH`).
+- **Test:** `make bash-test` → `tests/bash_test.sh`. Boots, logs in, runs
+  `/bin/bash --norc --noprofile`, asserts: `$BASH_VERSION` (SH1_VER=5.2), arithmetic
+  expansion (SH1_ARITH=42), for-loop (SH1_LOOP_A/B/C), pipeline (SH1_PIPE_OK).
+- **Job control (follow-up):** `Ctrl-Z`/`fg`/`bg` need kernel `setpgid`, `setsid`,
+  `tcsetpgrp`, SIGTSTP/SIGCONT delivery — tracked as part of the signal-completion
+  work in the roadmap. Stubs for these functions already exist in stubs.c and return
+  success/0, so bash starts without errors even now.
+
+## MC1 Midnight Commander port (2026-06-23)
+
+Final step of the arc: cross-build **GNU Midnight Commander 4.8.31** against the
+NC1 ncurses + GL1 glib in the sysroot, and prove the TUI renders on the serial
+console. `mc.elf` is a 1.5 MB static AArch64 binary → `/bin/mc`.
+
+- **Build:** `make mc` → `scripts/build-mc.sh`. Uses a `swiftos-cc` CC-wrapper
+  (like build-nginx.sh) that appends the freestanding crt0/stubs + `-lc -lm -lgcc
+  -lz` group on every link — MC's autoconf macros rewrite `LIBS` on link probes
+  and otherwise drop libc. pkg-config is faked to answer only for glib so optional
+  deps (ext2fs etc.) auto-disable. Lean configure: `--with-screen=ncurses
+  --without-x --without-subshell --without-gpm-mouse --disable-vfs --disable-nls
+  --disable-charset --without-internal-edit --disable-background --disable-tests`.
+- **Test:** `make mc-test` → `tests/mc_test.sh` (also in `make test`). Boots,
+  runs `/bin/mc`, asserts MC drew its ncurses UI (the boxed startup notice /
+  menu), dismisses it, then quits via MC's ESC-then-`0` (= F10). PASS.
+- **Source patches** (applied by build-mc.sh, documented):
+  1. `lib/tty/tty-ncurses.h` force-`#define ENABLE_SHADOWS 1` → disabled: dialog
+     drop-shadows call ncurses *widechar* (`cchar_t`/`getcchar`/`mvadd_wchnstr`)
+     which our 8-bit NC1 ncurses lacks. Shadows are cosmetic.
+  2. `src/main.c`: default `TERM=vt100` and `HOME=/tmp` at the top of `main()` —
+     baked binaries inherit an empty environment, so without these MC aborts on
+     "TERM unset" and then "Cannot create /.config/mc directory". `/tmp` is the
+     writable tmpfs (kernel/vfs/vfs.swift), so `~/.config/mc` lands there.
+- **compat additions** (also needed at link/compile): `mntent.h` gained `MOUNTED`
+  + MNTTYPE/MNTOPT names (gnulib mountlist one-arg-getmntent path; stubs already
+  report an empty mount list); new `sys/vfs.h` forwarding to `sys/statfs.h` (MC
+  fsusage includes `<sys/vfs.h>` for `struct statfs`); `getsid()` stub in stubs.c.
+- **No skin file shipped.** MC uses its compiled-in default skin (one-time
+  "Default skin has been loaded" notice). Shipping `misc/skins/default.ini`
+  instead makes MC's skin parser **segfault** (NULL deref, FAR_EL1=0) on a
+  monochrome terminal — a real MC-on-mono bug; the built-in skin is the working
+  path. Filesystem free-space (statfs) and mount list are empty stubs.
+- **Carry-over for real use:** colors (mono vt100 only), the skin-parser crash,
+  and a system-wide `TERM`/`HOME` at the login-exec path (vs. the per-binary
+  defaults patched in here) are follow-ups, not blockers for the TUI proof.
+
+## GL1 GLib port (2026-06-23)
+
+Second step of the Midnight Commander arc (MC requires GLib). Cross-build static
+**GLib 2.56.4 core** for swift-os and prove it boots.
+
+- **Build:** `make glib` → `scripts/build-glib.sh` (autotools cross-build, glib-core
+  only — no gobject/libffi, no gio library, no gmodule). Installs
+  `sysroot/aarch64-elf/lib/libglib-2.0.a` + `include/glib-2.0/...` +
+  `lib/glib-2.0/include/glibconfig.h`, and builds `build/glibdemo.elf` → `/bin/glibdemo`.
+- **Test:** `make glib-test` → `tests/glib_test.sh` (also in `make test`). Boots
+  base.img, runs `/bin/glibdemo`. PASS:
+  `GLIBDEMO-OK str="hello swift-os" list=3 map=value array_sum=10 utf8=1 mono=yes glib=2.56.4`
+  (GString/GList/GHashTable/GArray/g_utf8_validate/**g_get_monotonic_time**).
+- **Why 2.56.4:** last clean autotools series (2.58 last with autotools, 2.60+ meson-only).
+  Cross-compiling meson to bare-metal newlib is far harder.
+- **No pkg-config on host:** `PKG_CHECK_MODULES` bypassed by exporting `ZLIB_CFLAGS/LIBS`
+  and `LIBFFI_CFLAGS/LIBS` directly (`PKG_CONFIG=true`). libffi is never linked (gobject
+  not built). zlib consumed from `build/zlib-root` (run `scripts/build-zlib.sh` first).
+- **newlib/compat gaps filled (all in `userland/compat`, weak in stubs.c):**
+  - `iconv`/`iconv_open`/`iconv_close` — minimal charset conversion (UTF-8 identity +
+    Latin1↔UTF-8; passthrough otherwise). newlib's iconv is not built in.
+  - gettext family (`gettext`/`dgettext`/`ngettext`/`textdomain`/`bindtextdomain`/…) —
+    passthrough no-ops + new `libintl.h`. GLib 2.56 has no `--disable-nls`.
+  - `nl_langinfo(CODESET)` → "UTF-8" (so GLib treats text as UTF-8).
+  - DNS resolver stubs `res_query`/`res_search`/`res_init`/`dn_expand` + new `resolv.h`
+    and `arpa/nameser.h` (gio configure probes them; unused at runtime).
+  - `creat`, `sched_yield`, `utime` (+ new `utime.h`).
+  - `MSG_OOB`/`MSG_DONTROUTE` added to `compat/sys/socket.h` (GLib reads MSG_* values).
+- **Cross-build gotchas (carry-over for any GLib-era port):**
+  - GCC 16 defaults to **C23** where `bool` is a keyword → GLib 2.56's `bool` identifier
+    breaks. Build with `-std=gnu11`.
+  - newlib gates `pthread_rwlock_t`/`pthread_barrier_t` types behind feature macros →
+    pass `-D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
+    -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS` (mirrors what
+    `compat/pthread.h` does, but needed on the command line because glib headers pull
+    `<sys/types.h>` → `_pthreadtypes.h` before the `compat/pthread.h` wrapper runs).
+  - newlib omits `SSIZE_MAX` → `-DSSIZE_MAX=__LONG_MAX__` (giochannel needs it).
+  - libtool rejects building the convenience `.la` libs with raw `crt0/sys/stubs.o` in
+    LDFLAGS → `make` uses a libtool-friendly `LDFLAGS="-static -L… -L…"`; the runtime
+    objects are only for the final demo link and configure's link probes.
+  - configure cross run-test cache vars seeded (`glib_cv_*`, `gt_cv_func_gnugettext*_libc=yes`).
+- **Carry-over for MC1:** MC links `glib-2.0` only (gmodule X11/aspell-gated, off). MC core
+  is now the easiest remaining piece.
+
 ## NC1 ncurses port (2026-06-22)
 
 First step of the Midnight Commander arc: cross-build a static **ncurses 6.5**
@@ -2808,6 +2952,253 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
 - **Non-goals.** C5g does not change the registry or hand real MMIO/IRQ/DMA to
   userland. It freezes the existing `capConsole` device-authority minting
   boundary as an executable regression test.
+
+### C5h — MMIO authority grant reaches the supervised userland driver (DONE, 2026-06-23)
+
+- **The transition.** This is the metadata-only → hardware-authority step for the
+  *discoverable* virtio-input grant. `resetDeviceRegistry()` now registers
+  `virtio-input.0` with `deviceFlagMmioGrant | deviceFlagDiscovered` (the
+  `deviceFlagNoMmioGrant` bit is gone), so a `capConsole` claim of it yields a
+  `.map` right (`deviceMmioGrantRights`). The LA1 supervisor (`/bin/svc-supervisor`)
+  claims it and transfers the grant over IPC to the restartable driver service
+  (`/bin/svc-input`), which `sys_device_mmap`s the window Device-nGnRE and reads the
+  virtio identification registers (MagicValue@0x00, DeviceID@0x08) through the
+  *userland* mapping — the first real hardware authority to leave the kernel via the
+  supervised capability-transfer path (LA2's `devicemmapprobe` proved the map path,
+  but from a one-shot boot probe, not the supervised service).
+- **Decision — which name carries the real grant.** `virtio-input.0` is the
+  mappable, discoverable grant going forward. The former mappable alias
+  `virtio-input-mmio.0` (LA2's non-discoverable pre-position) is **removed**; its
+  role is now filled by `virtio-input.0` itself. To preserve the metadata-only
+  negative-path coverage that `virtio-input.0` used to provide, a new inert sibling
+  `virtio-input-meta.0` (`deviceFlagNoMmioGrant | deviceFlagDiscovered`, same
+  transport window) is registered: the legacy C5 demo (`drvsvcdemo`/`drvinputd`)
+  claims and transfers *it* to keep proving authority stays withheld, and the LA2
+  `devicemmapprobe` claims it to keep proving `sys_device_mmap` is refused with
+  `EACCES` on a no-MMIO grant. With a real virtio-input window present there are now
+  two discoverable grants, so the demo's discovery-exhaustion check moved from
+  index 1 to index 2.
+- **Userland wiring.** Added `swiftos_device_mmap(fd, len)` to the Swift bridge
+  (`swift_user.h`/`.c`) — it returns the raw base VA or a negative errno so the Swift
+  caller is simple. `svc-input`'s validation now requires the MMIO grant for a real
+  virtio-input device and only rejects the still-unimplemented IRQ/DMA grants;
+  `svc-supervisor`'s authority check does the same. The kernel's polled keyboard
+  driver still owns and reads the same window at C5h — both touch read-only ID
+  registers, so the two mappings coexist (kernel exit is C5i).
+- **Acceptance.** `make c5-mmio-grant-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires
+  `C5h OK: MMIO 0x<base> mapped from userland, MAGIC verified` plus the surrounding
+  LA1 lifecycle, and forbids any `svc-input`/`svc-supervisor` failure or panic. The
+  reported address is the physical window base (deterministic), not the per-run
+  mapped VA. Headless boards fall back to `pseudo-input.0` (no MMIO window to map).
+  `make test` now runs it alongside `c5-test` and `device-mmio-map-test`, all of
+  which stay green (the legacy demos were retargeted onto `virtio-input-meta.0`).
+
+### C5i — virtio-input driver runs entirely in userland; kernel exits the device (DONE, 2026-06-23)
+
+- **Kernel exits the device.** After `vfsInit()`, the kernel queries
+  `vfsVirtioInputUserlandOwned()` (true when a virtio-input window exists and was
+  registered mappable — the C5h policy) and, if so, skips `virtioKbdInit()` and the
+  per-tick `virtioKbdDrain()`. The skip is a single early-init flag
+  (`kernelPolledKbdActive`), not a per-tick registry walk. The interactive-console
+  boot decision still keys off device *presence*, so a graphical session
+  (virtio-keyboard + framebuffer) still boots straight to the shell. Marker:
+  `virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)`.
+- **VA→PA decision (Option A).** Userland virtqueue memory is normal RAM the device
+  addresses physically, but `mmap` hands back virtual addresses. Added
+  `SYS_virt_to_phys(va, handle_fd) -> pa` (syscall 105), gated by reusing
+  `vfsDeviceMmioWindow` — the caller must own a mappable device grant on `handle_fd`,
+  so only an actual device owner can resolve physical addresses (it cannot translate
+  arbitrary memory). The kernel walks the caller's TTBR0 via `addressSpaceTranslate`.
+  Anonymous `mmap` is eager (frames mapped immediately), so the PA is live right
+  after allocation. Chosen over kernel-allocated PA/VA pairs or bounce buffers for
+  simplicity; the device-handle gate keeps it from being an ambient VA→PA oracle.
+- **Userland driver.** `/bin/svc-input` now brings the event virtqueue up entirely
+  from EL0: reset → ACK → DRIVER → negotiate `VIRTIO_F_VERSION_1` → `FEATURES_OK` →
+  size queue 0 → allocate one zero-filled ring page (single-page split-queue layout
+  identical to the former kernel driver) → resolve its PA via `virt_to_phys` →
+  program `QUEUE_DESC/DRIVER/DEVICE` physical addresses → `QUEUE_READY` → offer 8
+  device-writable event buffers → `DRIVER_OK` → kick `QUEUE_NOTIFY`. Register and
+  ring access go through new volatile C bridges in `swift_user.c`
+  (`swiftos_mmio_read/write{16,32,64}`, `swiftos_dmb`) — the low-level MMIO/DMA
+  ordering Embedded Swift cannot express directly. `virtioInputPollOnce` is a bounded
+  used-ring drain (the persistent tight poll loop + tty delivery is C5j); in the
+  headless self-test no key events are generated, so it decodes zero bytes.
+- **Recovery shape.** The supervisor now performs the device handoff in *every*
+  generation, so gen 2 is a genuine kill → restart → re-claim → re-map → re-init of
+  the live device (each new driver instance resets the device first, so re-init is
+  clean). Emits `C5i OK: userland virtio-input driver initialized and recovered`.
+- **What this intentionally drops at C5i.** The kernel no longer feeds virtio-input
+  keystrokes to the tty, so the *graphical-window* keyboard is dead between/after the
+  bounded driver self-test. Headless and serial-console tests are unaffected — they
+  drive input over the PL011 UART, not virtio-input (no test uses QEMU `sendkey`).
+  C5j restores interactive keyboard by having the userland driver inject decoded
+  bytes into the kernel tty.
+- **Acceptance.** `make c5-userland-driver-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires the kernel-skip marker, virtio feature
+  negotiation + queue-ready in both generations, the restart marker, and the C5i OK
+  line; it forbids any `device_mmap`/`virt_to_phys`/queue-init failure and panics.
+  Wired into `make test`; `c5-test`, `device-mmio-map-test`, and `c5-mmio-grant-test`
+  stay green.
+
+### C5j — userland driver injects keystrokes into the tty; interactive keyboard restored (DONE, 2026-06-24)
+
+- **Closes the C5i gap.** C5i moved the virtio-input driver to userland but left the
+  kernel no longer feeding keystrokes to the tty. C5j adds `SYS_tty_inject(byte)`
+  (syscall 106, capConsole-gated) — the userland driver's path to the line
+  discipline. The kernel calls the same `ttyOnInput` entry the UART IRQ uses, so an
+  injected byte is echoed and delivered to a blocked `ttyRead` exactly like typed
+  serial input (no new wake path needed — `ttyRead` polls `cookedCount()` under
+  `wfi` and preemption picks it up).
+- **Capability decision: capConsole (ambient).** Gated on the capConsole capability
+  the input driver already holds as a boot-principal child of swos-init — matching
+  the existing `device_claim`/`reboot` gating. (The capability-handle alternative —
+  a `HandleKind.tty` write handle passed via spawn_handles — was considered and
+  deferred; it is the more capability-correct direction for a later pass.)
+- **Persistent driver `/bin/inputd`.** A new long-running service that owns the
+  virtio-input device end to end: claims `virtio-input.0` (capConsole), maps the MMIO
+  window, brings the virtqueue up (shared `virtio_input_user.swift` core, factored
+  out of svc-input), then runs a forever poll loop — drain the used ring, decode
+  evdev key presses to ASCII (US keymap mirrored from the old kernel driver, Shift
+  tracked), `tty_inject` each byte, and `nanosleep(1ms)` to yield. On a board with no
+  virtio-input window the claim fails and inputd exits 0 cleanly, so it is safe to
+  list unconditionally in `/etc/swos/services`.
+- **Integration.** `swos-init` gained a `SERVICE_INPUTD` kind and an `inputd` token;
+  `inputd` is listed first in `/etc/swos/services`, so it comes up before
+  console-login and the keyboard is live at the login prompt. This means every boot
+  that reaches swos-init now launches inputd — a no-op without a keyboard, harmless
+  with one (the boot self-tests claim+release the device before swos-init runs).
+- **Acceptance.** `make c5-tty-inject-test` (`-smp 4`, virtio-keyboard) boots to the
+  login prompt, then QMP `send-key`s "guest<Enter>" INTO the virtio-input device (not
+  the serial line). inputd decodes the keys and feeds them to the tty; the test
+  asserts `inputd: virtio-input driver ready`, `C5j OK: TTY bytes injected from
+  userland driver`, and that console-login advanced to the `Password:` prompt —
+  proving the injected bytes (including the newline) drove a full username line read
+  through the line discipline. Needs python3 for the QMP socket; SKIPs without it.
+  `make run` interactive keyboard works again through the same path.
+- **SMP note.** inputd's `tty_inject` now feeds `ttyOnInput` from an EL0 process,
+  concurrently with the UART IRQ — the same lockless multi-source pattern the kernel
+  already had (UART IRQ + the former timer-tick virtio drain). Input is low-rate;
+  a tty input lock is left for a later hardening pass.
+
+### C5 proper — DONE (C5h + C5i + C5j, 2026-06-24)
+
+With C5h (MMIO grant to the supervised driver), C5i (kernel exits the device,
+userland owns the virtqueue), and C5j (userland driver feeds the tty), "C5 proper"
+is complete: real hardware authority left the kernel through the capability path, an
+EL0 driver fully owns the virtio-input device, and interactive keyboard works again —
+the kernel runs no virtio-input driver at all. Next steps: network serviceization
+(move the net stack toward a restartable userland service, reusing the device-grant +
+shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
+
+### NS1 — virtio-net MMIO grant reaches userland (DONE, 2026-06-24)
+
+- **First step of network serviceization.** The flagship app/AI-hosting profile
+  wants the net stack to eventually be a restartable userland service. NS1 proves
+  the NIC's MMIO authority can reach userland the same way the virtio-input grant
+  did (C5h), reusing the C5 plumbing (device grant + `device_mmap`, and later
+  `virt_to_phys` + shmring). It is strictly **additive and non-disruptive**: the
+  in-kernel net driver keeps owning and operating the NIC (sshd/nginx/DHCP depend on
+  it), unlike C5 where the kernel could hand off the device entirely.
+- **Registry.** `resetDeviceRegistry()` discovers the virtio-net transport window
+  (`virtioNetDiscoverGrant()`, a read-only scan for a modern DEVID=1 mmio device)
+  and registers `virtio-net.0` at slot 2 with `deviceFlagMmioGrant` — mappable, so a
+  capConsole claim yields a `.map` right. New device kind `deviceKindVirtioNet` (3).
+- **Decision — NOT discoverable.** The grant is claimed by name, so it is registered
+  non-discoverable (`discoverable: false`, no `deviceFlagDiscovered`). This keeps the
+  legacy C5 driver demo's "exactly the input devices are discoverable" contract
+  intact — making the NIC a third `device_discover` entry trips that demo's
+  exhaustion check (verified: it exits 1 when the NIC is discoverable). A later NS
+  milestone can make the NIC discoverable for a net service that enumerates NICs,
+  together with generalizing that demo's discovery bound.
+- **Probe.** `/bin/netmmapprobe` (Swift) runs at boot as a capConsole principal AFTER
+  the kernel NIC is up: claims `virtio-net.0`, `device_mmap`s the window, verifies
+  MagicValue + DeviceID==1, and reads the 6-byte MAC from device config space
+  (offset 0x100) — proving device-specific config registers are reachable from
+  userland, not just the generic identity words. Reading these registers does not
+  change device state, so it is safe alongside the live NIC.
+- **Acceptance.** `make ns1-net-grant-test` (`-smp 4`, virtio-net/slirp) requires
+  `NS1 OK: virtio-net MMIO mapped from userland, MAC 52:54:00:12:34:56, DEVID
+  verified` AND the kernel net stack staying up (`net-a OK: ICMP echo reply from
+  10.0.2.2`) — coexistence end to end. Wired into `make test`; the C5 demo exits 0
+  with the NIC present. No-op clean exit on boards with no virtio-net window.
+- **Next (NS2/NS3).** NS2: a userland virtio-net driver that does real TX/RX on a
+  *dedicated/secondary* NIC (QEMU can attach two), proving an EL0 NIC driver works
+  end to end without disturbing the primary kernel-owned NIC (reuses `virt_to_phys`
+  for the TX/RX virtqueues). NS3: a minimal restartable userland net service over a
+  shmring data plane, supervised like svc-input. Full replacement of the in-kernel
+  TCP/socket stack stays a long-horizon epic, deliberately out of the NS1–NS3 scope.
+
+### NS2 — userland virtio-net driver does real TX/RX on a secondary NIC (DONE, 2026-06-24)
+
+- **Goal.** Prove an EL0 driver can do real TX/RX on a NIC, reusing the C5/NS1
+  plumbing (`device_mmap` + `virt_to_phys`), WITHOUT touching the primary kernel NIC.
+- **Two-NIC architecture.** The in-kernel net driver always binds the *first*
+  virtio-net device (ordinal 0); `virtioNetDiscoverGrant(ordinal:)` now selects by
+  ordinal, and `resetDeviceRegistry()` registers a *drivable* secondary grant
+  `virtio-net.1` (slot 3, `deviceFlagMmioGrant`, non-discoverable) only when a SECOND
+  NIC is attached. So the userland driver can fully reset + own the second NIC while
+  the kernel keeps serving on the first; on the single-NIC production profile
+  `virtio-net.1` does not exist and no userland program touches the live NIC.
+  `maxDevices` bumped 4→6 for the extra slots.
+- **Userland driver.** `/bin/netdriverprobe` (Swift) claims `virtio-net.1`, maps the
+  window, and brings up BOTH virtqueues from EL0 — RX (queue 0) and TX (queue 1):
+  reset → features (`VIRTIO_F_VERSION_1` + `VIRTIO_NET_F_MAC`) → per-queue
+  QSEL/QNUM/ring-program/QREADY → post device-writable RX buffers → DRIVER_OK. Every
+  ring and buffer physical address is resolved per-page via `virt_to_phys`, so no
+  allocation needs to be physically contiguous (each 2048-byte buffer fits within one
+  page). It then builds an ARP request for the slirp gateway (Ethernet+ARP after a
+  zeroed 12-byte virtio_net_hdr), transmits it on the TX queue, and polls the RX used
+  ring for slirp's ARP reply — proving both directions. Bounded re-transmit/poll loop
+  so it always terminates.
+- **Acceptance.** `make ns2-net-driver-test` (`-smp 4`, two virtio-net/slirp devices)
+  requires `NS2 OK: userland virtio-net TX/RX — ARP reply, 10.0.2.2 is at
+  52:55:0a:00:02:02` (the deterministic slirp gateway MAC) AND the primary kernel NIC
+  staying up (`net-a OK: ICMP echo reply`). Wired into `make test`. No-op clean exit
+  on the single-NIC profile.
+- **Caveat (same as C5i).** Ring/buffer access relies on TCG cache coherence; real-HW
+  cache maintenance for userland DMA (dc_cvac/dc_ivac) is not yet exposed to EL0 — a
+  later hardening step, alongside userland IRQ delivery (the driver polls).
+- **Next (NS3).** A minimal restartable userland net SERVICE over a shmring data
+  plane, supervised like svc-input — the restartable-service shape for networking.
+  Full replacement of the in-kernel TCP/socket stack stays a long-horizon epic.
+
+### NS3 — restartable userland net service over a shmring data plane (DONE, 2026-06-24)
+
+- **Goal.** The restartable-service shape for networking — the network analog of the
+  C5 driver service. A supervised userland service owns a NIC and relays frames over a
+  zero-copy shmring (LA3) data plane, with kill+restart recovery, never touching the
+  kernel net stack.
+- **Service `/bin/netsvc`.** Claims the secondary NIC (virtio-net.1), brings it up via
+  the shared userland virtio-net core (`virtio_net_user.swift`, factored out of the NS2
+  probe), and maps a full-duplex shmring channel whose id its supervisor passes in argv.
+  Loop: consume a record from ring0 (client→service) and, if a frame (tag 1), TRANSMIT
+  it on the NIC; poll the NIC RX queue and PRODUCE received frames into ring1
+  (service→client). Control records (tag 0) carry `RDY` (announced on startup) and
+  `STP` (the supervisor's stop signal → exit 40+gen). Exits 0 if there is no secondary
+  NIC.
+- **Supervisor/client `/bin/netsvc-demo`.** Reads the secondary NIC's MAC read-only
+  (so the ARP request carries the correct sender hardware address — and to detect a
+  second NIC; skips cleanly if absent), creates the shmring channel
+  (`SYS_shmring_create`, capNet), and for two generations spawns netsvc
+  (`spawn_handles_async`, passing the channel id), waits for `RDY`, hands it an ARP
+  request frame over ring0, verifies slirp's ARP reply frame relayed back over ring1,
+  then stops + reaps it. Gen 2 proves a kill+restart recovers the service over the same
+  channel.
+- **shmring usage.** The channel is `shmring_create(2)` — two 4 KiB ring regions
+  (ring0 @ +0, ring1 @ +4096), driven by the sans-IO `shmRingReserve/Commit/Peek/
+  Release` core (kernel/ipc/shmring.swift compiled `-D SHMRING_USER`). The id is a
+  global table index, so passing it via argv lets the service map the same physical
+  frames — frames cross the rings with no syscall on the data path.
+- **Acceptance.** `make ns3-net-service-test` (`-smp 4`, two virtio-net/slirp devices)
+  requires the gen-1 + gen-2 `netsvc-demo: gen N relayed ARP reply, 10.0.2.2 is at
+  52:55:0a:00:02:02` markers, the restart marker, `NS3 OK`, and the primary kernel
+  NIC's ICMP echo (coexistence). Wired into `make test`.
+- **NS arc complete (NS1+NS2+NS3).** A userland driver can map a NIC, drive real
+  TX/RX, and run as a restartable service over a zero-copy data plane — all without
+  disturbing the live primary kernel NIC. Replacing the actual in-kernel TCP/socket
+  stack + the primary NIC path stays a separate long-horizon epic; real-HW cache
+  maintenance for userland DMA and userland IRQ delivery are the related hardening gaps.
 
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
@@ -7316,3 +7707,258 @@ rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
 oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
+
+### CR1 — native Swift cron daemon `/bin/crond` (DONE, 2026-06-19)
+
+A long-running userland service that runs commands on a schedule, built entirely
+on existing primitives (no kernel change): the PL031 wall clock (`time()`), the
+monotonic scheduler tick (`sysinfo`), `nanosleep`, and a new thin synchronous
+spawn bridge `swiftos_run` (= `spawn`, fork+exec+wait with stdio inherited) in
+`userland/lib/swift_user.{h,c}`. `userland/crond.swift` parses a hybrid crontab —
+the classic five fields (with `*`, lists, ranges, `*/step`, dow 0/7 = Sunday, and
+Vixie dom/dow OR semantics) plus `@reboot/@hourly/@daily/@weekly/@monthly/@yearly`
+and `@every <dur>` (e.g. `30s`, `1h30m`). Sources merge `/etc/crontab` (signed
+base default) then `/data/crond/crontab` (durable override); an explicit path arg
+overrides both. Calendar jobs match the wall clock at minute granularity (guarded
+once/minute); `@every` jobs use the monotonic tick (immune to RTC absence). Each
+fired job runs as `/bin/sh -c "<command>"` (kernel maps `/bin/sh` → busybox).
+Acceptance: `tests/crond_test.sh` (`make crond-test`, in `make test`) drives a
+baked `/etc/crontab.test` and proves @reboot fires once, @every fires repeatedly,
+and the jobs durably append to `/data/crond/last-run`.
+
+Two deliberate v1 limitations, recorded not hidden:
+
+- **Synchronous reap.** The kernel `processWaitpid` ignores its `options` arg —
+  there is no `WNOHANG`. So crond runs each fired job to completion (blocking)
+  rather than reaping asynchronously; a job that never exits stalls the scheduler.
+  Fine for short cron jobs; revisit if/when the kernel grows `WNOHANG`.
+- **Auto-started at boot (since CR3).** crond is in the default `/etc/swos/services`
+  and started by swos-init as a child (sibling of the login shell). Enabling it
+  first exposed — then required fixing — the CR2 console-hang bug; see CR3 below.
+  Use `crond-supervised` to have it restarted on crash.
+
+### CR2 — a second resident daemon hangs the serial console (ROOT-CAUSED; FIXED in CR3, 2026-06-19)
+
+Attempting to enable crond auto-start (so it could, e.g., renew ACME certs on a
+`@daily` schedule) surfaced a reproducible failure that is **not** crond-specific
+and is **not** what it first looked like.
+
+Symptom: with crond resident AND `make kv-test`'s long churn session running, the
+interactive shell stops acting on console input *after* `/bin/kv` exits — the next
+line (`echo BACK-IN-SHELL`) is echoed by the tty (that happens at IRQ level) but is
+never executed. Clean correlation: kv-test is 3/3 PASS with only `sshd` resident,
+and consistently FAILS with one extra resident process; short interactive sessions
+with crond resident always pass.
+
+Disproven causes (each ruled out with a measurement, not a guess):
+  - **Not memory / image-load headroom** (my initial wrong label): `/bin/kv` is
+    213 pages, smaller than busybox (278 pages) which is already staged at boot, so
+    its load reuses the grow-only ELF staging buffer (`exec.swift` `elfBuf`) with no
+    fresh contiguous allocation.
+  - **Not kernel-heap exhaustion**: crond's periodic syscalls (`sysinfo`/`time`/
+    `nanosleep`) allocate nothing from the bump heap.
+  - **Not process-slot exhaustion, not a fork/exec failure**: instrumented every
+    `-1`/`(0,0,0)` return in `createProcess`/`buildExecImage`/`processFork` — none
+    fired; the post-kv `echo` exec is never even attempted.
+  - **Not a stuck reap**: instrumented the `processWaitpid` park loop — it never
+    spins; the shell is not blocked waiting for kv.
+  - **Not boot-start vs shell-start, not wakeup frequency** (a 30 s crond loop
+    fails identically), **not test flakiness** (3/3 without crond).
+
+**Root cause (confirmed by a per-tick process-table dump at the hang):** the
+console shell sits in `pBlocked` with `pWait = waitAny` — i.e. blocked in
+`wait(-1)` — while its only live child is crond. The chain is structural:
+`swos-init` (pid1, slot 0) forks the daemons and then `execve`s `/bin/console-login`
+→ the interactive shell, so **pid1 *becomes* the shell and inherits the daemons as
+its children**. busybox ash issues a blocking `wait(-1)` that returns only when some
+child exits. A long-lived daemon child (crond) never exits, so `wait(-1)` blocks
+forever and the shell never reads the next console line. Without crond, sshd exits
+on this NIC-less test path, the child set empties, `wait(-1)` returns `ECHILD`, and
+the shell continues — which is exactly why only a *second, never-exiting* daemon
+child trips it.
+
+Scope: this bites the **serial-console interactive shell** only. Production access
+is via sshd (session shells are children of sshd, not of pid1), and the serial
+console normally just sits at the login prompt, so a real box is unaffected — but
+the console tests run commands directly, which is why auto-start breaks them.
+
+Diagnostic instrumentation (process dump, alloc/exec/waitpid failure logs) was
+reverted — it was diagnostic only. Fixed in CR3, below.
+
+### CR3 — swos-init runs the login session as a child, not an exec-handoff (DONE, 2026-06-19)
+
+The fix for CR2. `userland/swos-init.c` no longer `execve`s `/bin/console-login`
+in place (which made pid1 *become* the interactive shell and inherit the daemons).
+The non-supervised path now `fork()`s console-login as a **child** — a sibling of
+sshd/crond — and loops on `waitpid(-1)`, reaping any daemon that exits while the
+session runs. When the login child (the shell, since console-login execs it in the
+same pid) exits, swos-init returns its code, so slot 0 still exits and the kernel
+still prints `M12c: session ended` and restarts init — the session-restart contract
+all ~60 console tests depend on is unchanged. The interactive shell now only ever
+parents its own foreground jobs, so busybox ash's `wait(-1)` can no longer block on
+a never-exiting daemon. The supervised path (`*-supervised` →
+`supervise_services_forever`) is untouched.
+
+This is the structural prerequisite for running more than one resident daemon with
+a usable serial console (the multi-daemon roadmap: ACME-renewal-via-cron, Node, the
+JVM, observability). Kernel unchanged; the change is entirely in swos-init.c.
+
+Verified: `make kv-test` (the CR2 canary) now PASS with crond auto-started, plus
+`crond-test` (now asserts auto-start), `console-login-test`, `busybox-test`,
+`calc-test`, `top-test` (-smp 4), and `sshd-supervision-test` (the untouched
+supervised path) all PASS.
+### TH9 — multi-signal default-terminate coverage + a corrected audit claim (DONE, 2026-06-19)
+
+`signal_test` exercised the default-terminate path for exactly one signal
+(SIGTERM). The audit worried that "only SIGINT/TERM/PIPE are delivered;
+SIGSEGV/SIGKILL etc. are defined but never delivered." Reading `processKill`
+(kernel/user/process.swift) shows that claim is too strong: `kill(otherPid, sig)`
+to a process that is NOT currently on-CPU takes a DIRECT teardown
+(`pExit = 128 + sig`) for ANY valid signal — the SIGINT/TERM/PIPE restriction is
+only on the *async-pending* delivery path (`signalDeliverToForeground/CurrentFrame`,
+i.e. Ctrl-C and raise-to-foreground). So `kill(child, SIGKILL|SIGSEGV)` already
+terminates correctly.
+
+`userland/signalprobe.c` now forks a nanosleeping child and kills it with SIGINT,
+SIGKILL, and SIGSEGV in turn, asserting each yields `WIFSIGNALED` with
+`WTERMSIG == sig` (the 128+signo status). Non-vacuous: a signal that failed to
+terminate would hang `waitpid` and the probe would never print SIGNALPROBE-OK.
+Verified `make signal-test` PASS. An exploratory in-kernel change to add SIGKILL to
+the async-delivery list was reverted — it has no reachable test (the direct-teardown
+and self-kill paths already handle SIGKILL), so shipping it would be an unverified
+no-op. Genuinely open signal items (left for a focused milestone): `kill` of a
+process running on ANOTHER CPU returns EBUSY (no remote teardown), and per-process
+(vs process-global) dispositions. Remaining audit tracks: datafs crash injection,
+SMP atomic contention, driver fault injection.
+
+### V-TS1 — system trust store + verify-by-default for /bin/tlsget (DONE, 2026-06-22)
+
+The X.509 chain/signature verifier (tls13.swift `enableVerification`, x509.swift,
+x509_verify.swift, rsa.swift, p256.swift) already existed and is opt-in. V-TS1
+closes the remaining "MITM-open by default" gap for the general HTTPS client:
+
+  - **System trust store shipped in the base image:** `base/etc/ssl/cert.pem` =
+    the ISRG Root X1 (RSA) + X2 (ECDSA) roots (Let's Encrypt's anchors), extracted
+    from the Mozilla bundle. Committed (~3.4 KB) so the base builds deterministically
+    with no network; it's the trust anchor for our ACME-issued certs and the LE API.
+    A full Mozilla bundle for arbitrary-host HTTPS remains the `ca-certificates`
+    package (follow-up).
+  - **Shared loader** `userland/lib/truststore.swift`: `loadSystemTrustRoots()` /
+    `loadTrustRootsFile()` read a PEM CA file → DER roots (via `pemReadCertificates`).
+  - **/bin/tlsget verifies by default:** loads the system store, requires the
+    server chain to anchor to it, checks the CertificateVerify signature, and
+    requires `host` in the leaf SAN + validity. New flags: `--cafile <pem>` to
+    override the store, `--insecure`/`-k` to opt out (bring-up only).
+
+Acceptance: `make tls-truststore-test` (in `make test`) — host openssl s_server with
+a leaf signed by a test CA (SAN IP:10.0.2.2); guest proves (A) default verify loads
+the 2 ISRG roots and REJECTS the off-store leaf, (B) `--cafile <testCA>` completes
+the handshake, (C) `--insecure` completes. `tls_test.sh` (A4 bring-up) now passes
+`--insecure` since it targets a throwaway self-signed cert.
+
+Deferred follow-ups (V-TS2): make `/bin/acme` and `swupdate os` verify against the
+system store by default (today acme verifies only with explicit `--ca`; the ACME
+mock tests rely on that). SNI is still not sent by the TLS client (tls13.swift) —
+needed for multi-cert/real virtual hosts; single-cert servers (and the tests) work
+without it. Real Let's Encrypt e2e needs a public domain (pairs with the H6 deploy).
+
+### V-TS2 — SNI + verify-by-default for /bin/acme (DONE, 2026-06-22)
+
+Extends V-TS1's "verify by default" from tlsget to the ACME client, and teaches the
+TLS client to send SNI.
+
+  - **SNI (RFC 6066) in tls13.swift:** the ClientHello now carries a server_name
+    extension built from `expectHostname` (set by `enableVerification`), but ONLY
+    for a real DNS name — a bare IP literal is skipped (RFC 6066 forbids IP SNI,
+    and all the IP-based tests stay byte-identical, so no regression). Real virtual-
+    hosted servers (incl. the Let's Encrypt API) now get the right certificate.
+    Smoke-covered host-side by `tls_verify_test.sh` (its driver connects with a DNS
+    hostname, so SNI is now on the wire); a dedicated QEMU SNI e2e needs a DNS-named
+    TLS server (deferred).
+  - **/bin/acme verifies by default:** without `--ca` it loads the system trust
+    store (/etc/ssl/cert.pem); `--ca <file>` overrides the roots; new `--insecure`
+    disables it (mock/bring-up only). The ACME server's TLS identity is the real
+    integrity anchor for the directory/nonce/challenge flow, so this matters for
+    real LE.
+
+Tests: `acme_verify_test.sh` gains a third case — default (no flag) verification
+against the system store REJECTS the self-signed mock (a 2nd "FAIL directory"),
+proving verify-on-by-default. `acme_mock_test.sh` and `acme_persist_test.sh` (which
+target the self-signed mock) now pass `--insecure`. All of acme-verify/mock/persist,
+tls-truststore, tls-test, tls-verify PASS.
+
+Deferred (V-TS3): make `swupdate os`/site HTTPS fetch verify by default — it's
+defense-in-depth (SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS) and
+touches os-update/site-update/site-bundle tests, so it's its own step. Real Let's
+Encrypt e2e still needs a public domain (pairs with H6).
+
+### V-TS3 — verify-by-default for swupdate HTTPS (DONE, 2026-06-22)
+
+Completes "verify by default everywhere": after tlsget (V-TS1) and acme (V-TS2),
+`/bin/swupdate`'s HTTPS fetch (`os <url>` SWSYS and `site <url>` SWSITE) now verifies
+the server certificate against the system trust store (/etc/ssl/cert.pem) too.
+
+  - `httpsGet` calls `enableVerification` (system roots + the URL host + now) unless
+    a global `--insecure` arg is present (parsed once in main). This is defense-in-
+    depth: the SWSYS/SWSITE payloads are Ed25519-signed regardless of TLS, so the
+    integrity guarantee does not depend on it — but a hostile mirror can no longer
+    feed bytes over an unauthenticated channel.
+  - Makefile: `userland/lib/asn1.swift` + `userland/lib/truststore.swift` added to
+    `SWUPDATE_SWIFT_SRCS` for the trust-store loader.
+
+Tests: `os_update_test.sh` and `site_update_test.sh` target self-signed mock servers,
+so their `swupdate os/site` invocations now pass `--insecure` (the SWSYS/SWSITE
+signature checks are what those tests exercise). PASS: os-update, site-update,
+site-bundle (apply-local, unaffected). The verify-on default path shares the exact
+`enableVerification` call covered by tls-truststore/acme-verify, so it is covered by
+construction (a swupdate-specific TLS-reject test would need an in-store cert, which
+is impossible offline — deferred with the real-LE e2e).
+
+With V-TS1–V-TS3, every outbound TLS client (tlsget, acme, swupdate) authenticates
+the server against the system trust store by default. Remaining: real Let's Encrypt
+e2e (public domain, pairs with H6); a dedicated QEMU SNI e2e (needs a DNS-named TLS
+server — SNI is currently covered host-side by tls-verify + by construction).
+
+### RSY1 — rsync 3.4.1 port: build + `rsync --version` in QEMU (DONE, 2026-06-23)
+
+First slice of the `rsync` port (catalog Tier 1, difficulty L). Scope R1 is build +
+version banner only; local-filesystem sync and rsync-over-TCP/ssh transport are
+follow-up packages (RSY2+).
+
+- Packaged like `curl`: `ports/net/rsync/Port.json` (rsync 3.4.1, sha256-pinned) +
+  `scripts/build-rsync.sh` + a `ports/catalog.json` entry (`status: packages`) +
+  the `ports-rsync-repo-fixture` Makefile target. Cross-built as a static AArch64
+  ELF against newlib + `userland/compat`, bundled popt and zlib; OpenSSL,
+  xxhash/zstd/lz4, iconv, locale, IPv6, ACLs, xattrs, and SIMD/asm disabled. The
+  build asserts no undefined symbols and an AArch64 ELF, then `swport recipe
+  package`/`repo-fixture` produce a signed `rsync.swpkg`.
+- rsync 3.4.x references `openat()` in `secure_relative_open()` (syscall.c) via the
+  `O_NOFOLLOW`/`O_DIRECTORY`/`AT_FDCWD` macro path — independent of `HAVE_OPENAT`,
+  which the cross-build leaves undefined. SwiftOS has no dirfd-relative (`*at`)
+  syscalls, and `execlp()` is also missing from newlib. Both are satisfied by a
+  rsync-local link shim (`userland/rsync/swiftos/at_compat.c`), deliberately kept
+  out of the shared `userland/compat` ABI: a broadly-detected `openat` there would
+  flip other ports' (e.g. nginx) configure detection toward a dirfd path-walk
+  SwiftOS can't service. `AT_FDCWD` degrades to `open()`; a real dirfd returns
+  ENOSYS (an RSY2 concern, never reached by `--version`). `execlp` is a varargs
+  wrapper over the compat `execvp`.
+- Known runtime gaps (acceptable per the catalog): symlinks unsupported (no
+  `symlink`/`readlink` syscalls), hardlinks degrade (`link()` -> EMLINK), mtime
+  preservation is a no-op (`utimes`).
+
+Gate `make rsync-test` (`tests/rsync_test.sh`): builds `rsync.swpkg`, publishes a
+one-package repo signed with the trusted `PKGREPO_SEED_HEX`, serves it over QEMU
+user-net HTTP, boots SwiftOS, logs in, `pkg update` + `pkg install rsync`, then
+asserts the `version 3.4.1` banner and the packaged marker. PASS.
+
+Two unrelated fixes were needed to build a bootable base image for the gate on a
+macOS host:
+- `scripts/build-bash.sh` read `$BASH_VERSION` as its version override — a bash
+  builtin the shell sets to its own version (macOS host bash 3.2.57), so it fetched
+  a non-existent tarball (404). Renamed the override to `$BASH_PORT_VERSION`.
+- The SH1 bash port still does not cross-compile here (newlib lacks `sigjmp_buf`;
+  configure mis-sets `RLIMTYPE`), and `bash.elf` was an unconditional base-image
+  bake. Added an opt-out `INCLUDE_BASH ?= 1` gate (mirrors `INCLUDE_NODE`); default
+  preserves the bake, and `rsync-test` builds with `INCLUDE_BASH=0` since rsync only
+  needs the OS to boot under busybox ash + pkg + networking. Fixing the bash
+  cross-build remains an SH1 follow-up.

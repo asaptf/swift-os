@@ -107,6 +107,12 @@
 #define SYS_SPAWN_HANDLES_ASYNC 98
 #define SYS_NAME_REGISTER       99
 #define SYS_NAME_LOOKUP         100
+#define SYS_DEVICE_MMAP         101
+#define SYS_SHMRING_CREATE      102
+#define SYS_SHMRING_MAP         103
+#define SYS_SHMRING_CLOSE       104
+#define SYS_VIRT_TO_PHYS        105
+#define SYS_TTY_INJECT          106
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -150,6 +156,7 @@
 
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_NET   3u
 #define SWIFTOS_DEVICE_BUS_PSEUDO        1u
 #define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
 #define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
@@ -339,6 +346,22 @@ static inline long ipc_reply_recv(int fd, unsigned long reply_port,
     m.out_reply_port = (unsigned long)out_reply_port;
     m.reply_handle_fd = reply_handle_fd;
     return __syscall3(SYS_IPC_REPLY_RECV, fd, (long)&m, 0);
+}
+
+// LA3 shared-memory ring (data-plane IPC). shmring_create reserves a full-duplex
+// channel of `pages` contiguous pages (even, 2..8) and returns its id (needs the
+// net capability); shmring_map maps a channel's pages read/write into the caller
+// and returns the base VA (or a negative errno); shmring_close drops the
+// creator's base reference. Records cross via the mapped pages with no syscall in
+// the reserve/commit/peek/release path — see kernel/ipc/shmring.swift.
+static inline long shmring_create(unsigned long pages) {
+    return __syscall3(SYS_SHMRING_CREATE, (long)pages, 0, 0);
+}
+static inline long shmring_map(int id) {
+    return __syscall3(SYS_SHMRING_MAP, id, 0, 0);
+}
+static inline int shmring_close(int id) {
+    return (int)__syscall3(SYS_SHMRING_CLOSE, id, 0, 0);
 }
 
 static inline long lseek(int fd, long offset, int whence) {
@@ -536,6 +559,38 @@ static inline int device_info(int fd, struct swiftos_device_info *info) {
 
 static inline int device_discover(int index, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
+}
+
+// LA2: map the MMIO window of the device claimed on `fd` into this process,
+// gated on the grant's `.map` right. `len` is clamped to the window length
+// (0 means the whole window). Returns a pointer to the window base (Device-nGnRE,
+// EL0 read/write), or MAP_FAILED on error (e.g. the grant lacks `.map`, or the
+// device is not mappable -> EACCES). The raw syscall returns a base VA or a small
+// negative errno, which we convert to MAP_FAILED exactly like mmap().
+static inline void *device_mmap(int fd, unsigned long len) {
+    long r = __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
+    if (r < 0 && r >= -4095) {
+        return MAP_FAILED;
+    }
+    return (void *)r;
+}
+
+// C5i: translate a virtual address in this process to its physical address, for a
+// userland device driver setting up DMA/virtqueue memory. Gated on `handle_fd`
+// being a device grant this process owns with the `.map` right (so only an actual
+// device owner can resolve physical addresses). Returns the physical address, or a
+// small negative errno (-13 EACCES if the handle is not a mappable device grant,
+// -22 EINVAL if `va` is not mapped).
+static inline long virt_to_phys(unsigned long va, int handle_fd) {
+    return __syscall3(SYS_VIRT_TO_PHYS, (long)va, handle_fd, 0);
+}
+
+// C5j: inject one byte into the kernel tty input, as if typed on the console — the
+// path a userland input driver uses to feed decoded keystrokes to the line
+// discipline (and thus to console-login / the foreground program). Needs
+// CAP_CONSOLE. Returns 0, or -1 (EPERM) without the capability.
+static inline int tty_inject(unsigned char byte) {
+    return (int)__syscall3(SYS_TTY_INJECT, (long)byte, 0, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

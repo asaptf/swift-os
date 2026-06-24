@@ -179,6 +179,18 @@ func protPageDesc(_ pa: UInt, _ prot: Int32) -> UInt64 {
          | DESC_TABLE | DESC_VALID
 }
 
+// LA2: a 4 KiB user leaf for memory-mapped I/O. Device-nGnRE (ATTR_DEVICE —
+// never Normal/cacheable, never inner-shareable), never executable, EL0 RW.
+// Mapping device registers Normal-cacheable is a real coherency/correctness bug,
+// so this deliberately does NOT route through protPageDesc (which hardcodes
+// ATTR_NORMAL). `pa` is hardware MMIO, not a RAM frame — the PMM must never own
+// or free it; see addressSpaceMapDeviceForActiveCpuMask.
+func deviceMmioPageDesc(_ pa: UInt) -> UInt64 {
+    return (UInt64(pa) & PAGE_4K_MASK)
+         | memAttrs(ATTR_DEVICE, /*executable*/ false, /*userAccess*/ true, /*userReadOnly*/ false)
+         | DESC_TABLE | DESC_VALID
+}
+
 private func zeroTable(_ table: UInt) {
     for i in 0..<ENTRIES_PER_TABLE {
         tableStore(table, i, 0)
@@ -419,6 +431,34 @@ func addressSpaceMmapForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pageCount: UI
         if !linkPage(ttbr0, cur, protPageDesc(frame, prot)) {
             pmm_free_page(frame)
             unmapRange(ttbr0, va, i)
+            return Errno.noMem.rawValue
+        }
+        i += 1
+    }
+    if !addressSpaceFlushTlbForActiveCpuMask(activeCpuMask, pageVA: va, singlePage: false) {
+        return Errno.invalid.rawValue
+    }
+    return 0
+}
+
+// LA2: map `pageCount` pages of MMIO at physical `pa` into the EL0 half of
+// `ttbr0` at `va`, as Device-nGnRE leaves (deviceMmioPageDesc). Unlike
+// addressSpaceMmap there is NO pmm_alloc_page/zeroFrame: every page is hardware
+// MMIO, kernel-known, not a RAM frame, so the PMM neither allocates nor (on
+// teardown) frees it — unmapRange's releaseUserFrame is a safe no-op for these
+// sub-PMM device addresses (pmm_frame_release range-guards them out). `pa`, `va`,
+// and `pageCount*PAGE_SIZE` must be page-aligned. On any mid-map failure the pages
+// linked so far are rolled back, so a failed call leaves no partial region.
+func addressSpaceMapDeviceForActiveCpuMask(_ ttbr0: UInt, _ va: UInt, _ pa: UInt,
+                                           _ pageCount: UInt, _ activeCpuMask: UInt64) -> Int32 {
+    if (va & (PAGE_SIZE - 1)) != 0 || (pa & (PAGE_SIZE - 1)) != 0 { return Errno.invalid.rawValue }
+    if pageCount == 0 { return Errno.invalid.rawValue }
+    var i: UInt = 0
+    while i < pageCount {
+        let cur = va + i * PAGE_SIZE
+        let phys = pa + i * PAGE_SIZE
+        if !linkPage(ttbr0, cur, deviceMmioPageDesc(phys)) {
+            unmapRange(ttbr0, va, i) // roll back the device leaves linked so far
             return Errno.noMem.rawValue
         }
         i += 1

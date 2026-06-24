@@ -34,9 +34,13 @@ let rightRead: UInt32 = 1 << 0
 let rightWrite: UInt32 = 1 << 1
 let rightTransfer: UInt32 = 1 << 5
 
-// Device flag bits (mirror syscall.h) for the metadata-only authority check.
+// Device flag bits (mirror syscall.h). C5h: the supervised driver now receives
+// real MMIO authority on virtio-input.0, so the MMIO grant (1<<2) is expected, not
+// withheld; only the still-unimplemented IRQ (1<<3) and DMA (1<<4) grants must stay
+// absent. The pseudo-input fallback carries deviceFlagNoMmioGrant and no IRQ/DMA.
 let supDevFlagNoMmioGrant: UInt32 = 1 << 0
-let supDevFlagHardwareAuthority: UInt32 = (1 << 2) | (1 << 3) | (1 << 4) // MMIO|IRQ|DMA
+let supDevFlagMmioGrant: UInt32 = 1 << 2
+let supDevFlagIrqDmaAuthority: UInt32 = (1 << 3) | (1 << 4)
 
 func putSpec(_ sp: UnsafeMutableRawPointer, _ idx: Int, _ src: Int32, _ dst: Int32, _ rights: UInt32) {
     let base = idx * 16
@@ -96,10 +100,15 @@ func sendDeviceHandle(_ fd: Int32, _ devFd: Int32) -> Bool {
     return ok
 }
 
-func deviceAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
-    return info.irq == 0 &&
-           (info.flags & supDevFlagNoMmioGrant) != 0 &&
-           (info.flags & supDevFlagHardwareAuthority) == 0
+// C5h: accept the real MMIO grant (or the inert pseudo fallback), but still reject
+// any IRQ/DMA authority and a bound IRQ number — those remain unimplemented.
+func deviceAuthorityAcceptable(_ info: swiftos_device_info) -> Bool {
+    if info.irq != 0 { return false }
+    if (info.flags & supDevFlagIrqDmaAuthority) != 0 { return false }
+    // Exactly one of: mappable MMIO grant (real virtio-input) or no-MMIO (pseudo).
+    let mmio = (info.flags & supDevFlagMmioGrant) != 0
+    let noMmio = (info.flags & supDevFlagNoMmioGrant) != 0
+    return mmio != noMmio
 }
 
 // Spawn /bin/svc-input concurrently with the inherited endpoint ends (cmdRecv→fd3,
@@ -151,7 +160,7 @@ func deviceHandoff(_ cmdSend: Int32, _ replyRecv: Int32, _ gen: Int, _ usedVirti
         swiftos_puts("svc-supervisor: device claim failed\n")
         return false
     }
-    if info.claimed != 1 || !deviceAuthorityWithheld(info) {
+    if info.claimed != 1 || !deviceAuthorityAcceptable(info) {
         _ = swiftos_close(devFd)
         swiftos_puts("svc-supervisor: device info mismatch\n")
         return false
@@ -183,7 +192,7 @@ func reclaimDevice(_ usedVirtio: Bool) -> Bool {
         swiftos_puts("svc-supervisor: reclaim claim failed\n")
         return false
     }
-    if info.claimed != 1 || !deviceAuthorityWithheld(info) {
+    if info.claimed != 1 || !deviceAuthorityAcceptable(info) {
         _ = swiftos_close(fd)
         swiftos_puts("svc-supervisor: reclaim info mismatch\n")
         return false
@@ -201,9 +210,12 @@ func waitExit(_ pid: Int32) -> Int32 {
 }
 
 // One full service generation: set up channels + name registry, spawn the
-// service, drive its lifecycle (ready → liveness → [gen 2: device handoff] →
-// stop), reap it and verify the exit code, then (gen 2) reclaim the device.
-func startAndDriveGeneration(_ gen: Int) -> Bool {
+// service, drive its lifecycle (ready → liveness → device handoff → stop), reap it
+// and verify the exit code, then reclaim the device. C5i: the handoff now happens
+// in EVERY generation so a restart genuinely re-claims, re-maps, and re-initializes
+// the device (recovery), not just first-time init. `usedVirtio` reports whether a
+// real mappable virtio-input grant (vs the pseudo fallback) was driven this gen.
+func startAndDriveGeneration(_ gen: Int, _ usedVirtio: inout Bool) -> Bool {
     guard let cmd = makeEndpoint(), let rep = makeEndpoint() else {
         swiftos_puts("svc-supervisor: endpoint_create failed\n")
         return false
@@ -245,10 +257,8 @@ func startAndDriveGeneration(_ gen: Int) -> Bool {
         return false
     }
 
-    var usedVirtio = false
-    if gen == 2 {
-        if !deviceHandoff(cmdSend, rep.recv, gen, &usedVirtio) { return false }
-    }
+    usedVirtio = false
+    if !deviceHandoff(cmdSend, rep.recv, gen, &usedVirtio) { return false }
 
     if !sendCmd(cmdSend, "STOP") {
         swiftos_puts("svc-supervisor: stop send failed\n")
@@ -260,9 +270,7 @@ func startAndDriveGeneration(_ gen: Int) -> Bool {
         return false
     }
 
-    if gen == 2 {
-        if !reclaimDevice(usedVirtio) { return false }
-    }
+    if !reclaimDevice(usedVirtio) { return false }
 
     _ = swiftos_close(cmdSend)
     _ = swiftos_close(rep.recv)
@@ -278,11 +286,14 @@ func main(_ argc: Int32,
 
     var gen = 1
     var restarts = 0
+    var droveVirtio = false
     while true {
-        if !startAndDriveGeneration(gen) {
+        var genVirtio = false
+        if !startAndDriveGeneration(gen, &genVirtio) {
             swiftos_puts("svc-supervisor: generation failed\n")
             return 1
         }
+        droveVirtio = droveVirtio || genVirtio
         // The service has exited and been reaped. A bounded number of generations
         // proves persistent restart-recovery; then we report success and exit so
         // boot proceeds (this runs as a boot self-test, like the C5 demo).
@@ -296,6 +307,12 @@ func main(_ argc: Int32,
         gen += 1
     }
 
+    // C5i: each generation re-claimed, re-mapped, and re-initialized the real
+    // virtio-input device from userland, so a kill+restart recovered a live
+    // hardware driver — the kernel ran no virtio-input driver at all this boot.
+    if droveVirtio {
+        swiftos_puts("C5i OK: userland virtio-input driver initialized and recovered\n")
+    }
     swiftos_puts("LA1 OK: persistent supervisor + Swift userland service over name-registry grant\n")
     return 0
 }

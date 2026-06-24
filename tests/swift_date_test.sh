@@ -86,7 +86,7 @@ await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 send_line '/bin/date'
 await_regex '^20[0-9][0-9]-[01][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9] UTC$' 60 || true
 send_line 'exit'

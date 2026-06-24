@@ -100,7 +100,7 @@ to_shell() {
   send $'\003'
   await "swift-os login:" 90 || return 1
   send $'root\n'; await "Password:" 90 || return 1
-  send $'swordfish\n'; await "built-in shell (ash)" 120 || return 1
+  send $'swordfish\n'; await "M12c: shell ready" 120 || return 1
   return 0
 }
 run_until() {  # run_until "cmd" "marker" [tries] [maxsec]
@@ -127,17 +127,21 @@ if to_shell; then
   # Guest networking warms up via DHCP; the run_until retries below tolerate the
   # short delay (the first successful HTTPS fetch confirms the link is up).
 
+  # --insecure: the mock HTTPS server uses a self-signed cert outside the system
+  # trust store; the SWSYS payload is Ed25519-signed regardless (that's what these
+  # cases exercise). TLS verify-by-default is covered by tls_truststore_test.sh.
+
   # 1. Tampered bundle -> signature rejected, nothing staged.
-  run_until "/bin/swupdate os $URL/bad.swsys" "swupdate: os bundle signature INVALID" 4 25 \
+  run_until "/bin/swupdate os $URL/bad.swsys --insecure" "swupdate: os bundle signature INVALID" 4 25 \
     || fail "tampered bundle was not rejected on signature"
   grep -qF "update-store: staged base image" "$LOG" && fail "tampered bundle staged a slot"
 
   # 2. Older bundle (version 3 <= floor 5) -> kernel anti-rollback refusal.
-  run_until "/bin/swupdate os $URL/old.swsys" "anti-rollback" 4 25 \
+  run_until "/bin/swupdate os $URL/old.swsys --insecure" "anti-rollback" 4 25 \
     || fail "older bundle was not refused by anti-rollback"
 
   # 3. Valid newer bundle (version 7) -> staged into slot B and activated.
-  run_until "/bin/swupdate os $URL/good.swsys" "OS base image staged + activated" 4 30 \
+  run_until "/bin/swupdate os $URL/good.swsys --insecure" "OS base image staged + activated" 4 30 \
     || fail "valid bundle did not stage + activate"
   await "version 7) into slot B" 5 || fail "kernel did not record the staged version/slot"
   await "update-store: activated slot B (on trial)" 5 || fail "inactive slot was not activated"

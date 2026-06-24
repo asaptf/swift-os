@@ -75,13 +75,17 @@ static int expect_msg(int fd, const char *want, int len, const char *fail) {
     return 1;
 }
 
+// C5h: virtio-input.0 now carries the real MMIO grant and flows to the userland
+// driver service (/bin/svc-input). This metadata-only demo instead exercises the
+// inert sibling virtio-input-meta.0, which preserves the C5e/C5f authority-withheld
+// thesis (a discovered virtio-input grant with no hardware authority).
 static int is_real_virtio_input(const struct swiftos_device_info *info) {
     return info->kind == SWIFTOS_DEVICE_KIND_VIRTIO_INPUT &&
            info->bus == SWIFTOS_DEVICE_BUS_VIRTIO_MMIO &&
            info->mmio_base != 0 &&
            info->mmio_len != 0 &&
            (info->flags & SWIFTOS_DEVICE_FLAG_DISCOVERED) != 0 &&
-           cstr_eq(info->name, "virtio-input.0");
+           cstr_eq(info->name, "virtio-input-meta.0");
 }
 
 static int is_pseudo_input(const struct swiftos_device_info *info) {
@@ -116,7 +120,7 @@ static int discover_input_device(struct swiftos_device_info *info,
             return 0;
         }
         if (valid_device_info(info, 1, 0)) {
-            cstr_copy(expect->name, "virtio-input.0", sizeof(expect->name));
+            cstr_copy(expect->name, "virtio-input-meta.0", sizeof(expect->name));
             expect->real = 1;
             found = 1;
             break;
@@ -138,8 +142,11 @@ static int discover_input_device(struct swiftos_device_info *info,
         puts_raw("drvsvc: C5d virtio-input metadata discovered\n");
     }
 
+    // C5h: with a real virtio-input window present there are now two discoverable
+    // grants (the mappable virtio-input.0 and the inert virtio-input-meta.0), so
+    // discovery is exhausted at index 2; the pseudo fallback exhausts even sooner.
     struct swiftos_device_info extra;
-    if (device_discover(1, &extra) != -2) {
+    if (device_discover(2, &extra) != -2) {
         puts_raw("drvsvc: device discovery exhaustion failed\n");
         return 0;
     }

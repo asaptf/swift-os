@@ -372,6 +372,70 @@ private func runUserlandServiceDemo() {
     uartPuts("\n")
 }
 
+// LA2: device-MMIO-map authority probe. Runs as a capConsole boot principal:
+// claims the mappable virtio-input window, maps it via sys_device_mmap, and reads
+// the virtio identification registers through the Device-nGnRE mapping to prove
+// the path is live. Also exercises the EACCES refusal on the metadata-only
+// sibling grant. No-ops cleanly on boards without a virtio-input window.
+private func runDeviceMmioMapProbe() {
+    uartPuts("swift-os LA2: device MMIO map authority probe\n")
+    let (img, sz) = demoImage("/bin/devicemmapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["devicemmapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("LA2 device mmap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// NS1: network-serviceization probe. Runs as a capConsole boot principal AFTER the
+// in-kernel NIC is up: claims the mappable virtio-net grant, maps the transport
+// window, and reads the device identity + config MAC through it — proving the NIC's
+// MMIO authority reaches userland without disturbing the live kernel net driver.
+// No-ops cleanly on boards without a virtio-net window.
+private func runNetMmioProbe() {
+    uartPuts("swift-os NS1: virtio-net MMIO grant probe\n")
+    let (img, sz) = demoImage("/bin/netmmapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netmmapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS1 net mmap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// NS2: userland virtio-net driver. Runs as a capConsole boot principal: claims the
+// SECONDARY virtio-net grant (present only when a second NIC is attached), brings
+// up the RX/TX virtqueues entirely from EL0, and does an ARP round-trip against
+// slirp — proving a userland NIC driver does real TX/RX without disturbing the
+// primary kernel-owned NIC. No-ops cleanly when there is no second NIC.
+private func runNetDriverProbe() {
+    uartPuts("swift-os NS2: userland virtio-net driver probe\n")
+    let (img, sz) = demoImage("/bin/netdriverprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netdriverprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS2 net driver probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// NS3: restartable userland net service over a shmring data plane. The supervisor/
+// client (/bin/netsvc-demo) creates an shmring channel, spawns /bin/netsvc twice
+// (proving kill+restart recovery), and relays an ARP request/reply through the
+// service — which drives the secondary NIC entirely from EL0. No-ops cleanly when
+// there is no second NIC.
+private func runNetSvcDemo() {
+    uartPuts("swift-os NS3: restartable userland net service over shmring\n")
+    let (img, sz) = demoImage("/bin/netsvc-demo")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netsvc-demo"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS3 net service demo exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -892,10 +956,16 @@ func irqHandler() {
     }
 }
 
+// C5i: set once at boot. False when the userland driver service owns virtio-input
+// (the kernel never called virtioKbdInit), so the per-tick drain is skipped
+// entirely rather than calling into a dormant getchar each tick.
+private var kernelPolledKbdActive = false
+
 /// Drain any keystrokes from the virtio-input keyboard into the tty line
 /// discipline, exactly as the UART IRQ feeds serial input. No-op when there is
-/// no keyboard device (the getchar returns -1 immediately).
+/// no keyboard device, or (C5i) when the userland driver owns it.
 private func virtioKbdDrain() {
+    if !kernelPolledKbdActive { return }
     while true {
         let b = virtioKbdGetchar()
         if b < 0 { break }
@@ -1230,7 +1300,21 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     ttyInit()
     signalReset()
     uartRxInit()
-    let inputKeyboard = virtioKbdInit() > 0
+    // C5i: the userland virtio-input driver service owns the device when the
+    // registry handed out a mappable MMIO grant (C5h policy). In that case the
+    // kernel must NOT bring up its in-kernel polled driver over the same window —
+    // the device is driven from EL0. This is an early-init decision (one query),
+    // not a per-tick check: kernelPolledKbdActive gates both init and the drain.
+    let userlandOwnsKbd = vfsVirtioInputUserlandOwned()
+    if userlandOwnsKbd {
+        uartPuts("virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)\n")
+    }
+    kernelPolledKbdActive = userlandOwnsKbd ? false : (virtioKbdInit() > 0)
+    // `inputKeyboard` reflects the PRESENCE of a window keyboard for the
+    // interactive-console boot decision below, independent of whether the kernel
+    // or the userland driver owns it — so a graphical session still boots straight
+    // to the shell when a virtio keyboard + framebuffer are present.
+    let inputKeyboard = userlandOwnsKbd || kernelPolledKbdActive
     // Take the "boot straight into swos-init / services" path (skipping the
     // serial-only milestone demo sequence) when a human is at a graphical window
     // (keyboard + framebuffer), OR when a virtio-gpu scanout console is the only
@@ -1340,6 +1424,10 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runFdOpsDemo()
         runDriverServiceDemo()
         runUserlandServiceDemo()
+        runDeviceMmioMapProbe()
+        runNetMmioProbe()
+        runNetDriverProbe()
+        runNetSvcDemo()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

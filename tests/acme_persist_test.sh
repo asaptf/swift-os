@@ -96,10 +96,12 @@ boot_and_login() {
   await "M7 tty: running; press Ctrl-C" 40 "$log" || return 1; printf '\003' >&3
   await "swift-os login:" 40 "$log" || return 1; send_line 'root'
   await "Password:" 30 "$log" || return 1; send_line 'swordfish'
-  await "built-in shell (ash)" 60 "$log" || return 1
+  await "M12c: shell ready" 60 "$log" || return 1
 }
 
-ACMECMD="/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /data/acme"
+# --insecure: this test targets a self-signed mock and checks persistence, not TLS
+# trust; cert verification (now on by default) is covered by acme_verify_test.sh.
+ACMECMD="/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /data/acme --insecure"
 
 # ---- boot 1: issue + persist ----
 LOG1="$WORK/boot1.log"

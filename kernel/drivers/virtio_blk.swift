@@ -846,6 +846,23 @@ func virtioBlkWriteSector(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
     return blkDoWriteBounce(sector)
 }
 
+// Write one 512-byte sector to `sector` of the CURRENTLY-SELECTED device (no
+// re-select), the write-side mirror of virtioBlkReadCurrent. Used by ESP/FAT
+// writes after virtioBlkSelectEsp(): virtioBlkWriteSector would force the store
+// device, which mis-targets when a SWOSBOOT store is also attached (the OS-1
+// coordinated topology). Caller is responsible for selecting the device first.
+func virtioBlkWriteCurrent(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
+    if blkMmio == 0 { return -1 }
+    guard let src = buf else { return -1 }
+    let bounce = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
+    var i = 0
+    while i < SECTOR_SIZE {
+        bounce.storeBytes(of: src.load(fromByteOffset: i, as: UInt8.self), toByteOffset: i, as: UInt8.self)
+        i += 1
+    }
+    return blkDoWriteBounce(sector)
+}
+
 // U1f-2a: read `count` (1...BLK_MULTI_SECTORS) consecutive 512-byte sectors from
 // absolute `sector` into `buf` in a single virtio request — far fewer round
 // trips than looping virtioBlkRead, which is what makes staging a multi-MB image

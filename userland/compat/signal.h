@@ -23,6 +23,31 @@
 #define SIG_SETMASK 2
 #endif
 
+/* POSIX job-control and terminal-resize signals absent from bare-metal newlib. */
+#ifndef SIGCONT
+#define SIGCONT   18
+#endif
+#ifndef SIGTSTP
+#define SIGTSTP   20
+#endif
+#ifndef SIGTTIN
+#define SIGTTIN   21
+#endif
+#ifndef SIGTTOU
+#define SIGTTOU   22
+#endif
+#ifndef SIGWINCH
+#define SIGWINCH  28
+#endif
+/* Signal-set upper bound used by bash and others. */
+#ifndef NSIG
+#define NSIG      64
+#endif
+#ifndef SIGRTMIN
+#define SIGRTMIN  34
+#define SIGRTMAX  63
+#endif
+
 typedef struct {
     int si_signo;
     int si_code;

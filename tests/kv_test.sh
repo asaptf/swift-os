@@ -122,7 +122,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 send_line '/bin/kv'
 await "swift-os kv" 60 || drive_fail "kv did not start"
 

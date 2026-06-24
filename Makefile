@@ -174,6 +174,8 @@ SWIFT_SRCS := \
 	kernel/net/tcp.swift \
 	kernel/net/stack.swift \
 	kernel/net/socket.swift \
+	kernel/ipc/shmring.swift \
+	kernel/ipc/shmring_chan.swift \
 	kernel/crypto/chacha20poly1305.swift \
 	kernel/crypto/sha256.swift \
 	kernel/crypto/sysrng.swift \
@@ -363,6 +365,62 @@ NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
 endif
 
+# Optional heavy userland app/shell ports: bash (SH1), zsh (SH2), ncurses+ncdemo
+# (NC1), GLib+glibdemo (GL1), Midnight Commander (MC1). Each is a slow from-source
+# cross-build (newlib + zlib + ncurses + glib + network). ALL default OFF so
+# kernel/base/disk iteration ships only busybox and never pulls the app toolchain;
+# turn one on with INCLUDE_<X>=1 (the matching test targets do). Build the port
+# first: `make ncurses`/`glib`/`mc`/`bash`/`zsh`.
+INCLUDE_BASH ?= 0
+ifeq ($(INCLUDE_BASH),1)
+BASH_BASE_ELF := $(BUILD)/bash.elf
+BASH_PACK_CMD := cp $(BUILD)/bash.elf $(BASE_ROOT)/bin/bash
+else
+BASH_BASE_ELF :=
+BASH_PACK_CMD := echo "  (bash.elf NOT packed — build with INCLUDE_BASH=1 for /bin/bash)"
+endif
+
+INCLUDE_ZSH ?= 0
+ifeq ($(INCLUDE_ZSH),1)
+ZSH_BASE_ELF := $(BUILD)/zsh.elf
+ZSH_PACK_CMD := cp $(BUILD)/zsh.elf $(BASE_ROOT)/bin/zsh
+else
+ZSH_BASE_ELF :=
+ZSH_PACK_CMD := echo "  (zsh.elf NOT packed — build with INCLUDE_ZSH=1 for /bin/zsh)"
+endif
+
+INCLUDE_NCURSES ?= 0
+ifeq ($(INCLUDE_NCURSES),1)
+NCURSES_BASE_ELF := $(BUILD)/ncdemo.elf
+NCURSES_PACK_CMD := cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo
+else
+NCURSES_BASE_ELF :=
+NCURSES_PACK_CMD := echo "  (ncdemo.elf NOT packed — build with INCLUDE_NCURSES=1)"
+endif
+
+INCLUDE_GLIB ?= 0
+ifeq ($(INCLUDE_GLIB),1)
+GLIBDEMO_BASE_ELF := $(BUILD)/glibdemo.elf
+GLIBDEMO_PACK_CMD := cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo
+else
+GLIBDEMO_BASE_ELF :=
+GLIBDEMO_PACK_CMD := echo "  (glibdemo.elf NOT packed — build with INCLUDE_GLIB=1)"
+endif
+
+INCLUDE_MC ?= 0
+ifeq ($(INCLUDE_MC),1)
+MC_BASE_ELF := $(BUILD)/mc.elf
+MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+else
+MC_BASE_ELF :=
+MC_PACK_CMD := echo "  (mc.elf NOT packed — build with INCLUDE_MC=1)"
+endif
+
+# root's login shell in the staged base. SH3 ships /bin/zsh in base/etc/swos/passwd;
+# when zsh is NOT baked (default), rewrite it to /bin/sh (busybox ash, always
+# present) so login still reaches a shell. Overridable on the command line.
+ROOT_LOGIN_SHELL ?= $(if $(filter 1,$(INCLUDE_ZSH)),,/bin/sh)
+
 # SU-B: a signed test SWSITE bundle (+ a tampered copy) for site-bundle-test.
 # OPT-IN via INCLUDE_SITE_TEST=1 so production images carry no test fixtures.
 # The site-signing PUBLIC key is baked unconditionally (production `swupdate
@@ -379,17 +437,21 @@ SITE_TEST_PACK_CMD := true
 endif
 
 # OS-3b: a tiny signed SWOSBASE image baked under /usr/share/swupdate-test so
-# os-stage-test has a valid image to stream into the inactive A/B slot. Opt-in via
-# INCLUDE_OS_STAGE_TEST=1 so production images carry no test fixtures.
+# os-stage-test has a valid image to stream into the inactive A/B slot. OS-1b: a
+# tiny signed SWSYS bundle (kernel stub + that base) for os-coordinate-activate-test
+# (swupdate os-apply-local, no network). Opt-in via INCLUDE_OS_STAGE_TEST=1 so
+# production images carry no test fixtures.
 TEST_BASE_IMG := $(BUILD)/test-base.img
+TEST_OS_BUNDLE := $(BUILD)/test-os.swsys
 INCLUDE_OS_STAGE_TEST ?= 0
 ifeq ($(INCLUDE_OS_STAGE_TEST),1)
-OS_STAGE_DEPS := $(TEST_BASE_IMG)
-OS_STAGE_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swupdate-test; cp $(TEST_BASE_IMG) $(BASE_ROOT)/usr/share/swupdate-test/test-base.img
+OS_STAGE_DEPS := $(TEST_BASE_IMG) $(TEST_OS_BUNDLE)
+OS_STAGE_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swupdate-test; cp $(TEST_BASE_IMG) $(BASE_ROOT)/usr/share/swupdate-test/test-base.img; cp $(TEST_OS_BUNDLE) $(BASE_ROOT)/usr/share/swupdate-test/os.swsys
 else
 OS_STAGE_DEPS :=
 OS_STAGE_PACK_CMD := true
 endif
+
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -409,6 +471,11 @@ USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_DEVICEAUTHDEMO_ELF := $(BUILD)/deviceauthdemo.elf
+USER_DEVICEMMAPPROBE_ELF := $(BUILD)/devicemmapprobe.elf
+USER_NETMMAPPROBE_ELF := $(BUILD)/netmmapprobe.elf
+USER_NETDRIVERPROBE_ELF := $(BUILD)/netdriverprobe.elf
+USER_NETSVC_ELF := $(BUILD)/netsvc.elf
+USER_NETSVCDEMO_ELF := $(BUILD)/netsvc-demo.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
@@ -439,6 +506,7 @@ USER_MV_ELF := $(BUILD)/mv.elf
 USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
 USER_DATE_ELF := $(BUILD)/date.elf
+USER_CROND_ELF := $(BUILD)/crond.elf
 USER_CALC_ELF := $(BUILD)/calc.elf
 USER_KV_ELF := $(BUILD)/kv.elf
 USER_HEAD_ELF := $(BUILD)/head.elf
@@ -462,14 +530,21 @@ USER_QW5_RIGHTSXFER_ELF := $(BUILD)/qw5-rightsxfer.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
 USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
 USER_SVC_INPUT_ELF := $(BUILD)/svc-input.elf
+USER_INPUTD_ELF := $(BUILD)/inputd.elf
+USER_SHMRINGPROBE_ELF := $(BUILD)/shmringprobe.elf
 USER_SVC_SUPERVISOR_ELF := $(BUILD)/svc-supervisor.elf
 USER_PKG_ELF := $(BUILD)/pkg.elf
 USER_LLM_ELF := $(BUILD)/llm.elf
 USER_LLMD_ELF := $(BUILD)/llmd.elf
 USER_PKGHELLO_ELF := $(BUILD)/pkghello.elf
 USER_ACME_ELF := $(BUILD)/acme.elf
+# SC2: SwiftCube control-plane daemon + node agent (swiftcube/).
+USER_SCTLD_ELF := $(BUILD)/sctld.elf
+USER_SLET_ELF := $(BUILD)/slet.elf
 BASE_EXEC_ELFS := \
 	$(USER_ACME_ELF) \
+	$(USER_SCTLD_ELF) \
+	$(USER_SLET_ELF) \
 	$(NODE_BASE_ELFS) \
 	$(USER_CALC_ELF) \
 	$(USER_LLM_ELF) \
@@ -491,11 +566,13 @@ BASE_EXEC_ELFS := \
 	$(USER_SSHD_ELF) \
 	$(USER_NSLOOKUP_ELF) \
 	$(USER_C4B_SOCKXFER_ELF) \
+	$(USER_SHMRINGPROBE_ELF) \
 	$(USER_QW4_BADGE_ELF) \
 	$(USER_QW5_RIGHTSXFER_ELF) \
 	$(USER_DRVINPUTD_ELF) \
 	$(USER_DRVSVCDEMO_ELF) \
 	$(USER_SVC_INPUT_ELF) \
+	$(USER_INPUTD_ELF) \
 	$(USER_SVC_SUPERVISOR_ELF) \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
@@ -524,6 +601,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CHMOD_ELF) \
 	$(USER_CHOWN_ELF) \
 	$(USER_DATE_ELF) \
+	$(USER_CROND_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_SWOSINIT_ELF) \
 	$(USER_TTYDEMO_ELF) \
@@ -572,15 +650,24 @@ BASE_EXEC_ELFS := \
 	$(USER_S4STRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
 	$(USER_DEVICEAUTHDEMO_ELF) \
+	$(USER_DEVICEMMAPPROBE_ELF) \
+	$(USER_NETMMAPPROBE_ELF) \
+	$(USER_NETDRIVERPROBE_ELF) \
+	$(USER_NETSVC_ELF) \
+	$(USER_NETSVCDEMO_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf \
-	$(BUILD)/ncdemo.elf
+	$(NCURSES_BASE_ELF) \
+	$(GLIBDEMO_BASE_ELF) \
+	$(MC_BASE_ELF) \
+	$(BASH_BASE_ELF) \
+	$(ZSH_BASE_ELF)
 
-.PHONY: build run debug gdb test docs-test errno-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test reboot-test os-stage-test os-update-test os-confirm-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
-.PHONY: ncurses ncurses-test
+.PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: virtio-transport-test
@@ -593,6 +680,7 @@ build: $(KERNEL_ELF)
 .PHONY: sshd-deploy-preflight-test
 .PHONY: hetzner-deploy-bundle-test
 .PHONY: netinfo-test
+.PHONY: device-mmio-map-test
 
 $(QEMU_DTB): | $(BUILD)/.dir
 	$(QEMU) -M virt,dumpdtb=$@ -cpu cortex-a72 -m 256M -nographic
@@ -730,25 +818,55 @@ $(BUILD)/user_securitydemo.o: userland/securitydemo.c userland/lib/syscall.h use
 $(BUILD)/user_deviceauthdemo.o: userland/deviceauthdemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/deviceauthdemo.c -o $@
 
+$(BUILD)/user_devicemmapprobe.o: userland/devicemmapprobe.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/devicemmapprobe.c -o $@
+
 $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
 
 $(BUILD)/user_console-login.o: userland/console-login.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/console-login.swift kernel/crypto/sha256.swift -o $@
 
-# LA1: svc-input compiles with the reusable UserlandService template; the
-# supervisor is a standalone program (it is the service's client, not a service).
-$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift -o $@
+# LA1/C5i: svc-input compiles with the reusable UserlandService template plus the
+# shared userland virtio-input driver core; the supervisor is a standalone program
+# (it is the service's client, not a service).
+$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift -o $@
 
 $(BUILD)/user_svc-supervisor.o: userland/svc-supervisor.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-supervisor.swift -o $@
+
+# C5j: persistent userland virtio-input driver, sharing the driver core with svc-input.
+$(BUILD)/user_inputd.o: userland/inputd.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/inputd.swift userland/lib/virtio_input_user.swift -o $@
+
+# LA3: the shmring probe reuses the kernel's sans-IO ring core (the same file the
+# kernel and host unit test compile), built -D SHMRING_USER so its cursor
+# accessors use the SEQ_CST userland atomics for cross-process ordering.
+$(BUILD)/user_shmringprobe.o: userland/shmringprobe.swift kernel/ipc/shmring.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -D SHMRING_USER -c userland/shmringprobe.swift kernel/ipc/shmring.swift -o $@
 
 $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ps.swift -o $@
 
 $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sleepprobe.swift -o $@
+
+# NS1: standalone Swift virtio-net MMIO grant probe.
+$(BUILD)/user_netmmapprobe.o: userland/netmmapprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netmmapprobe.swift -o $@
+
+# NS2: userland virtio-net driver probe, over the shared NS userland net core.
+$(BUILD)/user_netdriverprobe.o: userland/netdriverprobe.swift userland/lib/virtio_net_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netdriverprobe.swift userland/lib/virtio_net_user.swift -o $@
+
+# NS3: restartable userland net service + its supervisor/client, over the shared net
+# core AND the shmring data-plane ring (kernel/ipc/shmring.swift, -D SHMRING_USER).
+$(BUILD)/user_netsvc.o: userland/netsvc.swift userland/lib/virtio_net_user.swift kernel/ipc/shmring.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -D SHMRING_USER -c userland/netsvc.swift userland/lib/virtio_net_user.swift kernel/ipc/shmring.swift -o $@
+
+$(BUILD)/user_netsvc-demo.o: userland/netsvc-demo.swift userland/lib/virtio_net_user.swift kernel/ipc/shmring.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -D SHMRING_USER -c userland/netsvc-demo.swift userland/lib/virtio_net_user.swift kernel/ipc/shmring.swift -o $@
 
 $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyprobe.swift -o $@
@@ -825,6 +943,9 @@ $(BUILD)/user_chown.o: userland/chown.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/date.swift -o $@
 
+$(BUILD)/user_crond.o: userland/crond.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/crond.swift -o $@
+
 $(BUILD)/user_calc.o: userland/calc.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/calc.swift -o $@
 
@@ -861,14 +982,79 @@ $(BUILD)/user_tcpget.o: userland/tcpget.swift userland/lib/swift_user.h Makefile
 # /bin/tlsget links the pure-Swift TLS 1.3 client + crypto into one module
 # (mirrors the host tls_handshake_test target and the console-login+sha256 rule).
 TLS_SWIFT_SRCS := userland/lib/tls13.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
-$(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) -o $@
+$(BUILD)/user_tlsget.o: userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/asn1.swift userland/lib/truststore.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tlsget.swift $(TLS_SWIFT_SRCS) userland/lib/asn1.swift userland/lib/truststore.swift -o $@
+
+# SC2: /bin/sctld + /bin/slet — the SwiftCube control plane compiled into Embedded
+# Swift userland. One source set (cubestore core + control plane + the swift-os TLS
+# 1.3 record/key-schedule + crypto modules) feeds both ELFs; --gc-sections trims
+# each to what its main references. The control plane is Foundation-free; the host
+# control-test (make control-test) links the SAME control sources under host Swift.
+SC2_CONTROL_SRCS := \
+	swiftcube/cubestore/Crc32.swift swiftcube/cubestore/Model.swift swiftcube/cubestore/ByteIO.swift \
+	swiftcube/cubestore/MVCCIndex.swift swiftcube/cubestore/StorageSink.swift swiftcube/cubestore/WALCodec.swift \
+	swiftcube/cubestore/SnapshotCodec.swift swiftcube/cubestore/Watch.swift swiftcube/cubestore/CubeStore.swift \
+	swiftcube/control/Identity.swift swiftcube/control/Schema.swift swiftcube/control/Node.swift \
+	swiftcube/control/Token.swift swiftcube/control/Lease.swift swiftcube/control/RamStore.swift \
+	swiftcube/control/Wire.swift swiftcube/control/Rpc.swift swiftcube/control/MutualTLS.swift \
+	swiftcube/control/Channel.swift swiftcube/control/Controller.swift swiftcube/control/Agent.swift \
+	swiftcube/control/SC2Boot.swift \
+	userland/lib/tls13.swift userland/lib/asn1.swift userland/lib/x509.swift \
+	userland/lib/x509_verify.swift userland/lib/rsa.swift \
+	kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+# SC3: the Cell-supervisor seam + slet reconcile loop. These compile into the on-device
+# `slet` ELF (proving the whole reconcile loop is Embedded-Swift-clean); the host
+# FakeCellSupervisor is test-only and is NOT listed here. Image verification reuses the
+# existing Ed25519 (+ SHA-512) image-trust primitives — no new signature scheme.
+SC3_SLET_SRCS := \
+	swiftcube/cell/CellSpec.swift swiftcube/cell/CellSupervisor.swift \
+	swiftcube/cell/ImageResolver.swift swiftcube/cell/C6Adapter.swift \
+	swiftcube/slet/Assignment.swift swiftcube/slet/StoreClient.swift swiftcube/slet/Reconciler.swift \
+	kernel/crypto/ed25519.swift kernel/crypto/sha512.swift
+# SC5: the probe runner (state machine + spec) and the on-device http/tcp prober. These
+# compile into the `slet` ELF too (proving the probe loop is Embedded-Swift-clean); the host
+# FakeProber is test-only and is NOT listed here. NetProbe is the real prober over the SC2
+# socket bridge — exercised on-device once C6 yields real Cells (gate deferred, like SC3).
+SC5_SLET_SRCS := \
+	swiftcube/slet/probes/Probe.swift swiftcube/slet/probes/ProbeRunner.swift \
+	swiftcube/slet/probes/NetProbe.swift
+# SC7: the east-west service registry object + the userspace node-proxy (target manager + L4
+# forwarder + load balancer) + the node-local resolver + the on-device real transport. These
+# compile into the `slet` ELF too (proving the whole node-proxy is Embedded-Swift-clean); the
+# host FakeTransport is test-only and is NOT listed here. NetProxyTransport is the real L4
+# transport over the SC2 socket bridge — exercised on-device once C6 yields real Cells (the
+# QEMU east-west gate is deferred, like SC3/SC5). Endpoint.swift is the SC5 endpoints object
+# the proxy reads from /endpoints, so it is listed here (it is not otherwise in the slet ELF).
+SC7_SLET_SRCS := \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/slet/proxy/ProxyTransport.swift \
+	swiftcube/slet/proxy/Balancer.swift \
+	swiftcube/slet/proxy/NodeProxy.swift \
+	swiftcube/slet/proxy/NetProxyTransport.swift \
+	swiftcube/slet/resolver/Resolver.swift
+# SC8: the persistent-volume object + datafs PV provisioning/binding/fencing + the on-device
+# datafs binding. These compile into the `slet` ELF too (proving the volume path is Embedded-
+# Swift-clean); the host HostDirVolumeStore is test-only and is NOT listed here. The
+# VolumeManager conforms to the VolumeFence/VolumeMounter seams the reconciler drives. The live
+# datafs path (real /data over virtio-blk) is exercised once datafs + C6 yield a real stateful
+# Cell — the QEMU gate is deferred, like SC3/SC5/SC7.
+SC8_SLET_SRCS := \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/slet/volume/VolumeStore.swift \
+	swiftcube/slet/volume/VolumeManager.swift \
+	swiftcube/slet/volume/DatafsVolumeStore.swift
+
+$(BUILD)/user_sctld.o: swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/sctld/sctld.swift $(SC2_CONTROL_SRCS) -o $@
+$(BUILD)/user_slet.o: swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) $(SC8_SLET_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c swiftcube/slet/slet.swift $(SC2_CONTROL_SRCS) $(SC3_SLET_SRCS) $(SC5_SLET_SRCS) $(SC7_SLET_SRCS) $(SC8_SLET_SRCS) -o $@
 
 # SU-B/SU-C: swupdate links the Ed25519 crypto to verify SWSITE bundles, plus the
 # TLS 1.3 stack (shared with /bin/tlsget) to fetch them over HTTPS. The TLS set
 # already includes sha256, so add only ed25519+sha512 on top of it. (Defined here,
 # after TLS_SWIFT_SRCS, so the prerequisite list expands non-empty.)
-SWUPDATE_SWIFT_SRCS := $(TLS_SWIFT_SRCS) kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swsite.swift userland/lib/sysbundle.swift
+SWUPDATE_SWIFT_SRCS := $(TLS_SWIFT_SRCS) kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swsite.swift userland/lib/sysbundle.swift userland/lib/asn1.swift userland/lib/truststore.swift
 $(BUILD)/user_swupdate.o: userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swupdate.swift $(SWUPDATE_SWIFT_SRCS) -o $@
 
@@ -983,6 +1169,9 @@ $(USER_SECURITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/use
 $(USER_DEVICEAUTHDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_deviceauthdemo.o -o $@
 
+$(USER_DEVICEMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_devicemmapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_devicemmapprobe.o -o $@
+
 $(USER_IDENTITYDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_identitydemo.o -o $@
 
@@ -995,11 +1184,29 @@ $(USER_SVC_INPUT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/
 $(USER_SVC_SUPERVISOR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o -o $@
 
+$(USER_INPUTD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o -o $@
+
+$(USER_SHMRINGPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o -o $@
+
 $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps.o -o $@
 
 $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o -o $@
+
+$(USER_NETMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o -o $@
+
+$(USER_NETDRIVERPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o -o $@
+
+$(USER_NETSVC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netsvc.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netsvc.o -o $@
+
+$(USER_NETSVCDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netsvc-demo.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netsvc-demo.o -o $@
 
 $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o -o $@
@@ -1079,6 +1286,9 @@ $(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 $(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o -o $@
 
+$(USER_CROND_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_crond.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_crond.o -o $@
+
 # calc and kv link the Unicode data tables (they use dynamic String compare/hashing).
 $(USER_CALC_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_calc.o $(SWIFT_UNICODE_DATA) -o $@
@@ -1125,6 +1335,13 @@ $(USER_TCPGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/use
 
 $(USER_TLSGET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tlsget.o -o $@
+
+# SC2 daemons. Link the Embedded Unicode tables (String comparison/decoding), like
+# /bin/calc; --gc-sections trims them to the referenced data.
+$(USER_SCTLD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sctld.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sctld.o $(SWIFT_UNICODE_DATA) -o $@
+$(USER_SLET_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_slet.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_slet.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_ACME_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_acme.o -o $@
@@ -1464,6 +1681,405 @@ errno-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/errno_test.swift kernel/errno.swift -o $(BUILD)/errno_test
 	$(BUILD)/errno_test
 
+# SC0: cubestore single-node MVCC KV store (watch + WAL/snapshot). Host test of
+# the Foundation-free core plus the POSIX-file sink (cases 1-11). The core files
+# stay Foundation-free; only the sink adapter and the test harness use Foundation.
+CUBESTORE_CORE = \
+	swiftcube/cubestore/Crc32.swift \
+	swiftcube/cubestore/Model.swift \
+	swiftcube/cubestore/ByteIO.swift \
+	swiftcube/cubestore/MVCCIndex.swift \
+	swiftcube/cubestore/StorageSink.swift \
+	swiftcube/cubestore/WALCodec.swift \
+	swiftcube/cubestore/SnapshotCodec.swift \
+	swiftcube/cubestore/Watch.swift \
+	swiftcube/cubestore/CubeStore.swift
+
+# SwiftCube (SC0–SC9b) host-test aggregate. Every SC milestone ships a deterministic,
+# Foundation-only-in-the-harness host acceptance test; this rolls all of them up so the
+# whole orchestration layer is covered by one target and is part of `make test` (below),
+# guarding the shared cubestore/control/scheduler cores against regressions.
+.PHONY: swiftcube-test
+swiftcube-test:
+	$(MAKE) cubestore-test
+	$(MAKE) raft-test
+	$(MAKE) store-test
+	$(MAKE) control-test
+	$(MAKE) slet-test
+	$(MAKE) scheduler-test
+	$(MAKE) probe-test
+	$(MAKE) endpoints-test
+	$(MAKE) lb-test
+	$(MAKE) proxy-test
+	$(MAKE) volume-test
+	$(MAKE) manifest-test
+	$(MAKE) sctl-test
+	$(MAKE) rollout-test
+	@echo "swiftcube-test: all SC0–SC9b host acceptance suites passed"
+
+cubestore-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) $(CUBESTORE_CORE) \
+		swiftcube/cubestore/host/PosixFileSink.swift \
+		swiftcube/cubestore/tests/cubestore_test.swift \
+		-o $(BUILD)/cubestore_test
+	$(BUILD)/cubestore_test
+
+# SC1a: Raft consensus core (transport-agnostic, deterministic) over a simulated
+# message bus, driving a trivial replicated state machine. The Raft core reuses
+# cubestore's Foundation-free seams (Bytes/ByteIO/Crc32, AppendLog/SnapshotStore);
+# only the simulator + test harness use Foundation. Covers cases 1,4-8,11.
+.PHONY: raft-test store-test control-test slet-test scheduler-test probe-test endpoints-test lb-test proxy-test volume-test sc2-join-test
+# Seams shared with cubestore (compiled once per test target to avoid duplicate
+# symbols when both cores are linked together).
+CUBESTORE_SEAMS = \
+	swiftcube/cubestore/Crc32.swift \
+	swiftcube/cubestore/Model.swift \
+	swiftcube/cubestore/ByteIO.swift \
+	swiftcube/cubestore/StorageSink.swift
+RAFT_ONLY = \
+	swiftcube/raft/RaftTypes.swift \
+	swiftcube/raft/Random.swift \
+	swiftcube/raft/StateMachine.swift \
+	swiftcube/raft/RaftStorage.swift \
+	swiftcube/raft/RaftNode.swift
+RAFT_CORE = $(CUBESTORE_SEAMS) $(RAFT_ONLY)
+raft-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) $(RAFT_CORE) \
+		swiftcube/raft/tests/Simulator.swift \
+		swiftcube/raft/tests/raft_test.swift \
+		-o $(BUILD)/raft_test
+	$(BUILD)/raft_test
+
+# SC1b: cubestore wired in as the Raft replicated state machine — writes go
+# through Raft (propose → commit → apply), compare-and-apply evaluated at apply,
+# ReadIndex linearizable reads, talk-to-any forwarding. The committed Raft log is
+# the durability log (cubestore's SC0 WAL retired; cubestore runs over a discard
+# log here). Reuses the full cubestore core + the raft core + the simulator.
+# Covers cases 2,3,9,10.
+store-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) $(CUBESTORE_CORE) $(RAFT_ONLY) \
+		swiftcube/store/WriteRequest.swift \
+		swiftcube/store/CubeStateMachine.swift \
+		swiftcube/raft/tests/Simulator.swift \
+		swiftcube/store/tests/store_test.swift \
+		-o $(BUILD)/store_test
+	$(BUILD)/store_test
+
+# SC2: node join over mTLS — bootstrap tokens, CA-signed identity, TTL leases, the
+# leader-gated reaper, and the framed/resumable watch wire. Host acceptance (cases
+# 1-7) runs the full control plane over a loopback transport carrying a REAL
+# mutual-TLS handshake with an injected clock — no network, no wall clock. Reuses
+# the cubestore core + the swift-os TLS 1.3 record/key-schedule primitives + the
+# crypto modules (P-256/X25519/SHA-256/ChaCha20-Poly1305); the control plane is
+# Foundation-free, only the harness uses Foundation.
+CONTROL_CORE = \
+	swiftcube/control/Identity.swift \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Token.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/control/Wire.swift \
+	swiftcube/control/Rpc.swift \
+	swiftcube/control/MutualTLS.swift \
+	swiftcube/control/Channel.swift \
+	swiftcube/control/Controller.swift \
+	swiftcube/control/Agent.swift
+CONTROL_TLS_DEPS = \
+	userland/lib/tls13.swift userland/lib/asn1.swift userland/lib/x509.swift \
+	userland/lib/x509_verify.swift userland/lib/rsa.swift \
+	kernel/crypto/p256.swift kernel/crypto/sha256.swift \
+	kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift
+control-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		swiftcube/control/tests/control_test.swift \
+		-o $(BUILD)/control_test
+	$(BUILD)/control_test
+
+# SC3: slet reconcile-loop host acceptance (cases 1–8). Links the cubestore core + the
+# SC2 control plane (the reconciler watches/CAS-writes over the same Agent/Controller
+# mTLS path used in case 8) + the SC3 Cell seam (interface + host fake + C6 stub) + the
+# Ed25519/SHA-256/SHA-512 image-trust primitives. The reconcile loop is Foundation-free;
+# only the harness uses Foundation. The on-device gate (case 9) is deferred — C6 is not
+# implemented; see swiftcube/cell/C6Adapter.swift.
+SC3_CELL_SRCS = \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/slet/probes/ProbeRunner.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/cell/ImageResolver.swift \
+	swiftcube/cell/C6Adapter.swift \
+	swiftcube/cell/FakeSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/StoreClient.swift \
+	swiftcube/slet/Reconciler.swift
+slet-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) \
+		swiftcube/slet/tests/slet_test.swift \
+		-o $(BUILD)/slet_test
+	$(BUILD)/slet_test
+
+# SC4: the spread+fit scheduler — the pure schedule() function (filter → score/spread →
+# fit → deterministic cellIds) plus the leader-gated reconcile loop that diffs its result
+# against /assignments and applies the delta via CAS. Pure control-plane logic, no kernel:
+# the host acceptance (cases 1–10) runs the loop against an in-process cubestore with an
+# injected clock. Reuses the cubestore core + the SC2 node/lease schema (for healthy-node
+# liveness) + the SC3 Cell spec/Assignment objects it produces. Foundation-free except the
+# harness; only kernel/crypto/sha256.swift is linked to satisfy the Schema seam.
+SC4_SCHED_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift
+scheduler-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SC4_SCHED_SRCS) \
+		swiftcube/sctld/scheduler/tests/scheduler_test.swift \
+		-o $(BUILD)/scheduler_test
+	$(BUILD)/scheduler_test
+
+# SC5a: the probe runner — readiness/liveness state machine (thresholds, initialDelay,
+# timeout-as-failure) wired into the reconcile loop (readiness→status.ready, liveness→
+# restart). Host acceptance (cases 1–6, 9) drives the reconciler with a FakeProber + the
+# SC3 FakeCellSupervisor and an injected clock — no kernel, no network, no wall clock.
+# Reuses the cubestore core + the SC2 control plane (store client/CAS) + the SC3 Cell seam
+# + the SC5 probe sources + the Ed25519/SHA-256/SHA-512 image-trust primitives. The probe
+# loop is Foundation-free; only the harness uses Foundation. The on-device gate (a Cell
+# becoming ready via an http probe over virtio-net) is deferred — C6 is not implemented.
+# Probe.swift + ProbeRunner.swift come in via $(SC3_CELL_SRCS) (CellSpec references ProbeSpec;
+# Reconciler holds a ProbeRunner), so only the test-only FakeProber is added here — listing
+# the others twice would duplicate symbols.
+SC5_PROBE_SRCS = \
+	swiftcube/slet/probes/FakeProber.swift
+probe-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC5_PROBE_SRCS) \
+		swiftcube/slet/probes/tests/probe_test.swift \
+		-o $(BUILD)/probe_test
+	$(BUILD)/probe_test
+
+# SC5b: the endpoints loop — leader-gated, level-triggered, ready-only. Host acceptance
+# (cases 1/2, 7, 8, 10) drives the loop against an in-process cubestore with synthetic Cell
+# statuses (as slet reports them) and checks the deterministic sorted /endpoints/<service>
+# output, leader-only writes, no-churn convergence, and ready→endpoint add/remove. Reuses
+# the cubestore core + the RAM store + the SC3 status/Cell objects + the SC5 probe spec
+# (CellSpec decode references it) + the SC5 endpoints sources. Only kernel/crypto/sha256 is
+# linked to satisfy the Schema seam transitively. Foundation only in the harness.
+SC5_ENDPOINTS_SRCS = \
+	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/endpoints/EndpointsLoop.swift
+endpoints-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) \
+		$(SC5_ENDPOINTS_SRCS) \
+		swiftcube/sctld/endpoints/tests/endpoints_test.swift \
+		-o $(BUILD)/endpoints_test
+	$(BUILD)/endpoints_test
+
+# SC6: the LB provider interface + the nginx provider (pure renderer + validate→swap→reload
+# applier) + the leader-gated, debounced, level-triggered LB programmer loop. Host acceptance
+# (cases 1–10) drives the loop and the provider against an in-process cubestore with an injected
+# clock: a FakeApplier models validate-before-swap + atomic-swap (so the provider is tested with
+# no real nginx in CI), a FakeProvider counts reconciles (so the loop's leader gate / debounce /
+# backoff are tested independent of rendering). Reuses the cubestore core + the SC2 clock seam +
+# the SC5 endpoints object (the backend pool). The renderer/provider/loop are Foundation-free;
+# only the NginxApplier seam (shells out to a local nginx) and the harness use Foundation. The
+# on-device gate (program a real nginx, curl through the listener to a Cell) is conditional on a
+# ported nginx + real Cells (C6) — deferred, not claimed. Only kernel/crypto/sha256.swift is
+# linked to satisfy the Schema clock seam transitively.
+SC6_LB_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/lb/LBProvider.swift \
+	swiftcube/sctld/lb/ExposeConfig.swift \
+	swiftcube/sctld/lb/LBLoop.swift \
+	swiftcube/sctld/lb/nginx/NginxRenderer.swift \
+	swiftcube/sctld/lb/nginx/ConfigApplier.swift \
+	swiftcube/sctld/lb/nginx/NginxProvider.swift \
+	swiftcube/sctld/lb/nginx/NginxApplier.swift
+lb-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SC6_LB_SRCS) \
+		swiftcube/sctld/lb/tests/lb_test.swift \
+		-o $(BUILD)/lb_test
+	$(BUILD)/lb_test
+
+# SC7: the east-west service registry + userspace node-proxy. Host acceptance (cases 1–9) drives
+# the real SC7 control logic against an in-process cubestore: the SC5 endpoints loop + the SC7
+# service reconciler populate /endpoints + /services, a Resolver turns a name into the node-local
+# proxy address, and a NodeProxy load-balances accepted connections across the ready endpoints over
+# an in-memory ProxyTransport (FakeTransport + fake backend servers — so bytes flow end-to-end with
+# no kernel and no real sockets, the FakeProber/FakeApplier pattern). Reuses the cubestore core +
+# the SC2 control plane (the StoreClient/LocalStoreClient read seam pulls AgentStoreClient, so the
+# TLS/crypto deps are linked as in slet-test) + the SC3 Cell status object + the SC5 endpoints
+# object/loop + the SC7 service/proxy/resolver sources. The proxy/reconciler/resolver are
+# Foundation-free; only the harness uses Foundation. The on-device gate (two real Cells, A connects
+# to B by service name over virtio-net) is conditional on C6 + real Cells — deferred, not claimed;
+# the real transport (NetProxyTransport over swiftos sockets) compiles into the slet ELF.
+SC7_SVC_SRCS = \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/endpoints/EndpointsLoop.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/sctld/services/ServiceReconciler.swift \
+	swiftcube/slet/proxy/ProxyTransport.swift \
+	swiftcube/slet/proxy/Balancer.swift \
+	swiftcube/slet/proxy/NodeProxy.swift \
+	swiftcube/slet/resolver/Resolver.swift
+proxy-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC7_SVC_SRCS) \
+		swiftcube/slet/proxy/tests/proxy_test.swift \
+		-o $(BUILD)/proxy_test
+	$(BUILD)/proxy_test
+
+# SC8: node-local sticky persistent volumes on datafs + single-writer fencing. Host
+# acceptance (cases 1–8) drives the REAL SC8 logic against an in-process cubestore with a
+# HostDirVolumeStore (a host directory standing in for datafs, honest POSIX fsync) and an
+# injected clock: the VolumeManager provisions/binds/mounts/fences PVs and bumps the fencing
+# token, the leader-gated scheduler PINS each stateful ordinal to its bound node (Pending when
+# that node is down), and the SC3 reconcile loop + FakeCellSupervisor exercise the single-mount
+# gate end to end. Reuses the cubestore core + the SC2 control plane (the StoreClient read seam
+# pulls AgentStoreClient, so the TLS/crypto deps are linked as in slet-test) + the SC3 Cell seam
+# + the SC4 scheduler + the SC8 volume sources. The volume logic is Foundation-free; only the
+# HostDirVolumeStore (host datafs fake) and the harness use Foundation. The on-device datafs
+# binding (DatafsVolumeStore) compiles into the slet ELF; the QEMU gate (a real stateful Cell
+# writes /data, restarts, data survives, stays pinned) is conditional on datafs + C6 — deferred.
+# SC4 scheduler sources are listed here (NOT via a shared var) joined with the SC3 Cell seam,
+# de-duplicated against the cubestore/control cores; DatafsVolumeStore is on-device only.
+SC8_VOLUME_SRCS = \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/slet/volume/VolumeStore.swift \
+	swiftcube/slet/volume/VolumeManager.swift \
+	swiftcube/slet/volume/host/HostDirVolumeStore.swift
+# Scheduler core only — Node/Lease/Schema/RamStore come from CONTROL_CORE and the Cell
+# objects (CellSpec/Assignment/Probe) from SC3_CELL_SRCS, so listing them again would
+# duplicate symbols. Volume.swift comes from SC8_VOLUME_SRCS.
+SC8_SCHED_SRCS = \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift
+volume-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) $(CONTROL_CORE) $(CONTROL_TLS_DEPS) \
+		kernel/crypto/ed25519.swift kernel/crypto/sha512.swift \
+		$(SC3_CELL_SRCS) $(SC8_SCHED_SRCS) $(SC8_VOLUME_SRCS) \
+		swiftcube/slet/volume/tests/volume_test.swift \
+		-o $(BUILD)/volume_test
+	$(BUILD)/volume_test
+
+# SC9a: the manifest parser/validator + its mapping onto cubestore objects. Host acceptance
+# (case 1) golden-parses a §10 manifest into the typed `Manifest`, checks the mapping onto
+# DeploymentSpec/ServiceExpose/ServiceSpec, and rejects malformed manifests with clear errors.
+# The parser/validator (Yaml/Manifest/ManifestParser) is Foundation-free — `sctld` links the
+# same sources to re-validate a submitted manifest — and depends only on the cubestore ByteIO
+# core plus the typed objects it produces (Probe/CellSpec/Assignment/Volume/Deployment/Endpoint/
+# LBProvider/ExposeConfig/Service). Only the harness uses Foundation.
+.PHONY: manifest-test sctl-test sctl
+MANIFEST_SRCS = \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/endpoints/Endpoint.swift \
+	swiftcube/sctld/lb/LBProvider.swift \
+	swiftcube/sctld/lb/ExposeConfig.swift \
+	swiftcube/sctld/services/Service.swift \
+	swiftcube/manifest/Yaml.swift \
+	swiftcube/manifest/Manifest.swift \
+	swiftcube/manifest/ManifestParser.swift
+manifest-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) \
+		$(MANIFEST_SRCS) \
+		swiftcube/manifest/tests/manifest_test.swift \
+		-o $(BUILD)/manifest_test
+	$(BUILD)/manifest_test
+
+# SC9a: the `sctl` CLI command layer + the control-client transport seam. Host acceptance
+# (case 2) drives apply/get/describe/scale/delete + `rollout status` through the dispatcher over
+# a StoreControlClient backed by an in-process cubestore (the milestone's "fake control client"),
+# proving the round-trip: apply upserts objects and bumps the revision on a template change,
+# keeps it on a pure scale; get/scale/delete behave. The command layer + manifest are
+# Foundation-free; only the harness (and the host `sctl` main) use Foundation. The real
+# over-the-wire mTLS transport (WireControlClient) lands with the SC9b multi-node QEMU harness.
+SCTL_SRCS = \
+	$(MANIFEST_SRCS) \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/sctld/rollout/Rollout.swift \
+	swiftcube/sctl/ControlClient.swift \
+	swiftcube/sctl/StoreControlClient.swift \
+	swiftcube/sctl/Config.swift \
+	swiftcube/sctl/Command.swift
+sctl-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(SCTL_SRCS) \
+		swiftcube/sctl/tests/sctl_test.swift \
+		-o $(BUILD)/sctl_test
+	$(BUILD)/sctl_test
+
+# SC9b: the leader-gated rollout state machine — the pure stepper (rolling/blue-green/canary +
+# automatic rollback) and the level-triggered controller that drives per-revision desired counts
+# (/schedrev, placed by the reused SC4 scheduler), traffic weights (/traffic), and status/history
+# (/rollouts). Host acceptance (cases 3–9 + a real-scheduler integration check) drives the
+# controller against an in-process cubestore with an injected clock and a simulated cluster (the
+# /status/cells readiness signal). Reuses the cubestore core + the SC2 node/lease schema + the SC3
+# Cell objects + the SC4 scheduler. The rollout logic is Foundation-free; only the harness uses
+# Foundation; only kernel/crypto/sha256.swift is linked to satisfy the Schema seam.
+.PHONY: rollout-test
+ROLLOUT_SRCS = \
+	swiftcube/control/Schema.swift \
+	swiftcube/control/Node.swift \
+	swiftcube/control/Lease.swift \
+	swiftcube/control/RamStore.swift \
+	swiftcube/slet/probes/Probe.swift \
+	swiftcube/cell/CellSpec.swift \
+	swiftcube/cell/CellSupervisor.swift \
+	swiftcube/slet/Assignment.swift \
+	swiftcube/slet/volume/Volume.swift \
+	swiftcube/sctld/scheduler/Deployment.swift \
+	swiftcube/sctld/scheduler/Schedule.swift \
+	swiftcube/sctld/scheduler/SchedulerLoop.swift \
+	swiftcube/sctld/rollout/Rollout.swift \
+	swiftcube/sctld/rollout/RolloutPlan.swift \
+	swiftcube/sctld/rollout/RolloutController.swift
+rollout-test: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		$(ROLLOUT_SRCS) \
+		swiftcube/sctld/rollout/tests/rollout_test.swift \
+		-o $(BUILD)/rollout_test
+	$(BUILD)/rollout_test
+
+# SC9a: build the host `sctl` binary (Mac/Linux). The command layer + manifest parser are the
+# Foundation-free SCTL_SRCS; main.swift + Config.swift + the POSIX cubestore sink are the host
+# shell. Single-node today via `sctl --local <statedir> <command>`; the remote mTLS transport is
+# the SC9b seam.
+sctl: | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O $(CUBESTORE_CORE) kernel/crypto/sha256.swift \
+		swiftcube/cubestore/host/PosixFileSink.swift \
+		$(SCTL_SRCS) \
+		swiftcube/sctl/main.swift \
+		-o $(BUILD)/sctl
+	@echo "built $(BUILD)/sctl"
+
 phase1-roadmap-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/phase1_roadmap_test.swift -o $(BUILD)/phase1_roadmap_test
 	$(BUILD)/phase1_roadmap_test
@@ -1504,6 +2120,13 @@ stability-coverage-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/stability_coverage_test.swift -o $(BUILD)/stability_coverage_test
 	$(BUILD)/stability_coverage_test
 
+# LA3 shared-memory ring: the host unit test for the sans-IO core, then the
+# in-QEMU full-duplex round-trip at -smp 4 (parent/child over mapped pages).
+shmring-test: build $(QEMU_DTB_SMP4) disk base-image | $(BUILD)/.dir
+	$(HOST_SWIFTC) -D SHMRING_HOST tests/shmring_test.swift kernel/ipc/shmring.swift -o $(BUILD)/shmring_test
+	$(BUILD)/shmring_test
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
+
 test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
@@ -1535,11 +2158,14 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	FDT_TEST=$(BUILD)/fdt_test ./tests/qemu_virt_hardware_map_test.sh
 	$(HOST_SWIFTC) tests/net_test.swift kernel/net/packet.swift kernel/net/ethernet.swift kernel/net/arp.swift kernel/net/ipv4.swift kernel/net/ipv6.swift kernel/net/icmp.swift kernel/net/icmp6.swift kernel/net/udp.swift kernel/net/dhcp.swift kernel/net/tcp.swift kernel/net/dns.swift kernel/net/stack.swift -o $(BUILD)/net_test
 	$(BUILD)/net_test
+	$(HOST_SWIFTC) -D SHMRING_HOST tests/shmring_test.swift kernel/ipc/shmring.swift -o $(BUILD)/shmring_test
+	$(BUILD)/shmring_test
 	$(HOST_SWIFTC) tests/crypto_test.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/crypto_test
 	$(BUILD)/crypto_test
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
 	$(BUILD)/handle_test
 	$(MAKE) virtio-transport-test
+	$(MAKE) swiftcube-test
 	$(HOST_SWIFTC) tests/elf_loader_test.swift kernel/user/elf.swift -o $(BUILD)/elf_loader_test
 	$(BUILD)/elf_loader_test
 	$(HOST_SWIFTC) tests/user_access_test.swift kernel/user/user_access.swift -o $(BUILD)/user_access_test
@@ -1578,6 +2204,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(HOST_SWIFTC) -O tests/x509_chain_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_chain_test
 	$(BUILD)/x509_chain_test
 	./tests/tls_verify_test.sh
+	./tests/tls_truststore_test.sh
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
 	./tests/log_export_test.sh
@@ -1617,6 +2244,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/sshd_deploy_preflight_test.sh
 	./tests/hetzner_deploy_bundle_test.sh
 	bash ./tests/net_zero_copy_throughput_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
 	./tests/dns_test.sh
 	./tests/vfs_disk_test.sh
 	./tests/disk_exec_test.sh
@@ -1632,7 +2260,13 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/nginx_test.sh
 	./tests/nginx_data_test.sh
 	./tests/nginx_tls_test.sh
+	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
 	./tests/ncurses_test.sh
+	./tests/glib_test.sh
+	./tests/mc_test.sh
+	./tests/bash_test.sh
+	./tests/zsh_test.sh
+	rm -f $(BASE_IMG); $(MAKE) base-image
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -1666,12 +2300,20 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/largemmap_test.sh
 	./tests/mmapreserve_test.sh
 	./tests/sleep_test.sh
+	./tests/crond_test.sh
 	./tests/calc_test.sh
 	./tests/kv_test.sh
 	./tests/llm_run_test.sh
 	./tests/llm_serve_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
+	$(MAKE) device-mmio-map-test
+	$(MAKE) c5-mmio-grant-test
+	$(MAKE) c5-userland-driver-test
+	$(MAKE) c5-tty-inject-test
+	$(MAKE) ns1-net-grant-test
+	$(MAKE) ns2-net-driver-test
+	$(MAKE) ns3-net-service-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -1684,6 +2326,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_kattempt_test.sh
 	./tests/uefi_kconfirm_test.sh
 	./tests/uefi_krollback_test.sh
+	$(MAKE) os-coordinate-test
+	$(MAKE) os-coordinate-activate-test
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -1800,6 +2444,12 @@ hetzner-deploy-test: build $(SSHKEY)
 data-persist-test: build $(QEMU_DTB)
 	./tests/data_persist_test.sh
 
+# CR1: native Swift /bin/crond. Boots with the base image + a writable /data
+# disk, then drives a test crontab to prove @reboot fires once, @every fires
+# repeatedly, and jobs run via /bin/sh -c (durable append to /data).
+crond-test: build $(QEMU_DTB) base-image
+	./tests/crond_test.sh
+
 # OS-3b: streamed staging of a base image into the inactive A/B slot via the
 # capability-gated kernel syscalls (begin/write/commit), with monotonic
 # anti-rollback. Forces a base rebuild carrying the signed SWOSBASE fixture.
@@ -1822,6 +2472,23 @@ os-confirm-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
 	./tests/os_confirm_test.sh
+
+# OS-1: the single coordinated A/B selector — the only topology where BOTH A/B
+# mechanisms coexist (UEFI kernel A/B on the ESP + a SWOSBOOT store as the base
+# disk). The kernel puts the base on the slot the loader booted (ESP
+# kernel-state.lastBooted), so kernel + base never drift. Boots under AAVMF; SKIPs
+# without the firmware. Needs the ESP staging (uefi), base image, store + kernelboot.
+os-coordinate-test: build uefi base-image updatestore kernelboot
+	./tests/os_coordinate_test.sh
+
+# OS-1b: `swupdate os` flips the single ESP selector (kernel-state) so kernel +
+# base activate together. Boots a UEFI/ESP disk + SWOSBOOT store under AAVMF,
+# reaches a shell, and runs `swupdate os-apply-local` on a baked tiny SWSYS bundle
+# (no network). Needs the fixtures (INCLUDE_OS_STAGE_TEST=1). SKIPs without AAVMF.
+os-coordinate-activate-test: build uefi updatestore $(TEST_BASE_IMG) $(TEST_OS_BUNDLE)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
+	./tests/os_coordinate_activate_test.sh
 
 # Power control: /bin/reboot issues PSCI SYSTEM_RESET (machine resets), /bin/shutdown
 # issues PSCI SYSTEM_OFF (QEMU exits), and both are capConsole-gated. The reset path
@@ -1852,8 +2519,25 @@ nginx-test: build $(QEMU_DTB) base-image
 # NC1: boot the base image and run /bin/ncdemo — links static ncurses, resolves
 # terminfo from compiled-in fallbacks (no DB on disk), draws a box on the serial
 # console, reads a key, and exits. Asserts the post-endwin plain-text markers.
-ncurses-test: build $(QEMU_DTB) base-image
+ncurses-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NCURSES=1
 	./tests/ncurses_test.sh
+
+# GL1: boot the base image and run /bin/glibdemo — links static libglib-2.0.a
+# and exercises GString/GList/GHashTable/GArray/g_get_monotonic_time. Asserts
+# the GLIBDEMO-OK marker.
+glib-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_GLIB=1
+	./tests/glib_test.sh
+
+# MC1: boot the base image and run /bin/mc — the Midnight Commander TUI on the
+# ncurses backend. Asserts the panels/menu draw and that it quits cleanly.
+mc-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1
+	./tests/mc_test.sh
 
 # W2: nginx serves a web root + logs from the persistent /data tier; content
 # survives reboot. Needs the base image and host curl.
@@ -1898,6 +2582,17 @@ acme-verify-test: build $(QEMU_DTB) base-image
 
 tls-verify-test:
 	./tests/tls_verify_test.sh
+
+# V-TS1: /bin/tlsget verifies by default against the system trust store
+# (/etc/ssl/cert.pem, shipped in the base image). Needs base-image + a NIC + host openssl.
+tls-truststore-test: build $(QEMU_DTB) base-image
+	./tests/tls_truststore_test.sh
+
+# SC2: on-device node-join + lease-expiry acceptance (case 8). Boots /bin/sctld +
+# /bin/slet under Embedded Swift in QEMU and asserts the join → register →
+# heartbeat → reaper-expiry → watch lifecycle markers on the serial console.
+sc2-join-test: build $(QEMU_DTB) base-image
+	./tests/sc2_join_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
 	./tests/mprotect_test.sh
@@ -2075,6 +2770,52 @@ device-authority-cap-test: build $(QEMU_DTB) base-image
 
 c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test
 
+# LA2: device-MMIO-map authority. Boots the base image with a virtio-input window
+# present and asserts the capConsole probe maps it and reads its registers, plus
+# the EACCES refusals. Runs single-core and under -smp 4.
+device-mmio-map-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/device_mmio_map_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/device_mmio_map_test.sh
+
+# C5h: real MMIO authority reaches the supervised userland driver service. The LA1
+# supervisor claims the now-mappable virtio-input.0 grant and transfers it over IPC
+# to /bin/svc-input, which sys_device_mmap's the window and verifies the virtio magic
+# through the userland mapping. Runs under -smp 4 with the virtio-input device.
+c5-mmio-grant-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_mmio_grant_test.sh
+
+# C5i: the virtio-input driver runs entirely in userland. The kernel skips its
+# in-kernel polled driver; /bin/svc-input maps the MMIO window, resolves the
+# virtqueue's physical address via virt_to_phys, brings the queue up, and recovers
+# across a supervisor-driven kill+restart. Runs under -smp 4.
+c5-userland-driver-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_userland_driver_test.sh
+
+# NS1: virtio-net MMIO grant reaches userland alongside the live in-kernel net
+# stack. Boots with a virtio-net (slirp) device; the capConsole probe maps the NIC
+# window, reads the identity + config MAC, and the kernel net stack stays up
+# (ICMP echo reply). Runs under -smp 4.
+ns1-net-grant-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns1_net_grant_test.sh
+
+# NS2: a userland virtio-net driver does real TX/RX on a SECONDARY NIC (two
+# virtio-net devices; the kernel keeps the first) via an ARP round-trip against
+# slirp, without disturbing the primary kernel NIC. Runs under -smp 4.
+ns2-net-driver-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns2_net_driver_test.sh
+
+# NS3: a restartable userland net service relays frames over an shmring data plane,
+# driving a secondary NIC from EL0; kill+restart recovery across two generations.
+ns3-net-service-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns3_net_service_test.sh
+
+# C5j: the persistent userland driver (/bin/inputd, launched by swos-init) injects
+# decoded virtio-input keystrokes into the kernel tty (SYS_tty_inject), restoring
+# interactive keyboard. The test QMP send-key's a character into the virtio device
+# and asserts it reaches the login prompt via the userland driver. Runs under -smp 4.
+c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
+
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
 
@@ -2161,15 +2902,29 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 # uses the writable kernel-state file for mutable active-slot selection. Both
 # slots are the same image for now; A/B differentiation comes with staging a new
 # kernel into the inactive slot. make-disk.sh copies these into the GPT image.
-$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
+# OS-1c: fixed-size (padded) ESP kernel slots. A slot file is the kernel image
+# zero-padded to KERNEL_SLOT_BYTES so the box can later overwrite it IN PLACE with
+# a different-size new kernel (the FAT writer does same-size-in-place only), and so
+# the per-slot signed manifest entry covers a fixed-length region. The loader loads
+# the whole padded file; trailing zeros are harmless (the kernel zeroes its own BSS
+# and the base ramdisk is allocated elsewhere). Host (here) and the on-box installer
+# pad identically so the SHA-256 over the padded slot matches.
+KERNEL_SLOT_BYTES := 4194304   # 4 MiB
+$(BUILD)/kernel-slot.bin: $(KERNEL_BIN) Makefile | $(BUILD)/.dir
+	@ksz=$$(wc -c < $(KERNEL_BIN)); if [ $$ksz -gt $(KERNEL_SLOT_BYTES) ]; then \
+	  echo "kernel.bin $$ksz B exceeds the $(KERNEL_SLOT_BYTES) B slot" >&2; exit 1; fi
+	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(KERNEL_SLOT_BYTES) 2>/dev/null
+	dd if=$(KERNEL_BIN) of=$@ conv=notrunc 2>/dev/null
+
+$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	$(KERNELBOOT) $@ A $(BUILD)/kernel-slot.bin $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 
 # H3: stage the packed read-only base image on the ESP so the loader can read it
 # into RAM and hand the kernel a ramdisk (the path for boards whose boot disk —
@@ -2254,6 +3009,12 @@ $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift 
 # os-stage-test streams into the inactive A/B slot. Signed with the image key.
 $(TEST_BASE_IMG): $(BASEPACK) $(IMG_SIGNING_SEED) tests/fixtures/test-base/README.txt Makefile | $(BUILD)/.dir
 	$(BASEPACK) tests/fixtures/test-base $@ $(IMG_SIGNING_SEED)
+
+# OS-1b: a tiny signed SWSYS bundle (kernel stub + the test base, version 2) for
+# the no-network coordinated-activate test. The kernel half is a stand-in (only
+# the base half is applied today); both halves use the tiny SWOSBASE fixture.
+$(TEST_OS_BUNDLE): $(SYSPACK) $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	$(SYSPACK) create $(TEST_BASE_IMG) $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED)
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
@@ -2369,6 +3130,9 @@ ports-tzdata-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/sysutils/tzdata/P
 
 ports-curl-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/net/curl/Port.json scripts/build-curl.sh
 	./scripts/build-curl.sh
+
+ports-rsync-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/net/rsync/Port.json scripts/build-rsync.sh userland/rsync/swiftos/at_compat.c
+	./scripts/build-rsync.sh
 
 ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh
 	./scripts/build-nginx.sh
@@ -2507,6 +3271,11 @@ package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-
 package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-seed-repo-fixture
 	./tests/pkg_ports_seed_repo_install_test.sh
 
+# R1: install the rsync port from a signed repo over the network and run
+# `rsync --version` in QEMU. Builds rsync.swpkg + a one-package trusted repo.
+rsync-test: build busybox $(QEMU_DTB) package-lua-install-fixture ports-rsync-repo-fixture
+	./tests/rsync_test.sh
+
 package-static-host-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
 	./tests/pkg_static_host_repo_install_test.sh
 
@@ -2536,6 +3305,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
+	if [ -n "$(ROOT_LOGIN_SHELL)" ]; then perl -i -pe 's{^(root(?::[^:]*){4}:).*$$}{$${1}$(ROOT_LOGIN_SHELL)}' $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi
 	if [ -n "$(SSHD_AUTHORIZED_KEYS_FILE)" ]; then cp "$(SSHD_AUTHORIZED_KEYS_FILE)" $(BASE_ROOT)/etc/ssh/authorized_keys; fi
@@ -2626,6 +3396,11 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_DEVICEAUTHDEMO_ELF) $(BASE_ROOT)/bin/deviceauthdemo
+	cp $(USER_DEVICEMMAPPROBE_ELF) $(BASE_ROOT)/bin/devicemmapprobe
+	cp $(USER_NETMMAPPROBE_ELF) $(BASE_ROOT)/bin/netmmapprobe
+	cp $(USER_NETDRIVERPROBE_ELF) $(BASE_ROOT)/bin/netdriverprobe
+	cp $(USER_NETSVC_ELF) $(BASE_ROOT)/bin/netsvc
+	cp $(USER_NETSVCDEMO_ELF) $(BASE_ROOT)/bin/netsvc-demo
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
@@ -2656,6 +3431,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_CHMOD_ELF) $(BASE_ROOT)/bin/chmod
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
+	cp $(USER_CROND_ELF) $(BASE_ROOT)/bin/crond
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
 	cp $(USER_LLM_ELF) $(BASE_ROOT)/bin/llm
 	cp $(USER_LLMD_ELF) $(BASE_ROOT)/bin/llmd
@@ -2672,20 +3448,28 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_TCPGET_ELF) $(BASE_ROOT)/bin/tcpget
 	cp $(USER_TLSGET_ELF) $(BASE_ROOT)/bin/tlsget
 	cp $(USER_ACME_ELF) $(BASE_ROOT)/bin/acme
+	cp $(USER_SCTLD_ELF) $(BASE_ROOT)/bin/sctld
+	cp $(USER_SLET_ELF) $(BASE_ROOT)/bin/slet
 	cp $(USER_HTTPD_ELF) $(BASE_ROOT)/bin/httpd
 	cp $(USER_SSH_ELF) $(BASE_ROOT)/bin/ssh
 	cp $(USER_SSHD_ELF) $(BASE_ROOT)/bin/sshd
 	cp $(USER_NSLOOKUP_ELF) $(BASE_ROOT)/bin/nslookup
 	cp $(USER_C4B_SOCKXFER_ELF) $(BASE_ROOT)/bin/c4b-sockxfer
+	cp $(USER_SHMRINGPROBE_ELF) $(BASE_ROOT)/bin/shmringprobe
 	cp $(USER_QW4_BADGE_ELF) $(BASE_ROOT)/bin/qw4-badge
 	cp $(USER_QW5_RIGHTSXFER_ELF) $(BASE_ROOT)/bin/qw5-rightsxfer
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
 	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
 	cp $(USER_SVC_INPUT_ELF) $(BASE_ROOT)/bin/svc-input
+	cp $(USER_INPUTD_ELF) $(BASE_ROOT)/bin/inputd
 	cp $(USER_SVC_SUPERVISOR_ELF) $(BASE_ROOT)/bin/svc-supervisor
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
-	cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo
+	$(NCURSES_PACK_CMD)
+	$(GLIBDEMO_PACK_CMD)
+	$(MC_PACK_CMD)
+	$(BASH_PACK_CMD)
+	$(ZSH_PACK_CMD)
 	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
 base-image: $(BASE_IMG)
@@ -2709,6 +3493,56 @@ ncurses:
 $(BUILD)/ncdemo.elf:
 	@echo "ncurses demo not built. Run: make ncurses" >&2; exit 1
 
+# GL1: cross-build static GLib 2.56 core + the glibdemo proof binary.
+glib:
+	./scripts/build-glib.sh
+
+# glibdemo.elf is produced by `make glib` (slow; needs newlib + zlib + network).
+# Like busybox it must run before `make base-image`.
+$(BUILD)/glibdemo.elf:
+	@echo "glib demo not built. Run: make glib" >&2; exit 1
+
+# MC1: cross-build Midnight Commander (needs `make ncurses` + `make glib` first).
+mc:
+	./scripts/build-mc.sh
+
+# mc.elf is produced by `make mc` (slow; needs newlib + ncurses + glib + zlib).
+# Like busybox it must run before `make base-image`.
+$(BUILD)/mc.elf:
+	@echo "Midnight Commander not built. Run: make mc" >&2; exit 1
+
+# SH1: cross-build GNU bash (needs `make ncurses` first for readline + curses).
+bash:
+	./scripts/build-bash.sh
+
+# bash-test: boot the base image and verify bash starts, runs compound commands,
+# and exits cleanly. Requires `make bash` + `make base-image` first.
+bash-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_BASH=1
+	./tests/bash_test.sh
+
+# bash.elf is produced by `make bash` (needs newlib + ncurses + network).
+# Must run before `make base-image`.
+$(BUILD)/bash.elf:
+	@echo "bash not built. Run: make bash" >&2; exit 1
+
+# SH2: cross-build zsh (needs `make ncurses` first for ZLE + terminal library).
+zsh:
+	./scripts/build-zsh.sh
+
+# zsh-test: boot the base image and verify zsh starts, runs arrays/functions,
+# and exits cleanly. Requires `make zsh` + `make base-image` first.
+zsh-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_ZSH=1
+	./tests/zsh_test.sh
+
+# zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
+# Must run before `make base-image`.
+$(BUILD)/zsh.elf:
+	@echo "zsh not built. Run: make zsh" >&2; exit 1
+
 busybox-check:
 	./scripts/busybox-check.sh
 
@@ -2729,6 +3563,7 @@ clean:
 		$(BUILD)/tzdata-port-work $(BUILD)/tzdata-root $(BUILD)/tzdata-repo-root $(BUILD)/tzdata-repo-root.pub \
 		$(BUILD)/nginx-port-work $(BUILD)/nginx-root $(BUILD)/nginx-repo-root $(BUILD)/nginx-repo-root.pub $(BUILD)/nginx \
 		$(BUILD)/sqlite-port-work $(BUILD)/sqlite-port-runtime $(BUILD)/sqlite-root $(BUILD)/sqlite-repo-root $(BUILD)/sqlite-repo-root.pub \
+		$(BUILD)/rsync-port-work $(BUILD)/rsync-port-runtime $(BUILD)/rsync-root $(BUILD)/rsync-repo-root $(BUILD)/rsync-repo-root.pub $(BUILD)/rsync-test-repo $(BUILD)/base-rsync-repo.img \
 		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(BUILD)/base-ports-static-host-dns.img $(BUILD)/base-hosted-url.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.

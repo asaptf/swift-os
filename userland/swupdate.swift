@@ -68,6 +68,11 @@ private let pOsRootPub: StaticString = "/etc/swupdate/os-root.pub"
 private let maxOsBundleBytes = 96 * 1024 * 1024
 private let osStageChunk = 64 * 1024
 
+// TLS opt-out: set by a `--insecure` argument. HTTPS cert verification (against
+// the system trust store) is on by default; --insecure is for mock/bring-up
+// servers only. See httpsGet().
+private var gInsecure = false
+
 // ---- small helpers ---------------------------------------------------------
 
 private func put(_ s: StaticString) {
@@ -493,6 +498,22 @@ private func httpsGet(ip: UInt32, port: UInt16, host: [UInt8], path: [UInt8], ma
     defer { _ = swiftos_close(fd) }
 
     let client = TLS13Client()
+    // TLS server-certificate verification is ON by default, anchored at the system
+    // trust store (/etc/ssl/cert.pem). The SWSYS/SWSITE payloads are Ed25519-signed
+    // regardless, so this is defense-in-depth; --insecure disables it for mock/
+    // bring-up servers.
+    if !gInsecure {
+        let roots = loadSystemTrustRoots()
+        if roots.isEmpty {
+            put("swupdate: no trust roots (need /etc/ssl/cert.pem or --insecure)\n")
+            return nil
+        }
+        var hostBytes: [UInt8] = []
+        for b in host { if b == 0 { break }; hostBytes.append(b) }
+        client.enableVerification(rootsDER: roots,
+                                  hostname: String(decoding: hostBytes, as: UTF8.self),
+                                  now: unixToYYYYMMDDHHMMSS(UInt64(swiftos_time())))
+    }
     var sk = [UInt8](repeating: 0, count: 32)
     var ch = [UInt8](repeating: 0, count: 32)
     sk.withUnsafeMutableBytes { fillRandom($0.baseAddress!, 32) }
@@ -668,11 +689,25 @@ private func applyOsBundleBytes(_ bundle: [UInt8]) -> Int32 {
     if swiftos_update_stage_commit() != 0 {
         put("swupdate: os stage commit rejected (base is not a signed v3 image)\n"); return 1
     }
-    if swiftos_update_activate() != 0 {
-        put("swupdate: base image staged but activate failed — run /bin/swos-activate\n"); return 1
+    // 5. Coordinated activate (OS-1). When an ESP kernel-state is present it is the
+    // single A/B authority: flip it so the loader boots the other kernel slot and
+    // the base follows it on the next boot — kernel + base activate together. On a
+    // store-only box (no ESP) kernel_activate returns ENODEV; fall back to flipping
+    // the SWOSBOOT base selector directly.
+    let krc = swiftos_kernel_activate()
+    if krc == 0 {
+        put("swupdate: OS staged + ESP selector flipped (kernel+base activate together); reboot to boot the new system (on trial)\n")
+        return 0
     }
-    put("swupdate: OS base image staged + activated; reboot to boot the new system (on trial)\n")
-    return 0
+    if krc == -19 {   // ENODEV: no ESP — store-only box
+        if swiftos_update_activate() != 0 {
+            put("swupdate: base image staged but activate failed — run /bin/swos-activate\n"); return 1
+        }
+        put("swupdate: OS base image staged + activated; reboot to boot the new system (on trial)\n")
+        return 0
+    }
+    put("swupdate: base image staged but ESP selector flip failed — run /bin/swos-kactivate\n")
+    return 1
 }
 
 private func osApplyLocal(_ path: [CChar]) -> Int32 {
@@ -778,6 +813,10 @@ func main(_ argc: Int32,
         usage()
         return 2
     }
+    // Global TLS opt-out: any `--insecure` arg disables HTTPS cert verification
+    // for this run (mock servers / bring-up only). On by default otherwise.
+    var ti = 2
+    while ti < Int(argc) { if let a = argv[ti], cstrEq(a, "--insecure") { gInsecure = true }; ti += 1 }
     if cstrEq(cmdp, "seed") {
         return seed()
     }

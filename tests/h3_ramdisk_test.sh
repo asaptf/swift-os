@@ -67,7 +67,7 @@ if wait_for "swift-os login:" 600; then
     wait_for "Password:" 240 || true
     send_text $'swordfish\n'
 fi
-if wait_for "built-in shell (ash)" 600; then
+if wait_for "M12c: shell ready" 600; then
     send_text $'echo H3''-RAMDISK-OK\n'
     wait_for "H3-RAMDISK-OK" 240 || true
     send_text $'exit\n'

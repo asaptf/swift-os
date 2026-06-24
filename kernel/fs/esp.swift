@@ -321,7 +321,9 @@ private func fatCopyChain(_ vol: Fat32Vol, _ srcStart: UInt32, _ dstStart: UInt3
             withUnsafeMutableBytes(of: &buf) { raw in
                 let p = raw.baseAddress!
                 if virtioBlkReadCurrent(fatClusterLBA(vol, sc) + UInt64(s), p) != 0 { ok = false; return }
-                if virtioBlkWriteSector(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
+                // ESP-targeted write (the device is already selected): virtioBlkWriteSector
+                // would force the store device, mis-targeting in the coordinated topology.
+                if virtioBlkWriteCurrent(fatClusterLBA(vol, dc) + UInt64(s), UnsafeRawPointer(p)) != 0 { ok = false; return }
             }
             s += 1; done += 1
         }
@@ -458,7 +460,7 @@ private func espConfirmInner() -> Int {
         espSt32(p, kernelStateAttemptOff(confirmedSlot), 0)
         espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
         kernelStateRehash(p)
-        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(p)) != 0 { return }
         rc = 0
     }
     if rc != 0 { return rc }
@@ -559,7 +561,7 @@ private func espActivateInner() -> Int {
         espSt32(p, kernelStateLastBootedOff, kernelStateNoSlot)
         espSt32(p, kernelStateSeqOff, espLd32(UnsafeRawPointer(p), kernelStateSeqOff) &+ 1)
         kernelStateRehash(p)
-        if virtioBlkWriteSector(lba, UnsafeRawPointer(p)) != 0 { return }
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(p)) != 0 { return }
         rc = 0
     }
     if rc != 0 { return rc }
@@ -641,6 +643,35 @@ func espStageActiveToInactive() -> Int {
         uartPuts("\n")
     }
     return rc
+}
+
+/// OS-1: the kernel slot the UEFI loader actually booted this session, read from
+/// the writable ESP kernel-state (`lastBooted`). Returns 0 or 1, or -1 when there
+/// is no GPT/ESP disk, no valid kernel-state, or `lastBooted` is unset (e.g. a
+/// first boot before the loader has run). This is the single coordinated A/B
+/// selector: updateStoreInit uses it to put the base on the SAME generation the
+/// loader booted the kernel from, so kernel + base never drift. Leaves the served
+/// base/store device reselected (the caller can read the store immediately after).
+func espBootedKernelSlot() -> Int {
+    if !virtioBlkHasEsp() { return -1 }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return -1 }
+    var slot = -1
+    if let (partLBA, _) = espFindPartition(), let vol = fatReadBPB(partLBA),
+       let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2,
+       let sw = fatFind(vol, efi.0, "swift-os"), sw.2,
+       let ks = fatFind(vol, sw.0, "kernel-state"), !ks.2, ks.1 >= 512 {
+        var buf = InlineArray<512, UInt8>(repeating: 0)
+        withUnsafeMutableBytes(of: &buf) { raw in
+            let p = raw.baseAddress!
+            if virtioBlkReadCurrent(fatClusterLBA(vol, ks.0), p) == 0
+                && kernelStateValid(UnsafeRawPointer(p)) {
+                let booted = espLd32(UnsafeRawPointer(p), kernelStateLastBootedOff)
+                if booted <= 1 { slot = Int(booted) }
+            }
+        }
+    }
+    virtioBlkReselectServed()
+    return slot
 }
 
 /// U1g-4a/4b: at boot, if a GPT/ESP boot disk is attached on virtio-mmio, locate

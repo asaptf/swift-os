@@ -207,6 +207,43 @@ int swiftos_device_discover(int index, struct swiftos_device_info *info) {
     return device_discover(index, info);
 }
 
+long swiftos_device_mmap(int fd, unsigned long len) {
+    // Raw syscall (not the device_mmap() inline) so the Swift caller sees the
+    // exact base VA or negative errno instead of MAP_FAILED.
+    return __syscall3(SYS_DEVICE_MMAP, fd, (long)len, 0);
+}
+
+long swiftos_virt_to_phys(unsigned long va, int handle_fd) {
+    return virt_to_phys(va, handle_fd);
+}
+
+int swiftos_tty_inject(unsigned char byte) {
+    return tty_inject(byte);
+}
+
+// Volatile MMIO/ring accessors (C5i). volatile guarantees the access is not
+// elided or reordered by the compiler; on the Device-nGnRE register window the
+// memory type also prevents hardware reordering. For the virtqueue (normal RAM)
+// swiftos_dmb provides the device-visibility ordering.
+unsigned int swiftos_mmio_read32(unsigned long addr) {
+    return *(volatile unsigned int *)addr;
+}
+void swiftos_mmio_write32(unsigned long addr, unsigned int value) {
+    *(volatile unsigned int *)addr = value;
+}
+unsigned short swiftos_mmio_read16(unsigned long addr) {
+    return *(volatile unsigned short *)addr;
+}
+void swiftos_mmio_write16(unsigned long addr, unsigned short value) {
+    *(volatile unsigned short *)addr = value;
+}
+void swiftos_mmio_write64(unsigned long addr, unsigned long value) {
+    *(volatile unsigned long *)addr = value;
+}
+void swiftos_dmb(void) {
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
 int swiftos_name_register(const char *name, int endpoint_fd) {
     return name_register(name, endpoint_fd);
 }
@@ -219,6 +256,10 @@ long swiftos_spawn_handles_async(const char *path, void *argv, const void *handl
                                  unsigned long handle_count) {
     return spawn_handles_async(path, (char *const *)argv,
                                (const struct swiftos_spawn_handle *)handles, handle_count);
+}
+
+long swiftos_run(const char *path, char *const *argv) {
+    return spawn(path, argv);
 }
 
 long swiftos_getdents(int fd, void *buf, unsigned long count) {
@@ -424,9 +465,17 @@ int swiftos_pkg_stream_abort(void) {
     return pkg_stream_abort();
 }
 
+/* Return the basename of path (pointer into the same string, no allocation). */
+static const char *shell_basename(const char *path) {
+    const char *base = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') base = p + 1;
+    }
+    return *base ? base : path;
+}
+
 int swiftos_exec_shell(const char *path) {
-    char arg0[] = "sh";
-    char *argv[] = { arg0, 0 };
+    char *argv[] = { (char *)shell_basename(path), 0 };
     return execve(path, argv, 0);
 }
 
@@ -439,8 +488,7 @@ int swiftos_pty_spawn_shell(const char *path, int slave_fd) {
     dup2(slave_fd, 1);
     dup2(slave_fd, 2);
     for (int fd = 3; fd < 32; fd++) close(fd);
-    char arg0[] = "sh";
-    char *argv[] = { arg0, 0 };
+    char *argv[] = { (char *)shell_basename(path), 0 };
     execve(path, argv, 0);
     __syscall3(SYS_EXIT, 127, 0, 0);     // exec failed
     return 0;                            // unreachable
@@ -1003,6 +1051,15 @@ unsigned int swiftos_atomic_load(unsigned int *p) {
     return __atomic_load_n(p, __ATOMIC_SEQ_CST);
 }
 
+void swiftos_atomic_store(unsigned int *p, unsigned int v) {
+    __atomic_store_n(p, v, __ATOMIC_SEQ_CST);
+}
+
 unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta) {
     return __atomic_fetch_add(p, delta, __ATOMIC_SEQ_CST);
 }
+
+// LA3 shared-memory ring bridges (thin forwards to the C-only syscall wrappers).
+long swiftos_shmring_create(unsigned long pages) { return shmring_create(pages); }
+long swiftos_shmring_map(int id) { return shmring_map(id); }
+int  swiftos_shmring_close(int id) { return shmring_close(id); }

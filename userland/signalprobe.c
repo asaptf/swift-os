@@ -26,6 +26,26 @@ static void custom_handler(int sig) {
     if (sig == SIGTERM) { custom_handler_seen++; }
 }
 
+// Fork a child that blocks in nanosleep, kill it with `sig`, and confirm the
+// default action terminated it with the matching 128+signo wait status. Returns
+// 1 on the expected result, 0 on a wrong status, negative on a setup failure.
+static int kill_sleeping_child(int sig) {
+    pid_t child = fork();
+    if (child < 0) { return -1; }
+    if (child == 0) {
+        struct timespec ts;
+        ts.tv_sec = 10;
+        ts.tv_nsec = 0;
+        for (;;) { nanosleep(&ts, NULL); }
+    }
+    tiny_sleep();   // let the child settle into nanosleep (not on-CPU)
+    if (kill(child, sig) != 0) { return -2; }
+    int status = 0;
+    if (waitpid(child, &status, 0) != child) { return -3; }
+    if (!WIFSIGNALED(status) || WTERMSIG(status) != sig) { return 0; }
+    return 1;
+}
+
 int main(void) {
     errno = 0;
     if (kill(getpid(), 0) != 0) { fail("kill self probe"); }
@@ -80,6 +100,21 @@ int main(void) {
         fail("waitpid signaled status");
     }
     printf("signalprobe: child SIGTERM status OK\n");
+
+    // Default-action terminate is not special to SIGTERM: kill a sleeping child
+    // with SIGINT, SIGKILL, and SIGSEGV and confirm each reports the matching
+    // 128+signo status. (SIGKILL in particular must always terminate.)
+    static const int fatal_sigs[] = { SIGINT, SIGKILL, SIGSEGV };
+    static const char *const fatal_names[] = { "SIGINT", "SIGKILL", "SIGSEGV" };
+    for (int i = 0; i < 3; i++) {
+        int r = kill_sleeping_child(fatal_sigs[i]);
+        if (r != 1) {
+            printf("signalprobe: FAIL %s default terminate (r=%d)\n", fatal_names[i], r);
+            _exit(1);
+        }
+    }
+    printf("signalprobe: multi-signal default terminate OK\n");
+
     printf("SIGNALPROBE-OK\n");
     return 0;
 }
