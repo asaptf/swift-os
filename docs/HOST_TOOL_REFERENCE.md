@@ -36,6 +36,7 @@ format, manifest, signature, or fixture.
 | `build/basepack` | `make base-image` | Pack a directory into a `SWOSBASE` read-only base image. | `./tests/boot_test.sh` |
 | `build/updatestore` | `make updatestore` | Build an A/B `SWOSBOOT` update-store disk from two signed base images. | `tests/updatestore_test.swift`, `tests/ab_update_test.sh` |
 | `build/kernelboot` | `make kernelboot` | Build the signed UEFI kernel A/B boot manifest consumed from the ESP. | `tests/uefi_kernel_ab_test.sh` |
+| `build/syspack` | `make syspack` | Pack a kernel image plus a signed base image into a signed `SWSYS` system-update bundle (Ed25519 signature over the body plus a monotonic `systemVersion`), and verify or inspect one, for reflash-free OS updates. | `make syspack-test`, `make os-update-test` |
 | `build/sshkey` | `make sshkey` | Generate SwiftOS SSHD seed files and derive OpenSSH `ssh-ed25519` public keys and known_hosts lines from host-key seeds. | `make sshd-transport-test`, `make sshd-host-key-rotation-test`, `make sshd-kex-seed-test` |
 | `build/swpkg` | `make swpkg` | Create, inspect, verify, and extract `.swpkg` package artifacts. | `tests/swpkg_tool_test.swift`, `make package-fixture` |
 | `build/pkgstore` | `make pkgstore` | Create and inspect package-store disk images. | `tests/pkgstore_tool_test.swift`, `make package-store-test` |
@@ -54,6 +55,7 @@ format, manifest, signature, or fixture.
 | `scripts/build-tzdata.sh` | `make ports-tzdata-repo-fixture` | Compile IANA time zone data with host `zic`, package `/usr/share/zoneinfo`, and publish a signed local repository fixture. | `make ports-tzdata-repo-fixture` |
 | `scripts/build-nginx.sh` | `make ports-nginx-repo-fixture` | Cross-build minimal static HTTP-only nginx, package it, and publish a signed local repository fixture. | `make ports-nginx-repo-fixture` |
 | `scripts/build-sqlite.sh` | `make ports-sqlite-repo-fixture` | Cross-build static SQLite, package `sqlite3`, `libsqlite3.a`, headers, and pkgconf metadata, then publish a signed local repository fixture. | `make ports-sqlite-repo-fixture` |
+| `scripts/build-rsync.sh` | `make ports-rsync-repo-fixture` | Cross-build the static `rsync` CLI from `ports/net/rsync/Port.json` (R1: build + `rsync --version`; no TLS/xattr/ACL/symlink), package it, and publish a signed local repository fixture. | `make ports-rsync-repo-fixture`, `make rsync-test` |
 | `scripts/build-ports-seed-repo.sh` | `make ports-seed-repo-fixture` | Publish every catalog entry with `status: "packages"` into one signed local seed repository. | `make package-ports-seed-repo-install-test` |
 | `scripts/publish-ports-static-host.sh` | `make ports-static-host-publish` | Create a deployable static web root for the ports seed repository with manifest and checksums. | `make ports-static-host-publish`, `make package-static-host-repo-install-test` |
 | `scripts/verify-ports-hosted-url.sh` | `make ports-hosted-url-verify` | Fetch and verify a deployed static-host package repository URL, including sidecar manifest, checksums, package blobs, and signed catalog. | `make ports-hosted-url-verify-test` |

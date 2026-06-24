@@ -1739,6 +1739,117 @@ unsigned int swiftos_atomic_load(unsigned int *p);
 unsigned int swiftos_atomic_add(unsigned int *p, unsigned int delta);
 ```
 
+### IPC, Endpoints, And Fork
+
+```c
+int  swiftos_endpoint_create(int ends[2]);
+long swiftos_ipc_send(int fd, const void *buf, unsigned long len, int handle_fd);
+long swiftos_ipc_recv(int fd, void *buf, unsigned long cap, int *out_handle_fd);
+int  swiftos_fork(void);
+```
+
+`swiftos_endpoint_create` creates an IPC endpoint pair (`ends[0]` is the send
+end, `ends[1]` the recv end), returning 0 on success. `swiftos_ipc_send` sends
+`len` bytes on a send end and, when `handle_fd >= 0`, transfers that handle to
+the peer (granting every right the sender holds); `swiftos_ipc_recv` blocks for
+one message, copying up to `cap` bytes into `buf` and storing any transferred
+handle's new fd in `*out_handle_fd` (`-1` if none), returning the byte count or
+a negative errno. `swiftos_fork` forks the calling process copy-on-write (0 in
+the child, the child pid in the parent, negative on error). These forward to the
+C-only inline syscalls in `userland/lib/syscall.h` — the documented low-level
+bridge exception used by native Swift services (see
+`userland/lib/userland_service.swift` and the `IPC Endpoints` section above).
+
+### Device Grants And MMIO
+
+```c
+int  swiftos_device_claim(const char *name, struct swiftos_device_info *info);
+int  swiftos_device_query(int fd, struct swiftos_device_info *info);
+int  swiftos_device_discover(int index, struct swiftos_device_info *info);
+long swiftos_device_mmap(int fd, unsigned long len);
+long swiftos_virt_to_phys(unsigned long va, int handle_fd);
+
+unsigned int   swiftos_mmio_read32(unsigned long addr);
+void           swiftos_mmio_write32(unsigned long addr, unsigned int value);
+unsigned short swiftos_mmio_read16(unsigned long addr);
+void           swiftos_mmio_write16(unsigned long addr, unsigned short value);
+void           swiftos_mmio_write64(unsigned long addr, unsigned long value);
+void           swiftos_dmb(void);
+```
+
+`swiftos_device_claim` claims an opaque device grant by name (needs
+`CAP_CONSOLE`) and returns a handle fd; `swiftos_device_query` inspects the grant
+held on `fd` and `swiftos_device_discover` enumerates available grants by index,
+both filling `struct swiftos_device_info` and returning 0 or a negative errno.
+`swiftos_device_mmap` maps the claimed device's MMIO window into this process,
+gated on the grant's `.map` right, returning the mapped base VA (`>= 0`) or a
+small negative errno (`-13` EACCES for a metadata-only grant). `swiftos_virt_to_phys`
+resolves a VA to its physical address for a userland driver programming
+DMA/virtqueue registers, gated on `handle_fd` being a mappable grant the caller
+owns. The `swiftos_mmio_*` accessors and `swiftos_dmb` (a full `dsb sy` data
+memory barrier) are the volatile MMIO/DMA-ring primitives Embedded Swift cannot
+express directly; the userland virtio-input/virtio-net drivers use them to touch
+device registers and order ring writes against device notifications. See the
+`Device Grants` section above for the grant model and `struct swiftos_device_info`
+layout.
+
+### Name Registry
+
+```c
+int swiftos_name_register(const char *name, int endpoint_fd);
+int swiftos_name_lookup(const char *name);
+```
+
+`swiftos_name_register` publishes the recv end of an endpoint under a short name
+(needs `CAP_CONSOLE`); `swiftos_name_lookup` resolves a name to a fresh send-end
+fd (negative / `-ENOENT` on failure). Together they are the explicit
+grant-by-lookup path a supervisor uses to wire a service's command endpoint to
+its clients.
+
+### Process Launch And TTY Injection
+
+```c
+long swiftos_run(const char *path, char *const *argv);
+int  swiftos_tty_inject(unsigned char byte);
+unsigned int swiftos_tcget_lflag(int fd);
+int          swiftos_tcset_lflag(int fd, unsigned int lflag);
+```
+
+`swiftos_run` synchronously runs `path` with a NULL-terminated `argv` (fork +
+exec + wait, inheriting stdin/stdout/stderr) and returns the child's exit status
+(negative on error); `/bin/crond` uses it to launch scheduled jobs. `swiftos_tty_inject`
+injects one byte into the kernel tty input as if typed on the console (needs
+`CAP_CONSOLE`; `-1` EPERM without it) and backs the userland virtio-input driver
+feeding decoded keystrokes to the line discipline. `swiftos_tcget_lflag` and
+`swiftos_tcset_lflag` get/set the per-fd `c_lflag` termios word for an explicit
+fd — unlike `swiftos_set_echo`/`swiftos_set_raw`, which act on fd 0 — so a test
+can prove `tcgetattr`/`tcsetattr` route to the terminal behind a given fd.
+
+### Staged Image Updates
+
+```c
+int swiftos_update_stage_begin(unsigned long version, unsigned long total);
+int swiftos_update_stage_write(const void *buf, unsigned long count);
+int swiftos_update_stage_commit(void);
+int swiftos_update_stage_abort(void);
+
+int swiftos_kernel_install_begin(void);
+int swiftos_kernel_install_write(const void *buf, unsigned long count);
+int swiftos_kernel_install_commit(const void *entry);
+int swiftos_kernel_install_abort(void);
+```
+
+The `swiftos_update_stage_*` family streams a signed base image into the inactive
+A/B slot from a userland buffer: `begin` declares the monotonic OS `version`
+(which must exceed the store's anti-rollback floor) and `total` image length,
+`write` appends bytes, then `commit`/`abort` finalize or discard. The
+`swiftos_kernel_install_*` family streams a new host-signed kernel into the
+inactive ESP slot and commits its 104-byte signed manifest entry (the kernel
+verifies the hash plus a per-slot Ed25519 signature). All need `CAP_CONSOLE` and
+return 0 on success or a negative errno. These back `/bin/swos-stagebase` and
+`/bin/swos-kinstall` and complement the slot-promotion helpers in **Update Store**
+above.
+
 ## Compatibility Layer
 
 The newlib and compatibility surface is intentionally source-level, not ABI
