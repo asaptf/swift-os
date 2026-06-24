@@ -378,6 +378,18 @@ BASH_BASE_ELF :=
 BASH_PACK_CMD := echo "  (bash.elf NOT packed — build with INCLUDE_BASH=1 for /bin/bash)"
 endif
 
+# zsh (SH2) is baked into base.img by default, like bash. OPT-OUT the same way so
+# tests/hosts that do not need the zsh port can build a base image without it:
+# `make base-image INCLUDE_ZSH=0`. Default preserves the zsh bake.
+INCLUDE_ZSH ?= 1
+ifeq ($(INCLUDE_ZSH),1)
+ZSH_BASE_ELF := $(BUILD)/zsh.elf
+ZSH_PACK_CMD := cp $(BUILD)/zsh.elf $(BASE_ROOT)/bin/zsh
+else
+ZSH_BASE_ELF :=
+ZSH_PACK_CMD := echo "  (zsh.elf NOT packed — build with INCLUDE_ZSH=1 for /bin/zsh)"
+endif
+
 # SU-B: a signed test SWSITE bundle (+ a tampered copy) for site-bundle-test.
 # OPT-IN via INCLUDE_SITE_TEST=1 so production images carry no test fixtures.
 # The site-signing PUBLIC key is baked unconditionally (production `swupdate
@@ -609,9 +621,10 @@ BASE_EXEC_ELFS := \
 	$(BUILD)/ncdemo.elf \
 	$(BUILD)/glibdemo.elf \
 	$(BUILD)/mc.elf \
-	$(BASH_BASE_ELF)
+	$(BASH_BASE_ELF) \
+	$(ZSH_BASE_ELF)
 
-.PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test
+.PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
 .PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
@@ -2173,6 +2186,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/glib_test.sh
 	./tests/mc_test.sh
 	./tests/bash_test.sh
+	./tests/zsh_test.sh
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -2757,15 +2771,29 @@ $(ESP_DIR)/EFI/BOOT/BOOTAA64.EFI: $(EFI_APP)
 # uses the writable kernel-state file for mutable active-slot selection. Both
 # slots are the same image for now; A/B differentiation comes with staging a new
 # kernel into the inactive slot. make-disk.sh copies these into the GPT image.
-$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(KERNEL_BIN)
+# OS-1c: fixed-size (padded) ESP kernel slots. A slot file is the kernel image
+# zero-padded to KERNEL_SLOT_BYTES so the box can later overwrite it IN PLACE with
+# a different-size new kernel (the FAT writer does same-size-in-place only), and so
+# the per-slot signed manifest entry covers a fixed-length region. The loader loads
+# the whole padded file; trailing zeros are harmless (the kernel zeroes its own BSS
+# and the base ramdisk is allocated elsewhere). Host (here) and the on-box installer
+# pad identically so the SHA-256 over the padded slot matches.
+KERNEL_SLOT_BYTES := 4194304   # 4 MiB
+$(BUILD)/kernel-slot.bin: $(KERNEL_BIN) Makefile | $(BUILD)/.dir
+	@ksz=$$(wc -c < $(KERNEL_BIN)); if [ $$ksz -gt $(KERNEL_SLOT_BYTES) ]; then \
+	  echo "kernel.bin $$ksz B exceeds the $(KERNEL_SLOT_BYTES) B slot" >&2; exit 1; fi
+	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(KERNEL_SLOT_BYTES) 2>/dev/null
+	dd if=$(KERNEL_BIN) of=$@ conv=notrunc 2>/dev/null
+
+$(ESP_DIR)/EFI/swift-os/kernelA.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(KERNEL_BIN)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernelB.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	cp $(KERNEL_BIN) $@
-$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	cp $< $@
+$(ESP_DIR)/EFI/swift-os/kernel-boot: $(KERNELBOOT) $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
-	$(KERNELBOOT) $@ A $(KERNEL_BIN) $(KERNEL_BIN) $(IMG_SIGNING_SEED)
+	$(KERNELBOOT) $@ A $(BUILD)/kernel-slot.bin $(BUILD)/kernel-slot.bin $(IMG_SIGNING_SEED)
 
 # H3: stage the packed read-only base image on the ESP so the loader can read it
 # into RAM and hand the kernel a ramdisk (the path for boards whose boot disk —
@@ -3304,6 +3332,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo
 	cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
 	$(BASH_PACK_CMD)
+	$(ZSH_PACK_CMD)
 	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
 base-image: $(BASE_IMG)
@@ -3358,6 +3387,20 @@ bash-test: build $(QEMU_DTB) base-image
 # Must run before `make base-image`.
 $(BUILD)/bash.elf:
 	@echo "bash not built. Run: make bash" >&2; exit 1
+
+# SH2: cross-build zsh (needs `make ncurses` first for ZLE + terminal library).
+zsh:
+	./scripts/build-zsh.sh
+
+# zsh-test: boot the base image and verify zsh starts, runs arrays/functions,
+# and exits cleanly. Requires `make zsh` + `make base-image` first.
+zsh-test: build $(QEMU_DTB) base-image
+	./tests/zsh_test.sh
+
+# zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
+# Must run before `make base-image`.
+$(BUILD)/zsh.elf:
+	@echo "zsh not built. Run: make zsh" >&2; exit 1
 
 busybox-check:
 	./scripts/busybox-check.sh

@@ -171,6 +171,9 @@ private func tryAuthenticate(_ store: UnsafeMutablePointer<UInt8>, _ total: Int,
             let n = f5.len < lineMax - 1 ? f5.len : lineMax - 1
             for k in 0..<n { shell[k] = store[f5.start + k] }
             shell[n] = 0
+            // Emit the "shell ready" marker BEFORE exec so test harnesses can
+            // detect a successful login regardless of which shell is launched.
+            swiftos_puts("M12c: shell ready\n")
             _ = swiftos_exec_shell(UnsafeRawPointer(shell.baseAddress!).assumingMemoryBound(to: CChar.self))
         }
         swiftos_puts("console-login: exec of shell failed\n")

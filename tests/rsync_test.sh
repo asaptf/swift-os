@@ -44,7 +44,7 @@ rm -rf "$REPO_DIR"
 # needs the OS to boot (busybox ash + pkg + networking), so build without the
 # bash port (INCLUDE_BASH=0) to stay independent of it.
 rm -f "$BASE"
-( cd "$ROOT" && make BASE_IMG=build/base-rsync-repo.img PKG_DEFAULT_REPO_URL="$REPO_URL" INCLUDE_BASH=0 base-image ) >/dev/null 2>&1 || {
+( cd "$ROOT" && make BASE_IMG=build/base-rsync-repo.img PKG_DEFAULT_REPO_URL="$REPO_URL" INCLUDE_BASH=0 INCLUDE_ZSH=0 base-image ) >/dev/null 2>&1 || {
   echo "FAIL: cannot build default-repo base image" >&2; exit 2;
 }
 ( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {

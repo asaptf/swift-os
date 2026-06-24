@@ -19,6 +19,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DISK_IMG="$ROOT/build/swift-os.img"
 KERNELBOOT="$ROOT/build/kernelboot"
 KERNEL_BIN="$ROOT/build/kernel.bin"
+# OS-1c: the ESP slots are the kernel zero-padded to a fixed size; manifests and
+# corrupt-slot fixtures must use the SAME padded image so SHA-256 matches on disk.
+KERNEL_SLOT="$ROOT/build/kernel-slot.bin"
 SIGN_SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
@@ -30,6 +33,7 @@ PART_OFFSET=$((2048 * 512))
 [[ -f "$DISK_IMG" ]]   || { echo "FAIL: $DISK_IMG missing (run 'make disk')" >&2; exit 2; }
 [[ -x "$KERNELBOOT" ]] || { echo "FAIL: $KERNELBOOT missing (run 'make kernelboot')" >&2; exit 2; }
 [[ -f "$KERNEL_BIN" ]] || { echo "FAIL: $KERNEL_BIN missing (run 'make build')" >&2; exit 2; }
+[[ -f "$KERNEL_SLOT" ]] || { echo "FAIL: $KERNEL_SLOT missing (run 'make disk')" >&2; exit 2; }
 [[ -f "$SIGN_SEED" ]]  || { echo "FAIL: $SIGN_SEED missing (run 'make base-image')" >&2; exit 2; }
 for t in "$MCOPY" "$MDEL"; do [[ -x "$t" ]] || { echo "FAIL: missing mtools $t" >&2; exit 2; }; done
 
@@ -83,7 +87,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 
 # --- Case B: active=B, both slots present -> loader boots slot B -------------
 cp "$FRESH" "$WORK"
-"$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" "$SIGN_SEED" >/dev/null || fail "could not build active-B manifest"
+"$KERNELBOOT" "$MANI" B "$KERNEL_SLOT" "$KERNEL_SLOT" "$SIGN_SEED" >/dev/null || fail "could not build active-B manifest"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest into the ESP"
 boot_work
@@ -111,7 +115,7 @@ stop_qemu
 # loader must reject slot A and boot the (valid) slot B.
 cp "$FRESH" "$WORK"
 BADA="$(mktemp -t swiftos-uabk-bada.XXXXXX)"
-cp "$KERNEL_BIN" "$BADA"
+cp "$KERNEL_SLOT" "$BADA"
 printf '\xFF' | dd of="$BADA" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$BADA" ::/EFI/swift-os/kernelA.bin \
   || fail "could not write corrupt kernelA.bin"

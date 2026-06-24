@@ -116,7 +116,7 @@ send 'root'
 await "Password:" 90                       || fail "no password prompt"
 send 'swordfish'
 await "Welcome to swift-os, root" 120     || fail "root login did not complete"
-await "built-in shell (ash)" 120          || fail "root shell did not start"
+await "M12c: shell ready" 120          || fail "root shell did not start"
 
 # CR3 auto-start: the system crond was started by swos-init at boot (it is in the
 # default /etc/swos/services) and parsed the all-comments /etc/crontab to zero

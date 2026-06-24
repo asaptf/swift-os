@@ -92,7 +92,7 @@ send_line 'root'
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
-await "built-in shell (ash)" 60 || drive_fail "root shell did not start"
+await "M12c: shell ready" 60 || drive_fail "root shell did not start"
 
 # Run the controller self-test (P-256/X25519-heavy under TCG ⇒ generous timeout).
 send_line '/bin/sctld'

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# bash_test.sh — SH1 bash port acceptance.
+# zsh_test.sh — SH2 zsh port acceptance.
 #
-# Boots the base image, logs in as root, and runs /bin/bash. Verifies:
-#   1. Bash starts and reports its version via $BASH_VERSION.
-#   2. Basic arithmetic and variable expansion work.
-#   3. A for-loop (the simplest compound command) produces expected output.
-#   4. A pipeline (echo | cat) passes data through correctly.
-#   5. Bash exits cleanly, returning control to the ash shell.
+# Boots the base image, logs in as root, and runs /bin/zsh. Verifies:
+#   1. zsh reports its version via $ZSH_VERSION (SH2_VER=5.9).
+#   2. zsh arrays work: arr=(a b c); ${#arr} == 3.
+#   3. Arithmetic expansion works: $(( 6 * 7 )) == 42.
+#   4. A named function can be defined and called.
+#   5. zsh exits cleanly, returning control to the ash shell.
 #
-# Bash is built --without-job-control (no SIGTSTP/setpgid); interactive
-# editing via readline + ncurses is present. TERM=vt100 and HOME=/tmp are
-# baked into the binary so it works with an empty environment (see build-bash.sh).
+# zsh is built --disable-dynamic (static modules), --disable-multibyte.
+# ZLE (built-in line editor) uses libncurses for terminal handling.
+# TERM=vt100 and HOME=/tmp are baked into the binary (see build-zsh.sh).
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,9 +26,9 @@ if [[ ! -f "$DISK" ]]; then
         || { echo "FAIL: cannot build base.img" >&2; exit 2; }
 fi
 
-LOG="$(mktemp -t swiftos-bash.XXXXXX)"
-PIDFILE="$(mktemp -t swiftos-bash-pid.XXXXXX)"
-INFIFO="$(mktemp -u -t swiftos-bash-in.XXXXXX)"; mkfifo "$INFIFO"
+LOG="$(mktemp -t swiftos-zsh.XXXXXX)"
+PIDFILE="$(mktemp -t swiftos-zsh-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-zsh-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 stop_qemu() {
     if [[ -f "$PIDFILE" ]]; then
@@ -52,14 +52,14 @@ await() {
 }
 drive_fail() {
     echo "FAIL: $1" >&2
-    echo "--- serial (bash, control chars stripped) ---" >&2
+    echo "--- serial (zsh, control chars stripped) ---" >&2
     LC_ALL=C tr -cd '\11\12\15\40-\176' < "$LOG" 2>/dev/null | tail -80 >&2 || true
     exit 1
 }
 send_line() {
-    local line="$1" delay="${BASH_CHAR_DELAY:-0.02}" i
+    local line="$1" delay="${ZSH_CHAR_DELAY:-0.02}" i
     for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-    printf '\n' >&3; sleep "${BASH_SEND_DELAY:-0.15}"
+    printf '\n' >&3; sleep "${ZSH_SEND_DELAY:-0.15}"
 }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
@@ -72,7 +72,7 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-# Boot sequence: M7 tty demo → login → root shell.
+# Boot: M7 tty demo → login → root ash shell.
 await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
@@ -83,29 +83,27 @@ await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
-# Launch bash with --norc so it doesn't look for non-existent rc files.
-send_line '/bin/bash --norc --noprofile'
+# Launch zsh; --no-rcs skips all startup files (none exist anyway).
+send_line '/bin/zsh --no-rcs'
 
-# 1. Version: bash prints nothing on startup (no MOTD), but $BASH_VERSION is set.
-#    Use a unique marker so we don't confuse it with the shell prompt.
-await 'swift-os' 30 || await '#' 30 || true   # wait for prompt (either PS1 form)
-send_line 'echo SH1_VER=$BASH_VERSION'
-await 'SH1_VER=5.2' 30 || drive_fail "bash did not start or BASH_VERSION not set"
+# 1. Version.
+await '%' 30 || await '#' 30 || true   # wait for any prompt
+send_line 'echo SH2_VER=$ZSH_VERSION'
+await 'SH2_VER=5.9' 30 || drive_fail "zsh did not start or ZSH_VERSION not set"
 
-# 2. Arithmetic expansion.
-send_line 'echo SH1_ARITH=$(( 6 * 7 ))'
-await 'SH1_ARITH=42' 15 || drive_fail "arithmetic expansion failed"
+# 2. Arrays.
+send_line 'arr=(a b c); echo SH2_ARR=${#arr}'
+await 'SH2_ARR=3' 15 || drive_fail "array length expansion failed"
 
-# 3. For-loop (compound command).
-send_line 'for x in A B C; do echo SH1_LOOP_$x; done'
-await 'SH1_LOOP_A' 15 || drive_fail "for-loop did not produce output"
-await 'SH1_LOOP_C' 10 || drive_fail "for-loop did not complete"
+# 3. Arithmetic.
+send_line 'echo SH2_ARITH=$(( 6 * 7 ))'
+await 'SH2_ARITH=42' 15 || drive_fail "arithmetic expansion failed"
 
-# 4. Pipeline.
-send_line 'echo SH1_PIPE_OK | cat'
-await 'SH1_PIPE_OK' 15 || drive_fail "pipeline failed"
+# 4. Function definition and call.
+send_line 'greet() { echo "SH2_FUNC_$1" }; greet OK'
+await 'SH2_FUNC_OK' 15 || drive_fail "function definition/call failed"
 
-# 5. Exit back to the ash shell.
+# 5. Exit.
 send_line 'exit'
 await 'M12c: shell ready' 30 || await 'swift-os login:' 20 || true
 send_line 'exit'
@@ -118,11 +116,10 @@ QP=""
 clean="$(LC_ALL=C tr -cd '\11\12\15\40-\176' < "$LOG")"
 ok=1
 for marker in \
-    'SH1_VER=5.2' \
-    'SH1_ARITH=42' \
-    'SH1_LOOP_A' \
-    'SH1_LOOP_C' \
-    'SH1_PIPE_OK'; do
+    'SH2_VER=5.9' \
+    'SH2_ARR=3' \
+    'SH2_ARITH=42' \
+    'SH2_FUNC_OK'; do
     if grep -qF "$marker" <<<"$clean"; then
         echo "PASS: $marker"
     else
@@ -131,9 +128,9 @@ for marker in \
 done
 
 if (( ok )); then
-    echo "RESULT: bash ${BASH_VERSION:-5.2} started, executed compound commands, and exited cleanly."
+    echo "RESULT: zsh 5.9 started, executed arrays/arithmetic/functions, and exited cleanly."
     exit 0
 fi
-echo "--- serial (bash region) ---" >&2
+echo "--- serial (zsh region) ---" >&2
 sed -n '/built-in shell/,$p' <<<"$clean" | head -100 >&2
 exit 1
