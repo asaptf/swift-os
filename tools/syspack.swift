@@ -44,27 +44,75 @@ private func value(after flag: String, in args: [String]) -> String? {
     return args[i + 1]
 }
 
-// Build the SWSYS body (header + kernel || base). Mirrors sysbundle.swift offsets.
-private func buildBody(kernel: Data, base: Data, version: UInt64) -> Data {
-    let headerSize = 72
+// Build a v4 SWOSKERN manifest (232 bytes) over the padded kernel slot image: an
+// INDEPENDENT Ed25519 signature per slot over "SWOSKSLT"||u32 index||u64 size||
+// sha256 (52 bytes), signed with the image-signing seed. Mirrors tools/kernelboot.swift
+// and boot/efi/loader.c verify_slot_sig; the on-box installer (kernel/fs/esp.swift)
+// re-verifies the sliced per-slot entry against image_trust_root before trusting it.
+// Both slot entries cover the SAME padded image, so `swupdate os` can install into
+// whichever slot is inactive using that slot's entry.
+private func buildKernelManifest(paddedKernel: Data, seed: Data) -> Data {
+    let sha = sha256Data(paddedKernel)
+    let size = UInt64(paddedKernel.count)
+    func slotSig(_ index: UInt32) -> Data {
+        var msg = Data()
+        msg.append(contentsOf: Array("SWOSKSLT".utf8))
+        appendLE32(&msg, index)
+        appendLE64(&msg, size)
+        msg.append(sha)
+        precondition(msg.count == 52, "per-slot message must be 52 bytes")
+        var sig = [UInt8](repeating: 0, count: 64)
+        sig.withUnsafeMutableBytes { gb in
+            msg.withUnsafeBytes { mb in
+                seed.withUnsafeBytes { sb in
+                    ed25519Sign(message: mb.baseAddress!, 52, seed: sb.baseAddress!, signature: gb.baseAddress!)
+                }
+            }
+        }
+        return Data(sig)
+    }
+    var m = Data()
+    m.append(contentsOf: Array("SWOSKERN".utf8))  // 0
+    appendLE32(&m, 4)                              // 8  version (v4 per-slot)
+    appendLE32(&m, 0)                              // 12 active   (default; kernel-state overrides)
+    appendLE32(&m, 1)                              // 16 fallback
+    appendLE32(&m, 1)                              // 20 generation
+    appendLE64(&m, size)                           // 24  slotA size
+    m.append(sha)                                  // 32  slotA sha256
+    m.append(slotSig(0))                           // 64  slotA sig
+    appendLE64(&m, size)                           // 128 slotB size
+    m.append(sha)                                  // 136 slotB sha256
+    m.append(slotSig(1))                           // 168 slotB sig
+    precondition(m.count == 232, "v4 manifest must be 232 bytes")
+    return m
+}
+
+// Build the SWSYS v2 body (header + padded kernel || base || kernel manifest).
+// Mirrors sysbundle.swift offsets.
+private func buildBody(kernel paddedKernel: Data, base: Data, manifest: Data, version: UInt64) -> Data {
+    let headerSize = 80
     let kernelOff = headerSize
-    let baseOff = kernelOff + kernel.count
+    let baseOff = kernelOff + paddedKernel.count
+    let kmOff = baseOff + base.count
 
     var payload = Data()
-    payload.append(kernel)
+    payload.append(paddedKernel)
     payload.append(base)
+    payload.append(manifest)
     let sha = sha256Data(payload)
 
     var header = Data()
     header.append(contentsOf: Array("SWSYS001".utf8))   // off 0  (8 bytes)
-    appendLE32(&header, 1)                               // off 8  formatVersion
+    appendLE32(&header, 2)                               // off 8  formatVersion (v2)
     appendLE32(&header, 0)                               // off 12 flags (full)
     appendLE64(&header, version)                         // off 16 systemVersion
     appendLE32(&header, UInt32(kernelOff))               // off 24
-    appendLE32(&header, UInt32(kernel.count))            // off 28
+    appendLE32(&header, UInt32(paddedKernel.count))      // off 28
     appendLE32(&header, UInt32(baseOff))                 // off 32
     appendLE32(&header, UInt32(base.count))              // off 36
-    header.append(sha)                                   // off 40 (32 bytes) -> header is 72
+    appendLE32(&header, UInt32(kmOff))                   // off 40
+    appendLE32(&header, UInt32(manifest.count))          // off 44
+    header.append(sha)                                   // off 48 (32 bytes) -> header is 80
     precondition(header.count == headerSize, "header must be \(headerSize) bytes")
 
     var body = Data()
@@ -90,9 +138,9 @@ private func signBody(_ body: Data, seed: Data) -> Data {
 }
 
 private func doCreate(_ args: [String]) {
-    // syspack create <kernel.bin> <base.img> <out.swsys> --version N --seed <seed>
+    // syspack create <kernel.bin> <base.img> <out.swsys> --version N --seed <seed> [--slot-bytes N]
     guard args.count >= 5 else {
-        fail("usage: syspack create <kernel.bin> <base.img> <out.swsys> --version N --seed <seed>")
+        fail("usage: syspack create <kernel.bin> <base.img> <out.swsys> --version N --seed <seed> [--slot-bytes N]")
     }
     let kernelPath = args[2], basePath = args[3], outPath = args[4]
     guard let vStr = value(after: "--version", in: args), let version = UInt64(vStr) else {
@@ -100,6 +148,10 @@ private func doCreate(_ args: [String]) {
     }
     if version == 0 { fail("--version must be > 0 (0 is the anti-rollback floor)") }
     guard let seedPath = value(after: "--seed", in: args) else { fail("missing --seed <seed>") }
+    // The ESP kernel slot is a fixed size; the carried image is the kernel padded
+    // to it (must match KERNEL_SLOT_BYTES so the on-box install hash matches).
+    let slotBytes = Int(UInt64(value(after: "--slot-bytes", in: args) ?? "4194304") ?? 4194304)
+    if slotBytes <= 0 { fail("--slot-bytes must be > 0") }
     guard let kernel = try? Data(contentsOf: URL(fileURLWithPath: kernelPath)), !kernel.isEmpty else {
         fail("cannot read kernel \(kernelPath)")
     }
@@ -109,16 +161,22 @@ private func doCreate(_ args: [String]) {
     guard let seed = try? Data(contentsOf: URL(fileURLWithPath: seedPath)) else {
         fail("cannot read seed \(seedPath)")
     }
-    let body = buildBody(kernel: kernel, base: base, version: version)
+    if kernel.count > slotBytes { fail("kernel \(kernel.count) B exceeds the \(slotBytes) B slot") }
+    var paddedKernel = kernel
+    if paddedKernel.count < slotBytes {
+        paddedKernel.append(Data(repeating: 0, count: slotBytes - paddedKernel.count))
+    }
+    let manifest = buildKernelManifest(paddedKernel: paddedKernel, seed: seed)
+    let body = buildBody(kernel: paddedKernel, base: base, manifest: manifest, version: version)
     let bundle = signBody(body, seed: seed)
     do { try bundle.write(to: URL(fileURLWithPath: outPath), options: .atomic) }
     catch { fail("cannot write \(outPath): \(error)") }
-    print("syspack: wrote \(outPath) (version \(version), kernel \(kernel.count) B, base \(base.count) B, total \(bundle.count) B)")
+    print("syspack: wrote \(outPath) (version \(version), kernel \(paddedKernel.count) B padded from \(kernel.count) B, base \(base.count) B, manifest \(manifest.count) B, total \(bundle.count) B)")
 }
 
 private func describe(_ r: SysBundleVerify) -> (Int32, String) {
     switch r {
-    case .ok(let h): return (0, "OK (version \(h.systemVersion), kernel \(h.kernelLen) B, base \(h.baseLen) B)")
+    case .ok(let h): return (0, "OK (version \(h.systemVersion), kernel \(h.kernelLen) B, base \(h.baseLen) B, manifest \(h.kmanifestLen) B)")
     case .badSize: return (2, "INVALID: too small")
     case .badSignature: return (2, "INVALID: signature")
     case .badMagic: return (2, "INVALID: magic")

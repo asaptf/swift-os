@@ -620,13 +620,15 @@ private func site(_ url: UnsafeMutablePointer<CChar>) -> Int32 {
 //
 // `swupdate os <url>` / `swupdate os-apply-local <file>` apply a signed SWSYS
 // system-update bundle (tools/syspack.swift): verify its Ed25519 signature and
-// payload SHA against the baked OS-signing key, then stream the *base* image half
-// into the INACTIVE A/B slot via the capability-gated kernel staging syscalls
-// (OS-3b) and promote that slot for the next boot. The kernel enforces the
-// monotonic anti-rollback floor at stage-begin, so an older (even validly signed)
-// bundle is refused. The kernel half rides in the bundle for forward
-// compatibility but is not yet written to the ESP — coordinated kernel staging is
-// the deferred boot-path work; the base half alone is a complete, testable update.
+// payload SHA against the baked OS-signing key, then stream BOTH halves into the
+// INACTIVE A/B slot via the capability-gated kernel syscalls — the base image into
+// the SWOSBOOT store slot (OS-3b) and, when an ESP kernel A/B is present, the
+// padded kernel into the inactive ESP slot with its per-slot signed manifest entry
+// (OS-1c-2b/3) — then flip the single coordinated selector so kernel + base
+// activate together (OS-1). The kernel enforces the monotonic anti-rollback floor
+// at base stage-begin and re-verifies the per-slot kernel signature at install
+// commit, so an older or unsigned OS is refused. On a store-only box (no ESP) the
+// kernel half is skipped and only the base is updated.
 
 private func loadOsPubkey() -> [UInt8]? {
     guard let raw = readFileFully(cz(pOsRootPub), 64), raw.count == 32 else { return nil }
@@ -689,6 +691,45 @@ private func applyOsBundleBytes(_ bundle: [UInt8]) -> Int32 {
     if swiftos_update_stage_commit() != 0 {
         put("swupdate: os stage commit rejected (base is not a signed v3 image)\n"); return 1
     }
+
+    // 4b. (OS-1c-3) Install the kernel half into the inactive ESP slot too, when an
+    // ESP kernel A/B is present, so the coordinated activate below moves kernel +
+    // base together. Stream the padded kernel image, then commit the per-slot signed
+    // entry sliced from the bundle's v4 manifest for the slot the kernel reserved
+    // (the kernel re-verifies that entry's signature + the on-disk re-hash). On a
+    // store-only box (no ESP) begin returns ENODEV and we skip — base-only activate
+    // below handles it. Neither half is activated until step 5's selector flip, so a
+    // failure here leaves the box on the current slot (the staged base is inert).
+    let kSlot = swiftos_kernel_install_begin()
+    if kSlot >= 0 {
+        var koff = 0
+        var kOK = true
+        bundle.withUnsafeBytes { raw in
+            let kp = raw.baseAddress!.advanced(by: sigSize + hdr.kernelOff)
+            while koff < hdr.kernelLen {
+                var n = hdr.kernelLen - koff
+                if n > osStageChunk { n = osStageChunk }
+                if swiftos_kernel_install_write(kp.advanced(by: koff), UInt(n)) != 0 { kOK = false; break }
+                koff += n
+            }
+        }
+        if !kOK {
+            _ = swiftos_kernel_install_abort()
+            put("swupdate: kernel stage write failed\n"); return 1
+        }
+        // Slice the 104-byte per-slot entry for the reserved slot (A@24, B@128).
+        let entryOff = sigSize + hdr.kmanifestOff + (kSlot == 0 ? 24 : 128)
+        let kcrc = bundle.withUnsafeBytes { raw in
+            swiftos_kernel_install_commit(raw.baseAddress!.advanced(by: entryOff))
+        }
+        if kcrc != 0 {
+            put("swupdate: kernel install commit rejected (entry sig/hash) — kernel NOT updated\n"); return 1
+        }
+        put("swupdate: new kernel installed into the inactive ESP slot (verified)\n")
+    } else if kSlot != -19 {   // -19 ENODEV = store-only box (no ESP); anything else is fatal
+        put("swupdate: kernel install begin failed\n"); return 1
+    }
+
     // 5. Coordinated activate (OS-1). When an ESP kernel-state is present it is the
     // single A/B authority: flip it so the loader boots the other kernel slot and
     // the base follows it on the next boot — kernel + base activate together. On a

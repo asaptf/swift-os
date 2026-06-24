@@ -26,22 +26,33 @@
 // File layout: [64-byte Ed25519 signature over body][body].
 //   body (little-endian):
 //     off  0  magic "SWSYS001"        (8 bytes)
-//     off  8  u32 formatVersion (= 1)
+//     off  8  u32 formatVersion (= 2)
 //     off 12  u32 flags          (0 = full image; deltas reserve bit 0)
 //     off 16  u64 systemVersion  (monotonic; anti-rollback)
-//     off 24  u32 kernelOff      (body-relative offset of the kernel image)
-//     off 28  u32 kernelLen
+//     off 24  u32 kernelOff      (body-relative offset of the PADDED kernel slot image)
+//     off 28  u32 kernelLen      (== the ESP slot size, e.g. 4 MiB)
 //     off 32  u32 baseOff        (body-relative offset of the SWOSBASE image)
 //     off 36  u32 baseLen
-//     off 40  payloadSha256      (32 bytes; SHA-256 of body[72..])
-//     off 72  payload: kernel image bytes, then base image bytes
+//     off 40  u32 kmanifestOff   (body-relative offset of the v4 SWOSKERN manifest)
+//     off 44  u32 kmanifestLen   (== 232; per-slot signed entries over the kernel)
+//     off 48  payloadSha256      (32 bytes; SHA-256 of body[80..])
+//     off 80  payload: padded kernel image, then base image, then kernel manifest
+//
+// OS-1c-3 (format v2): the bundle now carries the kernel as a fixed-size PADDED
+// slot image plus the v4 SWOSKERN manifest (boot/efi/loader.c) for it — a per-slot
+// Ed25519 signature over each slot index, signed with the same image-signing key.
+// `swupdate os` streams the kernel into the inactive ESP slot and commits the
+// matching per-slot entry (sliced from this manifest) via the OS-1c-2b install
+// syscalls, so one bundle moves kernel + base together. v1 (kernel not written,
+// 72-byte header) is superseded; bundles are regenerated, none persist on disk.
 
 enum SysBundleFormat {
     static let magicLen = 8
     static let sigSize = 64        // leading detached Ed25519 signature
-    static let headerSize = 72     // body header (payload begins here)
-    static let formatVersion: UInt32 = 1
+    static let headerSize = 80     // body header (payload begins here)
+    static let formatVersion: UInt32 = 2
     static let flagFull: UInt32 = 0
+    static let kmanifestSize = 232 // a v4 SWOSKERN manifest (fixed size)
 
     // Body field offsets.
     static let offFormatVersion = 8
@@ -51,7 +62,9 @@ enum SysBundleFormat {
     static let offKernelLen = 28
     static let offBaseOff = 32
     static let offBaseLen = 36
-    static let offPayloadSha = 40
+    static let offKmanifestOff = 40
+    static let offKmanifestLen = 44
+    static let offPayloadSha = 48
 }
 
 /// A parsed, layout-validated SWSYS body header (signature/SHA checked separately).
@@ -63,6 +76,8 @@ struct SysBundleHeader {
     var kernelLen: Int
     var baseOff: Int
     var baseLen: Int
+    var kmanifestOff: Int       // body-relative; the 232-byte v4 SWOSKERN manifest
+    var kmanifestLen: Int
 }
 
 /// Outcome of verifying a full SWSYS file (signature + magic + layout + payload
@@ -116,20 +131,25 @@ func parseSysBundleHeader(_ body: UnsafeRawPointer, _ bodyLen: Int) -> SysBundle
     let kLen = Int(sysLd32(body, SysBundleFormat.offKernelLen))
     let bOff = Int(sysLd32(body, SysBundleFormat.offBaseOff))
     let bLen = Int(sysLd32(body, SysBundleFormat.offBaseLen))
+    let mOff = Int(sysLd32(body, SysBundleFormat.offKmanifestOff))
+    let mLen = Int(sysLd32(body, SysBundleFormat.offKmanifestLen))
 
-    // Both regions must be non-empty, start at/after the header, and end within
-    // the body. Checks are written to avoid Int overflow (offsets are u32-derived,
-    // so each fits and the sum fits in Int on a 64-bit host/kernel).
+    // All three regions must be non-empty, start at/after the header, and end
+    // within the body. Checks are written to avoid Int overflow (offsets are
+    // u32-derived, so each fits and the sum fits in Int on a 64-bit host/kernel).
     let h = SysBundleFormat.headerSize
     if kLen < 1 || bLen < 1 { return nil }
+    if mLen != SysBundleFormat.kmanifestSize { return nil }   // a fixed-size v4 SWOSKERN manifest
     if kOff < h || kOff > bodyLen || kLen > bodyLen - kOff { return nil }
     if bOff < h || bOff > bodyLen || bLen > bodyLen - bOff { return nil }
+    if mOff < h || mOff > bodyLen || mLen > bodyLen - mOff { return nil }
 
     return SysBundleHeader(formatVersion: SysBundleFormat.formatVersion,
                            flags: sysLd32(body, SysBundleFormat.offFlags),
                            systemVersion: sysLd64(body, SysBundleFormat.offSystemVersion),
                            kernelOff: kOff, kernelLen: kLen,
-                           baseOff: bOff, baseLen: bLen)
+                           baseOff: bOff, baseLen: bLen,
+                           kmanifestOff: mOff, kmanifestLen: mLen)
 }
 
 /// Verify a complete SWSYS file end to end: Ed25519 signature over the body

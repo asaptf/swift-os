@@ -452,6 +452,32 @@ OS_STAGE_DEPS :=
 OS_STAGE_PACK_CMD := true
 endif
 
+# OS-1c-2b: fixtures for uefi-kinstall-test — a genuinely NEW kernel image (the
+# padded slot with one trailing pad byte flipped, so it has a DISTINCT sha256 but
+# still boots; the flipped byte is in the zero-pad past the real kernel) plus its
+# host-signed 104-byte manifest entries, sliced out of a kernelboot-built v4
+# manifest: entryB (slot index 1, valid for install into the inactive B slot),
+# entryA (slot index 0 over the same image — replayed into B it must be rejected
+# by the per-slot index binding), and entry-badsig (entryB with the signature
+# zeroed — must be rejected). Opt-in via INCLUDE_OS_KINSTALL_TEST=1 so production
+# images carry no test fixtures. The rules that build these live next to the
+# kernel-slot.bin rule (KERNEL_SLOT_BYTES is defined there).
+KINSTALL_TEST_NEWKERNEL := $(BUILD)/kinstall-newkernel.bin
+KINSTALL_TEST_ENTRY_B := $(BUILD)/kinstall-entryB.bin
+KINSTALL_TEST_ENTRY_A := $(BUILD)/kinstall-entryA.bin
+KINSTALL_TEST_ENTRY_BADSIG := $(BUILD)/kinstall-entry-badsig.bin
+# OS-1c-3b: a signed SWSYS v2 bundle whose kernel half is the distinct new kernel
+# (+ the tiny test base), so `swupdate os` install-then-flips a genuinely new kernel.
+KINSTALL_TEST_BUNDLE := $(BUILD)/kinstall-os.swsys
+INCLUDE_OS_KINSTALL_TEST ?= 0
+ifeq ($(INCLUDE_OS_KINSTALL_TEST),1)
+KINSTALL_TEST_DEPS := $(KINSTALL_TEST_NEWKERNEL) $(KINSTALL_TEST_ENTRY_B) $(KINSTALL_TEST_ENTRY_A) $(KINSTALL_TEST_ENTRY_BADSIG) $(KINSTALL_TEST_BUNDLE)
+KINSTALL_TEST_PACK_CMD := mkdir -p $(BASE_ROOT)/usr/share/swos-kinstall-test; cp $(KINSTALL_TEST_NEWKERNEL) $(BASE_ROOT)/usr/share/swos-kinstall-test/newkernel.bin; cp $(KINSTALL_TEST_ENTRY_B) $(BASE_ROOT)/usr/share/swos-kinstall-test/entryB.bin; cp $(KINSTALL_TEST_ENTRY_A) $(BASE_ROOT)/usr/share/swos-kinstall-test/entryA.bin; cp $(KINSTALL_TEST_ENTRY_BADSIG) $(BASE_ROOT)/usr/share/swos-kinstall-test/entry-badsig.bin; cp $(KINSTALL_TEST_BUNDLE) $(BASE_ROOT)/usr/share/swos-kinstall-test/os.swsys
+else
+KINSTALL_TEST_DEPS :=
+KINSTALL_TEST_PACK_CMD := true
+endif
+
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -506,6 +532,7 @@ USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
 USER_SWOSKSTAGE_ELF := $(BUILD)/swos-kstage.elf
 USER_SWOSKACTIVATE_ELF := $(BUILD)/swos-kactivate.elf
 USER_SWOSKCONFIRM_ELF := $(BUILD)/swos-kconfirm.elf
+USER_SWOSKINSTALL_ELF := $(BUILD)/swos-kinstall.elf
 USER_SWOSSTAGEBASE_ELF := $(BUILD)/swos-stagebase.elf
 USER_LS_ELF := $(BUILD)/ls.elf
 USER_SWUPDATE_ELF := $(BUILD)/swupdate.elf
@@ -601,6 +628,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SWOSKSTAGE_ELF) \
 	$(USER_SWOSKACTIVATE_ELF) \
 	$(USER_SWOSKCONFIRM_ELF) \
+	$(USER_SWOSKINSTALL_ELF) \
 	$(USER_SWOSSTAGEBASE_ELF) \
 	$(USER_LS_ELF) \
 	$(USER_SWUPDATE_ELF) \
@@ -693,6 +721,7 @@ BASE_EXEC_ELFS := \
 	$(ZSH_BASE_ELF)
 
 .PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test uefi-kinstall-test uefi-os-install-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test c6-cell-accounting-test c6-cell-create-test c6-cell-namespace-test c6-cell-lifecycle-test c6-cell-service-test c7-cell-pagecap-test c7-cell-handlecap-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
@@ -978,6 +1007,9 @@ $(BUILD)/user_swoskactivate.o: userland/swos-kactivate.swift userland/lib/swift_
 
 $(BUILD)/user_swoskconfirm.o: userland/swos-kconfirm.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kconfirm.swift -o $@
+
+$(BUILD)/user_swoskinstall.o: userland/swos-kinstall.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-kinstall.swift -o $@
 
 $(BUILD)/user_swosstagebase.o: userland/swos-stagebase.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/swos-stagebase.swift -o $@
@@ -1357,6 +1389,9 @@ $(USER_SWOSKACTIVATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUI
 
 $(USER_SWOSKCONFIRM_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskconfirm.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskconfirm.o -o $@
+
+$(USER_SWOSKINSTALL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskinstall.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swoskinstall.o -o $@
 
 $(USER_SWOSSTAGEBASE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosstagebase.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_swosstagebase.o -o $@
@@ -2446,6 +2481,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/uefi_krollback_test.sh
 	$(MAKE) os-coordinate-test
 	$(MAKE) os-coordinate-activate-test
+	$(MAKE) uefi-kinstall-test
+	$(MAKE) uefi-os-install-test
 	./tests/fb_vi_test.sh
 
 smp-state-audit:
@@ -2580,7 +2617,7 @@ os-stage-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 # from a host TLS server (slirp 10.0.2.2), verifies it, and stages the base image
 # into the inactive slot + activates it; anti-rollback + bad-signature rejected.
 # Needs python3 + openssl (SKIPs without them). base-image carries os-root.pub.
-os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_IMG)
+os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_IMG) $(BUILD)/kernel-slot.bin
 	./tests/os_update_test.sh
 
 # OS-5: health-confirm + anti-rollback floor bump. swupdate confirm marks the
@@ -2607,6 +2644,32 @@ os-coordinate-activate-test: build uefi updatestore $(TEST_BASE_IMG) $(TEST_OS_B
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
 	./tests/os_coordinate_activate_test.sh
+
+# OS-1c-2b: install a genuinely NEW kernel into the inactive ESP slot. Boots a
+# UEFI/ESP disk under AAVMF, corrupts slot B, then /bin/swos-kinstall streams a
+# distinct host-signed kernel image into slot B and commits its per-slot manifest
+# entry — with the kernel verifying the on-disk re-hash + the per-slot Ed25519
+# signature. Index-mismatched and bad-signature entries are rejected. Then flips
+# the ESP selector (swos-kactivate) and reboots to prove the loader boots the
+# freshly installed slot B. Needs the baked fixtures (INCLUDE_OS_KINSTALL_TEST=1);
+# rebuilds the base to carry them. SKIPs without AAVMF.
+uefi-kinstall-test: build uefi updatestore kernelboot $(KINSTALL_TEST_DEPS)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_OS_KINSTALL_TEST=1
+	./tests/uefi_kinstall_test.sh
+
+# OS-1c-3b: one SWSYS bundle moves kernel + base. Boots the coordinated topology
+# (UEFI kernel A/B on the ESP + a SWOSBOOT store) under AAVMF, reaches a shell, and
+# runs `swupdate os-apply-local` on a baked v2 bundle whose kernel half is a
+# DISTINCT kernel. swupdate streams the base into the inactive store slot AND the
+# kernel into the inactive ESP slot (committing the per-slot entry sliced from the
+# bundle's manifest), then flips the single ESP selector. Asserts both halves
+# staged + the flip, and (host) that the ESP slot now holds the new kernel while
+# the active slot is untouched. Needs the fixtures (INCLUDE_OS_KINSTALL_TEST=1).
+uefi-os-install-test: build uefi updatestore kernelboot $(KINSTALL_TEST_DEPS)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_OS_KINSTALL_TEST=1
+	./tests/uefi_os_install_test.sh
 
 # Power control: /bin/reboot issues PSCI SYSTEM_RESET (machine resets), /bin/shutdown
 # issues PSCI SYSTEM_OFF (QEMU exits), and both are capConsole-gated. The reset path
@@ -3090,6 +3153,32 @@ $(BUILD)/kernel-slot.bin: $(KERNEL_BIN) Makefile | $(BUILD)/.dir
 	dd if=/dev/zero of=$@ bs=1 count=0 seek=$(KERNEL_SLOT_BYTES) 2>/dev/null
 	dd if=$(KERNEL_BIN) of=$@ conv=notrunc 2>/dev/null
 
+# OS-1c-2b test fixtures (built only when referenced via INCLUDE_OS_KINSTALL_TEST=1):
+# a DISTINCT-but-bootable kernel image + its host-signed per-slot manifest entries.
+# The flipped byte is the last byte of the padded slot — in the zero-pad well past
+# the real kernel — so the sha256 differs while the kernel still boots identically.
+$(KINSTALL_TEST_NEWKERNEL): $(BUILD)/kernel-slot.bin
+	cp $< $@
+	printf '\xA5' | dd of=$@ bs=1 seek=$$(( $(KERNEL_SLOT_BYTES) - 1 )) count=1 conv=notrunc 2>/dev/null
+# Slot-B entry (index 1) over the new image: valid for install into the inactive B.
+$(BUILD)/kinstall-manifest-b: $(KERNELBOOT) $(BUILD)/kernel-slot.bin $(KINSTALL_TEST_NEWKERNEL) $(IMG_SIGNING_SEED)
+	$(KERNELBOOT) $@ A $(BUILD)/kernel-slot.bin $(KINSTALL_TEST_NEWKERNEL) $(IMG_SIGNING_SEED)
+$(KINSTALL_TEST_ENTRY_B): $(BUILD)/kinstall-manifest-b
+	dd if=$< of=$@ bs=1 skip=128 count=104 2>/dev/null
+# Slot-A entry (index 0) over the SAME new image: a correctly-signed entry for the
+# WRONG slot index — commit into slot B must reject it (per-slot index binding).
+$(BUILD)/kinstall-manifest-a: $(KERNELBOOT) $(KINSTALL_TEST_NEWKERNEL) $(IMG_SIGNING_SEED)
+	$(KERNELBOOT) $@ A $(KINSTALL_TEST_NEWKERNEL) $(KINSTALL_TEST_NEWKERNEL) $(IMG_SIGNING_SEED)
+$(KINSTALL_TEST_ENTRY_A): $(BUILD)/kinstall-manifest-a
+	dd if=$< of=$@ bs=1 skip=24 count=104 2>/dev/null
+# entryB with the 64-byte signature zeroed: a broken/unsigned entry, must be rejected.
+$(KINSTALL_TEST_ENTRY_BADSIG): $(KINSTALL_TEST_ENTRY_B)
+	cp $< $@
+	dd if=/dev/zero of=$@ bs=1 seek=40 count=64 conv=notrunc 2>/dev/null
+# OS-1c-3b: a SWSYS v2 bundle carrying the distinct new kernel + the tiny test base.
+$(KINSTALL_TEST_BUNDLE): $(SYSPACK) $(KINSTALL_TEST_NEWKERNEL) $(TEST_BASE_IMG) $(IMG_SIGNING_SEED)
+	$(SYSPACK) create $(KINSTALL_TEST_NEWKERNEL) $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED) --slot-bytes $(KERNEL_SLOT_BYTES)
+
 $(ESP_DIR)/EFI/swift-os/kernelA.bin: $(BUILD)/kernel-slot.bin
 	@mkdir -p $(ESP_DIR)/EFI/swift-os
 	cp $< $@
@@ -3184,11 +3273,12 @@ $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift 
 $(TEST_BASE_IMG): $(BASEPACK) $(IMG_SIGNING_SEED) tests/fixtures/test-base/README.txt Makefile | $(BUILD)/.dir
 	$(BASEPACK) tests/fixtures/test-base $@ $(IMG_SIGNING_SEED)
 
-# OS-1b: a tiny signed SWSYS bundle (kernel stub + the test base, version 2) for
-# the no-network coordinated-activate test. The kernel half is a stand-in (only
-# the base half is applied today); both halves use the tiny SWOSBASE fixture.
-$(TEST_OS_BUNDLE): $(SYSPACK) $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
-	$(SYSPACK) create $(TEST_BASE_IMG) $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED)
+# OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
+# SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
+# coordinated-activate test. The base half is applied by os-coordinate-activate-test;
+# the kernel half + manifest are what OS-1c-3b's `swupdate os` installs.
+$(TEST_OS_BUNDLE): $(SYSPACK) $(BUILD)/kernel-slot.bin $(TEST_BASE_IMG) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	$(SYSPACK) create $(BUILD)/kernel-slot.bin $(TEST_BASE_IMG) $@ --version 2 --seed $(IMG_SIGNING_SEED) --slot-bytes $(KERNEL_SLOT_BYTES)
 
 $(SWPKG): tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
 	$(HOST_SWIFTC) tools/swpkg.swift tools/packfs.swift kernel/crypto/sha256.swift -o $@
@@ -3475,7 +3565,7 @@ $(KERNELBOOT): tools/kernelboot.swift kernel/crypto/sha256.swift kernel/crypto/e
 
 kernelboot: $(KERNELBOOT)
 
-$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) $(SITE_SIGNING_PUB) $(SITE_TEST_DEPS) $(OS_STAGE_DEPS) Makefile
+$(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(PKGREPO_PUB) $(MODEL_BIN) $(MODEL_TOK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(MODELSIGN) $(SIGNING_SEED) $(SIGNING_PUB) $(IMG_SIGNING_SEED) $(IMG_SIGNING_PUB) $(SSHD_HOST_SEED_FILE) $(SSHD_KEX_SEED_FILE) $(SSHD_AUTHORIZED_KEYS_FILE) $(NET_IPV6_CONFIG_FILE) $(SWOS_SERVICES_FILE) $(SQLITE_BIN) $(NGINX_BIN) $(NGINX_CERT) $(SITE_SIGNING_PUB) $(SITE_TEST_DEPS) $(OS_STAGE_DEPS) $(KINSTALL_TEST_DEPS) Makefile
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
@@ -3522,6 +3612,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(IMG_SIGNING_PUB) $(BASE_ROOT)/etc/swupdate/os-root.pub
 	$(SITE_TEST_PACK_CMD)
 	$(OS_STAGE_PACK_CMD)
+	$(KINSTALL_TEST_PACK_CMD)
 	cp $(USER_SWOSINIT_ELF) $(BASE_ROOT)/bin/swos-init
 	cp $(USER_TTYDEMO_ELF) $(BASE_ROOT)/bin/ttydemo
 	cp $(USER_ARGVDEMO_ELF) $(BASE_ROOT)/bin/argvdemo
@@ -3605,6 +3696,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SWOSKSTAGE_ELF) $(BASE_ROOT)/bin/swos-kstage
 	cp $(USER_SWOSKACTIVATE_ELF) $(BASE_ROOT)/bin/swos-kactivate
 	cp $(USER_SWOSKCONFIRM_ELF) $(BASE_ROOT)/bin/swos-kconfirm
+	cp $(USER_SWOSKINSTALL_ELF) $(BASE_ROOT)/bin/swos-kinstall
 	cp $(USER_SWOSSTAGEBASE_ELF) $(BASE_ROOT)/bin/swos-stagebase
 	cp $(USER_LS_ELF) $(BASE_ROOT)/bin/ls
 	cp $(USER_SWUPDATE_ELF) $(BASE_ROOT)/bin/swupdate

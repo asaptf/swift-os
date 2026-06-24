@@ -453,13 +453,17 @@ The long-term syscall shape should prefer `spawn` and explicit inherited handles
 central process primitive. `fork` may be emulated or partially supported for compatibility with selected
 ports, but swift-os should not make copy-on-write Unix process cloning the foundation of its design.
 
-## Future isolation model: Cells (record, don't build yet)
+## Isolation model: Cells (implemented as composition — C6)
 
-swift-os will eventually use kernel-native, capability-based **Cells**: lightweight isolated execution domains
-inspired by FreeBSD jails and Solaris zones, but designed around immutable base images, private tmpfs scratch,
-explicit capabilities, resource accounting, and direct kernel lifecycle management.
+**Status: implemented (C6a–C6e, 2026-06).** swift-os uses capability-based **Cells**: lightweight isolated
+execution domains designed around immutable base images, private tmpfs scratch, explicit capabilities,
+resource accounting, and **userland-supervised lifecycle management** — a composition over a cheap per-process
+`CellId` tag, **NOT a fat in-kernel object** (the deliberate departure from FreeBSD jails / Solaris zones; see
+the Cell-as-composition decision in CAPABILITIES.md §5).
 
-See [CAPABILITIES.md](CAPABILITIES.md) for the handle/capability ABI and the Cell-as-composition decision.
+See [CAPABILITIES.md](CAPABILITIES.md) §5–§6 for the handle/capability ABI, the Cell-as-composition decision,
+and the C6a–C6e milestone record (per-cell accounting → creation + spawn-into-cell by handle → namespace root
+→ resource cap + enumerate + teardown → one-service-per-cell end to end).
 
 Cells are not Docker compatibility. They do not depend on Linux namespaces, cgroups, overlayfs, privileged
 containers, or a container daemon. Docker is an ecosystem and packaging model; Cells are an operating-system
@@ -475,18 +479,21 @@ A cell owns or references:
 - lifecycle state (`created`, `running`, `stopping`, `dead`);
 - observability counters and event streams.
 
-Initial implementation constraints:
+What C6 delivered (the bring-up constraints below are now satisfied):
 
-- M0-M8 run in a single default/global cell.
-- M4 process structures should leave room for a `CellId` or security context.
-- M5 VFS lookup should be designed around process/cell `root` and `cwd`, not global path state.
-- M6 process launch should be shaped like `spawn(image, argv, env, inheritedHandles, limits)`.
-- M7 signals, process groups, and terminal control should be cell-aware once multiple cells exist.
-- the bring-up userland runs inside the default cell; full cells remain future work.
+- the system still boots into the single default/global cell (`globalCell`); cells are created and populated
+  explicitly by a supervisor via `cell_create`/`cell_spawn` (C6b).
+- `ProcessSecurityContext` carries the `CellId` tag; per-cell resource accounting aggregates by it (C6a).
+- VFS lookup is rooted in the process/cell `root` + `cwd` — a cell confines its members to a namespace
+  subtree, reusing the C3 confinement machinery (C6c).
+- process launch is the explicit-handle `cell_spawn(cell, path, argv, inheritedHandles)` shape with a
+  resident-page resource cap (C6b/C6d).
+- a cell's lifecycle (member enumeration + teardown + CellId reclamation) is the supervisor walking the
+  job tree, with the per-process tag as the kernel backstop — no atomic in-kernel destroy (C6d, §5.3).
 
-Explicitly postponed beyond bring-up (future cells / Phase 2 work): network isolation, OCI image
-compatibility, image registries, overlay layers, seccomp-like policy VMs, multi-user accounting, nested cells,
-live migration, and SMP-aware resource scheduling.
+Still postponed (further cell work / Phase 2): richer per-cell limits (handle/CPU caps, intra-member page
+enforcement), network isolation, OCI image compatibility, image registries, overlay layers, seccomp-like
+policy VMs, multi-user accounting, nested cells, live migration, and SMP-aware resource scheduling.
 
 ## Identity and login model
 

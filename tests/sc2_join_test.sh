@@ -102,8 +102,9 @@ await "SC2: SELFTEST PASS" 240 || drive_fail "/bin/sctld self-test did not pass"
 send_line '/bin/slet'
 await "slet: node identity OK" 60 || drive_fail "/bin/slet identity self-check did not pass"
 # SC3: the reconcile loop + Cell seam compile into slet; the self-check runs the image
-# verifier + C6 adapter on-device. C6 is not implemented, so the adapter is a documented
-# stub and the real Cell path is deferred — assert that honest marker, not a faked Cell.
+# verifier + C6 adapter on-device. Kernel C6 exists, but the SwiftCube adapter is not yet
+# wired to it (SC3), so it still returns .unavailable and the real Cell path is deferred —
+# assert that honest marker, not a faked Cell.
 await "slet: SC3 reconcile loop" 60 || drive_fail "/bin/slet SC3 cell-seam self-check did not run"
 # SC8: the persistent-volume object + datafs PV provisioning/binding/fencing compile into
 # slet; the self-check runs the VolumeRecord codec, the (app,ordinal) id derivation, and the

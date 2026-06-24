@@ -29,6 +29,7 @@ BASE="$ROOT/build/base.img"
 USTORE="$ROOT/build/updatestore"
 SYSPACK="$ROOT/build/syspack"
 FIXTURE="$ROOT/build/test-base.img"
+KSLOT="$ROOT/build/kernel-slot.bin"   # OS-1c-3: SWSYS v2 carries the real padded kernel slot
 SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
 OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
@@ -40,6 +41,7 @@ TLS_PORT="${TLS_PORT:-$(( (RANDOM % 2000) + 44000 ))}"
 [[ -x "$USTORE" ]]  || { echo "FAIL: $USTORE missing (make updatestore)" >&2; exit 2; }
 [[ -x "$SYSPACK" ]] || { echo "FAIL: $SYSPACK missing (make syspack)" >&2; exit 2; }
 [[ -f "$FIXTURE" ]] || { echo "FAIL: $FIXTURE missing (make build/test-base.img)" >&2; exit 2; }
+[[ -f "$KSLOT" ]]   || { echo "FAIL: $KSLOT missing (make build/kernel-slot.bin)" >&2; exit 2; }
 [[ -f "$SEED" ]]    || { echo "FAIL: $SEED missing" >&2; exit 2; }
 command -v "$PYTHON" >/dev/null 2>&1 || { echo "SKIP: python3 not found" >&2; exit 0; }
 [[ -x "$OPENSSL" ]] || OPENSSL="$(command -v openssl 2>/dev/null || true)"
@@ -64,12 +66,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build the three SWSYS bundles (kernel half is a stand-in — only the base half is
-# applied today). good=version 7 (> floor 5); old=version 3 (<= floor); bad=good
+# Build the three SWSYS v2 bundles (the real padded kernel slot + its v4 manifest
+# ride along; this test applies only the base half). good=version 7 (> floor 5);
+# old=version 3 (<= floor); bad=good
 # with a flipped body byte so the Ed25519 signature fails.
-"$SYSPACK" create "$FIXTURE" "$FIXTURE" "$SRV/good.swsys" --version 7 --seed "$SEED" >/dev/null \
+"$SYSPACK" create "$KSLOT" "$FIXTURE" "$SRV/good.swsys" --version 7 --seed "$SEED" >/dev/null \
   || { echo "FAIL: syspack good bundle" >&2; exit 2; }
-"$SYSPACK" create "$FIXTURE" "$FIXTURE" "$SRV/old.swsys" --version 3 --seed "$SEED" >/dev/null \
+"$SYSPACK" create "$KSLOT" "$FIXTURE" "$SRV/old.swsys" --version 3 --seed "$SEED" >/dev/null \
   || { echo "FAIL: syspack old bundle" >&2; exit 2; }
 cp "$SRV/good.swsys" "$SRV/bad.swsys"
 # Flip a byte well past the 64-byte signature + 72-byte header (in the payload).

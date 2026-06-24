@@ -519,8 +519,11 @@ features.
 
 ### Can I use Docker containers?
 
-No. Future Cells are planned as SwiftOS-native isolated execution domains, not
-Docker or Linux namespace compatibility.
+No. SwiftOS **Cells** are the native isolated execution domain (implemented, C6a–C6e:
+per-cell accounting + resident-page cap, namespace-root confinement, handle-gated
+spawn-into-cell, and teardown) — a capability composition over a per-process `CellId`
+tag, not Docker / Linux-namespace / cgroup / overlayfs compatibility and not a
+container daemon.
 
 ## Verification
 

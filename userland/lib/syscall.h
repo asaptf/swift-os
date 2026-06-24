@@ -118,6 +118,10 @@
 #define SYS_CELL_SPAWN          109
 #define SYS_CELL_PIDS           110
 #define SYS_CELL_DESTROY        111
+#define SYS_KERNEL_INSTALL_BEGIN  112
+#define SYS_KERNEL_INSTALL_WRITE  113
+#define SYS_KERNEL_INSTALL_COMMIT 114
+#define SYS_KERNEL_INSTALL_ABORT  115
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -712,6 +716,29 @@ static inline int update_stage_commit(void) {
 }
 static inline int update_stage_abort(void) {
     return (int)__syscall3(SYS_UPDATE_STAGE_ABORT, 0, 0, 0);
+}
+
+// OS-1c-2b: install a NEW host-signed kernel into the inactive ESP slot. begin
+// reserves the inactive slot (the active slot stays bootable); write appends
+// image bytes (count a multiple of 512); commit takes the slot's 104-byte signed
+// manifest entry {u64 size, u8[32] sha256, u8[64] sig} and the kernel verifies it
+// (full slot written, size match, on-disk re-hash, and Ed25519 per-slot signature
+// bound to this slot index) before writing the entry into the signed manifest;
+// abort discards. The operator then runs kernel_activate + reboots. All need
+// CAP_CONSOLE. 0 on success; negative errno (-1 EPERM incl. bad signature, -19
+// ENODEV no ESP, -22 EINVAL bad size/hash/request, -14 EFAULT bad buffer, -11
+// EAGAIN no active install / wrong owner, -5 EIO write/flush/read failure).
+static inline int kernel_install_begin(void) {
+    return (int)__syscall3(SYS_KERNEL_INSTALL_BEGIN, 0, 0, 0);
+}
+static inline int kernel_install_write(const void *buf, unsigned long count) {
+    return (int)__syscall3(SYS_KERNEL_INSTALL_WRITE, (long)buf, (long)count, 0);
+}
+static inline int kernel_install_commit(const void *entry) {
+    return (int)__syscall3(SYS_KERNEL_INSTALL_COMMIT, (long)entry, 0, 0);
+}
+static inline int kernel_install_abort(void) {
+    return (int)__syscall3(SYS_KERNEL_INSTALL_ABORT, 0, 0, 0);
 }
 
 // Export a serialized tail of the kernel log ring into buf. Returns bytes

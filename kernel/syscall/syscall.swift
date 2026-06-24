@@ -112,6 +112,10 @@ private let sysCellCreate: UInt = 108       // cell_create(root_path, page_cap, 
 private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
 private let sysCellPids: UInt = 110         // cell_pids(cell_fd, buf, cap) -> live member count; enumerate a cell's processes by tag for teardown (C6d)
 private let sysCellDestroy: UInt = 111      // cell_destroy(cell_fd) -> 0/EBUSY; free the CellId once the cell has no live members (C6d)
+private let sysKernelInstallBegin: UInt = 112  // kernel_install_begin() — reserve the inactive ESP kernel slot for a streamed NEW-kernel install (OS-1c-2b); needs capConsole
+private let sysKernelInstallWrite: UInt = 113  // kernel_install_write(buf, count) — append kernel-image bytes to the inactive ESP slot (OS-1c-2b); needs capConsole
+private let sysKernelInstallCommit: UInt = 114 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
+private let sysKernelInstallAbort: UInt = 115  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -433,6 +437,14 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             ttyOnInput(UInt8(truncatingIfNeeded: frame[0]))
             result = 0
         }
+    } else if number == sysKernelInstallBegin {
+        result = kernelInstallBegin() // OS-1c-2b: reserve the inactive ESP kernel slot
+    } else if number == sysKernelInstallWrite {
+        result = kernelInstallWrite(bufVA: frame[0], count: frame[1]) // OS-1c-2b
+    } else if number == sysKernelInstallCommit {
+        result = kernelInstallCommit(entryVA: frame[0]) // OS-1c-2b
+    } else if number == sysKernelInstallAbort {
+        result = kernelInstallAbort() // OS-1c-2b
     } else if number == sysCellStat {
         // C6a: aggregate the resource-accounting domain of one CellId.
         result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
