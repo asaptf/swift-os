@@ -82,7 +82,7 @@ chmod +x "$WRAP"
 # the return-to-zsh_main line — a stable anchor in every zsh 5.x release.
 # ZDOTDIR points to /tmp (writable tmpfs) so rc/history files go there.
 perl -i -pe '
-    if (/^\s+return zsh_main\b/) {
+    if (/^\s+return\s*\(?\s*zsh_main\b/) {
         print "    setenv(\"TERM\",    \"vt100\", 0);  /* swift-os: bare-env default */\n";
         print "    setenv(\"HOME\",    \"/tmp\",  0);\n";
         print "    setenv(\"ZDOTDIR\", \"/tmp\",  0);\n";
@@ -110,6 +110,13 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     export zsh_cv_header_sys_ioctl_h_tiocgwinsz=no
     # Use ncurses for ZLE terminal operations (tgetent etc.).
     export zsh_cv_term_lib=ncurses
+    # newlib's <sys/time.h> already defines `struct timezone`; the compile probe
+    # mis-detects it under the cross CC, so force it on or zsh re-defines the
+    # struct and the build fails with a redefinition error.
+    export zsh_cv_type_exists_struct_timezone=yes
+    # newlib's struct rusage lacks the timeval ru_utime/ru_stime zsh's job-timing
+    # code expects; force getrusage off so zsh uses the times()/struct tms path.
+    export ac_cv_func_getrusage=no
 
     ./configure --host=aarch64-elf --prefix=/usr \
         --disable-dynamic \
@@ -129,7 +136,9 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     if [[ -f "$SRC/config.modules" ]]; then
         for mod in zsh/net/socket zsh/net/tcp zsh/langinfo zsh/system; do
             if grep -q "^name=$mod " "$SRC/config.modules" 2>/dev/null; then
-                sed -i "s|^\(name=$mod \).*|\1link=no load=no|" "$SRC/config.modules"
+                # -i.bak (suffix attached) is portable across GNU and BSD/macOS sed.
+                sed -i.bak "s|^\(name=$mod \).*|\1link=no load=no|" "$SRC/config.modules"
+                rm -f "$SRC/config.modules.bak"
             fi
         done
     fi
