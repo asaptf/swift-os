@@ -160,16 +160,23 @@ int swiftos_tty_inject(unsigned char byte);
 // negative errno.
 int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
 
-// C6b/C6c: allocate a fresh cell and return a control-handle fd (negative errno on
-// failure); writes the new CellId to *out_cell_id when non-NULL. `root` is the
-// cell's VFS namespace root (NULL or "/" = unconfined). Needs CAP_CONSOLE.
-int  swiftos_cell_create(const char *root, unsigned int *out_cell_id);
+// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd (negative errno
+// on failure); writes the new CellId to *out_cell_id when non-NULL. `root` is the
+// cell's VFS namespace root (NULL or "/" = unconfined); `page_cap` is an optional
+// hard resident-page ceiling (0 = unlimited). Needs CAP_CONSOLE.
+int  swiftos_cell_create(const char *root, unsigned long page_cap,
+                         unsigned int *out_cell_id);
 // C6b: launch a process into the cell named by `cell_fd` (a control handle the
 // caller holds), with the same explicit-handle inheritance ABI as
 // swiftos_spawn_handles_async. Returns the child pid, or a negative errno (EBADF if
 // cell_fd is not a cell handle the caller holds). Reap the child with swiftos_waitpid.
 long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
                         const void *handles, unsigned long handle_count);
+// C6d: enumerate the cell's live members into `buf` (up to `cap` u32 pids); returns
+// the live member count. Needs the control handle.
+int  swiftos_cell_pids(int cell_fd, void *buf, unsigned long cap);
+// C6d: free the cell's CellId; returns 0, or EBUSY (negative) while members live.
+int  swiftos_cell_destroy(int cell_fd);
 
 unsigned int swiftos_mmio_read32(unsigned long addr);
 void         swiftos_mmio_write32(unsigned long addr, unsigned int value);

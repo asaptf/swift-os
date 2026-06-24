@@ -623,6 +623,36 @@ userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` obje
   4`; wired into `make test`.
 - Non-goals: C6c does not tear cells down or enforce limits (C6d).
 
+### C6d — cell lifecycle: resource cap + enumerate + teardown (DONE, 2026-06-24)
+
+- Hard resident-page cap: `cell_create` grows a `page_cap` arg (0 = unlimited),
+  enforced before `createProcess` in the spawn-into-cell path — a new member is
+  refused (ENOMEM) once the cell's aggregate resident pages reach the cap. A
+  pre-allocation guard, so no teardown path / SMP race; soft to within one member.
+- `SYS_cell_pids(110)` enumerates a cell's live members by tag (the supervisor's
+  job-tree walk). `SYS_cell_destroy(111)` frees the CellId, refused with EBUSY while
+  any member is live (the supervisor reaps first); on free the cell generation is
+  bumped (monotonic) so the dangling control handle resolves stale — the `.cell`
+  handle carries a generation stamp validated on every resolve, closing the
+  slot-reuse confused-deputy hole.
+- Acceptance: `make c6-cell-lifecycle-test` — `/bin/cellcapprobe` caps a cell, spawns
+  until the cap refuses, enumerates the members, proves destroy is EBUSY while live,
+  then reaps + frees the CellId and reuses it (stale handle rejected). Single-core +
+  `-smp 4`; C6a–C6c + the C3 markers stay green; wired into `make test`.
+- The honest trade-off (§5.3) stands: no atomic kernel "destroy the cell" — teardown
+  is the supervisor walking the enumerated job tree, with the per-process tag +
+  destroy-refuses-while-live as the backstop.
+
+### C6 arc — DONE (C6a + C6b + C6c + C6d, 2026-06-24)
+
+The per-process CellId tag is now a real (still cheap) isolation/accounting domain,
+assembled and supervised entirely in userland over small kernel primitives — **no fat
+in-kernel `Cell` object** (CAPABILITIES.md §5). A cell has per-domain resource
+accounting (C6a), is created + launched into by handle (C6b), confines its processes
+to a namespace root (C6c), and supports a resource cap + member enumeration + explicit
+teardown (C6d). Remaining Cell work: the C6e end-to-end "one supervised service per
+cell" payoff, and richer limits (handle/CPU caps, intra-member page enforcement).
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

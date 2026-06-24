@@ -225,14 +225,23 @@ int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out) {
     return cell_stat(cell, out, sizeof(*out));
 }
 
-int swiftos_cell_create(const char *root, unsigned int *out_cell_id) {
-    return cell_create(root, out_cell_id);
+int swiftos_cell_create(const char *root, unsigned long page_cap,
+                        unsigned int *out_cell_id) {
+    return cell_create(root, page_cap, out_cell_id);
 }
 
 long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
                         const void *handles, unsigned long handle_count) {
     return cell_spawn(cell_fd, path, (char *const *)argv,
                       (const struct swiftos_spawn_handle *)handles, handle_count);
+}
+
+int swiftos_cell_pids(int cell_fd, void *buf, unsigned long cap) {
+    return cell_pids(cell_fd, buf, cap);
+}
+
+int swiftos_cell_destroy(int cell_fd) {
+    return cell_destroy(cell_fd);
 }
 
 // Volatile MMIO/ring accessors (C5i). volatile guarantees the access is not

@@ -68,7 +68,7 @@ func main(_ argc: Int32,
 
     // 2. Create a cell rooted at /www.
     var cell: UInt32 = 0
-    let cellFd = swiftos_cell_create("/www", &cell)
+    let cellFd = swiftos_cell_create("/www", 0, &cell)
     if cellFd < 0 || cell < 2 {
         swiftos_puts("C6c FAIL: cell_create(/www) did not return a fresh cell + handle\n")
         return 1

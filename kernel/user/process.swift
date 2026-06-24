@@ -2986,6 +2986,12 @@ func processSpawnIntoCellAsync(_ cellRaw: UInt32, _ image: UInt, _ size: UInt,
     let valid = vfsValidateHandleInheritance(parent: parent, inherit: .explicit,
                                              specsVA: specsVA, specCount: specCount)
     if valid < 0 { return valid }
+    // C6d: hard resident-page cap. Refuse a new member once the cell's aggregate
+    // resident pages have reached the ceiling. This is a pre-allocation guard (the
+    // child is never created), so it has no teardown path and no SMP teardown race;
+    // the ceiling is soft to within one member's footprint.
+    let cap = vfsCellPageCap(cellRaw: cellRaw)
+    if cap > 0 && processCellResidentPages(cellRaw) >= cap { return Errno.noMem.code } // ENOMEM
     let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
                               parent: parent, inherit: .explicit,
                               inheritSpecsVA: specsVA, inheritSpecCount: specCount)
@@ -3492,6 +3498,46 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
     raw.storeBytes(of: handles, toByteOffset: 24, as: UInt32.self)
     raw.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
     return Int(processes)
+}
+
+/// C6d: aggregate resident pages charged to a cell — the cap check's input. A
+/// bounded scan keyed on the CellId tag, like processCellStat (no per-cell counter).
+func processCellResidentPages(_ cellRaw: UInt32) -> Int {
+    var pages = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+        pages += pResPages[i]
+    }
+    return pages
+}
+
+/// C6d: count the live processes tagged with a cell. cell_destroy uses this to
+/// refuse teardown while any member is still running (EBUSY).
+func processCellLiveCount(_ cellRaw: UInt32) -> Int {
+    var n = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
+    return n
+}
+
+/// SYS_cell_pids (C6d): enumerate the pids of a cell's live members so a userland
+/// supervisor can walk + tear down the job tree. Writes up to `capacity` pids (u32
+/// each) to `buffer`; returns the live member count (which may exceed the number
+/// written if the buffer was too small), or a negative errno. Authority is by the
+/// control handle (resolved by the syscall layer); this trusts the validated raw.
+func processCellPids(_ cellRaw: UInt32, buffer: UInt, capacity: UInt) -> Int {
+    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
+    if writable > 0 {
+        guard let b = userWritableBuffer(buffer, UInt(writable * 4)) else { return Errno.invalid.code }
+        dst = UnsafeMutableRawPointer(b)
+    }
+    var total = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+        if total < writable, let raw = dst {
+            raw.storeBytes(of: UInt32(i + 1), toByteOffset: total * 4, as: UInt32.self) // pid = slot+1
+        }
+        total += 1
+    }
+    return total
 }
 
 private func sysInfoCpuCount() -> UInt32 {

@@ -482,6 +482,21 @@ private func runCellNamespaceProbe() {
     uartPuts("\n")
 }
 
+// C6d: cell lifecycle probe. A supervisor creates a cell with a resident-page cap,
+// spawns members until the cap refuses further growth, enumerates them by tag,
+// proves teardown is refused while members live, then releases + reaps them and
+// frees the CellId — proving the domain's accounting is reclaimed and reusable.
+private func runCellLifecycleProbe() {
+    uartPuts("swift-os C6d: cell lifecycle (cap + enumerate + teardown) probe\n")
+    let (img, sz) = demoImage("/bin/cellcapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellcapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6d cell lifecycle probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1477,6 +1492,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellStatProbe()
         runCellCreateProbe()
         runCellNamespaceProbe()
+        runCellLifecycleProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

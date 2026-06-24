@@ -3332,6 +3332,51 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   the job tree, reclaim the domain-tagged resources, and free the CellId; optional
   per-cell resident-page/handle limits enforced at allocation.
 
+### C6d — cell lifecycle: resource cap + enumerate + teardown (DONE, 2026-06-24)
+
+- **Goal.** Close the Cell arc: a hard per-cell resource limit, enumeration of a
+  cell's members by tag, and explicit teardown that frees the CellId. The honest
+  composition trade-off (§5.3) stays — there is no single atomic kernel "destroy the
+  cell"; teardown is the supervisor walking the (enumerated) job tree, with the
+  per-process CellId tag + the destroy-refuses-while-live guard as the backstop.
+- **Hard resident-page cap.** `cell_create` grows a `page_cap` arg (0 = unlimited),
+  stored in `CellSlot.pageCap`. Enforced in `processSpawnIntoCellAsync` **before**
+  `createProcess`: if the cell's aggregate resident pages (a bounded scan, same as
+  cell_stat) have reached the cap, the spawn is refused with ENOMEM. This is a
+  pre-allocation guard — the child is never created, so there is no teardown path and
+  no SMP teardown race; the ceiling is soft to within one member's footprint. (Chosen
+  per the user's call: cap at spawn time, where the C6d acceptance drives growth;
+  fine-grained sbrk/mmap-time enforcement within a member is future.)
+- **`SYS_cell_pids(110, cell_fd, buf, cap)`** enumerates the pids of a cell's live
+  members (bounded scan keyed on the tag), returning the count. The supervisor's
+  "walk the job tree" primitive. Authority is by the control handle.
+- **`SYS_cell_destroy(111, cell_fd)`** frees the CellId. It is **refused with EBUSY
+  while any member is live** (`processCellLiveCount > 0`) — the supervisor must reap
+  the job tree first; this enforces "every member is gone" before the slot frees. On
+  success the slot's generation is bumped (monotonic, never reset) before clearing,
+  so the now-dangling control handle resolves **stale** even after the slot is
+  re-allocated to a new cell. The `.cell` handle stamps its cell generation in its
+  OpenDescription at create; `vfsCellResolveControl` rejects a generation mismatch —
+  closing the confused-deputy hole that slot reuse would otherwise open.
+- **Probe `/bin/cellcapprobe`** (reuses `/bin/cellchild`): caps a cell at 30 resident
+  pages, spawns members until the cap refuses (ENOMEM after ~2 ×20-page members),
+  enumerates them via cell_pids (count matches), proves `cell_destroy` returns EBUSY
+  while live, then releases the shared pipe barrier so the members EOF + exit, reaps
+  them, `cell_destroy` frees the CellId (accounting zero), re-creates a cell to prove
+  the CellId is reusable (same slot), and confirms the stale handle to the destroyed
+  cell is rejected.
+- **Acceptance.** `make c6-cell-lifecycle-test` (single-core + `-smp 4`) requires the
+  cap-refused/enumerate/EBUSY/destroy/reuse/stale-reject markers + `C6d OK`, with no
+  `C6d FAIL`/`panic:`. C6a–C6c and the C3 confinement markers stay green. Wired into
+  `make test`.
+- **C6 arc complete (C6a–C6d).** The CellId tag is now a real domain: per-cell
+  accounting (C6a), creation + spawn-into-cell by handle (C6b), a confined namespace
+  root (C6c), and a resource cap + enumerate + teardown lifecycle (C6d) — all as a
+  userland-supervisor composition over a cheap kernel tag, no fat in-kernel Cell
+  object (CAPABILITIES.md §5). Remaining: the C6e end-to-end "one service per cell"
+  payoff (a real supervised service hosted in a cell), and richer limits
+  (handle/CPU caps, intra-member page enforcement).
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

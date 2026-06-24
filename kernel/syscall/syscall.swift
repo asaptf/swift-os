@@ -110,6 +110,8 @@ private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte
 private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
 private let sysCellCreate: UInt = 108       // cell_create(root_path, out_cell_id) -> .cell control handle fd; allocate a fresh CellId with an optional namespace root (C6b/C6c); needs capConsole
 private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
+private let sysCellPids: UInt = 110         // cell_pids(cell_fd, buf, cap) -> live member count; enumerate a cell's processes by tag for teardown (C6d)
+private let sysCellDestroy: UInt = 111      // cell_destroy(cell_fd) -> 0/EBUSY; free the CellId once the cell has no live members (C6d)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -436,15 +438,16 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
                                  buffer: frame[1], capacity: frame[2])
     } else if number == sysCellCreate {
-        // C6b/C6c: allocate a fresh CellId rooted at frame[0] (a namespace root path,
-        // NULL = unconfined), return a .cell control handle fd (capConsole).
-        result = vfsCellCreate(root: frame[0], outId: frame[1])
+        // C6b/C6c/C6d: allocate a fresh CellId rooted at frame[0] (a namespace root
+        // path, NULL = unconfined) with an optional resident-page cap frame[1],
+        // return a .cell control handle fd (capConsole).
+        result = vfsCellCreate(root: frame[0], pageCap: frame[1], outId: frame[2])
     } else if number == sysCellSpawn {
         // C6b: launch a child into the cell named by the control handle at frame[0].
         // Authority is by handle — resolve it first; a caller without the handle
         // cannot name the cell. Then the same explicit-handle async spawn ABI as
         // spawn_handles_async, but the child is re-tagged into the cell.
-        let cellRaw = vfsCellResolveForSpawn(fd: Int(bitPattern: frame[0]))
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
         if cellRaw < 0 {
             result = cellRaw
         } else {
@@ -458,6 +461,27 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
                                                    argc: argc, specsVA: frame[3],
                                                    specCount: frame[4])
             }
+        }
+    } else if number == sysCellPids {
+        // C6d: enumerate the cell's live members (by tag) so a supervisor can walk +
+        // tear down the job tree. Authority is by the control handle at frame[0].
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else {
+            result = processCellPids(UInt32(cellRaw), buffer: frame[1], capacity: frame[2])
+        }
+    } else if number == sysCellDestroy {
+        // C6d: free a cell's CellId. Refuse (EBUSY) while any member is still live —
+        // the supervisor must reap the job tree first; the per-process CellId tag is
+        // the backstop that keeps a missed member contained + accounted (§5.3).
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else if processCellLiveCount(UInt32(cellRaw)) > 0 {
+            result = Errno.busy.code
+        } else {
+            result = vfsCellFree(fd: Int(bitPattern: frame[0]))
         }
     } else {
         result = Errno.noSys.code

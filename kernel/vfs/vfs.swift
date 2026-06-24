@@ -239,6 +239,10 @@ private struct CellSlot {
     // and cannot reach anything outside it (isDescendant check). Reuses the C3
     // machinery — no separate per-cell mount table.
     var root = 0
+    // C6d: optional hard resident-page ceiling (0 = unlimited). Enforced at
+    // spawn-into-cell time — a new member is refused once the cell's aggregate
+    // resident pages have reached the cap.
+    var pageCap = 0
 }
 private let maxCells = 8
 private var cells = [CellSlot](repeating: CellSlot(), count: maxCells)
@@ -1647,16 +1651,17 @@ private func releaseDeviceGrant(_ dev: Int) {
 // CellId and gated separately by capProcessInspect.
 private func cellControlRights() -> Rights { [.write, .duplicate, .transfer] }
 
-// C6b/C6c: SYS_cell_create — allocate a fresh CellId and return a `.cell` control
-// handle fd for it. capConsole-gated: creating an isolation/accounting domain is a
-// privileged supervisor operation (the same gate as device_claim / tty_inject).
-// `rootVA` (C6c) names the cell's VFS namespace root: NULL or "/" leaves the cell
-// unconfined (like globalCell); any other path is resolved (against the caller's own
-// namespace) to a directory the cell's processes are confined to. Writes the new
-// CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the domain
-// via cell_stat. The cell persists until explicit teardown (C6d); closing the
-// control handle does NOT free it.
-func vfsCellCreate(root rootVA: UInt, outId outVA: UInt) -> Int {
+// C6b/C6c/C6d: SYS_cell_create — allocate a fresh CellId and return a `.cell`
+// control handle fd for it. capConsole-gated: creating an isolation/accounting
+// domain is a privileged supervisor operation (the same gate as device_claim /
+// tty_inject). `rootVA` (C6c) names the cell's VFS namespace root: NULL or "/"
+// leaves the cell unconfined (like globalCell); any other path is resolved (against
+// the caller's own namespace) to a directory the cell's processes are confined to.
+// `pageCap` (C6d) is an optional hard resident-page ceiling (0 = unlimited). Writes
+// the new CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the
+// domain via cell_stat. The cell persists until explicit teardown (cell_destroy,
+// C6d); closing the control handle does NOT free it.
+func vfsCellCreate(root rootVA: UInt, pageCap: UInt, outId outVA: UInt) -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
     let out: UnsafeMutablePointer<UInt8>?
     if outVA == 0 {
@@ -1700,8 +1705,12 @@ func vfsCellCreate(root rootVA: UInt, outId outVA: UInt) -> Int {
     cells[slot].generation &+= 1
     cells[slot].ownerProc = proc
     cells[slot].root = rootNode
+    cells[slot].pageCap = pageCap > UInt(Int.max) ? Int.max : Int(pageCap)
     openDescriptions[d].kind = .cell
     openDescriptions[d].node = slot
+    // C6d: stamp the cell generation into the description so a handle that outlives a
+    // cell_destroy + slot reuse resolves stale (never to the new tenant of the slot).
+    openDescriptions[d].offset = Int(cells[slot].generation)
     installDescription(proc, fd, d, rights: cellControlRights())
     if let outBuf = out {
         UnsafeMutableRawPointer(outBuf).storeBytes(of: UInt32(slot + 1), toByteOffset: 0, as: UInt32.self)
@@ -1727,16 +1736,15 @@ func vfsApplyCellNamespace(slot childSlot: Int, cellRaw: UInt32) {
     }
 }
 
-// C6b: resolve a fd the caller claims is a cell control handle into the CellId raw
-// it names, enforcing authority-by-handle for cell_spawn. Returns the raw (>= 2,
-// since globalCell is never created) on success, or a negative errno: EBADF if the
-// fd is not a live `.cell` handle, EACCES if it lacks the `.write` (mutate) right,
-// EINVAL if the underlying cell slot is somehow stale. The caller must hold the
-// handle — a process that was never given it cannot name the cell.
-func vfsCellResolveForSpawn(fd: Int) -> Int {
-    let proc = currentVFSProcess()
-    let daif = vfsLock()
-    defer { vfsUnlock(daif) }
+// C6b/C6d: resolve a fd the caller claims is a cell control handle into the CellId
+// raw it names, enforcing authority-by-handle for cell_spawn / cell_pids /
+// cell_destroy. Returns the raw (>= 2, since globalCell is never created) on success,
+// or a negative errno: EBADF if the fd is not a live `.cell` handle, EACCES if it
+// lacks the `.write` (mutate) right, EINVAL if the cell slot is freed or the handle
+// is stale (its stamped generation no longer matches — the slot was reused by a
+// later cell_create). The caller must hold the handle — a process that was never
+// given it cannot name the cell.
+private func cellRawForControlHandleLocked(_ proc: Int, _ fd: Int) -> Int {
     guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return Errno.badFD.code }
     let entry = fdEntry(proc, fd)
     guard entry.kind == .cell else { return Errno.badFD.code }
@@ -1746,7 +1754,46 @@ func vfsCellResolveForSpawn(fd: Int) -> Int {
           && openDescriptions[d].kind == .cell else { return Errno.invalid.code }
     let slot = openDescriptions[d].node
     guard slot >= 1 && slot < maxCells && cells[slot].inUse else { return Errno.invalid.code }
+    guard openDescriptions[d].offset == Int(cells[slot].generation) else { return Errno.invalid.code }
     return slot + 1 // CellId raw
+}
+
+func vfsCellResolveControl(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    return cellRawForControlHandleLocked(proc, fd)
+}
+
+// C6d: the hard resident-page cap of a cell (0 = unlimited / unknown cell). Used by
+// the spawn-into-cell path to refuse a new member past the ceiling.
+func vfsCellPageCap(cellRaw: UInt32) -> Int {
+    let idx = Int(cellRaw) - 1
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard idx >= 1 && idx < maxCells && cells[idx].inUse else { return 0 }
+    return cells[idx].pageCap
+}
+
+// C6d: free a cell's CellId, the final step of teardown. The caller (cell_destroy)
+// must have already confirmed via the control handle that it owns the cell AND that
+// the cell has no live member processes. Bumps the generation so the now-dangling
+// control handle(s) resolve stale, then clears the slot for reuse. Returns 0, or a
+// negative errno if `fd` is not a valid control handle for a live cell.
+func vfsCellFree(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    let raw = cellRawForControlHandleLocked(proc, fd)
+    if raw < 0 { return raw }
+    let slot = raw - 1
+    // Advance the generation PAST this handle's stamp before clearing the slot, so
+    // the now-dangling handle (and any dup) resolves stale even after the slot is
+    // re-allocated. Generation is monotonic across free/reuse — never reset.
+    let nextGen = cells[slot].generation &+ 1
+    cells[slot] = CellSlot()           // inUse = false, root/cap cleared
+    cells[slot].generation = nextGen
+    return 0
 }
 
 private func deviceNameMatches(_ dev: Int, _ name: UnsafePointer<UInt8>) -> Bool {

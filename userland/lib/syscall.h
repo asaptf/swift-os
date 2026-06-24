@@ -116,6 +116,8 @@
 #define SYS_CELL_STAT           107
 #define SYS_CELL_CREATE         108
 #define SYS_CELL_SPAWN          109
+#define SYS_CELL_PIDS           110
+#define SYS_CELL_DESTROY        111
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -604,12 +606,25 @@ static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
     return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
 }
 
-// C6b/C6c: allocate a fresh cell and return a control-handle fd for it (negative
-// errno on failure). `root` is the cell's VFS namespace root (NULL or "/" =
-// unconfined); a process spawned into the cell is confined to it. Writes the new
-// CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
-static inline int cell_create(const char *root, unsigned int *out_cell_id) {
-    return (int)__syscall3(SYS_CELL_CREATE, (long)root, (long)out_cell_id, 0);
+// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd for it
+// (negative errno on failure). `root` is the cell's VFS namespace root (NULL or
+// "/" = unconfined); `page_cap` is an optional hard resident-page ceiling (0 =
+// unlimited). Writes the new CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
+static inline int cell_create(const char *root, unsigned long page_cap,
+                              unsigned int *out_cell_id) {
+    return (int)__syscall3(SYS_CELL_CREATE, (long)root, (long)page_cap, (long)out_cell_id);
+}
+
+// C6d: enumerate the cell's live members into `buf` (up to `cap` u32 pids); returns
+// the live member count (may exceed what was written). Needs the control handle.
+static inline int cell_pids(int cell_fd, void *buf, unsigned long cap) {
+    return (int)__syscall3(SYS_CELL_PIDS, (long)cell_fd, (long)buf, (long)cap);
+}
+
+// C6d: free the cell's CellId. Returns 0, or EBUSY (negative) if the cell still has
+// live members — reap them first. Needs the control handle.
+static inline int cell_destroy(int cell_fd) {
+    return (int)__syscall3(SYS_CELL_DESTROY, (long)cell_fd, 0, 0);
 }
 
 // C6b: launch a process into the cell named by `cell_fd` (a control handle the
