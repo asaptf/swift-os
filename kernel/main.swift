@@ -305,6 +305,41 @@ private func runS5fRunAnyPlacementDemo() -> Bool {
     return true
 }
 
+// SMP-race stress: run N copies of /bin/smprace concurrently across CPUs (reusing
+// the reviewed S5f run-any placement primitive) so more than one CPU is inside the
+// S4-locked resource pools (PMM, VFS/tmpfs, pipes) at the same instant. The
+// concurrent churn is bounded; correctness is asserted by the S4a-S4e lock-boundary
+// guards later in boot plus a frame-leak check here (pmm_free_count must return to
+// its pre-churn baseline once every reaped copy has freed its address space).
+private func runSmpRaceStressDemo() -> Bool {
+    uartPuts("swift-os SMPRACE: concurrent EL0 resource churn\n")
+    let (img, sz) = demoImage("/bin/smprace")
+    if img == 0 { return false }
+    let beforeFrames = pmmFreeCount()
+    let (packed, packedLen, argc) = packArgs(["smprace", "R"])
+    processRunS5fRunAnyPlacement(img, sz, packed, packedLen, argc)
+    let afterFrames = pmmFreeCount()
+    if afterFrames != beforeFrames {
+        uartPuts("panic: SMPRACE leaked frames during concurrent churn\n")
+        while true {}
+    }
+    // Every concurrently-placed copy must have passed its own self-check. We read
+    // the count from the kernel (not the console) because concurrent puts_raw from
+    // multiple CPUs interleaves at the character level - unparseable by design.
+    let copies = processLastS5fRunAnyProcessCount()
+    let okCount = processLastS5fRunAnyExitOkCount()
+    if okCount != copies {
+        uartPuts("panic: SMPRACE copy reported a failure under concurrent churn\n")
+        while true {}
+    }
+    uartPuts("SMPRACE OK: concurrent EL0 churn completed copies=")
+    uartPutUInt(copies)
+    uartPuts(" ok=")
+    uartPutUInt(okCount)
+    uartPuts("\n")
+    return true
+}
+
 private func runForkDemo() {
     uartPuts("swift-os M8d: fork + waitpid\n")
     let (img, sz) = demoImage("/bin/forkdemo")
@@ -1538,6 +1573,18 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
                 klog(.info, "smp", "S5f OK: run-any placement covered scheduler CPUs", UInt64(platform.cpuCount))
             } else {
                 klog(.info, "smp", "S5f OK: run-any placement CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
+        let ranSmpRaceStressDemo = runSmpRaceStressDemo()
+        if ranSmpRaceStressDemo {
+            if !processS5fRunAnyPlacementSelfTest() {
+                uartPuts("panic: SMPRACE placement guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "SMPRACE OK: concurrent churn crossed scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "SMPRACE OK: concurrent churn CPU0 fallback", UInt64(platform.cpuCount))
             }
         }
         runForkDemo()
