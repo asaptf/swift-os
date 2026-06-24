@@ -221,6 +221,21 @@ private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from 
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
 private let maxDevices = 6
 private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
+
+// C6b: the cell allocation table — the kernel half of a Cell (docs/CAPABILITIES.md
+// §5). This is NOT a fat Cell object: it only allocates/validates a CellId and, in
+// later slices, will carry the namespace root (C6c) and limits (C6d). Everything a
+// cell "contains" (its job tree, handle set, resources) lives in the existing
+// per-process tables keyed by the CellId tag; this table just makes the tag's
+// lifecycle explicit. `cells[i]` corresponds to `CellId(raw: UInt32(i + 1))`, so
+// index 0 is `globalCell` (raw 1) and is always live and never handed out.
+private struct CellSlot {
+    var inUse = false
+    var generation: UInt32 = 0   // bumped on alloc; reserved for handle-staleness checks (C6d)
+    var ownerProc = -1           // the process that created the cell (for C6d reclaim)
+}
+private let maxCells = 8
+private var cells = [CellSlot](repeating: CellSlot(), count: maxCells)
 private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
 private let deviceInfoNameCap = 24
@@ -974,6 +989,15 @@ func vfsInit() {
     for i in 0..<maxEvents { eventCounters[i] = EventCounter() }
     for i in 0..<maxEndpoints { resetEndpointSlotForReuse(i) }
     resetDeviceRegistry()
+    resetCellRegistry()
+}
+
+// C6b: seed the cell table. cells[0] is globalCell (raw 1) — always live and never
+// handed out by cell_create; all M0-era and unconfined processes carry this tag.
+private func resetCellRegistry() {
+    for i in 0..<maxCells { cells[i] = CellSlot() }
+    cells[0].inUse = true
+    cells[0].generation = 1
 }
 
 func vfsMountActivePackageStore() -> Int {
@@ -1311,6 +1335,10 @@ private func releaseDescription(_ d: Int) {
     if desc.kind == .device {
         releaseDeviceGrant(desc.node)
     }
+    // C6b: closing the last cell control handle does NOT free the CellId — a cell
+    // outlives its handle and is reclaimed only by explicit teardown (C6d), so a
+    // supervisor crash leaves the domain contained + accounted, not silently
+    // dissolved. The slot stays cells[node].inUse until cell_destroy. (No-op here.)
     if desc.kind == .ptyMaster { ptyReleaseEnd(desc.pty, master: true) }
     if desc.kind == .ptySlave { ptyReleaseEnd(desc.pty, master: false) }
     openDescriptions[d] = OpenDescription()
@@ -1604,6 +1632,76 @@ private func releaseDeviceGrant(_ dev: Int) {
     if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return }
     devices[dev].claimed = false
     devices[dev].ownerProc = -1
+}
+
+// C6b: rights a cell control handle carries. `.write` is the authority to mutate
+// the cell — add a member via cell_spawn today, tear it down in C6d. `.duplicate`/
+// `.transfer` let a supervisor hand the control handle to a sub-supervisor. There
+// is no `.read` byte stream (a cell is not readable); cell_stat is keyed on the
+// CellId and gated separately by capProcessInspect.
+private func cellControlRights() -> Rights { [.write, .duplicate, .transfer] }
+
+// C6b: SYS_cell_create — allocate a fresh CellId and return a `.cell` control
+// handle fd for it. capConsole-gated: creating an isolation/accounting domain is a
+// privileged supervisor operation (the same gate as device_claim / tty_inject).
+// Writes the new CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can
+// query the domain via cell_stat. The cell persists until explicit teardown (C6d);
+// closing the control handle does NOT free it.
+func vfsCellCreate(outId outVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    let out: UnsafeMutablePointer<UInt8>?
+    if outVA == 0 {
+        out = nil
+    } else {
+        guard let buf = userWritableBuffer(outVA, 4) else { return Errno.invalid.code }
+        out = buf
+    }
+
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    var slot = -1
+    for i in 1..<maxCells where !cells[i].inUse { slot = i; break }
+    if slot < 0 { return Errno.noSpace.code } // ENOSPC: cell table full
+
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd < 0 { return Errno.noSpace.code }
+    let d = allocDescription()
+    if d < 0 { return Errno.noSpace.code }
+
+    cells[slot].inUse = true
+    cells[slot].generation &+= 1
+    cells[slot].ownerProc = proc
+    openDescriptions[d].kind = .cell
+    openDescriptions[d].node = slot
+    installDescription(proc, fd, d, rights: cellControlRights())
+    if let outBuf = out {
+        UnsafeMutableRawPointer(outBuf).storeBytes(of: UInt32(slot + 1), toByteOffset: 0, as: UInt32.self)
+    }
+    return fd
+}
+
+// C6b: resolve a fd the caller claims is a cell control handle into the CellId raw
+// it names, enforcing authority-by-handle for cell_spawn. Returns the raw (>= 2,
+// since globalCell is never created) on success, or a negative errno: EBADF if the
+// fd is not a live `.cell` handle, EACCES if it lacks the `.write` (mutate) right,
+// EINVAL if the underlying cell slot is somehow stale. The caller must hold the
+// handle — a process that was never given it cannot name the cell.
+func vfsCellResolveForSpawn(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return Errno.badFD.code }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .cell else { return Errno.badFD.code }
+    if !hasRights(entry.rights, .write) { return Errno.access.code }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse
+          && openDescriptions[d].kind == .cell else { return Errno.invalid.code }
+    let slot = openDescriptions[d].node
+    guard slot >= 1 && slot < maxCells && cells[slot].inUse else { return Errno.invalid.code }
+    return slot + 1 // CellId raw
 }
 
 private func deviceNameMatches(_ dev: Int, _ name: UnsafePointer<UInt8>) -> Bool {

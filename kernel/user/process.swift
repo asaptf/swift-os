@@ -2970,6 +2970,30 @@ func processSpawnChildWithHandlesAsync(_ image: UInt, _ size: UInt, packed: UInt
     return child + 1 // pid (mirrors processCurrentPid / processWaitpid's slot+1 convention)
 }
 
+/// C6b: spawn a child INTO a target cell. Like processSpawnChildWithHandlesAsync
+/// (explicit handle inheritance, non-blocking, returns the child pid), but after the
+/// child inherits the parent's security context it is RE-TAGGED into `cellRaw` so
+/// every page/handle/CPU-tick it accrues charges to that CellId's accounting domain
+/// instead of the parent's (globalCell). The caller already proved authority by
+/// holding the cell control handle (vfsCellResolveForSpawn in the syscall layer);
+/// this function trusts the validated raw. setuid-on-cell-spawn is intentionally not
+/// offered — a cell launch is an explicit, non-elevating supervisor action.
+func processSpawnIntoCellAsync(_ cellRaw: UInt32, _ image: UInt, _ size: UInt,
+                               packed: UInt, packedLen: UInt, argc: Int,
+                               specsVA: UInt, specCount: UInt) -> Int {
+    let parent = currentProcessSlot()
+    guard parent >= 0 else { return Errno.invalid.code }
+    let valid = vfsValidateHandleInheritance(parent: parent, inherit: .explicit,
+                                             specsVA: specsVA, specCount: specCount)
+    if valid < 0 { return valid }
+    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
+                              parent: parent, inherit: .explicit,
+                              inheritSpecsVA: specsVA, inheritSpecCount: specCount)
+    if child < 0 { return Errno.again.code } // EAGAIN
+    pSecurity[child].cell = CellId(raw: cellRaw)
+    return child + 1 // pid (slot+1 convention)
+}
+
 func processCurrentPid() -> Int {
     let current = currentProcessSlot()
     return current >= 0 ? current + 1 : 0

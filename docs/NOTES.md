@@ -3249,6 +3249,54 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   non-global cell — the first time `cell_stat` reports a domain other than
   `globalCell`.
 
+### C6b — cell creation + control handle + spawn-into-cell (DONE, 2026-06-24)
+
+- **Goal.** Turn the CellId from "a tag everything shares" into "a domain you
+  create and launch into." A cell is still a userland composition (§5): the kernel
+  adds only a cheap allocation table + a control handle + a spawn re-tag, **no fat
+  `Cell` object**.
+- **`HandleKind.cell`.** A new handle kind: an opaque, transferable capability token
+  naming a CellId. It carries no byte stream — holding it *is* the authority to
+  launch into the cell (and, in C6d, tear it down). Rights `[.write, .duplicate,
+  .transfer]`: `.write` = mutate the cell (add a member / destroy), the dup/transfer
+  pair lets a supervisor delegate it.
+- **Cell registry (vfs.swift).** A bounded `cells[]` table (`maxCells = 8`) mirroring
+  the `DeviceGrant` pattern, under `vfsLock`. `cells[i]` ↔ `CellId(raw: i + 1)`, so
+  index 0 is `globalCell` (raw 1) — always live, never handed out. Seeded by
+  `resetCellRegistry()` from `vfsInit`.
+- **`SYS_cell_create(108)`** (capConsole — creating an isolation/accounting domain
+  is a privileged supervisor op, the same gate as device_claim/tty_inject): allocates
+  a free slot, mints a `.cell` control-handle fd (an OpenDescription of kind `.cell`,
+  so dup/close/cloexec/spawn-inheritance all work uniformly), and writes the new
+  CellId raw to the caller's out-param. **Closing the last handle does NOT free the
+  cell** — a cell outlives its handle and is reclaimed only by explicit teardown
+  (C6d), so a supervisor crash leaves the domain contained + accounted, not silently
+  dissolved.
+- **`SYS_cell_spawn(109, cell_fd, path, argv, specs, count)`** → child pid. Authority
+  is **by handle**: `vfsCellResolveForSpawn` validates the caller holds a live `.cell`
+  handle with `.write` at `cell_fd` (EBADF otherwise) and yields the CellId; a process
+  that was never given the handle cannot name the cell. Then the same explicit-handle
+  async-spawn ABI as `spawn_handles_async`, except `processSpawnIntoCellAsync`
+  re-tags the child's `ProcessSecurityContext.cell` to the target CellId after it
+  inherits the parent's context — so every page/handle/tick the child accrues charges
+  to the *new* cell's accounting domain, not the parent's globalCell.
+- **Userland bridge.** `swiftos_cell_create(out_id)` + `swiftos_cell_spawn(cell_fd,
+  path, argv, handles, count)`; `cell_spawn` uses `__syscall6` (5 args + pad).
+- **Probe `/bin/cellcreateprobe` + `/bin/cellchild`.** A boot-time supervisor:
+  (1) proves spawning into fd 1 (a valid fd, but not a `.cell` handle) is refused;
+  (2) `cell_create` → cell 2 + handle fd 3; (3) launches `/bin/cellchild` into cell 2
+  (handing it a pipe read-end as fd 0 for a race-free barrier, + stdout); the child
+  prints `CELLCHILD: alive in cell` and blocks; (4) asserts `cell_stat(2)` shows the
+  child (`processes=1 residentPages=20 handles=2`) while `cell_stat(globalCell)` is
+  unchanged — the child did NOT leak into globalCell; (5) closes the pipe → child
+  EOF/exit → reap → `cell_stat(2)` back to all-zero.
+- **Acceptance.** `make c6-cell-create-test` (single-core + `-smp 4`) requires the
+  refusal marker, the `CELLCHILD: alive in cell` marker, the three per-stage reports,
+  and the `C6b OK` verdict with no `C6b FAIL`/`panic:`. Wired into `make test`.
+- **Next (C6c).** A cell carries a VFS namespace root (reusing the C3
+  confineNodes/isDescendant machinery); processes spawned into the cell resolve `/`
+  within it. Then C6d: enumerate-by-cell + teardown + optional per-cell limits.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

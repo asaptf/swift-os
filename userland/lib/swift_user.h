@@ -160,6 +160,16 @@ int swiftos_tty_inject(unsigned char byte);
 // negative errno.
 int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
 
+// C6b: allocate a fresh cell and return a control-handle fd (negative errno on
+// failure); writes the new CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
+int  swiftos_cell_create(unsigned int *out_cell_id);
+// C6b: launch a process into the cell named by `cell_fd` (a control handle the
+// caller holds), with the same explicit-handle inheritance ABI as
+// swiftos_spawn_handles_async. Returns the child pid, or a negative errno (EBADF if
+// cell_fd is not a cell handle the caller holds). Reap the child with swiftos_waitpid.
+long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
+                        const void *handles, unsigned long handle_count);
+
 unsigned int swiftos_mmio_read32(unsigned long addr);
 void         swiftos_mmio_write32(unsigned long addr, unsigned int value);
 unsigned short swiftos_mmio_read16(unsigned long addr);

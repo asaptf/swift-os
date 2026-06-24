@@ -452,6 +452,21 @@ private func runCellStatProbe() {
     uartPuts("\n")
 }
 
+// C6b: cell-creation + spawn-into-cell probe. Runs as a capConsole boot principal:
+// a minimal supervisor creates a cell, refuses a spawn without the cell handle,
+// launches /bin/cellchild into the cell, proves the child is charged to the new
+// cell (and not globalCell), then reaps it and proves the charge is reclaimed.
+private func runCellCreateProbe() {
+    uartPuts("swift-os C6b: cell-creation + spawn-into-cell probe\n")
+    let (img, sz) = demoImage("/bin/cellcreateprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellcreateprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6b cell create probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1445,6 +1460,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runNetDriverProbe()
         runNetSvcDemo()
         runCellStatProbe()
+        runCellCreateProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

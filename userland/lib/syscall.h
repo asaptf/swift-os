@@ -114,6 +114,8 @@
 #define SYS_VIRT_TO_PHYS        105
 #define SYS_TTY_INJECT          106
 #define SYS_CELL_STAT           107
+#define SYS_CELL_CREATE         108
+#define SYS_CELL_SPAWN          109
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -600,6 +602,24 @@ static inline int tty_inject(unsigned char byte) {
 // process count in the cell (>= 0), or a small negative errno.
 static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
     return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
+}
+
+// C6b: allocate a fresh cell and return a control-handle fd for it (negative
+// errno on failure). Writes the new CellId to *out_cell_id when non-NULL. Needs
+// CAP_CONSOLE.
+static inline int cell_create(unsigned int *out_cell_id) {
+    return (int)__syscall3(SYS_CELL_CREATE, (long)out_cell_id, 0, 0);
+}
+
+// C6b: launch a process into the cell named by `cell_fd` (a control handle the
+// caller holds), with the same explicit-handle inheritance ABI as
+// spawn_handles_async. Returns the child pid (negative errno on failure: EBADF if
+// cell_fd is not a cell handle the caller holds).
+static inline long cell_spawn(int cell_fd, const char *path, char *const argv[],
+                              const struct swiftos_spawn_handle *handles,
+                              size_t handle_count) {
+    return __syscall6(SYS_CELL_SPAWN, (long)cell_fd, (long)path, (long)argv,
+                      (long)handles, (long)handle_count, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

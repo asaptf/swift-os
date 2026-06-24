@@ -587,6 +587,27 @@ userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` obje
 - Non-goals: C6a does not create cells (C6b), confine namespaces (C6c), or enforce
   limits/teardown (C6d) — it only makes the accounting domain observable.
 
+### C6b — cell creation + control handle + spawn-into-cell (DONE, 2026-06-24)
+
+- `HandleKind.cell`: an opaque, transferable capability token naming a CellId
+  (rights `[.write, .duplicate, .transfer]`; no byte stream). A bounded `cells[]`
+  table (`maxCells = 8`, index 0 = globalCell) in vfs.swift under `vfsLock`.
+- `SYS_cell_create(108)` (capConsole) allocates a fresh CellId and returns a `.cell`
+  control-handle fd, writing the new id to an out-param. Closing the handle does NOT
+  free the cell (teardown is explicit, C6d) — a crashed supervisor leaves the domain
+  contained + accounted, the honest trade-off from §5.3.
+- `SYS_cell_spawn(109, cell_fd, path, argv, specs, count)` launches a child into the
+  cell named by `cell_fd`. Authority is **by handle**: a caller without the handle
+  cannot name the cell (EBADF). The child inherits explicit handles (same ABI as
+  `spawn_handles_async`) and is re-tagged into the cell, so its resources charge to
+  the new domain, not globalCell.
+- Acceptance: `make c6-cell-create-test` — the `/bin/cellcreateprobe` supervisor
+  refuses a spawn without the handle, creates cell 2, launches `/bin/cellchild` into
+  it, and asserts via cell_stat that the child is charged to cell 2 (not globalCell)
+  and reclaimed on reap. Single-core + `-smp 4`; wired into `make test`.
+- Non-goals: C6b does not confine the cell's namespace (C6c) or enforce
+  limits/teardown (C6d). The cell shares the global VFS root until C6c.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

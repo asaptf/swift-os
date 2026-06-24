@@ -108,6 +108,8 @@ private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the cre
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
 private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
+private let sysCellCreate: UInt = 108       // cell_create(out_cell_id) -> .cell control handle fd; allocate a fresh CellId (C6b); needs capConsole
+private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -433,6 +435,29 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         // C6a: aggregate the resource-accounting domain of one CellId.
         result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
                                  buffer: frame[1], capacity: frame[2])
+    } else if number == sysCellCreate {
+        // C6b: allocate a fresh CellId, return a .cell control handle fd (capConsole).
+        result = vfsCellCreate(outId: frame[0])
+    } else if number == sysCellSpawn {
+        // C6b: launch a child into the cell named by the control handle at frame[0].
+        // Authority is by handle — resolve it first; a caller without the handle
+        // cannot name the cell. Then the same explicit-handle async spawn ABI as
+        // spawn_handles_async, but the child is re-tagged into the cell.
+        let cellRaw = vfsCellResolveForSpawn(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else {
+            let ex = execResolve(frame[1])
+            if ex.addr == 0 {
+                result = Errno.noEntry.code
+            } else {
+                let (packed, packedLen, argc) = packUserArgv(frame[2])
+                result = processSpawnIntoCellAsync(UInt32(cellRaw), ex.addr, ex.len,
+                                                   packed: packed, packedLen: packedLen,
+                                                   argc: argc, specsVA: frame[3],
+                                                   specCount: frame[4])
+            }
+        }
     } else {
         result = Errno.noSys.code
     }
