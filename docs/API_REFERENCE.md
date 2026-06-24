@@ -59,6 +59,7 @@ source, then follow its Makefile rule and acceptance test.
 | Synchronous request/reply IPC | `userland/ipc_call_test.c` | `ipc_call`, `ipc_reply_recv`, reply-port correlation | `make ipc-call-test` |
 | Endpoint badges (client tagging) | `userland/qw4_badge.c` | `ipc_badge`, `ipc_recv_badged`, send-capability badge | `make qw4-badge-test` |
 | Opaque device discovery and grants | `userland/drvsvcdemo.c`, `userland/drvinputd.c` | `device_discover`, `device_claim`, `device_info`, endpoint handle transfer | `make c5-device-authority-test` |
+| Cells: isolate + supervise a service | `userland/cell-supervisor.swift`, `userland/cell-kv-supervisor.swift` | `cell_create` (root + page/handle caps), `cell_spawn`, `cell_stat`, `cell_pids`, `cell_destroy` | `make c6-cell-service-test`, `make c7-cell-supervisor-test`, `make c7-cell-realservice-test` |
 | UDP or TCP service | `userland/udpecho.swift`, `userland/tcpecho.swift`, `userland/httpd.swift` | socket helpers, `swiftos_bind`, `swiftos_accept`, `swiftos_poll` | `./tests/udp_echo_test.sh`, `./tests/tcp_echo_test.sh`, `./tests/httpd_test.sh` |
 | Network status preflight | `userland/netinfo.swift` | `netinfo`, `swiftos_netinfo_refresh`, `swiftos_net_*` | `make netinfo-test` |
 | DNS, TCP, or TLS client | `userland/nslookup.swift`, `userland/tcpget.swift`, `userland/tlsget.swift` | `swiftos_resolve`, `swiftos_connect`, `swiftos_read`, `swiftos_write` | `./tests/dns_test.sh`, `./tests/tcp_connect_test.sh`, `./tests/tls_test.sh` |
@@ -298,6 +299,17 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 102 | `shmring_create` | `pages` | channel id or negative error (full-duplex shared-memory SPSC ring; needs `capNet`) |
 | 103 | `shmring_map` | `id` | base user VA or negative error (map a channel's pages read/write) |
 | 104 | `shmring_close` | `id` | 0 or negative error (drop the creator's base reference to a channel) |
+| 105 | `virt_to_phys` | `va`, `handle_fd` | physical address or negative error (resolve a VA to its PA for a userland driver's DMA/virtqueue setup; gated on owning a mappable device grant) |
+| 106 | `tty_inject` | `byte` | 0 or negative error (feed one byte to the kernel tty input as if typed; the userland input driver's path to the line discipline; needs `capConsole`) |
+| 107 | `cell_stat` | `cellId`, `buf`, `cap` | live process count or negative error (aggregate one cell's `{processes, residentPages, cpuTicks, handles}` accounting domain; needs `capProcessInspect`) |
+| 108 | `cell_create` | `root_path`, `page_cap`, `handle_cap`, `out_cell_id` | `.cell` control-handle fd or negative error (mint a fresh CellId with an optional namespace root + resident-page/handle caps; `0` cap = unlimited; needs `capConsole`) |
+| 109 | `cell_spawn` | `cell_fd`, `path`, `argv`, `specs`, `count` | child pid or negative error (launch a process into the cell named by the held control handle, with explicit handle inheritance) |
+| 110 | `cell_pids` | `cell_fd`, `buf`, `cap` | live member count or negative error (enumerate a cell's processes by tag, for supervised teardown) |
+| 111 | `cell_destroy` | `cell_fd` | 0, `-EBUSY` while members live, or negative error (free the CellId once the cell is empty) |
+| 112 | `kernel_install_begin` | none | 0 or negative error (reserve the inactive ESP kernel slot for a streamed new-kernel install; needs `capConsole`) |
+| 113 | `kernel_install_write` | `buf`, `count` | bytes accepted or negative error (append kernel-image bytes to the inactive ESP slot; needs `capConsole`) |
+| 114 | `kernel_install_commit` | `entry` | 0 or negative error (verify hash + per-slot signature and write the signed manifest entry; needs `capConsole`) |
+| 115 | `kernel_install_abort` | none | 0 or negative error (discard an in-progress kernel install; needs `capConsole`) |
 
 Notes:
 
@@ -540,6 +552,49 @@ if rc >= 0 {
     swiftos_puts("\n")
 }
 ```
+
+## Cells
+
+A **Cell** is a userland-supervisor composition over a cheap per-process `CellId`
+tag — an isolation + resource-accounting domain assembled from primitives that
+already exist (a process tree, the handle table, a VFS namespace root, and
+per-domain accounting), **not** a fat in-kernel object. See
+[CAPABILITIES.md](CAPABILITIES.md) §5 for the design decision and the C6/C7 arc.
+
+`userland/lib/swift_user.h` exposes the cell control surface for Embedded Swift
+supervisors:
+
+```c
+// Aggregate one cell's live {processes, residentPages, cpuTicks, handles} domain.
+int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
+// Mint a fresh cell: an optional namespace root + an optional resident-page cap and
+// handle cap (0 = unlimited for either). Returns a `.cell` control-handle fd. Needs
+// CAP_CONSOLE. Authority over the cell is by holding this handle.
+int  swiftos_cell_create(const char *root, unsigned long page_cap,
+                         unsigned long handle_cap, unsigned int *out_cell_id);
+// Launch a process into the cell named by `cell_fd`, with explicit handle inheritance
+// (the same spec vector as swiftos_spawn_handles_async). Returns the child pid.
+long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
+                        const void *handles, unsigned long handle_count);
+// Enumerate a cell's live members by tag (the supervisor's "walk the job tree").
+int  swiftos_cell_pids(int cell_fd, void *buf, unsigned long cap);
+// Free the cell's CellId; refused with EBUSY while any member is still live.
+int  swiftos_cell_destroy(int cell_fd);
+```
+
+The caps are enforced kernel-side: the resident-page cap is checked both at
+spawn-into-cell time (C6d) and at every per-process growth site (C7a — `sbrk`,
+anon `mmap`/`mprotect` commit, shared-frame map), and the handle cap is enforced
+at the user-facing handle constructors (C7b — refused with `EMFILE`). A supervisor
+can drive deterministic, page-granular heap growth in a hosted workload with the
+heap bridge `swiftos_sbrk` (the previous-break primitive alongside
+`swiftos_heap_break`).
+
+The persistent restart/FDIR pattern (C7c) and a real in-tree service hosted in a
+cell (C7d, `/bin/kv` over pipes) are shown in `userland/cell-supervisor.swift` and
+`userland/cell-kv-supervisor.swift`; assembly + one-service-per-cell is
+`userland/cellsvcprobe.swift`. Acceptance: `make c6-cell-service-test`,
+`make c7-cell-supervisor-test`, `make c7-cell-realservice-test`.
 
 ## Device Grants
 

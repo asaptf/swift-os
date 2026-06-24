@@ -1181,6 +1181,21 @@ diagnostic fixtures than stable application interfaces.
 | `swos-kconfirm` | `swos-kconfirm` | Mark the booted ESP kernel slot confirmed healthy. | `tests/uefi_kconfirm_test.sh` |
 | `reboot` | `reboot` | Flush `/data` and warm-reboot the machine via PSCI `SYSTEM_RESET`. Needs `capConsole`; a non-console principal is refused. | `tests/reboot_test.sh` |
 | `shutdown` | `shutdown` | Flush `/data` and power the machine off via PSCI `SYSTEM_OFF` (QEMU `virt` exits). Needs `capConsole`; a non-console principal is refused. | `tests/reboot_test.sh` |
+| `cellstatprobe` | `cellstatprobe` | C6a: fork children and assert `cell_stat` aggregates the live per-cell `{processes, residentPages, handles}` domain and reclaims reaped charge. | `tests/c6_cell_accounting_test.sh` |
+| `cellcreateprobe` | `cellcreateprobe` | C6b: create a cell + control handle and `cell_spawn` `cellchild` into it; assert the child charges to the new cell, not globalCell. | `tests/c6_cell_create_test.sh` |
+| `cellchild` | `cellchild` | C6b workload: announce liveness then block on a pipe barrier so the supervisor can measure its cell-charged footprint. | `tests/c6_cell_create_test.sh` |
+| `cellnsprobe` | `cellnsprobe` | C6c: root a cell at `/www` and assert the spawned member is confined to it. | `tests/c6_cell_namespace_test.sh` |
+| `cellnschild` | `cellnschild` | C6c workload: resolve a file inside the cell root but be refused `/etc` and `/` (namespace confinement). | `tests/c6_cell_namespace_test.sh` |
+| `cellcapprobe` | `cellcapprobe` | C6d: cap a cell's resident pages, spawn until refused, enumerate members (`cell_pids`), prove `cell_destroy` is EBUSY while live, then reap + free + reuse the CellId. | `tests/c6_cell_lifecycle_test.sh` |
+| `cellhello` | `cellhello` | C6e service: a request/reply IPC service that proves its own isolation and replies `pong` to `ping` over its granted endpoints. | `tests/c6_cell_service_test.sh` |
+| `cellsvcprobe` | `cellsvcprobe` | C6e: assemble a cell { `/www` root + restricted handles + page cap }, host `cellhello`, drive a live round-trip, then tear down. | `tests/c6_cell_service_test.sh` |
+| `cellgrower` | `cellgrower` | C7a workload: `sbrk`/`mmap` its own heap until the cell's resident-page cap refuses it (intra-member enforcement). | `tests/c7_cell_pagecap_test.sh` |
+| `cellgrowprobe` | `cellgrowprobe` | C7a: cap a cell, host `cellgrower`, assert `cell_stat.residentPages <= cap` while an uncapped global member is unaffected. | `tests/c7_cell_pagecap_test.sh` |
+| `cellopener` | `cellopener` | C7b workload: `open()` files until the cell's handle cap refuses with `EMFILE`. | `tests/c7_cell_handlecap_test.sh` |
+| `cellhandleprobe` | `cellhandleprobe` | C7b: cap a cell's handles, host `cellopener`, assert `cell_stat.handles <= cap` while an uncapped global member is unaffected. | `tests/c7_cell_handlecap_test.sh` |
+| `cell-svc` | `cell-svc serve\|crash` | C7c demo service: reply `pong` to `ping` (exit non-zero on `die`), or crash immediately, so the supervisor can drive restart and crash-loop paths. | `tests/c7_cell_supervisor_test.sh` |
+| `cell-supervisor` | `cell-supervisor` | C7c: a persistent restart/FDIR supervisor that hosts `cell-svc` in a cell, restarts it in a fresh CellId on exit, and bounds restarts so a crash loop halts. | `tests/c7_cell_supervisor_test.sh` |
+| `cell-kv-supervisor` | `cell-kv-supervisor` | C7d: lift the real `/bin/kv` store into a supervised cell over pipes — restricted handles + caps, a live `SET`/`GET` round-trip, restart in a fresh cell with fresh state, clean teardown. | `tests/c7_cell_realservice_test.sh` |
 
 ### `swos-init`
 
