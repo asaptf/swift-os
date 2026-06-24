@@ -275,6 +275,10 @@ operators, AI hosting operators, support engineers, and security reviewers.
   validation rules.
 - [SMP Mutable State Audit](docs/SMP_STATE_AUDIT.md): machine-checked SMP
   mutable-state inventory.
+- [Namespace Design](docs/NAMESPACE_DESIGN.md): recorded per-process namespace
+  generalization (record-only design note).
+- [OS Update Audit](docs/OS_UPDATE_AUDIT.md): Phase 0 design audit of the OS
+  self-update (kernel + base image) surface.
 - [Next Session](docs/NEXT_SESSION.md): current handoff notes for the next
   engineering session.
 - [Hetzner Deployment](docs/HETZNER_DEPLOYMENT.md): bare-metal bring-up handoff

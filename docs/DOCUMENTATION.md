@@ -106,6 +106,7 @@ discoverable.
 | Reuse package-manager session prompts and milestone prompts | [Package Manager Session Prompts](PACKAGE_MANAGER_SESSION_PROMPTS.md) |
 | Review the current seed ports catalog and recipe validation rules | [Ports Seed Catalog](../ports/README.md) |
 | Review the machine-checked SMP mutable-state inventory | [SMP Mutable State Audit](SMP_STATE_AUDIT.md) |
+| Review the OS self-update (kernel + base image) Phase 0 design audit | [OS Update Audit](OS_UPDATE_AUDIT.md) |
 | Reproduce the bare-metal Hetzner Cloud ARM VM bring-up | [Hetzner Deployment](HETZNER_DEPLOYMENT.md) |
 | Pick up the latest handoff notes for the next engineering session | [Next Session](NEXT_SESSION.md) |
 
