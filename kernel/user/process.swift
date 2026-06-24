@@ -3531,6 +3531,25 @@ func processCellGrowthAllowed(_ slot: Int, addPages: Int) -> Bool {
     return processCellResidentPages(cellRaw) + addPages <= cap
 }
 
+/// C7b: the CellId raw tag of a process slot (globalCell.raw for an unknown/dead
+/// slot). The VFS handle-cap guard uses this to find the cell a handle-allocating
+/// process belongs to. VFS process index == kernel process slot (see processCellStat).
+func processCellRawForSlot(_ slot: Int) -> UInt32 {
+    if slot < 0 || slot >= maxProc { return globalCell.raw }
+    return pSecurity[slot].cell.raw
+}
+
+/// C7b: aggregate the in-use handles charged to a cell — the handle-cap check's
+/// input. A bounded scan keyed on the CellId tag (like processCellResidentPages),
+/// summing each member's per-process handle count. No per-cell counter table.
+func processCellHandleCount(_ cellRaw: UInt32) -> Int {
+    var n = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+        n += vfsHandleCount(slot: i)
+    }
+    return n
+}
+
 /// C6d: count the live processes tagged with a cell. cell_destroy uses this to
 /// refuse teardown while any member is still running (EBUSY).
 func processCellLiveCount(_ cellRaw: UInt32) -> Int {

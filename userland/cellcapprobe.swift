@@ -75,7 +75,7 @@ func main(_ argc: Int32,
 
     // 1. Create a capped cell.
     var cell: UInt32 = 0
-    let cellFd = swiftos_cell_create(nil, pageCap, &cell)
+    let cellFd = swiftos_cell_create(nil, pageCap, 0, &cell)
     if cellFd < 0 || cell < 2 {
         swiftos_puts("C6d FAIL: cell_create with a page cap failed\n")
         return 1
@@ -160,7 +160,7 @@ func main(_ argc: Int32,
 
     // 7. The CellId is reusable: a fresh cell_create reclaims the freed slot.
     var cell2: UInt32 = 0
-    let cellFd2 = swiftos_cell_create(nil, 0, &cell2)
+    let cellFd2 = swiftos_cell_create(nil, 0, 0, &cell2)
     if cellFd2 < 0 || cell2 < 2 {
         swiftos_puts("C6d FAIL: CellId was not reusable after destroy\n"); ok = false
     } else {

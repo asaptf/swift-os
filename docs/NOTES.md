@@ -3448,6 +3448,45 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   with EMFILE), then the persistent restart/FDIR cell supervisor (C7c) and lifting a
   real in-tree service into a cell (C7d).
 
+### C7b — per-cell handle cap (DONE, 2026-06-24)
+
+- **Goal.** The second C7 hardening: a per-cell **handle** cap, the analogue of the
+  page cap. Without it a cell member could exhaust handle-table / kernel-object
+  resources unbounded; with it the cell's *aggregate* in-use handle count is a hard
+  ceiling.
+- **ABI: folded into `cell_create`** (the user's call — symmetric with `page_cap`, no
+  new syscall; SYS_cell_create stays at 108, next free still 112). The syscall grew a
+  `handle_cap` arg: `cell_create(root, page_cap, handle_cap, out_cell_id)` (now a
+  4-arg call via `__syscall4`); `CellSlot` gained `handleCap`. All existing cell-create
+  callers (the C6 probes + C7a) pass `handle_cap = 0` (unlimited) — behaviour-preserving.
+- **Enforcement at the user-facing handle constructors.** A new `allocUserFD(proc,
+  from:)` wrapper checks `cellHandleCapWouldExceed` (a bounded `processCellHandleCount`
+  scan, like the page-cap guard) and returns **EMFILE** before allocating; ENOSPC still
+  covers a genuinely full fd table. Routed through it: `vfsOpen`, `vfsDup`,
+  `handleDuplicate`, fcntl `F_DUPFD(_CLOEXEC)`, `vfsPipe`, `vfsOpenpty`,
+  `vfsSocketpair`, `vfsEndpointCreate`, and `installSocketFD` (socket + accept);
+  `vfsDup2` gets an inline guard (only a *fresh* newfd grows the table). globalCell +
+  uncapped cells short-circuit on one integer compare (zero cost).
+- **Delegation is deliberately NOT capped.** The explicit spawn-grant handle install
+  and IPC handle transfer keep calling `allocFDInProcess` directly: those are authority
+  handed IN by a supervisor/peer, not the member growing its own table (and the child's
+  initial grants are installed before it is re-tagged into the cell, so they would be
+  charged to globalCell anyway). This mirrors the page cap, which never retroactively
+  refuses a member's spawn-time footprint.
+- **Probe `/bin/cellhandleprobe` + workload `/bin/cellopener`.** The supervisor caps a
+  cell at 12 handles and launches one opener (granted only barrier-read + stdout + a
+  signal pipe = 3 handles). The opener `open()`s `/etc/motd` repeatedly (never closing)
+  until refused with **EMFILE**, signals capped-out + alive; the supervisor asserts
+  `cell_stat.handles <= cap`, reaps it, then proves an uncapped (global) member — itself
+  — opens well past `cap` handles unaffected.
+- **Acceptance.** `make c7-cell-handlecap-test` (single-core + `-smp 4`) requires the
+  `open refused … (EMFILE)`/`within cap`/`uncapped … unaffected` markers + `C7b OK`,
+  with no `C7b FAIL`/`CELLOPENER FAIL`/`panic:`. The whole C6 arc + C7a stay green
+  (the cell_create ABI change is covered). Wired into `make test`.
+- **Next (C7c).** A persistent restart/FDIR cell supervisor (swos-init-launched,
+  bounded restarts, fresh CellId per generation), then lifting a real in-tree service
+  into a cell (C7d). CPU/tick budget remains deferred (needs scheduler integration).
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

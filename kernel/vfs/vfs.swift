@@ -240,9 +240,13 @@ private struct CellSlot {
     // machinery — no separate per-cell mount table.
     var root = 0
     // C6d: optional hard resident-page ceiling (0 = unlimited). Enforced at
-    // spawn-into-cell time — a new member is refused once the cell's aggregate
-    // resident pages have reached the cap.
+    // spawn-into-cell time (C6d) AND at the per-process resident-page growth sites
+    // (C7a) — the cell aggregate can never exceed it.
     var pageCap = 0
+    // C7b: optional hard handle ceiling (0 = unlimited). Enforced at the user-facing
+    // handle constructors (allocUserFD): a member of a capped cell that mints a new
+    // handle past the cell's aggregate handle count is refused with EMFILE.
+    var handleCap = 0
 }
 private let maxCells = 8
 private var cells = [CellSlot](repeating: CellSlot(), count: maxCells)
@@ -1283,6 +1287,34 @@ private func allocFDInProcess(_ proc: Int, from start: Int = 3) -> Int {
     return -1
 }
 
+// C7b: would allocating `n` more handles for `proc` exceed its cell's handle cap?
+// Returns true (refuse) only for a member of an explicitly capped cell that is at the
+// ceiling; globalCell + uncapped cells short-circuit on one integer compare (zero
+// cost — no scan). The aggregate is a bounded scan (processCellHandleCount), like the
+// C7a page-cap guard. Caller holds vfsLock (reads cells[] without re-locking).
+private func cellHandleCapWouldExceed(_ proc: Int, adding n: Int) -> Bool {
+    let cellRaw = processCellRawForSlot(proc)
+    if cellRaw == globalCell.raw { return false }   // common case: no scan
+    let idx = Int(cellRaw) - 1
+    guard idx >= 1 && idx < maxCells && cells[idx].inUse else { return false }
+    let cap = cells[idx].handleCap
+    if cap <= 0 { return false }                     // uncapped cell — unaffected
+    return processCellHandleCount(cellRaw) + n > cap
+}
+
+// C7b: allocate an fd for a USER-facing handle constructor (open/dup/pipe/socket/
+// endpoint/…), enforcing the cell handle cap. Returns a non-negative fd, or a
+// negative errno: EMFILE if the proc's cell handle cap is reached, ENOSPC if the fd
+// table is full. The delegation paths — the explicit spawn-grant handle install and
+// IPC handle transfer — deliberately keep calling allocFDInProcess directly and are
+// NOT capped: those are authority handed IN by a supervisor/peer, not the member
+// growing its own table. Caller holds vfsLock.
+private func allocUserFD(_ proc: Int, from start: Int = 3) -> Int {
+    if cellHandleCapWouldExceed(proc, adding: 1) { return Errno.manyFiles.code }
+    let fd = allocFDInProcess(proc, from: start)
+    return fd < 0 ? Errno.noSpace.code : fd
+}
+
 private func allocDescription() -> Int {
     for i in 0..<maxOpenDescriptions where !openDescriptions[i].inUse {
         openDescriptions[i] = OpenDescription()
@@ -1657,11 +1689,12 @@ private func cellControlRights() -> Rights { [.write, .duplicate, .transfer] }
 // tty_inject). `rootVA` (C6c) names the cell's VFS namespace root: NULL or "/"
 // leaves the cell unconfined (like globalCell); any other path is resolved (against
 // the caller's own namespace) to a directory the cell's processes are confined to.
-// `pageCap` (C6d) is an optional hard resident-page ceiling (0 = unlimited). Writes
-// the new CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the
-// domain via cell_stat. The cell persists until explicit teardown (cell_destroy,
-// C6d); closing the control handle does NOT free it.
-func vfsCellCreate(root rootVA: UInt, pageCap: UInt, outId outVA: UInt) -> Int {
+// `pageCap` (C6d/C7a) is an optional hard resident-page ceiling (0 = unlimited);
+// `handleCap` (C7b) is an optional hard handle ceiling (0 = unlimited). Writes the new
+// CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the domain via
+// cell_stat. The cell persists until explicit teardown (cell_destroy, C6d); closing the
+// control handle does NOT free it.
+func vfsCellCreate(root rootVA: UInt, pageCap: UInt, handleCap: UInt, outId outVA: UInt) -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
     let out: UnsafeMutablePointer<UInt8>?
     if outVA == 0 {
@@ -1706,6 +1739,7 @@ func vfsCellCreate(root rootVA: UInt, pageCap: UInt, outId outVA: UInt) -> Int {
     cells[slot].ownerProc = proc
     cells[slot].root = rootNode
     cells[slot].pageCap = pageCap > UInt(Int.max) ? Int.max : Int(pageCap)
+    cells[slot].handleCap = handleCap > UInt(Int.max) ? Int.max : Int(handleCap)
     openDescriptions[d].kind = .cell
     openDescriptions[d].node = slot
     // C6d: stamp the cell generation into the description so a handle that outlives a
@@ -1856,8 +1890,8 @@ func handleDuplicate(_ proc: Int, _ fd: Int, mask: Rights) -> Int {
     defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return Errno.badFD.code }
     guard fdEntryHasRights(proc, fd, .duplicate) else { return Errno.access.code }
-    let newfd = allocFDInProcess(proc, from: 0)
-    if newfd == -1 { return Errno.noSpace.code }
+    let newfd = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if newfd < 0 { return newfd }
     let d = fdEntry(proc, fd).object
     retainDescription(d)
     installDescription(proc, newfd, d, rights: attenuate(fdEntry(proc, fd).rights, to: mask))
@@ -2358,8 +2392,8 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     }
 
     let proc = currentVFSProcess()
-    let fd = allocFDInProcess(proc)
-    if fd == -1 { return Errno.noSpace.code }
+    let fd = allocUserFD(proc)            // C7b: enforce the cell handle cap (EMFILE)
+    if fd < 0 { return fd }
     let d = allocDescription()
     if d == -1 { return Errno.noSpace.code }
 
@@ -2892,8 +2926,8 @@ func vfsDup(fd: Int) -> Int {
     defer { vfsUnlock(daif) }
     guard validFD(proc, fd) else { return Errno.badFD.code }
     guard fdEntryHasRights(proc, fd, .duplicate) else { return Errno.access.code }
-    let newfd = allocFDInProcess(proc, from: 0)
-    if newfd == -1 { return Errno.noSpace.code }
+    let newfd = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if newfd < 0 { return newfd }
     let d = fdEntry(proc, fd).object
     retainDescription(d)
     // The dup carries the source handle's rights (today: identical access via
@@ -2910,6 +2944,11 @@ func vfsDup2(oldfd: Int, newfd: Int) -> Int {
     if newfd < 0 || newfd >= maxFDs { return Errno.badFD.code }
     if oldfd == newfd { return newfd }
     guard fdEntryHasRights(proc, oldfd, .duplicate) else { return Errno.access.code }
+    // C7b: dup2 to a FRESH newfd grows the handle table; refuse past the cell cap
+    // (EMFILE). Reusing an in-use newfd is net-zero growth, so it is never capped.
+    if !fdEntry(proc, newfd).inUse && cellHandleCapWouldExceed(proc, adding: 1) {
+        return Errno.manyFiles.code
+    }
     if fdEntry(proc, newfd).inUse {
         releaseDescription(fdEntry(proc, newfd).object)
         setFDEntry(proc, newfd, HandleEntry())
@@ -2950,8 +2989,8 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         // description, like dup). F_DUPFD_CLOEXEC additionally marks the new fd
         // close-on-exec.
         let start = arg < 0 ? 0 : arg
-        let newfd = allocFDInProcess(proc, from: start)
-        if newfd == -1 { return Errno.noSpace.code }
+        let newfd = allocUserFD(proc, from: start)   // C7b: cell handle cap (EMFILE)
+        if newfd < 0 { return newfd }
         let d = fdEntry(proc, fd).object
         retainDescription(d)
         installDescription(proc, newfd, d, rights: fdEntry(proc, fd).rights)
@@ -2989,12 +3028,12 @@ func vfsPipe(fdsVA: UInt) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    let rfd = allocFDInProcess(proc, from: 0)
-    if rfd == -1 { return Errno.noSpace.code }
-    setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
-    let wfd = allocFDInProcess(proc, from: 0)
+    let rfd = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if rfd < 0 { return rfd }
+    setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve (counts toward the cap)
+    let wfd = allocUserFD(proc, from: 0)
     setFDEntry(proc, rfd, HandleEntry())
-    if wfd == -1 { return Errno.noSpace.code }
+    if wfd < 0 { return wfd }
 
     let p = allocPipe()
     if p == -1 { return Errno.noMem.code }
@@ -3030,11 +3069,11 @@ func vfsOpenpty(masterVA: UInt, slaveVA: UInt) -> Int {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
 
-    let mfd = allocFDInProcess(proc, from: 0)
-    if mfd == -1 { return Errno.noSpace.code }
-    setFDEntry(proc, mfd, HandleEntry(inUse: true, object: -1)) // reserve
-    let sfd = allocFDInProcess(proc, from: 0)
-    if sfd == -1 { setFDEntry(proc, mfd, HandleEntry()); return Errno.noSpace.code }
+    let mfd = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if mfd < 0 { return mfd }
+    setFDEntry(proc, mfd, HandleEntry(inUse: true, object: -1)) // reserve (counts toward the cap)
+    let sfd = allocUserFD(proc, from: 0)
+    if sfd < 0 { setFDEntry(proc, mfd, HandleEntry()); return sfd }
     setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1))
 
     func unwind(_ code: Int) -> Int {
@@ -3146,11 +3185,11 @@ func vfsSocketpair(fdsVA: UInt, flags: Int) -> Int {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
 
-    fd0 = allocFDInProcess(proc, from: 0)
-    if fd0 == -1 { return Errno.noSpace.code }
+    fd0 = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if fd0 < 0 { return fd0 }
     setFDEntry(proc, fd0, HandleEntry(inUse: true, object: -1))
-    fd1 = allocFDInProcess(proc, from: 0)
-    if fd1 == -1 { return fail(Errno.noSpace.code) }
+    fd1 = allocUserFD(proc, from: 0)
+    if fd1 < 0 { return fail(fd1) }
     setFDEntry(proc, fd1, HandleEntry(inUse: true, object: -1))
 
     p01 = allocPipe()
@@ -3356,14 +3395,14 @@ func vfsEndpointCreate(endsVA: UInt) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    let sfd = allocFDInProcess(proc, from: 0)
-    if sfd == -1 { return Errno.noSpace.code }
-    setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve
-    let rfd = allocFDInProcess(proc, from: 0)
-    if rfd == -1 {
+    let sfd = allocUserFD(proc, from: 0)   // C7b: cell handle cap (EMFILE)
+    if sfd < 0 { return sfd }
+    setFDEntry(proc, sfd, HandleEntry(inUse: true, object: -1)) // reserve (counts toward the cap)
+    let rfd = allocUserFD(proc, from: 0)
+    if rfd < 0 {
         rollbackEndpointCreate(proc: proc, sfd: sfd, rfd: -1,
                                endpoint: -1, sendDesc: -1, recvDesc: -1)
-        return Errno.noSpace.code
+        return rfd
     }
     setFDEntry(proc, rfd, HandleEntry(inUse: true, object: -1)) // reserve
 
@@ -4456,11 +4495,11 @@ func vfsSocket(domain: Int, type: Int, proto: Int) -> Int {
 private func installSocketFD(_ s: Int, flags: Int = 0) -> Int {
     let proc = currentVFSProcess()
     let daif = vfsLock()
-    let fd = allocFDInProcess(proc, from: 3)
+    let fd = allocUserFD(proc, from: 3)   // C7b: cell handle cap (EMFILE for socket/accept)
     if fd < 0 {
         vfsUnlock(daif)
         socketClose(s)
-        return Errno.noSpace.code
+        return fd
     }
     let d = allocDescription()
     if d < 0 {

@@ -226,8 +226,8 @@ int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out) {
 }
 
 int swiftos_cell_create(const char *root, unsigned long page_cap,
-                        unsigned int *out_cell_id) {
-    return cell_create(root, page_cap, out_cell_id);
+                        unsigned long handle_cap, unsigned int *out_cell_id) {
+    return cell_create(root, page_cap, handle_cap, out_cell_id);
 }
 
 long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,

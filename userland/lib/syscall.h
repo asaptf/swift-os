@@ -606,13 +606,15 @@ static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
     return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
 }
 
-// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd for it
+// C6b/C6c/C6d/C7b: allocate a fresh cell and return a control-handle fd for it
 // (negative errno on failure). `root` is the cell's VFS namespace root (NULL or
 // "/" = unconfined); `page_cap` is an optional hard resident-page ceiling (0 =
-// unlimited). Writes the new CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
+// unlimited); `handle_cap` is an optional hard handle ceiling (0 = unlimited).
+// Writes the new CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
 static inline int cell_create(const char *root, unsigned long page_cap,
-                              unsigned int *out_cell_id) {
-    return (int)__syscall3(SYS_CELL_CREATE, (long)root, (long)page_cap, (long)out_cell_id);
+                              unsigned long handle_cap, unsigned int *out_cell_id) {
+    return (int)__syscall4(SYS_CELL_CREATE, (long)root, (long)page_cap,
+                           (long)handle_cap, (long)out_cell_id);
 }
 
 // C6d: enumerate the cell's live members into `buf` (up to `cap` u32 pids); returns

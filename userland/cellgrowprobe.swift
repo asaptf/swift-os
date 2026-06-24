@@ -87,7 +87,7 @@ func main(_ argc: Int32,
 
     // 1. Create a capped cell.
     var cell: UInt32 = 0
-    let cellFd = swiftos_cell_create(nil, pageCap, &cell)
+    let cellFd = swiftos_cell_create(nil, pageCap, 0, &cell)
     if cellFd < 0 || cell < 2 {
         swiftos_puts("C7a FAIL: cell_create with a page cap failed\n")
         return 1

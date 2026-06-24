@@ -108,7 +108,7 @@ private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the cre
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
 private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
-private let sysCellCreate: UInt = 108       // cell_create(root_path, out_cell_id) -> .cell control handle fd; allocate a fresh CellId with an optional namespace root (C6b/C6c); needs capConsole
+private let sysCellCreate: UInt = 108       // cell_create(root_path, page_cap, handle_cap, out_cell_id) -> .cell control handle fd; allocate a fresh CellId with an optional namespace root (C6c) + page/handle caps (C6d/C7a/C7b); needs capConsole
 private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
 private let sysCellPids: UInt = 110         // cell_pids(cell_fd, buf, cap) -> live member count; enumerate a cell's processes by tag for teardown (C6d)
 private let sysCellDestroy: UInt = 111      // cell_destroy(cell_fd) -> 0/EBUSY; free the CellId once the cell has no live members (C6d)
@@ -438,10 +438,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
                                  buffer: frame[1], capacity: frame[2])
     } else if number == sysCellCreate {
-        // C6b/C6c/C6d: allocate a fresh CellId rooted at frame[0] (a namespace root
-        // path, NULL = unconfined) with an optional resident-page cap frame[1],
-        // return a .cell control handle fd (capConsole).
-        result = vfsCellCreate(root: frame[0], pageCap: frame[1], outId: frame[2])
+        // C6b/C6c/C6d/C7b: allocate a fresh CellId rooted at frame[0] (a namespace
+        // root path, NULL = unconfined) with an optional resident-page cap frame[1]
+        // and handle cap frame[2], return a .cell control handle fd (capConsole).
+        result = vfsCellCreate(root: frame[0], pageCap: frame[1], handleCap: frame[2], outId: frame[3])
     } else if number == sysCellSpawn {
         // C6b: launch a child into the cell named by the control handle at frame[0].
         // Authority is by handle — resolve it first; a caller without the handle

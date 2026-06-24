@@ -163,12 +163,13 @@ int swiftos_tty_inject(unsigned char byte);
 // negative errno.
 int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
 
-// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd (negative errno
-// on failure); writes the new CellId to *out_cell_id when non-NULL. `root` is the
-// cell's VFS namespace root (NULL or "/" = unconfined); `page_cap` is an optional
-// hard resident-page ceiling (0 = unlimited). Needs CAP_CONSOLE.
+// C6b/C6c/C6d/C7b: allocate a fresh cell and return a control-handle fd (negative
+// errno on failure); writes the new CellId to *out_cell_id when non-NULL. `root` is
+// the cell's VFS namespace root (NULL or "/" = unconfined); `page_cap` is an optional
+// hard resident-page ceiling and `handle_cap` an optional hard handle ceiling (0 =
+// unlimited for either). Needs CAP_CONSOLE.
 int  swiftos_cell_create(const char *root, unsigned long page_cap,
-                         unsigned int *out_cell_id);
+                         unsigned long handle_cap, unsigned int *out_cell_id);
 // C6b: launch a process into the cell named by `cell_fd` (a control handle the
 // caller holds), with the same explicit-handle inheritance ABI as
 // swiftos_spawn_handles_async. Returns the child pid, or a negative errno (EBADF if

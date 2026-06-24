@@ -105,7 +105,7 @@ func main(_ argc: Int32,
     // Assemble the cell: a /www root view + a resident-page cap. The handle set is
     // restricted at spawn time (only the three granted fds below).
     var cellRaw: UInt32 = 0
-    let cellFd = swiftos_cell_create("/www", 80, &cellRaw)
+    let cellFd = swiftos_cell_create("/www", 80, 0, &cellRaw)
     if cellFd < 0 || cellRaw < 2 {
         swiftos_puts("C6e FAIL: cell_create failed\n")
         return 1

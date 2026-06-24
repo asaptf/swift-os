@@ -689,6 +689,21 @@ service into a cell (C7d).
   `cell_stat.residentPages <= cap` while an uncapped global member grows past `cap`
   pages unaffected. Single-core + `-smp 4`; wired into `make test`.
 
+### C7b — per-cell handle cap (DONE, 2026-06-24)
+
+- A per-cell **handle** cap, the analogue of the page cap, **folded into `cell_create`**
+  (symmetric with `page_cap`, no new syscall): `cell_create(root, page_cap, handle_cap,
+  out_cell_id)`; `CellSlot.handleCap`. Enforced at the user-facing handle constructors
+  (open/dup/pipe/socket/accept/endpoint/openpty/socketpair via an `allocUserFD` wrapper,
+  plus an inline `dup2` guard) — a capped member that mints a handle past the cell's
+  aggregate count is refused with **EMFILE**. Delegation paths (spawn-grant install, IPC
+  handle transfer) are deliberately NOT capped — authority handed in, not self-growth.
+  globalCell + uncapped cells short-circuit (zero cost).
+- Acceptance: `make c7-cell-handlecap-test` — `/bin/cellhandleprobe` caps a cell + launches
+  `/bin/cellopener`; the opener `open()`s until refused (EMFILE), the supervisor asserts
+  `cell_stat.handles <= cap`, and an uncapped global member opens past `cap` handles
+  unaffected. Single-core + `-smp 4`; wired into `make test`.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

@@ -527,6 +527,21 @@ private func runCellPagecapProbe() {
     uartPuts("\n")
 }
 
+// C7b: per-cell handle cap probe. A supervisor creates a cell with a handle cap,
+// launches /bin/cellopener into it, and proves the opener cannot grow its OWN handle
+// table (open) past the cell's cap — refused with EMFILE, the aggregate never exceeds
+// the cap — while an uncapped (global) member is unaffected. Single-core and -smp 4.
+private func runCellHandlecapProbe() {
+    uartPuts("swift-os C7b: per-cell handle cap probe\n")
+    let (img, sz) = demoImage("/bin/cellhandleprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellhandleprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C7b cell handlecap probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1525,6 +1540,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellLifecycleProbe()
         runCellServiceProbe()
         runCellPagecapProbe()
+        runCellHandlecapProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
