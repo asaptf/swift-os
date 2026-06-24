@@ -794,6 +794,44 @@ Follow-ups (not blocking): double-indirect blocks for >4 MiB files; moving the F
 into a userland service in line with the driver-serviceization arc; per-cell
 quotas on `/data`.
 
+## K-series — mutable credentials over the immutable base (IN PROGRESS, 2026-06-24)
+
+The identity store `/etc/swos/passwd` lives in the read-only, Ed25519-signed base
+image, so a password change cannot edit it in place — and must not, or it would
+break the immutability/signature guarantee. The K-series adds a **crash-safe
+credential overlay** on the persistent `/data` tier (built on the D-series), merged
+over the base at authentication time. Because datafs has no journal and no atomic
+rename (only honest `fsync`), crash-safety is built at the application layer, as
+CLAUDE.md prescribes.
+
+Design (full crash analysis in the `swos_identity.swift` header):
+- **Dual-bank ping-pong.** The overlay is two fixed-size, SHA-256-checksummed,
+  generation-stamped banks (`/data/swos/passwd.{0,1}`). A change is written to the
+  non-winning bank then `fsync`'d; the `fsync` is the single commit point. A crash
+  only ever tears the non-winning bank (caught by checksum, ignored), so the last
+  committed credential always survives — no single crash reverts a committed
+  non-default password to the base default.
+- **Provisioned anchor.** A second dual-bank pair (`/data/swos/prov.{0,1}`) records
+  a monotonic high-water generation. After provisioning, if both passwd banks are
+  lost/corrupt or a stale lower-generation overlay is restored (rollback — disk rot
+  or `/data` tampering, never a single crash), auth **fails closed** instead of
+  falling back to the factory default. Recovery is a physically-gated path (K4).
+- **Hashing.** Passwords are hashed with PBKDF2-HMAC-SHA256 (field format
+  `pbkdf2-sha256$<iters>$<salthex>$<dkhex>`); the legacy `salt$sha256hex` base-seed
+  format is still verified for compatibility.
+
+- **K1 (this commit):** `userland/lib/swos_identity.swift` — PBKDF2, the password-
+  field codec, the bank serializer/checksum, dual-bank selection, and the merge +
+  ping-pong + anchor resolve policy. Pure (no syscalls): builds into userland ELFs
+  and the host test alike. Gate: `make test` runs `tests/identity_test.swift`
+  (PBKDF2 vectors + the full crash/rollback permutation matrix proving the
+  anti-rollback property). No boot-path change yet.
+- **K2 (planned):** `/bin/passwd` — verify old password, write the new passwd bank
+  (ping-pong) + advance the anchor, honest `fsync`/report, capability-gated.
+- **K3 (planned):** console-login resolves through the overlay; reboot-persistence
+  and fail-closed acceptance in QEMU.
+- **K4 (planned):** boot-flag recovery path so fail-closed never bricks the box.
+
 ## H-series — bare-metal Hetzner ARM bring-up (IN PROGRESS, 2026-06-16)
 
 Driven by the website-hosting goal: make SwiftOS boot as the *actual OS* of the
@@ -863,6 +901,88 @@ base (`0x4000_0000`) match.
   boot disk via rescue, observe over serial/VNC, iterate until SSH reaches
   SwiftOS. SAFETY: confirm with the user before the destructive step; keep a
   rescue path.
+
+## V-series — mountable multi-volume storage (planned)
+
+Driven by the hosting/appliance profiles: the D-series gave **one** persistent
+`/data` tier on **one** dedicated virtio-blk disk. The product needs to attach
+**additional** persistent storage — a second/third local disk, or a **Hetzner
+Cloud Volume**. A Hetzner Volume is, from the OS's point of view, *just another
+block device*: on the real server it appears on the same virtio-scsi/virtio-pci
+transport the H-series already brought up (H0–H5); under QEMU `virt` it is one
+more `virtio-blk-device`. So "second disk" and "Hetzner Volume" are the **same
+problem**, and the hard part is not discovery (the block layer already enumerates
+up to 8 devices and identifies them by sector-0 magic — see `virtioBlkInit`) but
+two upper-layer simplifications inherited from the D-series:
+
+1. **datafs is a singleton.** Global inode table, global block bitmap, a single
+   bound device (D0). Physically there can be many disks, but the persistent FS
+   exists exactly once in the code.
+2. **There is no mount table.** Mounting today is not an operation but an implicit
+   graft: `/data`'s vnode carries `dataFs=true` + `dfsInode`. The VFS knows the one
+   datafs instance through a hardcoded boolean on the VNode.
+
+The "one disk" constraint thus lives in *policy* (one `blkServedDevice`, one
+datafs, one graft), not in the driver.
+
+**Decisions recorded (reviewed 2026-06-24; the "ask, don't guess" forks resolved):**
+
+- **Namespace: global single tree first.** Mounts land in one shared VFS tree;
+  per-cell visibility rides on the existing C3 / C6c confinement (`isDescendant`),
+  not a separate per-cell mount table. Per-cell mount namespaces are a later option.
+- **API: both declarative and runtime, converging on one source of truth.** There
+  is a single mount table, persisted as a file on the root `/data` volume
+  (e.g. `/data/.system/mounts`). The *declarative* path = that file edited offline
+  / staged at image prep. The *runtime* path = a capability-gated `mount()` that
+  applies immediately and, with a `PERSIST` flag, writes through to the same file.
+  No Linux-style "fstab vs live state" divergence.
+- **Manifest lives on the root data volume** (decision: on `/data`, not the signed
+  base or kernel cmdline). It is read only *after* the root `/data` is mounted, so
+  a plain datafs file is sufficient; no chicken-and-egg beyond the root anchor.
+- **Root volume is anchored by UUID in the kernel cmdline** (the single pinned
+  identity in the scheme). On first boot a blank root disk is formatted as the root
+  and its UUID recorded. Everything else is discovered from the manifest on it.
+- **Guardrail (because the manifest is now mutable, unsigned state):** data-disk-
+  driven mounts are confined to a designated mount root (`/mnt/*`); system paths
+  (`/bin`, `/etc`, `/usr`) are off-limits to manifest-driven mounting, the mountpoint
+  must be an empty directory (no legacy overmount that hides contents), and a disk is
+  **never** auto-formatted unless sector 0 has no valid magic (a non-blank unknown
+  disk is left untouched). This keeps the immutable-base trust intact.
+
+Sub-milestones (one at a time, each builds + boots single-core and `-smp 4`, has a
+test, committed, review before the next):
+
+- **V0** (planned): de-singleton datafs + generic mount graft — a pure refactor with
+  no new disk and no behavior change. Wrap datafs global state in a `DfsVolume`
+  struct, index it (`dfsVolumes[]`, only slot 0 used); thread a `vol:` param through
+  `datafsRead/Write/Alloc/...`; generalize `virtioBlkDataRead/WriteRange` to a volume's
+  device (slot 0 = `blkDataDevice`); add `dfsVolume` to the VNode beside `dfsInode`,
+  set to 0 for `/data`; parametrize `datafsMirror` by volume. Acceptance: existing
+  `make datafs-test` / `datafs-fsync-test` / `datafs-sqlite-test` stay green unchanged.
+- **V1** (planned): mount a **second** `SWDATAFS` volume at `/mnt/<label>`. Add a
+  second writable virtio-blk data disk to the QEMU profile; mount it as a distinct
+  datafs instance. Acceptance: a new gate writes to both `/data` and the second
+  volume, proves write isolation between them, and that both survive reboot.
+- **V2** (planned): volume identity + declarative manifest. Add a 128-bit UUID +
+  human label to the datafs superblock; mount-by-label/UUID; read the mount table
+  from `/data/.system/mounts` at boot and mount the volumes it names; enforce the
+  `/mnt/*`-only + empty-dir + never-format-non-blank guardrails; anchor the root
+  volume by cmdline UUID. Acceptance: a manifest-driven mount of a labeled volume,
+  a missing volume leaves its mountpoint empty (boot does not fail), and a guardrail
+  refusal (mount over `/bin`, or format a non-blank disk) is rejected.
+- **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
+  mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
+  through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)
+  returns `EBUSY` via a per-mount refcount. Acceptance: a userland program mounts a
+  labeled volume, reads/writes it, persists across reboot, and a busy unmount is
+  refused; an unprivileged caller is denied.
+- **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
+  port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
+  or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume
+  to a live VM) is deferred (QEMU `virt`/virtio-mmio has no clean hotplug; real Hetzner
+  is virtio-pci).
+
+Full design + per-stage findings to go in `docs/NOTES.md` (V-series) as work lands.
 
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 

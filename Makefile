@@ -2373,6 +2373,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/smp_state_audit_test.sh
 	$(HOST_SWIFTC) tests/hkdf_test.swift kernel/crypto/sha256.swift -o $(BUILD)/hkdf_test
 	$(BUILD)/hkdf_test
+	$(HOST_SWIFTC) tests/identity_test.swift userland/lib/swos_identity.swift kernel/crypto/sha256.swift -o $(BUILD)/identity_test
+	$(BUILD)/identity_test
 	$(HOST_SWIFTC) tests/x25519_test.swift kernel/crypto/x25519.swift -o $(BUILD)/x25519_test
 	$(BUILD)/x25519_test
 	$(HOST_SWIFTC) tests/tls_handshake_test.swift userland/lib/tls13.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift kernel/crypto/x25519.swift kernel/crypto/chacha20poly1305.swift -o $(BUILD)/tls_handshake_test
