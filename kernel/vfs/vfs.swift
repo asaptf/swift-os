@@ -3084,6 +3084,38 @@ func vfsPtySetForeground(fd: Int, pid: Int) -> Int {
     return 0
 }
 
+// tcgetattr/tcsetattr must act on the terminal behind `fd`, not a single global.
+// A pty end carries its own line-discipline flags (ptys[p].lflag); any other fd
+// (the real console, or a non-tty) falls back to the console tty flags, which
+// preserves prior behaviour for the console fds. Without per-fd routing, a
+// program on a pty (e.g. mc over sshd) that switches to raw mode flipped the
+// CONSOLE instead of its own pty slave, leaving the pty stuck in canonical mode.
+func vfsTtyGetLflagForFD(_ fd: Int) -> UInt32 {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return ttyGetLflag() }
+    let entry = fdEntry(proc, fd)
+    if entry.kind == .ptyMaster || entry.kind == .ptySlave {
+        let p = openDescriptions[entry.object].pty
+        if ptyValid(p) { return ptySlaveLflag(p) }
+    }
+    return ttyGetLflag()
+}
+
+func vfsTtySetLflagForFD(_ fd: Int, _ lflag: UInt32) {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { ttySetLflag(lflag); return }
+    let entry = fdEntry(proc, fd)
+    if entry.kind == .ptyMaster || entry.kind == .ptySlave {
+        let p = openDescriptions[entry.object].pty
+        if ptyValid(p) { ptySetLflag(p, lflag); return }
+    }
+    ttySetLflag(lflag)
+}
+
 private let socketpairFlagNonblock = 1
 private let socketpairFlagCloexec = 2
 
@@ -3895,6 +3927,16 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let next = base + offset
     if next < 0 { return Errno.invalid.code }
     file.offset = next
+    // Directories track their read position with a separate getdents cursor
+    // (file.dirCursor), not the byte offset. Keep it in sync on an absolute
+    // seek so rewinddir() (lseek(fd, 0, SEEK_SET)) and seekdir() (lseek to a
+    // telldir offset) actually reposition the stream. Without this, a rewind
+    // left dirCursor past the end and the next getdents returned nothing — mc's
+    // local_opendir() does a probe readdir() then rewinddir(), so it saw every
+    // directory as empty (and crashed on "/" once ".." was dropped). Only
+    // SEEK_SET is synced: a directory's byte offset isn't advanced by getdents,
+    // so SEEK_CUR/SEEK_END would carry a stale base.
+    if whence == 0 && nodes[node].isDir { file.dirCursor = next }
     openDescriptions[d] = file
     return next
 }

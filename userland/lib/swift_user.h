@@ -299,6 +299,12 @@ void swiftos_set_echo(int on);
 // ISIG is kept so Ctrl-C still works. set_raw(0) restores the saved flags.
 void swiftos_set_raw(int on);
 
+// Per-fd c_lflag (third termios word) accessor + setter. Unlike set_echo/set_raw
+// (which act on fd 0), these take an explicit fd so a test can prove tcgetattr/
+// tcsetattr route to the terminal behind that fd (pty end vs console).
+unsigned int swiftos_tcget_lflag(int fd);
+int swiftos_tcset_lflag(int fd, unsigned int lflag);
+
 // ---- /bin/top: system + per-process statistics --------------------------
 #define SWIFTOS_TOP_MAX 16
 #define SWIFTOS_CPU_MAX 8

@@ -105,12 +105,28 @@ QP=""
 
 clean="$(LC_ALL=C tr -cd '\11\12\15\40-\176' < "$LOG")"
 ok=1
-# UI markers: MC's menu + button bar labels rendered to the screen.
+
+# A userland fault (segfault/abort) is logged by the kernel as "EL0 fault ...".
+# MC's one-time "Default skin has been loaded" notice is drawn BEFORE the file
+# panels load, so it must NOT count as success on its own: MC used to crash
+# right after it (empty root file list -> NULL fname deref) yet still "drew" the
+# notice, so this test passed falsely. Require both: no fault, and a real
+# two-panel/menu marker that only appears once the panels have initialised.
+if grep -qF "EL0 fault" <<<"$clean"; then
+  echo "FAIL: MC crashed on launch (kernel logged an EL0 fault)" >&2
+  grep -oE "EL0 fault.*FAR_EL1=0x[0-9A-Fa-f]+" <<<"$clean" | head -1 >&2
+  ok=0
+fi
+
+# Informational only (drawn before the panels, so not a pass criterion).
+grep -qF "Default skin has been loaded" <<<"$clean" && echo "note: drew the default-skin notice"
+
+# Pass markers: MC's actual panel/menu UI (only reached once panels load).
 hit=0
-for marker in "Quit" "Command" "Help" "PullDn" "Default skin has been loaded" "Left" "Right"; do
+for marker in "Quit" "Command" "Help" "PullDn" "Left" "Right"; do
   if grep -qF "$marker" <<<"$clean"; then echo "PASS: drew \"$marker\""; hit=1; fi
 done
-[[ "$hit" = 1 ]] || { echo "FAIL: no MC UI markers found" >&2; ok=0; }
+[[ "$hit" = 1 ]] || { echo "FAIL: MC did not draw its two-panel UI (crash or terminal init failure?)" >&2; ok=0; }
 
 if (( ok )); then
   echo "RESULT: Midnight Commander started and rendered its TUI on swift-os."

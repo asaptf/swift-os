@@ -488,6 +488,7 @@ USER_CELLNSPROBE_ELF := $(BUILD)/cellnsprobe.elf
 USER_CELLCAPPROBE_ELF := $(BUILD)/cellcapprobe.elf
 USER_CELLHELLO_ELF := $(BUILD)/cellhello.elf
 USER_CELLSVCPROBE_ELF := $(BUILD)/cellsvcprobe.elf
+USER_PTYRUN_ELF := $(BUILD)/ptyrun.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
 USER_SUDO_ELF := $(BUILD)/sudo.elf
@@ -675,6 +676,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CELLCAPPROBE_ELF) \
 	$(USER_CELLHELLO_ELF) \
 	$(USER_CELLSVCPROBE_ELF) \
+	$(USER_PTYRUN_ELF) \
 	$(BUILD)/busybox.elf \
 	$(NCURSES_BASE_ELF) \
 	$(GLIBDEMO_BASE_ELF) \
@@ -915,6 +917,9 @@ $(BUILD)/user_netsvc-demo.o: userland/netsvc-demo.swift userland/lib/virtio_net_
 
 $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyprobe.swift -o $@
+
+$(BUILD)/user_ptyrun.o: userland/ptyrun.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyrun.swift -o $@
 
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
@@ -1279,6 +1284,9 @@ $(USER_NETSVCDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 
 $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o -o $@
+
+$(USER_PTYRUN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyrun.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyrun.o -o $@
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
@@ -3528,6 +3536,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_CELLHELLO_ELF) $(BASE_ROOT)/bin/cellhello
 	cp $(USER_CELLSVCPROBE_ELF) $(BASE_ROOT)/bin/cellsvcprobe
 	cp $(USER_PTYPROBE_ELF) $(BASE_ROOT)/bin/ptyprobe
+	cp $(USER_PTYRUN_ELF) $(BASE_ROOT)/bin/ptyrun
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
 	cp $(USER_SUDO_ELF) $(BASE_ROOT)/bin/sudo
 	cp $(USER_REBOOT_ELF) $(BASE_ROOT)/bin/reboot

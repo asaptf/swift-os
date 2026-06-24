@@ -96,6 +96,7 @@ for marker in \
   "ptyprobe: echo OK" \
   "ptyprobe: slave output ONLCR OK" \
   "ptyprobe: backspace OK" \
+  "ptyprobe: termios per-fd routing OK" \
   "ptyprobe: slave EOF OK" \
   "PTYPROBE-OK"; do
   if grep -qF "$marker" <<<"$clean"; then

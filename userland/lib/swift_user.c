@@ -550,6 +550,19 @@ void swiftos_set_raw(int on) {
     (void)__syscall3(SYS_TCSETATTR, 0, 0, (long)t);
 }
 
+unsigned int swiftos_tcget_lflag(int fd) {
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, fd, (long)t, 0);
+    return t[3]; // c_lflag
+}
+
+int swiftos_tcset_lflag(int fd, unsigned int lflag) {
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, fd, (long)t, 0);
+    t[3] = lflag;
+    return (int)__syscall3(SYS_TCSETATTR, fd, 0, (long)t);
+}
+
 // ---- /bin/top statistics (SYS_SYSINFO / SYS_PROCSTAT) ---------------------
 // Kernel record layouts (must match kernel/user/process.swift).
 struct top_sysinfo {
