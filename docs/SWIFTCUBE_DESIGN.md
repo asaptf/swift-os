@@ -20,9 +20,10 @@ the container abstraction**, not optimizing it.
 ## 1. Thesis: why this is faster than Docker
 
 SwiftCube does not run containers. A deployed application instance is a **SwiftOS
-Cell** — the kernel-native, capability-based isolation domain described in
-[Architecture](ARCHITECTURE.md) ("Future isolation model: Cells") and decided as
-a userland composition in [Capabilities](CAPABILITIES.md) (§5, milestone C6).
+Cell** — the capability-based isolation domain described in
+[Architecture](ARCHITECTURE.md) ("Isolation model: Cells") and decided as
+a userland composition in [Capabilities](CAPABILITIES.md) (§5, milestones C6a–C6e,
+implemented).
 
 A Cell already bundles exactly what an orchestrated workload needs:
 

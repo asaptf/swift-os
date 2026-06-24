@@ -11,10 +11,12 @@
 // that consumes the protocol is the orchestrator's.
 //
 // Two implementations sit behind this seam: a host `FakeCellSupervisor` (deterministic,
-// for the SC3 acceptance tests) and the real `C6CellSupervisor` adapter. Because C6 is
-// not yet implemented (only the per-process CellId tag + syscalls 51–53 exist — see
-// CAPABILITIES §5/§6 and RISK_REMEDIATION_ROADMAP), the real adapter is a documented
-// stub and the on-device gate is deferred (see C6Adapter.swift). Class-bound (`AnyObject`)
+// for the SC3 acceptance tests) and the real `C6CellSupervisor` adapter. Kernel C6 is
+// implemented (cell_create/cell_spawn/cell_pids/cell_destroy, syscalls 107–111 — see
+// CAPABILITIES §5/§6 and RISK_REMEDIATION_ROADMAP), but the SwiftCube-side wiring of a
+// CellSpec onto those syscalls is the SC3 milestone and is not built yet, so the real
+// adapter still returns `.unavailable` and the on-device gate is deferred (see
+// C6Adapter.swift). Class-bound (`AnyObject`)
 // so it monomorphizes to a single existential under Embedded Swift, matching the
 // `CubeClock` seam. Foundation-free.
 
