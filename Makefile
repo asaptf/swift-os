@@ -365,16 +365,13 @@ NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
 endif
 
-# bash (SH1) is baked into base.img by default. It is OPT-OUT so hosts/tests that
-# do not need the full bash port — e.g. the rsync smoke test, which only needs
-# the OS to boot under busybox ash + pkg + networking — can build a base image
-# without it: `make base-image INCLUDE_BASH=0`. Default preserves the bash bake.
-# Optional override for root's login shell in the staged base image. Empty keeps
-# whatever base/etc/swos/passwd ships (SH3: /bin/zsh). Tests that must boot without
-# the heavy shell ports set ROOT_LOGIN_SHELL=/bin/sh (busybox ash, always present).
-ROOT_LOGIN_SHELL ?=
-
-INCLUDE_BASH ?= 1
+# Optional heavy userland app/shell ports: bash (SH1), zsh (SH2), ncurses+ncdemo
+# (NC1), GLib+glibdemo (GL1), Midnight Commander (MC1). Each is a slow from-source
+# cross-build (newlib + zlib + ncurses + glib + network). ALL default OFF so
+# kernel/base/disk iteration ships only busybox and never pulls the app toolchain;
+# turn one on with INCLUDE_<X>=1 (the matching test targets do). Build the port
+# first: `make ncurses`/`glib`/`mc`/`bash`/`zsh`.
+INCLUDE_BASH ?= 0
 ifeq ($(INCLUDE_BASH),1)
 BASH_BASE_ELF := $(BUILD)/bash.elf
 BASH_PACK_CMD := cp $(BUILD)/bash.elf $(BASE_ROOT)/bin/bash
@@ -383,10 +380,7 @@ BASH_BASE_ELF :=
 BASH_PACK_CMD := echo "  (bash.elf NOT packed — build with INCLUDE_BASH=1 for /bin/bash)"
 endif
 
-# zsh (SH2) is baked into base.img by default, like bash. OPT-OUT the same way so
-# tests/hosts that do not need the zsh port can build a base image without it:
-# `make base-image INCLUDE_ZSH=0`. Default preserves the zsh bake.
-INCLUDE_ZSH ?= 1
+INCLUDE_ZSH ?= 0
 ifeq ($(INCLUDE_ZSH),1)
 ZSH_BASE_ELF := $(BUILD)/zsh.elf
 ZSH_PACK_CMD := cp $(BUILD)/zsh.elf $(BASE_ROOT)/bin/zsh
@@ -394,6 +388,38 @@ else
 ZSH_BASE_ELF :=
 ZSH_PACK_CMD := echo "  (zsh.elf NOT packed — build with INCLUDE_ZSH=1 for /bin/zsh)"
 endif
+
+INCLUDE_NCURSES ?= 0
+ifeq ($(INCLUDE_NCURSES),1)
+NCURSES_BASE_ELF := $(BUILD)/ncdemo.elf
+NCURSES_PACK_CMD := cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo
+else
+NCURSES_BASE_ELF :=
+NCURSES_PACK_CMD := echo "  (ncdemo.elf NOT packed — build with INCLUDE_NCURSES=1)"
+endif
+
+INCLUDE_GLIB ?= 0
+ifeq ($(INCLUDE_GLIB),1)
+GLIBDEMO_BASE_ELF := $(BUILD)/glibdemo.elf
+GLIBDEMO_PACK_CMD := cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo
+else
+GLIBDEMO_BASE_ELF :=
+GLIBDEMO_PACK_CMD := echo "  (glibdemo.elf NOT packed — build with INCLUDE_GLIB=1)"
+endif
+
+INCLUDE_MC ?= 0
+ifeq ($(INCLUDE_MC),1)
+MC_BASE_ELF := $(BUILD)/mc.elf
+MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+else
+MC_BASE_ELF :=
+MC_PACK_CMD := echo "  (mc.elf NOT packed — build with INCLUDE_MC=1)"
+endif
+
+# root's login shell in the staged base. SH3 ships /bin/zsh in base/etc/swos/passwd;
+# when zsh is NOT baked (default), rewrite it to /bin/sh (busybox ash, always
+# present) so login still reaches a shell. Overridable on the command line.
+ROOT_LOGIN_SHELL ?= $(if $(filter 1,$(INCLUDE_ZSH)),,/bin/sh)
 
 # SU-B: a signed test SWSITE bundle (+ a tampered copy) for site-bundle-test.
 # OPT-IN via INCLUDE_SITE_TEST=1 so production images carry no test fixtures.
@@ -425,6 +451,7 @@ else
 OS_STAGE_DEPS :=
 OS_STAGE_PACK_CMD := true
 endif
+
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -635,9 +662,9 @@ BASE_EXEC_ELFS := \
 	$(USER_PTYPROBE_ELF) \
 	$(USER_CELLSTATPROBE_ELF) \
 	$(BUILD)/busybox.elf \
-	$(BUILD)/ncdemo.elf \
-	$(BUILD)/glibdemo.elf \
-	$(BUILD)/mc.elf \
+	$(NCURSES_BASE_ELF) \
+	$(GLIBDEMO_BASE_ELF) \
+	$(MC_BASE_ELF) \
 	$(BASH_BASE_ELF) \
 	$(ZSH_BASE_ELF)
 
@@ -2242,11 +2269,13 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/nginx_test.sh
 	./tests/nginx_data_test.sh
 	./tests/nginx_tls_test.sh
+	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
 	./tests/ncurses_test.sh
 	./tests/glib_test.sh
 	./tests/mc_test.sh
 	./tests/bash_test.sh
 	./tests/zsh_test.sh
+	rm -f $(BASE_IMG); $(MAKE) base-image
 	./tests/package_overlay_test.sh
 	./tests/pkg_store_boot_test.sh
 	./tests/pkg_local_install_test.sh
@@ -2500,18 +2529,24 @@ nginx-test: build $(QEMU_DTB) base-image
 # NC1: boot the base image and run /bin/ncdemo — links static ncurses, resolves
 # terminfo from compiled-in fallbacks (no DB on disk), draws a box on the serial
 # console, reads a key, and exits. Asserts the post-endwin plain-text markers.
-ncurses-test: build $(QEMU_DTB) base-image
+ncurses-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NCURSES=1
 	./tests/ncurses_test.sh
 
 # GL1: boot the base image and run /bin/glibdemo — links static libglib-2.0.a
 # and exercises GString/GList/GHashTable/GArray/g_get_monotonic_time. Asserts
 # the GLIBDEMO-OK marker.
-glib-test: build $(QEMU_DTB) base-image
+glib-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_GLIB=1
 	./tests/glib_test.sh
 
 # MC1: boot the base image and run /bin/mc — the Midnight Commander TUI on the
 # ncurses backend. Asserts the panels/menu draw and that it quits cleanly.
-mc-test: build $(QEMU_DTB) base-image
+mc-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1
 	./tests/mc_test.sh
 
 # W2: nginx serves a web root + logs from the persistent /data tier; content
@@ -3449,9 +3484,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SVC_SUPERVISOR_ELF) $(BASE_ROOT)/bin/svc-supervisor
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
-	cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo
-	cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo
-	cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+	$(NCURSES_PACK_CMD)
+	$(GLIBDEMO_PACK_CMD)
+	$(MC_PACK_CMD)
 	$(BASH_PACK_CMD)
 	$(ZSH_PACK_CMD)
 	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
@@ -3501,7 +3536,9 @@ bash:
 
 # bash-test: boot the base image and verify bash starts, runs compound commands,
 # and exits cleanly. Requires `make bash` + `make base-image` first.
-bash-test: build $(QEMU_DTB) base-image
+bash-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_BASH=1
 	./tests/bash_test.sh
 
 # bash.elf is produced by `make bash` (needs newlib + ncurses + network).
@@ -3515,7 +3552,9 @@ zsh:
 
 # zsh-test: boot the base image and verify zsh starts, runs arrays/functions,
 # and exits cleanly. Requires `make zsh` + `make base-image` first.
-zsh-test: build $(QEMU_DTB) base-image
+zsh-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_ZSH=1
 	./tests/zsh_test.sh
 
 # zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
