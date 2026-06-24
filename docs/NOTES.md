@@ -3129,6 +3129,40 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   shmring data plane, supervised like svc-input. Full replacement of the in-kernel
   TCP/socket stack stays a long-horizon epic, deliberately out of the NS1–NS3 scope.
 
+### NS2 — userland virtio-net driver does real TX/RX on a secondary NIC (DONE, 2026-06-24)
+
+- **Goal.** Prove an EL0 driver can do real TX/RX on a NIC, reusing the C5/NS1
+  plumbing (`device_mmap` + `virt_to_phys`), WITHOUT touching the primary kernel NIC.
+- **Two-NIC architecture.** The in-kernel net driver always binds the *first*
+  virtio-net device (ordinal 0); `virtioNetDiscoverGrant(ordinal:)` now selects by
+  ordinal, and `resetDeviceRegistry()` registers a *drivable* secondary grant
+  `virtio-net.1` (slot 3, `deviceFlagMmioGrant`, non-discoverable) only when a SECOND
+  NIC is attached. So the userland driver can fully reset + own the second NIC while
+  the kernel keeps serving on the first; on the single-NIC production profile
+  `virtio-net.1` does not exist and no userland program touches the live NIC.
+  `maxDevices` bumped 4→6 for the extra slots.
+- **Userland driver.** `/bin/netdriverprobe` (Swift) claims `virtio-net.1`, maps the
+  window, and brings up BOTH virtqueues from EL0 — RX (queue 0) and TX (queue 1):
+  reset → features (`VIRTIO_F_VERSION_1` + `VIRTIO_NET_F_MAC`) → per-queue
+  QSEL/QNUM/ring-program/QREADY → post device-writable RX buffers → DRIVER_OK. Every
+  ring and buffer physical address is resolved per-page via `virt_to_phys`, so no
+  allocation needs to be physically contiguous (each 2048-byte buffer fits within one
+  page). It then builds an ARP request for the slirp gateway (Ethernet+ARP after a
+  zeroed 12-byte virtio_net_hdr), transmits it on the TX queue, and polls the RX used
+  ring for slirp's ARP reply — proving both directions. Bounded re-transmit/poll loop
+  so it always terminates.
+- **Acceptance.** `make ns2-net-driver-test` (`-smp 4`, two virtio-net/slirp devices)
+  requires `NS2 OK: userland virtio-net TX/RX — ARP reply, 10.0.2.2 is at
+  52:55:0a:00:02:02` (the deterministic slirp gateway MAC) AND the primary kernel NIC
+  staying up (`net-a OK: ICMP echo reply`). Wired into `make test`. No-op clean exit
+  on the single-NIC profile.
+- **Caveat (same as C5i).** Ring/buffer access relies on TCG cache coherence; real-HW
+  cache maintenance for userland DMA (dc_cvac/dc_ivac) is not yet exposed to EL0 — a
+  later hardening step, alongside userland IRQ delivery (the driver polls).
+- **Next (NS3).** A minimal restartable userland net SERVICE over a shmring data
+  plane, supervised like svc-input — the restartable-service shape for networking.
+  Full replacement of the in-kernel TCP/socket stack stays a long-horizon epic.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

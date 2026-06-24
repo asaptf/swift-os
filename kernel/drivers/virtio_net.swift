@@ -392,19 +392,27 @@ struct VirtioNetGrantDiscovery {
     var slot: UInt32 = 0
 }
 
-func virtioNetDiscoverGrant() -> VirtioNetGrantDiscovery {
+// `ordinal` selects which virtio-net window to return (0 = the first, which the
+// in-kernel driver binds; 1 = the second, used as a drivable secondary NIC for the
+// userland net driver — NS2 — so userland can own a NIC without disturbing the
+// kernel's primary).
+func virtioNetDiscoverGrant(ordinal: UInt32 = 0) -> VirtioNetGrantDiscovery {
     var out = VirtioNetGrantDiscovery()
+    var seen: UInt32 = 0
     var i: UInt32 = 0
     while i < platform.virtioMmioCount {
         let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
         if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
            mmio_read32(m + R_VERSION) == 2 &&
            mmio_read32(m + R_DEVID) == VIRTIO_ID_NET {
-            out.found = true
-            out.mmioBase = m
-            out.mmioLen = platform.virtioMmioStride
-            out.slot = i
-            return out
+            if seen == ordinal {
+                out.found = true
+                out.mmioBase = m
+                out.mmioLen = platform.virtioMmioStride
+                out.slot = i
+                return out
+            }
+            seen += 1
         }
         i += 1
     }

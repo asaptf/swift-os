@@ -446,6 +446,7 @@ USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_DEVICEAUTHDEMO_ELF := $(BUILD)/deviceauthdemo.elf
 USER_DEVICEMMAPPROBE_ELF := $(BUILD)/devicemmapprobe.elf
 USER_NETMMAPPROBE_ELF := $(BUILD)/netmmapprobe.elf
+USER_NETDRIVERPROBE_ELF := $(BUILD)/netdriverprobe.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
@@ -622,6 +623,7 @@ BASE_EXEC_ELFS := \
 	$(USER_DEVICEAUTHDEMO_ELF) \
 	$(USER_DEVICEMMAPPROBE_ELF) \
 	$(USER_NETMMAPPROBE_ELF) \
+	$(USER_NETDRIVERPROBE_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
@@ -634,7 +636,7 @@ BASE_EXEC_ELFS := \
 	$(ZSH_BASE_ELF)
 
 .PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
-.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: virtio-transport-test
@@ -822,6 +824,10 @@ $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h 
 # NS1: standalone Swift virtio-net MMIO grant probe.
 $(BUILD)/user_netmmapprobe.o: userland/netmmapprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netmmapprobe.swift -o $@
+
+# NS2: standalone Swift userland virtio-net driver (TX/RX on a secondary NIC).
+$(BUILD)/user_netdriverprobe.o: userland/netdriverprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netdriverprobe.swift -o $@
 
 $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyprobe.swift -o $@
@@ -1153,6 +1159,9 @@ $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 
 $(USER_NETMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o -o $@
+
+$(USER_NETDRIVERPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o -o $@
 
 $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o -o $@
@@ -2256,6 +2265,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(MAKE) c5-userland-driver-test
 	$(MAKE) c5-tty-inject-test
 	$(MAKE) ns1-net-grant-test
+	$(MAKE) ns2-net-driver-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -2733,6 +2743,12 @@ c5-userland-driver-test: build $(QEMU_DTB_SMP4) base-image
 # (ICMP echo reply). Runs under -smp 4.
 ns1-net-grant-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns1_net_grant_test.sh
+
+# NS2: a userland virtio-net driver does real TX/RX on a SECONDARY NIC (two
+# virtio-net devices; the kernel keeps the first) via an ARP round-trip against
+# slirp, without disturbing the primary kernel NIC. Runs under -smp 4.
+ns2-net-driver-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns2_net_driver_test.sh
 
 # C5j: the persistent userland driver (/bin/inputd, launched by swos-init) injects
 # decoded virtio-input keystrokes into the kernel tty (SYS_tty_inject), restoring
@@ -3323,6 +3339,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_DEVICEAUTHDEMO_ELF) $(BASE_ROOT)/bin/deviceauthdemo
 	cp $(USER_DEVICEMMAPPROBE_ELF) $(BASE_ROOT)/bin/devicemmapprobe
 	cp $(USER_NETMMAPPROBE_ELF) $(BASE_ROOT)/bin/netmmapprobe
+	cp $(USER_NETDRIVERPROBE_ELF) $(BASE_ROOT)/bin/netdriverprobe
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps

@@ -219,7 +219,7 @@ private var endpointRecvWaiters = [Int32](
     repeating: -1, count: maxEndpoints * maxRecvWaitersPerEndpoint)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
-private let maxDevices = 4
+private let maxDevices = 6
 private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
 private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
@@ -851,6 +851,21 @@ private func resetDeviceRegistry() {
                        bus: deviceBusVirtioMmio,
                        mmioBase: net.mmioBase,
                        mmioLen: net.mmioLen,
+                       flags: deviceFlagMmioGrant,
+                       discoverable: false)
+    }
+    // NS2: when a SECOND virtio-net device is attached, publish it as a drivable
+    // grant `virtio-net.1`. The in-kernel net driver always binds the first NIC
+    // (ordinal 0), so the userland net driver can fully reset + own the second one
+    // (TX/RX from EL0) without disturbing the primary kernel NIC. Absent on the
+    // single-NIC production profile, so no userland program touches the live NIC.
+    let net2 = virtioNetDiscoverGrant(ordinal: 1)
+    if net2.found {
+        registerDevice(3, "virtio-net.1",
+                       kind: deviceKindVirtioNet,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: net2.mmioBase,
+                       mmioLen: net2.mmioLen,
                        flags: deviceFlagMmioGrant,
                        discoverable: false)
     }

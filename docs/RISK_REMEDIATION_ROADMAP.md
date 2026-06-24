@@ -526,13 +526,24 @@ TCP/socket stack is a separate long-horizon epic, out of NS1–NS3 scope.
 - Non-goals: NS1 does not run a userland NIC driver, does not touch the kernel net
   path, and does not move any socket/TCP logic.
 
-### NS2 / NS3 — planned
+### NS2 — userland virtio-net driver does real TX/RX on a secondary NIC (DONE, 2026-06-24)
 
-- NS2: a userland virtio-net driver doing real TX/RX on a dedicated/secondary NIC
-  (reusing `virt_to_phys` for the TX/RX virtqueues), proving an EL0 NIC driver works
-  end to end without disturbing the primary kernel-owned NIC.
-- NS3: a minimal restartable userland net service over a shmring data plane,
-  supervised like svc-input — the restartable-service shape for networking.
+- `virtioNetDiscoverGrant(ordinal:)` selects which NIC window to expose; the registry
+  publishes a drivable `virtio-net.1` grant only when a SECOND NIC exists (the kernel
+  always binds the first). `/bin/netdriverprobe` claims it, brings up RX+TX
+  virtqueues entirely from EL0 (per-page `virt_to_phys`, no contiguity assumption),
+  and does an ARP round-trip against slirp — proving real TX and RX from userland
+  without disturbing the primary kernel NIC. `maxDevices` 4→6.
+- Acceptance: `make ns2-net-driver-test` (two virtio-net devices) requires the NS2 OK
+  ARP-reply marker plus the primary kernel NIC's ICMP echo reply.
+- Non-goals: NS2 does not make the driver persistent/restartable (NS3), does not use
+  a shmring data plane yet, and does not touch the kernel net path or socket layer.
+
+### NS3 — planned
+
+- A minimal restartable userland net service over a shmring data plane, supervised
+  like svc-input — the restartable-service shape for networking. Full replacement of
+  the in-kernel TCP/socket stack remains a separate long-horizon epic.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

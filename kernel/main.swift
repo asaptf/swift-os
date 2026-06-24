@@ -404,6 +404,22 @@ private func runNetMmioProbe() {
     uartPuts("\n")
 }
 
+// NS2: userland virtio-net driver. Runs as a capConsole boot principal: claims the
+// SECONDARY virtio-net grant (present only when a second NIC is attached), brings
+// up the RX/TX virtqueues entirely from EL0, and does an ARP round-trip against
+// slirp — proving a userland NIC driver does real TX/RX without disturbing the
+// primary kernel-owned NIC. No-ops cleanly when there is no second NIC.
+private func runNetDriverProbe() {
+    uartPuts("swift-os NS2: userland virtio-net driver probe\n")
+    let (img, sz) = demoImage("/bin/netdriverprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["netdriverprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("NS2 net driver probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1394,6 +1410,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runUserlandServiceDemo()
         runDeviceMmioMapProbe()
         runNetMmioProbe()
+        runNetDriverProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
