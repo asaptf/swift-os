@@ -487,6 +487,21 @@ private func runCellStatProbe() {
     uartPuts("\n")
 }
 
+// Process-table capacity probe: forks children (each parked on a pipe barrier)
+// until the EL0 process table refuses, and asserts more than the historical 16
+// were live simultaneously, that the boundary returned a clean EAGAIN, and that
+// saturate-and-reap leaks no slot. Guards the unified kMaxProcesses cap.
+private func runProcMaxProbe() {
+    uartPuts("swift-os procmax: process-table capacity probe\n")
+    let (img, sz) = demoImage("/bin/procmaxprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["procmaxprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("procmax probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 // C6b: cell-creation + spawn-into-cell probe. Runs as a capConsole boot principal:
 // a minimal supervisor creates a cell, refuses a spawn without the cell handle,
 // launches /bin/cellchild into the cell, proves the child is charged to the new
@@ -707,9 +722,12 @@ private func runOrphanReapDemo() {
     let baseSlots = processLiveSlotCount()
     let baseFrames = pmmFreeCount()
     let baseEndpoints = vfsEndpointInUseCount()
-    // 20 rounds exceeds both the 16-slot process table and the 16-slot endpoint
-    // table, so any per-round slot leak would exhaust a table (round launch
-    // fails) well before the count comparison.
+    // A per-round leak is caught two ways: the steady-state count comparison
+    // below (afterSlots/afterEndpoints vs baseline) is the primary check, and 20
+    // rounds also exceeds the 16-slot endpoint table, so an endpoint leak exhausts
+    // that table (round launch fails) outright. The process table is larger
+    // (kMaxProcesses), so a process-slot leak surfaces via the count comparison
+    // rather than table exhaustion.
     var launched = true
     for _ in 0..<20 {
         if !processOrphanReapRound(img, sz, packed: p, packedLen: n, argc: c) {
@@ -1596,6 +1614,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runNetMmioProbe()
         runNetDriverProbe()
         runNetSvcDemo()
+        runProcMaxProbe()
         runCellStatProbe()
         runCellCreateProbe()
         runCellNamespaceProbe()

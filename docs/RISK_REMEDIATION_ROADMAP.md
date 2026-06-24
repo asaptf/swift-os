@@ -719,6 +719,43 @@ service into a cell (C7d).
   accounting-reset / bounded-crash-loop markers + `C7c OK`. Single-core + `-smp 4`; wired
   into `make test`.
 
+## Process-table capacity (PT series) — scale the slot table for the hosting profile
+
+The EL0 process table was capped at 16 slots since bring-up. That is tight for the
+flagship application/AI-hosting profile once you count init, the login path, the
+supervised services the C5/C7 arcs add, and a real app plus its workers. This short
+series raises the cap and — the substantive part — removes the latent coupling that
+made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
+
+### PT1 — unify the process-slot cap and raise 16 → 64 (DONE, 2026-06-24)
+
+- The cap lived as **three** independent `16` literals that all meant "number of
+  process slots" and silently had to move together: `maxProc` (process.swift, the
+  table), `maxVFSProcesses` (vfs.swift — the per-process VFS handle/cwd/confine
+  tables are slot-keyed, so a drift corrupts FD indexing), and `maxFutexWaiters`
+  (futex.swift — at most one parked waiter per thread, so bounded by the slot count;
+  if `maxProc` exceeded it the dead queue-full EAGAIN branch would come alive
+  untested). PT1 makes all three derive from one `let kMaxProcesses = 64`
+  (process.swift), so the cap can never again be raised in one table without the
+  others. `maxEndpoints` (IPC, not per-process) is intentionally left at 16.
+- **Measurement set the value, and killed a fancier design.** Per-slot static cost is
+  ~26 KB, dominated by two heavyweight per-process tables sized for real runtimes
+  (the `maxFDs = 512` handle table ≈ 12 KB and the `maxAnonVmas = 512` anon-VMA table
+  ≈ 12 KB, "512 covers Node"). So 64 slots ≈ 1.7 MB static — noise on the 4 GB
+  hosting target. A two-tier decouple (small default + on-demand pool for FD/VMA) was
+  **rejected** as premature: ~1.5–3 MB saved against hot-path indirection on every FD
+  op + a pooled allocator under `vfsLock` + a large SMP/test surface. The
+  embedded/appliance profile, where footprint matters, lowers `kMaxProcesses` (and,
+  later, the FD/VMA sizes) in one place instead.
+- Userland `/bin/ps` and `/bin/top` keep their own mirrors (`SWIFTOS_PS_MAX`,
+  `SWIFTOS_TOP_MAX`, `pidMax`), all raised 16 → 64 so they don't truncate the listing.
+- Acceptance: `make procmax-test` — `/bin/procmaxprobe` forks pipe-barriered children
+  until `fork()` returns `-EAGAIN`, asserting > 16 were live at once, a clean EAGAIN at
+  the boundary, exact live-count growth, and no slot leak after saturate-and-reap.
+  Single-core + `-smp 4`; wired into `make test`.
+- Follow-ups (not blocking): bump `maxEndpoints` for IPC-heavy multi-service loads; an
+  `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table sizes together.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

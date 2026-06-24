@@ -3210,7 +3210,7 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
 - **Design — on-demand aggregation, no per-cell counter table.** The per-process
   counters (`pResPages`, `pCpuTicks`, and the handle table) are already the single
   source of truth, so `processCellStat` aggregates on demand: a single bounded scan
-  of the process table (`maxProc = 16`) summing the live processes whose
+  of the process table (`maxProc`) summing the live processes whose
   `pSecurity[i].cell` matches. This adds **zero per-op accounting cost** (nothing on
   the hot allocation/charge paths changed) and **zero drift risk**, and "a reaped
   process's charge is removed" falls out for free — a reaped slot is `pUnused` and is
@@ -8027,7 +8027,11 @@ tries to fill it discovered `pthread_create` fails at ~the 13th thread:
 live system already holds several, so you exhaust thread slots *before* the 16-slot
 futex table — the EAGAIN branch is defensive/dead under the current cap. Recorded
 rather than tested; if `maxProc` ever rises above `maxFutexWaiters`, add the
-oversubscription case. Verified `make futex-test` PASS at `-smp 4`. Remaining audit
+oversubscription case. **Update (PT, 2026-06-24):** `maxFutexWaiters` now derives
+from the same `kMaxProcesses` constant as `maxProc` (futex.swift), so it can never
+fall behind the slot count — at most one parked waiter per thread, so the table
+cannot legitimately overflow and the EAGAIN branch stays defensive by construction.
+Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
 
@@ -8285,3 +8289,61 @@ macOS host:
   preserves the bake, and `rsync-test` builds with `INCLUDE_BASH=0` since rsync only
   needs the OS to boot under busybox ash + pkg + networking. Fixing the bash
   cross-build remains an SH1 follow-up.
+
+### PT1 — process-table capacity: unify the slot cap and raise 16 → 64 (DONE, 2026-06-24)
+
+Driven by the flagship application/AI-hosting profile: the EL0 process table was
+capped at 16 slots since bring-up, which is tight once you count init, the login
+path, supervised services (C5/C7), and a real app plus its workers. PT1 raises the
+cap to **64** and, more importantly, removes the latent coupling that made raising
+it dangerous.
+
+**The real problem was three independent `16` literals that all meant "number of
+process slots" and had to move together:**
+- `maxProc` (kernel/user/process.swift) — the process table itself.
+- `maxVFSProcesses` (kernel/vfs/vfs.swift) — the per-process VFS handle/cwd/confine
+  tables are slot-keyed (`slot * maxFDs + fd`); if this drifts from `maxProc` the FD
+  indexing silently corrupts.
+- `maxFutexWaiters` (kernel/sched/futex.swift) — at most one parked waiter per
+  thread, so it is bounded by the slot count; if `maxProc` exceeded it, the
+  previously-dead queue-full EAGAIN branch (see the futex audit note above) would
+  come alive untested.
+
+PT1 introduces one source of truth, `let kMaxProcesses = 64` (process.swift), and
+makes all three derive from it, so the cap can never again be raised in one table
+without the others. `maxEndpoints` (IPC, not per-process) is deliberately left at 16
+— a separate resource with its own follow-up knob.
+
+**Measurement that set the value.** Per-slot static cost is ~26 KB, dominated by the
+two heavyweight per-process tables sized for real runtimes: the FD handle table
+(`maxFDs = 512` × `HandleEntry` ≈ 24 B = ~12 KB) and the anonymous-VMA table
+(`maxAnonVmas = 512` × `AnonVma` ≈ 24 B = ~12 KB; "512 covers Node"). So 64 slots ≈
+**1.7 MB** static (.bss), 128 ≈ 3.3 MB — noise on the 4 GB hosting target. A
+considered two-tier decoupling (small default FD/VMA capacity + a large on-demand
+pool) was **rejected** as premature: it would save ~1.5–3 MB at the cost of
+indirection on every FD op (a hot path) plus a new pooled allocator under `vfsLock`
+and a much larger SMP/test surface — against priority #2's "fast" and the
+strict-workflow "small reviewable steps". The embedded/appliance profile, where
+static footprint actually matters, can instead lower `kMaxProcesses` in one place.
+
+**Userland observability mirrors.** `/bin/ps` and `/bin/top` keep their own caps
+(separate compilation, no shared header): `SWIFTOS_PS_MAX` and `SWIFTOS_TOP_MAX`
+(userland/lib/swift_user.h) and `pidMax` (userland/top.swift) were also 16 and would
+silently truncate their listings at 16 processes. All three raised to 64 with a
+comment that they must track `kMaxProcesses`. The kernel `SYS_psinfo`/`SYS_procstat`
+paths already iterate `0..<maxProc` within the caller's buffer capacity, so they
+scaled for free.
+
+**Acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
+parked on a pipe barrier, until `fork()` returns `-EAGAIN`; it asserts more than the
+old 16 were live simultaneously, that the boundary returned exactly EAGAIN (`-11`),
+that the live total grew by exactly the number forked, and that saturate-and-reap
+leaks no slot. `make procmax-test` runs it single-core and under `-smp 4`; wired into
+`make test`. The orphan-reap comment in main.swift was corrected (its count-based
+check already catches leaks regardless of table size), and the futex audit note above
+got a forward-update. See the "Process-table capacity (PT series)" section in
+docs/RISK_REMEDIATION_ROADMAP.md.
+
+Follow-ups (not blocking): bump `maxEndpoints` if IPC-heavy multi-service workloads
+need it; an `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table
+sizes together for a minimal static footprint.
