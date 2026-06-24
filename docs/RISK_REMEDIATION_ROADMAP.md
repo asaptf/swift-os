@@ -864,6 +864,90 @@ base (`0x4000_0000`) match.
   SwiftOS. SAFETY: confirm with the user before the destructive step; keep a
   rescue path.
 
+## V-series — mountable multi-volume storage (planned)
+
+Driven by the hosting/appliance profiles: the D-series gave **one** persistent
+`/data` tier on **one** dedicated virtio-blk disk. The product needs to attach
+**additional** persistent storage — a second/third local disk, or a **Hetzner
+Cloud Volume**. A Hetzner Volume is, from the OS's point of view, *just another
+block device*: on the real server it appears on the same virtio-scsi/virtio-pci
+transport the H-series already brought up (H0–H5); under QEMU `virt` it is one
+more `virtio-blk-device`. So "second disk" and "Hetzner Volume" are the **same
+problem**, and the hard part is not discovery (the block layer already enumerates
+up to 8 devices and identifies them by sector-0 magic — see `virtioBlkInit`) but
+two upper-layer simplifications inherited from the D-series:
+
+1. **datafs is a singleton.** Global inode table, global block bitmap, a single
+   bound device (D0). Physically there can be many disks, but the persistent FS
+   exists exactly once in the code.
+2. **There is no mount table.** Mounting today is not an operation but an implicit
+   graft: `/data`'s vnode carries `dataFs=true` + `dfsInode`. The VFS knows the one
+   datafs instance through a hardcoded boolean on the VNode.
+
+The "one disk" constraint thus lives in *policy* (one `blkServedDevice`, one
+datafs, one graft), not in the driver.
+
+**Decisions recorded (reviewed 2026-06-24; the "ask, don't guess" forks resolved):**
+
+- **Namespace: global single tree first.** Mounts land in one shared VFS tree;
+  per-cell visibility rides on the existing C3 / C6c confinement (`isDescendant`),
+  not a separate per-cell mount table. Per-cell mount namespaces are a later option.
+- **API: both declarative and runtime, converging on one source of truth.** There
+  is a single mount table, persisted as a file on the root `/data` volume
+  (e.g. `/data/.system/mounts`). The *declarative* path = that file edited offline
+  / staged at image prep. The *runtime* path = a capability-gated `mount()` that
+  applies immediately and, with a `PERSIST` flag, writes through to the same file.
+  No Linux-style "fstab vs live state" divergence.
+- **Manifest lives on the root data volume** (decision: on `/data`, not the signed
+  base or kernel cmdline). It is read only *after* the root `/data` is mounted, so
+  a plain datafs file is sufficient; no chicken-and-egg beyond the root anchor.
+- **Root volume is anchored by UUID in the kernel cmdline** (the single pinned
+  identity in the scheme). On first boot a blank root disk is formatted as the root
+  and its UUID recorded. Everything else is discovered from the manifest on it.
+- **Guardrail (because the manifest is now mutable, unsigned state):** data-disk-
+  driven mounts are confined to a designated mount root (`/mnt/*`); system paths
+  (`/bin`, `/etc`, `/usr`) are off-limits to manifest-driven mounting, the mountpoint
+  must be an empty directory (no legacy overmount that hides contents), and a disk is
+  **never** auto-formatted unless sector 0 has no valid magic (a non-blank unknown
+  disk is left untouched). This keeps the immutable-base trust intact.
+
+Sub-milestones (one at a time, each builds + boots single-core and `-smp 4`, has a
+test, committed, review before the next):
+
+- **V0** (DONE, 2026-06-24): de-singleton datafs + generic mount graft — a pure
+  refactor with no new disk and no behavior change. datafs global state is now a
+  `DfsVolume` record in `dfsVolumes[]` (only slot 0 used); a `vol:` param is threaded
+  through the whole datafs API; `virtioBlkVolume{Read,Write,Flush,CapacitySectors}`
+  are the device-indexed block layer (the `virtioBlkData*` entry points became thin
+  volume-0 wrappers); the VNode carries `dfsVolume` beside `dfsInode`; `datafsMirror`
+  is volume-parametrized; rename refuses crossing volumes. Acceptance met: `make
+  data-persist-test` / `datafs-test` / `datafs-fsync-test` / `datafs-sqlite-test`
+  stay green unchanged. See `docs/NOTES.md` (V-series).
+- **V1** (planned): mount a **second** `SWDATAFS` volume at `/mnt/<label>`. Add a
+  second writable virtio-blk data disk to the QEMU profile; mount it as a distinct
+  datafs instance. Acceptance: a new gate writes to both `/data` and the second
+  volume, proves write isolation between them, and that both survive reboot.
+- **V2** (planned): volume identity + declarative manifest. Add a 128-bit UUID +
+  human label to the datafs superblock; mount-by-label/UUID; read the mount table
+  from `/data/.system/mounts` at boot and mount the volumes it names; enforce the
+  `/mnt/*`-only + empty-dir + never-format-non-blank guardrails; anchor the root
+  volume by cmdline UUID. Acceptance: a manifest-driven mount of a labeled volume,
+  a missing volume leaves its mountpoint empty (boot does not fail), and a guardrail
+  refusal (mount over `/bin`, or format a non-blank disk) is rejected.
+- **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
+  mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
+  through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)
+  returns `EBUSY` via a per-mount refcount. Acceptance: a userland program mounts a
+  labeled volume, reads/writes it, persists across reboot, and a busy unmount is
+  refused; an unprivileged caller is denied.
+- **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
+  port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
+  or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume
+  to a live VM) is deferred (QEMU `virt`/virtio-mmio has no clean hotplug; real Hetzner
+  is virtio-pci).
+
+Full design + per-stage findings to go in `docs/NOTES.md` (V-series) as work lands.
+
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:
