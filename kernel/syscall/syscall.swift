@@ -142,9 +142,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
                           offset: Int(bitPattern: frame[1]),
                           whence: Int(bitPattern: frame[2]))
     } else if number == sysTcGetAttr {
-        result = syscallTcGetAttr(termios: frame[1])
+        result = syscallTcGetAttr(fd: Int(bitPattern: frame[0]), termios: frame[1])
     } else if number == sysTcSetAttr {
-        result = syscallTcSetAttr(termios: frame[2])
+        result = syscallTcSetAttr(fd: Int(bitPattern: frame[0]), termios: frame[2])
     } else if number == sysSigaction {
         let sig = Int(bitPattern: frame[0])
         if signalIsValid(sig) {
@@ -491,22 +491,25 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     signalDeliverToCurrentFrame(frame)
 }
 
-private func syscallTcGetAttr(termios ptr: UInt) -> Int {
+private func syscallTcGetAttr(fd: Int, termios ptr: UInt) -> Int {
     guard let base = userWritableBuffer(ptr, 16) else { return Errno.invalid.code }
+    // Read the c_lflag of the terminal behind this fd (pty end or console),
+    // not a single global — see vfsTtyGetLflagForFD.
+    let lflag = vfsTtyGetLflagForFD(fd)
     let words = UnsafeMutableRawPointer(mutating: base)
     // Zero the four flag words, then publish the current c_lflag.
     words.storeBytes(of: UInt32(0), toByteOffset: 0, as: UInt32.self)
     words.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
     words.storeBytes(of: UInt32(0), toByteOffset: 8, as: UInt32.self)
-    words.storeBytes(of: ttyGetLflag(), toByteOffset: termiosLflagOffset, as: UInt32.self)
+    words.storeBytes(of: lflag, toByteOffset: termiosLflagOffset, as: UInt32.self)
     return 0
 }
 
-private func syscallTcSetAttr(termios ptr: UInt) -> Int {
+private func syscallTcSetAttr(fd: Int, termios ptr: UInt) -> Int {
     guard let base8 = userReadableBuffer(ptr, 16) else { return Errno.invalid.code }
     let base = UnsafeRawPointer(base8)
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
-    ttySetLflag(lflag)
+    vfsTtySetLflagForFD(fd, lflag)
     return 0
 }
 
