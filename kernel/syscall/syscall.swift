@@ -107,6 +107,10 @@ private let sysShmRingMap: UInt = 103      // shmring_map(id) → base user VA (
 private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the creator's base reference to a channel (LA3)
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
+private let sysKernelInstallBegin: UInt = 107  // kernel_install_begin() — reserve the inactive ESP kernel slot for a streamed NEW-kernel install (OS-1c-2b); needs capConsole
+private let sysKernelInstallWrite: UInt = 108  // kernel_install_write(buf, count) — append kernel-image bytes to the inactive ESP slot (OS-1c-2b); needs capConsole
+private let sysKernelInstallCommit: UInt = 109 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
+private let sysKernelInstallAbort: UInt = 110  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -428,6 +432,14 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             ttyOnInput(UInt8(truncatingIfNeeded: frame[0]))
             result = 0
         }
+    } else if number == sysKernelInstallBegin {
+        result = kernelInstallBegin() // OS-1c-2b: reserve the inactive ESP kernel slot
+    } else if number == sysKernelInstallWrite {
+        result = kernelInstallWrite(bufVA: frame[0], count: frame[1]) // OS-1c-2b
+    } else if number == sysKernelInstallCommit {
+        result = kernelInstallCommit(entryVA: frame[0]) // OS-1c-2b
+    } else if number == sysKernelInstallAbort {
+        result = kernelInstallAbort() // OS-1c-2b
     } else {
         result = Errno.noSys.code
     }

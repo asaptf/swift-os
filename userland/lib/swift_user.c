@@ -340,6 +340,19 @@ int swiftos_update_stage_abort(void) {
     return update_stage_abort();
 }
 
+int swiftos_kernel_install_begin(void) {
+    return kernel_install_begin();
+}
+int swiftos_kernel_install_write(const void *buf, unsigned long count) {
+    return kernel_install_write(buf, count);
+}
+int swiftos_kernel_install_commit(const void *entry) {
+    return kernel_install_commit(entry);
+}
+int swiftos_kernel_install_abort(void) {
+    return kernel_install_abort();
+}
+
 int swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps) {
     struct security_info si;
     int rc = security_info(&si);

@@ -195,6 +195,13 @@ int  swiftos_update_stage_begin(unsigned long version, unsigned long total);
 int  swiftos_update_stage_write(const void *buf, unsigned long count);
 int  swiftos_update_stage_commit(void);
 int  swiftos_update_stage_abort(void);
+// OS-1c-2b: stream a NEW host-signed kernel into the inactive ESP slot, then
+// commit its 104-byte signed manifest entry (the kernel verifies hash + per-slot
+// Ed25519 signature). All need CAP_CONSOLE.
+int  swiftos_kernel_install_begin(void);
+int  swiftos_kernel_install_write(const void *buf, unsigned long count);
+int  swiftos_kernel_install_commit(const void *entry);
+int  swiftos_kernel_install_abort(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
 // Fetch the effective AND real security identity (any out-param may be NULL).

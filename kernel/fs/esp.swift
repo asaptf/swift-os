@@ -645,6 +645,298 @@ func espStageActiveToInactive() -> Int {
     return rc
 }
 
+// --- OS-1c-2b: install a NEW kernel into the inactive ESP slot --------------
+//
+// The reflash-free kernel path. Where swos-kstage (U1g-4c) only DUPLICATES the
+// running kernel into the inactive slot, this streams a genuinely NEW, host-signed
+// kernel image into the INACTIVE padded slot from a userland buffer, then writes
+// that slot's signed manifest entry — so one SWSYS bundle (OS-1c-3) can move
+// kernel + base together. Capability-gated, single-owner: begin / write* /
+// commit(entry) / abort, mirroring the base-image streaming staging
+// (updatestore.swift). Unlike the base store (a contiguous slot addressed by byte
+// offset), the destination is a FAT cluster chain on the ESP, so a cross-call
+// cursor (curCluster / curSecInClus) walks the chain as bytes arrive. The slot
+// file is fixed-size (KERNEL_SLOT_BYTES); the write is in place, no FAT/dir growth.
+//
+// KEY SECURITY PROPERTY: the kernel holds the image-signing public key
+// (image_trust_root). commit verifies, kernel-side: (a) the whole padded slot was
+// written, (b) entry.size == the slot size, (c) the on-disk slot re-hashes to
+// entry.sha256, and (d) entry.sig is a valid Ed25519 signature over
+//   "SWOSKSLT" || u32 slot_index || u64 size || u8[32] sha256   (52 bytes)
+// bound to THIS slot's index. Only then is the 104-byte entry written into the
+// signed manifest. A compromised userland therefore cannot install a kernel the
+// host did not sign FOR THIS SLOT (a slot-A entry replayed into slot B fails the
+// index binding). Power-fail safe: the slot bytes are flushed to media BEFORE the
+// manifest entry is written, so a crash leaves the OLD entry in place and the
+// loader's per-slot hash check rejects the half-written slot and rolls back.
+
+private let kernelSlotBytes: UInt64 = 4 * 1024 * 1024   // must match KERNEL_SLOT_BYTES (Makefile)
+private let kinstallChunkMax = 64 * 1024                 // max bytes per write syscall
+private let kinstallEntryLen = 104                       // manifest entry: size@0(u64), sha@8(32), sig@40(64)
+
+private var kinstallActive = false
+private var kinstallOwnerPid: Int = -1
+private var kinstallTargetSlot = -1                      // 0/1: the inactive slot being written
+private var kinstallVol: Fat32Vol? = nil                 // cached ESP volume geometry
+private var kinstallSwClus: UInt32 = 0                   // \EFI\swift-os directory cluster
+private var kinstallSlotFirstClus: UInt32 = 0            // first cluster of the slot file (re-hash walks from here)
+private var kinstallCurCluster: UInt32 = 0               // streaming cursor: current cluster
+private var kinstallCurSecInClus: UInt32 = 0             // streaming cursor: sector within the cluster
+private var kinstallWritten: UInt64 = 0
+
+@inline(__always) private func kinstallReset() {
+    kinstallActive = false
+    kinstallOwnerPid = -1
+    kinstallTargetSlot = -1
+    kinstallVol = nil
+    kinstallSwClus = 0
+    kinstallSlotFirstClus = 0
+    kinstallCurCluster = 0
+    kinstallCurSecInClus = 0
+    kinstallWritten = 0
+}
+
+private func kernelInstallBeginInner() -> Int {
+    guard let (partLBA, _) = espFindPartition() else { return Errno.noEntry.code }
+    guard let vol = fatReadBPB(partLBA) else { return Errno.io.code }
+    guard let efi = fatFind(vol, vol.rootClus, "EFI"), efi.2 else { return Errno.noEntry.code }
+    guard let sw = fatFind(vol, efi.0, "swift-os"), sw.2 else { return Errno.noEntry.code }
+    guard let ka = fatFind(vol, sw.0, "kernelA.bin"), !ka.2 else { return Errno.noEntry.code }
+    guard let kb = fatFind(vol, sw.0, "kernelB.bin"), !kb.2 else { return Errno.noEntry.code }
+    guard let mf = fatFind(vol, sw.0, "kernel-boot"), !mf.2 else { return Errno.noEntry.code }
+    // Install into the slot the loader is NOT booting (the active slot stays
+    // bootable; the operator flips to the new one with swos-kactivate afterward).
+    guard let active = fatReadEffectiveKernelActive(vol, sw.0, mf.0) else { return Errno.invalid.code }
+    let target = active == 0 ? 1 : 0
+    let slot = target == 0 ? ka : kb
+    // The slot file must be exactly the fixed padded size; the streamed write is
+    // in place (no FAT/dir growth) and the signed entry covers this fixed length.
+    if UInt64(slot.1) != kernelSlotBytes { return Errno.invalid.code }
+
+    kinstallReset()
+    kinstallActive = true
+    kinstallOwnerPid = processCurrentPid()
+    kinstallTargetSlot = target
+    kinstallVol = vol
+    kinstallSwClus = sw.0
+    kinstallSlotFirstClus = slot.0
+    kinstallCurCluster = slot.0
+    kinstallCurSecInClus = 0
+    kinstallWritten = 0
+    return 0
+}
+
+/// OS-1c-2b begin: reserve the inactive ESP kernel slot for a streamed install and
+/// record its FAT chain cursor. capConsole-gated. Does NOT mutate the manifest —
+/// only commit does. Returns 0, or a negative errno. Syscall 101 (/bin/swos-kinstall).
+func kernelInstallBegin() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !virtioBlkHasEsp() { return Errno.noDev.code }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); return Errno.noDev.code }
+    let rc = kernelInstallBeginInner()
+    virtioBlkReselectServed()
+    if rc != 0 { kinstallReset() }
+    return rc
+}
+
+/// OS-1c-2b write: append `count` bytes from the userland buffer at `bufVA` to the
+/// inactive slot's FAT chain at the cursor. Writes are whole sectors (count a
+/// multiple of 512; the bundle pads the kernel to KERNEL_SLOT_BYTES). capConsole-
+/// gated, single-owner. Returns 0, or a negative errno. Syscall 102.
+func kernelInstallWrite(bufVA: UInt, count: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !kinstallActive || kinstallOwnerPid != processCurrentPid() { return Errno.again.code }
+    if count == 0 { return 0 }
+    if count > UInt(kinstallChunkMax) || count % 512 != 0 { kinstallReset(); return Errno.invalid.code }
+    if UInt64(count) > kernelSlotBytes - kinstallWritten { kinstallReset(); return Errno.invalid.code }
+    guard let vol = kinstallVol else { kinstallReset(); return Errno.again.code }
+    guard let src = userReadableBuffer(bufVA, count) else { kinstallReset(); return Errno.fault.code }
+
+    if !virtioBlkHasEsp() { kinstallReset(); return Errno.noDev.code }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); kinstallReset(); return Errno.noDev.code }
+    var ok = true
+    var off = 0
+    while off < Int(count) {
+        if kinstallCurCluster < 2 || kinstallCurCluster >= 0x0FFFFFF8 { ok = false; break }
+        let lba = fatClusterLBA(vol, kinstallCurCluster) + UInt64(kinstallCurSecInClus)
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(src) + off) != 0 { ok = false; break }
+        off += 512
+        kinstallCurSecInClus += 1
+        if kinstallCurSecInClus >= vol.secPerClus {
+            kinstallCurCluster = fatNext(vol, kinstallCurCluster)
+            kinstallCurSecInClus = 0
+        }
+    }
+    virtioBlkReselectServed()
+    if !ok { kinstallReset(); return Errno.io.code }
+    kinstallWritten &+= UInt64(count)
+    return 0
+}
+
+// Re-read the slot's FAT chain (KERNEL_SLOT_BYTES bytes) from the ESP and SHA-256
+// it incrementally into `digest`. The ESP device must already be selected.
+private func kinstallHashSlot(_ vol: Fat32Vol, _ firstClus: UInt32, _ digest: inout InlineArray<32, UInt8>) -> Bool {
+    var stream = Sha256Stream()
+    var clus = firstClus
+    var remaining = kernelSlotBytes
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    while remaining > 0 {
+        if clus < 2 || clus >= 0x0FFFFFF8 { return false }
+        var s: UInt32 = 0
+        var ok = true
+        while s < vol.secPerClus && remaining > 0 && ok {
+            withUnsafeMutableBytes(of: &buf) { raw in
+                let p = raw.baseAddress!
+                if virtioBlkReadCurrent(fatClusterLBA(vol, clus) + UInt64(s), p) != 0 { ok = false; return }
+                stream.update(UnsafeRawPointer(p), 512)
+            }
+            s += 1
+            remaining = remaining >= 512 ? remaining - 512 : 0
+        }
+        if !ok { return false }
+        clus = fatNext(vol, clus)
+    }
+    withUnsafeMutableBytes(of: &digest) { raw in stream.final(raw.baseAddress!) }
+    return true
+}
+
+private func kernelInstallCommitInner(_ vol: Fat32Vol, _ target: Int, _ firstClus: UInt32,
+                                      _ swClus: UInt32, _ entry: InlineArray<104, UInt8>) -> Int {
+    // Durability: the streamed slot bytes must reach stable media BEFORE the
+    // manifest entry names them, so a crash can never leave a committed manifest
+    // pointing at half-written slot bytes.
+    if virtioBlkFlush() != 0 { return Errno.io.code }
+
+    // (d) verify entry.sig over "SWOSKSLT" || u32 index || u64 size || sha256 (52B),
+    // bound to THIS slot index, against the embedded image-signing key, FIRST — it
+    // is cheap and authorizes (index, size, sha). The 52-byte message is
+    // reconstructed exactly as the host signer (tools/kernelboot.swift) and the
+    // loader (boot/efi/loader.c verify_slot_sig) build it. Only once the entry is
+    // proven host-signed FOR THIS SLOT do we pay the on-disk re-hash below.
+    var msg = InlineArray<52, UInt8>(repeating: 0)
+    let tag: StaticString = "SWOSKSLT"
+    tag.withUTF8Buffer { t in var i = 0; while i < 8 { msg[i] = t[i]; i += 1 } }
+    let idx = UInt32(target)
+    msg[8]  = UInt8(idx & 0xFF);        msg[9]  = UInt8((idx >> 8) & 0xFF)
+    msg[10] = UInt8((idx >> 16) & 0xFF); msg[11] = UInt8((idx >> 24) & 0xFF)
+    withUnsafeBytes(of: entry) { eb in
+        let p = eb.baseAddress!
+        var i = 0
+        while i < 8 { msg[12 + i] = p.load(fromByteOffset: i, as: UInt8.self); i += 1 }       // size (u64 LE)
+        i = 0
+        while i < 32 { msg[20 + i] = p.load(fromByteOffset: 8 + i, as: UInt8.self); i += 1 }  // sha256
+    }
+    var sigOK = false
+    withUnsafeBytes(of: entry) { eb in
+        let sig = eb.baseAddress! + 40
+        withUnsafeBytes(of: msg) { mb in
+            withUnsafeBytes(of: image_trust_root) { tr in
+                sigOK = ed25519Verify(message: mb.baseAddress!, 52, signature: sig, publicKey: tr.baseAddress!)
+            }
+        }
+    }
+    if !sigOK { return Errno.perm.code }
+
+    // (c) the entry is host-signed for this slot — now confirm the bytes actually
+    // on disk re-hash to the signed sha256 (proves the streamed write landed in
+    // full and matches what the host signed).
+    var digest = InlineArray<32, UInt8>(repeating: 0)
+    if !kinstallHashSlot(vol, firstClus, &digest) { return Errno.io.code }
+    var shaOK = true
+    withUnsafeBytes(of: entry) { eb in
+        let p = eb.baseAddress!
+        var i = 0
+        while i < 32 { if digest[i] != p.load(fromByteOffset: 8 + i, as: UInt8.self) { shaOK = false }; i += 1 }
+    }
+    if !shaOK { return Errno.invalid.code }
+
+    // All checks passed: splice the 104-byte entry into the signed manifest at the
+    // per-slot offset (slot 0 @24, slot 1 @128). The manifest is 232 bytes in the
+    // kernel-boot file's first cluster/sector; the rest of the sector is preserved.
+    guard let mf = fatFind(vol, swClus, "kernel-boot"), !mf.2, mf.1 >= 232 else { return Errno.noEntry.code }
+    let entryOff = target == 0 ? 24 : 128
+    var rc = Errno.io.code
+    var buf = InlineArray<512, UInt8>(repeating: 0)
+    withUnsafeMutableBytes(of: &buf) { raw in
+        let p = raw.baseAddress!
+        let lba = fatClusterLBA(vol, mf.0)
+        if virtioBlkReadCurrent(lba, p) != 0 { return }
+        let magic: StaticString = "SWOSKERN"
+        var m = true
+        magic.withUTF8Buffer { mm in var i = 0; while i < 8 { if p.load(fromByteOffset: i, as: UInt8.self) != mm[i] { m = false }; i += 1 } }
+        if !m || espLd32(UnsafeRawPointer(p), 8) != 4 { rc = Errno.invalid.code; return }  // only patch a v4 manifest
+        withUnsafeBytes(of: entry) { eb in
+            let e = eb.baseAddress!
+            var i = 0
+            while i < kinstallEntryLen {
+                p.storeBytes(of: e.load(fromByteOffset: i, as: UInt8.self), toByteOffset: entryOff + i, as: UInt8.self)
+                i += 1
+            }
+        }
+        if virtioBlkWriteCurrent(lba, UnsafeRawPointer(p)) != 0 { return }
+        rc = 0
+    }
+    if rc != 0 { return rc }
+    if virtioBlkFlush() != 0 { return Errno.io.code }
+    return 0
+}
+
+/// OS-1c-2b commit: require the whole slot was written, copy the 104-byte signed
+/// entry out of userland, and verify it kernel-side (size, on-disk re-hash, and
+/// per-slot Ed25519 signature against image_trust_root). Only on success is the
+/// entry written into the signed manifest + flushed. capConsole-gated, single-
+/// owner. Returns 0, or a negative errno. Syscall 103.
+func kernelInstallCommit(entryVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !kinstallActive || kinstallOwnerPid != processCurrentPid() { return Errno.again.code }
+    if kinstallWritten != kernelSlotBytes { kinstallReset(); return Errno.invalid.code }
+    guard let vol = kinstallVol else { kinstallReset(); return Errno.again.code }
+
+    // Copy the entry out of userland up front, before any disk I/O.
+    guard let esrc = userReadableBuffer(entryVA, UInt(kinstallEntryLen)) else { kinstallReset(); return Errno.fault.code }
+    var entry = InlineArray<104, UInt8>(repeating: 0)
+    do {
+        let e = UnsafeRawPointer(esrc)
+        var i = 0
+        while i < kinstallEntryLen { entry[i] = e.load(fromByteOffset: i, as: UInt8.self); i += 1 }
+    }
+    // (b) entry.size must equal the fixed slot size.
+    var entrySize: UInt64 = 0
+    withUnsafeBytes(of: entry) { eb in entrySize = espLd64(eb.baseAddress!, 0) }
+    if entrySize != kernelSlotBytes { kinstallReset(); return Errno.invalid.code }
+
+    let target = kinstallTargetSlot
+    let firstClus = kinstallSlotFirstClus
+    let swClus = kinstallSwClus
+
+    if !virtioBlkHasEsp() { kinstallReset(); return Errno.noDev.code }
+    if virtioBlkSelectEsp() == 0 { virtioBlkReselectServed(); kinstallReset(); return Errno.noDev.code }
+    let rc = kernelInstallCommitInner(vol, target, firstClus, swClus, entry)
+    virtioBlkReselectServed()
+    kinstallReset()
+    if rc == 0 {
+        uartPuts("kernel-store: installed new kernel into inactive slot ")
+        uartPuts(target == 0 ? "A" : "B")
+        uartPuts(", manifest entry verified + written (per-slot sig)\n")
+    } else {
+        uartPuts("kernel-store: kernel install commit rejected rc ")
+        uartPutUInt(UInt64(bitPattern: Int64(rc)))
+        uartPuts("\n")
+    }
+    return rc
+}
+
+/// OS-1c-2b abort: discard an in-progress install. The inactive slot may hold
+/// partial bytes but its manifest entry is untouched, so the loader still rejects
+/// it (content != old entry hash) and rolls back. capConsole-gated. Syscall 104.
+func kernelInstallAbort() -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.perm.code }
+    if !kinstallActive { return 0 }
+    if kinstallOwnerPid != processCurrentPid() { return Errno.again.code }
+    kinstallReset()
+    return 0
+}
+
 /// OS-1: the kernel slot the UEFI loader actually booted this session, read from
 /// the writable ESP kernel-state (`lastBooted`). Returns 0 or 1, or -1 when there
 /// is no GPT/ESP disk, no valid kernel-state, or `lastBooted` is unset (e.g. a
