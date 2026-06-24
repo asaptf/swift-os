@@ -108,7 +108,7 @@ private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the cre
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
 private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
-private let sysCellCreate: UInt = 108       // cell_create(out_cell_id) -> .cell control handle fd; allocate a fresh CellId (C6b); needs capConsole
+private let sysCellCreate: UInt = 108       // cell_create(root_path, out_cell_id) -> .cell control handle fd; allocate a fresh CellId with an optional namespace root (C6b/C6c); needs capConsole
 private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
@@ -436,8 +436,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
                                  buffer: frame[1], capacity: frame[2])
     } else if number == sysCellCreate {
-        // C6b: allocate a fresh CellId, return a .cell control handle fd (capConsole).
-        result = vfsCellCreate(outId: frame[0])
+        // C6b/C6c: allocate a fresh CellId rooted at frame[0] (a namespace root path,
+        // NULL = unconfined), return a .cell control handle fd (capConsole).
+        result = vfsCellCreate(root: frame[0], outId: frame[1])
     } else if number == sysCellSpawn {
         // C6b: launch a child into the cell named by the control handle at frame[0].
         // Authority is by handle — resolve it first; a caller without the handle

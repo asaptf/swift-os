@@ -100,7 +100,7 @@ func main(_ argc: Int32,
 
     // 2. Create a cell.
     var newCell: UInt32 = 0
-    let cellFd = swiftos_cell_create(&newCell)
+    let cellFd = swiftos_cell_create(nil, &newCell) // unconfined cell (C6c root tested separately)
     if cellFd < 0 || newCell < 2 {
         swiftos_puts("C6b FAIL: cell_create did not return a fresh cell + handle\n")
         return 1

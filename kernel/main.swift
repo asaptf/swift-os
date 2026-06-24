@@ -467,6 +467,21 @@ private func runCellCreateProbe() {
     uartPuts("\n")
 }
 
+// C6c: per-cell namespace-root probe. A supervisor creates a cell rooted at /www
+// and launches /bin/cellnschild into it; the child proves it is confined to the
+// subtree (a file inside resolves; /etc and the global root are refused) while the
+// default cell (globalCell) stays unconfined.
+private func runCellNamespaceProbe() {
+    uartPuts("swift-os C6c: per-cell namespace-root probe\n")
+    let (img, sz) = demoImage("/bin/cellnsprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellnsprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6c cell namespace probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1461,6 +1476,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runNetSvcDemo()
         runCellStatProbe()
         runCellCreateProbe()
+        runCellNamespaceProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

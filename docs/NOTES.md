@@ -3297,6 +3297,41 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   confineNodes/isDescendant machinery); processes spawned into the cell resolve `/`
   within it. Then C6d: enumerate-by-cell + teardown + optional per-cell limits.
 
+### C6c — per-cell namespace root (DONE, 2026-06-24)
+
+- **Goal.** Give a cell a VFS root subtree so its processes resolve `/` within it
+  and cannot reach anything outside — the namespace half of the Cell. Reuses the C3
+  confinement machinery (`confineNodes` + `isDescendant`); **no separate per-cell
+  mount table**.
+- **`CellSlot.root`.** Each cell carries a root node (0 = unconfined, like
+  globalCell). `SYS_cell_create` grows a `root_path` argument (the C6b out-param
+  shifts to the second slot): NULL or `"/"` → unconfined; any other path is resolved
+  (against the caller's own namespace) to a directory node under `vfsLock`, validated
+  (ENOENT/ENOTDIR), and stored as the cell root.
+- **Confinement on spawn.** `vfsApplyCellNamespace(child, cellRaw)` runs in
+  `processSpawnIntoCellAsync` after the child inherits the parent's VFS state: for a
+  confined cell it overrides the child's `confineNodes[child]` + `cwdNodes[child]` to
+  the cell root. So an absolute path still resolves against the global tree but is
+  rejected by the existing C3 `isDescendant(node, confineRoot)` check if it falls
+  outside the subtree — including `/` itself (the global root is not a descendant of
+  the cell root). A child forked *within* the cell stays confined via the existing
+  parent→child `confineNodes` inheritance. The cell's cwd makes relative paths
+  resolve inside the root.
+- **Probe `/bin/cellnsprobe` + `/bin/cellnschild`.** The supervisor first proves the
+  default cell is unconfined (it reads `/etc/motd`), then `cell_create("/www", …)`
+  and launches the child into the rooted cell. The child asserts: `open("index.html")`
+  succeeds (its cwd is the cell root `/www`), `open("/etc/motd")` is refused (outside
+  the root), and `open("/")` is refused (global root unreachable); it exits 0 only if
+  all three hold. The supervisor checks the child's exit code.
+- **Acceptance.** `make c6-cell-namespace-test` (single-core + `-smp 4`) requires the
+  default-unconfined marker, the three `CELLNS:` verdicts, and `C6c OK`, with no
+  `CELLNS FAIL`/`C6c FAIL`/`panic:`. The existing C3 confinement markers
+  (`CONFINE-IN-OK`/`CONFINE-OUT-OK`/`C3-SCOPE-OK`, boot_test.sh) stay green. Wired
+  into `make test`.
+- **Next (C6d).** Enumerate a cell's processes by tag so a supervisor can walk + kill
+  the job tree, reclaim the domain-tagged resources, and free the CellId; optional
+  per-cell resident-page/handle limits enforced at allocation.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

@@ -615,6 +615,7 @@ M-series; naming it C1–C6 (capabilities) keeps it distinct from the M and net 
 | **C6** | Cell as userland composition | Add the per-process `CellId` tag (accounting domain + namespace root). A userland **cell supervisor** assembles a cell = job + handle set + resource domain + namespace, and launches a process inside it. **No kernel `Cell` object.** | Two cells with separate namespaces/roots and separate resource accounting; a process in one cannot name objects in the other (handles + namespace root); per-cell counters reported. | Delivers the Cells vision as composition (§5). The tag is cheap; the policy is userland. |
 | **C6a** | Per-cell resource-accounting domain (DONE, 2026-06-24) | Implemented slice: `SYS_cell_stat(107)` aggregates one `CellId`'s live `{processes, residentPages, cpuTicks, handles}` by an on-demand scan keyed on the existing per-process `CellId` tag — **no per-cell counter table, zero per-op cost**; reaped charge drops out for free. Gated on `capProcessInspect`. Everything still runs in `globalCell`. | `make c6-cell-accounting-test`: the `/bin/cellstatprobe` boot probe forks children, asserts the aggregate tracks the live processes (+ pages/handles) and reclaims a reaped process's charge. Single-core + `-smp 4`. | Cell creation/namespace/limits/teardown (C6b–C6d) are the remaining slices. |
 | **C6b** | Cell creation + control handle + spawn-into-cell (DONE, 2026-06-24) | Implemented slice: `HandleKind.cell` (an opaque, transferable capability token, no byte stream); a bounded `cells[]` registry (index 0 = globalCell). `SYS_cell_create(108)` (capConsole) mints a fresh CellId + control-handle fd; `SYS_cell_spawn(109)` launches a child into the cell named by a held handle (**authority by handle** — EBADF without it), re-tagging the child so its resources charge to the new domain. Closing the handle does NOT free the cell (teardown is C6d). | `make c6-cell-create-test`: `/bin/cellcreateprobe` refuses a spawn without the handle, creates cell 2, launches `/bin/cellchild` into it, and asserts the child is charged to cell 2 (not globalCell) and reclaimed on reap. Single-core + `-smp 4`. | Cell namespace root (C6c) and limits/teardown (C6d) remain. The cell shares the global VFS root until C6c. |
+| **C6c** | Per-cell namespace root (DONE, 2026-06-24) | Implemented slice: `CellSlot.root` carries a VFS root node (0 = unconfined). `SYS_cell_create` grows a `root_path` arg; `vfsApplyCellNamespace` sets a spawned member's C3 `confineNodes` + cwd to the cell root, so it resolves `/` within the subtree and anything outside (including the global root) is refused by the existing `isDescendant` check. Pure C3 reuse — no per-cell mount table. | `make c6-cell-namespace-test`: `/bin/cellnsprobe` roots a cell at /www, and `/bin/cellnschild` resolves a file inside but is refused /etc and `/`; the default cell stays unconfined; the C3 confinement markers stay green. Single-core + `-smp 4`. | Lifecycle/teardown + optional per-cell limits (C6d) remain. |
 
 Dependencies are strict: C2 needs C1's handle table; C3 needs C2's
 explicit-grant model to have something to scope; C4 builds endpoint/VMO handle
@@ -638,9 +639,9 @@ dependencies for the remaining richer work.
 - **Not** a rewrite of `principal`/`session`. Those stay; handles and rights sit *beside* them. A principal
   still identifies *who*; handles increasingly carry *what you may touch*. The flat `caps` word narrows to a
   coarse gate (or retires) as object handles take over object-scoped authority.
-- **Not** fully implemented. C1-C5f, C5 proper, and the C6a/C6b cell slices exist;
-  richer IPC and the rest of the Cell arc (C6c namespace, C6d lifecycle/limits)
-  remain planned work.
+- **Not** fully implemented. C1-C5f, C5 proper, and the C6a/C6b/C6c cell slices
+  exist; richer IPC and the rest of the Cell arc (C6d lifecycle/limits) remain
+  planned work.
 
 ---
 

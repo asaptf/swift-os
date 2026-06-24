@@ -233,6 +233,12 @@ private struct CellSlot {
     var inUse = false
     var generation: UInt32 = 0   // bumped on alloc; reserved for handle-staleness checks (C6d)
     var ownerProc = -1           // the process that created the cell (for C6d reclaim)
+    // C6c: the cell's VFS namespace root (a node in the global tree). 0 = unconfined
+    // (the whole namespace, like globalCell). A process spawned into the cell has its
+    // C3 confine root + cwd set to this node, so it resolves `/` within the subtree
+    // and cannot reach anything outside it (isDescendant check). Reuses the C3
+    // machinery — no separate per-cell mount table.
+    var root = 0
 }
 private let maxCells = 8
 private var cells = [CellSlot](repeating: CellSlot(), count: maxCells)
@@ -1641,13 +1647,16 @@ private func releaseDeviceGrant(_ dev: Int) {
 // CellId and gated separately by capProcessInspect.
 private func cellControlRights() -> Rights { [.write, .duplicate, .transfer] }
 
-// C6b: SYS_cell_create — allocate a fresh CellId and return a `.cell` control
+// C6b/C6c: SYS_cell_create — allocate a fresh CellId and return a `.cell` control
 // handle fd for it. capConsole-gated: creating an isolation/accounting domain is a
 // privileged supervisor operation (the same gate as device_claim / tty_inject).
-// Writes the new CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can
-// query the domain via cell_stat. The cell persists until explicit teardown (C6d);
-// closing the control handle does NOT free it.
-func vfsCellCreate(outId outVA: UInt) -> Int {
+// `rootVA` (C6c) names the cell's VFS namespace root: NULL or "/" leaves the cell
+// unconfined (like globalCell); any other path is resolved (against the caller's own
+// namespace) to a directory the cell's processes are confined to. Writes the new
+// CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the domain
+// via cell_stat. The cell persists until explicit teardown (C6d); closing the
+// control handle does NOT free it.
+func vfsCellCreate(root rootVA: UInt, outId outVA: UInt) -> Int {
     if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
     let out: UnsafeMutablePointer<UInt8>?
     if outVA == 0 {
@@ -1656,10 +1665,27 @@ func vfsCellCreate(outId outVA: UInt) -> Int {
         guard let buf = userWritableBuffer(outVA, 4) else { return Errno.invalid.code }
         out = buf
     }
+    // A NULL or "/" path means unconfined (root node 0); any other path is resolved
+    // to a directory node under the lock (resolve() expects vfsLock held, as in
+    // vfsConfine), and is validated before we allocate the cell.
+    let wantRoot = rootVA != 0
+    var rootPath: UnsafePointer<UInt8>? = nil
+    if wantRoot {
+        guard let p = userCString(rootVA) else { return Errno.invalid.code }
+        rootPath = p
+    }
 
     let proc = currentVFSProcess()
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
+
+    var rootNode = 0
+    if let rp = rootPath, !(rp[0] == 0x2F && rp[1] == 0) { // not just "/"
+        let node = resolve(rp)
+        if node == -1 { return Errno.noEntry.code }      // ENOENT
+        if !nodes[node].isDir { return Errno.notDir.code } // ENOTDIR
+        rootNode = node
+    }
 
     var slot = -1
     for i in 1..<maxCells where !cells[i].inUse { slot = i; break }
@@ -1673,6 +1699,7 @@ func vfsCellCreate(outId outVA: UInt) -> Int {
     cells[slot].inUse = true
     cells[slot].generation &+= 1
     cells[slot].ownerProc = proc
+    cells[slot].root = rootNode
     openDescriptions[d].kind = .cell
     openDescriptions[d].node = slot
     installDescription(proc, fd, d, rights: cellControlRights())
@@ -1680,6 +1707,24 @@ func vfsCellCreate(outId outVA: UInt) -> Int {
         UnsafeMutableRawPointer(outBuf).storeBytes(of: UInt32(slot + 1), toByteOffset: 0, as: UInt32.self)
     }
     return fd
+}
+
+// C6c: apply a cell's namespace root to a freshly spawned member. Called from the
+// spawn-into-cell path after the child inherits the parent's VFS state; if the cell
+// is confined (root != 0) it overrides the child's C3 confine root + cwd so the
+// child resolves `/` within the subtree and cannot escape it. An unconfined cell
+// (root 0) leaves the inherited (unconfined) namespace untouched.
+func vfsApplyCellNamespace(slot childSlot: Int, cellRaw: UInt32) {
+    let idx = Int(cellRaw) - 1
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard idx >= 1 && idx < maxCells && cells[idx].inUse else { return }
+    guard childSlot >= 0 && childSlot < maxVFSProcesses else { return }
+    let root = cells[idx].root
+    if root != 0 {
+        confineNodes[childSlot] = root
+        cwdNodes[childSlot] = root
+    }
 }
 
 // C6b: resolve a fd the caller claims is a cell control handle into the CellId raw

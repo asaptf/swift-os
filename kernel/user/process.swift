@@ -2991,6 +2991,10 @@ func processSpawnIntoCellAsync(_ cellRaw: UInt32, _ image: UInt, _ size: UInt,
                               inheritSpecsVA: specsVA, inheritSpecCount: specCount)
     if child < 0 { return Errno.again.code } // EAGAIN
     pSecurity[child].cell = CellId(raw: cellRaw)
+    // C6c: confine the child to the cell's VFS namespace root (no-op for an
+    // unconfined cell). Done after createProcess seeded the child's inherited VFS
+    // state, so this overrides the inherited (unconfined) root.
+    vfsApplyCellNamespace(slot: child, cellRaw: cellRaw)
     return child + 1 // pid (slot+1 convention)
 }
 

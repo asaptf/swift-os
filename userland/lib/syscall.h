@@ -604,11 +604,12 @@ static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
     return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
 }
 
-// C6b: allocate a fresh cell and return a control-handle fd for it (negative
-// errno on failure). Writes the new CellId to *out_cell_id when non-NULL. Needs
-// CAP_CONSOLE.
-static inline int cell_create(unsigned int *out_cell_id) {
-    return (int)__syscall3(SYS_CELL_CREATE, (long)out_cell_id, 0, 0);
+// C6b/C6c: allocate a fresh cell and return a control-handle fd for it (negative
+// errno on failure). `root` is the cell's VFS namespace root (NULL or "/" =
+// unconfined); a process spawned into the cell is confined to it. Writes the new
+// CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
+static inline int cell_create(const char *root, unsigned int *out_cell_id) {
+    return (int)__syscall3(SYS_CELL_CREATE, (long)root, (long)out_cell_id, 0);
 }
 
 // C6b: launch a process into the cell named by `cell_fd` (a control handle the

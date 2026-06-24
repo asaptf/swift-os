@@ -608,6 +608,21 @@ userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` obje
 - Non-goals: C6b does not confine the cell's namespace (C6c) or enforce
   limits/teardown (C6d). The cell shares the global VFS root until C6c.
 
+### C6c — per-cell namespace root (DONE, 2026-06-24)
+
+- `CellSlot.root`: a cell carries a VFS root node (0 = unconfined). `SYS_cell_create`
+  grows a `root_path` arg (NULL/"/" = unconfined); other paths resolve to a directory
+  the cell's processes are confined to. `vfsApplyCellNamespace` sets a spawned
+  member's C3 `confineNodes` + `cwd` to the cell root, so it resolves `/` within the
+  subtree and any path outside (including the global root) is refused by the existing
+  `isDescendant` check. No separate per-cell mount table — pure C3 reuse.
+- Acceptance: `make c6-cell-namespace-test` — `/bin/cellnsprobe` creates a cell
+  rooted at /www and launches `/bin/cellnschild`; the child resolves a file inside
+  the root but is refused /etc/motd and `/`, while the default cell stays unconfined.
+  The existing C3 confinement markers (boot_test.sh) stay green. Single-core + `-smp
+  4`; wired into `make test`.
+- Non-goals: C6c does not tear cells down or enforce limits (C6d).
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
