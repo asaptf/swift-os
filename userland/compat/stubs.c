@@ -2921,7 +2921,24 @@ W struct spwd *getspnam(const char *n) { (void)n; return 0; }
 #define SYS_GETCWD 18
 W int chdir(const char *p) { return (int)sys3(SYS_CHDIR, (long)p, 0, 0); }
 W int fchdir(int fd) { (void)fd; errno = ENOSYS; return -1; }
-W char *getcwd(char *buf, size_t n) { long r = sys3(SYS_GETCWD, (long)buf, (long)n, 0); return r < 0 ? 0 : buf; }
+W char *getcwd(char *buf, size_t n) {
+    /* GNU extension (used by busybox ash getpwd()): getcwd(NULL, n) allocates
+     * the result buffer; getcwd(NULL, 0) allocates one of sufficient size.
+     * Without this ash got NULL -> empty $PWD until the first cd. */
+    char *owned = 0;
+    if (buf == 0) {
+        if (n == 0) n = 4096;
+        owned = buf = malloc(n);
+        if (buf == 0) { errno = ENOMEM; return 0; }
+    }
+    long r = sys3(SYS_GETCWD, (long)buf, (long)n, 0);
+    if (r < 0) {
+        free(owned); /* free(NULL) is a no-op when the caller passed a buffer */
+        errno = (r == -28) ? ERANGE : (int)-r; /* kernel ENOSPC -> POSIX ERANGE */
+        return 0;
+    }
+    return buf;
+}
 W int chroot(const char *p) { (void)p; errno = ENOSYS; return -1; }
 W int dup(int fd) {
     int nfd = sysret(sys3(SYS_DUP, fd, 0, 0));
