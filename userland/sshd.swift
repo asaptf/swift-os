@@ -2189,7 +2189,10 @@ private func sendGlobalRequestResult(_ fd: Int32, _ packet: UnsafeMutableRawPoin
 }
 
 private let interactiveRelayChunk = 1024
-private let interactiveShellPath: StaticString = "/bin/busybox"
+// /bin/sh (a busybox copy) — spawned with argv0 basename "sh" so busybox runs
+// its sh applet. Spawning "/bin/busybox" directly fails ("applet not found")
+// because argv0 basename "busybox" is not itself an applet.
+private let interactiveShellPath: StaticString = "/bin/sh"
 
 // HC35: run an interactive shell session. Allocates a PTY, forks the shell onto
 // the slave, and relays bytes between the SSH channel and the PTY master with a
