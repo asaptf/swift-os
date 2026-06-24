@@ -221,6 +221,31 @@ private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from 
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
 private let maxDevices = 6
 private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
+
+// C6b: the cell allocation table — the kernel half of a Cell (docs/CAPABILITIES.md
+// §5). This is NOT a fat Cell object: it only allocates/validates a CellId and, in
+// later slices, will carry the namespace root (C6c) and limits (C6d). Everything a
+// cell "contains" (its job tree, handle set, resources) lives in the existing
+// per-process tables keyed by the CellId tag; this table just makes the tag's
+// lifecycle explicit. `cells[i]` corresponds to `CellId(raw: UInt32(i + 1))`, so
+// index 0 is `globalCell` (raw 1) and is always live and never handed out.
+private struct CellSlot {
+    var inUse = false
+    var generation: UInt32 = 0   // bumped on alloc; reserved for handle-staleness checks (C6d)
+    var ownerProc = -1           // the process that created the cell (for C6d reclaim)
+    // C6c: the cell's VFS namespace root (a node in the global tree). 0 = unconfined
+    // (the whole namespace, like globalCell). A process spawned into the cell has its
+    // C3 confine root + cwd set to this node, so it resolves `/` within the subtree
+    // and cannot reach anything outside it (isDescendant check). Reuses the C3
+    // machinery — no separate per-cell mount table.
+    var root = 0
+    // C6d: optional hard resident-page ceiling (0 = unlimited). Enforced at
+    // spawn-into-cell time — a new member is refused once the cell's aggregate
+    // resident pages have reached the cap.
+    var pageCap = 0
+}
+private let maxCells = 8
+private var cells = [CellSlot](repeating: CellSlot(), count: maxCells)
 private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
 private let deviceInfoNameCap = 24
@@ -974,6 +999,15 @@ func vfsInit() {
     for i in 0..<maxEvents { eventCounters[i] = EventCounter() }
     for i in 0..<maxEndpoints { resetEndpointSlotForReuse(i) }
     resetDeviceRegistry()
+    resetCellRegistry()
+}
+
+// C6b: seed the cell table. cells[0] is globalCell (raw 1) — always live and never
+// handed out by cell_create; all M0-era and unconfined processes carry this tag.
+private func resetCellRegistry() {
+    for i in 0..<maxCells { cells[i] = CellSlot() }
+    cells[0].inUse = true
+    cells[0].generation = 1
 }
 
 func vfsMountActivePackageStore() -> Int {
@@ -1150,6 +1184,16 @@ private func fdEntryHasRights(_ proc: Int, _ fd: Int, _ required: Rights) -> Boo
     validFD(proc, fd) && hasRights(fdEntry(proc, fd).rights, required)
 }
 
+/// C6a: count the in-use handles a process slot holds. Used by the per-cell
+/// resource-accounting aggregate (processCellStat) to charge a process's handle
+/// count to its CellId domain. Bounded by maxFDs; safe for any slot index.
+func vfsHandleCount(slot: Int) -> Int {
+    if slot < 0 || slot >= maxVFSProcesses { return 0 }
+    var n = 0
+    for fd in 0..<maxFDs where fdEntry(slot, fd).inUse { n += 1 }
+    return n
+}
+
 private func nameEquals(_ node: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> Bool {
     if nodes[node].nameLen != len { return false }
     let np = UnsafePointer<UInt8>(bitPattern: nodes[node].namePtr)!
@@ -1301,6 +1345,10 @@ private func releaseDescription(_ d: Int) {
     if desc.kind == .device {
         releaseDeviceGrant(desc.node)
     }
+    // C6b: closing the last cell control handle does NOT free the CellId — a cell
+    // outlives its handle and is reclaimed only by explicit teardown (C6d), so a
+    // supervisor crash leaves the domain contained + accounted, not silently
+    // dissolved. The slot stays cells[node].inUse until cell_destroy. (No-op here.)
     if desc.kind == .ptyMaster { ptyReleaseEnd(desc.pty, master: true) }
     if desc.kind == .ptySlave { ptyReleaseEnd(desc.pty, master: false) }
     openDescriptions[d] = OpenDescription()
@@ -1594,6 +1642,158 @@ private func releaseDeviceGrant(_ dev: Int) {
     if dev < 0 || dev >= maxDevices || !devices[dev].inUse { return }
     devices[dev].claimed = false
     devices[dev].ownerProc = -1
+}
+
+// C6b: rights a cell control handle carries. `.write` is the authority to mutate
+// the cell — add a member via cell_spawn today, tear it down in C6d. `.duplicate`/
+// `.transfer` let a supervisor hand the control handle to a sub-supervisor. There
+// is no `.read` byte stream (a cell is not readable); cell_stat is keyed on the
+// CellId and gated separately by capProcessInspect.
+private func cellControlRights() -> Rights { [.write, .duplicate, .transfer] }
+
+// C6b/C6c/C6d: SYS_cell_create — allocate a fresh CellId and return a `.cell`
+// control handle fd for it. capConsole-gated: creating an isolation/accounting
+// domain is a privileged supervisor operation (the same gate as device_claim /
+// tty_inject). `rootVA` (C6c) names the cell's VFS namespace root: NULL or "/"
+// leaves the cell unconfined (like globalCell); any other path is resolved (against
+// the caller's own namespace) to a directory the cell's processes are confined to.
+// `pageCap` (C6d) is an optional hard resident-page ceiling (0 = unlimited). Writes
+// the new CellId raw to *outIdVA (4 bytes) when non-NULL so the caller can query the
+// domain via cell_stat. The cell persists until explicit teardown (cell_destroy,
+// C6d); closing the control handle does NOT free it.
+func vfsCellCreate(root rootVA: UInt, pageCap: UInt, outId outVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    let out: UnsafeMutablePointer<UInt8>?
+    if outVA == 0 {
+        out = nil
+    } else {
+        guard let buf = userWritableBuffer(outVA, 4) else { return Errno.invalid.code }
+        out = buf
+    }
+    // A NULL or "/" path means unconfined (root node 0); any other path is resolved
+    // to a directory node under the lock (resolve() expects vfsLock held, as in
+    // vfsConfine), and is validated before we allocate the cell.
+    let wantRoot = rootVA != 0
+    var rootPath: UnsafePointer<UInt8>? = nil
+    if wantRoot {
+        guard let p = userCString(rootVA) else { return Errno.invalid.code }
+        rootPath = p
+    }
+
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    var rootNode = 0
+    if let rp = rootPath, !(rp[0] == 0x2F && rp[1] == 0) { // not just "/"
+        let node = resolve(rp)
+        if node == -1 { return Errno.noEntry.code }      // ENOENT
+        if !nodes[node].isDir { return Errno.notDir.code } // ENOTDIR
+        rootNode = node
+    }
+
+    var slot = -1
+    for i in 1..<maxCells where !cells[i].inUse { slot = i; break }
+    if slot < 0 { return Errno.noSpace.code } // ENOSPC: cell table full
+
+    let fd = allocFDInProcess(proc, from: 3)
+    if fd < 0 { return Errno.noSpace.code }
+    let d = allocDescription()
+    if d < 0 { return Errno.noSpace.code }
+
+    cells[slot].inUse = true
+    cells[slot].generation &+= 1
+    cells[slot].ownerProc = proc
+    cells[slot].root = rootNode
+    cells[slot].pageCap = pageCap > UInt(Int.max) ? Int.max : Int(pageCap)
+    openDescriptions[d].kind = .cell
+    openDescriptions[d].node = slot
+    // C6d: stamp the cell generation into the description so a handle that outlives a
+    // cell_destroy + slot reuse resolves stale (never to the new tenant of the slot).
+    openDescriptions[d].offset = Int(cells[slot].generation)
+    installDescription(proc, fd, d, rights: cellControlRights())
+    if let outBuf = out {
+        UnsafeMutableRawPointer(outBuf).storeBytes(of: UInt32(slot + 1), toByteOffset: 0, as: UInt32.self)
+    }
+    return fd
+}
+
+// C6c: apply a cell's namespace root to a freshly spawned member. Called from the
+// spawn-into-cell path after the child inherits the parent's VFS state; if the cell
+// is confined (root != 0) it overrides the child's C3 confine root + cwd so the
+// child resolves `/` within the subtree and cannot escape it. An unconfined cell
+// (root 0) leaves the inherited (unconfined) namespace untouched.
+func vfsApplyCellNamespace(slot childSlot: Int, cellRaw: UInt32) {
+    let idx = Int(cellRaw) - 1
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard idx >= 1 && idx < maxCells && cells[idx].inUse else { return }
+    guard childSlot >= 0 && childSlot < maxVFSProcesses else { return }
+    let root = cells[idx].root
+    if root != 0 {
+        confineNodes[childSlot] = root
+        cwdNodes[childSlot] = root
+    }
+}
+
+// C6b/C6d: resolve a fd the caller claims is a cell control handle into the CellId
+// raw it names, enforcing authority-by-handle for cell_spawn / cell_pids /
+// cell_destroy. Returns the raw (>= 2, since globalCell is never created) on success,
+// or a negative errno: EBADF if the fd is not a live `.cell` handle, EACCES if it
+// lacks the `.write` (mutate) right, EINVAL if the cell slot is freed or the handle
+// is stale (its stamped generation no longer matches — the slot was reused by a
+// later cell_create). The caller must hold the handle — a process that was never
+// given it cannot name the cell.
+private func cellRawForControlHandleLocked(_ proc: Int, _ fd: Int) -> Int {
+    guard fd >= 0 && fd < maxFDs && fdEntry(proc, fd).inUse else { return Errno.badFD.code }
+    let entry = fdEntry(proc, fd)
+    guard entry.kind == .cell else { return Errno.badFD.code }
+    if !hasRights(entry.rights, .write) { return Errno.access.code }
+    let d = entry.object
+    guard d >= 0 && d < maxOpenDescriptions && openDescriptions[d].inUse
+          && openDescriptions[d].kind == .cell else { return Errno.invalid.code }
+    let slot = openDescriptions[d].node
+    guard slot >= 1 && slot < maxCells && cells[slot].inUse else { return Errno.invalid.code }
+    guard openDescriptions[d].offset == Int(cells[slot].generation) else { return Errno.invalid.code }
+    return slot + 1 // CellId raw
+}
+
+func vfsCellResolveControl(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    return cellRawForControlHandleLocked(proc, fd)
+}
+
+// C6d: the hard resident-page cap of a cell (0 = unlimited / unknown cell). Used by
+// the spawn-into-cell path to refuse a new member past the ceiling.
+func vfsCellPageCap(cellRaw: UInt32) -> Int {
+    let idx = Int(cellRaw) - 1
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard idx >= 1 && idx < maxCells && cells[idx].inUse else { return 0 }
+    return cells[idx].pageCap
+}
+
+// C6d: free a cell's CellId, the final step of teardown. The caller (cell_destroy)
+// must have already confirmed via the control handle that it owns the cell AND that
+// the cell has no live member processes. Bumps the generation so the now-dangling
+// control handle(s) resolve stale, then clears the slot for reuse. Returns 0, or a
+// negative errno if `fd` is not a valid control handle for a live cell.
+func vfsCellFree(fd: Int) -> Int {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    let raw = cellRawForControlHandleLocked(proc, fd)
+    if raw < 0 { return raw }
+    let slot = raw - 1
+    // Advance the generation PAST this handle's stamp before clearing the slot, so
+    // the now-dangling handle (and any dup) resolves stale even after the slot is
+    // re-allocated. Generation is monotonic across free/reuse — never reset.
+    let nextGen = cells[slot].generation &+ 1
+    cells[slot] = CellSlot()           // inUse = false, root/cap cleared
+    cells[slot].generation = nextGen
+    return 0
 }
 
 private func deviceNameMatches(_ dev: Int, _ name: UnsafePointer<UInt8>) -> Bool {
@@ -2884,6 +3084,38 @@ func vfsPtySetForeground(fd: Int, pid: Int) -> Int {
     return 0
 }
 
+// tcgetattr/tcsetattr must act on the terminal behind `fd`, not a single global.
+// A pty end carries its own line-discipline flags (ptys[p].lflag); any other fd
+// (the real console, or a non-tty) falls back to the console tty flags, which
+// preserves prior behaviour for the console fds. Without per-fd routing, a
+// program on a pty (e.g. mc over sshd) that switches to raw mode flipped the
+// CONSOLE instead of its own pty slave, leaving the pty stuck in canonical mode.
+func vfsTtyGetLflagForFD(_ fd: Int) -> UInt32 {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { return ttyGetLflag() }
+    let entry = fdEntry(proc, fd)
+    if entry.kind == .ptyMaster || entry.kind == .ptySlave {
+        let p = openDescriptions[entry.object].pty
+        if ptyValid(p) { return ptySlaveLflag(p) }
+    }
+    return ttyGetLflag()
+}
+
+func vfsTtySetLflagForFD(_ fd: Int, _ lflag: UInt32) {
+    let proc = currentVFSProcess()
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    guard validFD(proc, fd) else { ttySetLflag(lflag); return }
+    let entry = fdEntry(proc, fd)
+    if entry.kind == .ptyMaster || entry.kind == .ptySlave {
+        let p = openDescriptions[entry.object].pty
+        if ptyValid(p) { ptySetLflag(p, lflag); return }
+    }
+    ttySetLflag(lflag)
+}
+
 private let socketpairFlagNonblock = 1
 private let socketpairFlagCloexec = 2
 
@@ -3695,6 +3927,16 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
     let next = base + offset
     if next < 0 { return Errno.invalid.code }
     file.offset = next
+    // Directories track their read position with a separate getdents cursor
+    // (file.dirCursor), not the byte offset. Keep it in sync on an absolute
+    // seek so rewinddir() (lseek(fd, 0, SEEK_SET)) and seekdir() (lseek to a
+    // telldir offset) actually reposition the stream. Without this, a rewind
+    // left dirCursor past the end and the next getdents returned nothing — mc's
+    // local_opendir() does a probe readdir() then rewinddir(), so it saw every
+    // directory as empty (and crashed on "/" once ".." was dropped). Only
+    // SEEK_SET is synced: a directory's byte offset isn't advanced by getdents,
+    // so SEEK_CUR/SEEK_END would carry a stale base.
+    if whence == 0 && nodes[node].isDir { file.dirCursor = next }
     openDescriptions[d] = file
     return next
 }

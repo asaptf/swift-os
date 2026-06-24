@@ -91,7 +91,23 @@ func main(_ argc: Int32,
     // Drain the echo bytes the edit produced so they don't linger.
     _ = swiftos_read(master, &buf, UInt(buf.count))
 
-    // 5) EOF: closing the master makes a subsequent slave read return 0.
+    // 5) termios per-fd routing: tcsetattr on the pty slave must change THIS
+    // pty's line-discipline flags, not the console's. Before the fix, tcget/
+    // tcsetattr ignored the fd and always touched the global console lflag, so a
+    // program on a pty (mc over sshd) that switched to raw mode flipped the
+    // console while its own pty stayed canonical. We only ever read fd 0 here.
+    let icanon: UInt32 = 1 << 0
+    let consoleBefore = swiftos_tcget_lflag(0)
+    let slaveDefault = swiftos_tcget_lflag(slave)   // a fresh pty: ICANON|ECHO|ISIG
+    _ = swiftos_tcset_lflag(slave, 0)               // clear all flags on the slave
+    let slaveAfter = swiftos_tcget_lflag(slave)
+    let consoleAfter = swiftos_tcget_lflag(0)
+    if (slaveDefault & icanon) == 0 { fail("pty slave default lflag missing ICANON"); return 1 }
+    if slaveAfter != 0 { fail("tcsetattr on pty slave had no effect"); return 1 }
+    if consoleAfter != consoleBefore { fail("tcsetattr on pty slave clobbered the console"); return 1 }
+    swiftos_puts("ptyprobe: termios per-fd routing OK\n")
+
+    // 6) EOF: closing the master makes a subsequent slave read return 0.
     _ = swiftos_close(master)
     let n = swiftos_read(slave, &buf, UInt(buf.count))
     if n != 0 { fail("slave EOF"); return 1 }

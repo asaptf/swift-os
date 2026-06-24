@@ -221,6 +221,29 @@ int swiftos_tty_inject(unsigned char byte) {
     return tty_inject(byte);
 }
 
+int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out) {
+    return cell_stat(cell, out, sizeof(*out));
+}
+
+int swiftos_cell_create(const char *root, unsigned long page_cap,
+                        unsigned int *out_cell_id) {
+    return cell_create(root, page_cap, out_cell_id);
+}
+
+long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
+                        const void *handles, unsigned long handle_count) {
+    return cell_spawn(cell_fd, path, (char *const *)argv,
+                      (const struct swiftos_spawn_handle *)handles, handle_count);
+}
+
+int swiftos_cell_pids(int cell_fd, void *buf, unsigned long cap) {
+    return cell_pids(cell_fd, buf, cap);
+}
+
+int swiftos_cell_destroy(int cell_fd) {
+    return cell_destroy(cell_fd);
+}
+
 // Volatile MMIO/ring accessors (C5i). volatile guarantees the access is not
 // elided or reordered by the compiler; on the Device-nGnRE register window the
 // memory type also prevents hardware reordering. For the virtqueue (normal RAM)
@@ -538,6 +561,19 @@ void swiftos_set_raw(int on) {
         t[3] = g_saved_lflag;
     }
     (void)__syscall3(SYS_TCSETATTR, 0, 0, (long)t);
+}
+
+unsigned int swiftos_tcget_lflag(int fd) {
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, fd, (long)t, 0);
+    return t[3]; // c_lflag
+}
+
+int swiftos_tcset_lflag(int fd, unsigned int lflag) {
+    unsigned int t[4] = { 0, 0, 0, 0 };
+    (void)__syscall3(SYS_TCGETATTR, fd, (long)t, 0);
+    t[3] = lflag;
+    return (int)__syscall3(SYS_TCSETATTR, fd, 0, (long)t);
 }
 
 // ---- /bin/top statistics (SYS_SYSINFO / SYS_PROCSTAT) ---------------------

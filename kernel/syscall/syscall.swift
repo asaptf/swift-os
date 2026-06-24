@@ -107,10 +107,15 @@ private let sysShmRingMap: UInt = 103      // shmring_map(id) → base user VA (
 private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the creator's base reference to a channel (LA3)
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
-private let sysKernelInstallBegin: UInt = 107  // kernel_install_begin() — reserve the inactive ESP kernel slot for a streamed NEW-kernel install (OS-1c-2b); needs capConsole
-private let sysKernelInstallWrite: UInt = 108  // kernel_install_write(buf, count) — append kernel-image bytes to the inactive ESP slot (OS-1c-2b); needs capConsole
-private let sysKernelInstallCommit: UInt = 109 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
-private let sysKernelInstallAbort: UInt = 110  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
+private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
+private let sysCellCreate: UInt = 108       // cell_create(root_path, out_cell_id) -> .cell control handle fd; allocate a fresh CellId with an optional namespace root (C6b/C6c); needs capConsole
+private let sysCellSpawn: UInt = 109        // cell_spawn(cell_fd, path, argv, specs, count) -> child pid; launch a process into the cell named by the control handle (C6b)
+private let sysCellPids: UInt = 110         // cell_pids(cell_fd, buf, cap) -> live member count; enumerate a cell's processes by tag for teardown (C6d)
+private let sysCellDestroy: UInt = 111      // cell_destroy(cell_fd) -> 0/EBUSY; free the CellId once the cell has no live members (C6d)
+private let sysKernelInstallBegin: UInt = 112  // kernel_install_begin() — reserve the inactive ESP kernel slot for a streamed NEW-kernel install (OS-1c-2b); needs capConsole
+private let sysKernelInstallWrite: UInt = 113  // kernel_install_write(buf, count) — append kernel-image bytes to the inactive ESP slot (OS-1c-2b); needs capConsole
+private let sysKernelInstallCommit: UInt = 114 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
+private let sysKernelInstallAbort: UInt = 115  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -141,9 +146,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
                           offset: Int(bitPattern: frame[1]),
                           whence: Int(bitPattern: frame[2]))
     } else if number == sysTcGetAttr {
-        result = syscallTcGetAttr(termios: frame[1])
+        result = syscallTcGetAttr(fd: Int(bitPattern: frame[0]), termios: frame[1])
     } else if number == sysTcSetAttr {
-        result = syscallTcSetAttr(termios: frame[2])
+        result = syscallTcSetAttr(fd: Int(bitPattern: frame[0]), termios: frame[2])
     } else if number == sysSigaction {
         let sig = Int(bitPattern: frame[0])
         if signalIsValid(sig) {
@@ -440,6 +445,56 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = kernelInstallCommit(entryVA: frame[0]) // OS-1c-2b
     } else if number == sysKernelInstallAbort {
         result = kernelInstallAbort() // OS-1c-2b
+    } else if number == sysCellStat {
+        // C6a: aggregate the resource-accounting domain of one CellId.
+        result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
+                                 buffer: frame[1], capacity: frame[2])
+    } else if number == sysCellCreate {
+        // C6b/C6c/C6d: allocate a fresh CellId rooted at frame[0] (a namespace root
+        // path, NULL = unconfined) with an optional resident-page cap frame[1],
+        // return a .cell control handle fd (capConsole).
+        result = vfsCellCreate(root: frame[0], pageCap: frame[1], outId: frame[2])
+    } else if number == sysCellSpawn {
+        // C6b: launch a child into the cell named by the control handle at frame[0].
+        // Authority is by handle — resolve it first; a caller without the handle
+        // cannot name the cell. Then the same explicit-handle async spawn ABI as
+        // spawn_handles_async, but the child is re-tagged into the cell.
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else {
+            let ex = execResolve(frame[1])
+            if ex.addr == 0 {
+                result = Errno.noEntry.code
+            } else {
+                let (packed, packedLen, argc) = packUserArgv(frame[2])
+                result = processSpawnIntoCellAsync(UInt32(cellRaw), ex.addr, ex.len,
+                                                   packed: packed, packedLen: packedLen,
+                                                   argc: argc, specsVA: frame[3],
+                                                   specCount: frame[4])
+            }
+        }
+    } else if number == sysCellPids {
+        // C6d: enumerate the cell's live members (by tag) so a supervisor can walk +
+        // tear down the job tree. Authority is by the control handle at frame[0].
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else {
+            result = processCellPids(UInt32(cellRaw), buffer: frame[1], capacity: frame[2])
+        }
+    } else if number == sysCellDestroy {
+        // C6d: free a cell's CellId. Refuse (EBUSY) while any member is still live —
+        // the supervisor must reap the job tree first; the per-process CellId tag is
+        // the backstop that keeps a missed member contained + accounted (§5.3).
+        let cellRaw = vfsCellResolveControl(fd: Int(bitPattern: frame[0]))
+        if cellRaw < 0 {
+            result = cellRaw
+        } else if processCellLiveCount(UInt32(cellRaw)) > 0 {
+            result = Errno.busy.code
+        } else {
+            result = vfsCellFree(fd: Int(bitPattern: frame[0]))
+        }
     } else {
         result = Errno.noSys.code
     }
@@ -448,22 +503,25 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
     signalDeliverToCurrentFrame(frame)
 }
 
-private func syscallTcGetAttr(termios ptr: UInt) -> Int {
+private func syscallTcGetAttr(fd: Int, termios ptr: UInt) -> Int {
     guard let base = userWritableBuffer(ptr, 16) else { return Errno.invalid.code }
+    // Read the c_lflag of the terminal behind this fd (pty end or console),
+    // not a single global — see vfsTtyGetLflagForFD.
+    let lflag = vfsTtyGetLflagForFD(fd)
     let words = UnsafeMutableRawPointer(mutating: base)
     // Zero the four flag words, then publish the current c_lflag.
     words.storeBytes(of: UInt32(0), toByteOffset: 0, as: UInt32.self)
     words.storeBytes(of: UInt32(0), toByteOffset: 4, as: UInt32.self)
     words.storeBytes(of: UInt32(0), toByteOffset: 8, as: UInt32.self)
-    words.storeBytes(of: ttyGetLflag(), toByteOffset: termiosLflagOffset, as: UInt32.self)
+    words.storeBytes(of: lflag, toByteOffset: termiosLflagOffset, as: UInt32.self)
     return 0
 }
 
-private func syscallTcSetAttr(termios ptr: UInt) -> Int {
+private func syscallTcSetAttr(fd: Int, termios ptr: UInt) -> Int {
     guard let base8 = userReadableBuffer(ptr, 16) else { return Errno.invalid.code }
     let base = UnsafeRawPointer(base8)
     let lflag = base.load(fromByteOffset: termiosLflagOffset, as: UInt32.self)
-    ttySetLflag(lflag)
+    vfsTtySetLflagForFD(fd, lflag)
     return 0
 }
 

@@ -19,7 +19,11 @@
 // .ptyMaster / .ptySlave are the two ends of a pseudo-terminal (HC34): a
 // bidirectional conduit with a per-instance line discipline. Both report as
 // character devices to fstat.
-enum HandleKind: UInt8 { case none, tty, file, pipe, socket, endpoint, event, device, ptyMaster, ptySlave }
+// .cell is the C6 cell control handle: an opaque, transferable capability token
+// that names a CellId resource-accounting/namespace domain. Holding it is the
+// authority to launch a process into that cell (cell_spawn) and, later, to tear
+// it down (C6d). It carries no read/write byte stream — it is a pure capability.
+enum HandleKind: UInt8 { case none, tty, file, pipe, socket, endpoint, event, device, ptyMaster, ptySlave, cell }
 
 // Per-handle, per-kind rights — a typed bitset checked per *handle*, not per
 // *process*. read/write are used today; the rest are reserved for later

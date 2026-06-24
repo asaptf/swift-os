@@ -3200,6 +3200,212 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   stack + the primary NIC path stays a separate long-horizon epic; real-HW cache
   maintenance for userland DMA and userland IRQ delivery are the related hardening gaps.
 
+### C6a — per-cell resource-accounting domain (DONE, 2026-06-24)
+
+- **Goal.** First step of the C6 Cell arc: put the long-reserved per-process
+  `CellId` tag to work as a resource-accounting domain. A Cell is a userland
+  composition over small kernel primitives (docs/CAPABILITIES.md §5), so the kernel
+  gains only an aggregation read, not a fat `Cell` object. Everything still runs in
+  `globalCell` (raw 1); cell creation arrives in C6b.
+- **Design — on-demand aggregation, no per-cell counter table.** The per-process
+  counters (`pResPages`, `pCpuTicks`, and the handle table) are already the single
+  source of truth, so `processCellStat` aggregates on demand: a single bounded scan
+  of the process table (`maxProc = 16`) summing the live processes whose
+  `pSecurity[i].cell` matches. This adds **zero per-op accounting cost** (nothing on
+  the hot allocation/charge paths changed) and **zero drift risk**, and "a reaped
+  process's charge is removed" falls out for free — a reaped slot is `pUnused` and is
+  excluded from the next read. This mirrors the existing `processStatSnapshot` /
+  `processSysInfo` scans. A maintained per-cell table was rejected: it would be a
+  second source of truth in the trusted core (against priority #1) and would have to
+  carefully decrement on reap to match the same acceptance.
+- **`SYS_cell_stat` (107).** `cell_stat(cellId, buffer, cap)` → live process count
+  in the cell, writing a 32-byte record: `cell:u32, processes:u32,
+  residentPages:u64, cpuTicks:u64, handles:u32, reserved:u32`. Gated on
+  `capProcessInspect` — reading a domain's resource usage is inspection authority
+  (this is the first enforcement of that capability; it only affects this new
+  syscall). `vfsHandleCount(slot:)` (new, in vfs.swift) counts a process's in-use
+  handles for the aggregate. Children already inherit the parent's `CellId` (the
+  whole `ProcessSecurityContext` is copied on fork/spawn), so everything is charged
+  to `globalCell` today — verified by the probe.
+- **Userland bridge.** `swift_user.h` adds `struct swiftos_cell_stat` and
+  `swiftos_cell_query(cell, out)` — named `_query` (not `_stat`) so the function does
+  not collide with the struct tag when imported into Swift (one namespace for types
+  and functions), the same convention as `swiftos_device_query` vs
+  `swiftos_device_info`.
+- **Probe `/bin/cellstatprobe`.** Runs as a boot probe (kernel/main.swift): reads the
+  baseline cell_stat, forks 3 children each blocked on a pipe barrier (deterministic,
+  no sleep/timing race), re-reads (asserts `processes == baseline + 3` and that pages
+  + handles grew), closes the pipe so the children hit EOF and exit, reaps them, and
+  re-reads (asserts `processes == baseline` — charge reclaimed). Observed run:
+  baseline `processes=1 residentPages=20 handles=3` → with-children `4 / 144 / 20` →
+  after-reap `1 / 36 / 3` (the residual page delta is the parent's own heap growth
+  during the run; the children's charge is fully reclaimed and the process + handle
+  counts return exactly to baseline).
+- **Acceptance.** `make c6-cell-accounting-test` boots the base image single-core and
+  under `-smp 4` and requires the three report lines + the `C6a OK` verdict, with no
+  `C6a FAIL`/`panic:`. Wired into `make test`.
+- **Next (C6b).** `SYS_cell_create` allocates a fresh `CellId` and returns a
+  `HandleKind.cell` control handle; spawn-into-cell charges a child's resources to a
+  non-global cell — the first time `cell_stat` reports a domain other than
+  `globalCell`.
+
+### C6b — cell creation + control handle + spawn-into-cell (DONE, 2026-06-24)
+
+- **Goal.** Turn the CellId from "a tag everything shares" into "a domain you
+  create and launch into." A cell is still a userland composition (§5): the kernel
+  adds only a cheap allocation table + a control handle + a spawn re-tag, **no fat
+  `Cell` object**.
+- **`HandleKind.cell`.** A new handle kind: an opaque, transferable capability token
+  naming a CellId. It carries no byte stream — holding it *is* the authority to
+  launch into the cell (and, in C6d, tear it down). Rights `[.write, .duplicate,
+  .transfer]`: `.write` = mutate the cell (add a member / destroy), the dup/transfer
+  pair lets a supervisor delegate it.
+- **Cell registry (vfs.swift).** A bounded `cells[]` table (`maxCells = 8`) mirroring
+  the `DeviceGrant` pattern, under `vfsLock`. `cells[i]` ↔ `CellId(raw: i + 1)`, so
+  index 0 is `globalCell` (raw 1) — always live, never handed out. Seeded by
+  `resetCellRegistry()` from `vfsInit`.
+- **`SYS_cell_create(108)`** (capConsole — creating an isolation/accounting domain
+  is a privileged supervisor op, the same gate as device_claim/tty_inject): allocates
+  a free slot, mints a `.cell` control-handle fd (an OpenDescription of kind `.cell`,
+  so dup/close/cloexec/spawn-inheritance all work uniformly), and writes the new
+  CellId raw to the caller's out-param. **Closing the last handle does NOT free the
+  cell** — a cell outlives its handle and is reclaimed only by explicit teardown
+  (C6d), so a supervisor crash leaves the domain contained + accounted, not silently
+  dissolved.
+- **`SYS_cell_spawn(109, cell_fd, path, argv, specs, count)`** → child pid. Authority
+  is **by handle**: `vfsCellResolveForSpawn` validates the caller holds a live `.cell`
+  handle with `.write` at `cell_fd` (EBADF otherwise) and yields the CellId; a process
+  that was never given the handle cannot name the cell. Then the same explicit-handle
+  async-spawn ABI as `spawn_handles_async`, except `processSpawnIntoCellAsync`
+  re-tags the child's `ProcessSecurityContext.cell` to the target CellId after it
+  inherits the parent's context — so every page/handle/tick the child accrues charges
+  to the *new* cell's accounting domain, not the parent's globalCell.
+- **Userland bridge.** `swiftos_cell_create(out_id)` + `swiftos_cell_spawn(cell_fd,
+  path, argv, handles, count)`; `cell_spawn` uses `__syscall6` (5 args + pad).
+- **Probe `/bin/cellcreateprobe` + `/bin/cellchild`.** A boot-time supervisor:
+  (1) proves spawning into fd 1 (a valid fd, but not a `.cell` handle) is refused;
+  (2) `cell_create` → cell 2 + handle fd 3; (3) launches `/bin/cellchild` into cell 2
+  (handing it a pipe read-end as fd 0 for a race-free barrier, + stdout); the child
+  prints `CELLCHILD: alive in cell` and blocks; (4) asserts `cell_stat(2)` shows the
+  child (`processes=1 residentPages=20 handles=2`) while `cell_stat(globalCell)` is
+  unchanged — the child did NOT leak into globalCell; (5) closes the pipe → child
+  EOF/exit → reap → `cell_stat(2)` back to all-zero.
+- **Acceptance.** `make c6-cell-create-test` (single-core + `-smp 4`) requires the
+  refusal marker, the `CELLCHILD: alive in cell` marker, the three per-stage reports,
+  and the `C6b OK` verdict with no `C6b FAIL`/`panic:`. Wired into `make test`.
+- **Next (C6c).** A cell carries a VFS namespace root (reusing the C3
+  confineNodes/isDescendant machinery); processes spawned into the cell resolve `/`
+  within it. Then C6d: enumerate-by-cell + teardown + optional per-cell limits.
+
+### C6c — per-cell namespace root (DONE, 2026-06-24)
+
+- **Goal.** Give a cell a VFS root subtree so its processes resolve `/` within it
+  and cannot reach anything outside — the namespace half of the Cell. Reuses the C3
+  confinement machinery (`confineNodes` + `isDescendant`); **no separate per-cell
+  mount table**.
+- **`CellSlot.root`.** Each cell carries a root node (0 = unconfined, like
+  globalCell). `SYS_cell_create` grows a `root_path` argument (the C6b out-param
+  shifts to the second slot): NULL or `"/"` → unconfined; any other path is resolved
+  (against the caller's own namespace) to a directory node under `vfsLock`, validated
+  (ENOENT/ENOTDIR), and stored as the cell root.
+- **Confinement on spawn.** `vfsApplyCellNamespace(child, cellRaw)` runs in
+  `processSpawnIntoCellAsync` after the child inherits the parent's VFS state: for a
+  confined cell it overrides the child's `confineNodes[child]` + `cwdNodes[child]` to
+  the cell root. So an absolute path still resolves against the global tree but is
+  rejected by the existing C3 `isDescendant(node, confineRoot)` check if it falls
+  outside the subtree — including `/` itself (the global root is not a descendant of
+  the cell root). A child forked *within* the cell stays confined via the existing
+  parent→child `confineNodes` inheritance. The cell's cwd makes relative paths
+  resolve inside the root.
+- **Probe `/bin/cellnsprobe` + `/bin/cellnschild`.** The supervisor first proves the
+  default cell is unconfined (it reads `/etc/motd`), then `cell_create("/www", …)`
+  and launches the child into the rooted cell. The child asserts: `open("index.html")`
+  succeeds (its cwd is the cell root `/www`), `open("/etc/motd")` is refused (outside
+  the root), and `open("/")` is refused (global root unreachable); it exits 0 only if
+  all three hold. The supervisor checks the child's exit code.
+- **Acceptance.** `make c6-cell-namespace-test` (single-core + `-smp 4`) requires the
+  default-unconfined marker, the three `CELLNS:` verdicts, and `C6c OK`, with no
+  `CELLNS FAIL`/`C6c FAIL`/`panic:`. The existing C3 confinement markers
+  (`CONFINE-IN-OK`/`CONFINE-OUT-OK`/`C3-SCOPE-OK`, boot_test.sh) stay green. Wired
+  into `make test`.
+- **Next (C6d).** Enumerate a cell's processes by tag so a supervisor can walk + kill
+  the job tree, reclaim the domain-tagged resources, and free the CellId; optional
+  per-cell resident-page/handle limits enforced at allocation.
+
+### C6d — cell lifecycle: resource cap + enumerate + teardown (DONE, 2026-06-24)
+
+- **Goal.** Close the Cell arc: a hard per-cell resource limit, enumeration of a
+  cell's members by tag, and explicit teardown that frees the CellId. The honest
+  composition trade-off (§5.3) stays — there is no single atomic kernel "destroy the
+  cell"; teardown is the supervisor walking the (enumerated) job tree, with the
+  per-process CellId tag + the destroy-refuses-while-live guard as the backstop.
+- **Hard resident-page cap.** `cell_create` grows a `page_cap` arg (0 = unlimited),
+  stored in `CellSlot.pageCap`. Enforced in `processSpawnIntoCellAsync` **before**
+  `createProcess`: if the cell's aggregate resident pages (a bounded scan, same as
+  cell_stat) have reached the cap, the spawn is refused with ENOMEM. This is a
+  pre-allocation guard — the child is never created, so there is no teardown path and
+  no SMP teardown race; the ceiling is soft to within one member's footprint. (Chosen
+  per the user's call: cap at spawn time, where the C6d acceptance drives growth;
+  fine-grained sbrk/mmap-time enforcement within a member is future.)
+- **`SYS_cell_pids(110, cell_fd, buf, cap)`** enumerates the pids of a cell's live
+  members (bounded scan keyed on the tag), returning the count. The supervisor's
+  "walk the job tree" primitive. Authority is by the control handle.
+- **`SYS_cell_destroy(111, cell_fd)`** frees the CellId. It is **refused with EBUSY
+  while any member is live** (`processCellLiveCount > 0`) — the supervisor must reap
+  the job tree first; this enforces "every member is gone" before the slot frees. On
+  success the slot's generation is bumped (monotonic, never reset) before clearing,
+  so the now-dangling control handle resolves **stale** even after the slot is
+  re-allocated to a new cell. The `.cell` handle stamps its cell generation in its
+  OpenDescription at create; `vfsCellResolveControl` rejects a generation mismatch —
+  closing the confused-deputy hole that slot reuse would otherwise open.
+- **Probe `/bin/cellcapprobe`** (reuses `/bin/cellchild`): caps a cell at 30 resident
+  pages, spawns members until the cap refuses (ENOMEM after ~2 ×20-page members),
+  enumerates them via cell_pids (count matches), proves `cell_destroy` returns EBUSY
+  while live, then releases the shared pipe barrier so the members EOF + exit, reaps
+  them, `cell_destroy` frees the CellId (accounting zero), re-creates a cell to prove
+  the CellId is reusable (same slot), and confirms the stale handle to the destroyed
+  cell is rejected.
+- **Acceptance.** `make c6-cell-lifecycle-test` (single-core + `-smp 4`) requires the
+  cap-refused/enumerate/EBUSY/destroy/reuse/stale-reject markers + `C6d OK`, with no
+  `C6d FAIL`/`panic:`. C6a–C6c and the C3 confinement markers stay green. Wired into
+  `make test`.
+- **Next (C6e).** The end-to-end "one service per cell" payoff: a supervisor that
+  assembles a cell { root + restricted handles + cap }, runs a real service inside,
+  proves isolation, and tears it down.
+
+### C6e — one service per cell, end to end (DONE, 2026-06-24)
+
+- **Goal.** The payoff of the arc: compose C6a–C6d into the "one model server per
+  cell" / AI-serving-cell shape from CAPABILITIES.md — a supervisor assembles a cell
+  = { a namespace root view + a restricted handle set + a resource cap }, launches a
+  *real* request/reply service inside it, drives live work, proves isolation, and
+  tears it down cleanly.
+- **Service `/bin/cellhello`.** A small IPC service: on startup it proves its own
+  isolation — `open("/etc/motd")` is denied (confined to the cell's /www root) and a
+  read of fd 0 fails (it was never granted that handle) — then serves "ping"→"pong"
+  over the two granted endpoints until it receives "stop" (or the endpoint EOFs). Its
+  *only* handles are stdout (fd 1), the command recv end (fd 3), and the reply send
+  end (fd 4); no ambient authority.
+- **Supervisor `/bin/cellsvcprobe`.** Creates the two endpoints, `cell_create("/www",
+  cap=80, …)`, then `cell_spawn`s the service into the cell with exactly those three
+  handle specs (the restricted set). It drives a live round-trip (`ipc_send "ping"` →
+  `ipc_recv "pong"`), confirms `cell_stat` charges the service to the cell
+  (processes=1), then sends "stop", reaps the service, and `cell_destroy`s the cell —
+  asserting the accounting is reclaimed.
+- **Acceptance.** `make c6-cell-service-test` (single-core + `-smp 4`) requires the
+  cell-assembly marker, the service's two isolation proofs, the pong round-trip,
+  `cell_stat processes=1`, the clean stop + teardown, and `C6e OK`, with no
+  `C6e FAIL`/`CELLHELLO FAIL`/`panic:`. Wired into `make test`.
+- **C6 arc complete (C6a–C6e).** The per-process CellId tag is a real (still cheap)
+  isolation/accounting domain, assembled + supervised entirely in userland over small
+  kernel primitives — **no fat in-kernel `Cell` object** (CAPABILITIES.md §5). A cell
+  has per-domain accounting (C6a), is created + launched into by handle (C6b),
+  confines its processes to a namespace root (C6c), enforces a resource cap +
+  enumerate + teardown lifecycle (C6d), and hosts a real isolated service end to end
+  (C6e). Remaining Cell work (future): richer limits (handle/CPU caps, intra-member
+  page enforcement), nested cells, and lifting a production service (the hosted site /
+  a model server) into a cell.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

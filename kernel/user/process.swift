@@ -43,6 +43,7 @@ private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
 private let procStatRecordSize = 56 // richer per-process record for /bin/top
+private let cellStatRecordSize = 32 // C6a per-cell accounting aggregate
 private let sysInfoLegacySize = 64  // original system-wide stats blob for /bin/top
 private let sysInfoCpuMax = 8
 private let sysInfoSize = sysInfoLegacySize + 8 + (sysInfoCpuMax * 16)
@@ -2969,6 +2970,40 @@ func processSpawnChildWithHandlesAsync(_ image: UInt, _ size: UInt, packed: UInt
     return child + 1 // pid (mirrors processCurrentPid / processWaitpid's slot+1 convention)
 }
 
+/// C6b: spawn a child INTO a target cell. Like processSpawnChildWithHandlesAsync
+/// (explicit handle inheritance, non-blocking, returns the child pid), but after the
+/// child inherits the parent's security context it is RE-TAGGED into `cellRaw` so
+/// every page/handle/CPU-tick it accrues charges to that CellId's accounting domain
+/// instead of the parent's (globalCell). The caller already proved authority by
+/// holding the cell control handle (vfsCellResolveForSpawn in the syscall layer);
+/// this function trusts the validated raw. setuid-on-cell-spawn is intentionally not
+/// offered — a cell launch is an explicit, non-elevating supervisor action.
+func processSpawnIntoCellAsync(_ cellRaw: UInt32, _ image: UInt, _ size: UInt,
+                               packed: UInt, packedLen: UInt, argc: Int,
+                               specsVA: UInt, specCount: UInt) -> Int {
+    let parent = currentProcessSlot()
+    guard parent >= 0 else { return Errno.invalid.code }
+    let valid = vfsValidateHandleInheritance(parent: parent, inherit: .explicit,
+                                             specsVA: specsVA, specCount: specCount)
+    if valid < 0 { return valid }
+    // C6d: hard resident-page cap. Refuse a new member once the cell's aggregate
+    // resident pages have reached the ceiling. This is a pre-allocation guard (the
+    // child is never created), so it has no teardown path and no SMP teardown race;
+    // the ceiling is soft to within one member's footprint.
+    let cap = vfsCellPageCap(cellRaw: cellRaw)
+    if cap > 0 && processCellResidentPages(cellRaw) >= cap { return Errno.noMem.code } // ENOMEM
+    let child = createProcess(image, size, packed: packed, packedLen: packedLen, argc: argc,
+                              parent: parent, inherit: .explicit,
+                              inheritSpecsVA: specsVA, inheritSpecCount: specCount)
+    if child < 0 { return Errno.again.code } // EAGAIN
+    pSecurity[child].cell = CellId(raw: cellRaw)
+    // C6c: confine the child to the cell's VFS namespace root (no-op for an
+    // unconfined cell). Done after createProcess seeded the child's inherited VFS
+    // state, so this overrides the inherited (unconfined) root.
+    vfsApplyCellNamespace(slot: child, cellRaw: cellRaw)
+    return child + 1 // pid (slot+1 convention)
+}
+
 func processCurrentPid() -> Int {
     let current = currentProcessSlot()
     return current >= 0 ? current + 1 : 0
@@ -3422,6 +3457,85 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
         }
     } else {
         for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
+    }
+    return total
+}
+
+/// SYS_cell_stat (C6a): aggregate the live resource usage of a single CellId
+/// domain. The kernel keeps no separate per-cell counter table — a Cell is a
+/// userland composition, and the per-process counters (pResPages / pCpuTicks /
+/// the handle table) are the single source of truth (docs/CAPABILITIES.md §5).
+/// We aggregate on demand by scanning the bounded process table and summing the
+/// processes whose CellId tag matches, so there is zero per-op accounting cost
+/// and a reaped process (slot back to pUnused) drops out of the total for free.
+///
+/// Record layout (32 bytes, naturally aligned): cell:u32, processes:u32,
+/// residentPages:u64, cpuTicks:u64, handles:u32, reserved:u32. Returns the live
+/// process count in the cell (>= 0), or a negative errno. Gated on
+/// capProcessInspect — reading another domain's resource usage is inspection
+/// authority.
+func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int {
+    if (processCurrentCaps() & capProcessInspect) == 0 { return Errno.perm.code }
+    if capacity < UInt(cellStatRecordSize) { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buffer, UInt(cellStatRecordSize)) else {
+        return Errno.invalid.code
+    }
+    var processes: UInt32 = 0
+    var residentPages: UInt64 = 0
+    var cpuTicks: UInt64 = 0
+    var handles: UInt32 = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
+        processes += 1
+        residentPages &+= UInt64(pResPages[i])
+        cpuTicks &+= pCpuTicks[i]
+        handles &+= UInt32(truncatingIfNeeded: vfsHandleCount(slot: i))
+    }
+    let raw = UnsafeMutableRawPointer(dst)
+    raw.storeBytes(of: rawCell, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: processes, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: residentPages, toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: cpuTicks, toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: handles, toByteOffset: 24, as: UInt32.self)
+    raw.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
+    return Int(processes)
+}
+
+/// C6d: aggregate resident pages charged to a cell — the cap check's input. A
+/// bounded scan keyed on the CellId tag, like processCellStat (no per-cell counter).
+func processCellResidentPages(_ cellRaw: UInt32) -> Int {
+    var pages = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+        pages += pResPages[i]
+    }
+    return pages
+}
+
+/// C6d: count the live processes tagged with a cell. cell_destroy uses this to
+/// refuse teardown while any member is still running (EBUSY).
+func processCellLiveCount(_ cellRaw: UInt32) -> Int {
+    var n = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
+    return n
+}
+
+/// SYS_cell_pids (C6d): enumerate the pids of a cell's live members so a userland
+/// supervisor can walk + tear down the job tree. Writes up to `capacity` pids (u32
+/// each) to `buffer`; returns the live member count (which may exceed the number
+/// written if the buffer was too small), or a negative errno. Authority is by the
+/// control handle (resolved by the syscall layer); this trusts the validated raw.
+func processCellPids(_ cellRaw: UInt32, buffer: UInt, capacity: UInt) -> Int {
+    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
+    if writable > 0 {
+        guard let b = userWritableBuffer(buffer, UInt(writable * 4)) else { return Errno.invalid.code }
+        dst = UnsafeMutableRawPointer(b)
+    }
+    var total = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+        if total < writable, let raw = dst {
+            raw.storeBytes(of: UInt32(i + 1), toByteOffset: total * 4, as: UInt32.self) // pid = slot+1
+        }
+        total += 1
     }
     return total
 }

@@ -113,10 +113,15 @@
 #define SYS_SHMRING_CLOSE       104
 #define SYS_VIRT_TO_PHYS        105
 #define SYS_TTY_INJECT          106
-#define SYS_KERNEL_INSTALL_BEGIN  107
-#define SYS_KERNEL_INSTALL_WRITE  108
-#define SYS_KERNEL_INSTALL_COMMIT 109
-#define SYS_KERNEL_INSTALL_ABORT  110
+#define SYS_CELL_STAT           107
+#define SYS_CELL_CREATE         108
+#define SYS_CELL_SPAWN          109
+#define SYS_CELL_PIDS           110
+#define SYS_CELL_DESTROY        111
+#define SYS_KERNEL_INSTALL_BEGIN  112
+#define SYS_KERNEL_INSTALL_WRITE  113
+#define SYS_KERNEL_INSTALL_COMMIT 114
+#define SYS_KERNEL_INSTALL_ABORT  115
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -595,6 +600,46 @@ static inline long virt_to_phys(unsigned long va, int handle_fd) {
 // CAP_CONSOLE. Returns 0, or -1 (EPERM) without the capability.
 static inline int tty_inject(unsigned char byte) {
     return (int)__syscall3(SYS_TTY_INJECT, (long)byte, 0, 0);
+}
+
+// C6a: read a CellId's aggregate resource-accounting domain into `buf` (a
+// 32-byte record: cell:u32, processes:u32, residentPages:u64, cpuTicks:u64,
+// handles:u32, reserved:u32). Needs CAP_PROCESS_INSPECT. Returns the live
+// process count in the cell (>= 0), or a small negative errno.
+static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
+    return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
+}
+
+// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd for it
+// (negative errno on failure). `root` is the cell's VFS namespace root (NULL or
+// "/" = unconfined); `page_cap` is an optional hard resident-page ceiling (0 =
+// unlimited). Writes the new CellId to *out_cell_id when non-NULL. Needs CAP_CONSOLE.
+static inline int cell_create(const char *root, unsigned long page_cap,
+                              unsigned int *out_cell_id) {
+    return (int)__syscall3(SYS_CELL_CREATE, (long)root, (long)page_cap, (long)out_cell_id);
+}
+
+// C6d: enumerate the cell's live members into `buf` (up to `cap` u32 pids); returns
+// the live member count (may exceed what was written). Needs the control handle.
+static inline int cell_pids(int cell_fd, void *buf, unsigned long cap) {
+    return (int)__syscall3(SYS_CELL_PIDS, (long)cell_fd, (long)buf, (long)cap);
+}
+
+// C6d: free the cell's CellId. Returns 0, or EBUSY (negative) if the cell still has
+// live members — reap them first. Needs the control handle.
+static inline int cell_destroy(int cell_fd) {
+    return (int)__syscall3(SYS_CELL_DESTROY, (long)cell_fd, 0, 0);
+}
+
+// C6b: launch a process into the cell named by `cell_fd` (a control handle the
+// caller holds), with the same explicit-handle inheritance ABI as
+// spawn_handles_async. Returns the child pid (negative errno on failure: EBADF if
+// cell_fd is not a cell handle the caller holds).
+static inline long cell_spawn(int cell_fd, const char *path, char *const argv[],
+                              const struct swiftos_spawn_handle *handles,
+                              size_t handle_count) {
+    return __syscall6(SYS_CELL_SPAWN, (long)cell_fd, (long)path, (long)argv,
+                      (long)handles, (long)handle_count, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

@@ -83,6 +83,21 @@ struct swiftos_device_info {
 };
 #endif
 
+// C6a: aggregate resource-accounting domain for one Cell (matches the kernel's
+// 32-byte cell_stat record). `cell` echoes the queried CellId; the rest sum the
+// live processes tagged with that cell.
+#ifndef SWIFTOS_CELL_STAT_T
+#define SWIFTOS_CELL_STAT_T
+struct swiftos_cell_stat {
+    unsigned int cell;
+    unsigned int processes;
+    unsigned long resident_pages;
+    unsigned long cpu_ticks;
+    unsigned int handles;
+    unsigned int reserved;
+};
+#endif
+
 // Device kind/bus/flag constants (mirror syscall.h; identical macro values).
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
@@ -137,6 +152,31 @@ long swiftos_virt_to_phys(unsigned long va, int handle_fd);
 // Needs CAP_CONSOLE; returns 0, or -1 (EPERM) without it. Used by the userland
 // virtio-input driver to feed decoded keystrokes to the line discipline.
 int swiftos_tty_inject(unsigned char byte);
+
+// C6a: read a CellId's aggregate resource-accounting domain into *out. Named
+// _query (not _stat) so it does not clash with the swiftos_cell_stat struct tag
+// when imported into Swift (one namespace for types and functions). Needs
+// CAP_PROCESS_INSPECT. Returns the live process count in the cell (>= 0), or a
+// negative errno.
+int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
+
+// C6b/C6c/C6d: allocate a fresh cell and return a control-handle fd (negative errno
+// on failure); writes the new CellId to *out_cell_id when non-NULL. `root` is the
+// cell's VFS namespace root (NULL or "/" = unconfined); `page_cap` is an optional
+// hard resident-page ceiling (0 = unlimited). Needs CAP_CONSOLE.
+int  swiftos_cell_create(const char *root, unsigned long page_cap,
+                         unsigned int *out_cell_id);
+// C6b: launch a process into the cell named by `cell_fd` (a control handle the
+// caller holds), with the same explicit-handle inheritance ABI as
+// swiftos_spawn_handles_async. Returns the child pid, or a negative errno (EBADF if
+// cell_fd is not a cell handle the caller holds). Reap the child with swiftos_waitpid.
+long swiftos_cell_spawn(int cell_fd, const char *path, void *argv,
+                        const void *handles, unsigned long handle_count);
+// C6d: enumerate the cell's live members into `buf` (up to `cap` u32 pids); returns
+// the live member count. Needs the control handle.
+int  swiftos_cell_pids(int cell_fd, void *buf, unsigned long cap);
+// C6d: free the cell's CellId; returns 0, or EBUSY (negative) while members live.
+int  swiftos_cell_destroy(int cell_fd);
 
 unsigned int swiftos_mmio_read32(unsigned long addr);
 void         swiftos_mmio_write32(unsigned long addr, unsigned int value);
@@ -265,6 +305,12 @@ void swiftos_set_echo(int on);
 // keypress is delivered without Enter and is not echoed (for /bin/top's 'q');
 // ISIG is kept so Ctrl-C still works. set_raw(0) restores the saved flags.
 void swiftos_set_raw(int on);
+
+// Per-fd c_lflag (third termios word) accessor + setter. Unlike set_echo/set_raw
+// (which act on fd 0), these take an explicit fd so a test can prove tcgetattr/
+// tcsetattr route to the terminal behind that fd (pty end vs console).
+unsigned int swiftos_tcget_lflag(int fd);
+int swiftos_tcset_lflag(int fd, unsigned int lflag);
 
 // ---- /bin/top: system + per-process statistics --------------------------
 #define SWIFTOS_TOP_MAX 16

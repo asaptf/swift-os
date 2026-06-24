@@ -506,6 +506,15 @@ USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
 USER_PTYPROBE_ELF := $(BUILD)/ptyprobe.elf
+USER_CELLSTATPROBE_ELF := $(BUILD)/cellstatprobe.elf
+USER_CELLCHILD_ELF := $(BUILD)/cellchild.elf
+USER_CELLCREATEPROBE_ELF := $(BUILD)/cellcreateprobe.elf
+USER_CELLNSCHILD_ELF := $(BUILD)/cellnschild.elf
+USER_CELLNSPROBE_ELF := $(BUILD)/cellnsprobe.elf
+USER_CELLCAPPROBE_ELF := $(BUILD)/cellcapprobe.elf
+USER_CELLHELLO_ELF := $(BUILD)/cellhello.elf
+USER_CELLSVCPROBE_ELF := $(BUILD)/cellsvcprobe.elf
+USER_PTYRUN_ELF := $(BUILD)/ptyrun.elf
 USER_PS_ELF := $(BUILD)/ps.elf
 USER_ID_ELF := $(BUILD)/id.elf
 USER_SUDO_ELF := $(BUILD)/sudo.elf
@@ -687,6 +696,15 @@ BASE_EXEC_ELFS := \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(USER_PTYPROBE_ELF) \
+	$(USER_CELLSTATPROBE_ELF) \
+	$(USER_CELLCHILD_ELF) \
+	$(USER_CELLCREATEPROBE_ELF) \
+	$(USER_CELLNSCHILD_ELF) \
+	$(USER_CELLNSPROBE_ELF) \
+	$(USER_CELLCAPPROBE_ELF) \
+	$(USER_CELLHELLO_ELF) \
+	$(USER_CELLSVCPROBE_ELF) \
+	$(USER_PTYRUN_ELF) \
 	$(BUILD)/busybox.elf \
 	$(NCURSES_BASE_ELF) \
 	$(GLIBDEMO_BASE_ELF) \
@@ -696,6 +714,7 @@ BASE_EXEC_ELFS := \
 
 .PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
 .PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test uefi-kinstall-test uefi-os-install-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test c6-cell-accounting-test c6-cell-create-test c6-cell-namespace-test c6-cell-lifecycle-test c6-cell-service-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: virtio-transport-test
@@ -880,6 +899,35 @@ $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sleepprobe.swift -o $@
 
+# C6a: per-cell resource-accounting probe (forks children, reads SYS_cell_stat).
+$(BUILD)/user_cellstatprobe.o: userland/cellstatprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellstatprobe.swift -o $@
+
+# C6b: the cell-creation supervisor probe + the tiny workload it launches.
+$(BUILD)/user_cellchild.o: userland/cellchild.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellchild.swift -o $@
+
+$(BUILD)/user_cellcreateprobe.o: userland/cellcreateprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellcreateprobe.swift -o $@
+
+# C6c: the namespace-root supervisor probe + the workload it confines.
+$(BUILD)/user_cellnschild.o: userland/cellnschild.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellnschild.swift -o $@
+
+$(BUILD)/user_cellnsprobe.o: userland/cellnsprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellnsprobe.swift -o $@
+
+# C6d: the cell-lifecycle supervisor probe (cap + enumerate + teardown).
+$(BUILD)/user_cellcapprobe.o: userland/cellcapprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellcapprobe.swift -o $@
+
+# C6e: the end-to-end one-service-per-cell supervisor probe + the service it hosts.
+$(BUILD)/user_cellhello.o: userland/cellhello.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellhello.swift -o $@
+
+$(BUILD)/user_cellsvcprobe.o: userland/cellsvcprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellsvcprobe.swift -o $@
+
 # NS1: standalone Swift virtio-net MMIO grant probe.
 $(BUILD)/user_netmmapprobe.o: userland/netmmapprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netmmapprobe.swift -o $@
@@ -898,6 +946,9 @@ $(BUILD)/user_netsvc-demo.o: userland/netsvc-demo.swift userland/lib/virtio_net_
 
 $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyprobe.swift -o $@
+
+$(BUILD)/user_ptyrun.o: userland/ptyrun.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyrun.swift -o $@
 
 $(BUILD)/user_id.o: userland/id.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/id.swift -o $@
@@ -1227,6 +1278,30 @@ $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps
 $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o -o $@
 
+$(USER_CELLSTATPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellstatprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellstatprobe.o -o $@
+
+$(USER_CELLCHILD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellchild.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellchild.o -o $@
+
+$(USER_CELLCREATEPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellcreateprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellcreateprobe.o -o $@
+
+$(USER_CELLNSCHILD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellnschild.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellnschild.o -o $@
+
+$(USER_CELLNSPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellnsprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellnsprobe.o -o $@
+
+$(USER_CELLCAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellcapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellcapprobe.o -o $@
+
+$(USER_CELLHELLO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellhello.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellhello.o -o $@
+
+$(USER_CELLSVCPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellsvcprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellsvcprobe.o -o $@
+
 $(USER_NETMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o -o $@
 
@@ -1241,6 +1316,9 @@ $(USER_NETSVCDEMO_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)
 
 $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o -o $@
+
+$(USER_PTYRUN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyrun.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyrun.o -o $@
 
 $(USER_ID_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_id.o -o $@
@@ -2348,6 +2426,11 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(MAKE) ns1-net-grant-test
 	$(MAKE) ns2-net-driver-test
 	$(MAKE) ns3-net-service-test
+	$(MAKE) c6-cell-accounting-test
+	$(MAKE) c6-cell-create-test
+	$(MAKE) c6-cell-namespace-test
+	$(MAKE) c6-cell-lifecycle-test
+	$(MAKE) c6-cell-service-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -2877,6 +2960,46 @@ ns3-net-service-test: build $(QEMU_DTB_SMP4) base-image
 # and asserts it reaches the login prompt via the userland driver. Runs under -smp 4.
 c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
+
+# C6a: per-cell resource accounting. The boot probe (/bin/cellstatprobe) forks
+# children in globalCell, reads SYS_cell_stat, and asserts the aggregate
+# {processes, residentPages, handles} grows with the live children and that a
+# reaped process's charge is reclaimed. Runs single-core and under -smp 4.
+c6-cell-accounting-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/c6_cell_accounting_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_accounting_test.sh
+
+# C6b: cell creation + spawn-into-cell. The boot probe (/bin/cellcreateprobe)
+# creates a cell, refuses a spawn without the cell handle, launches /bin/cellchild
+# into the cell, and asserts the child is charged to the new cell (not globalCell)
+# and reclaimed on reap. Runs single-core and under -smp 4.
+c6-cell-create-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/c6_cell_create_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_create_test.sh
+
+# C6c: per-cell namespace root. The boot probe (/bin/cellnsprobe) creates a cell
+# rooted at /www and launches /bin/cellnschild into it; the child must resolve a
+# file inside the root but be refused /etc and the global root, while the default
+# cell stays unconfined. Runs single-core and under -smp 4.
+c6-cell-namespace-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/c6_cell_namespace_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_namespace_test.sh
+
+# C6d: cell lifecycle — resident-page cap, enumerate-by-cell, and teardown. The boot
+# probe (/bin/cellcapprobe) caps a cell, spawns members until the cap refuses, walks
+# the members via cell_pids, proves destroy is refused while live, then reaps + frees
+# the CellId and reuses it. Runs single-core and under -smp 4.
+c6-cell-lifecycle-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/c6_cell_lifecycle_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_lifecycle_test.sh
+
+# C6e: end-to-end one-service-per-cell. The boot probe (/bin/cellsvcprobe) assembles
+# a cell { /www root + restricted handles + page cap }, launches /bin/cellhello
+# inside it, drives a ping/pong round-trip, confirms isolation + accounting, then
+# tears it down. Runs single-core and under -smp 4.
+c6-cell-service-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
+	./tests/c6_cell_service_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_service_test.sh
 
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
@@ -3495,7 +3618,16 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
+	cp $(USER_CELLSTATPROBE_ELF) $(BASE_ROOT)/bin/cellstatprobe
+	cp $(USER_CELLCHILD_ELF) $(BASE_ROOT)/bin/cellchild
+	cp $(USER_CELLCREATEPROBE_ELF) $(BASE_ROOT)/bin/cellcreateprobe
+	cp $(USER_CELLNSCHILD_ELF) $(BASE_ROOT)/bin/cellnschild
+	cp $(USER_CELLNSPROBE_ELF) $(BASE_ROOT)/bin/cellnsprobe
+	cp $(USER_CELLCAPPROBE_ELF) $(BASE_ROOT)/bin/cellcapprobe
+	cp $(USER_CELLHELLO_ELF) $(BASE_ROOT)/bin/cellhello
+	cp $(USER_CELLSVCPROBE_ELF) $(BASE_ROOT)/bin/cellsvcprobe
 	cp $(USER_PTYPROBE_ELF) $(BASE_ROOT)/bin/ptyprobe
+	cp $(USER_PTYRUN_ELF) $(BASE_ROOT)/bin/ptyrun
 	cp $(USER_ID_ELF) $(BASE_ROOT)/bin/id
 	cp $(USER_SUDO_ELF) $(BASE_ROOT)/bin/sudo
 	cp $(USER_REBOOT_ELF) $(BASE_ROOT)/bin/reboot

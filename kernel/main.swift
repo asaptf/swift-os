@@ -436,6 +436,82 @@ private func runNetSvcDemo() {
     uartPuts("\n")
 }
 
+// C6a: per-cell resource-accounting probe. Runs as a capProcessInspect boot
+// principal: forks children (all in globalCell), reads SYS_cell_stat, and proves
+// the aggregate {processes, residentPages, handles} tracks the live processes and
+// drops a reaped process's charge. The whole system still runs in one cell; this
+// exercises the accounting domain the C6b+ cell supervisor will build on.
+private func runCellStatProbe() {
+    uartPuts("swift-os C6a: per-cell resource-accounting probe\n")
+    let (img, sz) = demoImage("/bin/cellstatprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellstatprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6a cell stat probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// C6b: cell-creation + spawn-into-cell probe. Runs as a capConsole boot principal:
+// a minimal supervisor creates a cell, refuses a spawn without the cell handle,
+// launches /bin/cellchild into the cell, proves the child is charged to the new
+// cell (and not globalCell), then reaps it and proves the charge is reclaimed.
+private func runCellCreateProbe() {
+    uartPuts("swift-os C6b: cell-creation + spawn-into-cell probe\n")
+    let (img, sz) = demoImage("/bin/cellcreateprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellcreateprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6b cell create probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// C6c: per-cell namespace-root probe. A supervisor creates a cell rooted at /www
+// and launches /bin/cellnschild into it; the child proves it is confined to the
+// subtree (a file inside resolves; /etc and the global root are refused) while the
+// default cell (globalCell) stays unconfined.
+private func runCellNamespaceProbe() {
+    uartPuts("swift-os C6c: per-cell namespace-root probe\n")
+    let (img, sz) = demoImage("/bin/cellnsprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellnsprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6c cell namespace probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// C6d: cell lifecycle probe. A supervisor creates a cell with a resident-page cap,
+// spawns members until the cap refuses further growth, enumerates them by tag,
+// proves teardown is refused while members live, then releases + reaps them and
+// frees the CellId — proving the domain's accounting is reclaimed and reusable.
+private func runCellLifecycleProbe() {
+    uartPuts("swift-os C6d: cell lifecycle (cap + enumerate + teardown) probe\n")
+    let (img, sz) = demoImage("/bin/cellcapprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellcapprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6d cell lifecycle probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
+// C6e: the end-to-end "one service per cell" payoff. A cell supervisor assembles a
+// cell { namespace root + restricted handle set + resource cap }, launches a real
+// request/reply service (/bin/cellhello) inside it, drives a live round-trip, proves
+// the service is isolated + accounted, and tears it down cleanly.
+private func runCellServiceProbe() {
+    uartPuts("swift-os C6e: one-service-per-cell end-to-end probe\n")
+    let (img, sz) = demoImage("/bin/cellsvcprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellsvcprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6e cell service probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1428,6 +1504,11 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runNetMmioProbe()
         runNetDriverProbe()
         runNetSvcDemo()
+        runCellStatProbe()
+        runCellCreateProbe()
+        runCellNamespaceProbe()
+        runCellLifecycleProbe()
+        runCellServiceProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
