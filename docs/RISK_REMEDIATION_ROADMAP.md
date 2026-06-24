@@ -539,11 +539,30 @@ TCP/socket stack is a separate long-horizon epic, out of NS1–NS3 scope.
 - Non-goals: NS2 does not make the driver persistent/restartable (NS3), does not use
   a shmring data plane yet, and does not touch the kernel net path or socket layer.
 
-### NS3 — planned
+### NS3 — restartable userland net service over a shmring data plane (DONE, 2026-06-24)
 
-- A minimal restartable userland net service over a shmring data plane, supervised
-  like svc-input — the restartable-service shape for networking. Full replacement of
-  the in-kernel TCP/socket stack remains a separate long-horizon epic.
+- `/bin/netsvc` is a supervised, restartable userland service that owns the secondary
+  NIC (virtio-net.1, via the shared userland virtio-net core) and relays frames over a
+  full-duplex shmring (LA3) channel: it consumes frames from ring0 and TRANSMITS them
+  on the NIC, and PRODUCES received frames into ring1 — zero kernel net stack involved.
+  `/bin/netsvc-demo` (the supervisor/client) creates the channel, spawns netsvc across
+  two generations, and relays an ARP request/reply through it, proving kill+restart
+  recovery over the same data plane.
+- Acceptance: `make ns3-net-service-test` (two virtio-net devices) requires the gen-1
+  and gen-2 relayed-ARP-reply markers, the restart marker, `NS3 OK`, and the primary
+  kernel NIC's ICMP echo. No-op on the single-NIC profile.
+- Non-goals: NS3 does not replace the in-kernel TCP/socket stack (a separate
+  long-horizon epic), does not make the secondary NIC a general-purpose interface, and
+  does not add userland IRQ delivery (the service polls).
+
+### NS arc — DONE (NS1 + NS2 + NS3, 2026-06-24)
+
+The network-serviceization architecture is proven end to end on a non-disruptive path:
+a userland driver can map a NIC (NS1), drive real TX/RX on a dedicated NIC (NS2), and
+run as a restartable service with an shmring zero-copy data plane (NS3) — all without
+touching the live primary kernel NIC. Remaining long-horizon work (its own epic):
+moving the actual TCP/socket stack and the primary NIC's path to userland, plus
+real-HW cache maintenance for userland DMA and userland IRQ delivery.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 
