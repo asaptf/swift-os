@@ -25,7 +25,9 @@ int main(void) {
 
     // 1. Claim the mappable virtio-input window. capConsole-gated: a non-console
     //    principal is denied here (EACCES) and cannot reach the mapping path.
-    int fd = device_claim("virtio-input-mmio.0", &info);
+    //    C5h: the mappable grant is now virtio-input.0 itself (it replaced the
+    //    former virtio-input-mmio.0 alias).
+    int fd = device_claim("virtio-input.0", &info);
     if (fd < 0) {
         if (fd == -13) {
             puts_raw("DEVMMAP-CLAIM-DENY-OK err=-13\n");
@@ -72,11 +74,11 @@ int main(void) {
         puts_raw("DEVMMAP-DEVID-OK\n");
     }
 
-    // 4. Negative: a grant on the deviceFlagNoMmioGrant sibling (virtio-input.0)
-    //    is metadata-only — it carries no .map right, so device_mmap is refused
-    //    with EACCES. Use the raw syscall to assert the exact errno.
+    // 4. Negative: a grant on the deviceFlagNoMmioGrant sibling
+    //    (C5h: virtio-input-meta.0) is metadata-only — it carries no .map right, so
+    //    device_mmap is refused with EACCES. Use the raw syscall to assert errno.
     struct swiftos_device_info inert;
-    int inert_fd = device_claim("virtio-input.0", &inert);
+    int inert_fd = device_claim("virtio-input-meta.0", &inert);
     if (inert_fd >= 0) {
         long r = __syscall3(SYS_DEVICE_MMAP, inert_fd, (long)inert.mmio_len, 0);
         if (r == -13) {

@@ -67,33 +67,111 @@ func deviceNameEquals(_ info: swiftos_device_info, _ expected: StaticString) -> 
     return ok
 }
 
-// Authority must be withheld: no IRQ, the no-MMIO-grant flag set, and none of the
-// hardware-authority (MMIO/IRQ/DMA) grant bits present. Mirrors drvinputd.c.
-func hardwareAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
+// C5h: the virtio-input.0 grant now carries real MMIO authority (deviceFlagMmioGrant),
+// which this driver uses to map and probe the device. So the MMIO grant is no longer
+// withheld — only the IRQ and DMA grants (1<<3, 1<<4), which remain unimplemented,
+// must still be absent (along with a bound IRQ number). The pseudo-input fallback,
+// which carries deviceFlagNoMmioGrant, also satisfies this.
+func irqDmaAuthorityWithheld(_ info: swiftos_device_info) -> Bool {
     return info.irq == 0 &&
-           (info.flags & devFlagNoMmioGrant) != 0 &&
-           (info.flags & devFlagHardwareAuthority) == 0
+           (info.flags & (devFlagIrqGrant | devFlagDmaGrant)) == 0
 }
 
 func validDeviceInfo(_ info: swiftos_device_info) -> Bool {
     if info.claimed != 1 { return false }
-    if !hardwareAuthorityWithheld(info) { return false }
+    if !irqDmaAuthorityWithheld(info) { return false }
+    // C5h: a real virtio-input grant must now advertise the mappable MMIO grant.
     let realVirtio = info.kind == devKindVirtioInput &&
                      info.bus == devBusVirtioMmio &&
                      info.mmio_base != 0 && info.mmio_len != 0 &&
                      (info.flags & devFlagDiscovered) != 0 &&
+                     (info.flags & devFlagMmioGrant) != 0 &&
                      deviceNameEquals(info, "virtio-input.0")
     if realVirtio { return true }
+    // Headless fallback: the metadata-only pseudo device (no MMIO window to map).
     return info.kind == devKindPseudoInput &&
            info.bus == devBusPseudo &&
            info.mmio_base == 0 && info.mmio_len == 0 &&
+           (info.flags & devFlagNoMmioGrant) != 0 &&
            deviceNameEquals(info, "pseudo-input.0")
+}
+
+// The virtio-input driver core (register/ring constants, VirtioQueue, the init
+// handshake, used-ring + event accessors) lives in the shared
+// userland/lib/virtio_input_user.swift, also used by the C5j persistent /bin/inputd.
+
+// Print a UInt as "0x"-prefixed hex (no leading-zero padding), stack-only.
+func putHex(_ v: UInt) {
+    swiftos_puts("0x")
+    if v == 0 { swiftos_putc(UInt8(ascii: "0")); return }
+    var started = false
+    var shift = 60
+    while shift >= 0 {
+        let nyb = UInt8((v >> UInt(shift)) & 0xf)
+        if nyb != 0 || started {
+            started = true
+            swiftos_putc(nyb < 10 ? UInt8(ascii: "0") + nyb
+                                  : UInt8(ascii: "a") + (nyb - 10))
+        }
+        shift -= 4
+    }
+}
+
+// C5h: map the granted MMIO window and verify the virtio identification registers
+// through it, proving real hardware authority reached userland over the IPC grant.
+// Returns the mapped base VA on success (emitting the C5h OK marker), or 0 on any
+// failure.
+func probeMmioGrant(_ fd: Int32, _ info: swiftos_device_info) -> UInt {
+    let r = swiftos_device_mmap(fd, UInt(info.mmio_len))
+    if r < 0 {
+        swiftos_puts("svc-input: device_mmap failed\n")
+        return 0
+    }
+    let base = UInt(bitPattern: Int(r))
+    let magic = swiftos_mmio_read32(base + vioR_MAGIC)
+    let devid = swiftos_mmio_read32(base + vioR_DEVID)
+    if magic != vioMagic {
+        swiftos_puts("svc-input: MMIO magic mismatch\n")
+        return 0
+    }
+    if devid != vioDevIdInput {
+        swiftos_puts("svc-input: MMIO device-id mismatch\n")
+        return 0
+    }
+    // Report the physical window base (deterministic), not the per-run mapped VA.
+    swiftos_puts("C5h OK: MMIO ")
+    putHex(info.mmio_base)
+    swiftos_puts(" mapped from userland, MAGIC verified\n")
+    return base
+}
+
+// C5i: one bounded drain pass over the used ring, using the shared used-ring/event
+// accessors. Counts EV_KEY press events and refills their descriptors. Returns the
+// number decoded (0 in the headless self-test, where no key events are generated).
+// The persistent tight poll loop + tty delivery is C5j (/bin/inputd); here it just
+// proves the used-ring read path is live.
+func virtioInputPollOnce(_ mmio: UInt, _ q: inout VirtioQueue) -> Int {
+    let uidx = virtioUsedIndex(q)
+    var decoded = 0
+    while q.lastUsed != uidx {
+        let id = virtioUsedElemId(q, Int(q.lastUsed % UInt16(q.qn)))
+        if virtioEventType(q, id) == evKEY {
+            let v = virtioEventValue(q, id)
+            if v == 1 || v == 2 { decoded += 1 }
+        }
+        virtioRefill(&q, id)
+        q.lastUsed &+= 1
+    }
+    if decoded > 0 { swiftos_dmb(); swiftos_mmio_write32(mmio + vioR_QNOTIFY, 0) }
+    return decoded
 }
 
 // The service. Implements only handle(); run() is inherited from UserlandService.
 struct InputService: UserlandService {
     let gen: Int
     var deviceFd: Int32 = -1
+    var mmio: UInt = 0           // mapped MMIO window base VA (0 = not mapped)
+    var queue = VirtioQueue()    // userland-owned event virtqueue (C5i)
 
     mutating func handle(command: UnsafePointer<UInt8>, count: Int,
                          reply: UnsafeMutablePointer<UInt8>, replyCap: Int,
@@ -127,6 +205,32 @@ struct InputService: UserlandService {
             swiftos_puts("svc-input: device grant accepted gen ")
             swiftos_putc(UInt8(ascii: "0") + UInt8(gen))
             swiftos_putc(UInt8(ascii: "\n"))
+            // C5h: if this is the real mappable virtio-input grant, exercise the
+            // hardware authority — map the MMIO window and verify the device's
+            // identification registers through the userland mapping.
+            if (info.flags & devFlagMmioGrant) != 0 {
+                mmio = probeMmioGrant(deviceFd, info)
+                if mmio == 0 {
+                    _ = swiftos_close(deviceFd)
+                    deviceFd = -1
+                    return -(1 + 1)
+                }
+                // C5i: bring the event virtqueue up entirely from userland — the
+                // driver the kernel no longer runs (it skipped virtioKbdInit).
+                queue = virtioInputInit(mmio, deviceFd)
+                if queue.ringVA == 0 {
+                    _ = swiftos_close(deviceFd)
+                    deviceFd = -1
+                    return -(1 + 1)
+                }
+                swiftos_puts("svc-input: virtio features negotiated gen ")
+                swiftos_putc(UInt8(ascii: "0") + UInt8(gen)); swiftos_putc(UInt8(ascii: "\n"))
+                // One bounded drain pass proves the used-ring path is live (no key
+                // events are generated in the headless self-test).
+                _ = virtioInputPollOnce(mmio, &queue)
+                swiftos_puts("svc-input: virtio queue ready gen ")
+                swiftos_putc(UInt8(ascii: "0") + UInt8(gen)); swiftos_putc(UInt8(ascii: "\n"))
+            }
             return putGenMsg(reply, "DEVACK", gen)
         }
         if count == 4 && cmd4Equals(command, "STOP") {

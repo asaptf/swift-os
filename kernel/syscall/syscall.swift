@@ -105,6 +105,8 @@ private let sysDeviceMmap: UInt = 101      // device_mmap(fd, len) -> base VA �
 private let sysShmRingCreate: UInt = 102   // shmring_create(pages) → channel id — shared-memory SPSC ring (LA3); needs capNet
 private let sysShmRingMap: UInt = 103      // shmring_map(id) → base user VA (or negative errno) — map a channel's pages (LA3)
 private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the creator's base reference to a channel (LA3)
+private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
+private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -410,6 +412,22 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         return
     } else if number == sysShmRingClose {
         result = shmRingChannelClose(id: Int(bitPattern: frame[0]))
+    } else if number == sysVirtToPhys {
+        // C5i: returns a physical address on success or a negative errno encoded
+        // in the UInt (in [-4095, -1]); a real PA is >= RAM base, far outside the
+        // errno range, so the userland bridge distinguishes them by sign.
+        frame[0] = processVirtToPhys(frame[0], Int(bitPattern: frame[1]))
+        return // result is a physical address, not an errno
+    } else if number == sysTtyInject {
+        // C5j: capConsole-gated. Feed the byte to the same line-discipline entry
+        // the UART IRQ uses, so injected keystrokes reach console-login / the
+        // foreground reader exactly like typed serial input.
+        if (processCurrentCaps() & capConsole) == 0 {
+            result = Errno.perm.code
+        } else {
+            ttyOnInput(UInt8(truncatingIfNeeded: frame[0]))
+            result = 0
+        }
     } else {
         result = Errno.noSys.code
     }

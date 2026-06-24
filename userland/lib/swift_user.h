@@ -86,6 +86,7 @@ struct swiftos_device_info {
 // Device kind/bus/flag constants (mirror syscall.h; identical macro values).
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_NET   3u
 #define SWIFTOS_DEVICE_BUS_PSEUDO        1u
 #define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
 #define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
@@ -115,6 +116,34 @@ int  swiftos_device_claim(const char *name, struct swiftos_device_info *info);
 // into Swift, which shares one namespace for types and functions.
 int  swiftos_device_query(int fd, struct swiftos_device_info *info);
 int  swiftos_device_discover(int index, struct swiftos_device_info *info);
+// C5h: map the MMIO window of the device claimed on `fd` into this process,
+// gated on the grant's `.map` right (deviceFlagMmioGrant). Returns the mapped
+// base VA (>= 0) on success, or a small negative errno (e.g. -13 EACCES when the
+// grant is metadata-only). Returning a raw long keeps the Swift caller simple:
+// test `< 0` for failure, otherwise reinterpret the value as the base pointer.
+long swiftos_device_mmap(int fd, unsigned long len);
+// C5i: resolve a VA in this process to its physical address, for a userland device
+// driver programming DMA/virtqueue registers. Gated on `handle_fd` being a mappable
+// device grant the caller owns. Returns the PA (>= RAM base) or a negative errno.
+long swiftos_virt_to_phys(unsigned long va, int handle_fd);
+
+// C5i: volatile MMIO/DMA-ring accessors — the low-level bridge Embedded Swift
+// cannot express directly (a plain UnsafePointer load/store is not guaranteed
+// volatile). Used by the userland virtio-input driver to touch device registers
+// and the shared virtqueue. swiftos_dmb is a full data memory barrier (dsb sy),
+// ordering ring writes before a device notification (and notifications before
+// used-ring reads).
+// C5j: inject one byte into the kernel tty input (as if typed on the console).
+// Needs CAP_CONSOLE; returns 0, or -1 (EPERM) without it. Used by the userland
+// virtio-input driver to feed decoded keystrokes to the line discipline.
+int swiftos_tty_inject(unsigned char byte);
+
+unsigned int swiftos_mmio_read32(unsigned long addr);
+void         swiftos_mmio_write32(unsigned long addr, unsigned int value);
+unsigned short swiftos_mmio_read16(unsigned long addr);
+void         swiftos_mmio_write16(unsigned long addr, unsigned short value);
+void         swiftos_mmio_write64(unsigned long addr, unsigned long value);
+void         swiftos_dmb(void);
 // LA1 name registry: publish the recv end of an endpoint under a short name
 // (needs CAP_CONSOLE), or resolve a name to a fresh send-end fd (negative /
 // -ENOENT on failure).

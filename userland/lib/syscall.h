@@ -111,6 +111,8 @@
 #define SYS_SHMRING_CREATE      102
 #define SYS_SHMRING_MAP         103
 #define SYS_SHMRING_CLOSE       104
+#define SYS_VIRT_TO_PHYS        105
+#define SYS_TTY_INJECT          106
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -154,6 +156,7 @@
 
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
+#define SWIFTOS_DEVICE_KIND_VIRTIO_NET   3u
 #define SWIFTOS_DEVICE_BUS_PSEUDO        1u
 #define SWIFTOS_DEVICE_BUS_VIRTIO_MMIO   2u
 #define SWIFTOS_DEVICE_FLAG_NO_MMIO_GRANT (1u << 0)
@@ -570,6 +573,24 @@ static inline void *device_mmap(int fd, unsigned long len) {
         return MAP_FAILED;
     }
     return (void *)r;
+}
+
+// C5i: translate a virtual address in this process to its physical address, for a
+// userland device driver setting up DMA/virtqueue memory. Gated on `handle_fd`
+// being a device grant this process owns with the `.map` right (so only an actual
+// device owner can resolve physical addresses). Returns the physical address, or a
+// small negative errno (-13 EACCES if the handle is not a mappable device grant,
+// -22 EINVAL if `va` is not mapped).
+static inline long virt_to_phys(unsigned long va, int handle_fd) {
+    return __syscall3(SYS_VIRT_TO_PHYS, (long)va, handle_fd, 0);
+}
+
+// C5j: inject one byte into the kernel tty input, as if typed on the console — the
+// path a userland input driver uses to feed decoded keystrokes to the line
+// discipline (and thus to console-login / the foreground program). Needs
+// CAP_CONSOLE. Returns 0, or -1 (EPERM) without the capability.
+static inline int tty_inject(unsigned char byte) {
+    return (int)__syscall3(SYS_TTY_INJECT, (long)byte, 0, 0);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops

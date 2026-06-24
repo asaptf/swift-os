@@ -163,6 +163,20 @@
       "notes": "Packaged as a static HTTP-only curl CLI plus libcurl.a, public headers, pkgconf metadata, and a version marker. HTTPS/TLS waits for an openssl-dev split package and certificate-chain smoke."
     },
     {
+      "name": "rsync",
+      "portPath": "net/rsync",
+      "tier": 1,
+      "category": "networking",
+      "status": "packages",
+      "difficulty": "L",
+      "upstream": "rsync",
+      "summary": "File synchronization, backup transport, deployment, and admin copy.",
+      "runtimeDependencies": [],
+      "prerequisiteBundles": ["base-posix", "proc-basic", "net-client"],
+      "smokeTest": "install from the seed repository and run rsync --version in QEMU",
+      "notes": "R1 packages a static AArch64 rsync built with bundled popt and zlib; OpenSSL, xxhash/zstd/lz4, iconv, locale, IPv6, ACLs, xattrs, and SIMD/asm are disabled. Symlinks are unsupported (no symlink/readlink syscalls), hardlinks degrade (link() -> EMLINK), and mtime preservation is a no-op (utimes). First smoke is build + 'rsync --version'; local-filesystem sync and rsync-over-TCP/ssh transport are follow-up packages."
+    },
+    {
       "name": "lua",
       "portPath": "lang/lua",
       "tier": 0,

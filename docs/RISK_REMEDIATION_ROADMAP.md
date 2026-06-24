@@ -438,6 +438,113 @@ After S5 we have a credible multi-core OS. At that point we immediately follow w
   and virtio-mmio facts, plus a `.swpkg` header-integrity negative test for
   package artifact trust fields.
 
+### C5h — MMIO authority grant reaches the supervised userland driver (DONE, 2026-06-23)
+
+- First slice of "C5 proper": real hardware authority leaves the kernel through the
+  supervised capability-transfer path. `virtio-input.0` is now registered with
+  `deviceFlagMmioGrant | deviceFlagDiscovered` (no `deviceFlagNoMmioGrant`), so a
+  `capConsole` claim yields a `.map` right. The LA1 supervisor claims it and
+  transfers the grant over IPC to `/bin/svc-input`, which `sys_device_mmap`s the
+  window and verifies the virtio magic/device-id registers through the userland
+  mapping.
+- Registry decision: `virtio-input.0` carries the real grant going forward; the
+  former mappable alias `virtio-input-mmio.0` is removed and replaced by an inert,
+  discoverable `virtio-input-meta.0` that preserves the metadata-only negative-path
+  coverage (legacy `drvsvcdemo`/`drvinputd` and the LA2 `devicemmapprobe` EACCES
+  refusal). See `docs/NOTES.md` (C5h) for the full rationale.
+- Acceptance: `make c5-mmio-grant-test` requires
+  `C5h OK: MMIO 0x<base> mapped from userland, MAGIC verified`; `make c5-test` and
+  `make device-mmio-map-test` stay green. The kernel's polled keyboard driver still
+  owns the device at C5h (both read the same read-only ID registers); the kernel
+  exit is C5i and userland TTY injection is C5j.
+- Non-goals: C5h does not remove the in-kernel polled driver, does not add IRQ or
+  DMA authority, and does not yet make the userland driver feed the TTY.
+
+### C5i — virtio-input driver runs entirely in userland; kernel exits the device (DONE, 2026-06-23)
+
+- The kernel skips `virtioKbdInit()` and the per-tick drain when the registry shows
+  a mappable virtio-input grant (queried once via `vfsVirtioInputUserlandOwned()`),
+  so the device is driven only from EL0. `/bin/svc-input` brings the event virtqueue
+  up entirely in userland (reset → features → queue setup → DRIVER_OK → kick).
+- VA→PA for virtqueue setup uses **Option A**: a new `SYS_virt_to_phys(va, handle_fd)`
+  (syscall 105) gated on owning a mappable device grant, so only an actual device
+  owner can resolve physical addresses. Volatile MMIO/ring access uses new
+  `swiftos_mmio_*`/`swiftos_dmb` C bridges. Poll strategy stays polled (no userland
+  IRQ delivery yet); the C5i self-test does a bounded used-ring drain.
+- The supervisor hands the device to every generation, so a kill+restart genuinely
+  re-claims, re-maps, and re-initializes the live device — recovery, not just first
+  init. Acceptance: `make c5-userland-driver-test`
+  (`C5i OK: userland virtio-input driver initialized and recovered`).
+- Intentional transitional regression: the kernel no longer feeds virtio-input
+  keystrokes to the tty, so the graphical-window keyboard is dead until C5j restores
+  it via userland tty injection. Serial/headless input (PL011 UART) is unaffected.
+- Non-goals: C5i does not deliver IRQs to userland, does not make the driver a
+  persistent forever-running service, and does not yet feed the tty.
+
+### C5j — userland driver injects keystrokes into the tty; interactive keyboard restored (DONE, 2026-06-24)
+
+- Adds `SYS_tty_inject(byte)` (syscall 106), gated on **capConsole** (the ambient
+  option; the capability-handle alternative was deferred). It feeds the same
+  `ttyOnInput` line-discipline entry the UART IRQ uses, so injected bytes reach a
+  blocked `ttyRead` like typed serial input.
+- New persistent `/bin/inputd`, launched by swos-init (`SERVICE_INPUTD` + an `inputd`
+  token in `/etc/swos/services`): it owns virtio-input, runs a forever poll loop that
+  decodes evdev key presses (shared `virtio_input_user.swift` core) and injects each
+  byte into the tty, yielding 1 ms between polls. A no-op (clean exit) on boards with
+  no virtio-input device, so it is safe to list unconditionally.
+- Acceptance: `make c5-tty-inject-test` QMP `send-key`s "guest<Enter>" into the
+  virtio device and asserts `C5j OK: TTY bytes injected from userland driver` plus
+  console-login advancing to the `Password:` prompt (a full username line read driven
+  by injected keys). `make run` interactive keyboard works again.
+
+### C5 proper — DONE (2026-06-24)
+
+C5h + C5i + C5j complete "C5 proper": real hardware authority reaches a supervised
+EL0 driver, the kernel exits the virtio-input device entirely (userland owns the
+virtqueue), and the userland driver feeds the tty so interactive keyboard works. Next
+high-leverage steps: network serviceization (a restartable userland net service
+reusing the device-grant + shmring plumbing) or C6 Cells.
+
+## Network serviceization (NS series)
+
+Move the in-kernel net stack toward a restartable userland service, reusing the C5
+plumbing (device grant + `device_mmap` + `virt_to_phys` + shmring). Strictly
+incremental and non-disruptive: the in-kernel net driver keeps serving sshd/nginx/
+DHCP until a userland service can fully replace it. NS1–NS3 prove the architecture on
+a path that does not touch the live primary NIC; full replacement of the in-kernel
+TCP/socket stack is a separate long-horizon epic, out of NS1–NS3 scope.
+
+### NS1 — virtio-net MMIO grant reaches userland (DONE, 2026-06-24)
+
+- `resetDeviceRegistry()` publishes a mappable `virtio-net.0` grant
+  (`deviceFlagMmioGrant`, kind `deviceKindVirtioNet`) for the virtio-net transport
+  window, claimed by name (non-discoverable, to keep the legacy C5 demo's discovery
+  contract intact). `/bin/netmmapprobe` claims it, maps the window, and reads the
+  device identity + config MAC from userland — coexisting with the live kernel NIC.
+- Acceptance: `make ns1-net-grant-test` requires `NS1 OK: virtio-net MMIO mapped from
+  userland, MAC … DEVID verified` plus the kernel net stack staying up (ICMP echo).
+- Non-goals: NS1 does not run a userland NIC driver, does not touch the kernel net
+  path, and does not move any socket/TCP logic.
+
+### NS2 — userland virtio-net driver does real TX/RX on a secondary NIC (DONE, 2026-06-24)
+
+- `virtioNetDiscoverGrant(ordinal:)` selects which NIC window to expose; the registry
+  publishes a drivable `virtio-net.1` grant only when a SECOND NIC exists (the kernel
+  always binds the first). `/bin/netdriverprobe` claims it, brings up RX+TX
+  virtqueues entirely from EL0 (per-page `virt_to_phys`, no contiguity assumption),
+  and does an ARP round-trip against slirp — proving real TX and RX from userland
+  without disturbing the primary kernel NIC. `maxDevices` 4→6.
+- Acceptance: `make ns2-net-driver-test` (two virtio-net devices) requires the NS2 OK
+  ARP-reply marker plus the primary kernel NIC's ICMP echo reply.
+- Non-goals: NS2 does not make the driver persistent/restartable (NS3), does not use
+  a shmring data plane yet, and does not touch the kernel net path or socket layer.
+
+### NS3 — planned
+
+- A minimal restartable userland net service over a shmring data plane, supervised
+  like svc-input — the restartable-service shape for networking. Full replacement of
+  the in-kernel TCP/socket stack remains a separate long-horizon epic.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

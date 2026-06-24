@@ -2953,6 +2953,216 @@ require explicit review ("ask, don't guess"), and acceptance criteria style.
   userland. It freezes the existing `capConsole` device-authority minting
   boundary as an executable regression test.
 
+### C5h — MMIO authority grant reaches the supervised userland driver (DONE, 2026-06-23)
+
+- **The transition.** This is the metadata-only → hardware-authority step for the
+  *discoverable* virtio-input grant. `resetDeviceRegistry()` now registers
+  `virtio-input.0` with `deviceFlagMmioGrant | deviceFlagDiscovered` (the
+  `deviceFlagNoMmioGrant` bit is gone), so a `capConsole` claim of it yields a
+  `.map` right (`deviceMmioGrantRights`). The LA1 supervisor (`/bin/svc-supervisor`)
+  claims it and transfers the grant over IPC to the restartable driver service
+  (`/bin/svc-input`), which `sys_device_mmap`s the window Device-nGnRE and reads the
+  virtio identification registers (MagicValue@0x00, DeviceID@0x08) through the
+  *userland* mapping — the first real hardware authority to leave the kernel via the
+  supervised capability-transfer path (LA2's `devicemmapprobe` proved the map path,
+  but from a one-shot boot probe, not the supervised service).
+- **Decision — which name carries the real grant.** `virtio-input.0` is the
+  mappable, discoverable grant going forward. The former mappable alias
+  `virtio-input-mmio.0` (LA2's non-discoverable pre-position) is **removed**; its
+  role is now filled by `virtio-input.0` itself. To preserve the metadata-only
+  negative-path coverage that `virtio-input.0` used to provide, a new inert sibling
+  `virtio-input-meta.0` (`deviceFlagNoMmioGrant | deviceFlagDiscovered`, same
+  transport window) is registered: the legacy C5 demo (`drvsvcdemo`/`drvinputd`)
+  claims and transfers *it* to keep proving authority stays withheld, and the LA2
+  `devicemmapprobe` claims it to keep proving `sys_device_mmap` is refused with
+  `EACCES` on a no-MMIO grant. With a real virtio-input window present there are now
+  two discoverable grants, so the demo's discovery-exhaustion check moved from
+  index 1 to index 2.
+- **Userland wiring.** Added `swiftos_device_mmap(fd, len)` to the Swift bridge
+  (`swift_user.h`/`.c`) — it returns the raw base VA or a negative errno so the Swift
+  caller is simple. `svc-input`'s validation now requires the MMIO grant for a real
+  virtio-input device and only rejects the still-unimplemented IRQ/DMA grants;
+  `svc-supervisor`'s authority check does the same. The kernel's polled keyboard
+  driver still owns and reads the same window at C5h — both touch read-only ID
+  registers, so the two mappings coexist (kernel exit is C5i).
+- **Acceptance.** `make c5-mmio-grant-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires
+  `C5h OK: MMIO 0x<base> mapped from userland, MAGIC verified` plus the surrounding
+  LA1 lifecycle, and forbids any `svc-input`/`svc-supervisor` failure or panic. The
+  reported address is the physical window base (deterministic), not the per-run
+  mapped VA. Headless boards fall back to `pseudo-input.0` (no MMIO window to map).
+  `make test` now runs it alongside `c5-test` and `device-mmio-map-test`, all of
+  which stay green (the legacy demos were retargeted onto `virtio-input-meta.0`).
+
+### C5i — virtio-input driver runs entirely in userland; kernel exits the device (DONE, 2026-06-23)
+
+- **Kernel exits the device.** After `vfsInit()`, the kernel queries
+  `vfsVirtioInputUserlandOwned()` (true when a virtio-input window exists and was
+  registered mappable — the C5h policy) and, if so, skips `virtioKbdInit()` and the
+  per-tick `virtioKbdDrain()`. The skip is a single early-init flag
+  (`kernelPolledKbdActive`), not a per-tick registry walk. The interactive-console
+  boot decision still keys off device *presence*, so a graphical session
+  (virtio-keyboard + framebuffer) still boots straight to the shell. Marker:
+  `virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)`.
+- **VA→PA decision (Option A).** Userland virtqueue memory is normal RAM the device
+  addresses physically, but `mmap` hands back virtual addresses. Added
+  `SYS_virt_to_phys(va, handle_fd) -> pa` (syscall 105), gated by reusing
+  `vfsDeviceMmioWindow` — the caller must own a mappable device grant on `handle_fd`,
+  so only an actual device owner can resolve physical addresses (it cannot translate
+  arbitrary memory). The kernel walks the caller's TTBR0 via `addressSpaceTranslate`.
+  Anonymous `mmap` is eager (frames mapped immediately), so the PA is live right
+  after allocation. Chosen over kernel-allocated PA/VA pairs or bounce buffers for
+  simplicity; the device-handle gate keeps it from being an ambient VA→PA oracle.
+- **Userland driver.** `/bin/svc-input` now brings the event virtqueue up entirely
+  from EL0: reset → ACK → DRIVER → negotiate `VIRTIO_F_VERSION_1` → `FEATURES_OK` →
+  size queue 0 → allocate one zero-filled ring page (single-page split-queue layout
+  identical to the former kernel driver) → resolve its PA via `virt_to_phys` →
+  program `QUEUE_DESC/DRIVER/DEVICE` physical addresses → `QUEUE_READY` → offer 8
+  device-writable event buffers → `DRIVER_OK` → kick `QUEUE_NOTIFY`. Register and
+  ring access go through new volatile C bridges in `swift_user.c`
+  (`swiftos_mmio_read/write{16,32,64}`, `swiftos_dmb`) — the low-level MMIO/DMA
+  ordering Embedded Swift cannot express directly. `virtioInputPollOnce` is a bounded
+  used-ring drain (the persistent tight poll loop + tty delivery is C5j); in the
+  headless self-test no key events are generated, so it decodes zero bytes.
+- **Recovery shape.** The supervisor now performs the device handoff in *every*
+  generation, so gen 2 is a genuine kill → restart → re-claim → re-map → re-init of
+  the live device (each new driver instance resets the device first, so re-init is
+  clean). Emits `C5i OK: userland virtio-input driver initialized and recovered`.
+- **What this intentionally drops at C5i.** The kernel no longer feeds virtio-input
+  keystrokes to the tty, so the *graphical-window* keyboard is dead between/after the
+  bounded driver self-test. Headless and serial-console tests are unaffected — they
+  drive input over the PL011 UART, not virtio-input (no test uses QEMU `sendkey`).
+  C5j restores interactive keyboard by having the userland driver inject decoded
+  bytes into the kernel tty.
+- **Acceptance.** `make c5-userland-driver-test` (`-smp 4`, with
+  `-device virtio-keyboard-device`) requires the kernel-skip marker, virtio feature
+  negotiation + queue-ready in both generations, the restart marker, and the C5i OK
+  line; it forbids any `device_mmap`/`virt_to_phys`/queue-init failure and panics.
+  Wired into `make test`; `c5-test`, `device-mmio-map-test`, and `c5-mmio-grant-test`
+  stay green.
+
+### C5j — userland driver injects keystrokes into the tty; interactive keyboard restored (DONE, 2026-06-24)
+
+- **Closes the C5i gap.** C5i moved the virtio-input driver to userland but left the
+  kernel no longer feeding keystrokes to the tty. C5j adds `SYS_tty_inject(byte)`
+  (syscall 106, capConsole-gated) — the userland driver's path to the line
+  discipline. The kernel calls the same `ttyOnInput` entry the UART IRQ uses, so an
+  injected byte is echoed and delivered to a blocked `ttyRead` exactly like typed
+  serial input (no new wake path needed — `ttyRead` polls `cookedCount()` under
+  `wfi` and preemption picks it up).
+- **Capability decision: capConsole (ambient).** Gated on the capConsole capability
+  the input driver already holds as a boot-principal child of swos-init — matching
+  the existing `device_claim`/`reboot` gating. (The capability-handle alternative —
+  a `HandleKind.tty` write handle passed via spawn_handles — was considered and
+  deferred; it is the more capability-correct direction for a later pass.)
+- **Persistent driver `/bin/inputd`.** A new long-running service that owns the
+  virtio-input device end to end: claims `virtio-input.0` (capConsole), maps the MMIO
+  window, brings the virtqueue up (shared `virtio_input_user.swift` core, factored
+  out of svc-input), then runs a forever poll loop — drain the used ring, decode
+  evdev key presses to ASCII (US keymap mirrored from the old kernel driver, Shift
+  tracked), `tty_inject` each byte, and `nanosleep(1ms)` to yield. On a board with no
+  virtio-input window the claim fails and inputd exits 0 cleanly, so it is safe to
+  list unconditionally in `/etc/swos/services`.
+- **Integration.** `swos-init` gained a `SERVICE_INPUTD` kind and an `inputd` token;
+  `inputd` is listed first in `/etc/swos/services`, so it comes up before
+  console-login and the keyboard is live at the login prompt. This means every boot
+  that reaches swos-init now launches inputd — a no-op without a keyboard, harmless
+  with one (the boot self-tests claim+release the device before swos-init runs).
+- **Acceptance.** `make c5-tty-inject-test` (`-smp 4`, virtio-keyboard) boots to the
+  login prompt, then QMP `send-key`s "guest<Enter>" INTO the virtio-input device (not
+  the serial line). inputd decodes the keys and feeds them to the tty; the test
+  asserts `inputd: virtio-input driver ready`, `C5j OK: TTY bytes injected from
+  userland driver`, and that console-login advanced to the `Password:` prompt —
+  proving the injected bytes (including the newline) drove a full username line read
+  through the line discipline. Needs python3 for the QMP socket; SKIPs without it.
+  `make run` interactive keyboard works again through the same path.
+- **SMP note.** inputd's `tty_inject` now feeds `ttyOnInput` from an EL0 process,
+  concurrently with the UART IRQ — the same lockless multi-source pattern the kernel
+  already had (UART IRQ + the former timer-tick virtio drain). Input is low-rate;
+  a tty input lock is left for a later hardening pass.
+
+### C5 proper — DONE (C5h + C5i + C5j, 2026-06-24)
+
+With C5h (MMIO grant to the supervised driver), C5i (kernel exits the device,
+userland owns the virtqueue), and C5j (userland driver feeds the tty), "C5 proper"
+is complete: real hardware authority left the kernel through the capability path, an
+EL0 driver fully owns the virtio-input device, and interactive keyboard works again —
+the kernel runs no virtio-input driver at all. Next steps: network serviceization
+(move the net stack toward a restartable userland service, reusing the device-grant +
+shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
+
+### NS1 — virtio-net MMIO grant reaches userland (DONE, 2026-06-24)
+
+- **First step of network serviceization.** The flagship app/AI-hosting profile
+  wants the net stack to eventually be a restartable userland service. NS1 proves
+  the NIC's MMIO authority can reach userland the same way the virtio-input grant
+  did (C5h), reusing the C5 plumbing (device grant + `device_mmap`, and later
+  `virt_to_phys` + shmring). It is strictly **additive and non-disruptive**: the
+  in-kernel net driver keeps owning and operating the NIC (sshd/nginx/DHCP depend on
+  it), unlike C5 where the kernel could hand off the device entirely.
+- **Registry.** `resetDeviceRegistry()` discovers the virtio-net transport window
+  (`virtioNetDiscoverGrant()`, a read-only scan for a modern DEVID=1 mmio device)
+  and registers `virtio-net.0` at slot 2 with `deviceFlagMmioGrant` — mappable, so a
+  capConsole claim yields a `.map` right. New device kind `deviceKindVirtioNet` (3).
+- **Decision — NOT discoverable.** The grant is claimed by name, so it is registered
+  non-discoverable (`discoverable: false`, no `deviceFlagDiscovered`). This keeps the
+  legacy C5 driver demo's "exactly the input devices are discoverable" contract
+  intact — making the NIC a third `device_discover` entry trips that demo's
+  exhaustion check (verified: it exits 1 when the NIC is discoverable). A later NS
+  milestone can make the NIC discoverable for a net service that enumerates NICs,
+  together with generalizing that demo's discovery bound.
+- **Probe.** `/bin/netmmapprobe` (Swift) runs at boot as a capConsole principal AFTER
+  the kernel NIC is up: claims `virtio-net.0`, `device_mmap`s the window, verifies
+  MagicValue + DeviceID==1, and reads the 6-byte MAC from device config space
+  (offset 0x100) — proving device-specific config registers are reachable from
+  userland, not just the generic identity words. Reading these registers does not
+  change device state, so it is safe alongside the live NIC.
+- **Acceptance.** `make ns1-net-grant-test` (`-smp 4`, virtio-net/slirp) requires
+  `NS1 OK: virtio-net MMIO mapped from userland, MAC 52:54:00:12:34:56, DEVID
+  verified` AND the kernel net stack staying up (`net-a OK: ICMP echo reply from
+  10.0.2.2`) — coexistence end to end. Wired into `make test`; the C5 demo exits 0
+  with the NIC present. No-op clean exit on boards with no virtio-net window.
+- **Next (NS2/NS3).** NS2: a userland virtio-net driver that does real TX/RX on a
+  *dedicated/secondary* NIC (QEMU can attach two), proving an EL0 NIC driver works
+  end to end without disturbing the primary kernel-owned NIC (reuses `virt_to_phys`
+  for the TX/RX virtqueues). NS3: a minimal restartable userland net service over a
+  shmring data plane, supervised like svc-input. Full replacement of the in-kernel
+  TCP/socket stack stays a long-horizon epic, deliberately out of the NS1–NS3 scope.
+
+### NS2 — userland virtio-net driver does real TX/RX on a secondary NIC (DONE, 2026-06-24)
+
+- **Goal.** Prove an EL0 driver can do real TX/RX on a NIC, reusing the C5/NS1
+  plumbing (`device_mmap` + `virt_to_phys`), WITHOUT touching the primary kernel NIC.
+- **Two-NIC architecture.** The in-kernel net driver always binds the *first*
+  virtio-net device (ordinal 0); `virtioNetDiscoverGrant(ordinal:)` now selects by
+  ordinal, and `resetDeviceRegistry()` registers a *drivable* secondary grant
+  `virtio-net.1` (slot 3, `deviceFlagMmioGrant`, non-discoverable) only when a SECOND
+  NIC is attached. So the userland driver can fully reset + own the second NIC while
+  the kernel keeps serving on the first; on the single-NIC production profile
+  `virtio-net.1` does not exist and no userland program touches the live NIC.
+  `maxDevices` bumped 4→6 for the extra slots.
+- **Userland driver.** `/bin/netdriverprobe` (Swift) claims `virtio-net.1`, maps the
+  window, and brings up BOTH virtqueues from EL0 — RX (queue 0) and TX (queue 1):
+  reset → features (`VIRTIO_F_VERSION_1` + `VIRTIO_NET_F_MAC`) → per-queue
+  QSEL/QNUM/ring-program/QREADY → post device-writable RX buffers → DRIVER_OK. Every
+  ring and buffer physical address is resolved per-page via `virt_to_phys`, so no
+  allocation needs to be physically contiguous (each 2048-byte buffer fits within one
+  page). It then builds an ARP request for the slirp gateway (Ethernet+ARP after a
+  zeroed 12-byte virtio_net_hdr), transmits it on the TX queue, and polls the RX used
+  ring for slirp's ARP reply — proving both directions. Bounded re-transmit/poll loop
+  so it always terminates.
+- **Acceptance.** `make ns2-net-driver-test` (`-smp 4`, two virtio-net/slirp devices)
+  requires `NS2 OK: userland virtio-net TX/RX — ARP reply, 10.0.2.2 is at
+  52:55:0a:00:02:02` (the deterministic slirp gateway MAC) AND the primary kernel NIC
+  staying up (`net-a OK: ICMP echo reply`). Wired into `make test`. No-op clean exit
+  on the single-NIC profile.
+- **Caveat (same as C5i).** Ring/buffer access relies on TCG cache coherence; real-HW
+  cache maintenance for userland DMA (dc_cvac/dc_ivac) is not yet exposed to EL0 — a
+  later hardening step, alongside userland IRQ delivery (the driver polls).
+- **Next (NS3).** A minimal restartable userland net SERVICE over a shmring data
+  plane, supervised like svc-input — the restartable-service shape for networking.
+  Full replacement of the in-kernel TCP/socket stack stays a long-horizon epic.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5
@@ -7671,3 +7881,47 @@ With V-TS1–V-TS3, every outbound TLS client (tlsget, acme, swupdate) authentic
 the server against the system trust store by default. Remaining: real Let's Encrypt
 e2e (public domain, pairs with H6); a dedicated QEMU SNI e2e (needs a DNS-named TLS
 server — SNI is currently covered host-side by tls-verify + by construction).
+
+### RSY1 — rsync 3.4.1 port: build + `rsync --version` in QEMU (DONE, 2026-06-23)
+
+First slice of the `rsync` port (catalog Tier 1, difficulty L). Scope R1 is build +
+version banner only; local-filesystem sync and rsync-over-TCP/ssh transport are
+follow-up packages (RSY2+).
+
+- Packaged like `curl`: `ports/net/rsync/Port.json` (rsync 3.4.1, sha256-pinned) +
+  `scripts/build-rsync.sh` + a `ports/catalog.json` entry (`status: packages`) +
+  the `ports-rsync-repo-fixture` Makefile target. Cross-built as a static AArch64
+  ELF against newlib + `userland/compat`, bundled popt and zlib; OpenSSL,
+  xxhash/zstd/lz4, iconv, locale, IPv6, ACLs, xattrs, and SIMD/asm disabled. The
+  build asserts no undefined symbols and an AArch64 ELF, then `swport recipe
+  package`/`repo-fixture` produce a signed `rsync.swpkg`.
+- rsync 3.4.x references `openat()` in `secure_relative_open()` (syscall.c) via the
+  `O_NOFOLLOW`/`O_DIRECTORY`/`AT_FDCWD` macro path — independent of `HAVE_OPENAT`,
+  which the cross-build leaves undefined. SwiftOS has no dirfd-relative (`*at`)
+  syscalls, and `execlp()` is also missing from newlib. Both are satisfied by a
+  rsync-local link shim (`userland/rsync/swiftos/at_compat.c`), deliberately kept
+  out of the shared `userland/compat` ABI: a broadly-detected `openat` there would
+  flip other ports' (e.g. nginx) configure detection toward a dirfd path-walk
+  SwiftOS can't service. `AT_FDCWD` degrades to `open()`; a real dirfd returns
+  ENOSYS (an RSY2 concern, never reached by `--version`). `execlp` is a varargs
+  wrapper over the compat `execvp`.
+- Known runtime gaps (acceptable per the catalog): symlinks unsupported (no
+  `symlink`/`readlink` syscalls), hardlinks degrade (`link()` -> EMLINK), mtime
+  preservation is a no-op (`utimes`).
+
+Gate `make rsync-test` (`tests/rsync_test.sh`): builds `rsync.swpkg`, publishes a
+one-package repo signed with the trusted `PKGREPO_SEED_HEX`, serves it over QEMU
+user-net HTTP, boots SwiftOS, logs in, `pkg update` + `pkg install rsync`, then
+asserts the `version 3.4.1` banner and the packaged marker. PASS.
+
+Two unrelated fixes were needed to build a bootable base image for the gate on a
+macOS host:
+- `scripts/build-bash.sh` read `$BASH_VERSION` as its version override — a bash
+  builtin the shell sets to its own version (macOS host bash 3.2.57), so it fetched
+  a non-existent tarball (404). Renamed the override to `$BASH_PORT_VERSION`.
+- The SH1 bash port still does not cross-compile here (newlib lacks `sigjmp_buf`;
+  configure mis-sets `RLIMTYPE`), and `bash.elf` was an unconditional base-image
+  bake. Added an opt-out `INCLUDE_BASH ?= 1` gate (mirrors `INCLUDE_NODE`); default
+  preserves the bake, and `rsync-test` builds with `INCLUDE_BASH=0` since rsync only
+  needs the OS to boot under busybox ash + pkg + networking. Fixing the bash
+  cross-build remains an SH1 follow-up.

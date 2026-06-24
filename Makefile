@@ -365,6 +365,62 @@ NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
 endif
 
+# Optional heavy userland app/shell ports: bash (SH1), zsh (SH2), ncurses+ncdemo
+# (NC1), GLib+glibdemo (GL1), Midnight Commander (MC1). Each is a slow from-source
+# cross-build (newlib + zlib + ncurses + glib + network). ALL default OFF so
+# kernel/base/disk iteration ships only busybox and never pulls the app toolchain;
+# turn one on with INCLUDE_<X>=1 (the matching test targets do). Build the port
+# first: `make ncurses`/`glib`/`mc`/`bash`/`zsh`.
+INCLUDE_BASH ?= 0
+ifeq ($(INCLUDE_BASH),1)
+BASH_BASE_ELF := $(BUILD)/bash.elf
+BASH_PACK_CMD := cp $(BUILD)/bash.elf $(BASE_ROOT)/bin/bash
+else
+BASH_BASE_ELF :=
+BASH_PACK_CMD := echo "  (bash.elf NOT packed — build with INCLUDE_BASH=1 for /bin/bash)"
+endif
+
+INCLUDE_ZSH ?= 0
+ifeq ($(INCLUDE_ZSH),1)
+ZSH_BASE_ELF := $(BUILD)/zsh.elf
+ZSH_PACK_CMD := cp $(BUILD)/zsh.elf $(BASE_ROOT)/bin/zsh
+else
+ZSH_BASE_ELF :=
+ZSH_PACK_CMD := echo "  (zsh.elf NOT packed — build with INCLUDE_ZSH=1 for /bin/zsh)"
+endif
+
+INCLUDE_NCURSES ?= 0
+ifeq ($(INCLUDE_NCURSES),1)
+NCURSES_BASE_ELF := $(BUILD)/ncdemo.elf
+NCURSES_PACK_CMD := cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo
+else
+NCURSES_BASE_ELF :=
+NCURSES_PACK_CMD := echo "  (ncdemo.elf NOT packed — build with INCLUDE_NCURSES=1)"
+endif
+
+INCLUDE_GLIB ?= 0
+ifeq ($(INCLUDE_GLIB),1)
+GLIBDEMO_BASE_ELF := $(BUILD)/glibdemo.elf
+GLIBDEMO_PACK_CMD := cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo
+else
+GLIBDEMO_BASE_ELF :=
+GLIBDEMO_PACK_CMD := echo "  (glibdemo.elf NOT packed — build with INCLUDE_GLIB=1)"
+endif
+
+INCLUDE_MC ?= 0
+ifeq ($(INCLUDE_MC),1)
+MC_BASE_ELF := $(BUILD)/mc.elf
+MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+else
+MC_BASE_ELF :=
+MC_PACK_CMD := echo "  (mc.elf NOT packed — build with INCLUDE_MC=1)"
+endif
+
+# root's login shell in the staged base. SH3 ships /bin/zsh in base/etc/swos/passwd;
+# when zsh is NOT baked (default), rewrite it to /bin/sh (busybox ash, always
+# present) so login still reaches a shell. Overridable on the command line.
+ROOT_LOGIN_SHELL ?= $(if $(filter 1,$(INCLUDE_ZSH)),,/bin/sh)
+
 # SU-B: a signed test SWSITE bundle (+ a tampered copy) for site-bundle-test.
 # OPT-IN via INCLUDE_SITE_TEST=1 so production images carry no test fixtures.
 # The site-signing PUBLIC key is baked unconditionally (production `swupdate
@@ -396,24 +452,6 @@ OS_STAGE_DEPS :=
 OS_STAGE_PACK_CMD := true
 endif
 
-# Optional heavy userland app/shell ports — ncurses(demo), GLib(demo), Midnight
-# Commander, bash, zsh. Each is a slow from-source cross-build (`make ncurses`/
-# `glib`/`mc`/`bash`/`zsh`, needing newlib + zlib + network). Off by default so
-# kernel/base/disk iteration does NOT require the whole app toolchain; the SH/MC
-# test targets turn it on. When off, the base ships busybox only and root's login
-# shell falls back to /bin/sh (busybox ash) instead of /bin/zsh (SH3 default).
-INCLUDE_APPS ?= 0
-ifeq ($(INCLUDE_APPS),1)
-APP_ELFS := $(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf $(BUILD)/mc.elf $(BUILD)/bash.elf $(BUILD)/zsh.elf
-APP_PACK_CMD := cp $(BUILD)/ncdemo.elf $(BASE_ROOT)/bin/ncdemo; cp $(BUILD)/glibdemo.elf $(BASE_ROOT)/bin/glibdemo; cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc; cp $(BUILD)/bash.elf $(BASE_ROOT)/bin/bash; cp $(BUILD)/zsh.elf $(BASE_ROOT)/bin/zsh
-APP_SHELL_FIXUP := true
-else
-APP_ELFS :=
-APP_PACK_CMD := true
-# Lightweight base: root's login shell can't be /bin/zsh (not shipped) — fall back
-# to /bin/sh (busybox ash) so login still reaches a shell.
-APP_SHELL_FIXUP := sed -i.bak 's|^root:\(.*\):/bin/zsh|root:\1:/bin/sh|' $(BASE_ROOT)/etc/swos/passwd && rm -f $(BASE_ROOT)/etc/swos/passwd.bak
-endif
 USER_UVBARRIERPROBE_ELF := $(BUILD)/uvbarrierprobe.elf
 USER_UVCONDPROBE_ELF := $(BUILD)/uvcondprobe.elf
 USER_UVSOCKETPAIRPROBE_ELF := $(BUILD)/uvsocketpairprobe.elf
@@ -434,6 +472,8 @@ USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
 USER_DEVICEAUTHDEMO_ELF := $(BUILD)/deviceauthdemo.elf
 USER_DEVICEMMAPPROBE_ELF := $(BUILD)/devicemmapprobe.elf
+USER_NETMMAPPROBE_ELF := $(BUILD)/netmmapprobe.elf
+USER_NETDRIVERPROBE_ELF := $(BUILD)/netdriverprobe.elf
 USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
@@ -488,6 +528,7 @@ USER_QW5_RIGHTSXFER_ELF := $(BUILD)/qw5-rightsxfer.elf
 USER_DRVINPUTD_ELF := $(BUILD)/drvinputd.elf
 USER_DRVSVCDEMO_ELF := $(BUILD)/drvsvcdemo.elf
 USER_SVC_INPUT_ELF := $(BUILD)/svc-input.elf
+USER_INPUTD_ELF := $(BUILD)/inputd.elf
 USER_SHMRINGPROBE_ELF := $(BUILD)/shmringprobe.elf
 USER_SVC_SUPERVISOR_ELF := $(BUILD)/svc-supervisor.elf
 USER_PKG_ELF := $(BUILD)/pkg.elf
@@ -529,6 +570,7 @@ BASE_EXEC_ELFS := \
 	$(USER_DRVINPUTD_ELF) \
 	$(USER_DRVSVCDEMO_ELF) \
 	$(USER_SVC_INPUT_ELF) \
+	$(USER_INPUTD_ELF) \
 	$(USER_SVC_SUPERVISOR_ELF) \
 	$(USER_PKG_ELF) \
 	$(USER_CONSOLELOGIN_ELF) \
@@ -607,15 +649,21 @@ BASE_EXEC_ELFS := \
 	$(USER_SECURITYDEMO_ELF) \
 	$(USER_DEVICEAUTHDEMO_ELF) \
 	$(USER_DEVICEMMAPPROBE_ELF) \
+	$(USER_NETMMAPPROBE_ELF) \
+	$(USER_NETDRIVERPROBE_ELF) \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
 	$(USER_PTYPROBE_ELF) \
 	$(BUILD)/busybox.elf \
-	$(APP_ELFS)
+	$(NCURSES_BASE_ELF) \
+	$(GLIBDEMO_BASE_ELF) \
+	$(MC_BASE_ELF) \
+	$(BASH_BASE_ELF) \
+	$(ZSH_BASE_ELF)
 
 .PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
-.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
+.PHONY: build run debug gdb test docs-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: uvrwlock-test qw2-blocking-ipc-test ipc-call-test qw5-rights-intersection-test
 .PHONY: uvspawn-test
 .PHONY: virtio-transport-test
@@ -775,13 +823,18 @@ $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Mak
 $(BUILD)/user_console-login.o: userland/console-login.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/console-login.swift kernel/crypto/sha256.swift -o $@
 
-# LA1: svc-input compiles with the reusable UserlandService template; the
-# supervisor is a standalone program (it is the service's client, not a service).
-$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift -o $@
+# LA1/C5i: svc-input compiles with the reusable UserlandService template plus the
+# shared userland virtio-input driver core; the supervisor is a standalone program
+# (it is the service's client, not a service).
+$(BUILD)/user_svc-input.o: userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-input.swift userland/lib/userland_service.swift userland/lib/virtio_input_user.swift -o $@
 
 $(BUILD)/user_svc-supervisor.o: userland/svc-supervisor.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/svc-supervisor.swift -o $@
+
+# C5j: persistent userland virtio-input driver, sharing the driver core with svc-input.
+$(BUILD)/user_inputd.o: userland/inputd.swift userland/lib/virtio_input_user.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/inputd.swift userland/lib/virtio_input_user.swift -o $@
 
 # LA3: the shmring probe reuses the kernel's sans-IO ring core (the same file the
 # kernel and host unit test compile), built -D SHMRING_USER so its cursor
@@ -794,6 +847,14 @@ $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUI
 
 $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sleepprobe.swift -o $@
+
+# NS1: standalone Swift virtio-net MMIO grant probe.
+$(BUILD)/user_netmmapprobe.o: userland/netmmapprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netmmapprobe.swift -o $@
+
+# NS2: standalone Swift userland virtio-net driver (TX/RX on a secondary NIC).
+$(BUILD)/user_netdriverprobe.o: userland/netdriverprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/netdriverprobe.swift -o $@
 
 $(BUILD)/user_ptyprobe.o: userland/ptyprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/ptyprobe.swift -o $@
@@ -1111,6 +1172,9 @@ $(USER_SVC_INPUT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/
 $(USER_SVC_SUPERVISOR_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_svc-supervisor.o -o $@
 
+$(USER_INPUTD_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_inputd.o -o $@
+
 $(USER_SHMRINGPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_shmringprobe.o -o $@
 
@@ -1119,6 +1183,12 @@ $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps
 
 $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o -o $@
+
+$(USER_NETMMAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netmmapprobe.o -o $@
+
+$(USER_NETDRIVERPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_netdriverprobe.o -o $@
 
 $(USER_PTYPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ptyprobe.o -o $@
@@ -2172,7 +2242,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/nginx_test.sh
 	./tests/nginx_data_test.sh
 	./tests/nginx_tls_test.sh
-	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_APPS=1
+	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
 	./tests/ncurses_test.sh
 	./tests/glib_test.sh
 	./tests/mc_test.sh
@@ -2220,6 +2290,11 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
+	$(MAKE) c5-mmio-grant-test
+	$(MAKE) c5-userland-driver-test
+	$(MAKE) c5-tty-inject-test
+	$(MAKE) ns1-net-grant-test
+	$(MAKE) ns2-net-driver-test
 	./tests/busybox_test.sh
 	./tests/threads_test.sh
 	./tests/mmap_test.sh
@@ -2427,7 +2502,7 @@ nginx-test: build $(QEMU_DTB) base-image
 # console, reads a key, and exits. Asserts the post-endwin plain-text markers.
 ncurses-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
-	$(MAKE) base-image INCLUDE_APPS=1
+	$(MAKE) base-image INCLUDE_NCURSES=1
 	./tests/ncurses_test.sh
 
 # GL1: boot the base image and run /bin/glibdemo — links static libglib-2.0.a
@@ -2435,14 +2510,14 @@ ncurses-test: build $(QEMU_DTB)
 # the GLIBDEMO-OK marker.
 glib-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
-	$(MAKE) base-image INCLUDE_APPS=1
+	$(MAKE) base-image INCLUDE_GLIB=1
 	./tests/glib_test.sh
 
 # MC1: boot the base image and run /bin/mc — the Midnight Commander TUI on the
 # ncurses backend. Asserts the panels/menu draw and that it quits cleanly.
 mc-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
-	$(MAKE) base-image INCLUDE_APPS=1
+	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1
 	./tests/mc_test.sh
 
 # W2: nginx serves a web root + logs from the persistent /data tier; content
@@ -2682,6 +2757,40 @@ c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c
 device-mmio-map-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
 	./tests/device_mmio_map_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/device_mmio_map_test.sh
+
+# C5h: real MMIO authority reaches the supervised userland driver service. The LA1
+# supervisor claims the now-mappable virtio-input.0 grant and transfers it over IPC
+# to /bin/svc-input, which sys_device_mmap's the window and verifies the virtio magic
+# through the userland mapping. Runs under -smp 4 with the virtio-input device.
+c5-mmio-grant-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_mmio_grant_test.sh
+
+# C5i: the virtio-input driver runs entirely in userland. The kernel skips its
+# in-kernel polled driver; /bin/svc-input maps the MMIO window, resolves the
+# virtqueue's physical address via virt_to_phys, brings the queue up, and recovers
+# across a supervisor-driven kill+restart. Runs under -smp 4.
+c5-userland-driver-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_userland_driver_test.sh
+
+# NS1: virtio-net MMIO grant reaches userland alongside the live in-kernel net
+# stack. Boots with a virtio-net (slirp) device; the capConsole probe maps the NIC
+# window, reads the identity + config MAC, and the kernel net stack stays up
+# (ICMP echo reply). Runs under -smp 4.
+ns1-net-grant-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns1_net_grant_test.sh
+
+# NS2: a userland virtio-net driver does real TX/RX on a SECONDARY NIC (two
+# virtio-net devices; the kernel keeps the first) via an ARP round-trip against
+# slirp, without disturbing the primary kernel NIC. Runs under -smp 4.
+ns2-net-driver-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns2_net_driver_test.sh
+
+# C5j: the persistent userland driver (/bin/inputd, launched by swos-init) injects
+# decoded virtio-input keystrokes into the kernel tty (SYS_tty_inject), restoring
+# interactive keyboard. The test QMP send-key's a character into the virtio device
+# and asserts it reaches the login prompt via the userland driver. Runs under -smp 4.
+c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
 
 ssh-transport-test: build $(QEMU_DTB) base-image
 	./tests/ssh_transport_test.sh
@@ -2998,6 +3107,9 @@ ports-tzdata-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) ports/sysutils/tzdata/P
 ports-curl-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/net/curl/Port.json scripts/build-curl.sh
 	./scripts/build-curl.sh
 
+ports-rsync-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/net/rsync/Port.json scripts/build-rsync.sh userland/rsync/swiftos/at_compat.c
+	./scripts/build-rsync.sh
+
 ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh
 	./scripts/build-nginx.sh
 
@@ -3135,6 +3247,11 @@ package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-
 package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-seed-repo-fixture
 	./tests/pkg_ports_seed_repo_install_test.sh
 
+# R1: install the rsync port from a signed repo over the network and run
+# `rsync --version` in QEMU. Builds rsync.swpkg + a one-package trusted repo.
+rsync-test: build busybox $(QEMU_DTB) package-lua-install-fixture ports-rsync-repo-fixture
+	./tests/rsync_test.sh
+
 package-static-host-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
 	./tests/pkg_static_host_repo_install_test.sh
 
@@ -3164,7 +3281,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
-	$(APP_SHELL_FIXUP)
+	if [ -n "$(ROOT_LOGIN_SHELL)" ]; then perl -i -pe 's{^(root(?::[^:]*){4}:).*$$}{$${1}$(ROOT_LOGIN_SHELL)}' $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi
 	if [ -n "$(SSHD_AUTHORIZED_KEYS_FILE)" ]; then cp "$(SSHD_AUTHORIZED_KEYS_FILE)" $(BASE_ROOT)/etc/ssh/authorized_keys; fi
@@ -3256,6 +3373,8 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
 	cp $(USER_DEVICEAUTHDEMO_ELF) $(BASE_ROOT)/bin/deviceauthdemo
 	cp $(USER_DEVICEMMAPPROBE_ELF) $(BASE_ROOT)/bin/devicemmapprobe
+	cp $(USER_NETMMAPPROBE_ELF) $(BASE_ROOT)/bin/netmmapprobe
+	cp $(USER_NETDRIVERPROBE_ELF) $(BASE_ROOT)/bin/netdriverprobe
 	cp $(USER_IDENTITYDEMO_ELF) $(BASE_ROOT)/bin/identitydemo
 	cp $(USER_CONSOLELOGIN_ELF) $(BASE_ROOT)/bin/console-login
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
@@ -3316,10 +3435,15 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_DRVINPUTD_ELF) $(BASE_ROOT)/bin/drvinputd
 	cp $(USER_DRVSVCDEMO_ELF) $(BASE_ROOT)/bin/drvsvcdemo
 	cp $(USER_SVC_INPUT_ELF) $(BASE_ROOT)/bin/svc-input
+	cp $(USER_INPUTD_ELF) $(BASE_ROOT)/bin/inputd
 	cp $(USER_SVC_SUPERVISOR_ELF) $(BASE_ROOT)/bin/svc-supervisor
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
-	$(APP_PACK_CMD)
+	$(NCURSES_PACK_CMD)
+	$(GLIBDEMO_PACK_CMD)
+	$(MC_PACK_CMD)
+	$(BASH_PACK_CMD)
+	$(ZSH_PACK_CMD)
 	$(BASEPACK) $(BASE_ROOT) $@ $(IMG_SIGNING_SEED)
 
 base-image: $(BASE_IMG)
@@ -3369,7 +3493,7 @@ bash:
 # and exits cleanly. Requires `make bash` + `make base-image` first.
 bash-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
-	$(MAKE) base-image INCLUDE_APPS=1
+	$(MAKE) base-image INCLUDE_BASH=1
 	./tests/bash_test.sh
 
 # bash.elf is produced by `make bash` (needs newlib + ncurses + network).
@@ -3385,7 +3509,7 @@ zsh:
 # and exits cleanly. Requires `make zsh` + `make base-image` first.
 zsh-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
-	$(MAKE) base-image INCLUDE_APPS=1
+	$(MAKE) base-image INCLUDE_ZSH=1
 	./tests/zsh_test.sh
 
 # zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
@@ -3413,6 +3537,7 @@ clean:
 		$(BUILD)/tzdata-port-work $(BUILD)/tzdata-root $(BUILD)/tzdata-repo-root $(BUILD)/tzdata-repo-root.pub \
 		$(BUILD)/nginx-port-work $(BUILD)/nginx-root $(BUILD)/nginx-repo-root $(BUILD)/nginx-repo-root.pub $(BUILD)/nginx \
 		$(BUILD)/sqlite-port-work $(BUILD)/sqlite-port-runtime $(BUILD)/sqlite-root $(BUILD)/sqlite-repo-root $(BUILD)/sqlite-repo-root.pub \
+		$(BUILD)/rsync-port-work $(BUILD)/rsync-port-runtime $(BUILD)/rsync-root $(BUILD)/rsync-repo-root $(BUILD)/rsync-repo-root.pub $(BUILD)/rsync-test-repo $(BUILD)/base-rsync-repo.img \
 		$(BUILD)/base-ports-seed-repo.img $(BUILD)/base-ports-static-host.img $(BUILD)/base-ports-static-host-dns.img $(BUILD)/base-hosted-url.img $(ESP_DIR)
 
 # Print the resolved toolchain so failures are easy to diagnose.

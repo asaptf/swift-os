@@ -219,7 +219,7 @@ private var endpointRecvWaiters = [Int32](
     repeating: -1, count: maxEndpoints * maxRecvWaitersPerEndpoint)
 private let endpointSendEnd = pipeWriteEnd  // ipc_send transfers a handle from here
 private let endpointRecvEnd = pipeReadEnd   // ipc_recv receives it here
-private let maxDevices = 4
+private let maxDevices = 6
 private var devices = [DeviceGrant](repeating: DeviceGrant(), count: maxDevices)
 private let deviceInfoSize: UInt = 64
 private let deviceInfoNameOffset = 40
@@ -229,6 +229,7 @@ private let eventAllowedFlags = eventFlagSemaphore | oNonblock | oCloexec
 private let eventMaxCounter = UInt64.max - 1
 private let deviceKindPseudoInput: UInt32 = 1
 private let deviceKindVirtioInput: UInt32 = 2
+private let deviceKindVirtioNet: UInt32 = 3   // NS1: network-serviceization grant
 private let deviceBusPseudo: UInt32 = 1
 private let deviceBusVirtioMmio: UInt32 = 2
 private let deviceFlagNoMmioGrant: UInt32 = 1 << 0
@@ -796,34 +797,96 @@ private func resetDeviceRegistry() {
     for i in 0..<maxDevices { devices[i] = DeviceGrant() }
     let input = virtioInputDiscoverGrant()
     if input.found {
+        // C5h: virtio-input.0 now carries the REAL MMIO grant (deviceFlagMmioGrant,
+        // no deviceFlagNoMmioGrant). A capConsole claim of it yields a `.map` right,
+        // so the supervised userland driver service (/bin/svc-input), receiving the
+        // grant over IPC handle transfer, can sys_device_mmap the window Device-nGnRE
+        // and read the device's identification/queue registers directly. This is the
+        // metadata-only -> hardware-authority transition for the discoverable
+        // virtio-input grant. The kernel's polled keyboard driver still touches the
+        // same window read-only at C5h; the two mappings coexist (ownership handoff
+        // is C5i). See docs/NOTES.md.
         registerDevice(0, "virtio-input.0",
                        kind: deviceKindVirtioInput,
                        bus: deviceBusVirtioMmio,
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
-                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
-        // LA2: a second grant over the SAME virtio-input transport window, this
-        // one mappable (deviceFlagMmioGrant, no deviceFlagNoMmioGrant), so a
-        // capConsole claimer obtains a `.map` right and can sys_device_mmap the
-        // window Device-nGnRE. This aliases hardware the kernel's polled keyboard
-        // driver also touches; the MMIO-map path only needs to read the read-only
-        // identification registers (MagicValue/Version/DeviceID), so the two
-        // mappings coexist. Per-window ownership arbitration (one owner, kernel
-        // driver vs userland) is later LA-series work; reusing an existing window
-        // here avoids inventing hardware (see LA2 prompt).
-        registerDevice(1, "virtio-input-mmio.0",
+                       flags: deviceFlagMmioGrant | deviceFlagDiscovered)
+        // C5h: an inert sibling over the SAME transport window, metadata-only
+        // (deviceFlagNoMmioGrant), discoverable. It preserves the metadata-only
+        // negative-path coverage that virtio-input.0 used to provide before it
+        // became mappable: the legacy C5 driver demo (drvsvcdemo/drvinputd) claims
+        // and transfers THIS grant to prove authority stays withheld, and the LA2
+        // devicemmapprobe claims it to prove sys_device_mmap is refused with EACCES
+        // on a no-MMIO grant. (Replaces the former mappable virtio-input-mmio.0
+        // alias, whose mappable role virtio-input.0 now fills.)
+        registerDevice(1, "virtio-input-meta.0",
                        kind: deviceKindVirtioInput,
                        bus: deviceBusVirtioMmio,
                        mmioBase: input.mmioBase,
                        mmioLen: input.mmioLen,
-                       flags: deviceFlagMmioGrant | deviceFlagDiscovered,
-                       discoverable: false)
+                       flags: deviceFlagNoMmioGrant | deviceFlagDiscovered)
     } else {
         registerDevice(0, "pseudo-input.0",
                        kind: deviceKindPseudoInput,
                        bus: deviceBusPseudo,
                        flags: deviceFlagNoMmioGrant)
     }
+    // NS1: publish a mappable grant for the virtio-net transport window, the first
+    // step of network serviceization. A capConsole claimer obtains a `.map` right
+    // and can sys_device_mmap the window to read the device identity + config
+    // (e.g. the MAC) from userland. This COEXISTS with the in-kernel net driver,
+    // which keeps owning and operating the NIC (sshd/nginx/DHCP depend on it): the
+    // grant only authorizes mapping, and the userland probe reads read-only
+    // registers. NOT discoverable: it is claimed by name (claim-by-name needs no
+    // device_discover), and keeping it out of the discovery enumeration preserves
+    // the legacy C5 driver demo's "exactly the input devices are discoverable"
+    // contract. Making the NIC discoverable (for a userland net service that
+    // enumerates NICs) is deferred to a later NS milestone, together with
+    // generalizing that demo's discovery bound. Slot 2 keeps the input slots intact.
+    let net = virtioNetDiscoverGrant()
+    if net.found {
+        registerDevice(2, "virtio-net.0",
+                       kind: deviceKindVirtioNet,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: net.mmioBase,
+                       mmioLen: net.mmioLen,
+                       flags: deviceFlagMmioGrant,
+                       discoverable: false)
+    }
+    // NS2: when a SECOND virtio-net device is attached, publish it as a drivable
+    // grant `virtio-net.1`. The in-kernel net driver always binds the first NIC
+    // (ordinal 0), so the userland net driver can fully reset + own the second one
+    // (TX/RX from EL0) without disturbing the primary kernel NIC. Absent on the
+    // single-NIC production profile, so no userland program touches the live NIC.
+    let net2 = virtioNetDiscoverGrant(ordinal: 1)
+    if net2.found {
+        registerDevice(3, "virtio-net.1",
+                       kind: deviceKindVirtioNet,
+                       bus: deviceBusVirtioMmio,
+                       mmioBase: net2.mmioBase,
+                       mmioLen: net2.mmioLen,
+                       flags: deviceFlagMmioGrant,
+                       discoverable: false)
+    }
+}
+
+// C5i: does a discovered virtio-input device carry the mappable MMIO grant, i.e.
+// is it owned by the userland driver service rather than the in-kernel polled
+// driver? Queried once after vfsInit() so the kernel can skip virtioKbdInit() and
+// the per-tick poll. True only when a real virtio-input window exists AND it was
+// registered mappable (the C5h registry policy). Read under vfsLock like the rest.
+func vfsVirtioInputUserlandOwned() -> Bool {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    for dev in 0..<maxDevices where devices[dev].inUse {
+        if devices[dev].kind == deviceKindVirtioInput &&
+           (devices[dev].flags & deviceFlagMmioGrant) != 0 &&
+           (devices[dev].flags & deviceFlagNoMmioGrant) == 0 {
+            return true
+        }
+    }
+    return false
 }
 
 func vfsInit() {

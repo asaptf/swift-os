@@ -19,7 +19,9 @@ VERSION="${ZSH_VERSION:-5.9}"
 WORK="$ROOT/build/zsh-port-work"
 SRC="$WORK/zsh-${VERSION}"
 TARBALL="$WORK/zsh-${VERSION}.tar.xz"
-URL="${ZSH_URL:-https://www.zsh.org/pub/zsh-${VERSION}.tar.xz}"
+# www.zsh.org/pub/ 404s for current releases; use the SourceForge mirror (curl
+# follows the /download redirect). Override with ZSH_URL if a closer mirror exists.
+URL="${ZSH_URL:-https://sourceforge.net/projects/zsh/files/zsh/${VERSION}/zsh-${VERSION}.tar.xz/download}"
 RT="$ROOT/build/zsh-port-runtime"
 SYSROOT="${ZSH_SYSROOT:-$ROOT/sysroot/aarch64-elf}"
 COMPAT="$ROOT/userland/compat"
@@ -82,7 +84,7 @@ chmod +x "$WRAP"
 # the return-to-zsh_main line — a stable anchor in every zsh 5.x release.
 # ZDOTDIR points to /tmp (writable tmpfs) so rc/history files go there.
 perl -i -pe '
-    if (/^\s+return zsh_main\b/) {
+    if (/^\s+return\s*\(?\s*zsh_main\b/) {
         print "    setenv(\"TERM\",    \"vt100\", 0);  /* swift-os: bare-env default */\n";
         print "    setenv(\"HOME\",    \"/tmp\",  0);\n";
         print "    setenv(\"ZDOTDIR\", \"/tmp\",  0);\n";
@@ -129,7 +131,9 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     if [[ -f "$SRC/config.modules" ]]; then
         for mod in zsh/net/socket zsh/net/tcp zsh/langinfo zsh/system; do
             if grep -q "^name=$mod " "$SRC/config.modules" 2>/dev/null; then
-                sed -i "s|^\(name=$mod \).*|\1link=no load=no|" "$SRC/config.modules"
+                # perl -i (not `sed -i`, whose -i needs a backup-suffix arg on
+                # BSD/macOS sed) so the in-place edit is portable.
+                perl -i -pe "s|^(name=\Q$mod\E ).*|\${1}link=no load=no|" "$SRC/config.modules"
             fi
         done
     fi

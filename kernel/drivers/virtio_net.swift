@@ -380,6 +380,45 @@ func virtioNetInit() -> Bool {
 func virtioNetAvailable() -> Bool { netActive }
 func virtioNetMac() -> MAC { netMac }
 
+// NS1: locate the virtio-net MMIO transport window so the device registry can
+// publish a mappable grant for it (the network-serviceization analog of
+// virtioInputDiscoverGrant). Read-only scan of the identity registers — it does
+// NOT touch the device, so it is safe to call alongside the live kernel NIC; the
+// userland net driver/probe that claims the grant maps the window read-only too.
+struct VirtioNetGrantDiscovery {
+    var found = false
+    var mmioBase: UInt = 0
+    var mmioLen: UInt = 0
+    var slot: UInt32 = 0
+}
+
+// `ordinal` selects which virtio-net window to return (0 = the first, which the
+// in-kernel driver binds; 1 = the second, used as a drivable secondary NIC for the
+// userland net driver — NS2 — so userland can own a NIC without disturbing the
+// kernel's primary).
+func virtioNetDiscoverGrant(ordinal: UInt32 = 0) -> VirtioNetGrantDiscovery {
+    var out = VirtioNetGrantDiscovery()
+    var seen: UInt32 = 0
+    var i: UInt32 = 0
+    while i < platform.virtioMmioCount {
+        let m = platform.virtioMmioBase + UInt(i) * platform.virtioMmioStride
+        if mmio_read32(m + R_MAGIC) == VIRTIO_MAGIC &&
+           mmio_read32(m + R_VERSION) == 2 &&
+           mmio_read32(m + R_DEVID) == VIRTIO_ID_NET {
+            if seen == ordinal {
+                out.found = true
+                out.mmioBase = m
+                out.mmioLen = platform.virtioMmioStride
+                out.slot = i
+                return out
+            }
+            seen += 1
+        }
+        i += 1
+    }
+    return out
+}
+
 /// The frame area of a reserved TX buffer — the sans-IO core writes a frame to
 /// transmit here (zero-copy), then `virtioNetTxSubmit` sends it. Each call
 /// reserves one buffer from the fixed TX pool; completion is drained in batches.
