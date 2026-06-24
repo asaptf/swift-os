@@ -23,6 +23,9 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNELBOOT="$ROOT/build/kernelboot"
 KERNEL_BIN="$ROOT/build/kernel.bin"
+# OS-1c: ESP kernel slots are padded to a fixed size; a rebuilt manifest must sign
+# the same padded image so the slot verifies on disk.
+KERNEL_SLOT="$ROOT/build/kernel-slot.bin"
 USTORE="$ROOT/build/updatestore"
 BASE="$ROOT/build/base.img"
 SIGN_SEED="$ROOT/models/dev-image-signing.seed"
@@ -91,7 +94,7 @@ stop_qemu
 # --- Case B: active=B -> base coordinated to slot B (store active is still A) -
 # Fresh disk so no kernel-state from case A (which overrides the manifest) lingers.
 cp "$FRESH" "$WORK"
-"$KERNELBOOT" "$MANI" B "$KERNEL_BIN" "$KERNEL_BIN" "$SIGN_SEED" >/dev/null \
+"$KERNELBOOT" "$MANI" B "$KERNEL_SLOT" "$KERNEL_SLOT" "$SIGN_SEED" >/dev/null \
   || fail "could not build active-B kernel manifest"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$MANI" ::/EFI/swift-os/kernel-boot \
   || fail "could not write active-B manifest into the ESP"

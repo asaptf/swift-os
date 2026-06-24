@@ -106,7 +106,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 QP=$!; exec 3<>"$INFIFO"
 
 if to_shell root swordfish 1; then
-  await "built-in shell (ash)" 120 || fail "A: root shell did not start"
+  await "M12c: shell ready" 120 || fail "A: root shell did not start"
   send_line '/bin/reboot'
   await "power: rebooting now" 60 || fail "A: kernel did not issue PSCI SYSTEM_RESET"
   # The machine must actually reset: the boot flow reaches its prompts a 2nd time.
@@ -143,7 +143,7 @@ exec 3>&-; stop_qemu
 QP=$!; exec 3<>"$INFIFO"
 
 if to_shell root swordfish 1; then
-  await "built-in shell (ash)" 120 || fail "B: root shell did not start"
+  await "M12c: shell ready" 120 || fail "B: root shell did not start"
   send_line '/bin/shutdown'
   await "power: powering off now" 60 || fail "B: kernel did not issue PSCI SYSTEM_OFF"
   # QEMU must exit on its own (SYSTEM_OFF), without our kill.

@@ -85,7 +85,7 @@ await "swift-os login:" 90 || drive_fail "login prompt did not appear"
 send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 send_line '/bin/llm'
 await "llm: stories260K" 60 || drive_fail "llm did not start / could not load the model"

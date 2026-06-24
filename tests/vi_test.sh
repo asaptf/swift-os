@@ -106,7 +106,7 @@ await "swift-os login:" 90 || drive_fail "login prompt did not appear"
 send_line 'root'                        # log in
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 send_line 'vi /tmp/vitest'              # open vi on a new tmpfs file
 await $'\x1b[?1049h' 120 || drive_fail "vi did not enter the alternate screen"
 send_text 'ihello-from-vi'              # insert mode + text

@@ -18,7 +18,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${BASH_VERSION:-5.2.37}"
+# NB: do not read $BASH_VERSION here — that is a bash builtin variable, which the
+# shell running this script sets to its own version (e.g. macOS host bash
+# 3.2.57), shadowing the intended default and breaking the fetch URL. Use a
+# dedicated override name instead.
+VERSION="${BASH_PORT_VERSION:-5.2.37}"
 WORK="$ROOT/build/bash-port-work"
 SRC="$WORK/bash-${VERSION}"
 TARBALL="$WORK/bash-${VERSION}.tar.gz"

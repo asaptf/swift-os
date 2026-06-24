@@ -17,6 +17,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DISK_IMG="$ROOT/build/swift-os.img"
 BASE="$ROOT/build/base.img"
 KERNEL_BIN="$ROOT/build/kernel.bin"
+# OS-1c: ESP slots are the kernel padded to a fixed size; the corrupt slot-B
+# fixture must match that size so swos-kstage's same-size in-place copy applies.
+KERNEL_SLOT="$ROOT/build/kernel-slot.bin"
 QEMU="${QEMU:-qemu-system-aarch64}"
 AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
 MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
@@ -48,8 +51,8 @@ export MTOOLS_SKIP_CHECK=1
 "$ROOT/scripts/make-disk.sh" "$FRESH" >/dev/null \
   || { echo "FAIL: could not create a fresh disk image (run 'make disk')" >&2; exit 2; }
 
-# A same-size, byte-flipped copy of the kernel for the (inactive) slot B.
-cp "$KERNEL_BIN" "$BADB"
+# A same-size, byte-flipped copy of the padded kernel slot for (inactive) slot B.
+cp "$KERNEL_SLOT" "$BADB"
 printf '\xFF' | dd of="$BADB" bs=1 count=1 seek=0 conv=notrunc 2>/dev/null
 cp "$FRESH" "$WORK"
 "$MCOPY" -o -i "${WORK}@@${PART_OFFSET}" "$BADB" ::/EFI/swift-os/kernelB.bin \
@@ -94,7 +97,7 @@ to_shell() {
   send $'root\n'
   await "Password:" 90 || return 1
   send $'swordfish\n'
-  await "built-in shell (ash)" 120 || return 1
+  await "M12c: shell ready" 120 || return 1
   return 0
 }
 

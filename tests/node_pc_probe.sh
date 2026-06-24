@@ -90,7 +90,7 @@ await "swift-os login:" 90 || { echo "no login"; exit 2; }
 send_line 'root'
 await "Password:" 90 || { echo "no pw"; exit 2; }
 send_line 'swordfish'
-await "built-in shell (ash)" 120 || { echo "no shell"; exit 2; }
+await "M12c: shell ready" 120 || { echo "no shell"; exit 2; }
 
 send_line '/bin/node -e "console.log(6*7)"'
 if await "42" 25; then

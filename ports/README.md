@@ -9,11 +9,16 @@ artifacts.
 This is not a full ports tree yet. The checked-in package recipes are `lang/lua`,
 `archivers/zlib`, `archivers/bzip2`, `archivers/zstd`, `archivers/xz`,
 `archivers/libarchive`, `security/ca-certificates`, `security/openssl`, `devel/pcre2`,
-`sysutils/tzdata`, `net/curl`, `www/nginx`, and `databases/sqlite`, with validation,
-manifest generation, checksum-verified distfile fetching, `.swpkg` creation
-from clean staged roots, and signed static repository fixture generation.
+`sysutils/tzdata`, `net/curl`, `net/rsync`, `www/nginx`, and `databases/sqlite`,
+with validation, manifest generation, checksum-verified distfile fetching,
+`.swpkg` creation from clean staged roots, and signed static repository fixture
+generation.
 The `net/curl` recipe is packaged as a first HTTP-only static client; HTTPS/TLS
-waits on an `openssl-dev` split and certificate-chain smoke. The
+waits on an `openssl-dev` split and certificate-chain smoke. The `net/rsync`
+recipe is packaged as a first static `rsync` CLI (R1: build + `rsync --version`);
+local-filesystem sync and rsync-over-TCP/ssh transport are follow-ups, and
+symlinks, hardlinks, mtime preservation, xattrs, and ACLs are disabled until the
+VFS and syscall surface support them. The
 `security/acme-sh` recipe remains scaffolded: its upstream distfile,
 dependencies, and package manifest are machine-readable, but package and QEMU
 smoke targets wait on `oksh`, TLS-enabled curl, and HTTP/ACME fixtures.
@@ -46,6 +51,10 @@ cross-builds static PCRE2 libraries, headers, pkgconf metadata, and
 zoneinfo files and packages the `/usr/share/zoneinfo` tree.
 `make ports-curl-repo-fixture` cross-builds an HTTP-only static `curl` CLI,
 `libcurl.a`, headers, and pkgconf metadata.
+`make ports-rsync-repo-fixture` cross-builds a static `rsync` CLI (bundled popt
+and zlib; OpenSSL, xxhash/zstd/lz4, iconv, locale, IPv6, ACLs, xattrs, and
+SIMD/asm disabled). `make rsync-test` installs it from a signed repo and runs
+`rsync --version` in QEMU.
 `make ports-nginx-repo-fixture` cross-builds a minimal static HTTP-only nginx
 package. `make ports-sqlite-repo-fixture` cross-builds static SQLite,
 `libsqlite3.a`, headers, pkgconf metadata, and the `sqlite3` CLI.
@@ -76,6 +85,7 @@ hardened inside `swift-os`.
 | nginx | `ports/www/nginx/Port.json` | Minimal static HTTP-only nginx package |
 | SQLite | `ports/databases/sqlite/Port.json` | Static SQLite CLI, library, headers, and pkgconf metadata |
 | curl | `ports/net/curl/Port.json` | Static HTTP-only curl CLI, `libcurl.a`, headers, and pkgconf metadata |
+| rsync | `ports/net/rsync/Port.json` | Static `rsync` CLI (R1: build + `rsync --version`; no TLS/xattr/ACL/symlink) |
 | acme.sh | `ports/security/acme-sh/Port.json` | Scaffolded ACME client intake for HTTP-01 hosting |
 | Node.js | `ports/lang/nodejs/Port.json` | Scaffolded static runtime intake with V8/libuv blockers recorded |
 | npm | `ports/lang/npm/Port.json` | Scaffolded JavaScript package-manager intake tied to Node.js |
