@@ -952,13 +952,15 @@ datafs, one graft), not in the driver.
 Sub-milestones (one at a time, each builds + boots single-core and `-smp 4`, has a
 test, committed, review before the next):
 
-- **V0** (planned): de-singleton datafs + generic mount graft — a pure refactor with
-  no new disk and no behavior change. Wrap datafs global state in a `DfsVolume`
-  struct, index it (`dfsVolumes[]`, only slot 0 used); thread a `vol:` param through
-  `datafsRead/Write/Alloc/...`; generalize `virtioBlkDataRead/WriteRange` to a volume's
-  device (slot 0 = `blkDataDevice`); add `dfsVolume` to the VNode beside `dfsInode`,
-  set to 0 for `/data`; parametrize `datafsMirror` by volume. Acceptance: existing
-  `make datafs-test` / `datafs-fsync-test` / `datafs-sqlite-test` stay green unchanged.
+- **V0** (DONE, 2026-06-24): de-singleton datafs + generic mount graft — a pure
+  refactor with no new disk and no behavior change. datafs global state is now a
+  `DfsVolume` record in `dfsVolumes[]` (only slot 0 used); a `vol:` param is threaded
+  through the whole datafs API; `virtioBlkVolume{Read,Write,Flush,CapacitySectors}`
+  are the device-indexed block layer (the `virtioBlkData*` entry points became thin
+  volume-0 wrappers); the VNode carries `dfsVolume` beside `dfsInode`; `datafsMirror`
+  is volume-parametrized; rename refuses crossing volumes. Acceptance met: `make
+  data-persist-test` / `datafs-test` / `datafs-fsync-test` / `datafs-sqlite-test`
+  stay green unchanged. See `docs/NOTES.md` (V-series).
 - **V1** (planned): mount a **second** `SWDATAFS` volume at `/mnt/<label>`. Add a
   second writable virtio-blk data disk to the QEMU profile; mount it as a distinct
   datafs instance. Acceptance: a new gate writes to both `/data` and the second

@@ -696,42 +696,61 @@ func virtioBlkSwosbaseImageCount() -> Int { swosbaseCount }
 func virtioBlkPackageStoreAvailable() -> Bool { pkgStoreDevice >= 0 }
 func virtioBlkPackageStoreCapacityBytes() -> UInt64 { pkgStoreCapacity * UInt64(SECTOR_SIZE) }
 
-// --- persistent /data disk (D0) ---------------------------------------------
+// --- generalized per-volume block I/O (V0: multi-volume datafs) --------------
+// A "volume" is any writable virtio-blk device that carries a datafs. The
+// datafs layer is device-indexed: slot 0 binds the legacy persistent /data disk
+// (blkDataDevice), and later volumes bind additional writable disks/Hetzner
+// Volumes. Each call restores the served base/store device afterward, exactly
+// like the original D0 path, so later base reads are unaffected.
+
+// The device index of the legacy persistent /data disk (datafs volume 0), or -1.
+func virtioBlkDataDeviceIndex() -> Int { blkDataDevice }
+// Capacity of `dev` in 512-byte sectors (0 if out of range / absent).
+func virtioBlkVolumeCapacitySectors(_ dev: Int) -> UInt64 {
+    if dev < 0 || dev >= blkDeviceCount { return 0 }
+    return blkDeviceCapacity[dev]
+}
+// Read [byteOff, byteOff+len) from `dev` into `buf`. 0 on success.
+func virtioBlkVolumeReadRange(_ dev: Int, _ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
+    if dev < 0 { return -1 }
+    let rc = virtioBlkReadRangeFromDevice(dev, byteOff, buf, len)
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+// Write `buf` to [byteOff, byteOff+len) on `dev` (read-modify-write for partial
+// sectors), bounds-checked against the device capacity. 0 on success.
+func virtioBlkVolumeWriteRange(_ dev: Int, _ byteOff: UInt64, _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
+    if dev < 0 || dev >= blkDeviceCount { return -1 }
+    let cap = blkDeviceCapacity[dev] * UInt64(SECTOR_SIZE)
+    if byteOff + UInt64(len) > cap { return -2 }
+    let rc = virtioBlkWriteRangeToDevice(dev, byteOff, buf, len)
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+// Flush `dev`'s write cache to stable media. Pairs with a preceding write so it
+// survives a host crash. The /data disk's success counter (D2) is preserved for
+// its compatibility wrapper below. 0 on success.
+func virtioBlkVolumeFlush(_ dev: Int) -> Int32 {
+    if dev < 0 { return -1 }
+    if !blkSelectDevice(dev) { return -1 }
+    let rc = blkDoFlush()
+    if rc == 0 && dev == blkDataDevice { blkDataFlushes &+= 1 }
+    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
+    return rc
+}
+
+// --- persistent /data disk (D0) — compatibility wrappers over volume 0 -------
 // True if a writable persistent data disk (sector-0 magic "SWDATAFS") is present.
 func virtioBlkDataAvailable() -> Bool { blkDataDevice >= 0 }
 // Capacity of the data disk in 512-byte sectors (0 if none).
-func virtioBlkDataCapacitySectors() -> UInt64 {
-    if blkDataDevice < 0 { return 0 }
-    return blkDeviceCapacity[blkDataDevice]
-}
-// Read [byteOff, byteOff+len) from the data disk into `buf`. Restores the served
-// base/store device afterward so later base reads are unaffected. 0 on success.
+func virtioBlkDataCapacitySectors() -> UInt64 { virtioBlkVolumeCapacitySectors(blkDataDevice) }
 func virtioBlkDataReadRange(_ byteOff: UInt64, _ buf: UnsafeMutableRawPointer?, _ len: UInt32) -> Int32 {
-    if blkDataDevice < 0 { return -1 }
-    let rc = virtioBlkReadRangeFromDevice(blkDataDevice, byteOff, buf, len)
-    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
-    return rc
+    virtioBlkVolumeReadRange(blkDataDevice, byteOff, buf, len)
 }
-// Write `buf` to [byteOff, byteOff+len) on the data disk (read-modify-write for
-// partial sectors). Restores the served device afterward. 0 on success.
 func virtioBlkDataWriteRange(_ byteOff: UInt64, _ buf: UnsafeRawPointer?, _ len: UInt32) -> Int32 {
-    if blkDataDevice < 0 { return -1 }
-    let cap = blkDeviceCapacity[blkDataDevice] * UInt64(SECTOR_SIZE)
-    if byteOff + UInt64(len) > cap { return -2 }
-    let rc = virtioBlkWriteRangeToDevice(blkDataDevice, byteOff, buf, len)
-    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
-    return rc
+    virtioBlkVolumeWriteRange(blkDataDevice, byteOff, buf, len)
 }
-// Flush the data disk's write cache to stable media. Pairs with a preceding
-// write so it survives a host crash. 0 on success.
-func virtioBlkDataFlush() -> Int32 {
-    if blkDataDevice < 0 { return -1 }
-    if !blkSelectDevice(blkDataDevice) { return -1 }
-    let rc = blkDoFlush()
-    if rc == 0 { blkDataFlushes &+= 1 }
-    if blkServedDevice >= 0 { _ = blkSelectDevice(blkServedDevice) }
-    return rc
-}
+func virtioBlkDataFlush() -> Int32 { virtioBlkVolumeFlush(blkDataDevice) }
 // D2: number of successful data-disk flushes since boot.
 func virtioBlkDataFlushCount() -> UInt64 { blkDataFlushes }
 

@@ -55,8 +55,9 @@ private struct VNode {
     var dataCap = 0         // tmpfs growth capacity
     var diskImage = 0       // SWOSBASE image index for on-disk files
     var diskOffset = 0      // byte offset of contents within the disk image
-    var dataFs = false      // contents persist on the writable /data disk (datafs, D1)
+    var dataFs = false      // contents persist on a writable datafs volume (D1)
     var dfsInode = -1       // datafs inode number when dataFs
+    var dfsVolume = 0       // datafs volume slot when dataFs (V0: always 0 = /data)
     var special = 0         // device node: 0 none, 1 = /dev/null, 2 = /dev/zero
     var owner: UInt32 = 1   // owning principal (M13c); 1 = root/boot principal
     var mode: UInt32 = 0    // permission bits (M13c); 0 = unset → use heuristic
@@ -1966,16 +1967,18 @@ private func ensureTmpFileCapacity(_ node: Int, _ needed: Int) -> Bool {
 private func createDataFsNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int,
                               isDir: Bool) -> Int {
     if nodeCount >= maxNodes || nameLen <= 0 { return -1 }
+    let vol = nodes[parent].dfsVolume
     let mode: UInt32 = isDir ? 0o755 : 0o644
-    let ino = datafsCreate(nodes[parent].dfsInode, namePtr, nameLen, isDir: isDir, mode: mode)
+    let ino = datafsCreate(vol, nodes[parent].dfsInode, namePtr, nameLen, isDir: isDir, mode: mode)
     if ino < 0 { return -1 }
     let n = allocNode()
-    if n < 0 { _ = datafsRemove(ino); return -1 }
-    if !setNameCopy(n, namePtr, nameLen) { _ = datafsRemove(ino); return -1 }
+    if n < 0 { _ = datafsRemove(vol, ino); return -1 }
+    if !setNameCopy(n, namePtr, nameLen) { _ = datafsRemove(vol, ino); return -1 }
     nodes[n].isDir = isDir
     nodes[n].readOnly = false
     nodes[n].dataFs = true
     nodes[n].dfsInode = ino
+    nodes[n].dfsVolume = vol
     nodes[n].owner = processCurrentPrincipal()
     nodes[n].mode = mode
     nodes[n].mtime = rtcNow()
@@ -1986,28 +1989,29 @@ private func createDataFsNode(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ 
 
 // Build mirror VNodes for every datafs inode whose parent is `parentInode`,
 // recursing into directories. Called once per directory at mount.
-private func datafsMirror(_ parentVNode: Int, _ parentInode: Int) {
+private func datafsMirror(_ vol: Int, _ parentVNode: Int, _ parentInode: Int) {
     var nameBuf = [UInt8](repeating: 0, count: 128)
     let count = datafsInodeCount()
     var ino = 0
     while ino < count {
-        if ino != datafsRootInode() && datafsInodeUsed(ino) && datafsInodeParent(ino) == parentInode {
-            let isDir = datafsInodeIsDir(ino)
+        if ino != datafsRootInode() && datafsInodeUsed(vol, ino) && datafsInodeParent(vol, ino) == parentInode {
+            let isDir = datafsInodeIsDir(vol, ino)
             let n = allocNode()
             if n >= 0 {
                 let nl = nameBuf.withUnsafeMutableBufferPointer {
-                    datafsInodeNameCopy(ino, $0.baseAddress!, $0.count)
+                    datafsInodeNameCopy(vol, ino, $0.baseAddress!, $0.count)
                 }
                 _ = nameBuf.withUnsafeBufferPointer { setNameCopy(n, $0.baseAddress!, nl) }
                 nodes[n].isDir = isDir
                 nodes[n].readOnly = false
                 nodes[n].dataFs = true
                 nodes[n].dfsInode = ino
-                nodes[n].dataLen = datafsInodeSize(ino)
-                nodes[n].mode = datafsInodeMode(ino)
-                nodes[n].mtime = datafsInodeMtime(ino)
+                nodes[n].dfsVolume = vol
+                nodes[n].dataLen = datafsInodeSize(vol, ino)
+                nodes[n].mode = datafsInodeMode(vol, ino)
+                nodes[n].mtime = datafsInodeMtime(vol, ino)
                 linkChild(parentVNode, n)
-                if isDir { datafsMirror(n, ino) }
+                if isDir { datafsMirror(vol, n, ino) }
             }
         }
         ino += 1
@@ -2018,13 +2022,16 @@ private func datafsMirror(_ parentVNode: Int, _ parentInode: Int) {
 // /data. Called from vfsInit after the base + /tmp are set up.
 private func vfsMountDataFs(_ root: Int) {
     if !virtioBlkDataAvailable() { return }
-    if !datafsMount() { uartPuts("D1: datafs mount failed\n"); return }
+    // V0: the persistent /data tier is datafs volume 0, bound to the legacy
+    // data disk. Additional volumes (V1+) mount at /mnt/<label>.
+    if !datafsMount(0, virtioBlkDataDeviceIndex()) { uartPuts("D1: datafs mount failed\n"); return }
     let data = addDir(root, "data", readOnly: false)
     if data < 0 { return }
     nodes[data].dataFs = true
     nodes[data].dfsInode = datafsRootInode()
+    nodes[data].dfsVolume = 0
     nodes[data].mode = 0o755
-    datafsMirror(data, datafsRootInode())
+    datafsMirror(0, data, datafsRootInode())
     uartPuts("D1 OK: datafs mounted at /data\n")
 }
 
@@ -2387,7 +2394,7 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     // O_TRUNC on a writable tmpfs file resets it to empty (shell `>` redirects).
     // Base/disk files are read-only, so truncation never applies to them.
     if (f & oTrunc) != 0 && !nodes[node].isDir && !nodes[node].readOnly {
-        if nodes[node].dataFs { _ = datafsTruncate(nodes[node].dfsInode, 0) }
+        if nodes[node].dataFs { _ = datafsTruncate(nodes[node].dfsVolume, nodes[node].dfsInode, 0) }
         nodes[node].dataLen = 0
     }
 
@@ -2569,7 +2576,7 @@ func vfsRead(fd: Int, buffer: UInt, count: UInt) -> Int {
         let avail = nodes[node].dataLen - current.offset
         if avail > 0 {
             let want = min(Int(count), avail)
-            let got = datafsRead(nodes[node].dfsInode, current.offset,
+            let got = datafsRead(nodes[node].dfsVolume, nodes[node].dfsInode, current.offset,
                                  UnsafeMutableRawPointer(dst), want)
             if got > 0 {
                 current.offset += got
@@ -2823,11 +2830,11 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
         result = Int(count)   // /dev/null and /dev/zero: discard writes
     } else if nodes[node].dataFs {
         // Persistent /data file: write through to the data disk by inode.
-        let w = datafsWrite(nodes[node].dfsInode, current.offset,
+        let w = datafsWrite(nodes[node].dfsVolume, nodes[node].dfsInode, current.offset,
                             UnsafeRawPointer(src), Int(count))
         if w > 0 {
             current.offset += w
-            nodes[node].dataLen = datafsInodeSize(nodes[node].dfsInode)
+            nodes[node].dataLen = datafsInodeSize(nodes[node].dfsVolume, nodes[node].dfsInode)
             nodes[node].mtime = rtcNow()
             openDescriptions[d] = current
             result = w
@@ -2873,7 +2880,7 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
     let node = file.node
     if nodes[node].isDir { return Errno.isDir.code }
     if nodes[node].dataFs {
-        if !datafsTruncate(nodes[node].dfsInode, length) { return Errno.noSpace.code }
+        if !datafsTruncate(nodes[node].dfsVolume, nodes[node].dfsInode, length) { return Errno.noSpace.code }
         nodes[node].dataLen = length
         nodes[node].mtime = rtcNow()
         return 0
@@ -2902,17 +2909,17 @@ func vfsFsync(fd: Int) -> Int {
     guard entry.kind == .file else { return 0 }
     let node = openDescriptions[entry.object].node
     if node >= 0 && node < nodeCount && nodes[node].dataFs {
-        return datafsFlush() == 0 ? 0 : Errno.invalid.code
+        return datafsFlush(nodes[node].dfsVolume) == 0 ? 0 : Errno.invalid.code
     }
     return 0
 }
 
-// D2: sync(). Flush every writable filesystem to stable media. Only the /data
-// disk is durable, so this flushes it (when present).
+// D2: sync(). Flush every writable filesystem to stable media. Only datafs
+// volumes are durable, so this flushes each mounted one (when present).
 func vfsSyncAll() -> Int {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    if virtioBlkDataAvailable() { _ = datafsFlush() }
+    datafsSyncAll()
     return 0
 }
 
@@ -4185,7 +4192,7 @@ func vfsUnlink(path pathVA: UInt) -> Int {
     if nodes[node].isDir { return Errno.isDir.code }
     let parent = nodes[node].parent
     if nodes[parent].readOnly { return Errno.readOnly.code }
-    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
+    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsVolume, nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
 }
@@ -4222,7 +4229,7 @@ func vfsRmdir(path pathVA: UInt) -> Int {
     if nodes[node].firstChild != -1 { return Errno.notEmpty.code }
     let parent = nodes[node].parent
     if nodes[parent].readOnly { return Errno.readOnly.code }
-    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsInode) }
+    if nodes[node].dataFs { _ = datafsRemove(nodes[node].dfsVolume, nodes[node].dfsInode) }
     _ = unlinkChild(parent, node)
     return 0
 }
@@ -4244,8 +4251,10 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if !confinedAllows(dstParent) { return Errno.access.code }
     let srcParent = nodes[src].parent
     if nodes[srcParent].readOnly || nodes[dstParent].readOnly { return Errno.readOnly.code }
-    // No cross-filesystem rename (datafs <-> tmpfs would need a copy).
+    // No cross-filesystem rename (datafs <-> tmpfs, or across datafs volumes,
+    // would need a copy).
     if nodes[src].dataFs != nodes[dstParent].dataFs { return Errno.invalid.code }
+    if nodes[src].dataFs && nodes[src].dfsVolume != nodes[dstParent].dfsVolume { return Errno.invalid.code }
     if nodes[src].isDir && isDescendant(dstParent, of: src) { return Errno.invalid.code }
 
     let existing = findChild(dstParent, newPath + nls, nll)
@@ -4253,7 +4262,7 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if existing != -1 {
         if nodes[existing].isDir != nodes[src].isDir { return Errno.invalid.code }
         if nodes[existing].isDir && nodes[existing].firstChild != -1 { return Errno.notEmpty.code }
-        if nodes[existing].dataFs { _ = datafsRemove(nodes[existing].dfsInode) }
+        if nodes[existing].dataFs { _ = datafsRemove(nodes[existing].dfsVolume, nodes[existing].dfsInode) }
         _ = unlinkChild(dstParent, existing)
     }
 
@@ -4261,7 +4270,7 @@ func vfsRename(old oldVA: UInt, new newVA: UInt) -> Int {
     if !setNameCopy(src, newPath + nls, nll) { return Errno.noMem.code }
     linkChild(dstParent, src)
     if nodes[src].dataFs {
-        _ = datafsSetParentName(nodes[src].dfsInode, nodes[dstParent].dfsInode, newPath + nls, nll)
+        _ = datafsSetParentName(nodes[src].dfsVolume, nodes[src].dfsInode, nodes[dstParent].dfsInode, newPath + nls, nll)
     }
     return 0
 }

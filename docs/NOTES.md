@@ -7347,6 +7347,45 @@ the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
 via the provider rescue system, confirm with the user before the destructive
 step, iterate over serial/VNC until SSH reaches SwiftOS).
 
+## V-series — mountable multi-volume storage (post-M13)
+
+**Why.** The D-series gave one persistent `/data` tier on one virtio-blk disk.
+The hosting/appliance profiles need to attach additional persistent storage — a
+second/third local disk or a Hetzner Cloud Volume. To the OS a Hetzner Volume is
+just another block device (virtio-scsi/virtio-pci on the real server the H-series
+already drives; one more `virtio-blk-device` under QEMU `virt`), so "second disk"
+and "Hetzner Volume" are the same problem. Full design + the reviewed decisions
+(global single namespace; both a declarative manifest and a capability-gated
+runtime `mount()`, converging on one mount table; the manifest lives on the root
+`/data`; the root volume is anchored by a cmdline UUID; data-driven mounts are
+confined to `/mnt/*` and never auto-format a non-blank disk) are in
+`docs/RISK_REMEDIATION_ROADMAP.md` (V-series).
+
+### V0 — de-singleton datafs + generic mount graft (DONE, 2026-06-24)
+
+Pure refactor, no new disk, no behaviour change — de-risks the datafs singleton
+before V1 adds a second volume.
+
+- `kernel/fs/datafs.swift`: the former global state (geometry, the four scratch
+  buffers, the bound device, `mounted`) is now a `DfsVolume` record in a fixed
+  `dfsVolumes[DFS_MAX_VOLUMES]` table (slot 0 = the legacy `/data` disk). Every
+  helper and public entry point takes a leading `vol: Int` and indexes
+  `dfsVolumes[vol].*` (the `cells[idx].*` idiom). `datafsMount(vol, device)` binds
+  the volume's device explicitly; capacity/flush go through the new device-indexed
+  block layer. New `datafsFlush(vol)` + `datafsSyncAll()` (sync() now flushes every
+  mounted volume). Removed the dead `dfsNameMatches` helper.
+- `kernel/drivers/virtio_blk.swift`: added device-indexed
+  `virtioBlkVolume{ReadRange,WriteRange,Flush,CapacitySectors}` + a
+  `virtioBlkDataDeviceIndex()` accessor. The original `virtioBlkData*` entry points
+  (still used by the `main.swift` D0 boot-counter self-test) are now thin wrappers
+  over the volume-0 device, preserving the D2 flush counter.
+- `kernel/vfs/vfs.swift`: the VNode gains `dfsVolume` beside `dfsInode`; every
+  datafs call site (`createDataFsNode`, `datafsMirror`, mount, read/write/truncate/
+  fsync/sync, unlink/rmdir/rename) threads `nodes[...].dfsVolume`. Rename now also
+  refuses crossing datafs volumes (cross-FS guard).
+- Acceptance: `make data-persist-test` (D0), `datafs-test` (D1), `datafs-fsync-test`
+  (D2), `datafs-sqlite-test` (D3) all stay green unchanged.
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)
