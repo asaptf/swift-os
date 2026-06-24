@@ -436,6 +436,22 @@ private func runNetSvcDemo() {
     uartPuts("\n")
 }
 
+// C6a: per-cell resource-accounting probe. Runs as a capProcessInspect boot
+// principal: forks children (all in globalCell), reads SYS_cell_stat, and proves
+// the aggregate {processes, residentPages, handles} tracks the live processes and
+// drops a reaped process's charge. The whole system still runs in one cell; this
+// exercises the accounting domain the C6b+ cell supervisor will build on.
+private func runCellStatProbe() {
+    uartPuts("swift-os C6a: per-cell resource-accounting probe\n")
+    let (img, sz) = demoImage("/bin/cellstatprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellstatprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6a cell stat probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1428,6 +1444,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runNetMmioProbe()
         runNetDriverProbe()
         runNetSvcDemo()
+        runCellStatProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()

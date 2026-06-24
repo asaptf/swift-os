@@ -83,6 +83,21 @@ struct swiftos_device_info {
 };
 #endif
 
+// C6a: aggregate resource-accounting domain for one Cell (matches the kernel's
+// 32-byte cell_stat record). `cell` echoes the queried CellId; the rest sum the
+// live processes tagged with that cell.
+#ifndef SWIFTOS_CELL_STAT_T
+#define SWIFTOS_CELL_STAT_T
+struct swiftos_cell_stat {
+    unsigned int cell;
+    unsigned int processes;
+    unsigned long resident_pages;
+    unsigned long cpu_ticks;
+    unsigned int handles;
+    unsigned int reserved;
+};
+#endif
+
 // Device kind/bus/flag constants (mirror syscall.h; identical macro values).
 #define SWIFTOS_DEVICE_KIND_PSEUDO_INPUT 1u
 #define SWIFTOS_DEVICE_KIND_VIRTIO_INPUT 2u
@@ -137,6 +152,13 @@ long swiftos_virt_to_phys(unsigned long va, int handle_fd);
 // Needs CAP_CONSOLE; returns 0, or -1 (EPERM) without it. Used by the userland
 // virtio-input driver to feed decoded keystrokes to the line discipline.
 int swiftos_tty_inject(unsigned char byte);
+
+// C6a: read a CellId's aggregate resource-accounting domain into *out. Named
+// _query (not _stat) so it does not clash with the swiftos_cell_stat struct tag
+// when imported into Swift (one namespace for types and functions). Needs
+// CAP_PROCESS_INSPECT. Returns the live process count in the cell (>= 0), or a
+// negative errno.
+int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out);
 
 unsigned int swiftos_mmio_read32(unsigned long addr);
 void         swiftos_mmio_write32(unsigned long addr, unsigned int value);

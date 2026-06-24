@@ -1150,6 +1150,16 @@ private func fdEntryHasRights(_ proc: Int, _ fd: Int, _ required: Rights) -> Boo
     validFD(proc, fd) && hasRights(fdEntry(proc, fd).rights, required)
 }
 
+/// C6a: count the in-use handles a process slot holds. Used by the per-cell
+/// resource-accounting aggregate (processCellStat) to charge a process's handle
+/// count to its CellId domain. Bounded by maxFDs; safe for any slot index.
+func vfsHandleCount(slot: Int) -> Int {
+    if slot < 0 || slot >= maxVFSProcesses { return 0 }
+    var n = 0
+    for fd in 0..<maxFDs where fdEntry(slot, fd).inUse { n += 1 }
+    return n
+}
+
 private func nameEquals(_ node: Int, _ ptr: UnsafePointer<UInt8>, _ len: Int) -> Bool {
     if nodes[node].nameLen != len { return false }
     let np = UnsafePointer<UInt8>(bitPattern: nodes[node].namePtr)!

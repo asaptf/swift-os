@@ -564,6 +564,29 @@ touching the live primary kernel NIC. Remaining long-horizon work (its own epic)
 moving the actual TCP/socket stack and the primary NIC's path to userland, plus
 real-HW cache maintenance for userland DMA and userland IRQ delivery.
 
+## Cells (C6 series) — userland composition over the CellId tag
+
+Turn the long-reserved per-process `CellId` tag into a real (but still cheap)
+resource-accounting + namespace-rooting domain, with the cell *policy* assembled by a
+userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` object**).
+
+### C6a — per-cell resource-accounting domain (DONE, 2026-06-24)
+
+- `SYS_cell_stat(107)` aggregates one `CellId`'s live `{processes, residentPages,
+  cpuTicks, handles}` by an on-demand scan of the bounded process table (filtering on
+  each process's existing `pSecurity[i].cell`) — no per-cell counter table, so there
+  is **zero per-op accounting cost** and a reaped process drops out of the total for
+  free. Gated on `capProcessInspect`. `vfsHandleCount(slot:)` supplies the per-process
+  handle count. Children already inherit the parent's `CellId`; everything runs in
+  `globalCell` today.
+- Acceptance: `make c6-cell-accounting-test` — the `/bin/cellstatprobe` boot probe
+  forks 3 children (pipe-barrier liveness, no timing race), asserts the aggregate grew
+  by exactly 3 live processes (and pages + handles grew), then that reaping them
+  reclaims the charge (`processes` back to baseline). Single-core and `-smp 4`; wired
+  into `make test`.
+- Non-goals: C6a does not create cells (C6b), confine namespaces (C6c), or enforce
+  limits/teardown (C6d) — it only makes the accounting domain observable.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.

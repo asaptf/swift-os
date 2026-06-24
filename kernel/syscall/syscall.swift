@@ -107,6 +107,7 @@ private let sysShmRingMap: UInt = 103      // shmring_map(id) → base user VA (
 private let sysShmRingClose: UInt = 104    // shmring_close(id) — drop the creator's base reference to a channel (LA3)
 private let sysVirtToPhys: UInt = 105      // virt_to_phys(va, handle_fd) -> PA — resolve a VA to its physical address for a userland device driver's DMA/virtqueue setup, gated on owning a mappable device grant (C5i)
 private let sysTtyInject: UInt = 106       // tty_inject(byte) — feed one byte to the kernel tty input as if typed on the console; the userland input driver's path to the line discipline (C5j); needs capConsole
+private let sysCellStat: UInt = 107        // cell_stat(cellId, buffer, cap) -> live process count; aggregate per-cell resource-accounting domain {processes, residentPages, cpuTicks, handles} (C6a); needs capProcessInspect
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -428,6 +429,10 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
             ttyOnInput(UInt8(truncatingIfNeeded: frame[0]))
             result = 0
         }
+    } else if number == sysCellStat {
+        // C6a: aggregate the resource-accounting domain of one CellId.
+        result = processCellStat(cell: UInt32(truncatingIfNeeded: frame[0]),
+                                 buffer: frame[1], capacity: frame[2])
     } else {
         result = Errno.noSys.code
     }

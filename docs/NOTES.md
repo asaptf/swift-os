@@ -3200,6 +3200,55 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   stack + the primary NIC path stays a separate long-horizon epic; real-HW cache
   maintenance for userland DMA and userland IRQ delivery are the related hardening gaps.
 
+### C6a — per-cell resource-accounting domain (DONE, 2026-06-24)
+
+- **Goal.** First step of the C6 Cell arc: put the long-reserved per-process
+  `CellId` tag to work as a resource-accounting domain. A Cell is a userland
+  composition over small kernel primitives (docs/CAPABILITIES.md §5), so the kernel
+  gains only an aggregation read, not a fat `Cell` object. Everything still runs in
+  `globalCell` (raw 1); cell creation arrives in C6b.
+- **Design — on-demand aggregation, no per-cell counter table.** The per-process
+  counters (`pResPages`, `pCpuTicks`, and the handle table) are already the single
+  source of truth, so `processCellStat` aggregates on demand: a single bounded scan
+  of the process table (`maxProc = 16`) summing the live processes whose
+  `pSecurity[i].cell` matches. This adds **zero per-op accounting cost** (nothing on
+  the hot allocation/charge paths changed) and **zero drift risk**, and "a reaped
+  process's charge is removed" falls out for free — a reaped slot is `pUnused` and is
+  excluded from the next read. This mirrors the existing `processStatSnapshot` /
+  `processSysInfo` scans. A maintained per-cell table was rejected: it would be a
+  second source of truth in the trusted core (against priority #1) and would have to
+  carefully decrement on reap to match the same acceptance.
+- **`SYS_cell_stat` (107).** `cell_stat(cellId, buffer, cap)` → live process count
+  in the cell, writing a 32-byte record: `cell:u32, processes:u32,
+  residentPages:u64, cpuTicks:u64, handles:u32, reserved:u32`. Gated on
+  `capProcessInspect` — reading a domain's resource usage is inspection authority
+  (this is the first enforcement of that capability; it only affects this new
+  syscall). `vfsHandleCount(slot:)` (new, in vfs.swift) counts a process's in-use
+  handles for the aggregate. Children already inherit the parent's `CellId` (the
+  whole `ProcessSecurityContext` is copied on fork/spawn), so everything is charged
+  to `globalCell` today — verified by the probe.
+- **Userland bridge.** `swift_user.h` adds `struct swiftos_cell_stat` and
+  `swiftos_cell_query(cell, out)` — named `_query` (not `_stat`) so the function does
+  not collide with the struct tag when imported into Swift (one namespace for types
+  and functions), the same convention as `swiftos_device_query` vs
+  `swiftos_device_info`.
+- **Probe `/bin/cellstatprobe`.** Runs as a boot probe (kernel/main.swift): reads the
+  baseline cell_stat, forks 3 children each blocked on a pipe barrier (deterministic,
+  no sleep/timing race), re-reads (asserts `processes == baseline + 3` and that pages
+  + handles grew), closes the pipe so the children hit EOF and exit, reaps them, and
+  re-reads (asserts `processes == baseline` — charge reclaimed). Observed run:
+  baseline `processes=1 residentPages=20 handles=3` → with-children `4 / 144 / 20` →
+  after-reap `1 / 36 / 3` (the residual page delta is the parent's own heap growth
+  during the run; the children's charge is fully reclaimed and the process + handle
+  counts return exactly to baseline).
+- **Acceptance.** `make c6-cell-accounting-test` boots the base image single-core and
+  under `-smp 4` and requires the three report lines + the `C6a OK` verdict, with no
+  `C6a FAIL`/`panic:`. Wired into `make test`.
+- **Next (C6b).** `SYS_cell_create` allocates a fresh `CellId` and returns a
+  `HandleKind.cell` control handle; spawn-into-cell charges a child's resources to a
+  non-global cell — the first time `cell_stat` reports a domain other than
+  `globalCell`.
+
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 
 - **Scope.** Added `make c5-test` as the review-facing aggregate for C5

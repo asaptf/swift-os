@@ -221,6 +221,10 @@ int swiftos_tty_inject(unsigned char byte) {
     return tty_inject(byte);
 }
 
+int swiftos_cell_query(unsigned int cell, struct swiftos_cell_stat *out) {
+    return cell_stat(cell, out, sizeof(*out));
+}
+
 // Volatile MMIO/ring accessors (C5i). volatile guarantees the access is not
 // elided or reordered by the compiler; on the Device-nGnRE register window the
 // memory type also prevents hardware reordering. For the virtqueue (normal RAM)

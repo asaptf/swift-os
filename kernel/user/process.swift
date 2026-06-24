@@ -43,6 +43,7 @@ private let maxProc = 16
 private let procNameMax = 16
 private let psInfoRecordSize = 32
 private let procStatRecordSize = 56 // richer per-process record for /bin/top
+private let cellStatRecordSize = 32 // C6a per-cell accounting aggregate
 private let sysInfoLegacySize = 64  // original system-wide stats blob for /bin/top
 private let sysInfoCpuMax = 8
 private let sysInfoSize = sysInfoLegacySize + 8 + (sysInfoCpuMax * 16)
@@ -3424,6 +3425,45 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
         for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
     }
     return total
+}
+
+/// SYS_cell_stat (C6a): aggregate the live resource usage of a single CellId
+/// domain. The kernel keeps no separate per-cell counter table — a Cell is a
+/// userland composition, and the per-process counters (pResPages / pCpuTicks /
+/// the handle table) are the single source of truth (docs/CAPABILITIES.md §5).
+/// We aggregate on demand by scanning the bounded process table and summing the
+/// processes whose CellId tag matches, so there is zero per-op accounting cost
+/// and a reaped process (slot back to pUnused) drops out of the total for free.
+///
+/// Record layout (32 bytes, naturally aligned): cell:u32, processes:u32,
+/// residentPages:u64, cpuTicks:u64, handles:u32, reserved:u32. Returns the live
+/// process count in the cell (>= 0), or a negative errno. Gated on
+/// capProcessInspect — reading another domain's resource usage is inspection
+/// authority.
+func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int {
+    if (processCurrentCaps() & capProcessInspect) == 0 { return Errno.perm.code }
+    if capacity < UInt(cellStatRecordSize) { return Errno.invalid.code }
+    guard let dst = userWritableBuffer(buffer, UInt(cellStatRecordSize)) else {
+        return Errno.invalid.code
+    }
+    var processes: UInt32 = 0
+    var residentPages: UInt64 = 0
+    var cpuTicks: UInt64 = 0
+    var handles: UInt32 = 0
+    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
+        processes += 1
+        residentPages &+= UInt64(pResPages[i])
+        cpuTicks &+= pCpuTicks[i]
+        handles &+= UInt32(truncatingIfNeeded: vfsHandleCount(slot: i))
+    }
+    let raw = UnsafeMutableRawPointer(dst)
+    raw.storeBytes(of: rawCell, toByteOffset: 0, as: UInt32.self)
+    raw.storeBytes(of: processes, toByteOffset: 4, as: UInt32.self)
+    raw.storeBytes(of: residentPages, toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: cpuTicks, toByteOffset: 16, as: UInt64.self)
+    raw.storeBytes(of: handles, toByteOffset: 24, as: UInt32.self)
+    raw.storeBytes(of: UInt32(0), toByteOffset: 28, as: UInt32.self)
+    return Int(processes)
 }
 
 private func sysInfoCpuCount() -> UInt32 {

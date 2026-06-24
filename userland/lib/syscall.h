@@ -113,6 +113,7 @@
 #define SYS_SHMRING_CLOSE       104
 #define SYS_VIRT_TO_PHYS        105
 #define SYS_TTY_INJECT          106
+#define SYS_CELL_STAT           107
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -591,6 +592,14 @@ static inline long virt_to_phys(unsigned long va, int handle_fd) {
 // CAP_CONSOLE. Returns 0, or -1 (EPERM) without the capability.
 static inline int tty_inject(unsigned char byte) {
     return (int)__syscall3(SYS_TTY_INJECT, (long)byte, 0, 0);
+}
+
+// C6a: read a CellId's aggregate resource-accounting domain into `buf` (a
+// 32-byte record: cell:u32, processes:u32, residentPages:u64, cpuTicks:u64,
+// handles:u32, reserved:u32). Needs CAP_PROCESS_INSPECT. Returns the live
+// process count in the cell (>= 0), or a small negative errno.
+static inline int cell_stat(unsigned int cell, void *buf, unsigned long cap) {
+    return (int)__syscall3(SYS_CELL_STAT, (long)cell, (long)buf, (long)cap);
 }
 
 // U1c: mark the A/B slot booted this session healthy (CONFIRMED), so it stops
