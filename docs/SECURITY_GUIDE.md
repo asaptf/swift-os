@@ -111,7 +111,7 @@ architecture.
 | `capSpawn` and `capProcessInspect` are scaffold bits | They are part of the identity model, but not the main enforcement boundary yet |
 | `capLogExport` is explicit | Local log export exists, but no seeded account receives the bit by default |
 | Drivers and networking are still in kernel | C5d proves virtio-input or pseudo fallback discovery metadata plus an opaque device grant, but real MMIO/IRQ/DMA driver handoff remains roadmap work |
-| Single global cell today | `CellId` exists as a field; real Cells are future work |
+| Cells implemented (C6a–C6e) | The `CellId` tag is a real isolation/accounting domain: per-cell resource accounting + resident-page cap, namespace-root confinement, handle-gated spawn-into-cell, and member enumerate + teardown. The system still boots into `globalCell`; services are placed in cells explicitly by a supervisor. Isolation strength depends on the supervisor + handle discipline (CAPABILITIES §5.3), with the per-process tag + namespace root as the kernel backstop. |
 
 Do not describe the current system as a finished object-capability OS. It is a
 capability-aware OS with an active migration path toward object-scoped authority.

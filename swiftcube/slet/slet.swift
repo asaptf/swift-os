@@ -17,10 +17,11 @@
 // SC3 adds the node-side reconcile loop (Reconciler) and the C6 Cell-supervisor seam
 // (CellSupervisor + image verifier + C6 adapter). All of it compiles into this ELF, so
 // the build itself proves the reconcile loop is Embedded-Swift-clean. The SC3 self-check
-// below exercises the image-verifier seam and the C6 adapter and reports the C6 gap
-// HONESTLY: C6 (the userland Cell supervisor) is not implemented yet — only the CellId
-// tag + syscalls 51–53 exist — so the adapter is a documented stub, the real Cell path
-// is deferred, and the SC3 QEMU end-to-end gate is not claimed.
+// below exercises the image-verifier seam and the C6 adapter and reports the SwiftCube
+// gap HONESTLY: kernel C6 IS implemented (cell_create/cell_spawn/cell_pids/cell_destroy,
+// syscalls 107–111), but the SwiftCube-side mapping from a CellSpec onto those syscalls
+// is the SC3 milestone and is not wired yet — so the adapter still returns `.unavailable`
+// and the SC3 QEMU end-to-end gate is not claimed.
 
 private func bootRNG(_ buf: inout [UInt8]) {
     buf.withUnsafeMutableBytes { p in

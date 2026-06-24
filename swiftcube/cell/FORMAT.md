@@ -28,11 +28,13 @@ Two implementations sit behind it:
 
 ## 2. C6 status — honest scope
 
-**C6 is not implemented.** Per CAPABILITIES §6 and `docs/RISK_REMEDIATION_ROADMAP.md`,
-only the per-process `CellId` tag and syscalls 51–53 exist; the C1–C6
-capability/handle/IPC/cell arc has not been built. SC3 is the first SwiftCube milestone
-gated on C6, so — following the milestone's "scope honestly" rule — the SwiftCube value
-lands now without faking the kernel:
+**Kernel C6 is implemented; the SwiftCube adapter is not yet wired to it (SC3).** Per
+CAPABILITIES §6 and `docs/NOTES.md` (C6a–C6e), the kernel exposes the full Cell arc —
+`cell_stat(107)`, `cell_create(108)`, `cell_spawn(109)`, `cell_pids(110)`,
+`cell_destroy(111)`. What is still missing is the SwiftCube-side mapping from a CellSpec
+onto those syscalls (the SC3 milestone). So — following the milestone's "scope honestly"
+rule — the SwiftCube value lands now without faking the kernel, and `C6CellSupervisor`
+still returns `.unavailable` until SC3 wires it:
 
 - the reconcile loop is built against the `CellSupervisor` seam and is fully exercised by
   the host fake;
