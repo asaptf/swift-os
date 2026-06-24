@@ -643,15 +643,30 @@ userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` obje
   is the supervisor walking the enumerated job tree, with the per-process tag +
   destroy-refuses-while-live as the backstop.
 
-### C6 arc — DONE (C6a + C6b + C6c + C6d, 2026-06-24)
+### C6e — one service per cell, end to end (DONE, 2026-06-24)
+
+- The payoff: `/bin/cellsvcprobe` (a cell supervisor) assembles a cell = { a /www
+  namespace root + a restricted handle set + a resident-page cap }, `cell_spawn`s a
+  real request/reply service `/bin/cellhello` inside it with exactly three granted
+  handles (stdout + the two RPC endpoint ends), drives a live `ping`→`pong`
+  round-trip, confirms `cell_stat` charges the service to the cell, then stops +
+  reaps it and `cell_destroy`s the cell. The service proves its own isolation on
+  startup (a path outside /www is denied; the ungranted fd 0 is absent).
+- Acceptance: `make c6-cell-service-test` — the cell-assembly + the service's two
+  isolation proofs + the pong round-trip + `processes=1` + clean teardown + `C6e OK`.
+  Single-core + `-smp 4`; wired into `make test`.
+
+### C6 arc — DONE (C6a + C6b + C6c + C6d + C6e, 2026-06-24)
 
 The per-process CellId tag is now a real (still cheap) isolation/accounting domain,
 assembled and supervised entirely in userland over small kernel primitives — **no fat
 in-kernel `Cell` object** (CAPABILITIES.md §5). A cell has per-domain resource
 accounting (C6a), is created + launched into by handle (C6b), confines its processes
-to a namespace root (C6c), and supports a resource cap + member enumeration + explicit
-teardown (C6d). Remaining Cell work: the C6e end-to-end "one supervised service per
-cell" payoff, and richer limits (handle/CPU caps, intra-member page enforcement).
+to a namespace root (C6c), supports a resource cap + member enumeration + explicit
+teardown (C6d), and hosts a real isolated service end to end (C6e — the
+"one service per cell" shape). Remaining Cell work (future): richer limits (handle/CPU
+caps, intra-member page enforcement), nested cells, and lifting a production service
+(the hosted site / a model server) into a cell.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

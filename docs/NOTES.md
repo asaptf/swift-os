@@ -3369,13 +3369,42 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   cap-refused/enumerate/EBUSY/destroy/reuse/stale-reject markers + `C6d OK`, with no
   `C6d FAIL`/`panic:`. C6a–C6c and the C3 confinement markers stay green. Wired into
   `make test`.
-- **C6 arc complete (C6a–C6d).** The CellId tag is now a real domain: per-cell
-  accounting (C6a), creation + spawn-into-cell by handle (C6b), a confined namespace
-  root (C6c), and a resource cap + enumerate + teardown lifecycle (C6d) — all as a
-  userland-supervisor composition over a cheap kernel tag, no fat in-kernel Cell
-  object (CAPABILITIES.md §5). Remaining: the C6e end-to-end "one service per cell"
-  payoff (a real supervised service hosted in a cell), and richer limits
-  (handle/CPU caps, intra-member page enforcement).
+- **Next (C6e).** The end-to-end "one service per cell" payoff: a supervisor that
+  assembles a cell { root + restricted handles + cap }, runs a real service inside,
+  proves isolation, and tears it down.
+
+### C6e — one service per cell, end to end (DONE, 2026-06-24)
+
+- **Goal.** The payoff of the arc: compose C6a–C6d into the "one model server per
+  cell" / AI-serving-cell shape from CAPABILITIES.md — a supervisor assembles a cell
+  = { a namespace root view + a restricted handle set + a resource cap }, launches a
+  *real* request/reply service inside it, drives live work, proves isolation, and
+  tears it down cleanly.
+- **Service `/bin/cellhello`.** A small IPC service: on startup it proves its own
+  isolation — `open("/etc/motd")` is denied (confined to the cell's /www root) and a
+  read of fd 0 fails (it was never granted that handle) — then serves "ping"→"pong"
+  over the two granted endpoints until it receives "stop" (or the endpoint EOFs). Its
+  *only* handles are stdout (fd 1), the command recv end (fd 3), and the reply send
+  end (fd 4); no ambient authority.
+- **Supervisor `/bin/cellsvcprobe`.** Creates the two endpoints, `cell_create("/www",
+  cap=80, …)`, then `cell_spawn`s the service into the cell with exactly those three
+  handle specs (the restricted set). It drives a live round-trip (`ipc_send "ping"` →
+  `ipc_recv "pong"`), confirms `cell_stat` charges the service to the cell
+  (processes=1), then sends "stop", reaps the service, and `cell_destroy`s the cell —
+  asserting the accounting is reclaimed.
+- **Acceptance.** `make c6-cell-service-test` (single-core + `-smp 4`) requires the
+  cell-assembly marker, the service's two isolation proofs, the pong round-trip,
+  `cell_stat processes=1`, the clean stop + teardown, and `C6e OK`, with no
+  `C6e FAIL`/`CELLHELLO FAIL`/`panic:`. Wired into `make test`.
+- **C6 arc complete (C6a–C6e).** The per-process CellId tag is a real (still cheap)
+  isolation/accounting domain, assembled + supervised entirely in userland over small
+  kernel primitives — **no fat in-kernel `Cell` object** (CAPABILITIES.md §5). A cell
+  has per-domain accounting (C6a), is created + launched into by handle (C6b),
+  confines its processes to a namespace root (C6c), enforces a resource cap +
+  enumerate + teardown lifecycle (C6d), and hosts a real isolated service end to end
+  (C6e). Remaining Cell work (future): richer limits (handle/CPU caps, intra-member
+  page enforcement), nested cells, and lifting a production service (the hosted site /
+  a model server) into a cell.
 
 ### C5 aggregate readiness gate (DONE, 2026-06-10)
 

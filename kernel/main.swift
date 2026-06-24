@@ -497,6 +497,21 @@ private func runCellLifecycleProbe() {
     uartPuts("\n")
 }
 
+// C6e: the end-to-end "one service per cell" payoff. A cell supervisor assembles a
+// cell { namespace root + restricted handle set + resource cap }, launches a real
+// request/reply service (/bin/cellhello) inside it, drives a live round-trip, proves
+// the service is isolated + accounted, and tears it down cleanly.
+private func runCellServiceProbe() {
+    uartPuts("swift-os C6e: one-service-per-cell end-to-end probe\n")
+    let (img, sz) = demoImage("/bin/cellsvcprobe")
+    if img == 0 { return }
+    let (p, n, argc) = packArgs(["cellsvcprobe"])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts("C6e cell service probe exited, code ")
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+}
+
 private func runFsDemo() {
     uartPuts("swift-os M8b: VFS (dirs, stat, getdents, cwd, tmpfs)\n")
     let (img, sz) = demoImage("/bin/fsdemo")
@@ -1493,6 +1508,7 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         runCellCreateProbe()
         runCellNamespaceProbe()
         runCellLifecycleProbe()
+        runCellServiceProbe()
         runFsDemo()
         runSecurityDemo()
         runIdentityDemo()
