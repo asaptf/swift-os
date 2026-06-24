@@ -41,10 +41,11 @@ rm -rf "$REPO_DIR"
 }
 
 # Base image whose default pkg repo is our HTTP-served rsync repo. rsync only
-# needs the OS to boot (busybox ash + pkg + networking), so build without the
-# bash port (INCLUDE_BASH=0) to stay independent of it.
+# needs the OS to boot (a shell + pkg + networking), so keep the image free of
+# the heavy shell ports (bash/zsh) and point root's login shell at busybox ash
+# (/bin/sh) — SH3 defaults it to /bin/zsh, which need not be built for this test.
 rm -f "$BASE"
-( cd "$ROOT" && make BASE_IMG=build/base-rsync-repo.img PKG_DEFAULT_REPO_URL="$REPO_URL" INCLUDE_BASH=0 INCLUDE_ZSH=0 base-image ) >/dev/null 2>&1 || {
+( cd "$ROOT" && make BASE_IMG=build/base-rsync-repo.img PKG_DEFAULT_REPO_URL="$REPO_URL" INCLUDE_BASH=0 INCLUDE_ZSH=0 ROOT_LOGIN_SHELL=/bin/sh base-image ) >/dev/null 2>&1 || {
   echo "FAIL: cannot build default-repo base image" >&2; exit 2;
 }
 ( cd "$ROOT" && make package-lua-install-fixture ) >/dev/null 2>&1 || {
@@ -126,7 +127,9 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
-await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
+# Shell-agnostic readiness marker (console-login prints this before exec'ing the
+# root login shell — /bin/zsh per SH3 — so it does not assume a specific shell).
+await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 send_line "pkg update"
 await "pkg: catalog updated $REPO_URL" 120 || drive_fail "pkg update did not complete from default repo"

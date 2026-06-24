@@ -369,6 +369,11 @@ endif
 # do not need the full bash port — e.g. the rsync smoke test, which only needs
 # the OS to boot under busybox ash + pkg + networking — can build a base image
 # without it: `make base-image INCLUDE_BASH=0`. Default preserves the bash bake.
+# Optional override for root's login shell in the staged base image. Empty keeps
+# whatever base/etc/swos/passwd ships (SH3: /bin/zsh). Tests that must boot without
+# the heavy shell ports set ROOT_LOGIN_SHELL=/bin/sh (busybox ash, always present).
+ROOT_LOGIN_SHELL ?=
+
 INCLUDE_BASH ?= 1
 ifeq ($(INCLUDE_BASH),1)
 BASH_BASE_ELF := $(BUILD)/bash.elf
@@ -3174,6 +3179,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
+	if [ -n "$(ROOT_LOGIN_SHELL)" ]; then perl -i -pe 's{^(root(?::[^:]*){4}:).*$$}{$${1}$(ROOT_LOGIN_SHELL)}' $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi
 	if [ -n "$(SSHD_AUTHORIZED_KEYS_FILE)" ]; then cp "$(SSHD_AUTHORIZED_KEYS_FILE)" $(BASE_ROOT)/etc/ssh/authorized_keys; fi
