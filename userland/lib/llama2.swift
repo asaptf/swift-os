@@ -103,6 +103,60 @@ enum Mathf {
     static func rsqrtf(_ x: Float) -> Float { return 1.0 / sqrtf(x) }
 }
 
+// MARK: - NEON-vectorized hot-path dot products (LM1)
+//
+// The matmul inner products dominate the forward pass. These helpers express
+// them with Swift `SIMD` types, which the aarch64 backend lowers to NEON
+// (fmul/fadd .4s for fp32, smull/saddw for int8) when the translation unit is
+// built with `+neon` (see USER_SWIFT_FLAGS_NEON). The same source still compiles
+// on the host (native NEON), because `SIMD` is part of the Embedded-Swift-
+// compatible stdlib subset.
+//
+// Numerics: the int8 group dot accumulates in Int32 with wrapping ops, so it is
+// bit-for-bit identical to the sequential scalar sum (integer add is associative
+// under two's-complement wraparound) — proven in QEMU by /bin/simdprobe across
+// positive/mixed/negative/extreme lanes and a preemption-heavy 4000-iter qmatmul
+// loop. The fp32 dot uses a 4-lane accumulator + horizontal sum, reassociating
+// the float additions — a sub-ULP change the host engine tests pin to llama2.c.
+//
+// LM1b note: the int8 path here is safe under +neon, but the activation
+// quantizer (QLlama2.quantizeBuf) is NOT — its +neon codegen diverges in QEMU,
+// so it carries an `@_optimize(none)`. See that function and docs/NOTES.md (LM1).
+
+/// int8·int8 -> int32 over `gs` elements (one quant group). `gs` is a multiple
+/// of the group size (32/64) in real checkpoints; a scalar tail covers any
+/// remainder so the helper is total for arbitrary lengths.
+@inline(__always)
+func llamaQDotGroup(_ x: UnsafePointer<Int8>, _ w: UnsafePointer<Int8>, _ gs: Int) -> Int32 {
+    var acc = SIMD16<Int32>(repeating: 0)
+    var k = 0
+    while k + 16 <= gs {
+        let xa: SIMD16<Int8> = UnsafeRawPointer(x + k).loadUnaligned(as: SIMD16<Int8>.self)
+        let wa: SIMD16<Int8> = UnsafeRawPointer(w + k).loadUnaligned(as: SIMD16<Int8>.self)
+        acc &+= SIMD16<Int32>(truncatingIfNeeded: xa) &* SIMD16<Int32>(truncatingIfNeeded: wa)
+        k += 16
+    }
+    var s = acc.wrappedSum()
+    while k < gs { s &+= Int32(x[k]) &* Int32(w[k]); k += 1 }
+    return s
+}
+
+/// float·float -> float over `n` elements (4-lane SIMD + scalar tail).
+@inline(__always)
+func llamaFDot(_ a: UnsafePointer<Float>, _ b: UnsafePointer<Float>, _ n: Int) -> Float {
+    var acc = SIMD4<Float>(repeating: 0)
+    var j = 0
+    while j + 4 <= n {
+        let va = UnsafeRawPointer(a + j).loadUnaligned(as: SIMD4<Float>.self)
+        let vb = UnsafeRawPointer(b + j).loadUnaligned(as: SIMD4<Float>.self)
+        acc += va * vb
+        j += 4
+    }
+    var s = acc.sum()
+    while j < n { s += a[j] * b[j]; j += 1 }
+    return s
+}
+
 // MARK: - Model configuration + weights
 
 struct LlamaConfig {
@@ -241,10 +295,7 @@ final class Llama2 {
     private func matmul(_ xout: UnsafeMutablePointer<Float>, _ xin: UnsafePointer<Float>,
                         _ wt: UnsafePointer<Float>, _ n: Int, _ d: Int) {
         for i in 0..<d {
-            var val: Float = 0
-            let row = wt + i * n
-            for j in 0..<n { val += row[j] * xin[j] }
-            xout[i] = val
+            xout[i] = llamaFDot(wt + i * n, xin, n)   // LM1: NEON-vectorized
         }
     }
 
@@ -497,6 +548,15 @@ final class QLlama2: LlamaModel {
     /// scale = max|v| / 127.0f, q = round(v/scale) — half away from zero, all
     /// float32. An all-zero group gets q=0, s=0 (its contribution is zero either
     /// way, since the group's scale multiplies the whole partial sum).
+    // LM1b: this function's +neon-optimized codegen produces wrong activation
+    // quantization in QEMU (bisected from the /bin/llmd Q8 serving divergence:
+    // exempting exactly this function — abs-max reduction + round/saturate per
+    // group — makes the served story match the runq.c reference again, while the
+    // NEON `qmatmul`/`matmul` dot products stay correct). Pinned to scalar codegen
+    // here; it is O(n) per matmul (vs qmatmul's O(d·n)), so the cost is marginal.
+    // Root-causing the exact miscompiled op (likely the `.rounded()`/saturate or
+    // the max reduction) and dropping this pin is follow-up work. See docs/NOTES.md.
+    @_optimize(none)
     private func quantizeBuf(_ qOut: UnsafeMutablePointer<Int8>, _ sOut: UnsafeMutablePointer<Float>,
                              _ xin: UnsafePointer<Float>, _ n: Int) {
         let groups = n / gs
@@ -528,10 +588,9 @@ final class QLlama2: LlamaModel {
             let iN = i * n
             var j = 0
             while j + gs <= n {
-                var ival: Int32 = 0
-                for k in 0..<gs {
-                    ival += Int32(xq[j + k]) * Int32(w.q[iN + j + k])
-                }
+                // LM1: NEON-vectorized int32 group dot (bit-identical to scalar,
+                // proven in QEMU by /bin/simdprobe).
+                let ival = llamaQDotGroup(xq + j, w.q + (iN + j), gs)
                 val += Float(ival) * w.s[(iN + j) / gs] * xs[j / gs]
                 j += gs
             }

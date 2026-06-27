@@ -1082,6 +1082,33 @@ test, committed, review before the next):
 
 Full design + per-stage findings to go in `docs/NOTES.md` (V-series) as work lands.
 
+## LM-series — scaling inference toward a real LLM (IN PROGRESS, 2026-06-27)
+
+The flagship profile is AI hosting. The I-series (I0–I8) proved CPU inference end to
+end, but only on TinyStories (stories15M, a toy). The LM-series turns that proof into
+a product: serve a real (~1B) LLM, fast. The hard parts are (1) performance — the
+scalar engine is far too slow for a 1B model under emulation, and (2) model delivery —
+a real model cannot live in the 46 MB signed base (H3 loads it into RAM), so it needs a
+dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
+
+- **LM1** (DONE, 2026-06-27): NEON-vectorize both matmul hot paths (`Llama2.matmul`
+  fp32 + `QLlama2.qmatmul` int8) via Swift `SIMD`. New `USER_SWIFT_FLAGS_NEON` build
+  variant; `/bin/llm` + `/bin/llmd` use it. Q8 serving ~6–7 → ~21 tok/s (≈3×) in
+  QEMU, output still matches the runq.c reference. LM1b found+fixed the one function
+  whose `+neon` codegen miscompiled (`quantizeBuf`, pinned scalar via
+  `@_optimize(none)`). Gates: `make test` runs `llm_run_test`, `llm_serve_test`,
+  `simdprobe_test`. See `docs/NOTES.md` (LM1/LM1b).
+- **LM2** (planned): multi-threaded matmul across the SMP cores (threads + futex from
+  the S-series) — split the output-row loop across workers. Acceptance: same output,
+  parallel speedup, per-CPU utilization visible in `top`.
+- **LM3** (planned): model delivery off a dedicated virtio-blk "model disk" (mmap from
+  there, not the base) + a larger-RAM inference QEMU profile.
+- **LM4** (planned): first real model — **TinyLlama-1.1B-Chat** (Llama2 arch, rope
+  10000, SentencePiece 32k, GQA → runs on the current engine almost unchanged),
+  exported to the existing v2-Q8 format, signed bundle, e2e generation + tokens/sec.
+- **LM5** (planned): GGUF + Q4_K_M parser (smaller footprint, opens the GGUF
+  ecosystem). **LM6** (planned): sampling (temp/top-p/top-k) + chat template.
+
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
 Once Phase 1 lands (real handles + IPC, basic SMP, at least one driver out of the kernel), the forward build-out makes swift-os a complete OS for its product profiles. Recorded here so Phase 1 decisions don't foreclose it; **not** to be implemented early:
