@@ -1026,13 +1026,23 @@ test, committed, review before the next):
   and `/mnt/data1` with different content (a shared store would alias them), proves a
   `/data`-only file is absent on volume 1, and that both volumes read back their own
   content after reboot. Single-core; the existing D0–D3 datafs gates stay green.
-- **V2** (planned): volume identity + declarative manifest. Add a 128-bit UUID +
-  human label to the datafs superblock; mount-by-label/UUID; read the mount table
-  from `/data/.system/mounts` at boot and mount the volumes it names; enforce the
-  `/mnt/*`-only + empty-dir + never-format-non-blank guardrails; anchor the root
-  volume by cmdline UUID. Acceptance: a manifest-driven mount of a labeled volume,
-  a missing volume leaves its mountpoint empty (boot does not fail), and a guardrail
-  refusal (mount over `/bin`, or format a non-blank disk) is rejected.
+- **V2** (volume identity + declarative manifest) — split into V2a/V2b/V2c:
+  - **V2a** (DONE, 2026-06-27): volume identity + mount-by-label. The datafs
+    superblock gains a 128-bit UUID (generated at format, stable across reboot) and
+    a human label (provisioned offline, preserved across format). `vfsMountDataFs`
+    now picks the root `/data` disk by IDENTITY — the first **unlabeled** datafs disk
+    — and mounts every **labeled** disk at `/mnt/<label>`, so /data and the storage
+    volumes are deterministic regardless of scan/attach order. Acceptance:
+    `make v2-label-test` boots with the labeled disk attached FIRST and still mounts
+    it at `/mnt/media` (not `/data`), the file written there survives reboot, and the
+    volume UUID is non-zero and identical across reboot. D0–D3 + V1 stay green.
+  - **V2b** (planned): the declarative mount manifest `/data/.system/mounts` (read at
+    boot, mounts the volumes it names by label/UUID) + the guardrails (`/mnt/*`-only,
+    empty-dir mountpoint, never auto-format a non-blank unknown disk). Acceptance: a
+    manifest-driven mount, a missing volume leaves its mountpoint empty (boot does not
+    fail), and a guardrail refusal (mount over `/bin`, or format a non-blank disk).
+  - **V2c** (planned): anchor the root `/data` volume by UUID in the kernel cmdline
+    (the single pinned identity), with blank-disk-format-as-root on first boot.
 - **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
   mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
   through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)
