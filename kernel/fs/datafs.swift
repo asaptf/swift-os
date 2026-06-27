@@ -338,8 +338,12 @@ private func dfsFormat(_ vol: Int, _ totalBlocks: Int) -> Bool {
 
 // Mount volume `vol`'s datafs on `device`, formatting it on first boot. Returns
 // false if the device is absent, too small, or I/O fails. Slot 0 binds the
-// legacy /data disk (device = virtioBlkDataDeviceIndex()).
-func datafsMount(_ vol: Int, _ device: Int) -> Bool {
+// legacy /data disk (device = virtioBlkDataDeviceIndex()). V2c: when `usePinned`
+// is set and the disk is being formatted (first boot), the root volume's UUID is
+// stamped to `pinnedLo`/`pinnedHi` (the kernel-cmdline anchor) instead of being
+// generated, so future boots match the root by that UUID.
+func datafsMount(_ vol: Int, _ device: Int,
+                 pinnedLo: UInt64 = 0, pinnedHi: UInt64 = 0, usePinned: Bool = false) -> Bool {
     if !dfsValidVol(vol) || device < 0 { return false }
     if dfsVolumes[vol].mounted { return true }
     dfsVolumes[vol].device = device
@@ -361,9 +365,11 @@ func datafsMount(_ vol: Int, _ device: Int) -> Bool {
         // without the SWDATAFS magic — an unknown, possibly-data-bearing disk — is
         // never auto-formatted; refuse the mount instead of wiping it.
         if !dfsHasMagic(z) { dfsZeroBuf(z, DFS_BS); return false }
-        // First boot (or an older format): generate a fresh UUID; dfsFormat then
-        // stamps UUID + the captured label into the new superblock.
-        dfsGenUuid(vol)
+        // First boot (or an older format): take the cmdline-pinned UUID for the
+        // root (V2c), else generate a fresh one; dfsFormat then stamps UUID + the
+        // captured label into the new superblock.
+        if usePinned { dfsVolumes[vol].uuidLo = pinnedLo; dfsVolumes[vol].uuidHi = pinnedHi }
+        else { dfsGenUuid(vol) }
         // Allocate the bitmap before format (format fills it).
         if dfsVolumes[vol].bitmapPtr == 0 {
             let bitsPerBlock = DFS_BS * 8
@@ -441,6 +447,25 @@ func datafsPeekLabel(_ device: Int, _ dst: UnsafeMutablePointer<UInt8>, _ max: I
         got = ll
     }
     return got
+}
+
+// V2c: read a device's datafs UUID without mounting. Returns (lo, hi, formatted);
+// `formatted` is true only for an already-v2-formatted disk — a blank/SWDATAFS-
+// stamped but unformatted disk returns false so the caller can format it as the
+// pinned root.
+func datafsPeekUuid(_ device: Int) -> (lo: UInt64, hi: UInt64, formatted: Bool) {
+    if device < 0 { return (0, 0, false) }
+    var rlo: UInt64 = 0, rhi: UInt64 = 0, fmt = false
+    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 512) { buf in
+        guard let base = buf.baseAddress else { return }
+        if virtioBlkVolumeReadRange(device, 0, base, 512) != 0 { return }
+        let p = UInt(bitPattern: base)
+        if !dfsHasMagic(p) || dfsU32(p, SB_VERSION) != DFS_VERSION { return }
+        rlo = dfsU64(p, SB_UUID)
+        rhi = dfsU64(p, SB_UUID + 8)
+        fmt = true
+    }
+    return (rlo, rhi, fmt)
 }
 
 // --- inode introspection (used by the VFS mirror) ---------------------------

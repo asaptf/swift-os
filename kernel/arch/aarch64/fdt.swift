@@ -309,6 +309,48 @@ func fdtParse(_ base: UnsafePointer<UInt8>) -> PlatformInfo {
 /// device tree). `platformInit` copies it into the kernel-wide `recoveryMode`.
 var fdtRecoveryRequested = false
 
+/// V2c: set by `fdtParseInto` when /chosen/bootargs carries `datafs.root=<hex>` —
+/// the 128-bit UUID that pins which datafs disk serves the root /data tier (the
+/// single pinned identity). High 16 hex = uuidHi, next 16 = uuidLo. `platformInit`
+/// copies these into the kernel-wide anchor consulted by `vfsMountDataFs`.
+var fdtDatafsRootSet = false
+var fdtDatafsRootLo: UInt64 = 0
+var fdtDatafsRootHi: UInt64 = 0
+
+private func fdtHexDigit(_ c: UInt8) -> Int {
+    if c >= 0x30 && c <= 0x39 { return Int(c - 0x30) }
+    if c >= 0x61 && c <= 0x66 { return Int(c - 0x61) + 10 }
+    if c >= 0x41 && c <= 0x46 { return Int(c - 0x41) + 10 }
+    return -1
+}
+
+/// V2c: scan `bootargs` for `datafs.root=<hex>` and parse up to 32 hex digits into
+/// the pinned root UUID (first 16 -> high 64 bits, next 16 -> low 64 bits).
+private func fdtParseDatafsRoot(_ val: UnsafePointer<UInt8>, _ len: Int) {
+    let key: StaticString = "datafs.root="
+    let kp = key.utf8Start
+    let kl = key.utf8CodeUnitCount
+    if kl == 0 || len < kl { return }
+    var i = 0
+    while i + kl <= len {
+        var k = 0
+        while k < kl && rd8(val, i + k) == kp[k] { k += 1 }
+        if k == kl {
+            var hi: UInt64 = 0, lo: UInt64 = 0, count = 0
+            var j = i + kl
+            while j < len && count < 32 {
+                let d = fdtHexDigit(rd8(val, j))
+                if d < 0 { break }
+                if count < 16 { hi = (hi << 4) | UInt64(d) } else { lo = (lo << 4) | UInt64(d) }
+                count += 1; j += 1
+            }
+            if count > 0 { fdtDatafsRootHi = hi; fdtDatafsRootLo = lo; fdtDatafsRootSet = true }
+            return
+        }
+        i += 1
+    }
+}
+
 /// True if `val[0..<len]` contains the ASCII `token` as a substring.
 private func bytesContain(_ val: UnsafePointer<UInt8>, _ len: Int, _ token: StaticString) -> Bool {
     let t = token.utf8Start
@@ -331,6 +373,9 @@ private func bytesContain(_ val: UnsafePointer<UInt8>, _ len: Int, _ token: Stat
 func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     info.reset()
     fdtRecoveryRequested = false
+    fdtDatafsRootSet = false
+    fdtDatafsRootLo = 0
+    fdtDatafsRootHi = 0
     if be32(base) != fdtMagic { return }
 
     // Validate the header before trusting any offset. The kernel scans RAM for
@@ -434,8 +479,9 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                     }
                 } else if depth == 2 && inDevice {
                     if devIsChosen {
-                        if cstrEquals(propName, "bootargs") && bytesContain(valPtr, len, "recovery") {
-                            fdtRecoveryRequested = true
+                        if cstrEquals(propName, "bootargs") {
+                            if bytesContain(valPtr, len, "recovery") { fdtRecoveryRequested = true }
+                            fdtParseDatafsRoot(valPtr, len)
                         }
                     }
                     if cstrEquals(propName, "reg") {

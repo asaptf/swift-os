@@ -107,6 +107,15 @@ var platform = Platform()
 // corrupted. Exposed to userland via the recovery_mode syscall.
 var recoveryMode = false
 
+// V2c: the pinned root /data volume UUID from the kernel command line
+// (`datafs.root=<hex>`), or unset. When set, `vfsMountDataFs` selects the /data
+// disk by this UUID (the single pinned identity) and, on first boot, formats a
+// blank unlabeled disk as the root stamping this UUID. Unset => the V2a default
+// (first unlabeled disk).
+var datafsRootUuidSet = false
+var datafsRootUuidLo: UInt64 = 0
+var datafsRootUuidHi: UInt64 = 0
+
 // H5: true once platformInit derived the hardware map from ACPI (the real
 // Hetzner firmware path), false on the device-tree path. Drives the boot log.
 private(set) var platformDiscoveredFromAcpi = false
@@ -185,6 +194,11 @@ func platformInit(_ dtbPhys: UInt, _ acpiRsdp: UInt) {
     platform.dtbBase = parsedDtb
     recoveryMode = fdtRecoveryRequested
     if recoveryMode { uartPuts("K4 recovery: kernel command line requested recovery mode\n") }
+
+    datafsRootUuidSet = fdtDatafsRootSet
+    datafsRootUuidLo = fdtDatafsRootLo
+    datafsRootUuidHi = fdtDatafsRootHi
+    if datafsRootUuidSet { uartPuts("V2c: kernel command line pins the /data root volume UUID\n") }
 
     if info.haveRam {
         platform.ramBase = info.ramBase

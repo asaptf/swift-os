@@ -7471,6 +7471,31 @@ root `/data` volume (the decision recorded in the V-series design).
 - Remaining V2: **V2c** (anchor the `/data` root by UUID in the kernel cmdline +
   blank-disk-format-as-root on first boot).
 
+### V2c — cmdline-UUID root anchor (DONE, 2026-06-27)
+
+The `/data` root is pinnable to a specific volume by UUID — the single pinned
+identity from the V-series design, the most explicit root selection.
+
+- `kernel/arch/aarch64/fdt.swift`: the `/chosen/bootargs` parser (added by K4 for
+  the `recovery` token) now also extracts `datafs.root=<32 hex>` →
+  `fdtDatafsRoot{Set,Lo,Hi}` (first 16 hex = uuidHi, next 16 = uuidLo).
+- `kernel/arch/aarch64/platform.swift`: `platformInit` copies those into the
+  kernel-wide `datafsRootUuid{Set,Lo,Hi}` (mirrors `recoveryMode`). DTB path only —
+  the ACPI/Hetzner path leaves it unset (→ V2a default), a noted follow-up.
+- `kernel/fs/datafs.swift`: `datafsPeekUuid(device)` reads a disk's UUID without
+  mounting (only `formatted` for a v2 disk). `datafsMount` gains `usePinned` — when
+  formatting the root on first boot it stamps the pinned UUID instead of generating.
+- `kernel/vfs/vfs.swift`: when a pin is set, `vfsMountDataFs` selects `/data` as the
+  disk whose UUID matches; if none matches (first boot) it formats the first blank
+  UNLABELED disk as the root with the pin; no pin → V2a (first unlabeled). A
+  `V2c root: uuid=<lo>:<hi>` marker reports the root identity.
+- Test: `tests/v2_anchor_test.sh` (gate `make v2-anchor-test`, needs `dtc`) bakes
+  `datafs.root=…0a…14` (→ `uuid=20:10`) into a DTB; two blank unlabeled disks; boot 1
+  (A,B) formats the pinned root + writes an anchor file; boot 2 SWAPS disk order and
+  the pinned disk is still `/data` (anchor file present) — proving the UUID anchor
+  beats scan order. D0–D3 + V1 + V2a + V2b stay green.
+- **V2 complete (V2a–V2c).** Next: V3 (runtime capability-gated `mount()`/`unmount()`).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

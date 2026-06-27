@@ -1049,8 +1049,25 @@ test, committed, review before the next):
     3 boots prove auto-mount → manifest remap (`media` → `/mnt/store`, the file
     follows the disk, `/mnt/media` gone) → guardrail refusal (`media /etc/evil`
     refused, the disk left unmounted, `/etc` untouched). D0–D3 + V1 + V2a stay green.
-  - **V2c** (planned): anchor the root `/data` volume by UUID in the kernel cmdline
-    (the single pinned identity), with blank-disk-format-as-root on first boot.
+  - **V2c** (DONE, 2026-06-27): anchor the root `/data` volume by UUID in the kernel
+    cmdline (the single pinned identity). The FDT `/chosen/bootargs` parser (shared
+    with K4's `recovery` flag) extracts `datafs.root=<32 hex>` into a kernel-wide
+    anchor; `vfsMountDataFs` selects `/data` as the disk whose datafs UUID matches it
+    (`datafsPeekUuid`), and on first boot formats the first blank UNLABELED disk as
+    the root stamping the pinned UUID (`datafsMount(..., usePinned:)`) instead of a
+    generated one. No pin => the V2a default (first unlabeled). Acceptance:
+    `make v2-anchor-test` (needs `dtc` to bake the pin into a DTB) — two blank
+    unlabeled disks; boot 1 (order A,B) formats the pinned root + writes an anchor
+    file; boot 2 SWAPS the disk order and the pinned disk is still `/data` (same
+    UUID, anchor file present), proving the anchor beats scan order. D0–D3 + V1 +
+    V2a + V2b stay green.
+
+  **V2 complete (V2a + V2b + V2c).** datafs volumes have a stable identity (UUID +
+  label); `/data` and `/mnt/<label>` mounts are identity-driven and order-independent;
+  a declarative `/data/.system/mounts` manifest controls mounting within `/mnt`
+  guardrails; and the root is pinnable by a cmdline UUID. Next: **V3** (runtime
+  capability-gated `mount()`/`unmount()`), then **V4** (real Hetzner Volume — the
+  enumeration port only).
 - **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
   mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
   through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)

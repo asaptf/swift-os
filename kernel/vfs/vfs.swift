@@ -2040,24 +2040,57 @@ private func vfsMountDataFs(_ root: Int) {
     if !virtioBlkDataAvailable() { return }
     let n = virtioBlkDataVolumeCount()
 
-    // V2a: choose the root /data disk by IDENTITY, not scan order — it is the
-    // first UNLABELED datafs disk. Labeled disks are storage volumes that mount
-    // under /mnt/<label>. This makes /data deterministic when extra disks /
-    // Hetzner Volumes are attached in an arbitrary order. (Fallback: if every
-    // disk is labeled, the first one serves /data so the system still boots.)
+    // Choose the root /data disk by IDENTITY, not scan order, so /data is
+    // deterministic when extra disks / Hetzner Volumes attach in any order.
+    //   V2c: if the kernel cmdline pins a root UUID, match the disk carrying it;
+    //        on first boot (no match), format the first blank UNLABELED disk as the
+    //        root, stamping the pinned UUID.
+    //   V2a: otherwise the root is the first UNLABELED datafs disk.
     var rootOrd = -1
     var i = 0
-    while i < n {
-        var lbl = [UInt8](repeating: 0, count: 32)
-        let ll = lbl.withUnsafeMutableBufferPointer {
-            datafsPeekLabel(virtioBlkDataDeviceIndexAt(i), $0.baseAddress!, $0.count)
+    if datafsRootUuidSet {
+        i = 0
+        while i < n {
+            let u = datafsPeekUuid(virtioBlkDataDeviceIndexAt(i))
+            if u.formatted && u.lo == datafsRootUuidLo && u.hi == datafsRootUuidHi { rootOrd = i; break }
+            i += 1
         }
-        if ll == 0 { rootOrd = i; break }
-        i += 1
+        if rootOrd < 0 {
+            i = 0
+            while i < n {
+                let dev = virtioBlkDataDeviceIndexAt(i)
+                if !datafsPeekUuid(dev).formatted {   // blank disk -> candidate root
+                    var lbl = [UInt8](repeating: 0, count: 32)
+                    let ll = lbl.withUnsafeMutableBufferPointer { datafsPeekLabel(dev, $0.baseAddress!, $0.count) }
+                    if ll == 0 { rootOrd = i; break }
+                }
+                i += 1
+            }
+        }
+    }
+    if rootOrd < 0 {
+        i = 0
+        while i < n {
+            var lbl = [UInt8](repeating: 0, count: 32)
+            let ll = lbl.withUnsafeMutableBufferPointer {
+                datafsPeekLabel(virtioBlkDataDeviceIndexAt(i), $0.baseAddress!, $0.count)
+            }
+            if ll == 0 { rootOrd = i; break }
+            i += 1
+        }
     }
     if rootOrd < 0 { rootOrd = 0 }
 
-    if !datafsMount(0, virtioBlkDataDeviceIndexAt(rootOrd)) { uartPuts("D1: datafs mount failed\n"); return }
+    let rootDev = virtioBlkDataDeviceIndexAt(rootOrd)
+    let rootOK = datafsRootUuidSet
+        ? datafsMount(0, rootDev, pinnedLo: datafsRootUuidLo, pinnedHi: datafsRootUuidHi, usePinned: true)
+        : datafsMount(0, rootDev)
+    if !rootOK { uartPuts("D1: datafs mount failed\n"); return }
+    uartPuts("V2c root: uuid=")
+    uartPutUInt(datafsVolumeUuidLo(0))
+    uartPuts(":")
+    uartPutUInt(datafsVolumeUuidHi(0))
+    uartPuts("\n")
     let data = addDir(root, "data", readOnly: false)
     if data < 0 { return }
     nodes[data].dataFs = true
