@@ -906,8 +906,8 @@ $(BUILD)/user_devicemmapprobe.o: userland/devicemmapprobe.c userland/lib/syscall
 $(BUILD)/user_identitydemo.o: userland/identitydemo.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/identitydemo.c -o $@
 
-$(BUILD)/user_console-login.o: userland/console-login.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/console-login.swift kernel/crypto/sha256.swift -o $@
+$(BUILD)/user_console-login.o: userland/console-login.swift userland/lib/swos_identity.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/console-login.swift userland/lib/swos_identity.swift kernel/crypto/sha256.swift -o $@
 
 $(BUILD)/user_passwd.o: userland/passwd.swift userland/lib/swos_identity.swift kernel/crypto/sha256.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/passwd.swift userland/lib/swos_identity.swift kernel/crypto/sha256.swift -o $@

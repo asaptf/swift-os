@@ -863,10 +863,16 @@ Design (full crash analysis in the `swos_identity.swift` header):
   and the host test alike. Gate: `make test` runs `tests/identity_test.swift`
   (PBKDF2 vectors + the full crash/rollback permutation matrix proving the
   anti-rollback property). No boot-path change yet.
-- **K2 (planned):** `/bin/passwd` — verify old password, write the new passwd bank
-  (ping-pong) + advance the anchor, honest `fsync`/report, capability-gated.
-- **K3 (planned):** console-login resolves through the overlay; reboot-persistence
-  and fail-closed acceptance in QEMU.
+- **K2 (DONE):** `/bin/passwd` — self-service change: verify old password, write the
+  new passwd bank (ping-pong) + advance the anchor, honest `fsync`/report. Salt from
+  the kernel RNG (`swiftos_random`). Gate: `tests/passwd_change_test.sh` (login →
+  change ×2 → original rejected, all within one boot). Requires the PT1 process-table
+  fix to avoid boot-time exec exhaustion.
+- **K3 (DONE):** console-login authenticates through the shared resolver, so a
+  changed password works at login and the default is refused; a provisioned-but-
+  corrupt store fails closed (recovery message) instead of restoring the default.
+  Gate: `tests/passwd_persist_test.sh` — two QEMU boots over one data disk prove the
+  change persists across reboot (old/default rejected, new password accepted).
 - **K4 (planned):** boot-flag recovery path so fail-closed never bricks the box.
 
 ## H-series — bare-metal Hetzner ARM bring-up (IN PROGRESS, 2026-06-16)
