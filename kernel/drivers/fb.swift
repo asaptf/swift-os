@@ -41,6 +41,57 @@ private var g_cols: UInt = 0, g_rows: UInt = 0
 private let FG: UInt32 = 0xFFFFFFFF
 private let BG: UInt32 = 0x00000000
 
+// 16-colour ANSI/VGA palette, stored as the framebuffer's native 32-bpp word.
+// QEMU's ramfb / edk2 GOP on aarch64 `virt` is XRGB8888 (little-endian memory
+// order B,G,R,X), so a 0x00RRGGBB literal lands in the right channels — white
+// (0xFFFFFF) and black (0) are format-agnostic, the colours are verified by a
+// framebuffer screendump. Index 7 ("white"/lightgray, the default foreground)
+// is pure white so the boot banner and shell stay white-on-black exactly as
+// before; bold brightens a 0–7 index into its 8–15 twin (the linux console's
+// bright-on-bold convention that ncurses relies on for the A_BOLD colours).
+private let PALETTE: InlineArray<16, UInt32> = [
+    0x000000,   // 0 black
+    0xAA0000,   // 1 red
+    0x00AA00,   // 2 green
+    0xAA5500,   // 3 brown/yellow
+    0x0000AA,   // 4 blue
+    0xAA00AA,   // 5 magenta
+    0x00AAAA,   // 6 cyan
+    0xFFFFFF,   // 7 white (default fg; pure white keeps the boot banner white)
+    0x555555,   // 8 bright black (gray)
+    0xFF5555,   // 9 bright red
+    0x55FF55,   // 10 bright green
+    0xFFFF55,   // 11 bright yellow
+    0x5555FF,   // 12 bright blue
+    0xFF55FF,   // 13 bright magenta
+    0x55FFFF,   // 14 bright cyan
+    0xFFFFFF,   // 15 bright white
+]
+
+// Current SGR (Select Graphic Rendition) state, applied to glyphs as they are
+// drawn. fg/bg are palette indices 0–7; bold brightens the foreground; reverse
+// swaps fg/bg (mc's menu/selection bars). DEFAULT_ATTR packs the reset state
+// (fg 7 = white, bg 0 = black) into the per-cell attribute byte below.
+private let DEFAULT_ATTR: UInt8 = 0x07     // (bg 0 << 4) | (fg 7)
+private var g_sgr_fg: UInt8 = 7
+private var g_sgr_bg: UInt8 = 0
+private var g_sgr_bold = false
+private var g_sgr_reverse = false
+
+// Effective (fg,bg) palette indices for the current SGR state, after applying
+// bold (brightens fg) and reverse (swaps fg/bg). Packed as bg<<4 | fg.
+@inline(__always)
+private func sgrAttr() -> UInt8 {
+    var fg = g_sgr_fg
+    var bg = g_sgr_bg
+    if g_sgr_bold { fg |= 0x08 }
+    if g_sgr_reverse { let t = fg; fg = bg; bg = t }
+    return (bg << 4) | (fg & 0x0F)
+}
+
+@inline(__always) private func attrFg(_ a: UInt8) -> UInt32 { PALETTE[Int(a & 0x0F)] }
+@inline(__always) private func attrBg(_ a: UInt8) -> UInt32 { PALETTE[Int((a >> 4) & 0x0F)] }
+
 // Shadow text buffer: the glyph drawn in every cell, so the blinking cursor can
 // restore whatever character it sits on rather than blanking it. Bounded so the
 // buffer is a fixed BSS array; larger framebuffers just use the top-left region.
@@ -57,6 +108,13 @@ private let BG: UInt32 = 0x00000000
 private let MAX_COLS = 256
 private let MAX_ROWS = 128
 private var g_cells: InlineArray<32768, UInt8> = .init(repeating: UInt8(ascii: " "))
+
+// Parallel shadow of the colour attribute (bg<<4 | fg palette index) drawn in
+// every cell, so the cursor lift, line erase and scroll repaint each glyph in
+// its own colours rather than the default white-on-black. Same fixed-BSS
+// InlineArray discipline as g_cells (heap-free, statically initialised to the
+// reset attribute — no fb_init fill loop, which would fault under +strict-align).
+private var g_cell_attr: InlineArray<32768, UInt8> = .init(repeating: 0x07)  // DEFAULT_ATTR
 
 // Reverse-video block cursor, blinked from the timer tick. g_cur_* records where
 // the cursor is currently painted so it can be lifted when it moves or blinks off.
@@ -254,44 +312,55 @@ func fb_init(_ base: UInt64, _ width: UInt32, _ height: UInt32, _ stride_px: UIn
 @_cdecl("fb_available")
 func fb_available() -> Int32 { g_fb != 0 ? 1 : 0 }
 
+// Text console dimensions (columns, rows) for TIOCGWINSZ, so curses apps (mc)
+// size themselves to the whole framebuffer window rather than a fixed 80x24.
+// (0, 0) when there is no framebuffer (serial-only console).
+func fbConsoleDims() -> (cols: UInt, rows: UInt) {
+    g_fb == 0 ? (0, 0) : (g_cols, g_rows)
+}
+
 @_cdecl("fb_phys_base")
 func fb_phys_base() -> UInt64 { g_fb_base }
 
 @_cdecl("fb_phys_size")
 func fb_phys_size() -> UInt64 { g_fb_size }
 
-// Render a glyph at (cx,cy). When `inverted` the fg/bg swap, giving a solid
-// reverse-video block — that is how the text cursor is drawn over its cell.
-private func fb_render(_ c: UInt8, _ cx: UInt, _ cy: UInt, _ inverted: Bool) {
+// Render a glyph at (cx,cy) with explicit foreground/background colours: lit
+// font pixels take `fg`, the cell background `bg`. The text cursor draws its
+// reverse-video block by passing the cell's colours swapped.
+private func fb_render(_ c: UInt8, _ cx: UInt, _ cy: UInt, _ fg: UInt32, _ bg: UInt32) {
     let glyph = Int(c & 0x7F) * GLYPH_H
     let px0 = UInt64(cx) * UInt64(GLYPH_W)
     let py0 = UInt64(cy) * UInt64(GLYPH_H)
-    let on = inverted ? BG : FG
-    let off = inverted ? FG : BG
     for row in 0..<GLYPH_H {
         let bits = font8x16[glyph + row]   // VGA bit order: bit 7 is the leftmost pixel
         let lineBase = (py0 + UInt64(row)) * UInt64(g_stride) + px0
         for col in 0..<GLYPH_W {
-            fbStorePixel(lineBase + UInt64(col), ((bits >> (7 - col)) & 1) != 0 ? on : off)
+            fbStorePixel(lineBase + UInt64(col), ((bits >> (7 - col)) & 1) != 0 ? fg : bg)
         }
         fb_clean(g_fb_base + lineBase * 4, UInt64(GLYPH_W) * 4)
     }
 }
 
-// Draw a printable glyph at the cursor cell and remember it in the shadow buffer.
+// Draw a printable glyph at the cursor cell in the current SGR colours, and
+// remember both the glyph and its colour attribute in the shadow buffers.
 private func fb_draw_glyph(_ c: UInt8, _ cx: UInt, _ cy: UInt) {
+    let attr = sgrAttr()
     if cx < UInt(MAX_COLS) && cy < UInt(MAX_ROWS) {
         g_cells[Int(cy) * MAX_COLS + Int(cx)] = c
+        g_cell_attr[Int(cy) * MAX_COLS + Int(cx)] = attr
     }
-    fb_render(c, cx, cy, false)
+    fb_render(c, cx, cy, attrFg(attr), attrBg(attr))
 }
 
-// Repaint a cell from the shadow buffer (used to lift the cursor off it).
+// Repaint a cell from the shadow buffers (used to lift the cursor off it),
+// restoring both its glyph and its colour.
 private func fb_restore_cell(_ cx: UInt, _ cy: UInt) {
-    var c = (cx < UInt(MAX_COLS) && cy < UInt(MAX_ROWS))
-        ? g_cells[Int(cy) * MAX_COLS + Int(cx)] : UInt8(ascii: " ")
+    let inBounds = cx < UInt(MAX_COLS) && cy < UInt(MAX_ROWS)
+    var c = inBounds ? g_cells[Int(cy) * MAX_COLS + Int(cx)] : UInt8(ascii: " ")
     if c < 0x20 { c = UInt8(ascii: " ") }
-    fb_render(c, cx, cy, false)
+    let attr = inBounds ? g_cell_attr[Int(cy) * MAX_COLS + Int(cx)] : DEFAULT_ATTR
+    fb_render(c, cx, cy, attrFg(attr), attrBg(attr))
 }
 
 private func fb_scroll() {
@@ -302,21 +371,29 @@ private func fb_scroll() {
         fbStorePixel(i, fbLoadPixel(i + row_px))
         i += 1
     }
+    // New bottom row clears to the current background (background-colour erase),
+    // so a scroll inside a coloured screen keeps that colour rather than black.
+    let newAttr = sgrAttr()
+    let newBg = attrBg(newAttr)
     let bottom = UInt64(g_h) * UInt64(g_stride)
     i = move
     while i < bottom {
-        fbStorePixel(i, 0x00000000)
+        fbStorePixel(i, newBg)
         i += 1
     }
-    // Mirror the scroll in the shadow buffer so the cursor restores correctly.
+    // Mirror the scroll in both shadow buffers so the cursor restores correctly.
     var r: UInt = 1
     while r < g_rows {
         for c in 0..<Int(g_cols) {
             g_cells[Int(r - 1) * MAX_COLS + c] = g_cells[Int(r) * MAX_COLS + c]
+            g_cell_attr[Int(r - 1) * MAX_COLS + c] = g_cell_attr[Int(r) * MAX_COLS + c]
         }
         r += 1
     }
-    for c in 0..<Int(g_cols) { g_cells[Int(g_rows - 1) * MAX_COLS + c] = UInt8(ascii: " ") }
+    for c in 0..<Int(g_cols) {
+        g_cells[Int(g_rows - 1) * MAX_COLS + c] = UInt8(ascii: " ")
+        g_cell_attr[Int(g_rows - 1) * MAX_COLS + c] = newAttr
+    }
     g_cur_drawn = false  // its old painted cell scrolled away
     fb_clean(g_fb_base, g_fb_size)
 }
@@ -327,8 +404,8 @@ private func fb_scroll() {
 // program like vi drives it with VT100 control sequences, not just printable
 // text. We parse the subset those programs use: cursor positioning (CUP),
 // relative cursor moves (CUU/CUD/CUF/CUB, CHA, VPA), erase-in-display (ED) and
-// erase-in-line (EL), and the alternate-screen private modes. SGR (colour /
-// standout) is consumed and ignored. Anything unrecognised is swallowed, never
+// erase-in-line (EL), SGR colour/bold/reverse (so mc draws its blue panels), and
+// the alternate-screen private modes. Anything unrecognised is swallowed, never
 // printed, so a stray escape can't turn into garbage glyphs. A real serial
 // terminal still sees the raw bytes via the UART unchanged.
 
@@ -362,17 +439,22 @@ private func fb_lift_cursor() {
     }
 }
 
-// Clear cells [c0, c1) on row r in both the shadow buffer and the framebuffer.
+// Clear cells [c0, c1) on row r to a blank in the current background colour
+// (background-colour erase), updating both shadow buffers and the framebuffer.
+// mc relies on this to flood its panels with the skin's blue background.
 private func fb_clear_row_span(_ r: UInt, _ c0: UInt, _ c1in: UInt) {
     if r >= g_rows { return }
     var c1 = c1in
     if c1 > g_cols { c1 = g_cols }
+    let attr = sgrAttr()
+    let fg = attrFg(attr), bg = attrBg(attr)
     var c = c0
     while c < c1 {
         if r < UInt(MAX_ROWS) && c < UInt(MAX_COLS) {
             g_cells[Int(r) * MAX_COLS + Int(c)] = UInt8(ascii: " ")
+            g_cell_attr[Int(r) * MAX_COLS + Int(c)] = attr
         }
-        fb_render(UInt8(ascii: " "), c, r, false)
+        fb_render(UInt8(ascii: " "), c, r, fg, bg)
         c += 1
     }
 }
@@ -439,7 +521,37 @@ private func fb_csi_dispatch(_ final: UInt8) {
             }
             // ?25 (cursor show/hide) and other private modes: ignored.
         }
-    default: break   // SGR ('m') and any other final byte: consumed, ignored
+    case UInt8(ascii: "m"): fb_apply_sgr()    // SGR — colour / bold / reverse
+    default: break   // any other final byte: consumed, ignored
+    }
+}
+
+// Apply an SGR (CSI m) sequence to the current colour state. Reads the raw
+// parameter list directly (not csi_param, which folds 0 into a default) because
+// 0 is a real SGR opcode (reset); an empty parameter list (ESC[m) means reset.
+private func fb_apply_sgr() {
+    let count = g_any ? (g_pidx + 1) : 0
+    if count == 0 {
+        g_sgr_fg = 7; g_sgr_bg = 0; g_sgr_bold = false; g_sgr_reverse = false
+        return
+    }
+    var i = 0
+    while i < count {
+        switch g_params[i] {
+        case 0:  g_sgr_fg = 7; g_sgr_bg = 0; g_sgr_bold = false; g_sgr_reverse = false
+        case 1:  g_sgr_bold = true
+        case 2, 22: g_sgr_bold = false             // faint / normal intensity
+        case 7:  g_sgr_reverse = true
+        case 27: g_sgr_reverse = false
+        case 30...37:   g_sgr_fg = UInt8(g_params[i] - 30)
+        case 39: g_sgr_fg = 7                       // default foreground
+        case 40...47:   g_sgr_bg = UInt8(g_params[i] - 40)
+        case 49: g_sgr_bg = 0                       // default background
+        case 90...97:   g_sgr_fg = UInt8(g_params[i] - 90 + 8)   // bright fg
+        case 100...107: g_sgr_bg = UInt8(g_params[i] - 100 + 8)  // bright bg
+        default: break    // 38/48 (256-/true-colour) and unknowns: ignored
+        }
+        i += 1
     }
 }
 
@@ -541,7 +653,10 @@ func fb_cursor_blink() {
     if g_blink_on && !g_cur_drawn && g_cx < g_cols && g_cy < g_rows {
         var c = g_cells[Int(g_cy) * MAX_COLS + Int(g_cx)]
         if c < 0x20 { c = UInt8(ascii: " ") }
-        fb_render(c, g_cx, g_cy, true)
+        // Reverse-video block: swap the cell's own fg/bg, so the cursor inverts
+        // whatever colour that cell carries rather than a fixed white block.
+        let attr = g_cell_attr[Int(g_cy) * MAX_COLS + Int(g_cx)]
+        fb_render(c, g_cx, g_cy, attrBg(attr), attrFg(attr))
         g_cur_col = g_cx
         g_cur_row = g_cy
         g_cur_drawn = true

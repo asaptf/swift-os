@@ -421,7 +421,7 @@ endif
 INCLUDE_MC ?= 0
 ifeq ($(INCLUDE_MC),1)
 MC_BASE_ELF := $(BUILD)/mc.elf
-MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc; mkdir -p $(BASE_ROOT)/usr/share/mc/skins; cp $(BUILD)/mc-skins/default.ini $(BASE_ROOT)/usr/share/mc/skins/default.ini
 else
 MC_BASE_ELF :=
 MC_PACK_CMD := echo "  (mc.elf NOT packed — build with INCLUDE_MC=1)"
@@ -3412,9 +3412,9 @@ run-gfx: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-bios $(AAVMF_CODE) \
-		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
-		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
-		-device virtio-blk-device,drive=swosbase \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=gfxesp -device virtio-blk-device,drive=gfxesp \
+		-drive file=$(BASE_IMG),format=raw,if=none,id=gfxbase,readonly=on \
+		-device virtio-blk-device,drive=gfxbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
 # ---- Hetzner-faithful local profile (H-series bare-metal bring-up) ---------

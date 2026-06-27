@@ -213,6 +213,7 @@ struct VirtioInputDecoder {
 
     // Decode one event; returns an ASCII byte to inject, or 0 for modifiers /
     // releases / unmapped keys (the caller tracks Shift state via this call).
+    // Single-byte only — special keys go through decodeSeq.
     mutating func decode(type: UInt16, code: UInt16, value: UInt32) -> UInt8 {
         if type != evKEY { return 0 }
         if code == 42 || code == 54 {            // L/R Shift
@@ -224,5 +225,55 @@ struct VirtioInputDecoder {
             return c
         }
         return 0
+    }
+
+    // Decode one event into the byte sequence to inject into the tty. Returns the
+    // ASCII byte (as a 1-element array) for ordinary keys, or the multi-byte
+    // ANSI/VT escape sequence the `linux` terminfo defines for the arrows, the
+    // function keys and the navigation cluster — so curses apps like mc see
+    // KEY_F(3), KEY_UP, etc. Empty for modifiers / releases / unmapped keys.
+    mutating func decodeSeq(type: UInt16, code: UInt16, value: UInt32) -> [UInt8] {
+        if type != evKEY { return [] }
+        if code == 42 || code == 54 {            // L/R Shift
+            shift = (value != 0)
+            return []
+        }
+        if value != 1 && value != 2 { return [] } // only press / auto-repeat
+
+        // evdev keycodes (Linux input-event-codes.h) -> `linux` terminfo escapes.
+        switch code {
+        case 103: return esc("[A")    // Up        kcuu1
+        case 108: return esc("[B")    // Down      kcud1
+        case 106: return esc("[C")    // Right     kcuf1
+        case 105: return esc("[D")    // Left      kcub1
+        case 102: return esc("[1~")   // Home      khome
+        case 107: return esc("[4~")   // End       kend
+        case 104: return esc("[5~")   // PageUp    kpp
+        case 109: return esc("[6~")   // PageDown  knp
+        case 110: return esc("[2~")   // Insert    kich1
+        case 111: return esc("[3~")   // Delete    kdch1
+        case 59:  return esc("[[A")   // F1        kf1
+        case 60:  return esc("[[B")   // F2        kf2
+        case 61:  return esc("[[C")   // F3        kf3
+        case 62:  return esc("[[D")   // F4        kf4
+        case 63:  return esc("[[E")   // F5        kf5
+        case 64:  return esc("[17~")  // F6        kf6
+        case 65:  return esc("[18~")  // F7        kf7
+        case 66:  return esc("[19~")  // F8        kf8
+        case 67:  return esc("[20~")  // F9        kf9
+        case 68:  return esc("[21~")  // F10       kf10
+        case 87:  return esc("[23~")  // F11       kf11
+        case 88:  return esc("[24~")  // F12       kf12
+        default:  break
+        }
+        let c = shift ? kmShift[Int(code & 0x7f)] : km[Int(code & 0x7f)]
+        return c != 0 ? [c] : []
+    }
+
+    // ESC + the literal tail, as a byte array.
+    private func esc(_ tail: StaticString) -> [UInt8] {
+        var out: [UInt8] = [0x1b]
+        tail.withUTF8Buffer { b in for x in b { out.append(x) } }
+        return out
     }
 }

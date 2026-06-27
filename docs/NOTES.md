@@ -86,22 +86,52 @@ console. `mc.elf` is a 1.5 MB static AArch64 binary → `/bin/mc`.
   1. `lib/tty/tty-ncurses.h` force-`#define ENABLE_SHADOWS 1` → disabled: dialog
      drop-shadows call ncurses *widechar* (`cchar_t`/`getcchar`/`mvadd_wchnstr`)
      which our 8-bit NC1 ncurses lacks. Shadows are cosmetic.
-  2. `src/main.c`: default `TERM=vt100` and `HOME=/tmp` at the top of `main()` —
+  2. `src/main.c`: default `TERM=linux` and `HOME=/tmp` at the top of `main()` —
      baked binaries inherit an empty environment, so without these MC aborts on
      "TERM unset" and then "Cannot create /.config/mc directory". `/tmp` is the
      writable tmpfs (kernel/vfs/vfs.swift), so `~/.config/mc` lands there.
+     `linux` (not the original `vt100`) is the PC-text-console terminfo, which
+     advertises 8 colours — so MC emits colour SGR and the framebuffer console
+     paints the blue skin. setenv overwrite=0, so an inherited TERM still wins
+     once env propagation through the login-exec path lands.
 - **compat additions** (also needed at link/compile): `mntent.h` gained `MOUNTED`
   + MNTTYPE/MNTOPT names (gnulib mountlist one-arg-getmntent path; stubs already
   report an empty mount list); new `sys/vfs.h` forwarding to `sys/statfs.h` (MC
   fsusage includes `<sys/vfs.h>` for `struct statfs`); `getsid()` stub in stubs.c.
-- **No skin file shipped.** MC uses its compiled-in default skin (one-time
-  "Default skin has been loaded" notice). Shipping `misc/skins/default.ini`
-  instead makes MC's skin parser **segfault** (NULL deref, FAR_EL1=0) on a
-  monochrome terminal — a real MC-on-mono bug; the built-in skin is the working
-  path. Filesystem free-space (statfs) and mount list are empty stubs.
-- **Carry-over for real use:** colors (mono vt100 only), the skin-parser crash,
-  and a system-wide `TERM`/`HOME` at the login-exec path (vs. the per-binary
-  defaults patched in here) are follow-ups, not blockers for the TUI proof.
+- **Blue skin shipped (2026-06-27).** `misc/skins/default.ini` is installed to
+  `/usr/share/mc/skins/default.ini` (build-mc.sh stages it to `build/mc-skins/`,
+  Makefile `MC_PACK_CMD` packs it under `INCLUDE_MC=1`). MC's compiled-in fallback
+  skin is hardcoded black&white (`lib/skin/ini-file.c
+  mc_skin_hardcoded_blackwhite_colors`), so colour requires the real skin. The
+  earlier NULL-deref skin-parser crash was specific to a *monochrome* terminal;
+  with `TERM=linux` (colour) MC takes the colour code path and the parser is fine.
+  The framebuffer console (`kernel/drivers/fb.swift`) now interprets SGR colour
+  (16-colour VGA palette, bold/reverse, bce) so the blue panels render on `-device
+  ramfb`; verified by a QMP framebuffer screendump (≈33% blue pixels). Filesystem
+  free-space (statfs) and mount list remain empty stubs.
+- **Window size + function keys (2026-06-27).** Two follow-ups so MC is usable in
+  the graphical window, not just colourful:
+  - *TIOCGWINSZ.* The `ioctl` stub (`userland/compat/stubs.c`) returned a hardcoded
+    24x80, so MC only used the top-left of the 800x600 ramfb window. New syscall
+    `SYS_GET_WINSIZE` (117) returns the framebuffer text-console dims
+    (`fbConsoleDims()` in fb.swift → `(cols, rows)`, e.g. 100x37 at 800x600; 0 when
+    serial-only). The stub calls it and falls back to 24x80 when 0. MC now fills the
+    whole window.
+  - *Arrows / F-keys.* The userland keyboard driver decoder
+    (`userland/lib/virtio_input_user.swift`) only mapped printable ASCII to a single
+    byte, so arrows and F-keys were dropped. New `decodeSeq()` emits the multi-byte
+    `linux`-terminfo escape sequences (arrows `\E[A`–`\E[D`, F1–F5 `\E[[A`–`\E[[E`,
+    F6–F12 `\E[17~`–`\E[24~`, Home/End/PgUp/PgDn/Ins/Del); `/bin/inputd` injects the
+    whole sequence. Subtle bug fixed: inputd printed its "C5j OK" announce *between*
+    injected bytes on the first key, splitting the escape — moved before the inject
+    loop. Verified via QMP keyboard events: Down moves the panel selection, F9
+    activates the menu bar (5 yellow hotkeys). NOTE: busybox isn't relinked, so the
+    shell/busybox-vi still see 24x80 (their stale `stubs.o`); `make busybox` would
+    propagate the winsize ioctl to them too.
+- **Carry-over for real use:** a system-wide `TERM`/`HOME` at the login-exec path
+  (env does not yet propagate through `console-login`'s `execve` to the shell's
+  children, so MC relies on its own per-binary `setenv` defaults) is a follow-up,
+  not a blocker for the TUI proof.
 
 ## GL1 GLib port (2026-06-23)
 

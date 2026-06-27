@@ -123,6 +123,7 @@
 #define SYS_KERNEL_INSTALL_COMMIT 114
 #define SYS_KERNEL_INSTALL_ABORT  115
 #define SYS_RECOVERY_MODE         116
+#define SYS_GET_WINSIZE           117
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
