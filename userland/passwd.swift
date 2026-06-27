@@ -196,6 +196,11 @@ func main(_ argc: Int32,
         swiftos_puts("passwd: cannot read security context\n")
         return 1
     }
+    // In recovery mode the current password is verified against the read-only base
+    // store, bypassing the (possibly lost/corrupt/fail-closed) overlay. The new
+    // password is still written to the overlay with a generation above the anchor
+    // watermark, which repairs the store on the next normal boot.
+    let recovery = swiftos_recovery_mode() != 0
 
     return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: SCRATCH_CAP) { sb in
         let s = UnsafeMutableRawPointer(sb.baseAddress!)
@@ -237,8 +242,10 @@ func main(_ argc: Int32,
                 var outLen = 0
                 let st0 = identityResolve(
                     name: namePtr, nameLen: nameLen, password: oldp, passwordLen: oldLen,
-                    passwd0: pw0p, passwd0Len: max(0, n0), passwd1: pw1p, passwd1Len: max(0, n1),
-                    anchor0: pv0p, anchor0Len: max(0, a0), anchor1: pv1p, anchor1Len: max(0, a1),
+                    passwd0: recovery ? nil : pw0p, passwd0Len: recovery ? 0 : max(0, n0),
+                    passwd1: recovery ? nil : pw1p, passwd1Len: recovery ? 0 : max(0, n1),
+                    anchor0: recovery ? nil : pv0p, anchor0Len: recovery ? 0 : max(0, a0),
+                    anchor1: recovery ? nil : pv1p, anchor1Len: recovery ? 0 : max(0, a1),
                     base: UnsafeRawPointer(s + R_BASE), baseLen: baseLen,
                     outLine: s + R_OUTLINE, outLineCap: 512, outLineLen: &outLen)
 

@@ -304,12 +304,33 @@ func fdtParse(_ base: UnsafePointer<UInt8>) -> PlatformInfo {
     return info
 }
 
+/// Set by `fdtParseInto` when the parsed DTB's `/chosen/bootargs` contains the
+/// token "recovery" (the kernel command line QEMU `-append` patches into the
+/// device tree). `platformInit` copies it into the kernel-wide `recoveryMode`.
+var fdtRecoveryRequested = false
+
+/// True if `val[0..<len]` contains the ASCII `token` as a substring.
+private func bytesContain(_ val: UnsafePointer<UInt8>, _ len: Int, _ token: StaticString) -> Bool {
+    let t = token.utf8Start
+    let tl = token.utf8CodeUnitCount
+    if tl == 0 || len < tl { return false }
+    var i = 0
+    while i + tl <= len {
+        var k = 0
+        while k < tl && rd8(val, i + k) == t[k] { k += 1 }
+        if k == tl { return true }
+        i += 1
+    }
+    return false
+}
+
 /// In-place hardware-map form used by the kernel to avoid large struct
 /// return/copy code in the early boot path, where strict alignment checking is
 /// already enabled and RAM is still Device-typed. SMP/PSCI discovery is a
 /// separate pass that runs after the MMU is enabled.
 func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     info.reset()
+    fdtRecoveryRequested = false
     if be32(base) != fdtMagic { return }
 
     // Validate the header before trusting any offset. The kernel scans RAM for
@@ -345,6 +366,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
 
     // Per depth-2 device node, accumulated as we see its properties.
     var inDevice = false
+    var devIsChosen = false
     var devIsMemory = false
     var devIsPl011 = false
     var devIsGic = false
@@ -368,6 +390,7 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
             depth += 1
             if depth == 2 {
                 inDevice = true
+                devIsChosen = nameStartsWith(namePtr, "chosen")
                 devIsMemory = nameStartsWith(namePtr, "memory")
                 devIsPl011 = false
                 devIsGic = false
@@ -410,6 +433,11 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                         sizeCells = Int(be32(valPtr))
                     }
                 } else if depth == 2 && inDevice {
+                    if devIsChosen {
+                        if cstrEquals(propName, "bootargs") && bytesContain(valPtr, len, "recovery") {
+                            fdtRecoveryRequested = true
+                        }
+                    }
                     if cstrEquals(propName, "reg") {
                         devRegPtr = valPtr
                     } else if cstrEquals(propName, "compatible") {

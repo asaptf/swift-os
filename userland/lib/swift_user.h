@@ -251,6 +251,12 @@ int  swiftos_kernel_install_commit(const void *entry);
 int  swiftos_kernel_install_abort(void);
 // Fetch the current security context; returns 0 on success.
 int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned long *caps);
+
+// K4: non-zero if the kernel command line (FDT /chosen/bootargs) requested
+// recovery mode — the physically-gated escape that makes console-login/passwd
+// authenticate against the read-only base store only, bypassing the /data
+// credential overlay and its fail-closed state.
+int  swiftos_recovery_mode(void);
 // Fetch the effective AND real security identity (any out-param may be NULL).
 // Effective = what the process can do now; real = who invoked it. They differ
 // only after a setuid-on-exec (e.g. /bin/sudo). Returns 0 on success.
