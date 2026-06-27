@@ -831,7 +831,7 @@ Follow-ups (not blocking): double-indirect blocks for >4 MiB files; moving the F
 into a userland service in line with the driver-serviceization arc; per-cell
 quotas on `/data`.
 
-## K-series — mutable credentials over the immutable base (IN PROGRESS, 2026-06-24)
+## K-series — mutable credentials over the immutable base (DONE, 2026-06-27)
 
 The identity store `/etc/swos/passwd` lives in the read-only, Ed25519-signed base
 image, so a password change cannot edit it in place — and must not, or it would
@@ -873,7 +873,21 @@ Design (full crash analysis in the `swos_identity.swift` header):
   corrupt store fails closed (recovery message) instead of restoring the default.
   Gate: `tests/passwd_persist_test.sh` — two QEMU boots over one data disk prove the
   change persists across reboot (old/default rejected, new password accepted).
-- **K4 (planned):** boot-flag recovery path so fail-closed never bricks the box.
+- **K4 (DONE):** boot-flag recovery path so fail-closed never bricks the box. The
+  kernel reads `/chosen/bootargs` from the parsed DTB; the token `recovery` sets a
+  kernel-wide `recoveryMode`, exposed to userland via the `recovery_mode` syscall
+  (116). In recovery, console-login and passwd authenticate against the read-only
+  base store only — bypassing the overlay and its fail-closed state — so an operator
+  with boot access logs in with factory credentials and re-provisions (the new
+  password is written above the anchor watermark, repairing the store). Physically
+  gated by boot access (the recovery flag rides in the loaded device tree). Gate:
+  `tests/passwd_recovery_test.sh` — four boots prove recovery bypasses a changed
+  overlay with factory creds, re-provisions, and that normal boots stay
+  overlay-authoritative.
+
+The K-series is complete: passwords are mutable over the immutable signed base via
+a crash-safe `/data` overlay, changes work at login and survive reboot, anti-rollback
+fails closed instead of reverting to default, and recovery prevents a brick.
 
 ## H-series — bare-metal Hetzner ARM bring-up (IN PROGRESS, 2026-06-16)
 

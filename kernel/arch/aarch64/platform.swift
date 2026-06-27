@@ -99,6 +99,14 @@
 
 var platform = Platform()
 
+// K4: true when the kernel command line (FDT /chosen/bootargs, via QEMU -append)
+// requested recovery mode. A physically-gated escape hatch: in recovery,
+// console-login/passwd authenticate against the read-only base store only,
+// bypassing the /data credential overlay (and its fail-closed state) so an
+// operator can regain access and re-provision after the overlay is lost or
+// corrupted. Exposed to userland via the recovery_mode syscall.
+var recoveryMode = false
+
 // H5: true once platformInit derived the hardware map from ACPI (the real
 // Hetzner firmware path), false on the device-tree path. Drives the boot log.
 private(set) var platformDiscoveredFromAcpi = false
@@ -175,6 +183,8 @@ func platformInit(_ dtbPhys: UInt, _ acpiRsdp: UInt) {
     }
 
     platform.dtbBase = parsedDtb
+    recoveryMode = fdtRecoveryRequested
+    if recoveryMode { uartPuts("K4 recovery: kernel command line requested recovery mode\n") }
 
     if info.haveRam {
         platform.ramBase = info.ramBase

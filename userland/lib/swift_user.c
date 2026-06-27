@@ -1058,6 +1058,10 @@ long swiftos_getpid(void) {
     return __syscall3(SYS_GETPID, 0, 0, 0);
 }
 
+int swiftos_recovery_mode(void) {
+    return (int)__syscall3(SYS_RECOVERY_MODE, 0, 0, 0);
+}
+
 void swiftos_thread_exit(void) {
     __syscall3(SYS_EXIT, 0, 0, 0);
     for (;;) {

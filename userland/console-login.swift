@@ -100,16 +100,25 @@ private func parseUInt(_ store: UnsafeRawPointer, _ start: Int, _ len: Int) -> U
 /// non-negative exit code if a matched login's exec path returned (an error).
 private func tryAuthenticate(_ s: UnsafeMutableRawPointer, _ baseLen: Int,
                              _ name: UnsafeMutablePointer<UInt8>, _ nameLen: Int,
-                             _ pass: UnsafeMutablePointer<UInt8>, _ passLen: Int) -> Int32 {
-    // Read the four overlay banks fresh (absent → nil).
-    let n0 = readFileInto("/data/swos/passwd.0", s + R_PW0, identityBankSize)
-    let n1 = readFileInto("/data/swos/passwd.1", s + R_PW1, identityBankSize)
-    let a0 = readFileInto("/data/swos/prov.0",   s + R_PV0, identityBankSize)
-    let a1 = readFileInto("/data/swos/prov.1",   s + R_PV1, identityBankSize)
-    let pw0: UnsafeRawPointer? = n0 >= 0 ? UnsafeRawPointer(s + R_PW0) : nil
-    let pw1: UnsafeRawPointer? = n1 >= 0 ? UnsafeRawPointer(s + R_PW1) : nil
-    let pv0: UnsafeRawPointer? = a0 >= 0 ? UnsafeRawPointer(s + R_PV0) : nil
-    let pv1: UnsafeRawPointer? = a1 >= 0 ? UnsafeRawPointer(s + R_PV1) : nil
+                             _ pass: UnsafeMutablePointer<UInt8>, _ passLen: Int,
+                             _ recovery: Bool) -> Int32 {
+    // Read the four overlay banks fresh (absent → nil). In recovery mode we skip
+    // the overlay entirely and resolve against the base store only — this also
+    // bypasses any fail-closed state, so an operator with boot access can log in
+    // with the factory credentials and re-provision (/bin/passwd).
+    var n0 = -1, n1 = -1, a0 = -1, a1 = -1
+    var pw0: UnsafeRawPointer? = nil, pw1: UnsafeRawPointer? = nil
+    var pv0: UnsafeRawPointer? = nil, pv1: UnsafeRawPointer? = nil
+    if !recovery {
+        n0 = readFileInto("/data/swos/passwd.0", s + R_PW0, identityBankSize)
+        n1 = readFileInto("/data/swos/passwd.1", s + R_PW1, identityBankSize)
+        a0 = readFileInto("/data/swos/prov.0",   s + R_PV0, identityBankSize)
+        a1 = readFileInto("/data/swos/prov.1",   s + R_PV1, identityBankSize)
+        if n0 >= 0 { pw0 = UnsafeRawPointer(s + R_PW0) }
+        if n1 >= 0 { pw1 = UnsafeRawPointer(s + R_PW1) }
+        if a0 >= 0 { pv0 = UnsafeRawPointer(s + R_PV0) }
+        if a1 >= 0 { pv1 = UnsafeRawPointer(s + R_PV1) }
+    }
 
     return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 512) { outb -> Int32 in
         let outLine = UnsafeMutableRawPointer(outb.baseAddress!)
@@ -182,6 +191,10 @@ func main(_ argc: Int32,
             swiftos_puts("console-login: cannot open /etc/swos/passwd\n")
             return 1
         }
+        let recovery = swiftos_recovery_mode() != 0
+        if recovery {
+            swiftos_puts("console-login: RECOVERY MODE — base credentials only; change the password to re-provision\n")
+        }
 
         return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: lineMax) { name in
             withUnsafeTemporaryAllocation(of: UInt8.self, capacity: lineMax) { pass in
@@ -197,7 +210,7 @@ func main(_ argc: Int32,
                     swiftos_set_echo(1)
                     swiftos_puts("\n")              // the Enter was not echoed
                     if pr < 0 { return 0 }
-                    let rc = tryAuthenticate(s, baseLen, name.baseAddress!, nl, pass.baseAddress!, pr)
+                    let rc = tryAuthenticate(s, baseLen, name.baseAddress!, nl, pass.baseAddress!, pr, recovery)
                     if rc >= 0 { return rc } // matched: success execs; non-zero only on error
                     if rc == -2 {
                         swiftos_puts("console-login: credential store unavailable; recovery required\n")

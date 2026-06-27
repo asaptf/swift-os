@@ -116,6 +116,7 @@ private let sysKernelInstallBegin: UInt = 112  // kernel_install_begin() — res
 private let sysKernelInstallWrite: UInt = 113  // kernel_install_write(buf, count) — append kernel-image bytes to the inactive ESP slot (OS-1c-2b); needs capConsole
 private let sysKernelInstallCommit: UInt = 114 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
 private let sysKernelInstallAbort: UInt = 115  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
+private let sysRecoveryMode: UInt = 116        // recovery_mode() -> 1 if the kernel command line requested recovery, else 0 (K4)
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -164,6 +165,9 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         result = processKill(Int(bitPattern: frame[0]), Int(bitPattern: frame[1]))
     } else if number == sysGetpid {
         result = processCurrentPid()
+    } else if number == sysRecoveryMode {
+        result = recoveryMode ? 1 : 0
+
     } else if number == sysFork {
         result = processFork(frame)
     } else if number == sysExecve {
