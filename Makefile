@@ -244,6 +244,17 @@ USER_SWIFT_FLAGS := \
 	-Xllvm -mattr=+strict-align,-neon \
 	-Xfrontend -function-sections \
 	-import-objc-header userland/lib/swift_user.h
+# LM1: NEON-enabled variant for the SIMD-vectorized inference engine. The kernel
+# saves the full FP/SIMD register file (q0..q31 + FPCR/FPSR) on EL0 exception
+# entry (kernel/arch/aarch64/exceptions.S), so vector code is safe under
+# preemption in userland. strict-align is kept; only -neon is flipped to +neon.
+USER_SWIFT_FLAGS_NEON := \
+	-target $(TRIPLE) \
+	-enable-experimental-feature Embedded \
+	-wmo -parse-as-library -Osize \
+	-Xllvm -mattr=+strict-align,+neon \
+	-Xfrontend -function-sections \
+	-import-objc-header userland/lib/swift_user.h
 # Newlib-linked userland: aarch64-elf GNU toolchain + ./sysroot (run `make newlib`).
 SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
@@ -509,6 +520,7 @@ USER_IDENTITYDEMO_ELF := $(BUILD)/identitydemo.elf
 USER_CONSOLELOGIN_ELF := $(BUILD)/console-login.elf
 USER_PASSWD_ELF := $(BUILD)/passwd.elf
 USER_SLEEPPROBE_ELF := $(BUILD)/sleepprobe.elf
+USER_SIMDPROBE_ELF := $(BUILD)/simdprobe.elf
 USER_PTYPROBE_ELF := $(BUILD)/ptyprobe.elf
 USER_CELLSTATPROBE_ELF := $(BUILD)/cellstatprobe.elf
 USER_PROCMAXPROBE_ELF := $(BUILD)/procmaxprobe.elf
@@ -711,6 +723,7 @@ BASE_EXEC_ELFS := \
 	$(USER_IDENTITYDEMO_ELF) \
 	$(USER_PS_ELF) \
 	$(USER_SLEEPPROBE_ELF) \
+	$(USER_SIMDPROBE_ELF) \
 	$(USER_PTYPROBE_ELF) \
 	$(USER_CELLSTATPROBE_ELF) \
 	$(USER_PROCMAXPROBE_ELF) \
@@ -937,6 +950,10 @@ $(BUILD)/user_ps.o: userland/ps.swift userland/lib/swift_user.h Makefile | $(BUI
 $(BUILD)/user_sleepprobe.o: userland/sleepprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/sleepprobe.swift -o $@
 
+# LM1b: built with +neon to exercise the int8 SIMD path under NEON codegen.
+$(BUILD)/user_simdprobe.o: userland/simdprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/simdprobe.swift -o $@
+
 # C6a: per-cell resource-accounting probe (forks children, reads SYS_cell_stat).
 $(BUILD)/user_cellstatprobe.o: userland/cellstatprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/cellstatprobe.swift -o $@
@@ -1103,12 +1120,12 @@ $(BUILD)/user_kv.o: userland/kv.swift userland/lib/swift_user.h Makefile | $(BUI
 
 # /bin/llm: the app wrapper + the shared engine, compiled together (WMO).
 $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llm.swift userland/lib/llama2.swift -o $@
+	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llm.swift userland/lib/llama2.swift -o $@
 
 # /bin/llmd: the TCP model-serving daemon + the shared engine + bundle
 # verification (manifest parse + sha256), compiled together (WMO).
 $(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
@@ -1356,6 +1373,9 @@ $(USER_PS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_ps
 
 $(USER_SLEEPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_sleepprobe.o -o $@
+
+$(USER_SIMDPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_simdprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_simdprobe.o $(SWIFT_UNICODE_DATA) -o $@
 
 $(USER_CELLSTATPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellstatprobe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_cellstatprobe.o -o $@
@@ -2526,6 +2546,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/kv_test.sh
 	./tests/llm_run_test.sh
 	./tests/llm_serve_test.sh
+	./tests/simdprobe_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
@@ -3825,6 +3846,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_PASSWD_ELF) $(BASE_ROOT)/bin/passwd
 	cp $(USER_PS_ELF) $(BASE_ROOT)/bin/ps
 	cp $(USER_SLEEPPROBE_ELF) $(BASE_ROOT)/bin/sleepprobe
+	cp $(USER_SIMDPROBE_ELF) $(BASE_ROOT)/bin/simdprobe
 	cp $(USER_CELLSTATPROBE_ELF) $(BASE_ROOT)/bin/cellstatprobe
 	cp $(USER_PROCMAXPROBE_ELF) $(BASE_ROOT)/bin/procmaxprobe
 	cp $(USER_CELLCHILD_ELF) $(BASE_ROOT)/bin/cellchild

@@ -8506,3 +8506,55 @@ docs/RISK_REMEDIATION_ROADMAP.md.
 Follow-ups (not blocking): bump `maxEndpoints` if IPC-heavy multi-service workloads
 need it; an `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table
 sizes together for a minimal static footprint.
+
+## LM series — scaling inference toward a real LLM
+
+The I-series (I0–I8) proved CPU inference end to end on TinyStories. The LM-series
+turns that proof into a product: a real (~1B) LLM served fast. Plan: LM1 NEON matmul
+→ LM2 multi-threaded matmul across SMP cores → LM3 model delivery off a dedicated
+disk + a larger-RAM inference profile → LM4 first real model (TinyLlama-1.1B-Chat,
+Llama2 arch, exported to the existing v2-Q8 format) → LM5 GGUF + Q4_K → LM6 sampling
++ chat template.
+
+### LM1 — NEON-vectorized matmul (DONE, 2026-06-27)
+
+The matmul dot products dominate the forward pass; the bring-up engine
+(`userland/lib/llama2.swift`) computed them scalar. LM1 vectorizes both hot paths
+with Swift `SIMD` types lowered to NEON.
+
+- **NEON@EL0 is sound.** The kernel already saves the full FP/SIMD register file
+  (q0..q31 + FPCR/FPSR) on every EL0 exception entry (`exceptions.S`), so vector
+  code is safe under preemption. The aarch64 backend lowers `SIMD` to real NEON even
+  with `+strict-align` (`fmul/fadd .4s` for fp32, `smull/saddw` for int8).
+- **Build.** New `USER_SWIFT_FLAGS_NEON` (= `USER_SWIFT_FLAGS` with `-neon` flipped to
+  `+neon`). `/bin/llm` and `/bin/llmd` are built with it; the rest of userland and the
+  kernel stay on the `-neon`/`+strict-align` baseline.
+- **Engine.** `Llama2.matmul` uses `llamaFDot` (SIMD4<Float>); `QLlama2.qmatmul` uses
+  `llamaQDotGroup` (SIMD16<Int8> → SIMD16<Int32> widening dot, Int32 wrapping
+  accumulation → bit-identical to scalar).
+- **Result.** `/bin/llmd` Q8 serving went from ~6–7 tok/s to **~21 tok/s** in QEMU
+  (≈3×; ttft 140→60 ms); `/bin/llm` fp32 stays correct at ~320–355 tok/s. Greedy
+  output still matches the llama2.c / runq.c reference exactly.
+
+#### LM1b — the int8-NEON divergence, isolated and fixed
+
+Compiling the engine with `+neon` first made `/bin/llmd` (Q8) serve text that
+diverged from the runq.c reference (a correct prefix, then the argmax drifted), while
+`/bin/llm` (fp32) was fine and the host (native-arm64) build matched exactly. A
+focused diagnostic — `/bin/simdprobe` + `tests/simdprobe_test.sh`, which computes an
+int8 dot and the full `qmatmul` shape (forces the x18 platform-register spill the real
+engine has) both forced-scalar (`@_optimize(none)`) and via explicit SIMD16, in one
+`+neon` binary, on resident anon memory, looped 4000× under timer preemption —
+**ruled out** the int8 SIMD arithmetic codegen, the x18 spill, preemption/context-
+switch corruption, and LLVM auto-vectorization (the divergence survived
+`-vectorize-loops=false -vectorize-slp=false`). Bisecting with `@_optimize(none)`
+pinned the culprit to exactly one function: **`QLlama2.quantizeBuf`** (the activation
+quantizer — per-group abs-max reduction + round/saturate). Its `+neon`-optimized
+codegen produces wrong quantized activations in QEMU; exempting just that function via
+`@_optimize(none)` (it is O(n) per matmul vs `qmatmul`'s O(d·n), so the cost is
+marginal) restores correctness while the NEON dot products stay accelerated. Pinning
+down the exact miscompiled op (likely `.rounded()`/saturate or the max reduction) and
+dropping the pin is follow-up work.
+
+- Gates: `tests/llm_run_test.sh`, `tests/llm_serve_test.sh`, `tests/simdprobe_test.sh`
+  (all wired into `make test`), plus host `build/llm_engine_test` + `llm_q8_engine_test`.
