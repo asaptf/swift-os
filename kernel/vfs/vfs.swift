@@ -397,6 +397,19 @@ private func addDir(_ parent: Int, _ name: StaticString, readOnly: Bool = true) 
     return n
 }
 
+// V2a: like addDir but with a dynamic (runtime-byte) name — used to name a
+// volume mount point after its on-disk label.
+private func addDirNamed(_ parent: Int, _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int,
+                         readOnly: Bool) -> Int {
+    let n = allocNode()
+    if n < 0 { return -1 }
+    if !setNameCopy(n, namePtr, nameLen) { return -1 }
+    nodes[n].isDir = true
+    nodes[n].readOnly = readOnly
+    linkChild(parent, n)
+    return n
+}
+
 // Add a /dev special node (1 = null, 2 = zero). Reads of null give EOF, reads of
 // zero give zero bytes; writes to either are discarded. Many programs (and the
 // shell's job control) need /dev/null.
@@ -2022,9 +2035,26 @@ private func datafsMirror(_ vol: Int, _ parentVNode: Int, _ parentInode: Int) {
 // /data. Called from vfsInit after the base + /tmp are set up.
 private func vfsMountDataFs(_ root: Int) {
     if !virtioBlkDataAvailable() { return }
-    // V0: the persistent /data tier is datafs volume 0, bound to the legacy
-    // data disk. Additional volumes (V1+) mount at /mnt/<label>.
-    if !datafsMount(0, virtioBlkDataDeviceIndex()) { uartPuts("D1: datafs mount failed\n"); return }
+    let n = virtioBlkDataVolumeCount()
+
+    // V2a: choose the root /data disk by IDENTITY, not scan order — it is the
+    // first UNLABELED datafs disk. Labeled disks are storage volumes that mount
+    // under /mnt/<label>. This makes /data deterministic when extra disks /
+    // Hetzner Volumes are attached in an arbitrary order. (Fallback: if every
+    // disk is labeled, the first one serves /data so the system still boots.)
+    var rootOrd = -1
+    var i = 0
+    while i < n {
+        var lbl = [UInt8](repeating: 0, count: 32)
+        let ll = lbl.withUnsafeMutableBufferPointer {
+            datafsPeekLabel(virtioBlkDataDeviceIndexAt(i), $0.baseAddress!, $0.count)
+        }
+        if ll == 0 { rootOrd = i; break }
+        i += 1
+    }
+    if rootOrd < 0 { rootOrd = 0 }
+
+    if !datafsMount(0, virtioBlkDataDeviceIndexAt(rootOrd)) { uartPuts("D1: datafs mount failed\n"); return }
     let data = addDir(root, "data", readOnly: false)
     if data < 0 { return }
     nodes[data].dataFs = true
@@ -2034,35 +2064,60 @@ private func vfsMountDataFs(_ root: Int) {
     datafsMirror(0, data, datafsRootInode())
     uartPuts("D1 OK: datafs mounted at /data\n")
 
-    // V1: mount any additional SWDATAFS volumes (slot 1..N) under /mnt. Pre-V2
-    // there is no on-disk label, so volumes are mounted in scan order; V2 adds
-    // identity (UUID/label) + a declarative manifest. Each is a distinct datafs
-    // instance, so writes to /data and /mnt/dataN are fully isolated.
-    if virtioBlkDataVolumeCount() > 1 {
+    // V2a: mount every other (labeled) datafs disk under /mnt/<label> as a
+    // distinct, isolated instance. Slots are assigned in scan order, but the
+    // mount-point NAME comes from each disk's on-disk label.
+    if n > 1 {
         let mnt = addDir(root, "mnt", readOnly: false)
         if mnt >= 0 {
             nodes[mnt].mode = 0o755
-            mountExtraDataVolume(mnt, 1, "data1")
-            // Further slots (2, 3) mount here under their own names as the
-            // device profile grows; V1 ships and tests the second volume.
+            var slot = 1
+            i = 0
+            while i < n {
+                if i != rootOrd {
+                    // Labeled disks mount at /mnt/<label>; an unlabeled extra disk
+                    // falls back to /mnt/data<slot>. datafsMount rejects an
+                    // out-of-range slot, so extra disks beyond the table are skipped.
+                    let fb: StaticString = slot == 1 ? "data1" : (slot == 2 ? "data2" : "data3")
+                    mountExtraDataVolume(mnt, slot, virtioBlkDataDeviceIndexAt(i), fb)
+                    slot += 1
+                }
+                i += 1
+            }
         }
     }
 }
 
-// V1: mount data volume `vol` (its backing device is at the same scan ordinal)
-// at <parent>/<name> as a distinct datafs instance, mirroring its tree. A failed
-// mount leaves the mountpoint absent rather than failing the rest of boot.
-private func mountExtraDataVolume(_ parent: Int, _ vol: Int, _ name: StaticString) {
-    let dev = virtioBlkDataDeviceIndexAt(vol)
+// V1/V2a: mount data volume `vol` on `dev` under /mnt as a distinct datafs
+// instance, mirroring its tree. V2a names the mount point by the volume's on-disk
+// label (identity-driven), falling back to `fallback` when the volume is
+// unlabeled. A failed mount leaves the mountpoint absent rather than failing boot.
+private func mountExtraDataVolume(_ parent: Int, _ vol: Int, _ dev: Int, _ fallback: StaticString) {
     if dev < 0 { return }
     if !datafsMount(vol, dev) { uartPuts("V1: extra datafs mount failed\n"); return }
-    let mp = addDir(parent, name, readOnly: false)
+    var labelBuf = [UInt8](repeating: 0, count: 32)
+    let ll = labelBuf.withUnsafeMutableBufferPointer {
+        datafsVolumeLabelCopy(vol, $0.baseAddress!, $0.count)
+    }
+    let mp = ll > 0
+        ? labelBuf.withUnsafeBufferPointer { addDirNamed(parent, $0.baseAddress!, ll, readOnly: false) }
+        : addDir(parent, fallback, readOnly: false)
     if mp < 0 { return }
     nodes[mp].dataFs = true
     nodes[mp].dfsInode = datafsRootInode()
     nodes[mp].dfsVolume = vol
     nodes[mp].mode = 0o755
     datafsMirror(vol, mp, datafsRootInode())
+    // V2a: report the volume's stable identity (UUID halves + label length) so a
+    // reboot can be shown to carry the same UUID, and label-driven mounting is
+    // observable.
+    uartPuts("V2 vol: uuid=")
+    uartPutUInt(datafsVolumeUuidLo(vol))
+    uartPuts(":")
+    uartPutUInt(datafsVolumeUuidHi(vol))
+    uartPuts(" labellen=")
+    uartPutUInt(UInt64(datafsVolumeLabelLen(vol)))
+    uartPuts("\n")
     uartPuts("V1 OK: datafs volume mounted under /mnt\n")
 }
 

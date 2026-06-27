@@ -7413,6 +7413,33 @@ distinct, isolated datafs instance.
   Restoring a real `busybox.elf` + repacking `base.img` fixed it. See the worktree
   build-prereqs memory note.
 
+### V2a — volume identity (UUID + label) + mount-by-label (DONE, 2026-06-27)
+
+Volumes gain a stable on-disk identity, and `/data` vs the storage volumes are chosen
+by that identity rather than by the nondeterministic virtio-mmio scan order.
+
+- `kernel/fs/datafs.swift`: superblock format bumped to **version 2** with two new
+  sector-0 fields — a 128-bit UUID (`SB_UUID`, generated once at format) and a label
+  (`SB_LABELLEN`/`SB_LABEL`, up to 31 path-safe bytes). The label is **provisioned
+  offline** (stamped into sector 0 before first boot) and PRESERVED across format
+  (`dfsCaptureLabel` captures it from the read sector 0 before the format path zeroes
+  the buffer; `dfsFormat` writes it back). `dfsGenUuid` folds the RNG with `rtcNow()`
+  + a per-volume salt so the UUID is non-zero and unique even when the RNG is not yet
+  producing entropy this early in boot (a volume UUID needs uniqueness + stability,
+  not secrecy). New accessors + a no-mount `datafsPeekLabel(device)` sector-0 peek.
+- `kernel/vfs/vfs.swift`: `vfsMountDataFs` peeks every data disk's label and binds the
+  root `/data` to the first **unlabeled** disk; every **labeled** disk mounts at
+  `/mnt/<label>` (dynamic name via the new `addDirNamed`), an unlabeled extra falls
+  back to `/mnt/data<slot>` (keeps V1 green). So attaching a labeled Volume FIRST no
+  longer steals `/data`. A `V2 vol: uuid=<lo>:<hi> labellen=<n>` boot marker reports
+  the identity.
+- Test: `tests/v2_label_test.sh` (gate `make v2-label-test`) provisions the second
+  disk with label `media`, attaches it FIRST, and asserts it mounts at `/mnt/media`
+  (not `/data`), the file under it survives reboot, and the UUID is non-zero and
+  identical across reboot. D0–D3 + V1 stay green.
+- Remaining V2: **V2b** (declarative `/data/.system/mounts` manifest + `/mnt/*`-only /
+  empty-dir / never-format-non-blank guardrails), **V2c** (cmdline-UUID root anchor).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)
