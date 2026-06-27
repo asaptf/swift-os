@@ -80,17 +80,15 @@ private func writeBank(_ path: UnsafePointer<CChar>, _ bank: UnsafeRawPointer) -
     return fs == 0
 }
 
-/// Fill `out[0..<n]` with random bytes from /dev/urandom. Returns false on failure.
+/// Fill `out[0..<n]` with random bytes from the kernel RNG (the same
+/// getrandom-style source /bin/sshd and /bin/tlsget use). Returns false on failure.
 private func readRandom(_ out: UnsafeMutableRawPointer, _ n: Int) -> Bool {
-    let fd = swiftos_open("/dev/urandom", oRdOnly)
-    if fd < 0 { return false }
     var total = 0
     while total < n {
-        let r = swiftos_read(fd, out + total, UInt(n - total))
+        let r = swiftos_random(out + total, UInt(n - total))
         if r <= 0 { break }
         total += Int(r)
     }
-    _ = swiftos_close(fd)
     return total == n
 }
 

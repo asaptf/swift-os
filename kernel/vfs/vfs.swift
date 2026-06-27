@@ -203,7 +203,7 @@ private let maxFDs = 512
 private let maxOpenDescriptions = 1024
 private let maxPipes = 16
 private let pipeCap = 1024
-private let maxVFSProcesses = 16
+private let maxVFSProcesses = kMaxProcesses  // MUST equal maxProc: handle/cwd/confine tables are slot-keyed
 private let maxEvents = 16
 
 private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * maxVFSProcesses)

@@ -24,7 +24,7 @@ private let stateRunning: UInt32 = 2
 private let stateBlocked: UInt32 = 3
 private let stateZombie: UInt32 = 4
 
-private let pidMax = 16 // SWIFTOS_TOP_MAX; pid = slot+1, so 1..16
+private let pidMax = 64 // SWIFTOS_TOP_MAX; pid = slot+1, so 1..64. Tracks kernel kMaxProcesses.
 private let cpuMax = 8  // SWIFTOS_CPU_MAX
 
 // POLLIN, for the stdin readiness poll that doubles as the refresh delay.
