@@ -7440,6 +7440,37 @@ by that identity rather than by the nondeterministic virtio-mmio scan order.
 - Remaining V2: **V2b** (declarative `/data/.system/mounts` manifest + `/mnt/*`-only /
   empty-dir / never-format-non-blank guardrails), **V2c** (cmdline-UUID root anchor).
 
+### V2b — declarative mount manifest + guardrails (DONE, 2026-06-27)
+
+The mount policy becomes data-driven and bounded, with the manifest living on the
+root `/data` volume (the decision recorded in the V-series design).
+
+- `kernel/vfs/vfs.swift`: after `/data` mounts, `vfsMountDataFs` reads
+  `/data/.system/mounts` (`readMountManifest` — a datafs file, so it goes through
+  `datafsRead`, not the base/tmpfs `vfsReadStaticFile` path) into a 1 KiB heap
+  buffer. The file is one `<label> <mountpoint>` line per volume (`#` comments /
+  blanks skipped). When present it is **authoritative**: each labeled disk mounts at
+  the mountpoint `manifestMountpoint` maps its label to; an unlisted label is left
+  unmounted. With no manifest, the V2a default applies (auto-mount labeled disks at
+  `/mnt/<label>`, unlabeled extras at `/mnt/data<slot>`). A `V2 OK: mount manifest
+  applied` marker fires when a manifest is read.
+- Guardrails: `validateMountpoint` requires `/mnt/<name>` with a single path-safe
+  component (rejects `/bin`, `/etc`, `..`, nested paths → `V2: manifest mountpoint
+  refused`); `mountVolumeAt` refuses to overmount a non-empty existing dir; and
+  `datafsMount` now only (re)formats a disk whose sector 0 carries the `SWDATAFS`
+  magic (`dfsHasMagic`), so a non-blank unknown disk is never auto-wiped.
+- The old `mountExtraDataVolume` is replaced by `mountVolumeAt(parent, vol, dev,
+  namePtr, nameLen)` (dynamic mount-point name + the empty-dir guardrail), shared by
+  the manifest and the V2a-default paths.
+- Test: `tests/v2_manifest_test.sh` (gate `make v2-manifest-test`) — 3 boots:
+  (1) no manifest → `media` auto-mounts at `/mnt/media`, writes a file, then creates
+  the manifest `media /mnt/store`; (2) manifest present → `media` mounts at
+  `/mnt/store` (the file follows the disk), `/mnt/media` is gone, then the manifest
+  is rewritten to `media /etc/evil`; (3) the guardrail refuses `/etc/evil`, the disk
+  stays unmounted (`/mnt/store` gone), and `/etc` is intact. D0–D3 + V1 + V2a stay green.
+- Remaining V2: **V2c** (anchor the `/data` root by UUID in the kernel cmdline +
+  blank-disk-format-as-root on first boot).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

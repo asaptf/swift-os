@@ -2033,6 +2033,9 @@ private func datafsMirror(_ vol: Int, _ parentVNode: Int, _ parentInode: Int) {
 
 // D1: format-if-needed, mount the data disk's datafs, and mirror its tree under
 // /data. Called from vfsInit after the base + /tmp are set up.
+private let manifestCap = 1024
+private var vfsManifestBuf: UInt = 0   // heap buffer for the /data mount manifest
+
 private func vfsMountDataFs(_ root: Int) {
     if !virtioBlkDataAvailable() { return }
     let n = virtioBlkDataVolumeCount()
@@ -2064,53 +2067,161 @@ private func vfsMountDataFs(_ root: Int) {
     datafsMirror(0, data, datafsRootInode())
     uartPuts("D1 OK: datafs mounted at /data\n")
 
-    // V2a: mount every other (labeled) datafs disk under /mnt/<label> as a
-    // distinct, isolated instance. Slots are assigned in scan order, but the
-    // mount-point NAME comes from each disk's on-disk label.
-    if n > 1 {
-        let mnt = addDir(root, "mnt", readOnly: false)
-        if mnt >= 0 {
-            nodes[mnt].mode = 0o755
-            var slot = 1
-            i = 0
-            while i < n {
-                if i != rootOrd {
-                    // Labeled disks mount at /mnt/<label>; an unlabeled extra disk
-                    // falls back to /mnt/data<slot>. datafsMount rejects an
-                    // out-of-range slot, so extra disks beyond the table are skipped.
-                    let fb: StaticString = slot == 1 ? "data1" : (slot == 2 ? "data2" : "data3")
-                    mountExtraDataVolume(mnt, slot, virtioBlkDataDeviceIndexAt(i), fb)
-                    slot += 1
+    if n <= 1 { return }
+
+    // V2b: the mount table lives on the just-mounted /data volume. When present it
+    // is authoritative — each labeled disk mounts at the mountpoint the manifest
+    // assigns to its label, and a disk whose label is not listed is left
+    // unmounted. With no manifest, fall back to the V2a default (auto-mount every
+    // labeled disk at /mnt/<label>, unlabeled extras at /mnt/data<slot>).
+    let mlen = readMountManifest()
+    if mlen > 0 { uartPuts("V2 OK: mount manifest applied\n") }
+
+    let mnt = addDir(root, "mnt", readOnly: false)
+    if mnt < 0 { return }
+    nodes[mnt].mode = 0o755
+
+    var slot = 1
+    i = 0
+    while i < n {
+        if i == rootOrd { i += 1; continue }
+        let dev = virtioBlkDataDeviceIndexAt(i)
+        var lbl = [UInt8](repeating: 0, count: 32)
+        let ll = lbl.withUnsafeMutableBufferPointer { datafsPeekLabel(dev, $0.baseAddress!, $0.count) }
+        var nameBuf = [UInt8](repeating: 0, count: 32)
+        var nameLen = 0
+        var skip = false
+        if mlen > 0 {
+            if ll == 0 {
+                skip = true                       // unlabeled disk in manifest mode → not mounted
+            } else {
+                nameLen = lbl.withUnsafeBufferPointer { lp in
+                    nameBuf.withUnsafeMutableBufferPointer { nb in
+                        manifestMountpoint(vfsManifestBuf, mlen, lp.baseAddress!, ll, nb.baseAddress!, nb.count)
+                    }
                 }
-                i += 1
+                if nameLen == 0 { skip = true }   // label not listed in the manifest
+                else if nameLen < 0 { uartPuts("V2: manifest mountpoint refused (not /mnt/<name>)\n"); skip = true }
             }
+        } else if ll > 0 {
+            nameLen = ll
+            var k = 0; while k < ll { nameBuf[k] = lbl[k]; k += 1 }
+        } else {
+            let fb: StaticString = slot == 1 ? "data1" : (slot == 2 ? "data2" : "data3")
+            fb.withUTF8Buffer { b in nameLen = b.count; var k = 0; while k < b.count { nameBuf[k] = b[k]; k += 1 } }
         }
+        if !skip {
+            let mounted = nameBuf.withUnsafeBufferPointer { mountVolumeAt(mnt, slot, dev, $0.baseAddress!, nameLen) }
+            if mounted { slot += 1 }
+        }
+        i += 1
     }
 }
 
-// V1/V2a: mount data volume `vol` on `dev` under /mnt as a distinct datafs
-// instance, mirroring its tree. V2a names the mount point by the volume's on-disk
-// label (identity-driven), falling back to `fallback` when the volume is
-// unlabeled. A failed mount leaves the mountpoint absent rather than failing boot.
-private func mountExtraDataVolume(_ parent: Int, _ vol: Int, _ dev: Int, _ fallback: StaticString) {
-    if dev < 0 { return }
-    if !datafsMount(vol, dev) { uartPuts("V1: extra datafs mount failed\n"); return }
-    var labelBuf = [UInt8](repeating: 0, count: 32)
-    let ll = labelBuf.withUnsafeMutableBufferPointer {
-        datafsVolumeLabelCopy(vol, $0.baseAddress!, $0.count)
+// V2b: read the mount manifest (/data/.system/mounts) — a datafs file on the
+// just-mounted /data volume — into the shared buffer. Returns its length (0 if
+// absent/empty).
+private func readMountManifest() -> Int {
+    if vfsManifestBuf == 0 {
+        guard let p = swiftos_kernel_alloc(UInt(manifestCap), 1) else { return 0 }
+        vfsManifestBuf = UInt(bitPattern: p)
     }
-    let mp = ll > 0
-        ? labelBuf.withUnsafeBufferPointer { addDirNamed(parent, $0.baseAddress!, ll, readOnly: false) }
-        : addDir(parent, fallback, readOnly: false)
-    if mp < 0 { return }
+    let path: StaticString = "/data/.system/mounts"
+    var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
+    path.withUTF8Buffer { b in for i in 0..<b.count { name[i] = b[i] } }
+    return name.withUnsafeBufferPointer { bp -> Int in
+        let node = resolve(bp.baseAddress!)
+        if node < 0 || nodes[node].isDir || !nodes[node].dataFs { return 0 }
+        var len = nodes[node].dataLen
+        if len <= 0 { return 0 }
+        if len > manifestCap { len = manifestCap }
+        let got = datafsRead(nodes[node].dfsVolume, nodes[node].dfsInode, 0,
+                             UnsafeMutableRawPointer(bitPattern: vfsManifestBuf)!, len)
+        return got > 0 ? got : 0
+    }
+}
+
+// V2b: validate that [start, start+len) is exactly "/mnt/<name>" with a single,
+// path-safe name component (guardrail: data-driven mounts only land under /mnt,
+// never over /bin, /etc, ...). On success copy <name> to out, return its length;
+// otherwise return -1 (refused).
+private func validateMountpoint(_ p: UnsafePointer<UInt8>, _ start: Int, _ len: Int,
+                                _ out: UnsafeMutablePointer<UInt8>, _ outMax: Int) -> Int {
+    let prefix: StaticString = "/mnt/"
+    var ok = true
+    var pl = 0
+    prefix.withUTF8Buffer { b in
+        pl = b.count
+        if len <= b.count { ok = false; return }
+        var k = 0
+        while k < b.count { if p[start + k] != b[k] { ok = false; return }; k += 1 }
+    }
+    if !ok { return -1 }
+    let nameStart = start + pl
+    let nameLen = len - pl
+    if nameLen <= 0 || nameLen > outMax { return -1 }
+    var k = 0
+    while k < nameLen {
+        let c = p[nameStart + k]
+        if c == UInt8(ascii: "/") || c < 0x21 || c > 0x7e { return -1 } // single, path-safe component
+        out[k] = c
+        k += 1
+    }
+    return nameLen
+}
+
+// V2b: look up `label` in the manifest text. Each non-comment line is
+// `<label> <mountpoint>`. Returns the /mnt/<name> component length (copied into
+// out), 0 if the label is absent, or -1 if listed but the mountpoint is refused.
+private func manifestMountpoint(_ buf: UInt, _ mlen: Int,
+                                _ label: UnsafePointer<UInt8>, _ labelLen: Int,
+                                _ out: UnsafeMutablePointer<UInt8>, _ outMax: Int) -> Int {
+    guard let p = UnsafePointer<UInt8>(bitPattern: buf) else { return 0 }
+    var i = 0
+    while i < mlen {
+        while i < mlen && (p[i] == 0x20 || p[i] == 0x09) { i += 1 }   // leading blanks
+        let lineStart = i
+        var e = i
+        while e < mlen && p[e] != 0x0a { e += 1 }                     // to end-of-line
+        if lineStart < e && p[lineStart] != UInt8(ascii: "#") {
+            var t = lineStart
+            while t < e && p[t] != 0x20 && p[t] != 0x09 { t += 1 }    // token0 = label
+            if t - lineStart == labelLen {
+                var same = true
+                var k = 0
+                while k < labelLen { if p[lineStart + k] != label[k] { same = false; break }; k += 1 }
+                if same {
+                    while t < e && (p[t] == 0x20 || p[t] == 0x09) { t += 1 }
+                    let mpStart = t
+                    while t < e && p[t] != 0x20 && p[t] != 0x09 && p[t] != 0x0d { t += 1 }
+                    return validateMountpoint(p, mpStart, t - mpStart, out, outMax)
+                }
+            }
+        }
+        i = (e < mlen) ? e + 1 : e
+    }
+    return 0
+}
+
+// V1/V2a/V2b: mount data volume `vol` on `dev`, graft it under `parent` at the
+// given (dynamic) name, and mirror its tree. Empty-dir guardrail: never hide an
+// existing non-empty directory of that name. Returns true iff the volume mounted.
+private func mountVolumeAt(_ parent: Int, _ vol: Int, _ dev: Int,
+                           _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int) -> Bool {
+    if dev < 0 || nameLen <= 0 { return false }
+    let existing = findChild(parent, namePtr, nameLen)
+    if existing != -1 && nodes[existing].firstChild != -1 {
+        uartPuts("V2: mountpoint not empty, skipped\n"); return false
+    }
+    if !datafsMount(vol, dev) { uartPuts("V1: extra datafs mount failed\n"); return false }
+    let mp = existing != -1 ? existing : addDirNamed(parent, namePtr, nameLen, readOnly: false)
+    if mp < 0 { return false }
     nodes[mp].dataFs = true
     nodes[mp].dfsInode = datafsRootInode()
     nodes[mp].dfsVolume = vol
     nodes[mp].mode = 0o755
     datafsMirror(vol, mp, datafsRootInode())
-    // V2a: report the volume's stable identity (UUID halves + label length) so a
-    // reboot can be shown to carry the same UUID, and label-driven mounting is
-    // observable.
+    // Report the volume's stable identity (UUID halves + label length).
     uartPuts("V2 vol: uuid=")
     uartPutUInt(datafsVolumeUuidLo(vol))
     uartPuts(":")
@@ -2119,6 +2230,7 @@ private func mountExtraDataVolume(_ parent: Int, _ vol: Int, _ dev: Int, _ fallb
     uartPutUInt(UInt64(datafsVolumeLabelLen(vol)))
     uartPuts("\n")
     uartPuts("V1 OK: datafs volume mounted under /mnt\n")
+    return true
 }
 
 private func pipeCount(_ p: Int) -> Int {

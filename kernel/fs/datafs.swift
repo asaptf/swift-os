@@ -225,6 +225,16 @@ private func dfsLabelByteOK(_ c: UInt8) -> Bool {
     return c >= 0x21 && c <= 0x7e
 }
 
+// V2b guardrail: true iff sector-0 carries the "SWDATAFS" magic. The format path
+// only runs when this holds, so datafs NEVER auto-formats a disk that is not
+// explicitly marked as ours — a non-blank, non-SWDATAFS disk is left untouched.
+private func dfsHasMagic(_ buf: UInt) -> Bool {
+    let magic: StaticString = "SWDATAFS"
+    var ok = true
+    magic.withUTF8Buffer { m in for i in 0..<8 { if dfsU8(buf, i) != m[i] { ok = false } } }
+    return ok
+}
+
 // Capture the (pre-stamped or formatted) label from a sector-0 buffer into the
 // volume's label cache. Invalid/empty -> labelLen 0 (unlabeled).
 private func dfsCaptureLabel(_ vol: Int, _ buf: UInt) {
@@ -347,6 +357,10 @@ func datafsMount(_ vol: Int, _ device: Int) -> Bool {
     dfsCaptureLabel(vol, z)
     let version = dfsU32(z, SB_VERSION)
     if version != DFS_VERSION {
+        // V2b guardrail: only (re)format a disk explicitly marked as ours. A disk
+        // without the SWDATAFS magic — an unknown, possibly-data-bearing disk — is
+        // never auto-formatted; refuse the mount instead of wiping it.
+        if !dfsHasMagic(z) { dfsZeroBuf(z, DFS_BS); return false }
         // First boot (or an older format): generate a fresh UUID; dfsFormat then
         // stamps UUID + the captured label into the new superblock.
         dfsGenUuid(vol)

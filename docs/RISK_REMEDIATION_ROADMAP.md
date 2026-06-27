@@ -1022,11 +1022,19 @@ test, committed, review before the next):
     `make v2-label-test` boots with the labeled disk attached FIRST and still mounts
     it at `/mnt/media` (not `/data`), the file written there survives reboot, and the
     volume UUID is non-zero and identical across reboot. D0–D3 + V1 stay green.
-  - **V2b** (planned): the declarative mount manifest `/data/.system/mounts` (read at
-    boot, mounts the volumes it names by label/UUID) + the guardrails (`/mnt/*`-only,
-    empty-dir mountpoint, never auto-format a non-blank unknown disk). Acceptance: a
-    manifest-driven mount, a missing volume leaves its mountpoint empty (boot does not
-    fail), and a guardrail refusal (mount over `/bin`, or format a non-blank disk).
+  - **V2b** (DONE, 2026-06-27): the declarative mount manifest `/data/.system/mounts`
+    + the guardrails. After `/data` mounts, `vfsMountDataFs` reads the manifest (a
+    datafs file, one `<label> <mountpoint>` line per volume); when present it is
+    AUTHORITATIVE — each labeled disk mounts at the mountpoint its label maps to, and
+    a disk whose label is unlisted is left unmounted. No manifest = the V2a default
+    (auto-mount every labeled disk at `/mnt/<label>`). Guardrails: a manifest
+    mountpoint must be `/mnt/<name>` (single, path-safe component — `/bin`, `/etc`,
+    `..` are refused), the mountpoint dir must be empty (never overmount), and
+    `datafsMount` only (re)formats a disk carrying the `SWDATAFS` magic (a non-blank
+    unknown disk is never auto-formatted). Acceptance: `make v2-manifest-test` —
+    3 boots prove auto-mount → manifest remap (`media` → `/mnt/store`, the file
+    follows the disk, `/mnt/media` gone) → guardrail refusal (`media /etc/evil`
+    refused, the disk left unmounted, `/etc` untouched). D0–D3 + V1 + V2a stay green.
   - **V2c** (planned): anchor the root `/data` volume by UUID in the kernel cmdline
     (the single pinned identity), with blank-disk-format-as-root on first boot.
 - **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
