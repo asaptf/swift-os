@@ -141,6 +141,14 @@ private var blkServedDevice = -1
 // (datafs, D1+). SMP: set once at boot before EL0 runs.
 private var blkDataDevice = -1
 
+// V1: every writable SWDATAFS "data" disk, in scan order, so additional disks /
+// Hetzner Volumes can be mounted as further datafs volumes. blkDataDevices[0] is
+// the same device as blkDataDevice (= datafs volume 0 = /data); 1..N mount under
+// /mnt. SMP: set once at boot before EL0 runs.
+private let maxDataVolumes = 4
+private var blkDataDevices = [Int](repeating: -1, count: maxDataVolumes)
+private var blkDataDeviceCount = 0
+
 // D2: count successful data-disk cache flushes (fsync/sync), for the boot self-test.
 private var blkDataFlushes: UInt64 = 0
 
@@ -606,6 +614,8 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
     blkEspDevice = -1
     blkServedDevice = -1
     blkDataDevice = -1
+    blkDataDeviceCount = 0
+    for j in 0..<maxDataVolumes { blkDataDevices[j] = -1 }
     for j in 0..<maxBlkDevices {
         blkDeviceMmio[j] = 0
         blkDeviceCapacity[j] = 0
@@ -652,8 +662,12 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
             } else if blkBounceIsPackageStore() && pkgStoreDevice < 0 {
                 pkgStoreDevice = devIndex
                 pkgStoreCapacity = blkCapacity
-            } else if dataFsDev < 0 && blkBounceIsDataFs() {
-                dataFsDev = devIndex
+            } else if blkBounceIsDataFs() {
+                if dataFsDev < 0 { dataFsDev = devIndex }   // volume 0 = /data
+                if blkDataDeviceCount < maxDataVolumes {
+                    blkDataDevices[blkDataDeviceCount] = devIndex
+                    blkDataDeviceCount += 1
+                }
             }
             if espDev < 0 && blkDoRead(1) == 0 && blkBounceIsEfiPart() {
                 espDev = devIndex
@@ -705,6 +719,13 @@ func virtioBlkPackageStoreCapacityBytes() -> UInt64 { pkgStoreCapacity * UInt64(
 
 // The device index of the legacy persistent /data disk (datafs volume 0), or -1.
 func virtioBlkDataDeviceIndex() -> Int { blkDataDevice }
+// V1: number of writable SWDATAFS data volumes discovered (>=1 when /data exists).
+func virtioBlkDataVolumeCount() -> Int { blkDataDeviceCount }
+// The virtio-blk device backing data volume `ordinal` (0 = /data), or -1.
+func virtioBlkDataDeviceIndexAt(_ ordinal: Int) -> Int {
+    if ordinal < 0 || ordinal >= blkDataDeviceCount { return -1 }
+    return blkDataDevices[ordinal]
+}
 // Capacity of `dev` in 512-byte sectors (0 if out of range / absent).
 func virtioBlkVolumeCapacitySectors(_ dev: Int) -> UInt64 {
     if dev < 0 || dev >= blkDeviceCount { return 0 }

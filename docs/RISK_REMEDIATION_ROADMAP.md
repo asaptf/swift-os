@@ -961,10 +961,14 @@ test, committed, review before the next):
   is volume-parametrized; rename refuses crossing volumes. Acceptance met: `make
   data-persist-test` / `datafs-test` / `datafs-fsync-test` / `datafs-sqlite-test`
   stay green unchanged. See `docs/NOTES.md` (V-series).
-- **V1** (planned): mount a **second** `SWDATAFS` volume at `/mnt/<label>`. Add a
-  second writable virtio-blk data disk to the QEMU profile; mount it as a distinct
-  datafs instance. Acceptance: a new gate writes to both `/data` and the second
-  volume, proves write isolation between them, and that both survive reboot.
+- **V1** (DONE, 2026-06-27): mount a **second** `SWDATAFS` volume at `/mnt/data1`.
+  The virtio-blk scan now records every SWDATAFS disk (`blkDataDevices[]`), not just
+  the first; `vfsMountDataFs` mounts the second as datafs volume 1 under `/mnt/data1`
+  (a distinct instance, scan-ordered — pre-V2 there is no on-disk label). Acceptance
+  met: `make v1-volume-test` boots TWO data disks, writes the same filename to `/data`
+  and `/mnt/data1` with different content (a shared store would alias them), proves a
+  `/data`-only file is absent on volume 1, and that both volumes read back their own
+  content after reboot. Single-core; the existing D0–D3 datafs gates stay green.
 - **V2** (planned): volume identity + declarative manifest. Add a 128-bit UUID +
   human label to the datafs superblock; mount-by-label/UUID; read the mount table
   from `/data/.system/mounts` at boot and mount the volumes it names; enforce the

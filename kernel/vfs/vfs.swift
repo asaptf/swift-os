@@ -2033,6 +2033,37 @@ private func vfsMountDataFs(_ root: Int) {
     nodes[data].mode = 0o755
     datafsMirror(0, data, datafsRootInode())
     uartPuts("D1 OK: datafs mounted at /data\n")
+
+    // V1: mount any additional SWDATAFS volumes (slot 1..N) under /mnt. Pre-V2
+    // there is no on-disk label, so volumes are mounted in scan order; V2 adds
+    // identity (UUID/label) + a declarative manifest. Each is a distinct datafs
+    // instance, so writes to /data and /mnt/dataN are fully isolated.
+    if virtioBlkDataVolumeCount() > 1 {
+        let mnt = addDir(root, "mnt", readOnly: false)
+        if mnt >= 0 {
+            nodes[mnt].mode = 0o755
+            mountExtraDataVolume(mnt, 1, "data1")
+            // Further slots (2, 3) mount here under their own names as the
+            // device profile grows; V1 ships and tests the second volume.
+        }
+    }
+}
+
+// V1: mount data volume `vol` (its backing device is at the same scan ordinal)
+// at <parent>/<name> as a distinct datafs instance, mirroring its tree. A failed
+// mount leaves the mountpoint absent rather than failing the rest of boot.
+private func mountExtraDataVolume(_ parent: Int, _ vol: Int, _ name: StaticString) {
+    let dev = virtioBlkDataDeviceIndexAt(vol)
+    if dev < 0 { return }
+    if !datafsMount(vol, dev) { uartPuts("V1: extra datafs mount failed\n"); return }
+    let mp = addDir(parent, name, readOnly: false)
+    if mp < 0 { return }
+    nodes[mp].dataFs = true
+    nodes[mp].dfsInode = datafsRootInode()
+    nodes[mp].dfsVolume = vol
+    nodes[mp].mode = 0o755
+    datafsMirror(vol, mp, datafsRootInode())
+    uartPuts("V1 OK: datafs volume mounted under /mnt\n")
 }
 
 private func pipeCount(_ p: Int) -> Int {

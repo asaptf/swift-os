@@ -7386,6 +7386,33 @@ before V1 adds a second volume.
 - Acceptance: `make data-persist-test` (D0), `datafs-test` (D1), `datafs-fsync-test`
   (D2), `datafs-sqlite-test` (D3) all stay green unchanged.
 
+### V1 — second datafs volume mounted at /mnt/data1 (DONE, 2026-06-27)
+
+First real exercise of the multi-volume machinery: a second writable disk becomes a
+distinct, isolated datafs instance.
+
+- `kernel/drivers/virtio_blk.swift`: the scan recorded only the FIRST `SWDATAFS`
+  disk (`dataFsDev < 0 && …`). It now appends every data disk to
+  `blkDataDevices[maxDataVolumes]` (`blkDataDeviceCount`), keeping `blkDataDevice` =
+  `blkDataDevices[0]` for the legacy `/data` path. New accessors
+  `virtioBlkDataVolumeCount()` + `virtioBlkDataDeviceIndexAt(ordinal)`.
+- `kernel/vfs/vfs.swift`: after mounting volume 0 at `/data`, `vfsMountDataFs` mounts
+  each additional data disk via `mountExtraDataVolume(parent, vol, name)` — datafs
+  volume `vol` on the device at the same scan ordinal, grafted at `/mnt/data<vol>`
+  and mirrored. V1 ships the second volume (`/mnt/data1`); `/mnt` is created on
+  demand. A failed extra mount leaves the mountpoint absent, not the boot broken.
+- Pre-V2 there is no on-disk label, so volumes are mounted in **scan order**; V2 adds
+  identity (UUID/label) + the declarative manifest so mounts are not order-dependent.
+- Test: `tests/v1_volume_test.sh` (gate `make v1-volume-test`) boots two SWDATAFS
+  disks and proves isolation (same filename, different content per volume; a
+  `/data`-only file absent on volume 1) + independent reboot persistence.
+- **Lesson (cost real debugging time):** the V1 gate first failed with
+  `console-login: exec of shell failed` — root cause was a **0-byte `build/busybox.elf`**
+  (a `make` rebuild had truncated the offline-prebuilt binary), so `/bin/busybox` in
+  the base image had length 0 and the login shell could not exec. Not a V1 bug.
+  Restoring a real `busybox.elf` + repacking `base.img` fixed it. See the worktree
+  build-prereqs memory note.
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)
