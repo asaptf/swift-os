@@ -312,6 +312,13 @@ func fb_init(_ base: UInt64, _ width: UInt32, _ height: UInt32, _ stride_px: UIn
 @_cdecl("fb_available")
 func fb_available() -> Int32 { g_fb != 0 ? 1 : 0 }
 
+// Text console dimensions (columns, rows) for TIOCGWINSZ, so curses apps (mc)
+// size themselves to the whole framebuffer window rather than a fixed 80x24.
+// (0, 0) when there is no framebuffer (serial-only console).
+func fbConsoleDims() -> (cols: UInt, rows: UInt) {
+    g_fb == 0 ? (0, 0) : (g_cols, g_rows)
+}
+
 @_cdecl("fb_phys_base")
 func fb_phys_base() -> UInt64 { g_fb_base }
 

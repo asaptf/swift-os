@@ -127,6 +127,7 @@ static long sys4(long n, long a0, long a1, long a2, long a3) {
 #define SYS_EVENTFD 71
 #define SYS_SIGRETURN 76
 #define SYS_SOCKETPAIR 78
+#define SYS_GET_WINSIZE 117
 
 static int sysret(long r) {
     if (r < 0) { errno = (int)-r; return -1; }
@@ -452,7 +453,15 @@ W int ioctl(int fd, unsigned long req, ...) {
     switch (req) {
     case 0x5413: { // TIOCGWINSZ
         unsigned short *ws = (unsigned short *)arg; // row, col, xpix, ypix
-        if (ws) { ws[0] = 24; ws[1] = 80; ws[2] = 0; ws[3] = 0; }
+        if (ws) {
+            // Ask the kernel for the framebuffer text-console size so full-screen
+            // apps (mc) fill the whole graphical window; fall back to 24x80 on a
+            // serial-only console (kernel returns 0 when there is no framebuffer).
+            long v = sys3(SYS_GET_WINSIZE, fd, 0, 0);
+            if (v > 0) { ws[0] = (unsigned short)(v >> 16); ws[1] = (unsigned short)(v & 0xffff); }
+            else       { ws[0] = 24; ws[1] = 80; }
+            ws[2] = 0; ws[3] = 0;
+        }
         return 0;
     }
     case 0x5401: return tcgetattr(fd, (struct termios *)arg); // TCGETS

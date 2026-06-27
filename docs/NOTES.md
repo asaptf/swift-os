@@ -109,6 +109,25 @@ console. `mc.elf` is a 1.5 MB static AArch64 binary → `/bin/mc`.
   (16-colour VGA palette, bold/reverse, bce) so the blue panels render on `-device
   ramfb`; verified by a QMP framebuffer screendump (≈33% blue pixels). Filesystem
   free-space (statfs) and mount list remain empty stubs.
+- **Window size + function keys (2026-06-27).** Two follow-ups so MC is usable in
+  the graphical window, not just colourful:
+  - *TIOCGWINSZ.* The `ioctl` stub (`userland/compat/stubs.c`) returned a hardcoded
+    24x80, so MC only used the top-left of the 800x600 ramfb window. New syscall
+    `SYS_GET_WINSIZE` (117) returns the framebuffer text-console dims
+    (`fbConsoleDims()` in fb.swift → `(cols, rows)`, e.g. 100x37 at 800x600; 0 when
+    serial-only). The stub calls it and falls back to 24x80 when 0. MC now fills the
+    whole window.
+  - *Arrows / F-keys.* The userland keyboard driver decoder
+    (`userland/lib/virtio_input_user.swift`) only mapped printable ASCII to a single
+    byte, so arrows and F-keys were dropped. New `decodeSeq()` emits the multi-byte
+    `linux`-terminfo escape sequences (arrows `\E[A`–`\E[D`, F1–F5 `\E[[A`–`\E[[E`,
+    F6–F12 `\E[17~`–`\E[24~`, Home/End/PgUp/PgDn/Ins/Del); `/bin/inputd` injects the
+    whole sequence. Subtle bug fixed: inputd printed its "C5j OK" announce *between*
+    injected bytes on the first key, splitting the escape — moved before the inject
+    loop. Verified via QMP keyboard events: Down moves the panel selection, F9
+    activates the menu bar (5 yellow hotkeys). NOTE: busybox isn't relinked, so the
+    shell/busybox-vi still see 24x80 (their stale `stubs.o`); `make busybox` would
+    propagate the winsize ioctl to them too.
 - **Carry-over for real use:** a system-wide `TERM`/`HOME` at the login-exec path
   (env does not yet propagate through `console-login`'s `execve` to the shell's
   children, so MC relies on its own per-binary `setenv` defaults) is a follow-up,
