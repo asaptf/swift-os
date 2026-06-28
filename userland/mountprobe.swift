@@ -3,8 +3,9 @@
 //
 // Invokes the capability-gated SYS_mount / SYS_unmount via the userland bridge and
 // prints the raw return code so the boot test can assert on it. Usage:
-//   mountprobe mount   <selector> <mountpoint> [ro|persist|format]
-//   mountprobe unmount <mountpoint>
+//   mountprobe mount    <selector> <mountpoint> [ro|persist|format]
+//   mountprobe unmount  <mountpoint>
+//   mountprobe denytest <selector> <mountpoint>   (drop capConsole; expect EACCES)
 // `selector` names a datafs volume by 32-hex UUID or by label; `mountpoint` must
 // be /mnt/<name>. The verb's rc is reported as `MP: <verb> rc=<n>` (a negative n
 // is a -errno: -13 EACCES, -2 ENOENT, -16 EBUSY, -22 EINVAL).
@@ -93,6 +94,28 @@ func main(_ argc: Int32,
         return rc == 0 ? 0 : 1
     }
 
-    swiftos_puts("MP: unknown verb (expected mount|unmount)\n")
+    // V3c: prove the capability gate. Drop capConsole (login to a non-console
+    // principal that still holds the other root caps), then mount + unmount must
+    // both be refused with EACCES (-13). Usage: mountprobe denytest <sel> <mp>.
+    if streq(verb, "denytest") {
+        guard argc >= 4, let selector = argv[2], let mountpoint = argv[3] else {
+            swiftos_puts("MP: denytest needs <selector> <mountpoint>\n")
+            return 2
+        }
+        // capAllRoot without capConsole (bit 0) — see kernel/security/security.swift.
+        let noConsole: UInt = 0x3E
+        if swiftos_login(2, 2, noConsole) != 0 {
+            swiftos_puts("MP: denytest could not drop privilege (login failed)\n")
+            return 1
+        }
+        let mrc = swiftos_mount(UnsafePointer(selector), UnsafePointer(mountpoint), 0)
+        reportRC("mount", mrc)
+        let urc = swiftos_unmount(UnsafePointer(mountpoint))
+        reportRC("unmount", urc)
+        // EACCES = -13. Success means BOTH were refused with exactly that.
+        return (mrc == -13 && urc == -13) ? 0 : 1
+    }
+
+    swiftos_puts("MP: unknown verb (expected mount|unmount|denytest)\n")
     return 2
 }

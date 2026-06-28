@@ -7597,6 +7597,28 @@ same `/data/.system/mounts` table the V2b boot path reads, so it re-mounts on re
   manifest re-mounts media at `/mnt/store` with the file intact. V3a + V2b stay green.
 - Remaining V3: **V3c** (the unprivileged-principal `EACCES` acceptance).
 
+### V3c — unprivileged-principal denied (EACCES) (DONE, 2026-06-28)
+
+Closes V3 by proving the capability gate, not adding new mechanism: both `vfsMount`
+and `vfsUnmount` open with `if (processCurrentCaps() & capConsole) == 0 { return
+Errno.access.code }` (the same `capConsole` gate as `device_claim`/`reboot`/
+`cell_create`), placed before any mount work, so a denied call mutates nothing.
+
+- `/bin/mountprobe denytest <sel> <mp>` drops `capConsole` via `swiftos_login(2, 2,
+  0x3E)` (the root cap set minus bit 0 — a principal that still holds spawn/fs/tmp/
+  inspect/net but not console), then attempts both `mount` and `unmount`, expecting
+  `EACCES` (`-13`) from each. `processLogin` permits a `capConsole` holder to set its
+  own identity + a reduced cap set, which is exactly the privilege-drop the test needs.
+- Test: `tests/v3_deny_test.sh` (gate `make v3-deny-test`) — with `media` enumerated
+  but unmounted, the dropped-privilege `denytest` is refused (`mount rc=-13`,
+  `unmount rc=-13`) and `/mnt/store` is never created; a fresh, still-privileged
+  `mountprobe mount media /mnt/store` then succeeds (`rc=0`), proving the disk was
+  mountable and the denial was purely the gate. D0–D3 + V1 + V2a–c + V3a + V3b stay green.
+- **V3 complete (V3a–V3c).** Runtime mount/unmount converges on the same
+  `/data/.system/mounts` table the V2b boot path reads; busy mounts → `EBUSY`; the
+  surface is `capConsole`-gated. Next: **V4** (a real Hetzner Volume — the
+  virtio-scsi/pci enumeration port only; the volume + mount abstraction is unchanged).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

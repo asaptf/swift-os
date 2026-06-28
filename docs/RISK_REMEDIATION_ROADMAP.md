@@ -1068,12 +1068,12 @@ test, committed, review before the next):
   guardrails; and the root is pinnable by a cmdline UUID. Next: **V3** (runtime
   capability-gated `mount()`/`unmount()`), then **V4** (real Hetzner Volume — the
   enumeration port only).
-- **V3** (in progress): runtime `mount()` / `unmount()` syscalls, capability-gated (a
-  mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
+- **V3** (DONE, 2026-06-28): runtime `mount()` / `unmount()` syscalls, capability-gated
+  (`capConsole`, held by `init`/the cell supervisor). `PERSIST` writes the entry
   through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)
-  returns `EBUSY` via a per-mount refcount. Acceptance: a userland program mounts a
-  labeled volume, reads/writes it, persists across reboot, and a busy unmount is
-  refused; an unprivileged caller is denied.
+  returns `EBUSY` via a per-mount refcount. Acceptance met across V3a–c: a userland
+  program mounts a labeled volume, reads/writes it, persists across reboot, a busy
+  unmount is refused, and an unprivileged caller is denied (`EACCES`).
   - **V3a** (DONE, 2026-06-28): `SYS_mount`/`SYS_unmount` (118/119), `capConsole`-gated
     like `device_claim`; runtime graft of an enumerated-but-unmounted SWDATAFS volume
     by label/UUID selector into a free datafs slot; subtree teardown + slot release on
@@ -1084,7 +1084,14 @@ test, committed, review before the next):
     through to `/data/.system/mounts` (`persistMountEntry`, label-keyed + idempotent), so
     the V2b authoritative-manifest path re-mounts it on reboot. Needs a labeled volume.
     `/bin/mountprobe ... persist` + `make v3-persist-test`. See `docs/NOTES.md` (V3b).
-  - **V3c** (next): capability-gate hardening + the unprivileged-principal `EACCES` acceptance.
+  - **V3c** (DONE, 2026-06-28): the unprivileged-principal `EACCES` acceptance — both
+    `mount` and `unmount` are `capConsole`-gated (the gate sits before any mount work,
+    so a denied mount creates nothing), while a still-privileged caller mounts the same
+    volume. `/bin/mountprobe denytest` (drops `capConsole` via `login`) + `make v3-deny-test`.
+  - **V3 complete (V3a–V3c).** Runtime mount/unmount converges on the same
+    `/data/.system/mounts` table the V2b boot path reads (PERSIST writes through);
+    busy mounts are refused; the surface is capability-gated. Next: **V4** (real
+    Hetzner Volume — the enumeration port only).
 - **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
   port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
   or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume
