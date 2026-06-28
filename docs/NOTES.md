@@ -8613,3 +8613,40 @@ dropping the pin is follow-up work.
 
 - Gates: `tests/llm_run_test.sh`, `tests/llm_serve_test.sh`, `tests/simdprobe_test.sh`
   (all wired into `make test`), plus host `build/llm_engine_test` + `llm_q8_engine_test`.
+
+#### Note: LM2 (multi-threaded matmul) is blocked, deferred
+
+LM2 would fan matmul rows out over sibling threads. It is blocked on two things,
+recorded here so the next attempt starts informed: (1) **secondary EL0 scheduling
+is deliberately gated** — `processHomeCpuForNewReadySlot` places every new
+runnable EL0 slot on CPU0 unless the `s5fRunAnyPlacementActive` test gate is open,
+so in a normal boot a worker pool would just serialize on CPU0. Making run-any
+placement the default is a real scheduler decision (raise for review) and unblocks
+all multi-core userland, not just inference. (2) **The `+neon` codegen is fragile**
+in this Embedded-Swift/QEMU combo: a behaviour-preserving matmul→job+runner refactor
+(host oracles green) reintroduced a QEMU-only int8 divergence of the same class as
+the `quantizeBuf` bug, so the parallel runner must be paired with a `+neon` config
+that doesn't miscompile (likely autovec off + explicit SIMD only). The portable
+design that does work — route each matmul through a `LlamaMatmulJob` value + a
+`llamaMatmulRunner` hook (serial default for host/single-core; pool override in an
+app), no closures across threads, no per-call allocation — is kept for that future.
+
+### LM3a — a signed packed "model disk" (DONE, 2026-06-27)
+
+A real model is too big for the RAM-loaded base image, and datafs caps files at
+~4 MiB (single-indirect), so neither bring-up tier can hold one. LM3a ships the
+model bundle as its own **signed SWOSBASE packed read-only image** (`make
+model-image` → `build/model.img`, built by reusing `basepack` over a model-only
+root, signed with the image key so the kernel's compiled-in trust root verifies it
+like the base). A packed image has no ~4 MiB cap and reuses the base reader +
+file-backed mmap. The image carries the `stories15M/1` bundle (model.bin +
+tokenizer.bin + manifest.toml) plus a `MODEL-DISK-ID` provenance sentinel.
+Acceptance: `make model-image-test` (host, no QEMU) asserts the SWOSBASE magic,
+size, bundle entry names, and the sentinel; wired into `make test`.
+
+- Next: **LM3b** mounts `build/model.img` (a 2nd virtio-blk SWOSBASE disk) read-only
+  at `/srv/models` — the block layer already enumerates up to 4 SWOSBASE disks
+  (`maxSwosbaseImages`); the work is grafting the 2nd device's packed FS at a mount
+  point via the `buildBaseFromDisk` reader. **LM3c** adds an inference QEMU profile
+  with a larger `-m` + the model disk attached and serves the disk-delivered model,
+  asserting (via the sentinel) it did not come from the base.
