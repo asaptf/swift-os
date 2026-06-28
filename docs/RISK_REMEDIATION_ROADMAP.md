@@ -1080,8 +1080,11 @@ test, committed, review before the next):
     unmount; busy (open fd / cwd in the subtree) → `EBUSY`, computed on demand;
     RO/RW + `FORMAT_IF_BLANK` flags. `/bin/mountprobe` + `make v3-mount-test`. D0–D3 +
     V1 + V2a + V2b + V2c stay green. See `docs/NOTES.md` (V3a).
-  - **V3b** (next): `PERSIST` write-through to `/data/.system/mounts` (re-mounts on reboot).
-  - **V3c**: capability-gate hardening + the unprivileged-principal `EACCES` acceptance.
+  - **V3b** (DONE, 2026-06-28): the `PERSIST` flag writes the `<label> /mnt/<name>` entry
+    through to `/data/.system/mounts` (`persistMountEntry`, label-keyed + idempotent), so
+    the V2b authoritative-manifest path re-mounts it on reboot. Needs a labeled volume.
+    `/bin/mountprobe ... persist` + `make v3-persist-test`. See `docs/NOTES.md` (V3b).
+  - **V3c** (next): capability-gate hardening + the unprivileged-principal `EACCES` acceptance.
 - **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
   port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
   or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume

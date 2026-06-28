@@ -2453,7 +2453,25 @@ func vfsMount(selector selVA: UInt, mountpoint mpVA: UInt, flags: UInt) -> Int {
     }
     if !ok { return Errno.invalid.code }            // busy/non-empty mountpoint or datafs refused
     uartPuts("V3 OK: runtime mount\n")
-    // PERSIST write-through to the manifest is V3b.
+
+    // V3b: PERSIST writes the entry through to /data/.system/mounts so the mount
+    // re-applies on reboot. The manifest is label-keyed, so persistence needs a
+    // labeled volume; an unlabeled volume stays a live-only mount.
+    if (flags & mountFlagPersist) != 0 {
+        var lbl = [UInt8](repeating: 0, count: 32)
+        let ll = lbl.withUnsafeMutableBufferPointer { datafsVolumeLabelCopy(slot, $0.baseAddress!, $0.count) }
+        if ll <= 0 {
+            uartPuts("V3: persist skipped (volume is unlabeled)\n")
+        } else {
+            let persisted = lbl.withUnsafeBufferPointer { lp in
+                nameBuf.withUnsafeBufferPointer { np in
+                    persistMountEntry(lp.baseAddress!, ll, np.baseAddress!, nameLen)
+                }
+            }
+            uartPuts(persisted ? "V3 OK: mount persisted to manifest\n"
+                               : "V3: persist write-through failed\n")
+        }
+    }
     return 0
 }
 
@@ -2493,6 +2511,107 @@ func vfsUnmount(mountpoint mpVA: UInt) -> Int {
     _ = datafsUnmount(slot)
     uartPuts("V3 OK: runtime unmount\n")
     return 0
+}
+
+// V3b: write the `<label> /mnt/<name>` entry through to the root volume's mount
+// manifest (/data/.system/mounts), so the runtime mount re-applies at the next
+// boot via the V2b authoritative-manifest path. The manifest is label-keyed: any
+// existing line for the same label is replaced (re-persisting a label to a new
+// mountpoint updates it). Caller holds vfsLock and has verified the volume is
+// labeled. Returns true on success. Reuses the same VFS+datafs operations as a
+// userland write, so the on-disk inode and the in-memory mirror stay consistent.
+private func persistMountEntry(_ label: UnsafePointer<UInt8>, _ labelLen: Int,
+                               _ name: UnsafePointer<UInt8>, _ nameLen: Int) -> Bool {
+    // Resolve /data (root datafs volume 0).
+    let dataPath: StaticString = "/data"
+    var dp = [UInt8](repeating: 0, count: dataPath.utf8CodeUnitCount + 1)
+    dataPath.withUTF8Buffer { b in for i in 0..<b.count { dp[i] = b[i] } }
+    let dataNode = dp.withUnsafeBufferPointer { resolve($0.baseAddress!) }
+    if dataNode <= 0 || !nodes[dataNode].dataFs { return false }
+
+    // Find or create /data/.system (a datafs directory).
+    let sysName: StaticString = ".system"
+    var sn = [UInt8](repeating: 0, count: sysName.utf8CodeUnitCount)
+    sysName.withUTF8Buffer { b in for i in 0..<b.count { sn[i] = b[i] } }
+    var systemNode = sn.withUnsafeBufferPointer { findChild(dataNode, $0.baseAddress!, $0.count) }
+    if systemNode < 0 {
+        systemNode = sn.withUnsafeBufferPointer { createDataFsNode(dataNode, $0.baseAddress!, $0.count, isDir: true) }
+    }
+    if systemNode < 0 || !nodes[systemNode].isDir { return false }
+
+    // Find or create /data/.system/mounts (a datafs file).
+    let mName: StaticString = "mounts"
+    var mn = [UInt8](repeating: 0, count: mName.utf8CodeUnitCount)
+    mName.withUTF8Buffer { b in for i in 0..<b.count { mn[i] = b[i] } }
+    var mountsNode = mn.withUnsafeBufferPointer { findChild(systemNode, $0.baseAddress!, $0.count) }
+    if mountsNode < 0 {
+        mountsNode = mn.withUnsafeBufferPointer { createDataFsNode(systemNode, $0.baseAddress!, $0.count, isDir: false) }
+    }
+    if mountsNode < 0 || nodes[mountsNode].isDir { return false }
+
+    let vol = nodes[mountsNode].dfsVolume
+    let ino = nodes[mountsNode].dfsInode
+
+    return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: manifestCap) { src in
+        withUnsafeTemporaryAllocation(of: UInt8.self, capacity: manifestCap) { dst in
+            // Read the current manifest content.
+            var srcLen = nodes[mountsNode].dataLen
+            if srcLen > manifestCap { srcLen = manifestCap }
+            if srcLen > 0 {
+                let got = datafsRead(vol, ino, 0, UnsafeMutableRawPointer(src.baseAddress!), srcLen)
+                srcLen = got > 0 ? got : 0
+            }
+            // Copy existing lines verbatim, dropping any whose first token is this
+            // label (so a re-persist replaces the stale mountpoint).
+            var outLen = 0
+            var i = 0
+            while i < srcLen {
+                let lineStart = i
+                while i < srcLen && src[i] != 0x0a { i += 1 }
+                let lineEnd = i                       // points at '\n' or end
+                let copyEnd = (lineEnd < srcLen) ? lineEnd + 1 : lineEnd   // include the '\n'
+                i = copyEnd
+                var t = lineStart                     // first whitespace-delimited token
+                while t < lineEnd && src[t] != 0x20 && src[t] != 0x09 { t += 1 }
+                let tokLen = t - lineStart
+                var sameLabel = (tokLen == labelLen)
+                if sameLabel {
+                    var k = 0
+                    while k < labelLen { if src[lineStart + k] != label[k] { sameLabel = false; break }; k += 1 }
+                }
+                if sameLabel { continue }             // drop the stale entry
+                let lineLen = copyEnd - lineStart
+                if outLen + lineLen > manifestCap { return false }
+                var k = 0
+                while k < lineLen { dst[outLen + k] = src[lineStart + k]; k += 1 }
+                outLen += lineLen
+            }
+            // Ensure a newline separates the prior content from the new line.
+            if outLen > 0 && dst[outLen - 1] != 0x0a {
+                if outLen + 1 > manifestCap { return false }
+                dst[outLen] = 0x0a; outLen += 1
+            }
+            // Append "<label> /mnt/<name>\n".
+            let mid: StaticString = " /mnt/"
+            var need = labelLen + nameLen + 1
+            mid.withUTF8Buffer { need += $0.count }
+            if outLen + need > manifestCap { return false }
+            var k = 0
+            while k < labelLen { dst[outLen] = label[k]; outLen += 1; k += 1 }
+            mid.withUTF8Buffer { b in var j = 0; while j < b.count { dst[outLen] = b[j]; outLen += 1; j += 1 } }
+            k = 0
+            while k < nameLen { dst[outLen] = name[k]; outLen += 1; k += 1 }
+            dst[outLen] = 0x0a; outLen += 1
+            // Rewrite the file (truncate to 0 + write), update the mirror length,
+            // and flush so the entry survives the reboot.
+            if !datafsTruncate(vol, ino, 0) { return false }
+            let wrote = datafsWrite(vol, ino, 0, UnsafeRawPointer(dst.baseAddress!), outLen)
+            if wrote != outLen { return false }
+            nodes[mountsNode].dataLen = outLen
+            _ = datafsFlush(vol)
+            return true
+        }
+    }
 }
 
 private func pipeCount(_ p: Int) -> Int {

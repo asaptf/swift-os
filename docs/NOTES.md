@@ -7571,6 +7571,32 @@ write-through; V3c = the unprivileged-denied acceptance).
 - Remaining V3: **V3b** (`PERSIST` → write the entry through to `/data/.system/mounts`,
   re-mounts on reboot), **V3c** (the unprivileged-principal `EACCES` acceptance).
 
+### V3b — PERSIST write-through to the manifest (DONE, 2026-06-28)
+
+Makes a runtime mount durable: the `PERSIST` flag converges the live mount onto the
+same `/data/.system/mounts` table the V2b boot path reads, so it re-mounts on reboot
+(the "single source of truth, no fstab-vs-live divergence" decision from the design).
+
+- `kernel/vfs/vfs.swift`: after a successful `vfsMount`, when `PERSIST` is set,
+  `persistMountEntry(label, name)` finds/creates `/data/.system/mounts` (and the
+  `.system` dir) via the existing `findChild` + `createDataFsNode`, rewrites it
+  dropping any prior line for the same label, appends `<label> /mnt/<name>\n`, then
+  `datafsTruncate`+`datafsWrite`+`datafsFlush`. Label-keyed, so it needs a labeled
+  volume (an unlabeled volume logs `persist skipped` and stays a live-only mount);
+  re-persisting a label updates its mountpoint in place. Reuses the same VFS+datafs
+  ops as a userland write, so the on-disk inode and the in-memory mirror stay in sync.
+  Markers: `V3 OK: mount persisted to manifest` / `V3: persist skipped (volume is
+  unlabeled)`.
+- Userland: `/bin/mountprobe mount <sel> <mp> persist` sets `SWIFTOS_MOUNT_PERSIST`.
+- Note: `unmount` stays live-only (it does NOT remove the manifest entry); a persisted
+  mount that is unmounted will re-appear on the next boot. Un-persist-on-unmount is a
+  possible later nicety, not required by the V3 acceptance.
+- Test: `tests/v3_persist_test.sh` (gate `make v3-persist-test`) — 3 boots: seed a
+  comment-only manifest (media unmounted) → `mountprobe mount media /mnt/store persist`
+  writes `media /mnt/store` through + a marker file → reboot WITHOUT mountprobe and the
+  manifest re-mounts media at `/mnt/store` with the file intact. V3a + V2b stay green.
+- Remaining V3: **V3c** (the unprivileged-principal `EACCES` acceptance).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

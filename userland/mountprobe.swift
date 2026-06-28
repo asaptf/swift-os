@@ -3,7 +3,7 @@
 //
 // Invokes the capability-gated SYS_mount / SYS_unmount via the userland bridge and
 // prints the raw return code so the boot test can assert on it. Usage:
-//   mountprobe mount   <selector> <mountpoint> [ro|rw|format]
+//   mountprobe mount   <selector> <mountpoint> [ro|persist|format]
 //   mountprobe unmount <mountpoint>
 // `selector` names a datafs volume by 32-hex UUID or by label; `mountpoint` must
 // be /mnt/<name>. The verb's rc is reported as `MP: <verb> rc=<n>` (a negative n
@@ -11,6 +11,7 @@
 
 // Flag bits — must match SWIFTOS_MOUNT_* in userland/lib/syscall.h.
 private let mountRO: UInt = 0x1
+private let mountPersist: UInt = 0x2
 private let mountFormatIfBlank: UInt = 0x4
 
 private func putUInt(_ value: UInt) {
@@ -62,7 +63,7 @@ func main(_ argc: Int32,
           _ envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> Int32 {
     _ = envp
     guard let argv = argv, argc >= 2, let verb = argv[1] else {
-        swiftos_puts("MP: usage: mountprobe mount <selector> <mountpoint> [ro|format] | mountprobe unmount <mountpoint>\n")
+        swiftos_puts("MP: usage: mountprobe mount <selector> <mountpoint> [ro|persist|format] | mountprobe unmount <mountpoint>\n")
         return 2
     }
 
@@ -74,6 +75,7 @@ func main(_ argc: Int32,
         var flags: UInt = 0
         if argc >= 5, let mode = argv[4] {
             if streq(mode, "ro") { flags |= mountRO }
+            else if streq(mode, "persist") { flags |= mountPersist }
             else if streq(mode, "format") { flags |= mountFormatIfBlank }
         }
         let rc = swiftos_mount(UnsafePointer(selector), UnsafePointer(mountpoint), flags)
