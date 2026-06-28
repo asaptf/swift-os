@@ -421,7 +421,7 @@ endif
 INCLUDE_MC ?= 0
 ifeq ($(INCLUDE_MC),1)
 MC_BASE_ELF := $(BUILD)/mc.elf
-MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc
+MC_PACK_CMD := cp $(BUILD)/mc.elf $(BASE_ROOT)/bin/mc; mkdir -p $(BASE_ROOT)/usr/share/mc/skins; cp $(BUILD)/mc-skins/default.ini $(BASE_ROOT)/usr/share/mc/skins/default.ini
 else
 MC_BASE_ELF :=
 MC_PACK_CMD := echo "  (mc.elf NOT packed — build with INCLUDE_MC=1)"
@@ -2556,6 +2556,9 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/llm_run_test.sh
 	./tests/llm_serve_test.sh
 	./tests/simdprobe_test.sh
+	$(MAKE) model-image-test
+	$(MAKE) model-mount-test
+	$(MAKE) llm-serve-disk-test
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
@@ -3428,9 +3431,9 @@ run-gfx: disk base-image
 	$(QEMU) -M virt,acpi=off -cpu cortex-a72 -m 256M -no-reboot \
 		-global virtio-mmio.force-legacy=false \
 		-bios $(AAVMF_CODE) \
-		-drive file=$(DISK_IMG),format=raw,if=none,id=esp -device virtio-blk-device,drive=esp \
-		-drive file=$(BASE_IMG),format=raw,if=none,id=swosbase,readonly=on \
-		-device virtio-blk-device,drive=swosbase \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=gfxesp -device virtio-blk-device,drive=gfxesp \
+		-drive file=$(BASE_IMG),format=raw,if=none,id=gfxbase,readonly=on \
+		-device virtio-blk-device,drive=gfxbase \
 		-device ramfb -device virtio-keyboard-device -display cocoa -serial stdio
 
 # ---- Hetzner-faithful local profile (H-series bare-metal bring-up) ---------
@@ -3467,6 +3470,45 @@ $(BASEPACK): tools/basepack.swift tools/packfs.swift kernel/crypto/sha256.swift 
 # os-stage-test streams into the inactive A/B slot. Signed with the image key.
 $(TEST_BASE_IMG): $(BASEPACK) $(IMG_SIGNING_SEED) tests/fixtures/test-base/README.txt Makefile | $(BUILD)/.dir
 	$(BASEPACK) tests/fixtures/test-base $@ $(IMG_SIGNING_SEED)
+
+# LM3a: a dedicated, signed packed read-only "model disk" — a SECOND SWOSBASE
+# image carrying the model bundle, separate from the base. A real (multi-GB)
+# model cannot live in the RAM-loaded base image, and datafs caps files at
+# ~4 MiB (single-indirect), so neither tier can hold a real model. A packed
+# image has no such cap and reuses the base reader + file-backed mmap. LM3b
+# mounts it read-only at /srv/models; LM3c serves from there. Signed with the
+# image key so the kernel's compiled-in trust root verifies it like the base.
+MODEL_PACK_ROOT := $(BUILD)/model-pack-root
+MODEL_PACK_IMG  := $(BUILD)/model.img
+MODEL_DISK_ID   := SWOS-MODEL-DISK-v1
+
+$(MODEL_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	rm -rf $(MODEL_PACK_ROOT)
+	mkdir -p $(MODEL_PACK_ROOT)/stories15M/1
+	cp $(MODEL15_Q8) $(MODEL_PACK_ROOT)/stories15M/1/model.bin
+	cp $(MODEL_TOK32) $(MODEL_PACK_ROOT)/stories15M/1/tokenizer.bin
+	$(MODELMANIFEST) stories15M 1 $(MODEL15_Q8) $(MODEL_TOK32) $(MODEL_PACK_ROOT)/stories15M/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_PACK_ROOT)/stories15M/1/manifest.toml $(SIGNING_SEED)
+	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_PACK_ROOT)/MODEL-DISK-ID
+	$(BASEPACK) $(MODEL_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
+
+.PHONY: model-image
+model-image: $(MODEL_PACK_IMG)
+
+# LM3a host acceptance: the model image builds, is a valid signed SWOSBASE
+# packed FS, and carries the model bundle + the provenance sentinel.
+model-image-test: $(MODEL_PACK_IMG)
+	./tests/model_image_test.sh
+
+# LM3b acceptance: boot with the model disk attached and prove the kernel mounts
+# it read-only at /srv/models (sentinel readable, bundle visible).
+model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
+	./tests/model_mount_test.sh
+
+# LM3c acceptance: /bin/llmd serves the disk-delivered model from /srv/models
+# under a larger-RAM inference profile (model disk attached, -m 1024M).
+llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
+	./tests/llm_serve_disk_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network

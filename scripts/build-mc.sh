@@ -96,10 +96,14 @@ chmod +x "$PKGW"
 #    is 8-bit. Shadows are cosmetic — disable the unconditional define.
 sed -i.bak -e 's|^#define ENABLE_SHADOWS 1|/* swift-os: dialog shadows need widec ncurses; disabled */|' \
     "$SRC/lib/tty/tty-ncurses.h" && rm -f "$SRC/lib/tty/tty-ncurses.h.bak"
-# 2) Baked binaries inherit an empty environment. Default TERM (else tty_init
-#    aborts "TERM environment variable is unset") and HOME to the writable tmpfs
-#    (else g_get_home_dir fails and MC cannot create its ~/.config/mc dir).
-perl -0pi -e 's/(\n    GError \*mcerror = NULL;\n)/$1\n    setenv ("TERM", "vt100", 0);  \/* swift-os: defaults for a bare env *\/\n    setenv ("HOME", "\/tmp", 0);\n/' \
+# 2) Baked binaries inherit an empty environment (env does not yet propagate
+#    through the login-exec path to the shell's children). Default TERM to
+#    "linux" — the PC-text-console terminfo, which advertises 8 colours, so MC
+#    emits colour SGR and the framebuffer console paints its blue skin; vt100
+#    (the previous default) is monochrome. setenv overwrite=0 still respects an
+#    inherited TERM once env propagation lands. HOME -> writable tmpfs (else
+#    g_get_home_dir fails and MC cannot create its ~/.config/mc dir).
+perl -0pi -e 's/(\n    GError \*mcerror = NULL;\n)/$1\n    setenv ("TERM", "linux", 0);  \/* swift-os: colour-capable default for a bare env *\/\n    setenv ("HOME", "\/tmp", 0);\n/' \
     "$SRC/src/main.c"
 
 # --- configure (lean: ncurses, no subshell/x/vfs/editor/charset) -------------
@@ -124,10 +128,15 @@ undefined="$("$NM" -u "$SRC/src/mc")"
 "$READELF" -h "$SRC/src/mc" | grep -q 'Machine:[[:space:]]*AArch64' || fail "mc is not an AArch64 ELF"
 "$STRIP" "$SRC/src/mc" -o "$ROOT/build/mc.elf"
 
-# NOTE: we deliberately do NOT ship a skin file. MC uses its compiled-in default
-# skin (it prints a one-time "Default skin has been loaded" notice). Shipping
-# misc/skins/default.ini instead makes MC's skin parser segfault (NULL deref) on
-# a monochrome terminal — the built-in skin is the working path. See docs/NOTES.md.
+# Ship the standard blue skin (misc/skins/default.ini -> /usr/share/mc/skins).
+# MC's compiled-in fallback skin is hardcoded black&white (lib/skin/ini-file.c
+# mc_skin_hardcoded_blackwhite_colors), so colour requires the real skin file.
+# The earlier NULL-deref crash was specific to a *monochrome* terminal; with a
+# colour TERM (linux) at the login-exec path + an SGR-colour framebuffer console
+# the parser takes the colour path. Installed as a stable build artifact so the
+# base-image pack step (MC_PACK_CMD, gated by INCLUDE_MC) can find it.
+mkdir -p "$ROOT/build/mc-skins"
+cp "$SRC/misc/skins/default.ini" "$ROOT/build/mc-skins/default.ini"
 
-echo "Built $ROOT/build/mc.elf (mc ${VERSION}, ncurses + glib)"
+echo "Built $ROOT/build/mc.elf (mc ${VERSION}, ncurses + glib) + default skin"
 "$READELF" -h "$ROOT/build/mc.elf" | grep -E 'Type:|Entry'

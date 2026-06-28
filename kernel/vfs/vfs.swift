@@ -745,12 +745,47 @@ private func buildBaseFromDisk(_ root: Int) -> (mounted: Bool, image: Int) {
     return (false, -1)
 }
 
+// LM3b: the dedicated model disk is a separate signed SWOSBASE image carrying a
+// model bundle, identified by its top-level `MODEL-DISK-ID` sentinel. It is NOT a
+// package overlay (which grafts into the root), so it is mounted at its own
+// /srv/models mount point instead — see mountModelDiskImage. Returns the swosbase
+// image index of the model disk, or -1 if none is attached.
+private func findModelDiskImage() -> Int {
+    let count = virtioBlkSwosbaseImageCount()
+    var image = 0
+    while image < count {
+        if packedImageHasPath(image, "MODEL-DISK-ID") { return image }
+        image += 1
+    }
+    return -1
+}
+
+// LM3b: mount the model disk read-only at /srv/models. Signed-only (same image
+// trust root as the base), so only an image-key-signed model disk is accepted; a
+// real model that is too big for the RAM-loaded base / the ~4 MiB datafs file cap
+// ships this way. No-op when no model disk is attached.
+private func mountModelDiskImage(_ root: Int) {
+    if virtioBlkUsingStore() { return }
+    let image = findModelDiskImage()
+    if image < 0 { return }
+    let srv = addDir(root, "srv")
+    let models = srv >= 0 ? addDir(srv, "models") : -1
+    if models >= 0 && buildImageFromDisk(image, models,
+                                         allowExistingDirs: false,
+                                         requireSigned: true) {
+        klog(.info, "vfs", "LM3b: model disk mounted read-only at /srv/models")
+    } else {
+        klog(.info, "vfs", "LM3b: model disk mount rejected")
+    }
+}
+
 private func mountPackageImages(_ root: Int, baseImage: Int) {
     let count = virtioBlkSwosbaseImageCount()
+    let modelImage = findModelDiskImage()
     if !virtioBlkUsingStore() {
         var image = 0
         while image < count {
-            if image != baseImage {
+            if image != baseImage && image != modelImage {
                 if buildImageFromDisk(image, root,
                                       allowExistingDirs: true,
                                       requireSigned: false) {
@@ -980,6 +1015,7 @@ func vfsInit() {
             else { uartPuts("update-store: mounted active slot\n") }
         }
         mountPackageImages(root, baseImage: baseMount.image)
+        mountModelDiskImage(root)   // LM3b: model bundle disk at /srv/models
     } else {
         let bin = addDir(root, "bin")
         addFile(bin, "ps", "")

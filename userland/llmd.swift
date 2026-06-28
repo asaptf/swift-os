@@ -87,6 +87,10 @@ private func staticPath(_ s: StaticString) -> UnsafePointer<CChar> {
 // payload also faults it fully in, so "verified" implies "resident".
 
 private let bundleRoot: StaticString = "/models/stories15M"
+// LM3c: a dedicated model disk (LM3a/LM3b) mounts read-only at /srv/models. A
+// real model is too big for the RAM-loaded base, so prefer the disk-delivered
+// bundle when present and fall back to the base bundle otherwise.
+private let diskBundleRoot: StaticString = "/srv/models/stories15M"
 private let dentsCap = 2048
 private let manifestCap = 4096
 
@@ -487,10 +491,18 @@ func main(_ argc: Int32,
         swiftos_puts(trustRootPresent
             ? "llmd: trust root loaded (/etc/swos/model-signing.pub)\n"
             : "llmd: no trust root; integrity-only mode\n")
-        guard let bundle = resolveBundle(bundleRoot) else {
+        // LM3c: prefer the model disk (/srv/models) when one is mounted; fall
+        // back to the base bundle (/models) otherwise.
+        var fromDisk = false
+        var picked = resolveBundle(diskBundleRoot)
+        if picked != nil { fromDisk = true } else { picked = resolveBundle(bundleRoot) }
+        guard let bundle = picked else {
             swiftos_puts("llmd: no verifiable model bundle generation\n")
             return 1
         }
+        swiftos_puts(fromDisk
+            ? "llmd: serving from model disk /srv/models\n"
+            : "llmd: serving from base /models\n")
         swiftos_puts("llmd: bundle ")
         let nameBytes = Array(bundle.name.utf8)
         nameBytes.withUnsafeBytes { _ = swiftos_write(1, $0.baseAddress, UInt($0.count)) }

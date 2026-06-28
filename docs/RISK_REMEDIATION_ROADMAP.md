@@ -1074,7 +1074,7 @@ test, committed, review before the next):
   returns `EBUSY` via a per-mount refcount. Acceptance: a userland program mounts a
   labeled volume, reads/writes it, persists across reboot, and a busy unmount is
   refused; an unprivileged caller is denied.
-  - **V3a** (DONE, 2026-06-28): `SYS_mount`/`SYS_unmount` (117/118), `capConsole`-gated
+  - **V3a** (DONE, 2026-06-28): `SYS_mount`/`SYS_unmount` (118/119), `capConsole`-gated
     like `device_claim`; runtime graft of an enumerated-but-unmounted SWDATAFS volume
     by label/UUID selector into a free datafs slot; subtree teardown + slot release on
     unmount; busy (open fd / cwd in the subtree) → `EBUSY`, computed on demand;

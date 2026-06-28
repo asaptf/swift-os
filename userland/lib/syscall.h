@@ -123,8 +123,9 @@
 #define SYS_KERNEL_INSTALL_COMMIT 114
 #define SYS_KERNEL_INSTALL_ABORT  115
 #define SYS_RECOVERY_MODE         116
-#define SYS_MOUNT                 117
-#define SYS_UNMOUNT               118
+#define SYS_GET_WINSIZE           117
+#define SYS_MOUNT                 118
+#define SYS_UNMOUNT               119
 
 // mount(selector, mountpoint, flags) flag bits (must match the kernel
 // mountFlag* in kernel/vfs/vfs.swift).

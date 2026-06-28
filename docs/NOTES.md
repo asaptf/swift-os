@@ -86,22 +86,52 @@ console. `mc.elf` is a 1.5 MB static AArch64 binary → `/bin/mc`.
   1. `lib/tty/tty-ncurses.h` force-`#define ENABLE_SHADOWS 1` → disabled: dialog
      drop-shadows call ncurses *widechar* (`cchar_t`/`getcchar`/`mvadd_wchnstr`)
      which our 8-bit NC1 ncurses lacks. Shadows are cosmetic.
-  2. `src/main.c`: default `TERM=vt100` and `HOME=/tmp` at the top of `main()` —
+  2. `src/main.c`: default `TERM=linux` and `HOME=/tmp` at the top of `main()` —
      baked binaries inherit an empty environment, so without these MC aborts on
      "TERM unset" and then "Cannot create /.config/mc directory". `/tmp` is the
      writable tmpfs (kernel/vfs/vfs.swift), so `~/.config/mc` lands there.
+     `linux` (not the original `vt100`) is the PC-text-console terminfo, which
+     advertises 8 colours — so MC emits colour SGR and the framebuffer console
+     paints the blue skin. setenv overwrite=0, so an inherited TERM still wins
+     once env propagation through the login-exec path lands.
 - **compat additions** (also needed at link/compile): `mntent.h` gained `MOUNTED`
   + MNTTYPE/MNTOPT names (gnulib mountlist one-arg-getmntent path; stubs already
   report an empty mount list); new `sys/vfs.h` forwarding to `sys/statfs.h` (MC
   fsusage includes `<sys/vfs.h>` for `struct statfs`); `getsid()` stub in stubs.c.
-- **No skin file shipped.** MC uses its compiled-in default skin (one-time
-  "Default skin has been loaded" notice). Shipping `misc/skins/default.ini`
-  instead makes MC's skin parser **segfault** (NULL deref, FAR_EL1=0) on a
-  monochrome terminal — a real MC-on-mono bug; the built-in skin is the working
-  path. Filesystem free-space (statfs) and mount list are empty stubs.
-- **Carry-over for real use:** colors (mono vt100 only), the skin-parser crash,
-  and a system-wide `TERM`/`HOME` at the login-exec path (vs. the per-binary
-  defaults patched in here) are follow-ups, not blockers for the TUI proof.
+- **Blue skin shipped (2026-06-27).** `misc/skins/default.ini` is installed to
+  `/usr/share/mc/skins/default.ini` (build-mc.sh stages it to `build/mc-skins/`,
+  Makefile `MC_PACK_CMD` packs it under `INCLUDE_MC=1`). MC's compiled-in fallback
+  skin is hardcoded black&white (`lib/skin/ini-file.c
+  mc_skin_hardcoded_blackwhite_colors`), so colour requires the real skin. The
+  earlier NULL-deref skin-parser crash was specific to a *monochrome* terminal;
+  with `TERM=linux` (colour) MC takes the colour code path and the parser is fine.
+  The framebuffer console (`kernel/drivers/fb.swift`) now interprets SGR colour
+  (16-colour VGA palette, bold/reverse, bce) so the blue panels render on `-device
+  ramfb`; verified by a QMP framebuffer screendump (≈33% blue pixels). Filesystem
+  free-space (statfs) and mount list remain empty stubs.
+- **Window size + function keys (2026-06-27).** Two follow-ups so MC is usable in
+  the graphical window, not just colourful:
+  - *TIOCGWINSZ.* The `ioctl` stub (`userland/compat/stubs.c`) returned a hardcoded
+    24x80, so MC only used the top-left of the 800x600 ramfb window. New syscall
+    `SYS_GET_WINSIZE` (117) returns the framebuffer text-console dims
+    (`fbConsoleDims()` in fb.swift → `(cols, rows)`, e.g. 100x37 at 800x600; 0 when
+    serial-only). The stub calls it and falls back to 24x80 when 0. MC now fills the
+    whole window.
+  - *Arrows / F-keys.* The userland keyboard driver decoder
+    (`userland/lib/virtio_input_user.swift`) only mapped printable ASCII to a single
+    byte, so arrows and F-keys were dropped. New `decodeSeq()` emits the multi-byte
+    `linux`-terminfo escape sequences (arrows `\E[A`–`\E[D`, F1–F5 `\E[[A`–`\E[[E`,
+    F6–F12 `\E[17~`–`\E[24~`, Home/End/PgUp/PgDn/Ins/Del); `/bin/inputd` injects the
+    whole sequence. Subtle bug fixed: inputd printed its "C5j OK" announce *between*
+    injected bytes on the first key, splitting the escape — moved before the inject
+    loop. Verified via QMP keyboard events: Down moves the panel selection, F9
+    activates the menu bar (5 yellow hotkeys). NOTE: busybox isn't relinked, so the
+    shell/busybox-vi still see 24x80 (their stale `stubs.o`); `make busybox` would
+    propagate the winsize ioctl to them too.
+- **Carry-over for real use:** a system-wide `TERM`/`HOME` at the login-exec path
+  (env does not yet propagate through `console-login`'s `execve` to the shell's
+  children, so MC relies on its own per-binary `setenv` defaults) is a follow-up,
+  not a blocker for the TUI proof.
 
 ## GL1 GLib port (2026-06-23)
 
@@ -7527,7 +7557,7 @@ write-through; V3c = the unprivileged-denied acceptance).
   `capConsole`-gated like `device_claim`; `ensureMntDir` creates `/mnt` on demand.
   Teardown unlinks the whole mountpoint subtree from `/mnt` (name disappears) then
   `datafsUnmount`s the slot.
-- Syscalls `SYS_mount = 117(selector, mountpoint, flags)`, `SYS_unmount = 118(mountpoint)`;
+- Syscalls `SYS_mount = 118(selector, mountpoint, flags)`, `SYS_unmount = 119(mountpoint)`;
   flags `RO=1`, `PERSIST=2` (V3b), `FORMAT_IF_BLANK=4`. Userland: `mount_volume`/
   `unmount_volume` + `SWIFTOS_MOUNT_*` (`userland/lib/syscall.h`), `swiftos_mount`/
   `swiftos_unmount` bridge, and `/bin/mountprobe` (`mountprobe mount <sel> <mp> [ro|format]`
@@ -8628,3 +8658,75 @@ dropping the pin is follow-up work.
 
 - Gates: `tests/llm_run_test.sh`, `tests/llm_serve_test.sh`, `tests/simdprobe_test.sh`
   (all wired into `make test`), plus host `build/llm_engine_test` + `llm_q8_engine_test`.
+
+#### Note: LM2 (multi-threaded matmul) is blocked, deferred
+
+LM2 would fan matmul rows out over sibling threads. It is blocked on two things,
+recorded here so the next attempt starts informed: (1) **secondary EL0 scheduling
+is deliberately gated** — `processHomeCpuForNewReadySlot` places every new
+runnable EL0 slot on CPU0 unless the `s5fRunAnyPlacementActive` test gate is open,
+so in a normal boot a worker pool would just serialize on CPU0. Making run-any
+placement the default is a real scheduler decision (raise for review) and unblocks
+all multi-core userland, not just inference. (2) **The `+neon` codegen is fragile**
+in this Embedded-Swift/QEMU combo: a behaviour-preserving matmul→job+runner refactor
+(host oracles green) reintroduced a QEMU-only int8 divergence of the same class as
+the `quantizeBuf` bug, so the parallel runner must be paired with a `+neon` config
+that doesn't miscompile (likely autovec off + explicit SIMD only). The portable
+design that does work — route each matmul through a `LlamaMatmulJob` value + a
+`llamaMatmulRunner` hook (serial default for host/single-core; pool override in an
+app), no closures across threads, no per-call allocation — is kept for that future.
+
+### LM3a — a signed packed "model disk" (DONE, 2026-06-27)
+
+A real model is too big for the RAM-loaded base image, and datafs caps files at
+~4 MiB (single-indirect), so neither bring-up tier can hold one. LM3a ships the
+model bundle as its own **signed SWOSBASE packed read-only image** (`make
+model-image` → `build/model.img`, built by reusing `basepack` over a model-only
+root, signed with the image key so the kernel's compiled-in trust root verifies it
+like the base). A packed image has no ~4 MiB cap and reuses the base reader +
+file-backed mmap. The image carries the `stories15M/1` bundle (model.bin +
+tokenizer.bin + manifest.toml) plus a `MODEL-DISK-ID` provenance sentinel.
+Acceptance: `make model-image-test` (host, no QEMU) asserts the SWOSBASE magic,
+size, bundle entry names, and the sentinel; wired into `make test`.
+
+### LM3b — mount the model disk read-only at /srv/models (DONE, 2026-06-27)
+
+The kernel now grafts the model disk into the VFS at `/srv/models`. The model disk
+is just another SWOSBASE image on its own virtio-blk device (the block layer already
+enumerates up to 4), identified by its top-level `MODEL-DISK-ID` sentinel
+(`findModelDiskImage`). It is deliberately kept OUT of the package-overlay graft
+(`mountPackageImages` skips it) so it lands at its own mount point instead of
+polluting the root, and `mountModelDiskImage` grafts it via the existing
+`buildImageFromDisk(image, /srv/models-node, requireSigned: true)` path — so it is
+verified against the same compiled-in image trust root as the base, and file nodes
+carry the model device's image index (so file-backed `mmap` reads from the model
+disk). No-op when no model disk is attached, so every existing profile is unaffected.
+
+- Acceptance: `make model-mount-test` boots with the base + model disks attached and
+  asserts the `LM3b: model disk mounted read-only at /srv/models` log line, that
+  `/srv/models/MODEL-DISK-ID` reads back the sentinel (proving provenance — the base
+  has no such file), and that `/srv/models/stories15M/1/model.bin` is visible. Wired
+  into `make test`. No regression: `llm_run`/`llm_serve` (normal boot, no model disk)
+  and `v1_volume` (multi-disk datafs) stay green.
+### LM3c — serve the disk-delivered model end to end (DONE, 2026-06-27)
+
+`/bin/llmd` now prefers the model disk: it resolves `/srv/models/stories15M` first
+and falls back to the base `/models/stories15M` only if no model disk is mounted
+(logging `serving from model disk /srv/models` vs `serving from base /models`). The
+disk bundle's manifest is signed with the model-signing key (`modelsign sign`, the
+step LM3a first missed), so it verifies against `/etc/swos/model-signing.pub` exactly
+like the base bundle. The weights are mmap'd straight from the model disk (the file
+nodes carry the model device's image index, LM3b).
+
+- Acceptance: `make llm-serve-disk-test` boots the inference profile (`-m 1024M`, base
+  + model disks, slirp NIC), starts llmd, asserts `serving from model disk /srv/models`
+  and that a `POST /completion` returns the stories15M runq.c reference story — i.e.
+  the model outside the base is served end to end. Wired into `make test`. No
+  regression: `llm_serve_test` (no model disk) still passes via the base fallback.
+
+**LM3 arc complete (LM3a + LM3b + LM3c):** a model that cannot fit the RAM-loaded base
+or the ~4 MiB datafs file cap is built into its own signed packed image, mounted
+read-only at `/srv/models`, and served by llmd — the delivery path a real (≈1 GB)
+model will use (swap the bundle the model image is built from; the plumbing is the
+same). Remaining LM goal work: LM4 (a real TinyLlama-1.1B-Chat bundle on this path),
+LM5 (GGUF + Q4_K), LM6 (sampling + chat template); LM2 (multi-core) stays deferred.

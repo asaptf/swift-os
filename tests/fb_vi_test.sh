@@ -78,10 +78,26 @@ def qmp(obj):
 time.sleep(0.5); mon.recv(65536)            # QMP greeting
 qmp({"execute":"qmp_capabilities"})
 
-# UEFI boot is slow: wait, satisfy the M7 tty demo, log in, open vi, type text.
-time.sleep(18); send("tty-line\n",1); send("\x03",2)
-send("root\n",1); send("swordfish\n",3)
-send("vi /tmp/fbvi\n",3)
+# UEFI boot goes straight to the login prompt (the -kernel M7 tty demo is skipped
+# when swos-init + services are present). Wait for the prompt, then log in. The
+# inputd driver injects test bytes at boot that can trigger a spurious failed
+# login, so retry root/swordfish keyed on "shell ready" (extra sends after
+# success are harmless shell no-ops).
+def await_(marker, secs=120):
+    n=0
+    while n < secs*10:
+        if marker.encode() in bytes(log): return True
+        time.sleep(0.1); n+=1
+    print("FAIL: timed out waiting for %r"%marker); sys.exit(1)
+await_("swift-os login:")
+for _ in range(10):
+    time.sleep(1.2); send("root\n")
+    time.sleep(1.2); send("swordfish\n")
+    time.sleep(1.5)
+    if b"shell ready" in bytes(log): break
+else:
+    print("FAIL: could not log in"); sys.exit(1)
+time.sleep(1.0); send("vi /tmp/fbvi\n",3)
 send("iHELLO-FB-VI",1); send("\x1b",2)      # insert text, ESC to command mode
 
 r=qmp({"execute":"screendump","arguments":{"filename":PPM,"format":"ppm"}})

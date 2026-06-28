@@ -81,13 +81,16 @@ func main(_ argc: Int32,
             let type = virtioEventType(q, id)
             let code = virtioEventCode(q, id)
             let value = virtioEventValue(q, id)
-            let byte = decoder.decode(type: type, code: code, value: value)
-            if byte != 0 {
+            let bytes = decoder.decodeSeq(type: type, code: code, value: value)
+            // Announce BEFORE injecting, never between bytes — printing mid-escape
+            // would split a multi-byte key sequence (ESC then a delayed tail), so
+            // the foreground program would see a bare ESC + literal junk.
+            if !bytes.isEmpty && !announced {
+                announced = true
+                swiftos_puts("C5j OK: TTY bytes injected from userland driver\n")
+            }
+            for byte in bytes {
                 _ = swiftos_tty_inject(byte)
-                if !announced {
-                    announced = true
-                    swiftos_puts("C5j OK: TTY bytes injected from userland driver\n")
-                }
             }
             virtioRefill(&q, id)
             q.lastUsed &+= 1
