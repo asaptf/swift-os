@@ -8663,7 +8663,25 @@ disk). No-op when no model disk is attached, so every existing profile is unaffe
   has no such file), and that `/srv/models/stories15M/1/model.bin` is visible. Wired
   into `make test`. No regression: `llm_run`/`llm_serve` (normal boot, no model disk)
   and `v1_volume` (multi-disk datafs) stay green.
-- Next: **LM3c** adds an inference QEMU profile with a larger `-m` + the model disk
-  attached, and points `/bin/llmd` at `/srv/models/stories15M/1` so it serves the
-  disk-delivered model (mmap'd from the model disk), proving end to end that a model
-  outside the base is served.
+### LM3c — serve the disk-delivered model end to end (DONE, 2026-06-27)
+
+`/bin/llmd` now prefers the model disk: it resolves `/srv/models/stories15M` first
+and falls back to the base `/models/stories15M` only if no model disk is mounted
+(logging `serving from model disk /srv/models` vs `serving from base /models`). The
+disk bundle's manifest is signed with the model-signing key (`modelsign sign`, the
+step LM3a first missed), so it verifies against `/etc/swos/model-signing.pub` exactly
+like the base bundle. The weights are mmap'd straight from the model disk (the file
+nodes carry the model device's image index, LM3b).
+
+- Acceptance: `make llm-serve-disk-test` boots the inference profile (`-m 1024M`, base
+  + model disks, slirp NIC), starts llmd, asserts `serving from model disk /srv/models`
+  and that a `POST /completion` returns the stories15M runq.c reference story — i.e.
+  the model outside the base is served end to end. Wired into `make test`. No
+  regression: `llm_serve_test` (no model disk) still passes via the base fallback.
+
+**LM3 arc complete (LM3a + LM3b + LM3c):** a model that cannot fit the RAM-loaded base
+or the ~4 MiB datafs file cap is built into its own signed packed image, mounted
+read-only at `/srv/models`, and served by llmd — the delivery path a real (≈1 GB)
+model will use (swap the bundle the model image is built from; the plumbing is the
+same). Remaining LM goal work: LM4 (a real TinyLlama-1.1B-Chat bundle on this path),
+LM5 (GGUF + Q4_K), LM6 (sampling + chat template); LM2 (multi-core) stays deferred.

@@ -2549,6 +2549,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/simdprobe_test.sh
 	$(MAKE) model-image-test
 	$(MAKE) model-mount-test
+	$(MAKE) llm-serve-disk-test
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
@@ -3465,12 +3466,13 @@ MODEL_PACK_ROOT := $(BUILD)/model-pack-root
 MODEL_PACK_IMG  := $(BUILD)/model.img
 MODEL_DISK_ID   := SWOS-MODEL-DISK-v1
 
-$(MODEL_PACK_IMG): $(BASEPACK) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+$(MODEL_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(MODEL15_Q8) $(MODEL_TOK32) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
 	rm -rf $(MODEL_PACK_ROOT)
 	mkdir -p $(MODEL_PACK_ROOT)/stories15M/1
 	cp $(MODEL15_Q8) $(MODEL_PACK_ROOT)/stories15M/1/model.bin
 	cp $(MODEL_TOK32) $(MODEL_PACK_ROOT)/stories15M/1/tokenizer.bin
 	$(MODELMANIFEST) stories15M 1 $(MODEL15_Q8) $(MODEL_TOK32) $(MODEL_PACK_ROOT)/stories15M/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_PACK_ROOT)/stories15M/1/manifest.toml $(SIGNING_SEED)
 	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_PACK_ROOT)/MODEL-DISK-ID
 	$(BASEPACK) $(MODEL_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
 
@@ -3486,6 +3488,11 @@ model-image-test: $(MODEL_PACK_IMG)
 # it read-only at /srv/models (sentinel readable, bundle visible).
 model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 	./tests/model_mount_test.sh
+
+# LM3c acceptance: /bin/llmd serves the disk-delivered model from /srv/models
+# under a larger-RAM inference profile (model disk attached, -m 1024M).
+llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
+	./tests/llm_serve_disk_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
