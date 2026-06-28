@@ -2548,6 +2548,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/llm_serve_test.sh
 	./tests/simdprobe_test.sh
 	$(MAKE) model-image-test
+	$(MAKE) model-mount-test
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
@@ -3480,6 +3481,11 @@ model-image: $(MODEL_PACK_IMG)
 # packed FS, and carries the model bundle + the provenance sentinel.
 model-image-test: $(MODEL_PACK_IMG)
 	./tests/model_image_test.sh
+
+# LM3b acceptance: boot with the model disk attached and prove the kernel mounts
+# it read-only at /srv/models (sentinel readable, bundle visible).
+model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
+	./tests/model_mount_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network

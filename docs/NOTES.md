@@ -8644,9 +8644,26 @@ tokenizer.bin + manifest.toml) plus a `MODEL-DISK-ID` provenance sentinel.
 Acceptance: `make model-image-test` (host, no QEMU) asserts the SWOSBASE magic,
 size, bundle entry names, and the sentinel; wired into `make test`.
 
-- Next: **LM3b** mounts `build/model.img` (a 2nd virtio-blk SWOSBASE disk) read-only
-  at `/srv/models` — the block layer already enumerates up to 4 SWOSBASE disks
-  (`maxSwosbaseImages`); the work is grafting the 2nd device's packed FS at a mount
-  point via the `buildBaseFromDisk` reader. **LM3c** adds an inference QEMU profile
-  with a larger `-m` + the model disk attached and serves the disk-delivered model,
-  asserting (via the sentinel) it did not come from the base.
+### LM3b — mount the model disk read-only at /srv/models (DONE, 2026-06-27)
+
+The kernel now grafts the model disk into the VFS at `/srv/models`. The model disk
+is just another SWOSBASE image on its own virtio-blk device (the block layer already
+enumerates up to 4), identified by its top-level `MODEL-DISK-ID` sentinel
+(`findModelDiskImage`). It is deliberately kept OUT of the package-overlay graft
+(`mountPackageImages` skips it) so it lands at its own mount point instead of
+polluting the root, and `mountModelDiskImage` grafts it via the existing
+`buildImageFromDisk(image, /srv/models-node, requireSigned: true)` path — so it is
+verified against the same compiled-in image trust root as the base, and file nodes
+carry the model device's image index (so file-backed `mmap` reads from the model
+disk). No-op when no model disk is attached, so every existing profile is unaffected.
+
+- Acceptance: `make model-mount-test` boots with the base + model disks attached and
+  asserts the `LM3b: model disk mounted read-only at /srv/models` log line, that
+  `/srv/models/MODEL-DISK-ID` reads back the sentinel (proving provenance — the base
+  has no such file), and that `/srv/models/stories15M/1/model.bin` is visible. Wired
+  into `make test`. No regression: `llm_run`/`llm_serve` (normal boot, no model disk)
+  and `v1_volume` (multi-disk datafs) stay green.
+- Next: **LM3c** adds an inference QEMU profile with a larger `-m` + the model disk
+  attached, and points `/bin/llmd` at `/srv/models/stories15M/1` so it serves the
+  disk-delivered model (mmap'd from the model disk), proving end to end that a model
+  outside the base is served.
