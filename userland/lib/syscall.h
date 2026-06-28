@@ -123,6 +123,14 @@
 #define SYS_KERNEL_INSTALL_COMMIT 114
 #define SYS_KERNEL_INSTALL_ABORT  115
 #define SYS_RECOVERY_MODE         116
+#define SYS_MOUNT                 117
+#define SYS_UNMOUNT               118
+
+// mount(selector, mountpoint, flags) flag bits (must match the kernel
+// mountFlag* in kernel/vfs/vfs.swift).
+#define SWIFTOS_MOUNT_RO              0x1  // mount read-only (default: read-write)
+#define SWIFTOS_MOUNT_PERSIST        0x2  // write the entry through to /data/.system/mounts (V3b)
+#define SWIFTOS_MOUNT_FORMAT_IF_BLANK 0x4 // format a genuinely blank disk (no magic, sector 0 all zero)
 
 // reboot(cmd) command selectors (must match kernel/power/power.swift).
 #define SWIFTOS_POWER_RESET 0  // PSCI SYSTEM_RESET — warm reboot
@@ -569,6 +577,20 @@ static inline int device_info(int fd, struct swiftos_device_info *info) {
 
 static inline int device_discover(int index, struct swiftos_device_info *info) {
     return (int)__syscall3(SYS_DEVICE_DISCOVER, index, (long)info, 0);
+}
+
+// V3: runtime mount of an enumerated, unmounted datafs volume named by `selector`
+// (a 32-hex-char UUID, else a volume label) at `mountpoint` (must be /mnt/<name>).
+// `flags` is a bitwise OR of SWIFTOS_MOUNT_*. Returns 0, or a negative errno
+// (EACCES without capConsole, ENOENT no matching disk, EBUSY/EINVAL bad mount).
+static inline int mount_volume(const char *selector, const char *mountpoint, unsigned long flags) {
+    return (int)__syscall3(SYS_MOUNT, (long)selector, (long)mountpoint, (long)flags);
+}
+
+// V3: tear down a runtime graft at `mountpoint` and release its datafs slot.
+// Returns 0, or a negative errno (EACCES, EBUSY if an fd/cwd is in the subtree).
+static inline int unmount_volume(const char *mountpoint) {
+    return (int)__syscall3(SYS_UNMOUNT, (long)mountpoint, 0, 0);
 }
 
 // LA2: map the MMIO window of the device claimed on `fd` into this process,

@@ -235,6 +235,15 @@ private func dfsHasMagic(_ buf: UInt) -> Bool {
     return ok
 }
 
+// V3: true iff sector 0 (the 512-byte superblock region) is entirely zero — a
+// genuinely blank disk, safe to format under FORMAT_IF_BLANK. A non-zero sector 0
+// without our magic is an unknown disk and is never auto-wiped.
+private func dfsSectorBlank(_ buf: UInt) -> Bool {
+    var i = 0
+    while i < 512 { if dfsU8(buf, i) != 0 { return false }; i += 1 }
+    return true
+}
+
 // Capture the (pre-stamped or formatted) label from a sector-0 buffer into the
 // volume's label cache. Invalid/empty -> labelLen 0 (unlabeled).
 private func dfsCaptureLabel(_ vol: Int, _ buf: UInt) {
@@ -343,7 +352,8 @@ private func dfsFormat(_ vol: Int, _ totalBlocks: Int) -> Bool {
 // stamped to `pinnedLo`/`pinnedHi` (the kernel-cmdline anchor) instead of being
 // generated, so future boots match the root by that UUID.
 func datafsMount(_ vol: Int, _ device: Int,
-                 pinnedLo: UInt64 = 0, pinnedHi: UInt64 = 0, usePinned: Bool = false) -> Bool {
+                 pinnedLo: UInt64 = 0, pinnedHi: UInt64 = 0, usePinned: Bool = false,
+                 formatBlank: Bool = false) -> Bool {
     if !dfsValidVol(vol) || device < 0 { return false }
     if dfsVolumes[vol].mounted { return true }
     dfsVolumes[vol].device = device
@@ -364,7 +374,11 @@ func datafsMount(_ vol: Int, _ device: Int,
         // V2b guardrail: only (re)format a disk explicitly marked as ours. A disk
         // without the SWDATAFS magic — an unknown, possibly-data-bearing disk — is
         // never auto-formatted; refuse the mount instead of wiping it.
-        if !dfsHasMagic(z) { dfsZeroBuf(z, DFS_BS); return false }
+        //   V3 FORMAT_IF_BLANK relaxes this for a *genuinely blank* disk (sector 0
+        //   all zero — e.g. a freshly attached cloud volume), which we may stamp
+        //   and format. A non-zero sector 0 without our magic stays an unknown disk
+        //   and is still refused, never wiped.
+        if !dfsHasMagic(z) && !(formatBlank && dfsSectorBlank(z)) { dfsZeroBuf(z, DFS_BS); return false }
         // First boot (or an older format): take the cmdline-pinned UUID for the
         // root (V2c), else generate a fresh one; dfsFormat then stamps UUID + the
         // captured label into the new superblock.
@@ -708,4 +722,45 @@ func datafsSyncAll() {
         if dfsVolumes[vol].mounted { _ = virtioBlkVolumeFlush(dfsVolumes[vol].device) }
         vol += 1
     }
+}
+
+// V3: release a runtime-mounted datafs volume slot so the slot — and its disk —
+// can be remounted later. Flush first for durability, then clear the binding. The
+// fixed scratch buffers (zero/idx/inode/label) are kept for reuse; the block
+// bitmap is dropped (its size tracks the disk, so a later mount of a different
+// disk into this slot reallocates a correctly sized one).
+func datafsUnmount(_ vol: Int) -> Bool {
+    if !dfsValidVol(vol) || !dfsVolumes[vol].mounted { return false }
+    _ = virtioBlkVolumeFlush(dfsVolumes[vol].device)
+    dfsVolumes[vol].mounted = false
+    dfsVolumes[vol].device = -1
+    dfsVolumes[vol].bitmapPtr = 0   // size tracks the disk; reallocate on remount
+    dfsVolumes[vol].totalBlocks = 0
+    dfsVolumes[vol].uuidLo = 0
+    dfsVolumes[vol].uuidHi = 0
+    dfsVolumes[vol].labelLen = 0
+    return true
+}
+
+// V3: the first unmounted (free) datafs slot, or -1 if all slots are in use. The
+// VFS picks a free slot for a runtime mount.
+func datafsFindFreeVolume() -> Int {
+    var vol = 0
+    while vol < DFS_MAX_VOLUMES {
+        if !dfsVolumes[vol].mounted { return vol }
+        vol += 1
+    }
+    return -1
+}
+
+// V3: the slot a given virtio-blk device is currently mounted on, or -1 if none.
+// Lets the VFS skip an already-mounted disk when resolving a mount selector.
+func datafsDeviceMountedSlot(_ device: Int) -> Int {
+    if device < 0 { return -1 }
+    var vol = 0
+    while vol < DFS_MAX_VOLUMES {
+        if dfsVolumes[vol].mounted && dfsVolumes[vol].device == device { return vol }
+        vol += 1
+    }
+    return -1
 }

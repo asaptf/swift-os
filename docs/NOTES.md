@@ -7496,6 +7496,51 @@ identity from the V-series design, the most explicit root selection.
   beats scan order. D0–D3 + V1 + V2a + V2b stay green.
 - **V2 complete (V2a–V2c).** Next: V3 (runtime capability-gated `mount()`/`unmount()`).
 
+### V3a — runtime, capability-gated mount()/unmount() (DONE, 2026-06-28)
+
+First runtime mount surface: a supervisor can graft/ungraft an already-enumerated
+SWDATAFS volume at runtime, not just via boot-time identity + the manifest. Split
+of V3 (V3a = syscalls + live mount/unmount + busy refcount; V3b = `PERSIST`
+write-through; V3c = the unprivileged-denied acceptance).
+
+- **Mount table = the implicit graft.** There is still no separate table: a
+  mountpoint VNode carries `dataFs + dfsInode(root) + dfsVolume(slot)`. `unmount`
+  recovers `(mountpoint vnode, slot)` by `resolve()` + the invariant *a mount root
+  is the unique datafs node whose PARENT is not datafs* (`nodes[n].dataFs &&
+  !nodes[parent].dataFs`), which also refuses unmounting a datafs *subdir*; slot 0
+  (`/data`) is refused outright.
+- **Busy = computed on demand** (not a stored counter that can drift, the same
+  shape as `cell_destroy`'s live-member check): `mountSubtreeBusy(root)` is true iff
+  any `openDescriptions[d].kind == .file` whose `node` is `isDescendant(of: root)`,
+  or any `cwdNodes[p]` is `isDescendant(of: root)`. → `EBUSY`.
+- **Selector** (C string): 32 hex chars ⇒ match by UUID (`datafsPeekUuid`, parsed
+  hi:lo like the V2c cmdline pin), else by label (`datafsPeekLabel`). Resolves to an
+  *enumerated-but-unmounted* device (`datafsDeviceMountedSlot(dev) < 0`); the slot is
+  the first free one (`datafsFindFreeVolume`).
+- `kernel/fs/datafs.swift`: `datafsUnmount(vol)` (flush, clear `mounted`/`device`,
+  drop the disk-sized bitmap so a remount reallocates), `datafsFindFreeVolume`,
+  `datafsDeviceMountedSlot`, and a `formatBlank` param on `datafsMount` — `FORMAT_IF_BLANK`
+  relaxes the never-wipe guardrail *only* for a genuinely blank disk (no magic AND
+  sector 0 all zero, via `dfsSectorBlank`); a non-zero non-magic disk is still refused.
+- `kernel/vfs/vfs.swift`: `mountVolumeAt` gains `formatBlank`/`readOnly`;
+  `vfsMount(selector, mountpoint, flags)` + `vfsUnmount(mountpoint)`, both
+  `capConsole`-gated like `device_claim`; `ensureMntDir` creates `/mnt` on demand.
+  Teardown unlinks the whole mountpoint subtree from `/mnt` (name disappears) then
+  `datafsUnmount`s the slot.
+- Syscalls `SYS_mount = 117(selector, mountpoint, flags)`, `SYS_unmount = 118(mountpoint)`;
+  flags `RO=1`, `PERSIST=2` (V3b), `FORMAT_IF_BLANK=4`. Userland: `mount_volume`/
+  `unmount_volume` + `SWIFTOS_MOUNT_*` (`userland/lib/syscall.h`), `swiftos_mount`/
+  `swiftos_unmount` bridge, and `/bin/mountprobe` (`mountprobe mount <sel> <mp> [ro|format]`
+  / `mountprobe unmount <mp>`, prints `MP: <verb> rc=<n>`).
+- Test: `tests/v3_mount_test.sh` (gate `make v3-mount-test`). A `media`-labeled disk
+  is left UNMOUNTED at boot (an authoritative comment-only manifest lists nothing for
+  it), then `/bin/mountprobe` mounts it at `/mnt/store`, reads/writes a file, has a
+  busy unmount refused with `EBUSY` (the shell cwd is inside the subtree), and a clean
+  unmount succeed once idle (`/mnt/store` gone). Single-core. D0–D3 + V1 + V2a + V2b +
+  V2c stay green.
+- Remaining V3: **V3b** (`PERSIST` → write the entry through to `/data/.system/mounts`,
+  re-mounts on reboot), **V3c** (the unprivileged-principal `EACCES` acceptance).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

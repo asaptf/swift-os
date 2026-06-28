@@ -117,6 +117,8 @@ private let sysKernelInstallWrite: UInt = 113  // kernel_install_write(buf, coun
 private let sysKernelInstallCommit: UInt = 114 // kernel_install_commit(entry) — verify (hash + per-slot sig) and write the signed manifest entry (OS-1c-2b); needs capConsole
 private let sysKernelInstallAbort: UInt = 115  // kernel_install_abort() — discard an in-progress kernel install (OS-1c-2b); needs capConsole
 private let sysRecoveryMode: UInt = 116        // recovery_mode() -> 1 if the kernel command line requested recovery, else 0 (K4)
+private let sysMount: UInt = 117               // mount(selector, mountpoint, flags) — runtime capability-gated datafs mount (V3); needs capConsole
+private let sysUnmount: UInt = 118             // unmount(mountpoint) — tear down a runtime graft, release the datafs slot (V3); needs capConsole
 
 // Our termios layout (must match userland/lib/termios.h): four 32-bit flag
 // words; only c_lflag (offset 12) is interpreted today.
@@ -499,6 +501,11 @@ func syscallDispatch(number: UInt, frame: UnsafeMutablePointer<UInt>) {
         } else {
             result = vfsCellFree(fd: Int(bitPattern: frame[0]))
         }
+    } else if number == sysMount {
+        // V3: runtime capability-gated datafs mount (capConsole gate inside).
+        result = vfsMount(selector: frame[0], mountpoint: frame[1], flags: frame[2])
+    } else if number == sysUnmount {
+        result = vfsUnmount(mountpoint: frame[0])
     } else {
         result = Errno.noSys.code
     }

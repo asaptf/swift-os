@@ -1068,12 +1068,20 @@ test, committed, review before the next):
   guardrails; and the root is pinnable by a cmdline UUID. Next: **V3** (runtime
   capability-gated `mount()`/`unmount()`), then **V4** (real Hetzner Volume — the
   enumeration port only).
-- **V3** (planned): runtime `mount()` / `unmount()` syscalls, capability-gated (a
+- **V3** (in progress): runtime `mount()` / `unmount()` syscalls, capability-gated (a
   mount capability held by `init`/the cell supervisor). `PERSIST` writes the entry
   through to the manifest; `unmount` of a busy mountpoint (open fd / cwd within)
   returns `EBUSY` via a per-mount refcount. Acceptance: a userland program mounts a
   labeled volume, reads/writes it, persists across reboot, and a busy unmount is
   refused; an unprivileged caller is denied.
+  - **V3a** (DONE, 2026-06-28): `SYS_mount`/`SYS_unmount` (117/118), `capConsole`-gated
+    like `device_claim`; runtime graft of an enumerated-but-unmounted SWDATAFS volume
+    by label/UUID selector into a free datafs slot; subtree teardown + slot release on
+    unmount; busy (open fd / cwd in the subtree) → `EBUSY`, computed on demand;
+    RO/RW + `FORMAT_IF_BLANK` flags. `/bin/mountprobe` + `make v3-mount-test`. D0–D3 +
+    V1 + V2a + V2b + V2c stay green. See `docs/NOTES.md` (V3a).
+  - **V3b** (next): `PERSIST` write-through to `/data/.system/mounts` (re-mounts on reboot).
+  - **V3c**: capability-gate hardening + the unprivileged-principal `EACCES` acceptance.
 - **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
   port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
   or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume

@@ -203,6 +203,14 @@ int swiftos_device_query(int fd, struct swiftos_device_info *info) {
     return device_info(fd, info);
 }
 
+int swiftos_mount(const char *selector, const char *mountpoint, unsigned long flags) {
+    return mount_volume(selector, mountpoint, flags);
+}
+
+int swiftos_unmount(const char *mountpoint) {
+    return unmount_volume(mountpoint);
+}
+
 int swiftos_device_discover(int index, struct swiftos_device_info *info) {
     return device_discover(index, info);
 }

@@ -257,6 +257,12 @@ int  swiftos_context(unsigned int *principal, unsigned int *session, unsigned lo
 // authenticate against the read-only base store only, bypassing the /data
 // credential overlay and its fail-closed state.
 int  swiftos_recovery_mode(void);
+// V3: runtime, capability-gated datafs mount/unmount. `selector` names the volume
+// by 32-hex UUID or by label; `mountpoint` must be /mnt/<name>; `flags` is a
+// bitwise OR of SWIFTOS_MOUNT_* (see syscall.h). Both need capConsole. Return 0
+// or a negative errno (EACCES, ENOENT, EBUSY, EINVAL).
+int  swiftos_mount(const char *selector, const char *mountpoint, unsigned long flags);
+int  swiftos_unmount(const char *mountpoint);
 // Fetch the effective AND real security identity (any out-param may be NULL).
 // Effective = what the process can do now; real = who invoked it. They differ
 // only after a setuid-on-exec (e.g. /bin/sudo). Returns 0 on success.

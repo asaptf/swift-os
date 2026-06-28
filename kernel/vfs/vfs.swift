@@ -2239,16 +2239,20 @@ private func manifestMountpoint(_ buf: UInt, _ mlen: Int,
 // V1/V2a/V2b: mount data volume `vol` on `dev`, graft it under `parent` at the
 // given (dynamic) name, and mirror its tree. Empty-dir guardrail: never hide an
 // existing non-empty directory of that name. Returns true iff the volume mounted.
+//   V3: `formatBlank` threads FORMAT_IF_BLANK to datafsMount (stamp+format a
+//   genuinely blank disk); `readOnly` marks the mount point read-only.
 private func mountVolumeAt(_ parent: Int, _ vol: Int, _ dev: Int,
-                           _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int) -> Bool {
+                           _ namePtr: UnsafePointer<UInt8>, _ nameLen: Int,
+                           formatBlank: Bool = false, readOnly: Bool = false) -> Bool {
     if dev < 0 || nameLen <= 0 { return false }
     let existing = findChild(parent, namePtr, nameLen)
     if existing != -1 && nodes[existing].firstChild != -1 {
         uartPuts("V2: mountpoint not empty, skipped\n"); return false
     }
-    if !datafsMount(vol, dev) { uartPuts("V1: extra datafs mount failed\n"); return false }
-    let mp = existing != -1 ? existing : addDirNamed(parent, namePtr, nameLen, readOnly: false)
+    if !datafsMount(vol, dev, formatBlank: formatBlank) { uartPuts("V1: extra datafs mount failed\n"); return false }
+    let mp = existing != -1 ? existing : addDirNamed(parent, namePtr, nameLen, readOnly: readOnly)
     if mp < 0 { return false }
+    nodes[mp].readOnly = readOnly
     nodes[mp].dataFs = true
     nodes[mp].dfsInode = datafsRootInode()
     nodes[mp].dfsVolume = vol
@@ -2264,6 +2268,195 @@ private func mountVolumeAt(_ parent: Int, _ vol: Int, _ dev: Int,
     uartPuts("\n")
     uartPuts("V1 OK: datafs volume mounted under /mnt\n")
     return true
+}
+
+// ---- V3: runtime, capability-gated mount()/unmount() ----------------------
+//
+// The mount "table" is the implicit graft itself: a mountpoint VNode carries
+// dataFs + dfsInode(root) + dfsVolume(slot). A runtime unmount recovers
+// (mountpoint vnode, slot) by resolving the path and the invariant that a mount
+// root is the unique datafs node whose PARENT is not datafs. Both syscalls are
+// capConsole-gated (held by init / the cell supervisor), like device_claim.
+
+// SYS_mount(selector, mountpoint, flags) flag bits — must match the userland
+// SWIFTOS_MOUNT_* in userland/lib/syscall.h.
+private let mountFlagRO: UInt = 1 << 0           // mount read-only (default: read-write)
+private let mountFlagPersist: UInt = 1 << 1      // write the entry through to the manifest (V3b)
+private let mountFlagFormatIfBlank: UInt = 1 << 2 // format a genuinely blank disk (no magic, sector 0 all zero)
+
+// Length of a NUL-terminated user string already validated by userCString,
+// scanned up to `max` bytes.
+private func cstrLen(_ p: UnsafePointer<UInt8>, _ max: Int) -> Int {
+    var n = 0
+    while n < max && p[n] != 0 { n += 1 }
+    return n
+}
+
+// Parse 16 hex chars at p[start..<start+16] into a UInt64; sets ok=false on any
+// non-hex byte. Mirrors the cmdline UUID parse (V2c): first 16 hex = uuidHi, next
+// 16 = uuidLo.
+private func parseHex16(_ p: UnsafePointer<UInt8>, _ start: Int, _ ok: inout Bool) -> UInt64 {
+    var v: UInt64 = 0
+    var i = 0
+    while i < 16 {
+        let c = p[start + i]
+        var d: UInt64 = 0
+        if c >= 0x30 && c <= 0x39 { d = UInt64(c - 0x30) }
+        else if c >= 0x61 && c <= 0x66 { d = UInt64(c - 0x61 + 10) }
+        else if c >= 0x41 && c <= 0x46 { d = UInt64(c - 0x41 + 10) }
+        else { ok = false; return 0 }
+        v = (v << 4) | d
+        i += 1
+    }
+    return v
+}
+
+// Resolve a mount selector to an enumerated, currently-UNMOUNTED SWDATAFS device
+// index, or -1 if no such disk matches. A 32-hex-char selector matches by volume
+// UUID; anything else matches by volume label. Caller holds vfsLock.
+private func findUnmountedDataDevice(_ sel: UnsafePointer<UInt8>, _ selLen: Int) -> Int {
+    if selLen <= 0 { return -1 }
+    var byUuid = false
+    var uHi: UInt64 = 0
+    var uLo: UInt64 = 0
+    if selLen == 32 {
+        var ok = true
+        uHi = parseHex16(sel, 0, &ok)
+        uLo = parseHex16(sel, 16, &ok)
+        byUuid = ok
+    }
+    let n = virtioBlkDataVolumeCount()
+    var i = 0
+    while i < n {
+        let dev = virtioBlkDataDeviceIndexAt(i)
+        if datafsDeviceMountedSlot(dev) >= 0 { i += 1; continue }  // already mounted
+        if byUuid {
+            let u = datafsPeekUuid(dev)
+            if u.formatted && u.lo == uLo && u.hi == uHi { return dev }
+        } else {
+            var lbl = [UInt8](repeating: 0, count: 32)
+            let ll = lbl.withUnsafeMutableBufferPointer { datafsPeekLabel(dev, $0.baseAddress!, $0.count) }
+            if ll == selLen {
+                var same = true
+                var k = 0
+                while k < ll { if lbl[k] != sel[k] { same = false; break }; k += 1 }
+                if same { return dev }
+            }
+        }
+        i += 1
+    }
+    return -1
+}
+
+// The /mnt mount-root directory, created on demand (it is created at boot only
+// when extra volumes exist). Caller holds vfsLock.
+private func ensureMntDir() -> Int {
+    let path: StaticString = "/mnt"
+    var name = [UInt8](repeating: 0, count: path.utf8CodeUnitCount + 1)
+    path.withUTF8Buffer { b in for i in 0..<b.count { name[i] = b[i] } }
+    let existing = name.withUnsafeBufferPointer { resolve($0.baseAddress!) }
+    if existing > 0 { return existing }
+    let mnt = addDir(0, "mnt", readOnly: false)   // node 0 = "/"
+    if mnt >= 0 { nodes[mnt].mode = 0o755 }
+    return mnt
+}
+
+// True iff anything keeps the subtree rooted at `root` busy: an open description
+// pinning a vnode inside it, or a process whose cwd is inside it. This is the
+// per-mount refcount computed on demand (the same shape as cell_destroy's
+// live-member check), so it can never drift out of sync. Caller holds vfsLock.
+private func mountSubtreeBusy(_ root: Int) -> Bool {
+    for d in 0..<maxOpenDescriptions where openDescriptions[d].inUse {
+        if openDescriptions[d].kind == .file {        // .file descriptions index a vnode
+            let nd = openDescriptions[d].node
+            if nd > 0 && nd < nodeCount && isDescendant(nd, of: root) { return true }
+        }
+    }
+    for p in 0..<maxVFSProcesses {
+        let c = cwdNodes[p]
+        if c > 0 && c < nodeCount && isDescendant(c, of: root) { return true }
+    }
+    return false
+}
+
+// SYS_mount: mount an already-enumerated, unmounted SWDATAFS volume named by
+// `selector` (32-hex UUID, else label) at `mountpoint` (must be /mnt/<name>).
+func vfsMount(selector selVA: UInt, mountpoint mpVA: UInt, flags: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    guard let sel = userCString(selVA, maxLen: 64) else { return Errno.invalid.code }
+    guard let mpPath = userCString(mpVA, maxLen: 64) else { return Errno.invalid.code }
+
+    // Guardrail: the mountpoint must be exactly /mnt/<name> (single, path-safe
+    // component) — never over /bin, /etc, ... — and extract the name.
+    var nameBuf = [UInt8](repeating: 0, count: 32)
+    let mpLen = cstrLen(mpPath, 64)
+    let nameLen = nameBuf.withUnsafeMutableBufferPointer {
+        validateMountpoint(mpPath, 0, mpLen, $0.baseAddress!, $0.count)
+    }
+    if nameLen < 0 { return Errno.access.code }
+
+    let readOnly = (flags & mountFlagRO) != 0
+    let formatBlank = (flags & mountFlagFormatIfBlank) != 0
+    let selLen = cstrLen(sel, 64)
+
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let dev = findUnmountedDataDevice(sel, selLen)
+    if dev < 0 { return Errno.noEntry.code }       // no matching unmounted disk
+
+    let slot = datafsFindFreeVolume()
+    if slot < 0 { return Errno.noSpace.code }       // all datafs slots in use
+
+    let mnt = ensureMntDir()
+    if mnt < 0 { return Errno.noSpace.code }
+
+    let ok = nameBuf.withUnsafeBufferPointer {
+        mountVolumeAt(mnt, slot, dev, $0.baseAddress!, nameLen,
+                      formatBlank: formatBlank, readOnly: readOnly)
+    }
+    if !ok { return Errno.invalid.code }            // busy/non-empty mountpoint or datafs refused
+    uartPuts("V3 OK: runtime mount\n")
+    // PERSIST write-through to the manifest is V3b.
+    return 0
+}
+
+// SYS_unmount: tear down a runtime graft and release its datafs slot. Refuses a
+// busy mountpoint (EBUSY) and never unmounts the root /data volume (slot 0).
+func vfsUnmount(mountpoint mpVA: UInt) -> Int {
+    if (processCurrentCaps() & capConsole) == 0 { return Errno.access.code }
+    guard let mpPath = userCString(mpVA, maxLen: 64) else { return Errno.invalid.code }
+
+    // Confine to /mnt/<name>, mirroring the mount guardrail.
+    var nameBuf = [UInt8](repeating: 0, count: 32)
+    let mpLen = cstrLen(mpPath, 64)
+    let nameLen = nameBuf.withUnsafeMutableBufferPointer {
+        validateMountpoint(mpPath, 0, mpLen, $0.baseAddress!, $0.count)
+    }
+    if nameLen < 0 { return Errno.access.code }
+
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    let node = resolve(mpPath)
+    if node <= 0 { return Errno.noEntry.code }
+    // Must be a datafs mount ROOT: the unique datafs node whose parent is not
+    // datafs (a plain dir like /mnt). This refuses unmounting a datafs subdir.
+    if !nodes[node].dataFs { return Errno.invalid.code }
+    let parent = nodes[node].parent
+    if parent < 0 || nodes[parent].dataFs { return Errno.invalid.code }
+    let slot = nodes[node].dfsVolume
+    if slot == 0 { return Errno.access.code }       // never unmount the root /data
+
+    if mountSubtreeBusy(node) { return Errno.busy.code }
+
+    // Detach the whole mountpoint subtree from /mnt (the name disappears; the
+    // orphaned mirrored vnodes are reclaimed lazily, like every removed vnode),
+    // then release the datafs slot so the disk can be remounted.
+    _ = unlinkChild(parent, node)
+    _ = datafsUnmount(slot)
+    uartPuts("V3 OK: runtime unmount\n")
+    return 0
 }
 
 private func pipeCount(_ p: Int) -> Int {
