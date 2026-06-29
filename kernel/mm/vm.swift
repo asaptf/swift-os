@@ -41,6 +41,47 @@ private let BLOCK_1G_MASK: UInt64 = 0x0000_ffff_c000_0000
 private let BLOCK_2M_MASK: UInt64 = 0x0000_ffff_ffe0_0000
 private let PAGE_4K_MASK: UInt64  = 0x0000_ffff_ffff_f000
 
+// LM4 high-RAM window. Low RAM (physical < linearLimit) is identity-mapped, so
+// its physical address is also its kernel VA. RAM at/above linearLimit is mapped
+// into a high kernel VA window at highWindowBase (= 64 GiB, l1 index 64; see
+// mmu_map_high_ram_window in vm_early.c + the mirror in addressSpaceCreate), so
+// the kernel reaches a high frame at frameVA(pa). `highRamWindowBlocks` is the
+// number of 1 GiB window blocks (set once at boot by enableMMU); 0 means RAM ≤
+// 1 GiB and frameVA is the identity for every frame.
+private let linearLimit: UInt = 0x8000_0000
+private let highWindowBase: UInt = 0x10_0000_0000   // 64 GiB
+let highWindowL1Index = 64
+var highRamWindowBlocks = 0
+
+/// Kernel VA at which physical frame `pa` is reachable: identity for low RAM,
+/// the high-RAM window otherwise. Used wherever the kernel touches a frame's
+/// contents (zeroing, demand-fault disk reads); page tables stay in low RAM so
+/// the walkers keep using the raw identity address.
+@inline(__always)
+func frameVA(_ pa: UInt) -> UInt {
+    return pa < linearLimit ? pa : highWindowBase + (pa - linearLimit)
+}
+
+/// LM4: install the high-RAM window in the kernel boot tables for RAM above the
+/// 1 GiB linear boundary, and record the block count so addressSpaceCreate mirrors
+/// it into every process. Called from enableMMU (after the DTB-derived RAM size is
+/// known, before mmu_enable). Only the QEMU-virt / Hetzner layout (RAM based at
+/// 0x4000_0000) crosses the boundary; other boards keep a single identity zone.
+func setupHighRamWindow() {
+    let ramEnd = platform.ramBase &+ platform.ramSize
+    guard platform.ramBase == 0x4000_0000, ramEnd > linearLimit else {
+        highRamWindowBlocks = 0
+        return
+    }
+    let highBytes = ramEnd - linearLimit
+    let blocks = Int((highBytes + 0x3FFF_FFFF) / 0x4000_0000)   // ceil to 1 GiB
+    highRamWindowBlocks = blocks
+    mmu_map_high_ram_window(UInt64(blocks))
+    uartPuts("LM4 vm: high-RAM window mapped, ")
+    uartPutUInt(UInt64(blocks))
+    uartPuts(" GiB above 0x8000_0000\n")
+}
+
 func addressSpaceCurrentCpuTlbMask() -> UInt64 {
     let cpu = currentCpuId()
     if cpu >= smpMaxCpuCount() { return 0 }
@@ -376,6 +417,16 @@ func addressSpaceCreate() -> UInt {
     tableStore(l1pci, 2, blockDesc1G(0x80_8000_0000, ATTR_DEVICE))
     tableStore(l1pci, 3, blockDesc1G(0x80_C000_0000, ATTR_DEVICE))
     tableStore(l0, 1, tableDesc(UInt64(l1pci)))
+    // LM4: mirror the high-RAM window (mmu_map_high_ram_window) so the kernel can
+    // touch a high-zone data frame via frameVA while THIS process's TTBR0 is the
+    // active translation (e.g. zeroing/reading a demand-paged model page during a
+    // fault taken in the process). EL1-only blocks; userland never uses 64 GiB+.
+    var k = 0
+    while k < highRamWindowBlocks && highWindowL1Index + k < ENTRIES_PER_TABLE {
+        tableStore(l1, highWindowL1Index + k,
+                   blockDesc1G(UInt64(linearLimit + UInt(k) * 0x4000_0000), ATTR_NORMAL))
+        k += 1
+    }
     return l0
 #endif
 }
@@ -490,12 +541,16 @@ func addressSpaceMapFilePageForActiveCpuMask(_ ttbr0: UInt, _ pageVA: UInt, _ di
     if existing != 0 && (tableLoad(existing, Int((pageVA >> 12) & 0x1ff)) & DESC_VALID) != 0 {
         return false
     }
-    let frame = pmm_alloc_page()
+    // A demand-paged file page is bulk user data: prefer a high-zone frame so the
+    // 1 GiB low/identity zone stays free for page tables and kernel structures.
+    // The kernel only touches it here (zero + disk read) via frameVA; userland
+    // reads it directly through its own page-table leaf (the raw PA below).
+    let frame = pmm_alloc_page_high()
     if frame == 0 { return false } // ENOMEM
     zeroFrame(frame)
     if contentLen > 0 {
         let rc = vfsImageReadRange(diskImage, UInt64(diskByteOffset),
-                                   UnsafeMutableRawPointer(bitPattern: frame),
+                                   UnsafeMutableRawPointer(bitPattern: frameVA(frame)),
                                    UInt32(contentLen))
         if rc != 0 { pmm_free_page(frame); return false }
     }
@@ -596,7 +651,8 @@ private func unmapRange(_ ttbr0: UInt, _ va: UInt, _ pageCount: UInt) {
 
 @inline(__always)
 private func zeroFrame(_ frame: UInt) {
-    let p = UnsafeMutableRawPointer(bitPattern: frame)!
+    // A high-zone data frame is reachable only through the high-RAM window.
+    let p = UnsafeMutableRawPointer(bitPattern: frameVA(frame))!
     var off = 0
     while off < Int(PAGE_SIZE) {
         p.storeBytes(of: UInt64(0), toByteOffset: off, as: UInt64.self)

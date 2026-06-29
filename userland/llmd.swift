@@ -339,8 +339,10 @@ private func parseContentLength(_ b: UnsafePointer<UInt8>, _ headerEnd: Int) -> 
 /// first space (end of the URL). Returns nil when absent or malformed.
 private func parseTokenLimit(_ b: UnsafePointer<UInt8>, _ n: Int) -> Int? {
     var i = 0
-    // Bound the scan to the request line (stop at SP or CR).
-    while i < n && b[i] != 0x20 && b[i] != 0x0d { i += 1 }
+    // Bound the scan to the request line (stop at CR). The line is
+    // "METHOD SP PATH SP VERSION", so we must scan past the first space to reach
+    // the "?n=" in the PATH; the '?'/'&' guard below avoids matching elsewhere.
+    while i < n && b[i] != 0x0d && b[i] != 0x0a { i += 1 }
     let lineEnd = i
     i = 0
     while i + 1 < lineEnd {

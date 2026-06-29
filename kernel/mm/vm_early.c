@@ -155,6 +155,24 @@ void mmu_init_identity_map(void) {
     probe_l2_table[0] = table_desc((uint64_t)(uintptr_t)probe_l3_table);
 }
 
+// LM4: high-RAM linear window. The low identity map (l1_table[1]) covers only the
+// first 1 GiB of RAM, and userland is linked at 0x8000_0000, so RAM beyond 1 GiB
+// cannot be identity-mapped without colliding with user VA. Instead map it at a
+// high kernel VA — HIGH_WINDOW_BASE = 64 GiB (l1 index 64), well above the user
+// mmap arena (≤ 16 GiB) and below the PCIe ECAM (l1[256]) — as normal-cacheable
+// 1 GiB blocks over physical 0x8000_0000.. The kernel reaches a high frame at
+// frameVA(pa) = HIGH_WINDOW_BASE + (pa - 0x8000_0000) (kernel/mm/vm.swift); the
+// same blocks are mirrored into every process address space (addressSpaceCreate)
+// so the window works under any TTBR0. `blocks` is ceil(high-RAM / 1 GiB); 0 (RAM
+// ≤ 1 GiB) leaves the table untouched. Built MMU-off, before mmu_enable.
+#define HIGH_WINDOW_L1_INDEX 64
+void mmu_map_high_ram_window(uint64_t blocks) {
+    for (uint64_t k = 0; k < blocks && (HIGH_WINDOW_L1_INDEX + k) < ENTRIES_PER_TABLE; k += 1) {
+        l1_table[HIGH_WINDOW_L1_INDEX + k] =
+            block_desc_1g(0x80000000ULL + k * 0x40000000ULL, ATTR_NORMAL);
+    }
+}
+
 void mmu_configure_translation(void) {
     uint64_t mair = (0xffULL << 0) | (0x00ULL << 8);
     uint64_t tcr =

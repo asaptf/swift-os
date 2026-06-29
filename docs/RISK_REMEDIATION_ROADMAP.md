@@ -1119,11 +1119,18 @@ dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
 - **LM2** (planned): multi-threaded matmul across the SMP cores (threads + futex from
   the S-series) — split the output-row loop across workers. Acceptance: same output,
   parallel speedup, per-CPU utilization visible in `top`.
-- **LM3** (planned): model delivery off a dedicated virtio-blk "model disk" (mmap from
-  there, not the base) + a larger-RAM inference QEMU profile.
-- **LM4** (planned): first real model — **TinyLlama-1.1B-Chat** (Llama2 arch, rope
-  10000, SentencePiece 32k, GQA → runs on the current engine almost unchanged),
-  exported to the existing v2-Q8 format, signed bundle, e2e generation + tokens/sec.
+- **LM3** (DONE, 2026-06-27): model delivery off a dedicated virtio-blk "model disk"
+  (signed packed SWOSBASE image, mmap from there, not the base) + a larger-RAM
+  inference QEMU profile. See `docs/NOTES.md` (LM3a/b/c).
+- **LM4** (DONE, 2026-06-29): first real model — **TinyLlama-1.1B-Chat** (Llama2 arch,
+  rope 10000, SentencePiece 32k, GQA) converted GQA-correct to the v2-Q8 format
+  (LM4a), shipped as a signed packed model disk (LM4b), and served end to end in QEMU
+  (LM4c): coherent factual output + tokens/sec. Required a kernel enabler, **LM4-MM**:
+  the kernel ran in TTBR0 with userland linked at `0x8000_0000`, so RAM was usable only
+  up to the 1 GiB identity map; a high-RAM window at VA 64 GiB + `frameVA` + PMM
+  low/high zoning make RAM past 1 GiB usable for bulk user data pages (the model's
+  weights) while page tables stay in identity-mapped low RAM. See `docs/NOTES.md`
+  (LM4a/LM4b/LM4-MM/LM4c).
 - **LM5** (planned): GGUF + Q4_K_M parser (smaller footprint, opens the GGUF
   ecosystem). **LM6** (planned): sampling (temp/top-p/top-k) + chat template.
 

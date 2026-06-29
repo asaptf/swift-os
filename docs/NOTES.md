@@ -8810,3 +8810,66 @@ existing engine unchanged. Conversion (host):
   ("The capital of France is" → "…Paris.", "The three primary colors are" → "…red,
   blue, and yellow…"). Greedy is deterministic, so exact goldens double as a coherence
   check. Model is ~1.1 GB so this is NOT in `make test`. Host throughput ~13–14 tok/s.
+
+### LM4b — TinyLlama signed model image + llmd serving plumbing (DONE, 2026-06-29)
+
+- `make model-tinyllama-image` → `build/model-tinyllama.img`: a signed packed SWOSBASE
+  model disk carrying `tinyllama/1/{model.bin,tokenizer.bin,manifest.toml}` + the
+  `MODEL-DISK-ID` sentinel — same format as the LM3 stories disk, just a bigger payload
+  (~1.1 GB; the packed FS uses 64-bit data offsets, so >1 GB is fine). Host gate
+  `make model-tinyllama-image-test`.
+- `/bin/llmd` now prefers the `/srv/models/tinyllama` bundle (then stories15M, then the
+  base bundle), and `POST /completion?n=N` caps the generated token count (a real model
+  under QEMU-TCG is slow, so clients ask for a short completion; N clamps to [1, seqLen]).
+- **Bug fixed:** `modelBundleVerify` hashed the payload with the one-shot `sha256()`,
+  which allocates a padded copy of the *whole* message — fine for the small manifest/passwd
+  callers, fatal for a ~1.1 GB model (it panicked on the giant alloc). Now it streams via
+  `Sha256Stream` in 64 KiB chunks, like the kernel's content-hash check.
+
+### LM4-MM — high-RAM enabler: make RAM past 1 GiB usable (DONE, 2026-06-29)
+
+Serving a real model exposed a hard architectural limit. The kernel runs in **TTBR0 with
+TTBR1 disabled**: kernel + device + the RAM linear map live in VA `[0, 0x8000_0000)`, and
+**userland is linked at `0x8000_0000`** (`user.ld`). The kernel touches every physical
+frame by its identity address (`PA as pointer`: page-table walks, `zeroFrame`,
+disk-read-into-frame). So RAM was usable only up to the 1 GiB identity block
+(`l1_table[1]` = `0x4000_0000..0x8000_0000`); the PMM handed out frames past `0x8000_0000`
+that the kernel could not address, and TinyLlama (~1.15 GB resident) crashed the moment its
+working set crossed 1 GiB (`zeroFrame` PAN-faulting on a user VA).
+
+Fix (contained; preserves the userland ABI — no relink, no high-half rewrite):
+
+- **High-RAM window.** `mmu_map_high_ram_window` (vm_early.c) maps RAM above `0x8000_0000`
+  as normal-cacheable 1 GiB blocks at a high kernel VA — `highWindowBase = 64 GiB`
+  (`l1` index 64), above the user mmap arena (≤ 16 GiB) and below the PCIe ECAM
+  (`l1[256]`). `addressSpaceCreate` mirrors the same blocks into every process so the
+  window works under any TTBR0. `enableMMU` → `setupHighRamWindow()` installs it (no-op
+  when RAM ≤ 1 GiB; only the QEMU-virt/Hetzner `0x4000_0000` layout crosses the boundary).
+  The boot MMU probe at `l1[2]` (VA `0x8000_0000`, kernel table only) is untouched.
+- **`frameVA(pa)`** (vm.swift): identity for low RAM, `highWindowBase + (pa - 0x8000_0000)`
+  for high. Used by `zeroFrame` and the demand-fault disk read — the only places the kernel
+  touches a high frame's contents.
+- **PMM zoning** (pmm.swift + `PageAllocator.allocateInRange`): `pmm_alloc_page()` returns
+  **low**-zone frames only (page tables, kernel structures, anon mmap — all identity-
+  reachable); new `pmm_alloc_page_high()` prefers the **high** zone (fallback low) and is
+  used *only* by the file-backed demand-fault path, so the model's ~1.1 GB of weight pages
+  go high while the low zone stays free for page tables. Userland reaches the high data
+  frames directly through its own TTBR0 leaves (the leaf holds the real PA); the kernel only
+  ever via `frameVA`. Fork/teardown already skip non-table L1 entries, so the window blocks
+  (like the PCIe ECAM block) are handled correctly.
+
+### LM4c — serve TinyLlama-1.1B end to end (DONE, 2026-06-29)
+
+`make llm-serve-tinyllama-test` (`-m 2048M`, the 2 GiB DTB, base + TinyLlama model disks,
+slirp NIC): the kernel maps the high-RAM window, mounts the model disk at `/srv/models`,
+and `/bin/llmd` loads + verifies (ed25519+sha256) the 1.1 GB Q8 bundle, then a short
+`POST /completion?n=N` returns a **coherent, factually-correct** answer ("The capital of
+France is Paris. … Berlin … Washington, D.C. … Ottawa …") with a tokens/sec rate in the
+log. ~1 tok/s single-core under QEMU-TCG (LM2 multi-core stays deferred). Heavy + slow, so
+this is a standalone target, never in `make test`. The LM1/LM3 gates and the host
+`llm_q8_engine_test` (stories, base fallback) stay green.
+
+**LM4 arc complete:** the first real LLM runs on swift-os end to end — converted GQA-correct,
+shipped as a signed packed model disk, and served from a hardened kernel that can now use
+RAM beyond the 1 GiB linear-map boundary. Next LM work: LM5 (GGUF + Q4_K, smaller footprint),
+LM6 (sampling + chat template).
