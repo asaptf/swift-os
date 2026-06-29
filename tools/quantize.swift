@@ -20,7 +20,13 @@
 // hidden_dim: runq.c's matmul walks rows in steps of GS, so GS must divide
 // every matmul row length (dim and hidden_dim) or row tails would be dropped.
 //
-// Usage: quantize <in-fp32.bin> <out-q8.bin>
+// Usage: quantize <in-fp32.bin> <out-q8.bin> [seqlen-override]
+//
+// The optional 3rd argument overrides the seqLen field written to the v2
+// header (when > 0). The engine sizes its KV cache from that field, so a real
+// model (e.g. TinyLlama, native ctx 2048) can be shipped with a smaller context
+// to keep RAM modest in QEMU (LM4). The weights do not depend on seqLen (RoPE is
+// recomputed at run time), so this is a pure cap on the served context length.
 
 import Foundation
 
@@ -29,13 +35,16 @@ func die(_ msg: String) -> Never {
     exit(1)
 }
 
-guard CommandLine.arguments.count == 3 else {
-    die("usage: quantize <in-fp32.bin> <out-q8.bin>")
+guard CommandLine.arguments.count == 3 || CommandLine.arguments.count == 4 else {
+    die("usage: quantize <in-fp32.bin> <out-q8.bin> [seqlen-override]")
 }
 let inPath = CommandLine.arguments[1]
 let outPath = CommandLine.arguments[2]
+let seqLenOverride = CommandLine.arguments.count == 4 ? (Int(CommandLine.arguments[3]) ?? 0) : 0
 
-guard let data = FileManager.default.contents(atPath: inPath) else {
+// mmap the input rather than slurping it: a real fp32 checkpoint is multiple GB
+// and a mapped read lets the OS page it instead of resident-loading the whole file.
+guard let data = try? Data(contentsOf: URL(fileURLWithPath: inPath), options: .alwaysMapped) else {
     die("cannot read \(inPath)")
 }
 
@@ -46,7 +55,8 @@ func i32(_ off: Int) -> Int {
 let dim = i32(0), hidden = i32(4), nLayers = i32(8), nHeads = i32(12)
 let nKV = i32(16)
 var vocab = i32(20)
-let seqLen = i32(24)
+let seqLenIn = i32(24)
+let seqLen = seqLenOverride > 0 ? seqLenOverride : seqLenIn
 let shared = vocab > 0
 if vocab < 0 { vocab = -vocab }
 let headSize = dim / nHeads
@@ -57,7 +67,8 @@ var gs = 64
 while gs > 1 && (dim % gs != 0 || hidden % gs != 0) { gs /= 2 }
 if gs < 2 { die("degenerate group size for dim=\(dim) hidden=\(hidden)") }
 
-print("quantize: dim=\(dim) hidden=\(hidden) layers=\(nLayers) heads=\(nHeads) kv=\(nKV) vocab=\(vocab) seq=\(seqLen) shared=\(shared) GS=\(gs)")
+let seqNote = seqLenOverride > 0 && seqLenOverride != seqLenIn ? " (overridden from \(seqLenIn))" : ""
+print("quantize: dim=\(dim) hidden=\(hidden) layers=\(nLayers) heads=\(nHeads) kv=\(nKV) vocab=\(vocab) seq=\(seqLen)\(seqNote) shared=\(shared) GS=\(gs)")
 
 // ---- map the legacy fp32 tensors ----------------------------------------------
 // Legacy layout after the 28-byte header (run.c memory_map_weights order).
@@ -74,8 +85,8 @@ let oW1 = take(nLayers * dim * hidden)
 let oW2 = take(nLayers * hidden * dim)
 let oW3 = take(nLayers * dim * hidden)
 let oRmsFinal = take(dim)
-_ = take(seqLen * headSize / 2)   // legacy freq_cis_real
-_ = take(seqLen * headSize / 2)   // legacy freq_cis_imag
+_ = take(seqLenIn * headSize / 2)   // legacy freq_cis_real (skip uses input layout)
+_ = take(seqLenIn * headSize / 2)   // legacy freq_cis_imag (skip uses input layout)
 let oWcls = off                    // present only when !shared
 let needed = shared ? off : off + vocab * dim * 4
 guard data.count >= needed else { die("file truncated: have \(data.count), need \(needed)") }

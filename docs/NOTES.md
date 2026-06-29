@@ -8778,3 +8778,35 @@ read-only at `/srv/models`, and served by llmd — the delivery path a real (≈
 model will use (swap the bundle the model image is built from; the plumbing is the
 same). Remaining LM goal work: LM4 (a real TinyLlama-1.1B-Chat bundle on this path),
 LM5 (GGUF + Q4_K), LM6 (sampling + chat template); LM2 (multi-core) stays deferred.
+
+### LM4a — convert TinyLlama-1.1B-Chat to the engine's Q8 format (DONE, 2026-06-29)
+
+The first *real* model on the inference path. TinyLlama-1.1B-Chat is a Llama2-arch
+HF model (dim 2048, 22 layers, 32 attention heads, **4 KV heads (GQA)**, 32000
+SentencePiece vocab, rope_theta 10000, non-tied classifier) — it runs on the
+existing engine unchanged. Conversion (host):
+
+- `scripts/convert-tinyllama.py` (Python — the only language with a torch/transformers
+  binding; host build tooling like `fetch-model.sh`, not OS code) loads the HF
+  checkpoint and writes the legacy llama2.c **v0 fp32** `.bin` + a `tokenizer.bin`.
+  It is **GQA-correct**, unlike Karpathy's upstream `export.py` `load_hf_model`, which
+  hard-codes `n_kv_heads = n_attention_heads` and calls `permute_reverse` with full-dim
+  defaults — both wrong for TinyLlama and would mangle `wk`. Our converter applies the
+  RoPE un-permutation with the right per-projection head count and dims (wq: 32 heads,
+  dim 2048; wk: 4 heads, kvDim 256). The freq_cis tables are zero-filled (the engine
+  recomputes RoPE at run time; only their byte length matters for offset alignment).
+- `tools/quantize.swift` (the tested Q8 tool, reused) turns the fp32 into the served
+  v2 Q8. Two small additions: it now **mmaps** the input (a real fp32 checkpoint is
+  ~4.4 GB — a mapped read avoids a resident slurp), and takes an optional 3rd arg
+  `seqlen-override` that caps the seqLen field written to the v2 header. LM4 ships
+  TinyLlama at **seqLen 512** (native 2048) to keep the QEMU KV cache modest; weights
+  are seqLen-independent so this is a pure context cap. GS=64 divides dim/hidden/kvDim.
+- `scripts/fetch-tinyllama.sh` provisions a venv under `models/lm4venv` (gitignored)
+  and drives the conversion; idempotent. `make tinyllama` builds
+  `models/tinyllama-q8.bin` (~1.1 GB) + tokenizer.
+- Acceptance: `make llm-tinyllama-test` — the host oracle loads the Q8 bundle with the
+  EL0 engine source, checks the parsed config matches TinyLlama (proving the layout is
+  right), and asserts **byte-exact deterministic greedy output** for factual prompts
+  ("The capital of France is" → "…Paris.", "The three primary colors are" → "…red,
+  blue, and yellow…"). Greedy is deterministic, so exact goldens double as a coherence
+  check. Model is ~1.1 GB so this is NOT in `make test`. Host throughput ~13–14 tok/s.

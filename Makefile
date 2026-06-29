@@ -1867,6 +1867,34 @@ $(MODEL_Q8): $(MODEL_BIN) $(QUANTIZE)
 $(MODEL15_Q8): $(MODEL15_BIN) $(QUANTIZE)
 	$(QUANTIZE) $(MODEL15_BIN) $@
 
+# ---- LM4: first real model — TinyLlama-1.1B-Chat --------------------------
+# A real (~1.1 GB Q8) Llama2-architecture model, fetched from Hugging Face and
+# converted to the engine's v2 Q8 format (GQA-correct conversion; seqLen capped
+# to keep QEMU RAM modest). The fp32 intermediate (~4.4 GB) and the venv live
+# under models/ (gitignored). Heavy: NOT part of `make test`; build with
+# `make tinyllama`, exercise on the host with `make llm-tinyllama-test`, and
+# serve in QEMU with `make llm-serve-tinyllama-test`.
+TINYLLAMA_FP32   := $(MODEL_DIR)/tinyllama-fp32.bin
+TINYLLAMA_TOK    := $(MODEL_DIR)/tinyllama-tokenizer.bin
+TINYLLAMA_Q8     := $(MODEL_DIR)/tinyllama-q8.bin
+TINYLLAMA_SEQLEN := 512
+
+$(TINYLLAMA_FP32) $(TINYLLAMA_TOK): scripts/fetch-tinyllama.sh scripts/convert-tinyllama.py
+	scripts/fetch-tinyllama.sh
+
+$(TINYLLAMA_Q8): $(TINYLLAMA_FP32) $(QUANTIZE)
+	$(QUANTIZE) $(TINYLLAMA_FP32) $@ $(TINYLLAMA_SEQLEN)
+
+.PHONY: tinyllama
+tinyllama: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+
+# LM4a host oracle: load the converted TinyLlama Q8 bundle with the EL0 engine
+# source and assert config + deterministic greedy output (coherent answers).
+.PHONY: llm-tinyllama-test
+llm-tinyllama-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/llm_tinyllama_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_tinyllama_engine_test
+	$(BUILD)/llm_tinyllama_engine_test
+
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
 MODELMANIFEST := $(BUILD)/modelmanifest
 $(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
