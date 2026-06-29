@@ -87,10 +87,12 @@ private func staticPath(_ s: StaticString) -> UnsafePointer<CChar> {
 // payload also faults it fully in, so "verified" implies "resident".
 
 private let bundleRoot: StaticString = "/models/stories15M"
-// LM3c: a dedicated model disk (LM3a/LM3b) mounts read-only at /srv/models. A
+// LM3c/LM4: a dedicated model disk (LM3a/LM3b) mounts read-only at /srv/models. A
 // real model is too big for the RAM-loaded base, so prefer the disk-delivered
-// bundle when present and fall back to the base bundle otherwise.
-private let diskBundleRoot: StaticString = "/srv/models/stories15M"
+// bundle when present and fall back to the base bundle otherwise. The disk roots
+// are tried in order — the real TinyLlama (LM4) first, then the stories15M proof
+// (LM3) — so whichever model disk is attached is served without reconfiguration.
+private let diskBundleRoots: [StaticString] = ["/srv/models/tinyllama", "/srv/models/stories15M"]
 private let dentsCap = 2048
 private let manifestCap = 4096
 
@@ -332,6 +334,31 @@ private func parseContentLength(_ b: UnsafePointer<UInt8>, _ headerEnd: Int) -> 
 }
 
 @inline(__always)
+/// Parse an optional `n=<digits>` token-count override from the request line
+/// (e.g. `POST /completion?n=8 HTTP/1.0`). Scans only the first line, up to the
+/// first space (end of the URL). Returns nil when absent or malformed.
+private func parseTokenLimit(_ b: UnsafePointer<UInt8>, _ n: Int) -> Int? {
+    var i = 0
+    // Bound the scan to the request line (stop at SP or CR).
+    while i < n && b[i] != 0x20 && b[i] != 0x0d { i += 1 }
+    let lineEnd = i
+    i = 0
+    while i + 1 < lineEnd {
+        // Match "n=" preceded by '?' or '&' so we don't trip on path text.
+        if b[i] == 0x6e /* n */ && b[i + 1] == 0x3d /* = */
+            && (i == 0 || b[i - 1] == 0x3f /* ? */ || b[i - 1] == 0x26 /* & */) {
+            var j = i + 2, val = 0, any = false
+            while j < lineEnd, b[j] >= 0x30, b[j] <= 0x39 {
+                val = val * 10 + Int(b[j] - 0x30); any = true; j += 1
+                if val > 100000 { return 100000 }
+            }
+            return any ? val : nil
+        }
+        i += 1
+    }
+    return nil
+}
+
 private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> Bool {
     var ok = true
     s.withUTF8Buffer { sb in
@@ -386,7 +413,12 @@ private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: Lla
         let t0 = nowTicks()
         var tFirst: UInt64 = 0
         var produced = 0
-        let steps = defaultSteps > model.cfg.seqLen ? model.cfg.seqLen : defaultSteps
+        // Optional `?n=N` on the request line caps the generated token count
+        // (default 64). A real model under QEMU-TCG is slow, so clients ask for a
+        // short completion; N is clamped to [1, seqLen].
+        var want = defaultSteps
+        if let n = parseTokenLimit(b, total), n > 0 { want = n }
+        let steps = want > model.cfg.seqLen ? model.cfg.seqLen : want
         produced = llamaGenerate(model, tok, prompt: prompt, steps: steps) { piece in
             if piece.isEmpty { return }
             if tFirst == 0 { tFirst = nowTicks() }
@@ -494,8 +526,12 @@ func main(_ argc: Int32,
         // LM3c: prefer the model disk (/srv/models) when one is mounted; fall
         // back to the base bundle (/models) otherwise.
         var fromDisk = false
-        var picked = resolveBundle(diskBundleRoot)
-        if picked != nil { fromDisk = true } else { picked = resolveBundle(bundleRoot) }
+        var picked: (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? = nil
+        for root in diskBundleRoots {
+            picked = resolveBundle(root)
+            if picked != nil { fromDisk = true; break }
+        }
+        if picked == nil { picked = resolveBundle(bundleRoot) }
         guard let bundle = picked else {
             swiftos_puts("llmd: no verifiable model bundle generation\n")
             return 1

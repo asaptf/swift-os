@@ -145,18 +145,34 @@ func modelManifestParse(_ bytes: UnsafeRawBufferPointer) -> ModelManifest? {
 /// Verify one bundle payload against its manifest entry: size first (cheap),
 /// then SHA-256 over the bytes (for an mmap'd file this also faults the whole
 /// payload in — verified means resident). Case-insensitive hex compare.
+///
+/// The digest is computed with the streaming `Sha256Stream` in bounded chunks,
+/// NOT the one-shot `sha256()`: a real model payload is ~1.1 GB and the one-shot
+/// path allocates a padded copy of the whole message (fine for the small
+/// manifest/passwd callers, fatal here).
 func modelBundleVerify(_ entry: ModelBundleFile, _ bytes: UnsafeRawPointer, _ len: Int) -> Bool {
     if len != entry.size { return false }
-    var hex = [UInt8](repeating: 0, count: 64)
-    hex.withUnsafeMutableBytes { out in
-        sha256Hex(bytes, len, out.baseAddress!)
+    var stream = Sha256Stream()
+    let chunk = 1 << 16   // 64 KiB
+    var off = 0
+    while off < len {
+        let n = len - off < chunk ? len - off : chunk
+        stream.update(bytes + off, n)
+        off += n
     }
+    var digest = [UInt8](repeating: 0, count: 32)
+    digest.withUnsafeMutableBytes { stream.final($0.baseAddress!) }
+
     let want = Array(entry.sha256.utf8)
     if want.count != 64 { return false }
-    for i in 0..<64 {
-        var w = want[i]
-        if w >= 0x41 && w <= 0x46 { w += 32 }   // A-F -> a-f
-        if hex[i] != w { return false }
+    let hexDigits = Array("0123456789abcdef".utf8)
+    for i in 0..<32 {
+        let hi = hexDigits[Int(digest[i] >> 4)]
+        let lo = hexDigits[Int(digest[i] & 0x0F)]
+        var wh = want[2 * i], wl = want[2 * i + 1]
+        if wh >= 0x41 && wh <= 0x46 { wh += 32 }   // A-F -> a-f
+        if wl >= 0x41 && wl <= 0x46 { wl += 32 }
+        if hi != wh || lo != wl { return false }
     }
     return true
 }

@@ -3541,6 +3541,31 @@ model-image: $(MODEL_PACK_IMG)
 model-image-test: $(MODEL_PACK_IMG)
 	./tests/model_image_test.sh
 
+# LM4b: the real-model model disk — same signed packed SWOSBASE format + the
+# MODEL-DISK-ID sentinel as LM3a, but carrying the TinyLlama-1.1B Q8 bundle
+# (tinyllama/1/{model.bin,tokenizer.bin,manifest.toml}). ~1.1 GB and gitignored,
+# so built only on demand (depends on `make tinyllama`), never from `make test`.
+MODEL_TL_PACK_ROOT := $(BUILD)/model-tinyllama-pack-root
+MODEL_TL_PACK_IMG  := $(BUILD)/model-tinyllama.img
+
+$(MODEL_TL_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(TINYLLAMA_Q8) $(TINYLLAMA_TOK) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	rm -rf $(MODEL_TL_PACK_ROOT)
+	mkdir -p $(MODEL_TL_PACK_ROOT)/tinyllama/1
+	cp $(TINYLLAMA_Q8) $(MODEL_TL_PACK_ROOT)/tinyllama/1/model.bin
+	cp $(TINYLLAMA_TOK) $(MODEL_TL_PACK_ROOT)/tinyllama/1/tokenizer.bin
+	$(MODELMANIFEST) tinyllama 1 $(TINYLLAMA_Q8) $(TINYLLAMA_TOK) $(MODEL_TL_PACK_ROOT)/tinyllama/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_TL_PACK_ROOT)/tinyllama/1/manifest.toml $(SIGNING_SEED)
+	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_TL_PACK_ROOT)/MODEL-DISK-ID
+	$(BASEPACK) $(MODEL_TL_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
+
+.PHONY: model-tinyllama-image
+model-tinyllama-image: $(MODEL_TL_PACK_IMG)
+
+# LM4b host acceptance: the TinyLlama model image builds + is a valid signed
+# packed FS carrying the bundle + the provenance sentinel.
+model-tinyllama-image-test: $(MODEL_TL_PACK_IMG)
+	./tests/model_tinyllama_image_test.sh
+
 # LM3b acceptance: boot with the model disk attached and prove the kernel mounts
 # it read-only at /srv/models (sentinel readable, bundle visible).
 model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
@@ -3550,6 +3575,14 @@ model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 # under a larger-RAM inference profile (model disk attached, -m 1024M).
 llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 	./tests/llm_serve_disk_test.sh
+
+# LM4c acceptance: serve the REAL TinyLlama-1.1B model end to end off the model
+# disk (-m 2048M; the kernel high-RAM enabler makes RAM past the 1 GiB linear-map
+# boundary usable for the model's data pages). Heavy + slow (1.1 GB model,
+# single-core TCG) and depends on `make tinyllama`, so it is a standalone target,
+# never part of `make test`.
+llm-serve-tinyllama-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_tinyllama_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
