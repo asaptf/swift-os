@@ -1130,8 +1130,8 @@ $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/s
 
 # /bin/llmd: the TCP model-serving daemon + the shared engine + bundle
 # verification (manifest parse + sha256), compiled together (WMO).
-$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
@@ -1929,7 +1929,7 @@ gguf-dequant-test: $(TINYLLAMA_GGUF)
 # Llama-2 tokenizer) and generates coherent, factually-correct text. ~0.6 GB
 # model, so NOT in `make test`. Reuses the LM4 tokenizer.bin (same 32k vocab).
 gguf-engine-test: $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK)
-	$(HOST_SWIFTC) -O tests/gguf_engine_test.swift userland/lib/llama2.swift userland/lib/gguf.swift -o $(BUILD)/gguf_engine_test
+	$(HOST_SWIFTC) -O tests/gguf_engine_test.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift -o $(BUILD)/gguf_engine_test
 	$(BUILD)/gguf_engine_test
 
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
@@ -3597,6 +3597,30 @@ $(MODEL_TL_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(TINYLLAMA_Q8) $(TINYLLAMA_TOK) 
 
 .PHONY: model-tinyllama-image
 model-tinyllama-image: $(MODEL_TL_PACK_IMG)
+
+# LM5d: a signed model disk carrying the TinyLlama Q4_K_M GGUF as model.bin
+# (bundle tinyllama-gguf) + the shared Llama-2 tokenizer. Same packed-image
+# delivery as LM4b; llmd detects the GGUF magic and serves it with the k-quant
+# dequant engine (GGUFLlama). ~0.6 GB — half the Q8 footprint.
+MODEL_GGUF_PACK_ROOT := $(BUILD)/model-gguf-pack-root
+MODEL_GGUF_PACK_IMG  := $(BUILD)/model-gguf.img
+
+$(MODEL_GGUF_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	rm -rf $(MODEL_GGUF_PACK_ROOT)
+	mkdir -p $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1
+	cp $(TINYLLAMA_GGUF) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/model.bin
+	cp $(TINYLLAMA_TOK) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/tokenizer.bin
+	$(MODELMANIFEST) tinyllama-gguf 1 $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/manifest.toml $(SIGNING_SEED)
+	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_GGUF_PACK_ROOT)/MODEL-DISK-ID
+	$(BASEPACK) $(MODEL_GGUF_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
+
+.PHONY: model-gguf-image
+model-gguf-image: $(MODEL_GGUF_PACK_IMG)
+
+# LM5d acceptance: serve the TinyLlama Q4_K_M GGUF end to end from the model disk.
+llm-serve-gguf-test: build $(QEMU_DTB_2048) base-image $(MODEL_GGUF_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_gguf_test.sh
 
 # LM4b host acceptance: the TinyLlama model image builds + is a valid signed
 # packed FS carrying the bundle + the provenance sentinel.

@@ -92,7 +92,7 @@ private let bundleRoot: StaticString = "/models/stories15M"
 // bundle when present and fall back to the base bundle otherwise. The disk roots
 // are tried in order — the real TinyLlama (LM4) first, then the stories15M proof
 // (LM3) — so whichever model disk is attached is served without reconfiguration.
-private let diskBundleRoots: [StaticString] = ["/srv/models/tinyllama", "/srv/models/stories15M"]
+private let diskBundleRoots: [StaticString] = ["/srv/models/tinyllama-gguf", "/srv/models/tinyllama", "/srv/models/stories15M"]
 private let dentsCap = 2048
 private let manifestCap = 4096
 
@@ -214,7 +214,7 @@ private func loadVerified(_ root: StaticString, _ gen: Int, _ entry: ModelBundle
 /// recorded follow-up); with 8 VMA slots and verify-model-first ordering a
 /// rejected generation costs one slot, which the serving path never exhausts.
 private func resolveBundle(_ root: StaticString)
-    -> (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? {
+    -> (model: UnsafeRawPointer, modelLen: Int, tok: UnsafeRawPointer, gen: Int, name: String)? {
     let gens = modelGenerationsNewestFirst(scanGenerations(root))
     for gen in gens {
         let m: ModelManifest
@@ -230,7 +230,7 @@ private func resolveBundle(_ root: StaticString)
         case .ok(let parsed):
             m = parsed
         }
-        guard let (modelPtr, _) = loadVerified(root, gen, m.model) else {
+        guard let (modelPtr, modelLen) = loadVerified(root, gen, m.model) else {
             swiftos_puts("llmd: generation "); putUInt(UInt(gen))
             swiftos_puts(" rejected (model size/sha256 mismatch)\n")
             continue
@@ -240,7 +240,7 @@ private func resolveBundle(_ root: StaticString)
             swiftos_puts(" rejected (tokenizer size/sha256 mismatch)\n")
             continue
         }
-        return (modelPtr, tokPtr, gen, m.name)
+        return (modelPtr, modelLen, tokPtr, gen, m.name)
     }
     return nil
 }
@@ -508,11 +508,13 @@ func main(_ argc: Int32,
     // (no verification): llmd [model.bin] [tokenizer.bin].
     let modelPtr: UnsafeRawPointer
     let tokPtr: UnsafeRawPointer
+    var modelLen = 0
     if argc > 1, let argv = argv, let a = argv[1] {
-        guard let (mp, _) = loadFile(UnsafePointer(a)) else {
+        guard let (mp, mlen) = loadFile(UnsafePointer(a)) else {
             swiftos_puts("llmd: cannot load model file\n")
             return 1
         }
+        modelLen = mlen
         var tp = staticPath("/models/tok512.bin")
         if argc > 2, let t = argv[2] { tp = UnsafePointer(t) }
         guard let (kp, _) = loadFile(tp) else {
@@ -528,7 +530,7 @@ func main(_ argc: Int32,
         // LM3c: prefer the model disk (/srv/models) when one is mounted; fall
         // back to the base bundle (/models) otherwise.
         var fromDisk = false
-        var picked: (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? = nil
+        var picked: (model: UnsafeRawPointer, modelLen: Int, tok: UnsafeRawPointer, gen: Int, name: String)? = nil
         for root in diskBundleRoots {
             picked = resolveBundle(root)
             if picked != nil { fromDisk = true; break }
@@ -546,13 +548,24 @@ func main(_ argc: Int32,
         nameBytes.withUnsafeBytes { _ = swiftos_write(1, $0.baseAddress, UInt($0.count)) }
         swiftos_puts(" generation "); putUInt(UInt(bundle.gen))
         swiftos_puts(trustRootPresent ? " verified (ed25519+sha256)\n" : " verified (sha256)\n")
-        modelPtr = bundle.model; tokPtr = bundle.tok
+        modelPtr = bundle.model; tokPtr = bundle.tok; modelLen = bundle.modelLen
     }
     swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
 
     let lfd = swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("llmd: socket failed (capNet?)\n"); return 1 }
 
+    // LM5: a GGUF (Q4_K_M) model — weights stay compressed, dequantized per block.
+    if GGUFLlama.isGGUF(modelPtr) {
+        guard let model = GGUFLlama(ggufBytes: modelPtr, count: modelLen) else {
+            swiftos_puts("llmd: GGUF parse failed\n"); return 1
+        }
+        swiftos_puts("llmd: model GGUF k-quant dim="); putUInt(UInt(model.cfg.dim))
+        swiftos_puts(" layers="); putUInt(UInt(model.cfg.nLayers))
+        swiftos_puts(" vocab="); putUInt(UInt(model.cfg.vocabSize)); swiftos_puts("\n")
+        let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
+        return runServe(lfd, model, tok)
+    }
     if QLlama2.isQuantized(modelPtr) {
         let model = QLlama2(modelBytes: modelPtr)
         swiftos_puts("llmd: model int8 Q8_0 GS="); putUInt(UInt(model.gs))

@@ -8922,3 +8922,45 @@ this is a standalone target, never in `make test`. The LM1/LM3 gates and the hos
 shipped as a signed packed model disk, and served from a hardened kernel that can now use
 RAM beyond the 1 GiB linear-map boundary. Next LM work: LM5 (GGUF + Q4_K, smaller footprint),
 LM6 (sampling + chat template).
+
+### LM5 — GGUF + Q4_K reader (DONE, 2026-07-01)
+
+Read the mainstream **GGUF / k-quant** format (llama.cpp's on-disk format), so swift-os can
+serve models straight from the GGUF ecosystem at ~half the Q8 footprint. Target: a
+pre-quantized **TinyLlama-1.1B-Chat Q4_K_M** GGUF (~640 MB vs the 1.1 GB Q8).
+
+- **LM5a — GGUF reader** (`userland/lib/gguf.swift`, Foundation-free, shared by EL0 + host):
+  parses the header, walks the typed KV metadata table (recording each value's location),
+  and exposes the llama hyperparameters, the tokenizer arrays, and the tensor table
+  (name / shape / ggml type / data offset) without copying tensor data. `tools/ggufdump.swift`
+  + `make gguf-dump-test` validate it against the real file: v3, 201 tensors,
+  dim2048/22L/32H/4KV, tokenizer llama/32000, type mix F32=45 / Q4_K=135 / Q6_K=21.
+- **LM5b — Q4_K + Q6_K dequant** (`ggufDequantQ4K` / `ggufDequantQ6K`): decode a 256-weight
+  super-block to fp32, matching ggml's `dequantize_row_q4_K` / `q6_K` exactly (6-bit packed
+  scales/mins for Q4_K; 4+2-bit signed weights centered at −32 with 8-bit sub-block scales for
+  Q6_K), plus a correct IEEE half→float. `make gguf-dequant-test` cross-checks both against
+  the official `gguf` Python package's `dequantize()` on real tensors. The KAT caught an
+  off-by-one in the **subnormal** half path — k-quant super-block scales are often subnormal
+  halves (the Q6_K `d` here is 9.24e-6), which had produced exactly ½ the value.
+- **LM5c — GGUFLlama engine** (`userland/lib/gguf_engine.swift`, split out so GGUF-free
+  consumers still build `llama2.swift` alone): implements the shared `LlamaModel` protocol,
+  keeps the k-quant weights compressed in RAM, and runs the QLlama2 forward pass but with each
+  matmul dequantizing one super-block at a time into a 256-float scratch and dotting it with
+  the fp32 activation (`llamaFDot`). Norms are fp32 (read directly); token embedding +
+  classifier are k-quant rows dequantized per lookup; RoPE/GQA/SwiGLU unchanged; vocab from the
+  `token_embd` shape; seqLen capped to 512 like LM4. The dequant helpers are elementwise (no
+  reduction), so — unlike `quantizeBuf` — they are left **optimized** (≈14× faster than
+  `@_optimize(none)`); `make gguf-engine-test` (host) confirms coherent output
+  ("capital of France"→Paris, "opposite of hot"→cold) and LM5d confirms it under +neon.
+- **LM5d — serve e2e** (`make llm-serve-gguf-test`, `-m 2048M`): `/bin/llmd` detects the GGUF
+  magic, loads `GGUFLlama` over the signed **tinyllama-gguf** model disk (same packed delivery
+  as LM4b; `POST /completion?n=N` where N caps *total* positions, so it must exceed the prompt
+  length), and returns a coherent answer with a tok/s rate — confirming the Q4_K/Q6_K dequant
+  is correct under +neon. The forward re-dequantizes the whole model every token, so it is
+  slower per token than Q8 under QEMU-TCG (the price of keeping weights compressed); the test
+  asks for few tokens. Standalone target, not in `make test`.
+
+**LM5 arc complete:** swift-os reads and serves a GGUF Q4_K_M model, at ~half the Q8 footprint.
+The delivery/serving path is shared with LM3/LM4; only the engine + reader are new. Next LM
+work: LM6 (sampling — temp/top-p/top-k — + chat template); LM2 (multi-core matmul) stays
+deferred and would most help the dequant-heavy GGUF path.
