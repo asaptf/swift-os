@@ -120,6 +120,23 @@ private var pBrk = [UInt](repeating: 0, count: maxProc)
 // pMmapTop[slot]; it starts at userMmapTop and shrinks toward userMmapFloor.
 private var pMmapTop = [UInt](repeating: 0, count: maxProc)
 
+// rt-a: the mmap arena (pMmapTop), anon/file VMAs, and heap (pBrk) are properties
+// of the ADDRESS SPACE, which threads share. pThreadLeader[slot] names the slot
+// that owns that shared state (a process / fork child is its own leader; a thread
+// points at its creator's leader). Memory syscalls resolve through it so threads
+// carve from ONE cursor — a private per-thread copy handed out OVERLAPPING regions
+// in the shared address space, corrupting memory (intermittent V8-init SIGSEGV).
+// -1 = uninitialised → identity. The memory critical sections additionally mask
+// IRQs: processOnTick preempts at EL1, so two threads could otherwise interleave
+// inside mmap and race the cursor / page tables.
+private var pThreadLeader = [Int](repeating: -1, count: maxProc)
+
+func processMemLeader(_ slot: Int) -> Int {
+    guard slot >= 0 && slot < maxProc else { return slot }
+    let l = pThreadLeader[slot]
+    return (l >= 0 && l < maxProc) ? l : slot
+}
+
 // I2b: per-process file-backed mmap regions (lazy / demand-paged). A region
 // reserves VA but maps no frames until first touch; the page-fault handler
 // (processHandleFileFault) reads the backing disk extent into the faulting page.
@@ -2313,6 +2330,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = userHeapBase
+    pThreadLeader[slot] = slot // a process owns its own address space / mmap arena
     pMmapTop[slot] = userMmapTop
     fileVmasClear(slot)
     anonVmasClear(slot)
@@ -3131,6 +3149,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pBrk[child] = pBrk[parent]
     // The COW clone preserves every mapped user page (including mmap'd regions),
     // so the child inherits the parent's mmap cursor verbatim.
+    pThreadLeader[child] = child // fork creates a new address space: own arena
     pMmapTop[child] = pMmapTop[parent]
     fileVmasCopy(child, parent)
     pIsThread[child] = false
@@ -3197,9 +3216,14 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     pKilled[slot] = false
     pWait[slot] = waitNone
     pBrk[slot] = pBrk[creator]
-    // A thread shares the creator's address space; seed it with the same mmap
-    // cursor. (Concurrent mmap from multiple threads sharing one TTBR0 would
-    // need a shared cursor + lock — a follow-up; single-core today.)
+    // A thread SHARES the creator's address space, so it must share ONE mmap
+    // arena: point at the creator's group leader. Memory syscalls resolve through
+    // processMemLeader(), so threads carve from a single cursor under an IRQ-off
+    // critical section. (A per-thread copy handed out overlapping regions in the
+    // shared TTBR0 → memory corruption / intermittent V8-init SIGSEGV.) The
+    // per-slot copies below are vestigial for a thread — every access routes to
+    // the leader — but harmless; kept to avoid disturbing the fork path.
+    pThreadLeader[slot] = processMemLeader(creator)
     pMmapTop[slot] = pMmapTop[creator]
     fileVmasCopy(slot, creator)
     pIsThread[slot] = true
@@ -3217,9 +3241,13 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     pAddressSpaceCpuMask[slot] = 0
     copyProcessName(from: creator, to: slot)
     copyProcessSecurity(from: creator, to: slot)
-    // Share VFS state by snapshotting the creator's fd table + cwd (the demo only
-    // needs shared stdout; full fd-table aliasing is a follow-up — see NOTES).
-    vfsProcessInit(slot: slot, parent: creator)
+    // rt-a: a thread SHARES the creator's fd table, cwd, and confinement (POSIX
+    // threads share descriptors). vfsThreadAttach aliases this slot to the
+    // creator's VFS group instead of snapshotting a private copy — so an fd one
+    // thread opens (e.g. libuv's async-wake eventfd) is visible to all of them.
+    // A private snapshot diverged: a wakeup written by one thread never reached
+    // the fd another polled, deadlocking multithreaded runtimes (node -e).
+    vfsThreadAttach(slot: slot, leader: creator)
     if s5eThreadPlacementActive {
         let home = processNextS5eThreadHomeCpu()
         recordS5eThreadCreate(creator: creator, slot: slot, homeCpu: home)
@@ -3432,6 +3460,7 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     // not freed here — only the address space.
     let oldTtbr0 = pTtbr0[me]
     pTtbr0[me] = ttbr0
+    pThreadLeader[me] = me // exec installs a fresh address space: own arena
     pBrk[me] = userHeapBase
     pMmapTop[me] = userMmapTop // fresh image: empty mmap arena
     fileVmasClear(me)
@@ -3867,8 +3896,12 @@ func processTerminateBySignal(_ sig: Int) {
 /// sbrk(incr): grow the current process's heap, mapping pages from the PMM.
 func processSbrk(_ incr: Int) -> UInt {
     let fail = UInt(bitPattern: -1)
-    let me = currentProcessSlot()
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return fail }
+    // Serialize against a sibling thread preempting mid-grow (processOnTick yields
+    // at EL1); the heap/arena state is shared across the thread group.
+    let daif = irq_save()
+    defer { irq_restore(daif) }
     let old = pBrk[me]
     if incr == 0 { return old }
 
@@ -3943,8 +3976,13 @@ private func mappedPageCount(_ ttbr0: UInt, _ addr: UInt, _ pages: UInt) -> Int 
 /// negative errno encoded in the UInt result.
 func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
-    let me = currentProcessSlot()
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return err(-22) } // EINVAL
+    // The mmap arena (cursor + VMAs + page tables) is shared across the thread
+    // group; mask IRQs so a sibling thread cannot preempt (processOnTick yields at
+    // EL1) and carve an overlapping region from the same cursor.
+    let daif = irq_save()
+    defer { irq_restore(daif) }
     if len == 0 { return err(-22) }
     // W^X up front (also enforced in protPageDesc for committed pages).
     if (prot & PROT_WRITE) != 0 && (prot & PROT_EXEC) != 0 { return err(-22) }
@@ -4035,8 +4073,10 @@ func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UI
 /// VMA; the model-serving path maps once and exits, which is covered.)
 func processMmapFile(_ fd: Int, _ len: UInt, _ prot: Int32) -> UInt {
     func err(_ e: Int) -> UInt { UInt(bitPattern: e) }
-    let me = currentProcessSlot()
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return err(-22) } // EINVAL
+    let daif = irq_save() // shared arena cursor — see processMmap
+    defer { irq_restore(daif) }
     if len == 0 { return err(-22) }
     // Read-only file views only for now (model weights); write/exec is future work.
     if prot != PROT_READ { return err(-22) }
@@ -4171,7 +4211,10 @@ func processVirtToPhys(_ va: UInt, _ handleFd: Int) -> UInt {
 /// read-only from disk; false otherwise (the caller treats that as a real fault,
 /// e.g. a write to a read-only page, which falls through to COW / panic).
 func processHandleFileFault(_ faultVA: UInt) -> Bool {
-    let me = currentProcessSlot()
+    // Resolve to the group leader: a thread faulting on the shared address space
+    // must consult the leader's file VMAs. (No IRQ mask here — the page-fill path
+    // reads the backing disk, which must not run with IRQs masked.)
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return false }
     let pageSize = PageAllocator.pageSize
     let pageVA = faultVA & ~(pageSize - 1)
@@ -4205,8 +4248,10 @@ func processHandleFileFault(_ faultVA: UInt) -> Bool {
 /// munmap(addr, len): unmap and free `len` (rounded up) bytes at `addr`. addr
 /// must be page-aligned and lie in the mmap arena. Returns 0 or a negative errno.
 func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
-    let me = currentProcessSlot()
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return Errno.invalid.code }
+    let daif = irq_save() // shared arena — see processMmap
+    defer { irq_restore(daif) }
     if len == 0 { return Errno.invalid.code }
     if (addr & (PageAllocator.pageSize - 1)) != 0 { return Errno.invalid.code } // EINVAL: unaligned
     let pages = roundUpPages(len)
@@ -4264,8 +4309,10 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
 /// (W^X) is rejected. This is the JIT lever: reserve PROT_NONE, commit RW,
 /// write code, then flip the region to RX. Returns 0 or errno.
 func processMprotect(_ addr: UInt, _ len: UInt, _ prot: Int32) -> Int {
-    let me = currentProcessSlot()
+    let me = processMemLeader(currentProcessSlot())
     guard me >= 0 else { return Errno.invalid.code }
+    let daif = irq_save() // shared arena — see processMmap
+    defer { irq_restore(daif) }
     if len == 0 { return Errno.invalid.code }
     if (addr & (PageAllocator.pageSize - 1)) != 0 { return Errno.invalid.code }
     let pages = roundUpPages(len)
