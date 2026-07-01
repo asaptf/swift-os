@@ -195,6 +195,13 @@ private func blkUsedIdx() -> UInt16 {
 private func blkActiveIsPci() -> Bool {
     blkActiveDevice >= 0 && blkActiveDevice < maxBlkDevices && blkDeviceIsPci[blkActiveDevice]
 }
+// V4b: is a device currently selected and brought up? Transport-independent (a
+// virtio-pci device has no mmio base, so the old `blkMmio == 0` sentinel would
+// wrongly reject it): a brought-up device always has its ring + data pages and a
+// valid active index.
+private func blkActiveUsable() -> Bool {
+    blkActiveDevice >= 0 && blkRingBase != 0 && blkDataBase != 0
+}
 private func blkActiveNotify() {
     if blkActiveIsPci() { blkDevicePci[blkActiveDevice].notify(queue: 0) }
     else { VirtioMmioTransport(blkMmio).notify(queue: 0) }
@@ -321,7 +328,7 @@ private func blkSelectDevice(_ index: Int) -> Bool {
     blkSaveActiveState()
     if blkDeviceReady[index] {
         blkLoadActiveState(index)
-        return blkMmio != 0 && blkRingBase != 0 && blkDataBase != 0
+        return blkActiveUsable()
     }
     return blkBringUp(index) != 0
 }
@@ -409,7 +416,7 @@ private func blkBounceIsDataFs() -> Bool {
 
 // Read one sector into the internal bounce buffer. Returns 0 on success.
 private func blkDoRead(_ sector: UInt64) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     if blkCapacity != 0 && sector >= blkCapacity { return -2 }
 
     let hdr = blkDataBase + OFF_HDR
@@ -460,7 +467,7 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
 // device. Returns 0 on success. The caller chooses the device through
 // blkSelectDevice and prepares the bounce contents.
 private func blkDoWriteBounce(_ sector: UInt64) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     if blkCapacity != 0 && sector >= blkCapacity { return -2 }
 
     let hdr = blkDataBase + OFF_HDR
@@ -523,7 +530,7 @@ private func blkDoWrite(_ sector: UInt64, _ src: UnsafeRawPointer?) -> Int32 {
 // bytes — vs T_IN, device-writable. The caller fills blkMultiBase before a write
 // and reads it after a read. Returns 0 on success, negative on error.
 private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     if count < 1 || count > BLK_MULTI_SECTORS { return -4 }
     if blkCapacity != 0 && sector &+ UInt64(count) > blkCapacity { return -2 }
 
@@ -575,7 +582,7 @@ private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
 // kernel issues this after committing a manifest or staged-slot write so those
 // survive a host crash even with a write-back host cache (no cache=writethrough).
 private func blkDoFlush() -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     if !blkFlushOK { return 0 } // device has no volatile write cache to flush
 
     let hdr = blkDataBase + OFF_HDR
@@ -646,6 +653,7 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
         blkDeviceLastUsed[j] = 0
         blkDeviceFlushOK[j] = false
         blkDeviceReady[j] = false
+        blkDeviceIsPci[j] = false
     }
     for j in 0..<maxSwosbaseImages { swosbaseDevice[j] = -1 }
 
@@ -693,6 +701,53 @@ func virtioBlkInit(_ base: UInt, _ stride: UInt, _ count: UInt32) -> UInt64 {
                 espDev = devIndex
             }
         }
+    }
+
+    // V4b: also enumerate virtio-blk devices on the PCI transport (the GICv3 /
+    // Hetzner profile — a real Hetzner Cloud Volume is a virtio-blk-pci disk). Each
+    // is registered in the same device table with isPci=true and its configured
+    // transport stored, brought up, then classified by sector-0 magic exactly like
+    // an mmio disk — so a SWDATAFS PCI volume joins blkDataDevices[] and mounts via
+    // the unchanged V0–V3 stack. (No ECAM → collect returns 0 and this is a no-op,
+    // so the plain virtio-mmio boot is untouched.)
+    withUnsafeTemporaryAllocation(of: VirtioPciDevice.self, capacity: maxBlkDevices) { pcibuf in
+        let found = virtioPciCollectDevices(deviceType: VIRTIO_ID_BLOCK,
+                                            into: pcibuf.baseAddress!, max: maxBlkDevices)
+        var k = 0
+        while k < found {
+            if blkDeviceCount >= maxBlkDevices { break }
+            let devIndex = blkDeviceCount
+            blkDeviceCount += 1
+            blkDeviceMmio[devIndex] = 0
+            blkDeviceIsPci[devIndex] = true
+            blkDevicePci[devIndex] = VirtioPciTransport(pcibuf[k])
+            if firstIndex < 0 { firstIndex = devIndex }
+            if blkBringUp(devIndex) != 0 && blkDoRead(0) == 0 {
+                if storeDev < 0 && blkBounceIsSwosboot() {
+                    storeDev = devIndex
+                } else if blkBounceIsSwosbase() {
+                    if baseDev < 0 { baseDev = devIndex }
+                    if swosbaseCount < maxSwosbaseImages {
+                        swosbaseDevice[swosbaseCount] = devIndex
+                        swosbaseCount += 1
+                    }
+                } else if blkBounceIsPackageStore() && pkgStoreDevice < 0 {
+                    pkgStoreDevice = devIndex
+                    pkgStoreCapacity = blkCapacity
+                } else if blkBounceIsDataFs() {
+                    if dataFsDev < 0 { dataFsDev = devIndex }   // volume 0 = /data
+                    if blkDataDeviceCount < maxDataVolumes {
+                        blkDataDevices[blkDataDeviceCount] = devIndex
+                        blkDataDeviceCount += 1
+                    }
+                }
+                if espDev < 0 && blkDoRead(1) == 0 && blkBounceIsEfiPart() {
+                    espDev = devIndex
+                }
+            }
+            k += 1
+        }
+        if found > 0 { uartPuts("V4: virtio-blk-pci disks enumerated\n") }
     }
 
     blkEspDevice = espDev
@@ -894,7 +949,7 @@ func virtioBlkRead(_ sector: UInt64, _ buf: UnsafeMutableRawPointer?) -> Int32 {
 // success. Absolute (NOT slot-relative): U1b uses it to persist the SWOSBOOT
 // boot manifest at LBA 0/1, which lives outside the A/B image slots.
 func virtioBlkWriteSector(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     if blkStoreDevice >= 0 && !blkSelectDevice(blkStoreDevice) { return -1 }
     guard let src = buf else { return -1 }
     let bounce = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
@@ -912,7 +967,7 @@ func virtioBlkWriteSector(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
 // device, which mis-targets when a SWOSBOOT store is also attached (the OS-1
 // coordinated topology). Caller is responsible for selecting the device first.
 func virtioBlkWriteCurrent(_ sector: UInt64, _ buf: UnsafeRawPointer?) -> Int32 {
-    if blkMmio == 0 { return -1 }
+    if !blkActiveUsable() { return -1 }
     guard let src = buf else { return -1 }
     let bounce = UnsafeMutableRawPointer(bitPattern: blkDataBase + OFF_BOUNCE)!
     var i = 0

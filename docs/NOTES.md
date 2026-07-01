@@ -7652,6 +7652,38 @@ is still mmio, so boot is unchanged.
   make device selection transport-aware, and boot a `virtio-blk-pci` data disk in a
   new gate (the real Hetzner Volume simulation).
 
+### V4b — virtio-blk-pci discovery (real Hetzner Volume) (DONE, 2026-06-28)
+
+Closes V4: a Hetzner Cloud Volume — a virtio-blk **PCI** disk — is enumerated and
+mounted through the unchanged V0–V3 volume/mount stack, indistinguishable from a
+virtio-mmio data disk.
+
+- `kernel/drivers/pci.swift`: new `virtioPciCollectDevices(deviceType, into, max)` —
+  a SINGLE-pass enumerate that brings up every matching virtio-pci function (unlike
+  the first-match `virtioPciFindDevice`). Single-pass is required: `pciResolveFunction`
+  assigns BARs, so a re-scan-per-index would re-place an already-configured device's
+  BARs. The block driver needs it to find several volumes.
+- `kernel/drivers/virtio_blk.swift`: after the virtio-mmio scan, `virtioBlkInit` now
+  also collects virtio-blk PCI devices, registers each in the device table with
+  `blkDeviceIsPci = true` + its stored `VirtioPciTransport`, brings it up, and
+  classifies sector 0 by magic exactly like the mmio path — so a `SWDATAFS` PCI disk
+  joins `blkDataDevices[]` and mounts via the existing `vfsMountDataFs`. Marker
+  `V4: virtio-blk-pci disks enumerated`. No ECAM (`platform.pcieEcamBase == 0`) → the
+  collect returns 0 and the scan is a no-op, so the plain virtio-mmio boot is untouched.
+- Device selection is now transport-aware: `blkActiveUsable()` (active index + ring +
+  data pages allocated) replaces the six `blkMmio == 0` "is a device selected" guards
+  and the `blkSelectDevice` return check — a pci device has no mmio base, so the old
+  sentinel would wrongly reject it.
+- Test: `tests/v4_pci_test.sh` (gate `make v4-pci-test`) attaches the labeled `media`
+  volume as `-device virtio-blk-pci` (with `/data` on virtio-mmio) on the standard
+  `-M virt` profile (QEMU exposes a PCIe ECAM at the `platform.pcieEcamBase` default
+  `0x40_1000_0000`); it is enumerated, mounts at `/mnt/media`, is read/written, and the
+  file survives reboot. D0–D3 + V1 + V2a–c + V3a–c + the H2 `virtio-pci-test` stay green.
+- **V4 complete (V4a + V4b).** The **V-series (V0–V4) is complete**: multi-volume
+  mountable storage with stable identity, a declarative + runtime capability-gated
+  mount surface, and enumeration over both virtio-mmio and virtio-pci. Deferred:
+  runtime hotplug (real Hetzner is virtio-pci; QEMU `virt`/virtio-mmio has none clean).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

@@ -241,6 +241,54 @@ func virtioPciFindDevice(deviceType: UInt32) -> VirtioPciDevice? {
     return pciScanBusForVirtio(0, deviceType, 0)
 }
 
+// V4b: collect up to `max` modern virtio-pci devices of `deviceType` in a SINGLE
+// pass, filling out[0..<returned]. Unlike virtioPciFindDevice (first match), this
+// brings up every matching function — the block driver needs it to enumerate
+// several virtio-blk disks (e.g. multiple Hetzner Cloud Volumes). Single-pass is
+// essential: pciResolveFunction assigns BARs, so re-scanning per index would
+// re-place an already-configured device's BARs. Returns the number found.
+func virtioPciCollectDevices(deviceType: UInt32,
+                             into out: UnsafeMutablePointer<VirtioPciDevice>, max: Int) -> Int {
+    if platform.pcieEcamBase == 0 || max <= 0 { return 0 }
+    var count = 0
+    pciCollectBusForVirtio(0, deviceType, 0, out, max, &count)
+    return count
+}
+
+private func pciCollectBusForVirtio(_ bus: UInt32, _ deviceType: UInt32, _ depth: Int,
+                                    _ out: UnsafeMutablePointer<VirtioPciDevice>, _ max: Int,
+                                    _ count: inout Int) {
+    if depth > 32 || count >= max { return }
+    var d: UInt32 = 0
+    while d < 32 {
+        if pciRead16(bus, d, 0, CFG_VENDOR) != 0xFFFF {
+            let multifn = (pciRead8(bus, d, 0, CFG_HEADER_TYPE) & 0x80) != 0
+            let fnCount: UInt32 = multifn ? 8 : 1
+            var f: UInt32 = 0
+            while f < fnCount {
+                if pciRead16(bus, d, f, CFG_VENDOR) != 0xFFFF {
+                    if pciVirtioDeviceType(bus, d, f) == deviceType,
+                       let found = pciResolveFunction(bus, d, f, deviceType) {
+                        out[count] = found
+                        count += 1
+                        if count >= max { return }
+                    }
+                    // Descend through a PCI-to-PCI bridge / PCIe root port.
+                    if (pciRead8(bus, d, f, CFG_HEADER_TYPE) & 0x7F) == HEADER_TYPE_BRIDGE {
+                        let secondary = UInt32(pciRead8(bus, d, f, CFG_SECONDARY_BUS))
+                        if secondary != 0 && secondary != bus {
+                            pciCollectBusForVirtio(secondary, deviceType, depth + 1, out, max, &count)
+                            if count >= max { return }
+                        }
+                    }
+                }
+                f += 1
+            }
+        }
+        d += 1
+    }
+}
+
 // --- generic class-code discovery (non-virtio controllers, e.g. xHCI) -------
 
 private let CFG_REV_CLASS: UInt32 = 0x08   // rev(8) | progif(8) | subclass(8) | class(8)

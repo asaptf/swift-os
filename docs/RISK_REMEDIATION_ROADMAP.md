@@ -1122,7 +1122,7 @@ test, committed, review before the next):
     `/data/.system/mounts` table the V2b boot path reads (PERSIST writes through);
     busy mounts are refused; the surface is capability-gated. Next: **V4** (real
     Hetzner Volume — the enumeration port only).
-- **V4** (in progress, ties to H-series): a **real** Hetzner Volume — only the
+- **V4** (DONE, 2026-06-28, ties to H-series): a **real** Hetzner Volume — only the
   enumeration port (virtio-scsi / virtio-pci windows the H-series already drives), not
   the volume or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach
   a Volume to a live VM) is deferred (QEMU `virt`/virtio-mmio has no clean hotplug; real
@@ -1131,9 +1131,18 @@ test, committed, review before the next):
     driver onto `VirtioTransportOps` (mmio or pci), with per-device `isPci` + a stored
     `VirtioPciTransport`. Mmio path byte-identical; no new disk. Verified by the whole
     D0–D3 + V1 + V2a–c + V3a–c suite staying green. See `docs/NOTES.md` (V4a).
-  - **V4b** (next): virtio-blk-pci discovery in `virtioBlkInit`, `SWDATAFS` disks on PCI
-    enumerated into `blkDataDevices[]`, transport-aware device selection, and a
-    `virtio-blk-pci` data-disk mount gate (the real Hetzner Volume simulation).
+  - **V4b** (DONE, 2026-06-28): virtio-blk-pci discovery. `virtioBlkInit` now also
+    enumerates virtio-blk devices on PCI (new single-pass `virtioPciCollectDevices`),
+    registers each with `isPci` + its stored transport, and classifies `SWDATAFS` disks
+    into `blkDataDevices[]` exactly like the mmio scan; device-selection guards became
+    transport-aware (`blkActiveUsable` replaces the `blkMmio == 0` sentinel). `make
+    v4-pci-test` boots a `virtio-blk-pci` data volume, mounts it, reads/writes it, and
+    it survives reboot — while `/data` stays on virtio-mmio. Full D0–D3 + V1–V3 + the H2
+    `virtio-pci-test` stay green. See `docs/NOTES.md` (V4b).
+  - **V4 complete (V4a + V4b).** A Hetzner Cloud Volume (virtio-blk-pci) mounts through
+    the unchanged V0–V3 volume/mount stack, indistinguishable from a virtio-mmio data
+    disk. The **V-series is complete** (V0–V4). Remaining item is the deferred runtime
+    hotplug (real Hetzner is virtio-pci; QEMU `virt`/virtio-mmio has no clean hotplug).
 
 Full design + per-stage findings to go in `docs/NOTES.md` (V-series) as work lands.
 
