@@ -1919,6 +1919,12 @@ ggufdump: $(GGUFDUMP)
 gguf-dump-test: $(GGUFDUMP) $(TINYLLAMA_GGUF)
 	./tests/gguf_dump_test.sh
 
+# LM5b acceptance: the Q4_K / Q6_K super-block dequantizers match the official
+# `gguf` Python package's dequantize() (goldens baked into the test).
+gguf-dequant-test: $(TINYLLAMA_GGUF)
+	$(HOST_SWIFTC) -O tests/gguf_dequant_test.swift userland/lib/gguf.swift -o $(BUILD)/gguf_dequant_test
+	$(BUILD)/gguf_dequant_test
+
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
 MODELMANIFEST := $(BUILD)/modelmanifest
 $(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir

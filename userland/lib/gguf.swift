@@ -16,6 +16,104 @@
 // Pure and Foundation-free so it compiles into EL0 llmd and host tools alike.
 // All integers are little-endian per the GGUF spec.
 
+// ---- k-quant super-block sizes (QK_K = 256 weights per super-block) ----------
+public let ggmlQKK = 256
+public let ggmlQ4KBlockBytes = 144   // d(f16) + dmin(f16) + scales[12] + qs[128]
+public let ggmlQ6KBlockBytes = 210   // ql[128] + qh[64] + scales[16] + d(f16)
+
+/// IEEE half → float. Handles zero/subnormal/inf/nan; k-quant scales are normal
+/// halves in practice, but the full path keeps the reader correct for any GGUF.
+@inline(__always)
+public func ggufF16ToF32(_ h: UInt16) -> Float {
+    let h32 = UInt32(h)
+    let sign = (h32 & 0x8000) << 16
+    let exp = (h32 >> 10) & 0x1F
+    let mant = h32 & 0x3FF
+    var bits: UInt32
+    if exp == 0 {
+        if mant == 0 { bits = sign }
+        else {
+            // Subnormal half = mant × 2^-24. Shift the leading 1 up to bit 10;
+            // e shifts means the leading bit was at position 10-e, so the
+            // normalized f32 exponent field is (10-e) + 103 = 113 - e.
+            var e: Int32 = 0
+            var m = mant
+            while (m & 0x400) == 0 { e += 1; m <<= 1 }
+            m &= 0x3FF
+            let fe = UInt32(bitPattern: (113 - e))
+            bits = sign | (fe << 23) | (m << 13)
+        }
+    } else if exp == 0x1F {
+        bits = sign | 0x7F80_0000 | (mant << 13)
+    } else {
+        bits = sign | ((exp + (127 - 15)) << 23) | (mant << 13)
+    }
+    return Float(bitPattern: bits)
+}
+
+// Q4_K 6-bit scale/min unpack (ggml get_scale_min_k4), `s` = the 12 packed bytes.
+@inline(__always)
+private func q4kScaleMin(_ j: Int, _ s: UnsafePointer<UInt8>) -> (UInt8, UInt8) {
+    if j < 4 {
+        return (s[j] & 63, s[j + 4] & 63)
+    } else {
+        let d = (s[j + 4] & 0xF) | ((s[j - 4] >> 6) << 4)
+        let m = (s[j + 4] >> 4)  | ((s[j    ] >> 6) << 4)
+        return (d, m)
+    }
+}
+
+/// Dequantize one Q4_K super-block (144 bytes) to 256 floats. Matches ggml's
+/// dequantize_row_q4_K exactly: per super-block scales `d`/`dmin` (f16), eight
+/// sub-blocks of 32 with a 6-bit scale + 6-bit min, 4-bit weights.
+@_optimize(none)
+public func ggufDequantQ4K(_ blk: UnsafeRawPointer, _ out: UnsafeMutablePointer<Float>) {
+    let d = ggufF16ToF32(blk.loadUnaligned(fromByteOffset: 0, as: UInt16.self))
+    let dmin = ggufF16ToF32(blk.loadUnaligned(fromByteOffset: 2, as: UInt16.self))
+    let s = (blk + 4).assumingMemoryBound(to: UInt8.self)     // scales[12]
+    let q = (blk + 16).assumingMemoryBound(to: UInt8.self)    // qs[128]
+    var y = 0, qi = 0, isc = 0, j = 0
+    while j < ggmlQKK {
+        let (sc1, m1) = q4kScaleMin(isc, s)
+        let (sc2, m2) = q4kScaleMin(isc + 1, s)
+        let d1 = d * Float(sc1), min1 = dmin * Float(m1)
+        let d2 = d * Float(sc2), min2 = dmin * Float(m2)
+        var l = 0
+        while l < 32 { out[y] = d1 * Float(q[qi + l] & 0xF) - min1; y += 1; l += 1 }
+        l = 0
+        while l < 32 { out[y] = d2 * Float(q[qi + l] >> 4) - min2; y += 1; l += 1 }
+        qi += 32; isc += 2; j += 64
+    }
+}
+
+/// Dequantize one Q6_K super-block (210 bytes) to 256 floats. Matches ggml's
+/// dequantize_row_q6_K exactly: 4-bit low (`ql`) + 2-bit high (`qh`) → signed
+/// 6-bit weights centered at −32, scaled by an 8-bit sub-block scale × f16 `d`.
+@_optimize(none)
+public func ggufDequantQ6K(_ blk: UnsafeRawPointer, _ out: UnsafeMutablePointer<Float>) {
+    let ql = blk.assumingMemoryBound(to: UInt8.self)            // 128
+    let qh = (blk + 128).assumingMemoryBound(to: UInt8.self)    // 64
+    let sc = (blk + 192).assumingMemoryBound(to: Int8.self)     // 16
+    let d = ggufF16ToF32(blk.loadUnaligned(fromByteOffset: 208, as: UInt16.self))
+    var y = 0, qlo = 0, qho = 0, sco = 0, half = 0
+    while half < 2 {
+        var l = 0
+        while l < 32 {
+            let iscl = l / 16
+            let v1 = (ql[qlo + l]      & 0xF) | (((qh[qho + l] >> 0) & 3) << 4)
+            let v2 = (ql[qlo + l + 32] & 0xF) | (((qh[qho + l] >> 2) & 3) << 4)
+            let v3 = (ql[qlo + l]      >> 4)  | (((qh[qho + l] >> 4) & 3) << 4)
+            let v4 = (ql[qlo + l + 32] >> 4)  | (((qh[qho + l] >> 6) & 3) << 4)
+            out[y + l]      = d * Float(sc[sco + iscl + 0]) * Float(Int32(v1) - 32)
+            out[y + l + 32] = d * Float(sc[sco + iscl + 2]) * Float(Int32(v2) - 32)
+            out[y + l + 64] = d * Float(sc[sco + iscl + 4]) * Float(Int32(v3) - 32)
+            out[y + l + 96] = d * Float(sc[sco + iscl + 6]) * Float(Int32(v4) - 32)
+            l += 1
+        }
+        y += 128; qlo += 64; qho += 32; sco += 8; half += 1
+    }
+}
+
 // ggml tensor quantization types we recognize (subset; Q4_K_M uses F32/Q4_K/Q6_K).
 public enum GGMLType: UInt32 {
     case f32   = 0
