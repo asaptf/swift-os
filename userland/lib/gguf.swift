@@ -66,7 +66,6 @@ private func q4kScaleMin(_ j: Int, _ s: UnsafePointer<UInt8>) -> (UInt8, UInt8) 
 /// Dequantize one Q4_K super-block (144 bytes) to 256 floats. Matches ggml's
 /// dequantize_row_q4_K exactly: per super-block scales `d`/`dmin` (f16), eight
 /// sub-blocks of 32 with a 6-bit scale + 6-bit min, 4-bit weights.
-@_optimize(none)
 public func ggufDequantQ4K(_ blk: UnsafeRawPointer, _ out: UnsafeMutablePointer<Float>) {
     let d = ggufF16ToF32(blk.loadUnaligned(fromByteOffset: 0, as: UInt16.self))
     let dmin = ggufF16ToF32(blk.loadUnaligned(fromByteOffset: 2, as: UInt16.self))
@@ -89,7 +88,6 @@ public func ggufDequantQ4K(_ blk: UnsafeRawPointer, _ out: UnsafeMutablePointer<
 /// Dequantize one Q6_K super-block (210 bytes) to 256 floats. Matches ggml's
 /// dequantize_row_q6_K exactly: 4-bit low (`ql`) + 2-bit high (`qh`) → signed
 /// 6-bit weights centered at −32, scaled by an 8-bit sub-block scale × f16 `d`.
-@_optimize(none)
 public func ggufDequantQ6K(_ blk: UnsafeRawPointer, _ out: UnsafeMutablePointer<Float>) {
     let ql = blk.assumingMemoryBound(to: UInt8.self)            // 128
     let qh = (blk + 128).assumingMemoryBound(to: UInt8.self)    // 64
@@ -358,6 +356,18 @@ public final class GGUFFile {
             var i = 0
             var eq = true
             while i < sl { if u8(t.nameOff + i) != sp[i] { eq = false; break }; i += 1 }
+            if eq { return t }
+        }
+        return nil
+    }
+
+    /// Find a tensor by a runtime name (layer tensors like "blk.3.attn_q.weight").
+    public func tensor(name: String) -> GGUFTensor? {
+        let bytes = Array(name.utf8)
+        for t in tensors {
+            if t.nameLen != bytes.count { continue }
+            var i = 0, eq = true
+            while i < bytes.count { if u8(t.nameOff + i) != bytes[i] { eq = false; break }; i += 1 }
             if eq { return t }
         }
         return nil

@@ -1925,6 +1925,13 @@ gguf-dequant-test: $(TINYLLAMA_GGUF)
 	$(HOST_SWIFTC) -O tests/gguf_dequant_test.swift userland/lib/gguf.swift -o $(BUILD)/gguf_dequant_test
 	$(BUILD)/gguf_dequant_test
 
+# LM5c host oracle: the GGUFLlama engine loads the real Q4_K_M GGUF (+ the shared
+# Llama-2 tokenizer) and generates coherent, factually-correct text. ~0.6 GB
+# model, so NOT in `make test`. Reuses the LM4 tokenizer.bin (same 32k vocab).
+gguf-engine-test: $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/gguf_engine_test.swift userland/lib/llama2.swift userland/lib/gguf.swift -o $(BUILD)/gguf_engine_test
+	$(BUILD)/gguf_engine_test
+
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
 MODELMANIFEST := $(BUILD)/modelmanifest
 $(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
