@@ -226,6 +226,16 @@ long syscall(long number, ...) {
     switch (number) {
     case __NR_write:
         return (long)write((int)a0, (const void *)a1, (size_t)a2);
+    case SYS_close:
+        /* libuv's uv__close_nocancel() closes fds via syscall(SYS_close) rather
+         * than close() under __linux__ (deps/uv/src/unix/core.c). Without this
+         * every uv_fs_close fails -> node aborts on the first file read
+         * (ReadFileSync CHECK_EQ), e.g. running any .js file such as npm. */
+        return (long)close((int)a0);
+    case SYS_gettid:
+        /* Each SwiftOS thread is its own scheduler entity with a distinct pid,
+         * so getpid() is a valid, stable per-thread id for libuv's gettid(). */
+        return (long)getpid();
     case __NR_mmap:
 #if __NR_mmap2 != __NR_mmap   /* aarch64 aliases mmap2->mmap; avoid duplicate case */
     case __NR_mmap2:

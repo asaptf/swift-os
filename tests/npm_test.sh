@@ -4,11 +4,11 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="$ROOT/build/kernel.elf"
-DTB="$ROOT/build/virt.dtb"
+DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MEM="${NODE_QEMU_MEM:-2048M}"
-NPM_CLI="/usr/lib/node_modules/npm/bin/npm-cli.js"
+NPM_CLI="${NPM_CLI:-/usr/lib/node_modules/npm/bin/npm-cli.js}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK"   ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
@@ -70,11 +70,11 @@ await "swift-os login:" 90 || drive_fail "no login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "no password prompt"
 send_line 'swordfish'
-await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await "built-in shell (ash)" 120 || drive_fail "root shell did not start"
 
 send_line '/bin/node --version'
 await "v24.16.0" 120 || drive_fail "node --version did not print (prime)"
-send_line "/bin/node $NPM_CLI --version"
+send_line "/bin/node ${NPM_NODE_FLAGS:-} $NPM_CLI --version"
 await "11.13.0" 180 || drive_fail "npm --version did not print 11.13.0"
 
 send_line 'exit'
