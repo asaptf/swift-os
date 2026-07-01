@@ -8964,3 +8964,34 @@ pre-quantized **TinyLlama-1.1B-Chat Q4_K_M** GGUF (~640 MB vs the 1.1 GB Q8).
 The delivery/serving path is shared with LM3/LM4; only the engine + reader are new. Next LM
 work: LM6 (sampling — temp/top-p/top-k — + chat template); LM2 (multi-core matmul) stays
 deferred and would most help the dequant-heavy GGUF path.
+
+### LM6 — sampling + chat template (DONE, 2026-07-01)
+
+Greedy decoding is deterministic but repetitive, and a *chat* model wants a proper prompt
+format. LM6 adds both to the engine (`llama2.swift`), leaving the greedy path byte-identical
+(the LM4a golden test still passes).
+
+- **Sampler.** `LlamaRNG` (seedable xorshift64*, llama2.c's `random_f32`) + `LlamaSampler`
+  (temperature, top-k, top-p) + `llamaSample`: temperature-scaled softmax, then optional top-k
+  and nucleus (top-p) restriction, sampled with the RNG. `temperature 0` ≡ greedy argmax, so a
+  fixed seed is reproducible and `temp 0` is a drop-in for the old path.
+- **Sampled generation.** `llamaGenerateSampled` runs from a prompt *token array* with a
+  sampler and stops on EOS past the prompt (a chat turn ends at EOS). The String-prompt greedy
+  `llamaGenerate` is untouched.
+- **Chat template.** `llamaChatTokens` builds the TinyLlama-Chat (Zephyr) sequence
+  `<|user|>\n{msg}</s>\n<|assistant|>\n`, inserting the real EOS token where `</s>` goes (the
+  role markers are ordinary text pieces in the 32k SP vocab).
+- **llmd API.** A generalized query parser (`parseQueryInt`/`parseQueryFloat`) drives sampling
+  params `?temp/&top_k/&top_p/&seed/&n` on both routes. New `POST /chat` wraps the body in the
+  chat template and samples by default (temp 0.7 / top-k 40 / top-p 0.9); `POST /completion`
+  stays greedy by default (temp 0), backward-compatible with the LM3/LM4 serve tests.
+- Acceptance: `make llm-sampling-test` (host) — temp 0 == greedy, fixed seed reproducible +
+  different seeds diverge, chat template stays on-answer; `make llm-chat-test` (`-m 2048M`, Q8
+  disk) — `POST /chat "What is the capital of France?"` with a low temp + fixed seed returns
+  "`<|assistant|> The capital of France is Paris.`" e2e in QEMU. Both standalone (need the
+  model), not in `make test`.
+
+**LM6 arc complete.** The LM-series now covers: fast NEON matmul (LM1), disk-delivered signed
+models + a >1 GiB-RAM kernel (LM3/LM4-MM), a real Q8 model (LM4), the GGUF/Q4_K ecosystem
+(LM5), and sampling + chat (LM6). Remaining recorded direction: LM2 (multi-core matmul, blocked
+on the S-series scheduler ungate) — the biggest remaining speedup, especially for GGUF.

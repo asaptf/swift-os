@@ -1166,8 +1166,13 @@ dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
   `GGUFLlama` engine (`gguf_engine.swift`) that keeps the k-quant weights compressed
   and dequantizes per super-block in the matmul. Serves a TinyLlama-1.1B Q4_K_M GGUF
   (~0.6 GB, half the Q8 footprint) end to end in QEMU (`make llm-serve-gguf-test`).
-  See `docs/NOTES.md` (LM5a–LM5d). **LM6** (planned): sampling (temp/top-p/top-k)
-  + chat template.
+  See `docs/NOTES.md` (LM5a–LM5d).
+- **LM6** (DONE, 2026-07-01): sampling (temperature/top-k/top-p) + a seedable RNG +
+  the TinyLlama chat template, added to the engine with the greedy path unchanged;
+  llmd gains a `POST /chat` route and `?temp/&top_k/&top_p/&seed` sampling params.
+  `make llm-sampling-test` (host) + `make llm-chat-test` (QEMU, Q8). See
+  `docs/NOTES.md` (LM6). Remaining recorded direction: LM2 (multi-core matmul,
+  blocked on the S-series scheduler ungate).
 
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
