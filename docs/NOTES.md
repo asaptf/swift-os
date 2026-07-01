@@ -8633,13 +8633,16 @@ and a much larger SMP/test surface — against priority #2's "fast" and the
 strict-workflow "small reviewable steps". The embedded/appliance profile, where
 static footprint actually matters, can instead lower `kMaxProcesses` in one place.
 
-**Userland observability mirrors.** `/bin/ps` and `/bin/top` keep their own caps
-(separate compilation, no shared header): `SWIFTOS_PS_MAX` and `SWIFTOS_TOP_MAX`
-(userland/lib/swift_user.h) and `pidMax` (userland/top.swift) were also 16 and would
-silently truncate their listings at 16 processes. All three raised to 64 with a
-comment that they must track `kMaxProcesses`. The kernel `SYS_psinfo`/`SYS_procstat`
-paths already iterate `0..<maxProc` within the caller's buffer capacity, so they
-scaled for free.
+**Userland observability buffers.** `/bin/ps` and `/bin/top` originally kept their
+own caps (separate compilation, no shared header): `SWIFTOS_PS_MAX`,
+`SWIFTOS_TOP_MAX`, and `pidMax` were raised with `kMaxProcesses` during PT1, but
+they still formed a quiet future truncation risk. A 2026-07-01 follow-up removed
+those mirrors: the C bridge now calls `SYS_psinfo` / `SYS_procstat` with
+`capacity=0` to learn the live count, grows its buffers, then retries the
+snapshot. `top` also grows its per-frame sort/%CPU arrays and its pid-indexed
+previous-sample cache from the observed pid range. The kernel paths already
+iterate `0..<maxProc` within caller capacity, so no syscall ABI change was
+needed.
 
 **Acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
 parked on a pipe barrier, until `fork()` returns `-EAGAIN`; it asserts more than the
