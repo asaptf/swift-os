@@ -39,26 +39,20 @@ private let userHeapBase: UInt = 0xA000_0000
 // (away from the heap) mirrors the classic Linux mmap layout.
 private let userMmapTop: UInt = 0x4_0000_0000
 private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena grows down from the top
-// Single source of truth for the number of EL0 process slots. Several tables are
-// keyed by process slot and MUST be sized identically (or they drift into silent
-// corruption): the process table here (`maxProc`), the VFS slot state
-// (`maxVFSProcesses` in vfs.swift), and the futex wait table (`maxFutexWaiters` in
-// futex.swift — at most one parked waiter per thread, so it is bounded by the slot
-// count). These were three separate `16` literals; they now all derive from this
-// constant so the cap can be raised in one place without reintroducing the drift.
-// 64 is the hosting-profile default. PT2 moved the two heavyweight per-slot
-// resources (anonymous VMA tables and VFS fd tables) behind lazy per-slot pointers;
-// the embedded/appliance profile can still lower this constant here. See the
-// "Process-table capacity" series in docs/RISK_REMEDIATION_ROADMAP.md.
-let kMaxProcesses = 64
-private let maxProc = kMaxProcesses
+// Initial EL0 process-slot storage. PT3 makes this a boot-time starting size, not
+// a hard process limit: process/VFS/futex slot tables grow in chunks when the
+// allocator exhausts the currently visible range. The value remains 64 because it
+// is a good hosting-profile first allocation and preserves embedded/appliance
+// footprint until real concurrency asks for more.
+let kInitialProcessSlots = 64
+private let processSlotGrowChunk = 64
+private var processSlotBackingCapacity = 0
 
-// PT2a: keep the fixed backing arrays for now, but route all process-slot
-// validation and full-table scans through this narrow boundary. The next PT
-// steps can grow or replace the storage without rediscovering every `maxProc`
-// check in the scheduler/syscall/accounting paths.
+// PT2a/PT3a: route all process-slot validation and full-table scans through this
+// boundary. The backing storage is now growable, so callers must never retain the
+// capacity value as a compile-time truth.
 @inline(__always)
-private func processSlotCapacity() -> Int { maxProc }
+private func processSlotCapacity() -> Int { processSlotBackingCapacity }
 
 @inline(__always)
 private func processSlotRange() -> Range<Int> { 0..<processSlotCapacity() }
@@ -66,6 +60,10 @@ private func processSlotRange() -> Range<Int> { 0..<processSlotCapacity() }
 @inline(__always)
 private func processSlotValid(_ slot: Int) -> Bool {
     slot >= 0 && slot < processSlotCapacity()
+}
+
+func processSlotCapacityForSubsystems() -> Int {
+    processSlotCapacity()
 }
 
 private let procNameMax = 16
@@ -103,22 +101,22 @@ private let s5cPlacementStressRounds: UInt64 = 3
 private let s5cPlacementStressCpu0TailCount: UInt64 = 2
 
 // Stable context storage for cpu_switch_context.
-private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [maxProc]
+private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [processSlotCapacity()]
 private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [smpMaxCpuCount()]
 private var schedCtxCpuCount: UInt32 = 0
 
 // Per-process metadata (parallel arrays; not address-sensitive).
-private var pState = [Int32](repeating: 0, count: maxProc)
-private var pParent = [Int](repeating: -1, count: maxProc)   // parent slot, -1 = kernel
-private var pTtbr0 = [UInt](repeating: 0, count: maxProc)
-private var pKstack = [UInt](repeating: 0, count: maxProc) // kernel stack base (2 frames), freed on reap
-private var pExit = [Int](repeating: 0, count: maxProc)
-private var pKilled = [Bool](repeating: false, count: maxProc)
-private var pWait = [Int](repeating: waitNone, count: maxProc) // slot waited on / waitAny
-private var pBrk = [UInt](repeating: 0, count: maxProc)
+private var pState: UnsafeMutablePointer<Int32>! = nil
+private var pParent: UnsafeMutablePointer<Int>! = nil   // parent slot, -1 = kernel
+private var pTtbr0: UnsafeMutablePointer<UInt>! = nil
+private var pKstack: UnsafeMutablePointer<UInt>! = nil // kernel stack base (2 frames), freed on reap
+private var pExit: UnsafeMutablePointer<Int>! = nil
+private var pKilled: UnsafeMutablePointer<Bool>! = nil
+private var pWait: UnsafeMutablePointer<Int>! = nil // slot waited on / waitAny
+private var pBrk: UnsafeMutablePointer<UInt>! = nil
 // Track B — descending mmap cursor. Next anonymous mmap is placed just below
 // pMmapTop[slot]; it starts at userMmapTop and shrinks toward userMmapFloor.
-private var pMmapTop = [UInt](repeating: 0, count: maxProc)
+private var pMmapTop: UnsafeMutablePointer<UInt>! = nil
 
 // rt-a: the mmap arena (pMmapTop), anon/file VMAs, and heap (pBrk) are properties
 // of the ADDRESS SPACE, which threads share. pThreadLeader[slot] names the slot
@@ -129,12 +127,12 @@ private var pMmapTop = [UInt](repeating: 0, count: maxProc)
 // -1 = uninitialised → identity. The memory critical sections additionally mask
 // IRQs: processOnTick preempts at EL1, so two threads could otherwise interleave
 // inside mmap and race the cursor / page tables.
-private var pThreadLeader = [Int](repeating: -1, count: maxProc)
+private var pThreadLeader: UnsafeMutablePointer<Int>! = nil
 
 func processMemLeader(_ slot: Int) -> Int {
-    guard slot >= 0 && slot < maxProc else { return slot }
+    guard processSlotValid(slot) else { return slot }
     let l = pThreadLeader[slot]
-    return (l >= 0 && l < maxProc) ? l : slot
+    return processSlotValid(l) ? l : slot
 }
 
 // I2b: per-process file-backed mmap regions (lazy / demand-paged). A region
@@ -150,7 +148,7 @@ private struct FileVma {
     var prot: Int32 = 0
 }
 private let maxFileVmas = 8
-private var pFileVmas = [FileVma](repeating: FileVma(), count: maxProc * maxFileVmas)
+private var pFileVmas: UnsafeMutablePointer<FileVma>! = nil
 // Cumulative count of file-backed demand faults serviced (observability), and a
 // one-shot guard so the "demand paging active" marker is logged just once.
 var fileDemandFaults: UInt64 = 0
@@ -174,7 +172,7 @@ private let maxAnonVmas = 512
 // process-slot storage. A slot gets its AnonVma table only after it first creates
 // or inherits anonymous/device mmap state; processes that never mmap pay one
 // pointer, not 512 VMA records.
-private var pAnonVmaTables = [UInt](repeating: 0, count: maxProc)
+private var pAnonVmaTables: UnsafeMutablePointer<UInt>! = nil
 
 private func fileVmasClear(_ slot: Int) {
     for i in 0..<maxFileVmas { pFileVmas[slot * maxFileVmas + i].active = false }
@@ -296,26 +294,23 @@ private func anonVmasUnmapRange(_ slot: Int, _ addr: UInt, _ pages: UInt) {
         }
     }
 }
-private var pNameLen = [Int](repeating: 0, count: maxProc)
-private var pName = [UInt8](repeating: 0, count: maxProc * procNameMax)
+private var pNameLen: UnsafeMutablePointer<Int>! = nil
+private var pName: UnsafeMutablePointer<UInt8>! = nil
 // Principal / session / capability mask, plus the process's Cell tag, kept as
 // one typed record per slot (adding a Cell field is now a struct change, not a
 // new parallel array).
-private var pSecurity = [ProcessSecurityContext](
-    repeating: ProcessSecurityContext(principal: 0, session: 0, caps: 0, cell: globalCell,
-                                      realPrincipal: 0, realSession: 0, realCaps: 0),
-    count: maxProc)
+private var pSecurity: UnsafeMutablePointer<ProcessSecurityContext>! = nil
 // rt-a: a thread shares its creator's address space (TTBR0) instead of owning a
 // private one, so its exit must not be treated as an address-space teardown and
 // it joins via futex rather than waitpid.
-private var pIsThread = [Bool](repeating: false, count: maxProc)
-private var pSignalFrameActive = [Bool](repeating: false, count: maxProc)
-private var pSignalFrameSP = [UInt](repeating: 0, count: maxProc)
+private var pIsThread: UnsafeMutablePointer<Bool>! = nil
+private var pSignalFrameActive: UnsafeMutablePointer<Bool>! = nil
+private var pSignalFrameSP: UnsafeMutablePointer<UInt>! = nil
 // HC36: per-process pending-signal bitmask (index = signo). Signals are now
 // targeted at a specific process slot (e.g. a PTY's foreground process) rather
 // than a single global foreground, and delivered when that slot next returns to
 // EL0. Dispositions/restorers remain process-global in signal.swift for now.
-private var pPendingSignals = [UInt32](repeating: 0, count: maxProc)
+private var pPendingSignals: UnsafeMutablePointer<UInt32>! = nil
 
 // Accounting for /bin/top. CPU is charged one tick per timer interrupt to
 // whichever process is current (idle ticks when none is). Resident pages track
@@ -323,28 +318,28 @@ private var pPendingSignals = [UInt32](repeating: 0, count: maxProc)
 // copies the logical count even while physical frames are shared, exec resets to
 // the new image, and sbrk adds heap growth. Start tick is systemTicks at
 // creation, for "uptime of this process".
-private var pCpuTicks = [UInt64](repeating: 0, count: maxProc)
-private var pStartTick = [UInt64](repeating: 0, count: maxProc)
-private var pResPages = [Int](repeating: 0, count: maxProc)
+private var pCpuTicks: UnsafeMutablePointer<UInt64>! = nil
+private var pStartTick: UnsafeMutablePointer<UInt64>! = nil
+private var pResPages: UnsafeMutablePointer<Int>! = nil
 private var idleTicks: UInt64 = 0
 // nanosleep deadline (in systemTicks); 0 = not sleeping. A sleeping process
 // parks in pBlocked exactly like a futex/waitpid blocker, but only sleepers
 // carry a nonzero deadline, so the per-tick wake scan can pick them out without
 // disturbing the others.
-private var pWakeTick = [UInt64](repeating: 0, count: maxProc)
-private var pHomeCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
-private var pRunNext = [Int32](repeating: noProcessSlot, count: maxProc)
-private var pRunQueued = [Bool](repeating: false, count: maxProc)
-private var pLastDispatchCpu = [UInt32](repeating: unassignedCpu, count: maxProc)
-private var pDispatchCount = [UInt64](repeating: 0, count: maxProc)
-private var pDispatchCpuMask = [UInt64](repeating: 0, count: maxProc)
-private var pAddressSpaceCpuMask = [UInt64](repeating: 0, count: maxProc)
-private var pSchedulerQuiesced = [Bool](repeating: true, count: maxProc)
+private var pWakeTick: UnsafeMutablePointer<UInt64>! = nil
+private var pHomeCpu: UnsafeMutablePointer<UInt32>! = nil
+private var pRunNext: UnsafeMutablePointer<Int32>! = nil
+private var pRunQueued: UnsafeMutablePointer<Bool>! = nil
+private var pLastDispatchCpu: UnsafeMutablePointer<UInt32>! = nil
+private var pDispatchCount: UnsafeMutablePointer<UInt64>! = nil
+private var pDispatchCpuMask: UnsafeMutablePointer<UInt64>! = nil
+private var pAddressSpaceCpuMask: UnsafeMutablePointer<UInt64>! = nil
+private var pSchedulerQuiesced: UnsafeMutablePointer<Bool>! = nil
 // QW3: true once a slot has been reparented to the kernel (-1) at RUNTIME because
 // its real parent was reaped while it was still live. Distinguishes a runtime
 // orphan that nobody will waitpid() (collect it in the scheduler when it exits)
 // from a process born top-level with parent -1 (its orchestrator reaps it).
-private var pReparentedOrphan = [Bool](repeating: false, count: maxProc)
+private var pReparentedOrphan: UnsafeMutablePointer<Bool>! = nil
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
@@ -427,20 +422,177 @@ private var lastS5fRunAnyPolicySelectionCount: UInt64 = 0
 private var lastS5fRunAnyExitOkCount: UInt64 = 0
 private var s5fRunAnyPlacementActive = false
 private var s5fNextPlacementCpu: UInt32 = 0
-private var s5fRunAnySlots = [Int](repeating: -1, count: maxProc)
+private var s5fRunAnySlots: UnsafeMutablePointer<Int>! = nil
 
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
 
+private func processDefaultSecurityContext() -> ProcessSecurityContext {
+    ProcessSecurityContext(principal: 0, session: 0, caps: 0, cell: globalCell,
+                           realPrincipal: 0, realSession: 0, realCaps: 0)
+}
+
+private func processGrowTable<T>(_ old: UnsafeMutablePointer<T>?,
+                                 oldCount: Int,
+                                 newCount: Int,
+                                 defaultValue: T) -> UnsafeMutablePointer<T>? {
+    if newCount <= 0 { return nil }
+    let bytes = MemoryLayout<T>.stride * newCount
+    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
+    let next = raw.bindMemory(to: T.self, capacity: newCount)
+    var i = 0
+    if let oldTable = old {
+        while i < oldCount {
+            next[i] = oldTable[i]
+            i += 1
+        }
+    }
+    while i < newCount {
+        next[i] = defaultValue
+        i += 1
+    }
+    return next
+}
+
+private func processInstallSlotStorage(capacity newCapacity: Int) -> Bool {
+    let oldCapacity = processSlotBackingCapacity
+    if newCapacity <= oldCapacity { return true }
+
+    guard let nextProcCtx = processGrowTable(procCtx, oldCount: oldCapacity,
+                                             newCount: newCapacity,
+                                             defaultValue: CPUContext()),
+          let nextState = processGrowTable(pState, oldCount: oldCapacity,
+                                           newCount: newCapacity, defaultValue: pUnused),
+          let nextParent = processGrowTable(pParent, oldCount: oldCapacity,
+                                            newCount: newCapacity, defaultValue: -1),
+          let nextTtbr0 = processGrowTable(pTtbr0, oldCount: oldCapacity,
+                                           newCount: newCapacity, defaultValue: UInt(0)),
+          let nextKstack = processGrowTable(pKstack, oldCount: oldCapacity,
+                                            newCount: newCapacity, defaultValue: UInt(0)),
+          let nextExit = processGrowTable(pExit, oldCount: oldCapacity,
+                                          newCount: newCapacity, defaultValue: 0),
+          let nextKilled = processGrowTable(pKilled, oldCount: oldCapacity,
+                                            newCount: newCapacity, defaultValue: false),
+          let nextWait = processGrowTable(pWait, oldCount: oldCapacity,
+                                          newCount: newCapacity, defaultValue: waitNone),
+          let nextBrk = processGrowTable(pBrk, oldCount: oldCapacity,
+                                         newCount: newCapacity, defaultValue: UInt(0)),
+          let nextMmapTop = processGrowTable(pMmapTop, oldCount: oldCapacity,
+                                             newCount: newCapacity, defaultValue: UInt(0)),
+          let nextThreadLeader = processGrowTable(pThreadLeader, oldCount: oldCapacity,
+                                                  newCount: newCapacity, defaultValue: -1),
+          let nextFileVmas = processGrowTable(pFileVmas, oldCount: oldCapacity * maxFileVmas,
+                                              newCount: newCapacity * maxFileVmas,
+                                              defaultValue: FileVma()),
+          let nextAnonTables = processGrowTable(pAnonVmaTables, oldCount: oldCapacity,
+                                                newCount: newCapacity, defaultValue: UInt(0)),
+          let nextNameLen = processGrowTable(pNameLen, oldCount: oldCapacity,
+                                             newCount: newCapacity, defaultValue: 0),
+          let nextName = processGrowTable(pName, oldCount: oldCapacity * procNameMax,
+                                          newCount: newCapacity * procNameMax,
+                                          defaultValue: UInt8(0)),
+          let nextSecurity = processGrowTable(pSecurity, oldCount: oldCapacity,
+                                              newCount: newCapacity,
+                                              defaultValue: processDefaultSecurityContext()),
+          let nextIsThread = processGrowTable(pIsThread, oldCount: oldCapacity,
+                                              newCount: newCapacity, defaultValue: false),
+          let nextSignalActive = processGrowTable(pSignalFrameActive, oldCount: oldCapacity,
+                                                  newCount: newCapacity, defaultValue: false),
+          let nextSignalSP = processGrowTable(pSignalFrameSP, oldCount: oldCapacity,
+                                              newCount: newCapacity, defaultValue: UInt(0)),
+          let nextPendingSignals = processGrowTable(pPendingSignals, oldCount: oldCapacity,
+                                                    newCount: newCapacity, defaultValue: UInt32(0)),
+          let nextCpuTicks = processGrowTable(pCpuTicks, oldCount: oldCapacity,
+                                              newCount: newCapacity, defaultValue: UInt64(0)),
+          let nextStartTick = processGrowTable(pStartTick, oldCount: oldCapacity,
+                                               newCount: newCapacity, defaultValue: UInt64(0)),
+          let nextResPages = processGrowTable(pResPages, oldCount: oldCapacity,
+                                              newCount: newCapacity, defaultValue: 0),
+          let nextWakeTick = processGrowTable(pWakeTick, oldCount: oldCapacity,
+                                              newCount: newCapacity, defaultValue: UInt64(0)),
+          let nextHomeCpu = processGrowTable(pHomeCpu, oldCount: oldCapacity,
+                                             newCount: newCapacity, defaultValue: unassignedCpu),
+          let nextRunNext = processGrowTable(pRunNext, oldCount: oldCapacity,
+                                             newCount: newCapacity, defaultValue: noProcessSlot),
+          let nextRunQueued = processGrowTable(pRunQueued, oldCount: oldCapacity,
+                                               newCount: newCapacity, defaultValue: false),
+          let nextLastDispatchCpu = processGrowTable(pLastDispatchCpu, oldCount: oldCapacity,
+                                                     newCount: newCapacity,
+                                                     defaultValue: unassignedCpu),
+          let nextDispatchCount = processGrowTable(pDispatchCount, oldCount: oldCapacity,
+                                                   newCount: newCapacity, defaultValue: UInt64(0)),
+          let nextDispatchCpuMask = processGrowTable(pDispatchCpuMask, oldCount: oldCapacity,
+                                                     newCount: newCapacity, defaultValue: UInt64(0)),
+          let nextAddressSpaceCpuMask = processGrowTable(pAddressSpaceCpuMask,
+                                                         oldCount: oldCapacity,
+                                                         newCount: newCapacity,
+                                                         defaultValue: UInt64(0)),
+          let nextSchedulerQuiesced = processGrowTable(pSchedulerQuiesced,
+                                                       oldCount: oldCapacity,
+                                                       newCount: newCapacity,
+                                                       defaultValue: true),
+          let nextReparentedOrphan = processGrowTable(pReparentedOrphan,
+                                                      oldCount: oldCapacity,
+                                                      newCount: newCapacity,
+                                                      defaultValue: false),
+          let nextS5fRunAnySlots = processGrowTable(s5fRunAnySlots, oldCount: oldCapacity,
+                                                    newCount: newCapacity, defaultValue: -1)
+    else {
+        return false
+    }
+
+    procCtx = nextProcCtx
+    pState = nextState
+    pParent = nextParent
+    pTtbr0 = nextTtbr0
+    pKstack = nextKstack
+    pExit = nextExit
+    pKilled = nextKilled
+    pWait = nextWait
+    pBrk = nextBrk
+    pMmapTop = nextMmapTop
+    pThreadLeader = nextThreadLeader
+    pFileVmas = nextFileVmas
+    pAnonVmaTables = nextAnonTables
+    pNameLen = nextNameLen
+    pName = nextName
+    pSecurity = nextSecurity
+    pIsThread = nextIsThread
+    pSignalFrameActive = nextSignalActive
+    pSignalFrameSP = nextSignalSP
+    pPendingSignals = nextPendingSignals
+    pCpuTicks = nextCpuTicks
+    pStartTick = nextStartTick
+    pResPages = nextResPages
+    pWakeTick = nextWakeTick
+    pHomeCpu = nextHomeCpu
+    pRunNext = nextRunNext
+    pRunQueued = nextRunQueued
+    pLastDispatchCpu = nextLastDispatchCpu
+    pDispatchCount = nextDispatchCount
+    pDispatchCpuMask = nextDispatchCpuMask
+    pAddressSpaceCpuMask = nextAddressSpaceCpuMask
+    pSchedulerQuiesced = nextSchedulerQuiesced
+    pReparentedOrphan = nextReparentedOrphan
+    s5fRunAnySlots = nextS5fRunAnySlots
+    processSlotBackingCapacity = newCapacity
+    return true
+}
+
+private func processNextSlotCapacity() -> Int {
+    let current = processSlotCapacity()
+    return current <= 0 ? kInitialProcessSlots : current + processSlotGrowChunk
+}
+
 func processInit() {
     let n = MemoryLayout<CPUContext>.stride
     let cpuCount = smpMaxCpuCount()
-    guard let c = swiftos_kernel_alloc(UInt(n * maxProc), 16),
+    guard processInstallSlotStorage(capacity: kInitialProcessSlots),
+          futexEnsureWaiterCapacity(kInitialProcessSlots),
           let s = swiftos_kernel_alloc(UInt(n) * UInt(cpuCount), 16) else {
         uartPuts("panic: process context allocation failed\n")
         while true {}
     }
-    procCtx = c.bindMemory(to: CPUContext.self, capacity: maxProc)
     schedCtx = s.bindMemory(to: CPUContext.self, capacity: Int(cpuCount))
     schedCtxCpuCount = cpuCount
     processRunQueueCpuCount = cpuCount
@@ -2213,6 +2365,11 @@ func packArgs(_ args: [StaticString]) -> (UInt, UInt, Int) {
 }
 
 private func allocSlot() -> Int {
+    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
+    let newCapacity = processNextSlotCapacity()
+    if !vfsEnsureProcessCapacity(newCapacity) { return -1 }
+    if !futexEnsureWaiterCapacity(newCapacity) { return -1 }
+    if !processInstallSlotStorage(capacity: newCapacity) { return -1 }
     for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
     return -1
 }

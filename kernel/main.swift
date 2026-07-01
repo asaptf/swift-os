@@ -490,12 +490,11 @@ private func runCellStatProbe() {
     uartPuts("\n")
 }
 
-// Process-table capacity probe: forks children (each parked on a pipe barrier)
-// until the EL0 process table refuses, and asserts more than the historical 16
-// were live simultaneously, that the boundary returned a clean EAGAIN, and that
-// saturate-and-reap leaks no slot. Guards the unified kMaxProcesses cap.
+// Process-table growth probe: forks past the old fixed 64-slot table while each
+// child parks on a pipe barrier. It asserts the live count crosses that former
+// compile-time cap and that grow-and-reap leaks no slot.
 private func runProcMaxProbe() {
-    uartPuts("swift-os procmax: process-table capacity probe\n")
+    uartPuts("swift-os procmax: process-table growth probe\n")
     let (img, sz) = demoImage("/bin/procmaxprobe")
     if img == 0 { return }
     let (p, n, argc) = packArgs(["procmaxprobe"])
@@ -743,9 +742,9 @@ private func runOrphanReapDemo() {
     // A per-round leak is caught two ways: the steady-state count comparison
     // below (afterSlots/afterEndpoints vs baseline) is the primary check, and 20
     // rounds also exceeds the 16-slot endpoint table, so an endpoint leak exhausts
-    // that table (round launch fails) outright. The process table is larger
-    // (kMaxProcesses), so a process-slot leak surfaces via the count comparison
-    // rather than table exhaustion.
+    // that table (round launch fails) outright. Process-slot storage can grow, so
+    // a process-slot leak surfaces via the count comparison rather than table
+    // exhaustion.
     var launched = true
     for _ in 0..<20 {
         if !processOrphanReapRound(img, sz, packed: p, packedLen: n, argc: c) {

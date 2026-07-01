@@ -964,7 +964,7 @@ $(BUILD)/user_cellstatprobe.o: userland/cellstatprobe.swift userland/lib/swift_u
 $(BUILD)/user_mountprobe.o: userland/mountprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/mountprobe.swift -o $@
 
-# Process-table capacity probe (forks until the table refuses, asserts > 16 live).
+# Process-table growth probe (keeps more than the old 64-slot table live).
 $(BUILD)/user_procmaxprobe.o: userland/procmaxprobe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/procmaxprobe.swift -o $@
 
@@ -3263,11 +3263,11 @@ ns3-net-service-test: build $(QEMU_DTB_SMP4) base-image
 c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
 
-# Process-table capacity. The boot probe (/bin/procmaxprobe) forks children in
-# globalCell, each parked on a pipe barrier, until the table refuses; it asserts
-# more than the historical 16 were live at once (the cap is raised), that the
-# boundary returned a clean EAGAIN, and that saturate-and-reap leaks no slot. This
-# guards the unified kMaxProcesses cap. Runs single-core and under -smp 4.
+# Process-table growth. The boot probe (/bin/procmaxprobe) forks more than the
+# old 64-slot table's worth of children in globalCell, keeps them parked on a
+# pipe barrier, then releases and reaps them. This proves the PT1 64-slot value is
+# no longer the runtime boundary and that grow-and-reap leaks no slot. Runs
+# single-core and under -smp 4.
 procmax-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
 	./tests/procmax_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/procmax_test.sh

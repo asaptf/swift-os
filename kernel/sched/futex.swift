@@ -20,15 +20,14 @@
 let futexWait = 0
 let futexWake = 1
 
-// Sized to the process-slot count: at most one thread per slot can be parked in
-// futex_wait at any instant, so the table can never legitimately overflow. The
-// queue-full EAGAIN branch below stays defensive (unreachable) as long as this
-// tracks kMaxProcesses rather than drifting behind it.
-private let maxFutexWaiters = kMaxProcesses
+// Sized to the visible process-slot count: at most one thread per slot can be
+// parked in futex_wait at any instant, so the table can never legitimately
+// overflow. PT3a grows this table whenever process slots grow.
+private var maxFutexWaiters = kInitialProcessSlots
 
 // Parallel arrays: a waiter entry is (process slot, watched user VA).
-private var futexSlot = [Int](repeating: -1, count: maxFutexWaiters)
-private var futexAddr = [UInt](repeating: 0, count: maxFutexWaiters)
+private var futexSlot: UnsafeMutablePointer<Int>! = nil
+private var futexAddr: UnsafeMutablePointer<UInt>! = nil
 private var futexLockWord: UInt64 = 0
 private var futexLockAcquireCount: UInt64 = 0
 private var futexLockContentionCount: UInt64 = 0
@@ -70,6 +69,51 @@ private func futexUnlock(_ daif: UInt64) {
     irq_restore(daif)
 }
 
+private func futexGrowTable<T>(_ old: UnsafeMutablePointer<T>?,
+                               oldCount: Int,
+                               newCount: Int,
+                               defaultValue: T) -> UnsafeMutablePointer<T>? {
+    if newCount <= 0 { return nil }
+    let bytes = MemoryLayout<T>.stride * newCount
+    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
+    let next = raw.bindMemory(to: T.self, capacity: newCount)
+    var i = 0
+    if let oldTable = old {
+        while i < oldCount {
+            next[i] = oldTable[i]
+            i += 1
+        }
+    }
+    while i < newCount {
+        next[i] = defaultValue
+        i += 1
+    }
+    return next
+}
+
+func futexEnsureWaiterCapacity(_ requestedCapacity: Int) -> Bool {
+    let daif = futexLock()
+    defer { futexUnlock(daif) }
+
+    if futexSlot != nil && requestedCapacity <= maxFutexWaiters { return true }
+    let oldCapacity = futexSlot == nil ? 0 : maxFutexWaiters
+    let newCapacity = requestedCapacity > maxFutexWaiters ? requestedCapacity : maxFutexWaiters
+    guard let nextSlot = futexGrowTable(futexSlot,
+                                        oldCount: oldCapacity,
+                                        newCount: newCapacity,
+                                        defaultValue: -1),
+          let nextAddr = futexGrowTable(futexAddr,
+                                        oldCount: oldCapacity,
+                                        newCount: newCapacity,
+                                        defaultValue: UInt(0)) else {
+        return false
+    }
+    futexSlot = nextSlot
+    futexAddr = nextAddr
+    maxFutexWaiters = newCapacity
+    return true
+}
+
 func futexS5eLockAcquireCount() -> UInt64 {
     futexAtomicLoad(&futexLockAcquireCount)
 }
@@ -84,6 +128,7 @@ func futexS5eLockBoundaryHeldSelfTest() -> Bool {
 
 func futexS5eWaitTableIdleSelfTest() -> Bool {
     if futexAtomicLoad(&futexLockWord) != 0 { return false }
+    if futexSlot == nil || futexAddr == nil { return false }
     for i in 0..<maxFutexWaiters {
         if futexSlot[i] != -1 || futexAddr[i] != 0 { return false }
     }

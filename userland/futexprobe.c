@@ -7,10 +7,9 @@
 //      compare-and-block fast path.
 //   2. FUTEX_WAKE with no waiters returns 0 (woke nobody), never faults.
 //   3. Several threads FUTEX_WAIT on one word; setting it and FUTEX_WAKE wakes
-//      EVERY waiter — no lost wakeup across CPUs. (The 16-slot table-full EAGAIN
-//      boundary is intentionally NOT tested: maxProc=16 caps total threads below
-//      the system's live process count + 16 waiters, so it is unreachable in
-//      practice — you exhaust thread slots before the futex table. See NOTES.)
+//      EVERY waiter — no lost wakeup across CPUs. The table-full EAGAIN branch is
+//      intentionally not a normal target: the futex waiter table grows with the
+//      process-slot table, and at most one waiter can exist per process slot.
 // Built to run at -smp 4 so the wait/wake handoff crosses CPUs.
 
 #include <pthread.h>
@@ -23,7 +22,7 @@
 #define FUTEX_WAKE     1
 #define ERR_AGAIN     11   // EAGAIN, returned negated by the kernel
 
-#define NWAIT 3            // real waiters for the wait/wake roundtrip (well under maxProc)
+#define NWAIT 3            // real waiters for the wait/wake roundtrip
 
 static long sys3(long n, long a0, long a1, long a2) {
     register long x8 __asm__("x8") = n;

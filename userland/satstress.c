@@ -11,11 +11,13 @@
 //      permanently degrade the system.
 //
 // Pools exercised (limits as of this writing; the test does not hard-code them,
-// it discovers the ceiling): processes (maxProc=16), per-process fds
-// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=16). A vnode
-// create/unlink churn confirms the tmpfs node pool stays balanced under repeated
-// allocation without driving the *shared* table to global exhaustion (which
-// would starve the login shell - that is a separate, riskier soak test).
+// it discovers the ceiling where a fixed ceiling still exists): per-process fds
+// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=16). A small
+// fork/reap burst keeps process-slot reuse covered without treating the growable
+// process table as a bounded saturation target. A vnode create/unlink churn
+// confirms the tmpfs node pool stays balanced under repeated allocation without
+// driving the *shared* table to global exhaustion (which would starve the login
+// shell - that is a separate, riskier soak test).
 
 #include "lib/syscall.h"
 #include "lib/fs.h"

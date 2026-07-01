@@ -1,26 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-// procmaxprobe.swift — process-table capacity probe.
+// procmaxprobe.swift — process-table growth probe.
 //
-// Proves the EL0 process-slot table holds far more than the historical 16-slot
-// cap (kMaxProcesses in kernel/user/process.swift, now 64) and that the cap
-// boundary is reached cleanly with EAGAIN rather than a crash or a hang. The
-// probe runs in the single globalCell (raw 1), so cell_stat(globalCell).processes
-// is the total live process count. It:
+// Proves the EL0 process-slot table crosses both historical fixed caps: the
+// original 16-slot bring-up table and the later 64-slot PT1 table. The probe runs
+// in the single globalCell (raw 1), so cell_stat(globalCell).processes is the
+// total live process count. It:
 //   1. reads the baseline live process count;
 //   2. forks children in a loop, each parked on a pipe read (a deterministic
-//      liveness barrier — no sleep/timing race), until fork() returns -EAGAIN;
-//   3. asserts more than 16 children were live simultaneously (the old cap is
-//      gone), that the failing fork returned exactly EAGAIN (a clean boundary,
-//      not a corrupt errno), and that the live total grew by exactly the number
-//      forked (no lost slot);
+//      liveness barrier — no sleep/timing race), until more than 64 children are
+//      live simultaneously;
+//   3. asserts the live total grew by exactly the number forked (no lost slot);
 //   4. releases the barrier, reaps every child, and asserts the live count is
 //      back to baseline (no slot leak across saturation).
 // The boot test (tests/procmax_test.sh) asserts on the "PROCMAX OK" marker.
 
 private let globalCellRaw: UInt32 = 1   // matches kernel globalCell = CellId(raw: 1)
-private let eagain: Int32 = -11         // -EAGAIN, the kernel's Errno.again.code on a full table
-private let oldCap = 16                 // the historical maxProc the table used to be capped at
-private let maxKids = 128               // generous upper bound (> kMaxProcesses; the table caps us first)
+private let oldBringupCap = 16
+private let oldPT1Cap = 64
+private let targetKids = oldPT1Cap + 8
 
 private func putUInt(_ value: UInt) {
     if value == 0 { swiftos_putc(0x30); return }
@@ -65,12 +62,13 @@ func main(_ argc: Int32,
     let rfd = fds[0]
     let wfd = fds[1]
 
-    // Fork until the table refuses. Each child drops its write-end copy and parks
-    // in read(), so all forked children are simultaneously alive while we measure.
-    var kids = [Int32](repeating: 0, count: maxKids)
+    // Fork past the old fixed 64-slot table. Each child drops its write-end copy
+    // and parks in read(), so all forked children are simultaneously alive while
+    // we measure.
+    var kids = [Int32](repeating: 0, count: targetKids)
     var forked = 0
     var lastErr: Int32 = 0
-    while forked < maxKids {
+    while forked < targetKids {
         let pid = swiftos_fork()
         if pid < 0 { lastErr = pid; break }
         if pid == 0 {
@@ -88,17 +86,23 @@ func main(_ argc: Int32,
     putUInt(UInt(forked))
     swiftos_puts(" peak live processes=")
     putUInt(UInt(peak))
-    swiftos_puts(" boundary errno=")
-    // lastErr is negative; print its magnitude with a leading '-'.
-    if lastErr < 0 { swiftos_putc(0x2D); putUInt(UInt(-lastErr)) } else { putUInt(UInt(lastErr)) }
+    swiftos_puts(" target children=")
+    putUInt(UInt(targetKids))
+    if lastErr < 0 {
+        swiftos_puts(" early errno=-")
+        putUInt(UInt(-lastErr))
+    }
     swiftos_putc(0x0A)
 
     var ok = true
-    if forked <= oldCap {
+    if forked <= oldBringupCap {
         swiftos_puts("PROCMAX FAIL: forked children did not exceed the old 16-slot cap\n"); ok = false
     }
-    if lastErr != eagain {
-        swiftos_puts("PROCMAX FAIL: cap boundary did not return a clean EAGAIN\n"); ok = false
+    if forked <= oldPT1Cap {
+        swiftos_puts("PROCMAX FAIL: forked children did not exceed the old 64-slot cap\n"); ok = false
+    }
+    if lastErr != 0 {
+        swiftos_puts("PROCMAX FAIL: fork failed before crossing the old 64-slot cap\n"); ok = false
     }
     if peak != base + UInt32(forked) {
         swiftos_puts("PROCMAX FAIL: live count did not grow by exactly the number forked\n"); ok = false
@@ -124,7 +128,7 @@ func main(_ argc: Int32,
     if ok {
         swiftos_puts("PROCMAX OK: process table holds ")
         putUInt(UInt(peak))
-        swiftos_puts(" live processes (> old 16-slot cap), clean EAGAIN at the boundary, no leak\n")
+        swiftos_puts(" live processes (> old 64-slot cap), no leak\n")
         return 0
     }
     return 1
