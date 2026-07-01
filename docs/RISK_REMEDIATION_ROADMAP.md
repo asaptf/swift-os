@@ -763,14 +763,44 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
   op + a pooled allocator under `vfsLock` + a large SMP/test surface. The
   embedded/appliance profile, where footprint matters, lowers `kMaxProcesses` (and,
   later, the FD/VMA sizes) in one place instead.
-- Userland `/bin/ps` and `/bin/top` keep their own mirrors (`SWIFTOS_PS_MAX`,
-  `SWIFTOS_TOP_MAX`, `pidMax`), all raised 16 → 64 so they don't truncate the listing.
+- Follow-up (2026-07-01): userland `/bin/ps` and `/bin/top` no longer keep process-cap
+  mirrors. The C bridge first calls the snapshot syscalls with `capacity=0`, grows its
+  process-stat buffers to the kernel-reported live count, then retries the snapshot, so a
+  future kernel slot-cap increase does not silently truncate observability.
 - Acceptance: `make procmax-test` — `/bin/procmaxprobe` forks pipe-barriered children
   until `fork()` returns `-EAGAIN`, asserting > 16 were live at once, a clean EAGAIN at
   the boundary, exact live-count growth, and no slot leak after saturate-and-reap.
   Single-core + `-smp 4`; wired into `make test`.
 - Follow-ups (not blocking): bump `maxEndpoints` for IPC-heavy multi-service loads; an
   `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table sizes together.
+
+### PT2a — process-slot access boundary (DONE, 2026-07-01)
+
+- First preparatory step toward removing the fixed storage cap without a broad
+  scheduler/VFS rewrite. The backing arrays are still sized by `maxProc`, and the
+  externally visible capacity remains 64, but runtime slot validation and whole-table
+  scans now go through a narrow boundary in `process.swift`:
+  `processSlotCapacity()`, `processSlotRange()`, and `processSlotValid(_:)`.
+- This keeps PT2a behavior-neutral while making the next steps local: the storage can
+  grow, or later become chunked, without rediscovering every `slot >= maxProc` guard,
+  accounting scan, syscall snapshot loop, and scheduler readiness scan by hand.
+- Acceptance: normal kernel build plus the existing process-capacity gate
+  (`make procmax-test`) continue to pass; no syscall ABI changes.
+
+### PT2b — lazy anonymous-VMA tables (DONE, 2026-07-01)
+
+- The first heavyweight per-process table is no longer part of fixed process-slot
+  storage. `process.swift` replaced the static `maxProc * maxAnonVmas` anonymous-VMA
+  array with one pointer per slot plus a lazily allocated `maxAnonVmas` table on the
+  first anonymous/device mmap or when a fork/thread inherits an existing table.
+- This removes about 12 KiB of static storage per slot (512 `AnonVma` records) while
+  preserving the existing "512 covers Node/V8" per-process ceiling for processes that
+  actually use large mmap reservations. Fork/thread creation now fails cleanly with
+  `ENOMEM` if the inherited VMA table cannot be allocated instead of silently losing
+  reservation metadata.
+- Acceptance: normal kernel build, `/bin/mmapdemo` boot smoke (anonymous mmap,
+  mprotect/W^X, file-VMA cleanup), and the existing process-capacity gate continue
+  to pass; no syscall ABI changes.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 
@@ -1126,13 +1156,30 @@ dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
 - **LM2** (planned): multi-threaded matmul across the SMP cores (threads + futex from
   the S-series) — split the output-row loop across workers. Acceptance: same output,
   parallel speedup, per-CPU utilization visible in `top`.
-- **LM3** (planned): model delivery off a dedicated virtio-blk "model disk" (mmap from
-  there, not the base) + a larger-RAM inference QEMU profile.
-- **LM4** (planned): first real model — **TinyLlama-1.1B-Chat** (Llama2 arch, rope
-  10000, SentencePiece 32k, GQA → runs on the current engine almost unchanged),
-  exported to the existing v2-Q8 format, signed bundle, e2e generation + tokens/sec.
-- **LM5** (planned): GGUF + Q4_K_M parser (smaller footprint, opens the GGUF
-  ecosystem). **LM6** (planned): sampling (temp/top-p/top-k) + chat template.
+- **LM3** (DONE, 2026-06-27): model delivery off a dedicated virtio-blk "model disk"
+  (signed packed SWOSBASE image, mmap from there, not the base) + a larger-RAM
+  inference QEMU profile. See `docs/NOTES.md` (LM3a/b/c).
+- **LM4** (DONE, 2026-06-29): first real model — **TinyLlama-1.1B-Chat** (Llama2 arch,
+  rope 10000, SentencePiece 32k, GQA) converted GQA-correct to the v2-Q8 format
+  (LM4a), shipped as a signed packed model disk (LM4b), and served end to end in QEMU
+  (LM4c): coherent factual output + tokens/sec. Required a kernel enabler, **LM4-MM**:
+  the kernel ran in TTBR0 with userland linked at `0x8000_0000`, so RAM was usable only
+  up to the 1 GiB identity map; a high-RAM window at VA 64 GiB + `frameVA` + PMM
+  low/high zoning make RAM past 1 GiB usable for bulk user data pages (the model's
+  weights) while page tables stay in identity-mapped low RAM. See `docs/NOTES.md`
+  (LM4a/LM4b/LM4-MM/LM4c).
+- **LM5** (DONE, 2026-07-01): GGUF + Q4_K reader — a Foundation-free GGUF container
+  reader (`userland/lib/gguf.swift`) + exact Q4_K/Q6_K super-block dequant + a
+  `GGUFLlama` engine (`gguf_engine.swift`) that keeps the k-quant weights compressed
+  and dequantizes per super-block in the matmul. Serves a TinyLlama-1.1B Q4_K_M GGUF
+  (~0.6 GB, half the Q8 footprint) end to end in QEMU (`make llm-serve-gguf-test`).
+  See `docs/NOTES.md` (LM5a–LM5d).
+- **LM6** (DONE, 2026-07-01): sampling (temperature/top-k/top-p) + a seedable RNG +
+  the TinyLlama chat template, added to the engine with the greedy path unchanged;
+  llmd gains a `POST /chat` route and `?temp/&top_k/&top_p/&seed` sampling params.
+  `make llm-sampling-test` (host) + `make llm-chat-test` (QEMU, Q8). See
+  `docs/NOTES.md` (LM6). Remaining recorded direction: LM2 (multi-core matmul,
+  blocked on the S-series scheduler ungate).
 
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 

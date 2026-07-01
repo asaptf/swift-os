@@ -24,7 +24,6 @@ private let stateRunning: UInt32 = 2
 private let stateBlocked: UInt32 = 3
 private let stateZombie: UInt32 = 4
 
-private let pidMax = 64 // SWIFTOS_TOP_MAX; pid = slot+1, so 1..64. Tracks kernel kMaxProcesses.
 private let cpuMax = 8  // SWIFTOS_CPU_MAX
 
 // POLLIN, for the stdin readiness poll that doubles as the refresh delay.
@@ -70,10 +69,12 @@ private final class Top {
     private let store: UnsafeMutablePointer<UInt8>
     private var storeLen = 0
 
-    private let prevCpu: UnsafeMutablePointer<UInt>   // [pidMax+1], indexed by pid
-    private let prevSeen: UnsafeMutablePointer<UInt8>   // [pidMax+1]
-    private let order: UnsafeMutablePointer<Int32>      // [pidMax] sort permutation
-    private let pct10: UnsafeMutablePointer<UInt>     // [pidMax] %CPU * 10, per record
+    private var prevPidCap = 1
+    private var processCap = 1
+    private var prevCpu: UnsafeMutablePointer<UInt>     // indexed by pid
+    private var prevSeen: UnsafeMutablePointer<UInt8>   // indexed by pid
+    private var order: UnsafeMutablePointer<Int32>      // sort permutation
+    private var pct10: UnsafeMutablePointer<UInt>       // %CPU * 10, per record
     private let prevCoreTicks: UnsafeMutablePointer<UInt> // [cpuMax]
     private let prevCoreIdle: UnsafeMutablePointer<UInt>  // [cpuMax]
     private let coreBusy10: UnsafeMutablePointer<UInt>    // [cpuMax] %CPU * 10
@@ -84,16 +85,54 @@ private final class Top {
     init() {
         buf = UnsafeMutablePointer<UInt8>.allocate(capacity: cap)
         store = UnsafeMutablePointer<UInt8>.allocate(capacity: storeCap)
-        prevCpu = UnsafeMutablePointer<UInt>.allocate(capacity: pidMax + 1)
-        prevSeen = UnsafeMutablePointer<UInt8>.allocate(capacity: pidMax + 1)
-        order = UnsafeMutablePointer<Int32>.allocate(capacity: pidMax)
-        pct10 = UnsafeMutablePointer<UInt>.allocate(capacity: pidMax)
+        prevCpu = UnsafeMutablePointer<UInt>.allocate(capacity: prevPidCap)
+        prevSeen = UnsafeMutablePointer<UInt8>.allocate(capacity: prevPidCap)
+        order = UnsafeMutablePointer<Int32>.allocate(capacity: processCap)
+        pct10 = UnsafeMutablePointer<UInt>.allocate(capacity: processCap)
         prevCoreTicks = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
         prevCoreIdle = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
         coreBusy10 = UnsafeMutablePointer<UInt>.allocate(capacity: cpuMax)
-        for i in 0...pidMax { prevCpu[i] = 0; prevSeen[i] = 0 }
+        for i in 0..<prevPidCap { prevCpu[i] = 0; prevSeen[i] = 0 }
         for i in 0..<cpuMax { prevCoreTicks[i] = 0; prevCoreIdle[i] = 0; coreBusy10[i] = 0 }
         loadStore()
+    }
+
+    private func ensureProcessCapacity(_ needed: Int) {
+        if needed <= processCap { return }
+        var newCap = processCap
+        while newCap < needed { newCap *= 2 }
+        let newOrder = UnsafeMutablePointer<Int32>.allocate(capacity: newCap)
+        let newPct10 = UnsafeMutablePointer<UInt>.allocate(capacity: newCap)
+        order.deallocate()
+        pct10.deallocate()
+        order = newOrder
+        pct10 = newPct10
+        processCap = newCap
+    }
+
+    private func ensurePidCapacity(_ maxPid: UInt32) {
+        let needed = Int(maxPid) + 1
+        if needed <= prevPidCap { return }
+        var newCap = prevPidCap
+        while newCap < needed { newCap *= 2 }
+        let newCpu = UnsafeMutablePointer<UInt>.allocate(capacity: newCap)
+        let newSeen = UnsafeMutablePointer<UInt8>.allocate(capacity: newCap)
+        var i = 0
+        while i < newCap {
+            if i < prevPidCap {
+                newCpu[i] = prevCpu[i]
+                newSeen[i] = prevSeen[i]
+            } else {
+                newCpu[i] = 0
+                newSeen[i] = 0
+            }
+            i += 1
+        }
+        prevCpu.deallocate()
+        prevSeen.deallocate()
+        prevCpu = newCpu
+        prevSeen = newSeen
+        prevPidCap = newCap
     }
 
     // ---- frame buffer ----------------------------------------------------
@@ -227,6 +266,13 @@ private final class Top {
         if swiftos_sysinfo_refresh() != 0 { return false }
         let count = Int(swiftos_top_refresh())
         if count < 0 { return false }
+        ensureProcessCapacity(count)
+        var maxPid: UInt32 = 0
+        for i in 0..<count {
+            let pid = swiftos_top_pid(Int32(i))
+            if pid > maxPid { maxPid = pid }
+        }
+        ensurePidCapacity(maxPid)
 
         let hz = UInt(swiftos_sys_hz())
         let uptimeTicks = swiftos_sys_uptime_ticks()
@@ -268,7 +314,7 @@ private final class Top {
             let start = swiftos_top_start_tick(Int32(i))
             let num: UInt
             let den: UInt
-            if havePrev && pid <= UInt32(pidMax) && prevSeen[Int(pid)] != 0 {
+            if havePrev && Int(pid) < prevPidCap && prevSeen[Int(pid)] != 0 {
                 num = cpu >= prevCpu[Int(pid)] ? cpu - prevCpu[Int(pid)] : 0
                 den = procInterval
             } else {
@@ -361,10 +407,10 @@ private final class Top {
         flush()
 
         // Save this frame as the baseline for the next interval's %CPU.
-        for k in 0...pidMax { prevSeen[k] = 0 }
+        for k in 0..<prevPidCap { prevSeen[k] = 0 }
         for i in 0..<count {
             let pid = swiftos_top_pid(Int32(i))
-            if pid <= UInt32(pidMax) {
+            if Int(pid) < prevPidCap {
                 prevCpu[Int(pid)] = swiftos_top_cpu_ticks(Int32(i))
                 prevSeen[Int(pid)] = 1
             }

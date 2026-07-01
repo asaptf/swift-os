@@ -87,10 +87,12 @@ private func staticPath(_ s: StaticString) -> UnsafePointer<CChar> {
 // payload also faults it fully in, so "verified" implies "resident".
 
 private let bundleRoot: StaticString = "/models/stories15M"
-// LM3c: a dedicated model disk (LM3a/LM3b) mounts read-only at /srv/models. A
+// LM3c/LM4: a dedicated model disk (LM3a/LM3b) mounts read-only at /srv/models. A
 // real model is too big for the RAM-loaded base, so prefer the disk-delivered
-// bundle when present and fall back to the base bundle otherwise.
-private let diskBundleRoot: StaticString = "/srv/models/stories15M"
+// bundle when present and fall back to the base bundle otherwise. The disk roots
+// are tried in order — the real TinyLlama (LM4) first, then the stories15M proof
+// (LM3) — so whichever model disk is attached is served without reconfiguration.
+private let diskBundleRoots: [StaticString] = ["/srv/models/tinyllama-gguf", "/srv/models/tinyllama", "/srv/models/stories15M"]
 private let dentsCap = 2048
 private let manifestCap = 4096
 
@@ -212,7 +214,7 @@ private func loadVerified(_ root: StaticString, _ gen: Int, _ entry: ModelBundle
 /// recorded follow-up); with 8 VMA slots and verify-model-first ordering a
 /// rejected generation costs one slot, which the serving path never exhausts.
 private func resolveBundle(_ root: StaticString)
-    -> (model: UnsafeRawPointer, tok: UnsafeRawPointer, gen: Int, name: String)? {
+    -> (model: UnsafeRawPointer, modelLen: Int, tok: UnsafeRawPointer, gen: Int, name: String)? {
     let gens = modelGenerationsNewestFirst(scanGenerations(root))
     for gen in gens {
         let m: ModelManifest
@@ -228,7 +230,7 @@ private func resolveBundle(_ root: StaticString)
         case .ok(let parsed):
             m = parsed
         }
-        guard let (modelPtr, _) = loadVerified(root, gen, m.model) else {
+        guard let (modelPtr, modelLen) = loadVerified(root, gen, m.model) else {
             swiftos_puts("llmd: generation "); putUInt(UInt(gen))
             swiftos_puts(" rejected (model size/sha256 mismatch)\n")
             continue
@@ -238,7 +240,7 @@ private func resolveBundle(_ root: StaticString)
             swiftos_puts(" rejected (tokenizer size/sha256 mismatch)\n")
             continue
         }
-        return (modelPtr, tokPtr, gen, m.name)
+        return (modelPtr, modelLen, tokPtr, gen, m.name)
     }
     return nil
 }
@@ -332,6 +334,56 @@ private func parseContentLength(_ b: UnsafePointer<UInt8>, _ headerEnd: Int) -> 
 }
 
 @inline(__always)
+/// Byte offset just after "<name>=" on the request line (the query string of
+/// `METHOD SP PATH SP VERSION`), matched only when preceded by '?' or '&' so a
+/// key never trips on path text. Returns -1 when absent. Bounds the scan to the
+/// first line (stops at CR/LF).
+private func queryValueStart(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString) -> Int {
+    var lineEnd = 0
+    while lineEnd < n && b[lineEnd] != 0x0d && b[lineEnd] != 0x0a { lineEnd += 1 }
+    return name.withUTF8Buffer { nm -> Int in
+        let m = nm.count
+        if m == 0 { return -1 }
+        var i = 0
+        while i + m + 1 <= lineEnd {
+            if i == 0 || b[i - 1] == 0x3f /* ? */ || b[i - 1] == 0x26 /* & */ {
+                var k = 0, eq = true
+                while k < m { if b[i + k] != nm[k] { eq = false; break }; k += 1 }
+                if eq && b[i + m] == 0x3d /* = */ { return i + m + 1 }
+            }
+            i += 1
+        }
+        return -1
+    }
+}
+
+/// Parse an unsigned int query param, or `def` when absent/malformed.
+private func parseQueryInt(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString, _ def: Int) -> Int {
+    let s = queryValueStart(b, n, name)
+    if s < 0 { return def }
+    var j = s, val = 0, any = false
+    while j < n, b[j] >= 0x30, b[j] <= 0x39 {
+        val = val * 10 + Int(b[j] - 0x30); any = true; j += 1
+        if val > 1_000_000 { return 1_000_000 }
+    }
+    return any ? val : def
+}
+
+/// Parse a non-negative decimal float query param (e.g. `0.7`), or `def`.
+private func parseQueryFloat(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString, _ def: Float) -> Float {
+    let s = queryValueStart(b, n, name)
+    if s < 0 { return def }
+    var j = s, intPart = 0
+    var any = false
+    while j < n, b[j] >= 0x30, b[j] <= 0x39 { intPart = intPart * 10 + Int(b[j] - 0x30); any = true; j += 1 }
+    var frac: Float = 0, scale: Float = 0.1
+    if j < n, b[j] == 0x2e /* . */ {
+        j += 1
+        while j < n, b[j] >= 0x30, b[j] <= 0x39 { frac += Float(Int(b[j] - 0x30)) * scale; scale *= 0.1; any = true; j += 1 }
+    }
+    return any ? (Float(intPart) + frac) : def
+}
+
 private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> Bool {
     var ok = true
     s.withUTF8Buffer { sb in
@@ -342,7 +394,7 @@ private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> 
     return ok
 }
 
-/// Serve one connection: route GET /health, GET /metrics, POST /completion.
+/// Serve one connection: route GET /health, GET /metrics, POST /completion, POST /chat.
 private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: LlamaTokenizer, _ hz: UInt64) {
     withUnsafeTemporaryAllocation(byteCount: reqCap, alignment: 16) { req in
         let rp = req.baseAddress!
@@ -369,7 +421,12 @@ private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: Lla
             writeStr(cfd, "\n")
             return
         }
-        if !matches(b, total, "POST /completion") { send404(cfd); return }
+        // Two generative routes share the body/sampler/stream tail:
+        //   POST /completion — raw prompt, greedy by default.
+        //   POST /chat       — wrap the body in the TinyLlama chat template, and
+        //                      sample by default (a chat wants variety); stop at EOS.
+        let isChat = matches(b, total, "POST /chat")
+        if !isChat && !matches(b, total, "POST /completion") { send404(cfd); return }
 
         // Prompt = the request body (bounded).
         var plen = total - headerEnd
@@ -378,16 +435,31 @@ private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: Lla
         if plen > promptCap { plen = promptCap }
         var promptBytes = [UInt8](repeating: 0, count: plen)
         for i in 0..<plen { promptBytes[i] = b[headerEnd + i] }
-        let prompt = String(decoding: promptBytes, as: UTF8.self)
+        let body = String(decoding: promptBytes, as: UTF8.self)
 
-        // Stream the completion. Headers first, then each decoded piece as it
-        // is produced (HTTP/1.0: connection close delimits the body).
+        // Prompt tokens: chat template (with the real EOS) vs raw prompt.
+        let promptTokens = isChat ? llamaChatTokens(tok, userMessage: body)
+                                  : tok.encode(body, bos: true, eos: false)
+
+        // Sampler from query params. LM6: ?temp, ?top_k, ?top_p, ?seed. Defaults:
+        // /completion is greedy (temp 0, backward-compatible); /chat samples.
+        let temp = parseQueryFloat(b, total, "temp", isChat ? 0.7 : 0.0)
+        let topK = parseQueryInt(b, total, "top_k", isChat ? 40 : 0)
+        let topP = parseQueryFloat(b, total, "top_p", isChat ? 0.9 : 1.0)
+        let seed = UInt64(parseQueryInt(b, total, "seed", 12345))
+        var sampler = LlamaSampler(temperature: temp, topK: topK, topP: topP, seed: seed)
+
+        // `?n=N` caps TOTAL positions (prompt + generated); default 64. Clamp to seqLen.
+        var want = parseQueryInt(b, total, "n", defaultSteps)
+        if want < 1 { want = defaultSteps }
+        let steps = want > model.cfg.seqLen ? model.cfg.seqLen : want
+
+        // Stream: headers first, then each decoded piece (HTTP/1.0 close delimits).
         writeStr(cfd, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n")
         let t0 = nowTicks()
         var tFirst: UInt64 = 0
-        var produced = 0
-        let steps = defaultSteps > model.cfg.seqLen ? model.cfg.seqLen : defaultSteps
-        produced = llamaGenerate(model, tok, prompt: prompt, steps: steps) { piece in
+        let produced = llamaGenerateSampled(model, tok, promptTokens: promptTokens, steps: steps,
+                                            sampler: &sampler, stopOnEos: isChat) { piece in
             if piece.isEmpty { return }
             if tFirst == 0 { tFirst = nowTicks() }
             piece.withUnsafeBytes { raw in
@@ -474,11 +546,13 @@ func main(_ argc: Int32,
     // (no verification): llmd [model.bin] [tokenizer.bin].
     let modelPtr: UnsafeRawPointer
     let tokPtr: UnsafeRawPointer
+    var modelLen = 0
     if argc > 1, let argv = argv, let a = argv[1] {
-        guard let (mp, _) = loadFile(UnsafePointer(a)) else {
+        guard let (mp, mlen) = loadFile(UnsafePointer(a)) else {
             swiftos_puts("llmd: cannot load model file\n")
             return 1
         }
+        modelLen = mlen
         var tp = staticPath("/models/tok512.bin")
         if argc > 2, let t = argv[2] { tp = UnsafePointer(t) }
         guard let (kp, _) = loadFile(tp) else {
@@ -494,8 +568,12 @@ func main(_ argc: Int32,
         // LM3c: prefer the model disk (/srv/models) when one is mounted; fall
         // back to the base bundle (/models) otherwise.
         var fromDisk = false
-        var picked = resolveBundle(diskBundleRoot)
-        if picked != nil { fromDisk = true } else { picked = resolveBundle(bundleRoot) }
+        var picked: (model: UnsafeRawPointer, modelLen: Int, tok: UnsafeRawPointer, gen: Int, name: String)? = nil
+        for root in diskBundleRoots {
+            picked = resolveBundle(root)
+            if picked != nil { fromDisk = true; break }
+        }
+        if picked == nil { picked = resolveBundle(bundleRoot) }
         guard let bundle = picked else {
             swiftos_puts("llmd: no verifiable model bundle generation\n")
             return 1
@@ -508,13 +586,24 @@ func main(_ argc: Int32,
         nameBytes.withUnsafeBytes { _ = swiftos_write(1, $0.baseAddress, UInt($0.count)) }
         swiftos_puts(" generation "); putUInt(UInt(bundle.gen))
         swiftos_puts(trustRootPresent ? " verified (ed25519+sha256)\n" : " verified (sha256)\n")
-        modelPtr = bundle.model; tokPtr = bundle.tok
+        modelPtr = bundle.model; tokPtr = bundle.tok; modelLen = bundle.modelLen
     }
     swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
 
     let lfd = swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("llmd: socket failed (capNet?)\n"); return 1 }
 
+    // LM5: a GGUF (Q4_K_M) model — weights stay compressed, dequantized per block.
+    if GGUFLlama.isGGUF(modelPtr) {
+        guard let model = GGUFLlama(ggufBytes: modelPtr, count: modelLen) else {
+            swiftos_puts("llmd: GGUF parse failed\n"); return 1
+        }
+        swiftos_puts("llmd: model GGUF k-quant dim="); putUInt(UInt(model.cfg.dim))
+        swiftos_puts(" layers="); putUInt(UInt(model.cfg.nLayers))
+        swiftos_puts(" vocab="); putUInt(UInt(model.cfg.vocabSize)); swiftos_puts("\n")
+        let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
+        return runServe(lfd, model, tok)
+    }
     if QLlama2.isQuantized(modelPtr) {
         let model = QLlama2(modelBytes: modelPtr)
         swiftos_puts("llmd: model int8 Q8_0 GS="); putUInt(UInt(model.gs))

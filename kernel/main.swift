@@ -32,6 +32,9 @@ private var c4aEndpointRightsPassed = false
 private func enableMMU() {
     uartPuts("swift-os M3: enabling MMU\n")
     mmu_init_identity_map()
+    // LM4: map RAM above the 1 GiB linear boundary into the high-RAM window so it
+    // is usable for bulk user data pages (a real model). No-op when RAM ≤ 1 GiB.
+    setupHighRamWindow()
     uartPuts("M3 probe: page tables initialized\n")
     mmu_configure_translation()
     uartPuts("M3 probe: translation registers configured\n")

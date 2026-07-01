@@ -8654,7 +8654,7 @@ makes all three derive from it, so the cap can never again be raised in one tabl
 without the others. `maxEndpoints` (IPC, not per-process) is deliberately left at 16
 — a separate resource with its own follow-up knob.
 
-**Measurement that set the value.** Per-slot static cost is ~26 KB, dominated by the
+**Measurement that set the PT1 value.** Per-slot static cost was ~26 KB, dominated by the
 two heavyweight per-process tables sized for real runtimes: the FD handle table
 (`maxFDs = 512` × `HandleEntry` ≈ 24 B = ~12 KB) and the anonymous-VMA table
 (`maxAnonVmas = 512` × `AnonVma` ≈ 24 B = ~12 KB; "512 covers Node"). So 64 slots ≈
@@ -8666,13 +8666,16 @@ and a much larger SMP/test surface — against priority #2's "fast" and the
 strict-workflow "small reviewable steps". The embedded/appliance profile, where
 static footprint actually matters, can instead lower `kMaxProcesses` in one place.
 
-**Userland observability mirrors.** `/bin/ps` and `/bin/top` keep their own caps
-(separate compilation, no shared header): `SWIFTOS_PS_MAX` and `SWIFTOS_TOP_MAX`
-(userland/lib/swift_user.h) and `pidMax` (userland/top.swift) were also 16 and would
-silently truncate their listings at 16 processes. All three raised to 64 with a
-comment that they must track `kMaxProcesses`. The kernel `SYS_psinfo`/`SYS_procstat`
-paths already iterate `0..<maxProc` within the caller's buffer capacity, so they
-scaled for free.
+**Userland observability buffers.** `/bin/ps` and `/bin/top` originally kept their
+own caps (separate compilation, no shared header): `SWIFTOS_PS_MAX`,
+`SWIFTOS_TOP_MAX`, and `pidMax` were raised with `kMaxProcesses` during PT1, but
+they still formed a quiet future truncation risk. A 2026-07-01 follow-up removed
+those mirrors: the C bridge now calls `SYS_psinfo` / `SYS_procstat` with
+`capacity=0` to learn the live count, grows its buffers, then retries the
+snapshot. `top` also grows its per-frame sort/%CPU arrays and its pid-indexed
+previous-sample cache from the observed pid range. The kernel paths already
+iterate the process-slot range within caller capacity, so no syscall ABI change was
+needed.
 
 **Acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
 parked on a pipe barrier, until `fork()` returns `-EAGAIN`; it asserts more than the
@@ -8687,6 +8690,52 @@ docs/RISK_REMEDIATION_ROADMAP.md.
 Follow-ups (not blocking): bump `maxEndpoints` if IPC-heavy multi-service workloads
 need it; an `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table
 sizes together for a minimal static footprint.
+
+### PT2a — process-slot access boundary (DONE, 2026-07-01)
+
+This is the first behavior-neutral step toward removing the fixed process-table
+storage limit cleanly. The backing storage is still the PT1 fixed array set
+(`maxProc == kMaxProcesses == 64`), so the runtime limit intentionally does not change
+in this milestone. What changes is the boundary: runtime slot validation and full-table
+scans in `kernel/user/process.swift` now go through `processSlotCapacity()`,
+`processSlotRange()`, and `processSlotValid(_:)`.
+
+That sounds small, but it removes the most brittle part of the future refactor. The
+scheduler, wait/reap paths, `/bin/ps`/`top` snapshots, cell accounting, signal helpers,
+sleep wakeup scan, and S5 telemetry checks no longer open-code `slot >= maxProc` or
+`0..<maxProc`. Storage sizing still uses `maxProc` directly, making the milestone easy
+to review and preserving the exact `.bss` layout. PT2b can now move one heavyweight
+per-process table (VFS handle/cwd/confine state or anon-VMA state) behind a per-slot
+object without simultaneously changing every caller's notion of table size.
+
+Acceptance: `make build` and `make procmax-test`; no syscall ABI changes.
+
+### PT2b — lazy anonymous-VMA tables (DONE, 2026-07-01)
+
+The first heavyweight per-process resource is now lazy. `kernel/user/process.swift`
+replaces the static `maxProc * maxAnonVmas` array with one pointer per process slot.
+A slot gets its `maxAnonVmas` table only when it first creates anonymous/device mmap
+state (`anonVmaAdd`) or when `fork()` / `thread_create()` inherits a parent's existing
+anonymous-VMA table. Processes that never use anonymous/device mmap now pay one pointer
+instead of 512 `AnonVma` records.
+
+This removes roughly **12 KiB of fixed `.bss` per process slot** (about 768 KiB at the
+current 64-slot hosting default) without lowering the useful per-process VMA ceiling:
+a V8/Node process that needs 512 anonymous reservations still gets the same table, just
+from the kernel heap on first use. Because the kernel heap is still a bump allocator,
+the table is retained for slot reuse rather than freed; the point of PT2b is to remove
+compile-time/static slot weight, not yet to implement full dynamic reclamation.
+
+Correctness detail: `fork()` and `thread_create()` now treat inherited VMA-table
+allocation failure as `ENOMEM`. That is deliberate. Losing reservation metadata would
+make later `mprotect()`/`munmap()` behavior diverge from the copied address space, so
+the child/thread must not be created unless the metadata copy succeeds.
+
+Acceptance: `make build`, a `/bin/mmapdemo` boot smoke (anonymous mmap,
+mprotect/W^X, file-VMA cleanup), and the single-core + `-smp 4` `procmax` gate;
+no syscall ABI changes. In this local macOS environment the broader newlib-backed
+`mmapreserve`/`mapfixed` targets still require the missing newlib sysroot headers,
+so PT2b used the native Swift mmap smoke plus the process-capacity QEMU gates.
 
 ## LM series — scaling inference toward a real LLM
 
@@ -8811,3 +8860,171 @@ read-only at `/srv/models`, and served by llmd — the delivery path a real (≈
 model will use (swap the bundle the model image is built from; the plumbing is the
 same). Remaining LM goal work: LM4 (a real TinyLlama-1.1B-Chat bundle on this path),
 LM5 (GGUF + Q4_K), LM6 (sampling + chat template); LM2 (multi-core) stays deferred.
+
+### LM4a — convert TinyLlama-1.1B-Chat to the engine's Q8 format (DONE, 2026-06-29)
+
+The first *real* model on the inference path. TinyLlama-1.1B-Chat is a Llama2-arch
+HF model (dim 2048, 22 layers, 32 attention heads, **4 KV heads (GQA)**, 32000
+SentencePiece vocab, rope_theta 10000, non-tied classifier) — it runs on the
+existing engine unchanged. Conversion (host):
+
+- `scripts/convert-tinyllama.py` (Python — the only language with a torch/transformers
+  binding; host build tooling like `fetch-model.sh`, not OS code) loads the HF
+  checkpoint and writes the legacy llama2.c **v0 fp32** `.bin` + a `tokenizer.bin`.
+  It is **GQA-correct**, unlike Karpathy's upstream `export.py` `load_hf_model`, which
+  hard-codes `n_kv_heads = n_attention_heads` and calls `permute_reverse` with full-dim
+  defaults — both wrong for TinyLlama and would mangle `wk`. Our converter applies the
+  RoPE un-permutation with the right per-projection head count and dims (wq: 32 heads,
+  dim 2048; wk: 4 heads, kvDim 256). The freq_cis tables are zero-filled (the engine
+  recomputes RoPE at run time; only their byte length matters for offset alignment).
+- `tools/quantize.swift` (the tested Q8 tool, reused) turns the fp32 into the served
+  v2 Q8. Two small additions: it now **mmaps** the input (a real fp32 checkpoint is
+  ~4.4 GB — a mapped read avoids a resident slurp), and takes an optional 3rd arg
+  `seqlen-override` that caps the seqLen field written to the v2 header. LM4 ships
+  TinyLlama at **seqLen 512** (native 2048) to keep the QEMU KV cache modest; weights
+  are seqLen-independent so this is a pure context cap. GS=64 divides dim/hidden/kvDim.
+- `scripts/fetch-tinyllama.sh` provisions a venv under `models/lm4venv` (gitignored)
+  and drives the conversion; idempotent. `make tinyllama` builds
+  `models/tinyllama-q8.bin` (~1.1 GB) + tokenizer.
+- Acceptance: `make llm-tinyllama-test` — the host oracle loads the Q8 bundle with the
+  EL0 engine source, checks the parsed config matches TinyLlama (proving the layout is
+  right), and asserts **byte-exact deterministic greedy output** for factual prompts
+  ("The capital of France is" → "…Paris.", "The three primary colors are" → "…red,
+  blue, and yellow…"). Greedy is deterministic, so exact goldens double as a coherence
+  check. Model is ~1.1 GB so this is NOT in `make test`. Host throughput ~13–14 tok/s.
+
+### LM4b — TinyLlama signed model image + llmd serving plumbing (DONE, 2026-06-29)
+
+- `make model-tinyllama-image` → `build/model-tinyllama.img`: a signed packed SWOSBASE
+  model disk carrying `tinyllama/1/{model.bin,tokenizer.bin,manifest.toml}` + the
+  `MODEL-DISK-ID` sentinel — same format as the LM3 stories disk, just a bigger payload
+  (~1.1 GB; the packed FS uses 64-bit data offsets, so >1 GB is fine). Host gate
+  `make model-tinyllama-image-test`.
+- `/bin/llmd` now prefers the `/srv/models/tinyllama` bundle (then stories15M, then the
+  base bundle), and `POST /completion?n=N` caps the generated token count (a real model
+  under QEMU-TCG is slow, so clients ask for a short completion; N clamps to [1, seqLen]).
+- **Bug fixed:** `modelBundleVerify` hashed the payload with the one-shot `sha256()`,
+  which allocates a padded copy of the *whole* message — fine for the small manifest/passwd
+  callers, fatal for a ~1.1 GB model (it panicked on the giant alloc). Now it streams via
+  `Sha256Stream` in 64 KiB chunks, like the kernel's content-hash check.
+
+### LM4-MM — high-RAM enabler: make RAM past 1 GiB usable (DONE, 2026-06-29)
+
+Serving a real model exposed a hard architectural limit. The kernel runs in **TTBR0 with
+TTBR1 disabled**: kernel + device + the RAM linear map live in VA `[0, 0x8000_0000)`, and
+**userland is linked at `0x8000_0000`** (`user.ld`). The kernel touches every physical
+frame by its identity address (`PA as pointer`: page-table walks, `zeroFrame`,
+disk-read-into-frame). So RAM was usable only up to the 1 GiB identity block
+(`l1_table[1]` = `0x4000_0000..0x8000_0000`); the PMM handed out frames past `0x8000_0000`
+that the kernel could not address, and TinyLlama (~1.15 GB resident) crashed the moment its
+working set crossed 1 GiB (`zeroFrame` PAN-faulting on a user VA).
+
+Fix (contained; preserves the userland ABI — no relink, no high-half rewrite):
+
+- **High-RAM window.** `mmu_map_high_ram_window` (vm_early.c) maps RAM above `0x8000_0000`
+  as normal-cacheable 1 GiB blocks at a high kernel VA — `highWindowBase = 64 GiB`
+  (`l1` index 64), above the user mmap arena (≤ 16 GiB) and below the PCIe ECAM
+  (`l1[256]`). `addressSpaceCreate` mirrors the same blocks into every process so the
+  window works under any TTBR0. `enableMMU` → `setupHighRamWindow()` installs it (no-op
+  when RAM ≤ 1 GiB; only the QEMU-virt/Hetzner `0x4000_0000` layout crosses the boundary).
+  The boot MMU probe at `l1[2]` (VA `0x8000_0000`, kernel table only) is untouched.
+- **`frameVA(pa)`** (vm.swift): identity for low RAM, `highWindowBase + (pa - 0x8000_0000)`
+  for high. Used by `zeroFrame` and the demand-fault disk read — the only places the kernel
+  touches a high frame's contents.
+- **PMM zoning** (pmm.swift + `PageAllocator.allocateInRange`): `pmm_alloc_page()` returns
+  **low**-zone frames only (page tables, kernel structures, anon mmap — all identity-
+  reachable); new `pmm_alloc_page_high()` prefers the **high** zone (fallback low) and is
+  used *only* by the file-backed demand-fault path, so the model's ~1.1 GB of weight pages
+  go high while the low zone stays free for page tables. Userland reaches the high data
+  frames directly through its own TTBR0 leaves (the leaf holds the real PA); the kernel only
+  ever via `frameVA`. Fork/teardown already skip non-table L1 entries, so the window blocks
+  (like the PCIe ECAM block) are handled correctly.
+
+### LM4c — serve TinyLlama-1.1B end to end (DONE, 2026-06-29)
+
+`make llm-serve-tinyllama-test` (`-m 2048M`, the 2 GiB DTB, base + TinyLlama model disks,
+slirp NIC): the kernel maps the high-RAM window, mounts the model disk at `/srv/models`,
+and `/bin/llmd` loads + verifies (ed25519+sha256) the 1.1 GB Q8 bundle, then a short
+`POST /completion?n=N` returns a **coherent, factually-correct** answer ("The capital of
+France is Paris. … Berlin … Washington, D.C. … Ottawa …") with a tokens/sec rate in the
+log. ~1 tok/s single-core under QEMU-TCG (LM2 multi-core stays deferred). Heavy + slow, so
+this is a standalone target, never in `make test`. The LM1/LM3 gates and the host
+`llm_q8_engine_test` (stories, base fallback) stay green.
+
+**LM4 arc complete:** the first real LLM runs on swift-os end to end — converted GQA-correct,
+shipped as a signed packed model disk, and served from a hardened kernel that can now use
+RAM beyond the 1 GiB linear-map boundary. Next LM work: LM5 (GGUF + Q4_K, smaller footprint),
+LM6 (sampling + chat template).
+
+### LM5 — GGUF + Q4_K reader (DONE, 2026-07-01)
+
+Read the mainstream **GGUF / k-quant** format (llama.cpp's on-disk format), so swift-os can
+serve models straight from the GGUF ecosystem at ~half the Q8 footprint. Target: a
+pre-quantized **TinyLlama-1.1B-Chat Q4_K_M** GGUF (~640 MB vs the 1.1 GB Q8).
+
+- **LM5a — GGUF reader** (`userland/lib/gguf.swift`, Foundation-free, shared by EL0 + host):
+  parses the header, walks the typed KV metadata table (recording each value's location),
+  and exposes the llama hyperparameters, the tokenizer arrays, and the tensor table
+  (name / shape / ggml type / data offset) without copying tensor data. `tools/ggufdump.swift`
+  + `make gguf-dump-test` validate it against the real file: v3, 201 tensors,
+  dim2048/22L/32H/4KV, tokenizer llama/32000, type mix F32=45 / Q4_K=135 / Q6_K=21.
+- **LM5b — Q4_K + Q6_K dequant** (`ggufDequantQ4K` / `ggufDequantQ6K`): decode a 256-weight
+  super-block to fp32, matching ggml's `dequantize_row_q4_K` / `q6_K` exactly (6-bit packed
+  scales/mins for Q4_K; 4+2-bit signed weights centered at −32 with 8-bit sub-block scales for
+  Q6_K), plus a correct IEEE half→float. `make gguf-dequant-test` cross-checks both against
+  the official `gguf` Python package's `dequantize()` on real tensors. The KAT caught an
+  off-by-one in the **subnormal** half path — k-quant super-block scales are often subnormal
+  halves (the Q6_K `d` here is 9.24e-6), which had produced exactly ½ the value.
+- **LM5c — GGUFLlama engine** (`userland/lib/gguf_engine.swift`, split out so GGUF-free
+  consumers still build `llama2.swift` alone): implements the shared `LlamaModel` protocol,
+  keeps the k-quant weights compressed in RAM, and runs the QLlama2 forward pass but with each
+  matmul dequantizing one super-block at a time into a 256-float scratch and dotting it with
+  the fp32 activation (`llamaFDot`). Norms are fp32 (read directly); token embedding +
+  classifier are k-quant rows dequantized per lookup; RoPE/GQA/SwiGLU unchanged; vocab from the
+  `token_embd` shape; seqLen capped to 512 like LM4. The dequant helpers are elementwise (no
+  reduction), so — unlike `quantizeBuf` — they are left **optimized** (≈14× faster than
+  `@_optimize(none)`); `make gguf-engine-test` (host) confirms coherent output
+  ("capital of France"→Paris, "opposite of hot"→cold) and LM5d confirms it under +neon.
+- **LM5d — serve e2e** (`make llm-serve-gguf-test`, `-m 2048M`): `/bin/llmd` detects the GGUF
+  magic, loads `GGUFLlama` over the signed **tinyllama-gguf** model disk (same packed delivery
+  as LM4b; `POST /completion?n=N` where N caps *total* positions, so it must exceed the prompt
+  length), and returns a coherent answer with a tok/s rate — confirming the Q4_K/Q6_K dequant
+  is correct under +neon. The forward re-dequantizes the whole model every token, so it is
+  slower per token than Q8 under QEMU-TCG (the price of keeping weights compressed); the test
+  asks for few tokens. Standalone target, not in `make test`.
+
+**LM5 arc complete:** swift-os reads and serves a GGUF Q4_K_M model, at ~half the Q8 footprint.
+The delivery/serving path is shared with LM3/LM4; only the engine + reader are new. Next LM
+work: LM6 (sampling — temp/top-p/top-k — + chat template); LM2 (multi-core matmul) stays
+deferred and would most help the dequant-heavy GGUF path.
+
+### LM6 — sampling + chat template (DONE, 2026-07-01)
+
+Greedy decoding is deterministic but repetitive, and a *chat* model wants a proper prompt
+format. LM6 adds both to the engine (`llama2.swift`), leaving the greedy path byte-identical
+(the LM4a golden test still passes).
+
+- **Sampler.** `LlamaRNG` (seedable xorshift64*, llama2.c's `random_f32`) + `LlamaSampler`
+  (temperature, top-k, top-p) + `llamaSample`: temperature-scaled softmax, then optional top-k
+  and nucleus (top-p) restriction, sampled with the RNG. `temperature 0` ≡ greedy argmax, so a
+  fixed seed is reproducible and `temp 0` is a drop-in for the old path.
+- **Sampled generation.** `llamaGenerateSampled` runs from a prompt *token array* with a
+  sampler and stops on EOS past the prompt (a chat turn ends at EOS). The String-prompt greedy
+  `llamaGenerate` is untouched.
+- **Chat template.** `llamaChatTokens` builds the TinyLlama-Chat (Zephyr) sequence
+  `<|user|>\n{msg}</s>\n<|assistant|>\n`, inserting the real EOS token where `</s>` goes (the
+  role markers are ordinary text pieces in the 32k SP vocab).
+- **llmd API.** A generalized query parser (`parseQueryInt`/`parseQueryFloat`) drives sampling
+  params `?temp/&top_k/&top_p/&seed/&n` on both routes. New `POST /chat` wraps the body in the
+  chat template and samples by default (temp 0.7 / top-k 40 / top-p 0.9); `POST /completion`
+  stays greedy by default (temp 0), backward-compatible with the LM3/LM4 serve tests.
+- Acceptance: `make llm-sampling-test` (host) — temp 0 == greedy, fixed seed reproducible +
+  different seeds diverge, chat template stays on-answer; `make llm-chat-test` (`-m 2048M`, Q8
+  disk) — `POST /chat "What is the capital of France?"` with a low temp + fixed seed returns
+  "`<|assistant|> The capital of France is Paris.`" e2e in QEMU. Both standalone (need the
+  model), not in `make test`.
+
+**LM6 arc complete.** The LM-series now covers: fast NEON matmul (LM1), disk-delivered signed
+models + a >1 GiB-RAM kernel (LM3/LM4-MM), a real Q8 model (LM4), the GGUF/Q4_K ecosystem
+(LM5), and sampling + chat (LM6). Remaining recorded direction: LM2 (multi-core matmul, blocked
+on the S-series scheduler ungate) — the biggest remaining speedup, especially for GGUF.

@@ -290,6 +290,23 @@ private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
 // is always true, so the confinement guard is a no-op for unconfined processes.
 private var confineNodes = [Int](repeating: 0, count: maxVFSProcesses)
 
+// rt-a: POSIX threads share ONE file-descriptor table (and cwd / confinement).
+// Each VFS slot names its group leader — the slot whose handles[] region, cwd,
+// and confine the whole thread group uses. A normal process / fork child is its
+// own leader; a thread (thread_create) points at its creator's leader so an fd
+// opened by ANY thread (e.g. libuv's async-wake eventfd) is visible to all of
+// them. Without this, per-thread fd-table COPIES diverge and a wakeup written by
+// one thread never reaches the fd another polls — node -e deadlocked here.
+// -1 = uninitialised → treated as identity (the slot is its own leader).
+private var vfsGroupLeader = [Int](repeating: -1, count: maxVFSProcesses)
+
+/// Resolve a slot to the group leader that owns its shared fd table / cwd.
+private func vfsLeader(_ slot: Int) -> Int {
+    guard slot >= 0 && slot < maxVFSProcesses else { return slot }
+    let l = vfsGroupLeader[slot]
+    return (l >= 0 && l < maxVFSProcesses) ? l : slot
+}
+
 private var vfsLockWord: UInt64 = 0
 private var vfsLockAcquireCount: UInt64 = 0
 private var vfsLockContentionCount: UInt64 = 0
@@ -1144,6 +1161,11 @@ func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     if slot < 0 || slot >= maxVFSProcesses { return }
+    // A process (init / fork child / spawned image) owns its own fd table: it is
+    // its own group leader. fork/spawn still COPY the parent's table below — that
+    // is correct POSIX (a forked child gets a private copy). Only threads share,
+    // via vfsThreadAttach (which bypasses this function).
+    vfsGroupLeader[slot] = slot
     if parent >= 0 && parent < maxVFSProcesses {
         // cwd is always inherited; the handle set depends on the mode. `.all` is
         // the fork/thread case, `.stdioOnly` is legacy spawn compatibility, and
@@ -1171,10 +1193,36 @@ func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
     _ = installTTY(slot: slot, fd: 2, readable: true, writable: true)
 }
 
+/// rt-a: attach a new thread to its creator's VFS group so they share ONE fd
+/// table, cwd, and confinement. Unlike vfsProcessInit it does NOT copy or retain
+/// the leader's handles — the thread holds no fds of its own; every fd/cwd
+/// access routes through vfsLeader() to the leader's region. Its own handles[]
+/// region is cleared so a reused slot carries no stale entries.
+func vfsThreadAttach(slot: Int, leader: Int) {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+    if slot < 0 || slot >= maxVFSProcesses { return }
+    let root = (leader >= 0 && leader < maxVFSProcesses) ? vfsLeader(leader) : slot
+    vfsGroupLeader[slot] = root
+    for fd in 0..<maxFDs { handles[fdIndex(slot, fd)] = HandleEntry() }
+    cwdNodes[slot] = 0
+    confineNodes[slot] = 0
+}
+
 func vfsProcessCloseAll(slot: Int) {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
     if slot < 0 || slot >= maxVFSProcesses { return }
+    // A thread (non-leader) owns no fds — they belong to the shared leader table.
+    // Tearing them down here would close fds out from under live sibling threads,
+    // so a thread exit only detaches from the group; the leader's exit closes the
+    // shared table.
+    if vfsGroupLeader[slot] != slot && vfsGroupLeader[slot] >= 0 {
+        vfsGroupLeader[slot] = slot
+        cwdNodes[slot] = 0
+        confineNodes[slot] = 0
+        return
+    }
     for fd in 0..<maxFDs {
         let idx = fdIndex(slot, fd)
         if handles[idx].inUse {
@@ -1188,6 +1236,7 @@ func vfsProcessCloseAll(slot: Int) {
     releaseEndpointsOwnedBy(slot)
     cwdNodes[slot] = 0
     confineNodes[slot] = 0
+    vfsGroupLeader[slot] = slot // reset for slot reuse
 }
 
 /// Close the slot's close-on-exec descriptors. Called from execve: POSIX closes
@@ -1210,7 +1259,8 @@ func vfsCloseCloexec(slot: Int) {
 
 private func currentVFSProcess() -> Int {
     let slot = processCurrentSlot()
-    return (slot >= 0 && slot < maxVFSProcesses) ? slot : 0
+    // Resolve to the thread-group leader so all threads share one fd table.
+    return (slot >= 0 && slot < maxVFSProcesses) ? vfsLeader(slot) : 0
 }
 
 private func fdIndex(_ proc: Int, _ fd: Int) -> Int {
@@ -1223,7 +1273,8 @@ private func cwdNodeForCurrentProcess() -> Int {
 
 private func confineRootForCurrentProcess() -> Int {
     let slot = processCurrentSlot()
-    return (slot >= 0 && slot < maxVFSProcesses) ? confineNodes[slot] : 0
+    // Confinement is a group property — resolve to the leader (threads share it).
+    return (slot >= 0 && slot < maxVFSProcesses) ? confineNodes[vfsLeader(slot)] : 0
 }
 
 private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {

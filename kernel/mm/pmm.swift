@@ -14,6 +14,15 @@
 // by platformInit (default RAM base 0x4000_0000 + 256 MiB = 0x5000_0000).
 
 private var pmm: PageAllocator? = nil
+// LM4 PMM zoning: the kernel's linear identity map covers only the first 1 GiB of
+// RAM (physical < 0x8000_0000), so page tables and any frame the kernel touches
+// by its identity address must come from this "low" zone. `pmmLowZoneFrames` is
+// the number of managed frames below that boundary; frames at/above it are the
+// "high" zone, usable for bulk user data pages the kernel reaches only through
+// its high-RAM window (frameVA, kernel/mm/vm.swift). 0 means "all frames are low"
+// (RAM ≤ 1 GiB), which keeps every existing single-zone profile unchanged.
+let pmmLinearLimit: UInt = 0x8000_0000
+private var pmmLowZoneFrames = 0
 private var pmmLockWord: UInt64 = 0
 private var pmmLockAcquireCount: UInt64 = 0
 private var pmmLockContentionCount: UInt64 = 0
@@ -124,15 +133,44 @@ func pmmInit() {
     }
     pmm = allocator
 
+    // LM4: split into low (identity-mapped, < 0x8000_0000) and high zones. With
+    // RAM ≤ 1 GiB the boundary is past every frame, so the whole pool is "low"
+    // and allocation behaves exactly as before.
+    pmmLowZoneFrames = pmmLinearLimit > regionStart
+        ? min(Int((pmmLinearLimit - regionStart) / PageAllocator.pageSize), pageCount)
+        : 0
+
     uartPuts("M4.5 pmm: ")
     uartPutUInt(UInt64(allocator.freePages))
-    uartPuts(" free frames\n")
+    uartPuts(" free frames (")
+    uartPutUInt(UInt64(pmmLowZoneFrames))
+    uartPuts(" low)\n")
 }
 
 @_cdecl("pmm_alloc_page")
 func pmmAllocPage() -> UInt {
+    // Low zone only: the returned frame may be accessed by the kernel through its
+    // identity map (page tables, zeroing, copies), which covers only low RAM.
     pmmWithAllocator(default: UInt(0)) { allocator in
-        allocator.allocate() ?? 0
+        let lowEnd = pmmLowZoneFrames > 0 ? pmmLowZoneFrames : allocator.pageCount
+        return allocator.allocateInRange(0, lowEnd) ?? 0
+    }
+}
+
+/// LM4: allocate a frame for a bulk user data page (e.g. a demand-paged model
+/// page). Prefers the high zone (RAM above the 1 GiB linear map) so the low zone
+/// stays available for page tables and kernel structures, falling back to low
+/// when no high frame is free. The kernel only ever touches such a frame through
+/// frameVA() (vm.swift); userland reaches it directly via its own page tables.
+@_cdecl("pmm_alloc_page_high")
+func pmmAllocPageHigh() -> UInt {
+    pmmWithAllocator(default: UInt(0)) { allocator in
+        if pmmLowZoneFrames > 0 && pmmLowZoneFrames < allocator.pageCount,
+           let hi = allocator.allocateInRange(pmmLowZoneFrames, allocator.pageCount) {
+            return hi
+        }
+        let lowEnd = pmmLowZoneFrames > 0 ? pmmLowZoneFrames : allocator.pageCount
+        return allocator.allocateInRange(0, lowEnd) ?? 0
     }
 }
 

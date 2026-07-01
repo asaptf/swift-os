@@ -76,6 +76,35 @@ struct PageAllocator {
         return nil
     }
 
+    /// Allocate one free frame whose index is in [lo, hi). First-fit within the
+    /// range. Returns its physical address, or nil if the range has no free frame.
+    /// Used for PMM zoning (LM4): the kernel's linear ("low") map covers only the
+    /// first 1 GiB of RAM, so page tables and kernel structures must come from the
+    /// low zone while bulk user data pages (e.g. a demand-paged model) can come
+    /// from the high zone the kernel reaches through its high-RAM window.
+    mutating func allocateInRange(_ lo: Int, _ hi: Int) -> UInt? {
+        if freePages == 0 { return nil }
+        let a = lo < 0 ? 0 : lo
+        let b = hi > pageCount ? pageCount : hi
+        if a >= b { return nil }
+        let span = b - a
+        // Rotating first-fit within [a, b): start at the shared hint when it lands
+        // in range, else at the range base; wrap within the range.
+        let start = (hint >= a && hint < b) ? hint : a
+        for step in 0..<span {
+            var i = start + step
+            if i >= b { i -= span }
+            if !test(i) {
+                set(i)
+                refs?[i] = 1
+                freePages -= 1
+                hint = (i + 1 < b) ? i + 1 : a
+                return address(ofFrame: i)
+            }
+        }
+        return nil
+    }
+
     /// Allocate `count` physically contiguous frames. Returns the base address.
     mutating func allocateContiguous(_ count: Int) -> UInt? {
         if count <= 0 || count > freePages { return nil }

@@ -5,7 +5,6 @@ private let stateReady: UInt32 = 1
 private let stateRunning: UInt32 = 2
 private let stateBlocked: UInt32 = 3
 private let stateZombie: UInt32 = 4
-private let psMax: Int32 = 64   // mirrors SWIFTOS_PS_MAX / kernel kMaxProcesses; bounds the display loop
 
 private let modeDefault: Int32 = 0
 private let modeFull: Int32 = 1
@@ -378,7 +377,7 @@ func main(_ argc: Int32,
     }
 
     var i: Int32 = 0
-    while i < count && i < psMax {
+    while i < count {
         if pidMatches(filterSpec, swiftos_ps_pid(i)) {
             if mode == modeCustom {
                 putCustomRow(customSpec!, i)

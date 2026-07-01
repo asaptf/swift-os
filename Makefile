@@ -1130,8 +1130,8 @@ $(BUILD)/user_llm.o: userland/llm.swift userland/lib/llama2.swift userland/lib/s
 
 # /bin/llmd: the TCP model-serving daemon + the shared engine + bundle
 # verification (manifest parse + sha256), compiled together (WMO).
-$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
-	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
+$(BUILD)/user_llmd.o: userland/llmd.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS_NEON) -c userland/llmd.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift userland/lib/modelbundle.swift kernel/crypto/sha256.swift kernel/crypto/ed25519.swift kernel/crypto/sha512.swift -o $@
 
 $(BUILD)/user_head.o: userland/head.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/head.swift -o $@
@@ -1866,6 +1866,79 @@ $(MODEL_Q8): $(MODEL_BIN) $(QUANTIZE)
 	$(QUANTIZE) $(MODEL_BIN) $@
 $(MODEL15_Q8): $(MODEL15_BIN) $(QUANTIZE)
 	$(QUANTIZE) $(MODEL15_BIN) $@
+
+# ---- LM4: first real model — TinyLlama-1.1B-Chat --------------------------
+# A real (~1.1 GB Q8) Llama2-architecture model, fetched from Hugging Face and
+# converted to the engine's v2 Q8 format (GQA-correct conversion; seqLen capped
+# to keep QEMU RAM modest). The fp32 intermediate (~4.4 GB) and the venv live
+# under models/ (gitignored). Heavy: NOT part of `make test`; build with
+# `make tinyllama`, exercise on the host with `make llm-tinyllama-test`, and
+# serve in QEMU with `make llm-serve-tinyllama-test`.
+TINYLLAMA_FP32   := $(MODEL_DIR)/tinyllama-fp32.bin
+TINYLLAMA_TOK    := $(MODEL_DIR)/tinyllama-tokenizer.bin
+TINYLLAMA_Q8     := $(MODEL_DIR)/tinyllama-q8.bin
+TINYLLAMA_SEQLEN := 512
+
+$(TINYLLAMA_FP32) $(TINYLLAMA_TOK): scripts/fetch-tinyllama.sh scripts/convert-tinyllama.py
+	scripts/fetch-tinyllama.sh
+
+$(TINYLLAMA_Q8): $(TINYLLAMA_FP32) $(QUANTIZE)
+	$(QUANTIZE) $(TINYLLAMA_FP32) $@ $(TINYLLAMA_SEQLEN)
+
+.PHONY: tinyllama
+tinyllama: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+
+# LM4a host oracle: load the converted TinyLlama Q8 bundle with the EL0 engine
+# source and assert config + deterministic greedy output (coherent answers).
+.PHONY: llm-tinyllama-test
+llm-tinyllama-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/llm_tinyllama_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_tinyllama_engine_test
+	$(BUILD)/llm_tinyllama_engine_test
+
+# LM6a host oracle: the sampler (temperature/top-k/top-p + seedable RNG) and the
+# TinyLlama chat template. temp 0 == greedy; fixed seed reproducible; chat reply
+# stays on-answer. Reuses the LM4 Q8 bundle; not in `make test`.
+.PHONY: llm-sampling-test
+llm-sampling-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/llm_sampling_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_sampling_test
+	$(BUILD)/llm_sampling_test
+
+# ---- LM5: GGUF + Q4_K reader ----------------------------------------------
+# Read the mainstream GGUF / k-quant format: fetch a pre-quantized TinyLlama
+# Q4_K_M GGUF (~640 MB, ~half of Q8; gitignored), parse it with the shared
+# reader (userland/lib/gguf.swift), and serve it via a Q4_K/Q6_K per-block
+# dequant engine. Heavy artifacts, so NOT part of `make test`.
+TINYLLAMA_GGUF := $(MODEL_DIR)/tinyllama-q4km.gguf
+GGUFDUMP := $(BUILD)/ggufdump
+
+$(TINYLLAMA_GGUF): scripts/fetch-tinyllama-gguf.sh
+	scripts/fetch-tinyllama-gguf.sh
+
+.PHONY: tinyllama-gguf
+tinyllama-gguf: $(TINYLLAMA_GGUF)
+
+$(GGUFDUMP): tools/ggufdump.swift userland/lib/gguf.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/ggufdump.swift userland/lib/gguf.swift -o $@
+
+.PHONY: ggufdump
+ggufdump: $(GGUFDUMP)
+
+# LM5a acceptance: the shared GGUF reader parses a real TinyLlama Q4_K_M GGUF.
+gguf-dump-test: $(GGUFDUMP) $(TINYLLAMA_GGUF)
+	./tests/gguf_dump_test.sh
+
+# LM5b acceptance: the Q4_K / Q6_K super-block dequantizers match the official
+# `gguf` Python package's dequantize() (goldens baked into the test).
+gguf-dequant-test: $(TINYLLAMA_GGUF)
+	$(HOST_SWIFTC) -O tests/gguf_dequant_test.swift userland/lib/gguf.swift -o $(BUILD)/gguf_dequant_test
+	$(BUILD)/gguf_dequant_test
+
+# LM5c host oracle: the GGUFLlama engine loads the real Q4_K_M GGUF (+ the shared
+# Llama-2 tokenizer) and generates coherent, factually-correct text. ~0.6 GB
+# model, so NOT in `make test`. Reuses the LM4 tokenizer.bin (same 32k vocab).
+gguf-engine-test: $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/gguf_engine_test.swift userland/lib/llama2.swift userland/lib/gguf.swift userland/lib/gguf_engine.swift -o $(BUILD)/gguf_engine_test
+	$(BUILD)/gguf_engine_test
 
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
 MODELMANIFEST := $(BUILD)/modelmanifest
@@ -3513,6 +3586,55 @@ model-image: $(MODEL_PACK_IMG)
 model-image-test: $(MODEL_PACK_IMG)
 	./tests/model_image_test.sh
 
+# LM4b: the real-model model disk — same signed packed SWOSBASE format + the
+# MODEL-DISK-ID sentinel as LM3a, but carrying the TinyLlama-1.1B Q8 bundle
+# (tinyllama/1/{model.bin,tokenizer.bin,manifest.toml}). ~1.1 GB and gitignored,
+# so built only on demand (depends on `make tinyllama`), never from `make test`.
+MODEL_TL_PACK_ROOT := $(BUILD)/model-tinyllama-pack-root
+MODEL_TL_PACK_IMG  := $(BUILD)/model-tinyllama.img
+
+$(MODEL_TL_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(TINYLLAMA_Q8) $(TINYLLAMA_TOK) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	rm -rf $(MODEL_TL_PACK_ROOT)
+	mkdir -p $(MODEL_TL_PACK_ROOT)/tinyllama/1
+	cp $(TINYLLAMA_Q8) $(MODEL_TL_PACK_ROOT)/tinyllama/1/model.bin
+	cp $(TINYLLAMA_TOK) $(MODEL_TL_PACK_ROOT)/tinyllama/1/tokenizer.bin
+	$(MODELMANIFEST) tinyllama 1 $(TINYLLAMA_Q8) $(TINYLLAMA_TOK) $(MODEL_TL_PACK_ROOT)/tinyllama/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_TL_PACK_ROOT)/tinyllama/1/manifest.toml $(SIGNING_SEED)
+	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_TL_PACK_ROOT)/MODEL-DISK-ID
+	$(BASEPACK) $(MODEL_TL_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
+
+.PHONY: model-tinyllama-image
+model-tinyllama-image: $(MODEL_TL_PACK_IMG)
+
+# LM5d: a signed model disk carrying the TinyLlama Q4_K_M GGUF as model.bin
+# (bundle tinyllama-gguf) + the shared Llama-2 tokenizer. Same packed-image
+# delivery as LM4b; llmd detects the GGUF magic and serves it with the k-quant
+# dequant engine (GGUFLlama). ~0.6 GB — half the Q8 footprint.
+MODEL_GGUF_PACK_ROOT := $(BUILD)/model-gguf-pack-root
+MODEL_GGUF_PACK_IMG  := $(BUILD)/model-gguf.img
+
+$(MODEL_GGUF_PACK_IMG): $(BASEPACK) $(MODELSIGN) $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK) $(MODELMANIFEST) $(SIGNING_SEED) $(IMG_SIGNING_SEED) Makefile | $(BUILD)/.dir
+	rm -rf $(MODEL_GGUF_PACK_ROOT)
+	mkdir -p $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1
+	cp $(TINYLLAMA_GGUF) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/model.bin
+	cp $(TINYLLAMA_TOK) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/tokenizer.bin
+	$(MODELMANIFEST) tinyllama-gguf 1 $(TINYLLAMA_GGUF) $(TINYLLAMA_TOK) $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/manifest.toml
+	$(MODELSIGN) sign $(MODEL_GGUF_PACK_ROOT)/tinyllama-gguf/1/manifest.toml $(SIGNING_SEED)
+	printf '%s\n' '$(MODEL_DISK_ID)' > $(MODEL_GGUF_PACK_ROOT)/MODEL-DISK-ID
+	$(BASEPACK) $(MODEL_GGUF_PACK_ROOT) $@ $(IMG_SIGNING_SEED)
+
+.PHONY: model-gguf-image
+model-gguf-image: $(MODEL_GGUF_PACK_IMG)
+
+# LM5d acceptance: serve the TinyLlama Q4_K_M GGUF end to end from the model disk.
+llm-serve-gguf-test: build $(QEMU_DTB_2048) base-image $(MODEL_GGUF_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_gguf_test.sh
+
+# LM4b host acceptance: the TinyLlama model image builds + is a valid signed
+# packed FS carrying the bundle + the provenance sentinel.
+model-tinyllama-image-test: $(MODEL_TL_PACK_IMG)
+	./tests/model_tinyllama_image_test.sh
+
 # LM3b acceptance: boot with the model disk attached and prove the kernel mounts
 # it read-only at /srv/models (sentinel readable, bundle visible).
 model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
@@ -3522,6 +3644,19 @@ model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 # under a larger-RAM inference profile (model disk attached, -m 1024M).
 llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 	./tests/llm_serve_disk_test.sh
+
+# LM4c acceptance: serve the REAL TinyLlama-1.1B model end to end off the model
+# disk (-m 2048M; the kernel high-RAM enabler makes RAM past the 1 GiB linear-map
+# boundary usable for the model's data pages). Heavy + slow (1.1 GB model,
+# single-core TCG) and depends on `make tinyllama`, so it is a standalone target,
+# never part of `make test`.
+llm-serve-tinyllama-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_tinyllama_test.sh
+
+# LM6b acceptance: POST /chat (chat template + sampling) served e2e over the Q8
+# TinyLlama disk (faster per token than GGUF). Standalone, not in `make test`.
+llm-chat-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_chat_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network

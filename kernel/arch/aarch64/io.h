@@ -28,6 +28,7 @@ bool swiftos_heap_s4c_self_test(void);
 // (frame 0 never lies inside the managed region, so 0 is a safe sentinel).
 void pmm_init(void);
 uintptr_t pmm_alloc_page(void);
+uintptr_t pmm_alloc_page_high(void);
 uintptr_t pmm_alloc_pages(long count);
 void pmm_free_page(uintptr_t addr);
 void pmm_frame_ref(uintptr_t addr);
@@ -53,6 +54,7 @@ uint64_t fb_phys_size(void);
 // header solely for MMIO and cache maintenance.
 
 void mmu_init_identity_map(void);
+void mmu_map_high_ram_window(uint64_t blocks);
 void mmu_configure_translation(void);
 void mmu_enable_sctlr(void);
 void mmu_enable(void);
