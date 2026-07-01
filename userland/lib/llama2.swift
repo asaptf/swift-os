@@ -825,3 +825,127 @@ func llamaGenerate<M: LlamaModel>(_ model: M, _ tok: LlamaTokenizer, prompt: Str
     }
     return pos
 }
+
+// MARK: - Sampling (LM6)
+//
+// Greedy is deterministic but repetitive; a real chat needs a temperature +
+// nucleus/top-k sampler over the logits. A small seedable PRNG keeps it
+// reproducible for tests (fixed seed → fixed output; temperature 0 ≡ greedy).
+
+/// xorshift64* PRNG (llama2.c's `random_f32` generator). Seed must be non-zero.
+struct LlamaRNG {
+    var state: UInt64
+    init(seed: UInt64) { state = seed == 0 ? 0x853c49e6748fea9b : seed }
+    @inline(__always) mutating func nextU32() -> UInt32 {
+        state ^= state >> 12
+        state ^= state << 25
+        state ^= state >> 27
+        return UInt32((state &* 0x2545F4914F6CDD1D) >> 32)
+    }
+    /// Uniform float in [0, 1).
+    @inline(__always) mutating func nextFloat() -> Float {
+        return Float(nextU32() >> 8) / 16777216.0
+    }
+}
+
+/// Sampling configuration. `temperature <= 0` selects greedy argmax; otherwise
+/// logits are temperature-scaled, softmaxed, optionally restricted to the top-k
+/// and/or the smallest nucleus with cumulative probability ≥ topP, then sampled.
+struct LlamaSampler {
+    var temperature: Float = 0
+    var topK: Int = 0            // 0 = no top-k limit
+    var topP: Float = 1.0        // 1.0 = no nucleus limit
+    var rng: LlamaRNG
+
+    init(temperature: Float = 0, topK: Int = 0, topP: Float = 1.0, seed: UInt64 = 0) {
+        self.temperature = temperature
+        self.topK = topK
+        self.topP = topP
+        self.rng = LlamaRNG(seed: seed)
+    }
+}
+
+/// Pick the next token from `logits` per `sampler` (see LlamaSampler).
+func llamaSample(_ logits: UnsafePointer<Float>, _ n: Int, _ sampler: inout LlamaSampler) -> Int {
+    if sampler.temperature <= 0 { return Llama2.argmax(logits, n) }
+
+    // Temperature-scaled softmax (numerically stable).
+    var maxL = logits[0]
+    for i in 1..<n where logits[i] > maxL { maxL = logits[i] }
+    let invT = 1.0 / sampler.temperature
+    var probs = [Float](repeating: 0, count: n)
+    var sum: Float = 0
+    for i in 0..<n {
+        let e = Mathf.expf((logits[i] - maxL) * invT)
+        probs[i] = e; sum += e
+    }
+    let inv = 1.0 / sum
+    for i in 0..<n { probs[i] *= inv }
+
+    // Indices sorted by probability, descending, for top-k / nucleus cuts.
+    var idx = Array(0..<n)
+    idx.sort { probs[$0] > probs[$1] }
+
+    var cutoff = n
+    if sampler.topK > 0 && sampler.topK < cutoff { cutoff = sampler.topK }
+    if sampler.topP < 1.0 {
+        var cum: Float = 0
+        var pcut = cutoff
+        for j in 0..<cutoff {
+            cum += probs[idx[j]]
+            if cum >= sampler.topP { pcut = j + 1; break }
+        }
+        cutoff = pcut
+    }
+    if cutoff < 1 { cutoff = 1 }
+
+    // Sample within the (unnormalized) surviving set.
+    var csum: Float = 0
+    for j in 0..<cutoff { csum += probs[idx[j]] }
+    let r = sampler.rng.nextFloat() * csum
+    var acc: Float = 0
+    for j in 0..<cutoff {
+        acc += probs[idx[j]]
+        if r < acc { return idx[j] }
+    }
+    return idx[cutoff - 1]
+}
+
+/// Generation from a prompt *token array* with a sampler. Forces the prompt
+/// tokens (emitting them, as run.c does), then samples each new token. Stops on
+/// BOS always, and on EOS once past the prompt when `stopOnEos` (a chat turn
+/// ends at EOS). Returns positions advanced.
+@discardableResult
+func llamaGenerateSampled<M: LlamaModel>(_ model: M, _ tok: LlamaTokenizer,
+                                         promptTokens: [Int], steps: Int,
+                                         sampler: inout LlamaSampler,
+                                         stopOnEos: Bool, emit: ([UInt8]) -> Void) -> Int {
+    if promptTokens.isEmpty { return 0 }
+    var token = promptTokens[0]
+    var pos = 0
+    while pos < steps {
+        let logits = model.forward(token: token, pos: pos)
+        let next: Int
+        if pos < promptTokens.count - 1 {
+            next = promptTokens[pos + 1]
+        } else {
+            next = llamaSample(logits, model.cfg.vocabSize, &sampler)
+        }
+        pos += 1
+        if next == tok.bosId { break }
+        if stopOnEos && next == tok.eosId && pos >= promptTokens.count { break }
+        emit(tok.decode(prevToken: token, token: next))
+        token = next
+    }
+    return pos
+}
+
+/// Build the TinyLlama-Chat (Zephyr) prompt token sequence for a single user
+/// turn: `<|user|>\n{msg}</s>\n<|assistant|>\n`, inserting the real EOS token
+/// where the template's `</s>` goes (the role markers are ordinary text pieces).
+func llamaChatTokens(_ tok: LlamaTokenizer, userMessage: String) -> [Int] {
+    var toks = tok.encode("<|user|>\n" + userMessage, bos: true, eos: false)
+    toks.append(tok.eosId)
+    toks += tok.encode("\n<|assistant|>\n", bos: false, eos: false)
+    return toks
+}

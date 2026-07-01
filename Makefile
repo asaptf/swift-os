@@ -1895,6 +1895,14 @@ llm-tinyllama-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
 	$(HOST_SWIFTC) -O tests/llm_tinyllama_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_tinyllama_engine_test
 	$(BUILD)/llm_tinyllama_engine_test
 
+# LM6a host oracle: the sampler (temperature/top-k/top-p + seedable RNG) and the
+# TinyLlama chat template. temp 0 == greedy; fixed seed reproducible; chat reply
+# stays on-answer. Reuses the LM4 Q8 bundle; not in `make test`.
+.PHONY: llm-sampling-test
+llm-sampling-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
+	$(HOST_SWIFTC) -O tests/llm_sampling_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_sampling_test
+	$(BUILD)/llm_sampling_test
+
 # ---- LM5: GGUF + Q4_K reader ----------------------------------------------
 # Read the mainstream GGUF / k-quant format: fetch a pre-quantized TinyLlama
 # Q4_K_M GGUF (~640 MB, ~half of Q8; gitignored), parse it with the shared
