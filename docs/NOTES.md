@@ -8641,7 +8641,7 @@ those mirrors: the C bridge now calls `SYS_psinfo` / `SYS_procstat` with
 `capacity=0` to learn the live count, grows its buffers, then retries the
 snapshot. `top` also grows its per-frame sort/%CPU arrays and its pid-indexed
 previous-sample cache from the observed pid range. The kernel paths already
-iterate `0..<maxProc` within caller capacity, so no syscall ABI change was
+iterate the process-slot range within caller capacity, so no syscall ABI change was
 needed.
 
 **Acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
@@ -8657,6 +8657,25 @@ docs/RISK_REMEDIATION_ROADMAP.md.
 Follow-ups (not blocking): bump `maxEndpoints` if IPC-heavy multi-service workloads
 need it; an `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table
 sizes together for a minimal static footprint.
+
+### PT2a — process-slot access boundary (DONE, 2026-07-01)
+
+This is the first behavior-neutral step toward removing the fixed process-table
+storage limit cleanly. The backing storage is still the PT1 fixed array set
+(`maxProc == kMaxProcesses == 64`), so the runtime limit intentionally does not change
+in this milestone. What changes is the boundary: runtime slot validation and full-table
+scans in `kernel/user/process.swift` now go through `processSlotCapacity()`,
+`processSlotRange()`, and `processSlotValid(_:)`.
+
+That sounds small, but it removes the most brittle part of the future refactor. The
+scheduler, wait/reap paths, `/bin/ps`/`top` snapshots, cell accounting, signal helpers,
+sleep wakeup scan, and S5 telemetry checks no longer open-code `slot >= maxProc` or
+`0..<maxProc`. Storage sizing still uses `maxProc` directly, making the milestone easy
+to review and preserving the exact `.bss` layout. PT2b can now move one heavyweight
+per-process table (VFS handle/cwd/confine state or anon-VMA state) behind a per-slot
+object without simultaneously changing every caller's notion of table size.
+
+Acceptance: `make build` and `make procmax-test`; no syscall ABI changes.
 
 ## LM series — scaling inference toward a real LLM
 
