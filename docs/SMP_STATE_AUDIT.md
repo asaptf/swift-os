@@ -372,14 +372,12 @@ manifest entries left behind after globals move or disappear.
 - `kernel/user/process.swift:procCtx`
 - `kernel/user/process.swift:schedCtx`
 - `kernel/user/process.swift:schedCtxCpuCount`
-- `kernel/vfs/vfs.swift:confineNodes`
-- `kernel/vfs/vfs.swift:cwdNodes`
 - `kernel/vfs/vfs.swift:devices`
 - `kernel/vfs/vfs.swift:endpointRecvWaiters`
 - `kernel/vfs/vfs.swift:endpoints`
 - `kernel/vfs/vfs.swift:eventCounters`
-- `kernel/vfs/vfs.swift:handles`
 - `kernel/vfs/vfs.swift:mountedPackageStorePayloads`
+- `kernel/vfs/vfs.swift:vfsProcessStates`
 - `kernel/vfs/vfs.swift:nodeCount`
 - `kernel/vfs/vfs.swift:nodes`
 - `kernel/vfs/vfs.swift:openDescriptions`

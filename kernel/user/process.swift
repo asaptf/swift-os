@@ -41,15 +41,15 @@ private let userMmapTop: UInt = 0x4_0000_0000
 private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena grows down from the top
 // Single source of truth for the number of EL0 process slots. Several tables are
 // keyed by process slot and MUST be sized identically (or they drift into silent
-// corruption): the process table here (`maxProc`), the per-process VFS handle /
-// cwd / confine tables (`maxVFSProcesses` in vfs.swift), and the futex wait table
-// (`maxFutexWaiters` in futex.swift — at most one parked waiter per thread, so it
-// is bounded by the slot count). These were three separate `16` literals; they now
-// all derive from this constant so the cap can be raised in one place without
-// reintroducing the drift. 64 is the hosting-profile default (~26 KB static per
-// slot, ~1.7 MB total — noise on the 4 GB hosting target); the embedded/appliance
-// profile can lower it here. See the "Process-table capacity" series in
-// docs/RISK_REMEDIATION_ROADMAP.md.
+// corruption): the process table here (`maxProc`), the VFS slot state
+// (`maxVFSProcesses` in vfs.swift), and the futex wait table (`maxFutexWaiters` in
+// futex.swift — at most one parked waiter per thread, so it is bounded by the slot
+// count). These were three separate `16` literals; they now all derive from this
+// constant so the cap can be raised in one place without reintroducing the drift.
+// 64 is the hosting-profile default. PT2 moved the two heavyweight per-slot
+// resources (anonymous VMA tables and VFS fd tables) behind lazy per-slot pointers;
+// the embedded/appliance profile can still lower this constant here. See the
+// "Process-table capacity" series in docs/RISK_REMEDIATION_ROADMAP.md.
 let kMaxProcesses = 64
 private let maxProc = kMaxProcesses
 
@@ -2278,6 +2278,15 @@ private func buildUserEntryStack(_ ttbr0: UInt, packed: UInt, packedLen: UInt,
                           envPtr, envPackedLen, Int32(envc))
 }
 
+private func freeKernelStackPages(_ base: UInt) {
+    if base == 0 { return }
+    var pa = base
+    for _ in 0..<kernelStackPages {
+        pmmFreePage(pa)
+        pa += PageAllocator.pageSize
+    }
+}
+
 // Build a process from an ELF image. Returns its slot, or -1. `inherit` selects
 // how the child's handle table is seeded from the parent (C2): `.all` preserves
 // fork-inherits-everything behavior; `.stdioOnly` keeps legacy spawn tight; and
@@ -2311,6 +2320,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
 
     let userSP = buildUserEntryStack(ttbr0, packed: packed, packedLen: packedLen, argc: argc)
     if userSP == 0 {
+        freeKernelStackPages(kstack)
         address_space_destroy(ttbr0)
         return -1
     }
@@ -2354,8 +2364,22 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
     pAddressSpaceCpuMask[slot] = 0
     setProcessName(slot: slot, packed: packed, argc: argc)
     setProcessSecurity(slot: slot, parent: parent)
-    vfsProcessInit(slot: slot, parent: parent, inherit: inherit,
-                   specsVA: inheritSpecsVA, specCount: inheritSpecCount)
+    if !vfsProcessInit(slot: slot, parent: parent, inherit: inherit,
+                       specsVA: inheritSpecsVA, specCount: inheritSpecCount) {
+        address_space_destroy(ttbr0)
+        freeKernelStackPages(kstack)
+        pTtbr0[slot] = 0
+        pKstack[slot] = 0
+        pSchedulerQuiesced[slot] = true
+        pReparentedOrphan[slot] = false
+        pRunNext[slot] = noProcessSlot
+        pRunQueued[slot] = false
+        fileVmasClear(slot)
+        anonVmasClear(slot)
+        clearSignalFrameState(slot)
+        processSignalClearAllPending(slot)
+        return -1
+    }
     let targetCpu = homeCpu == unassignedCpu ? processHomeCpuForNewReadySlot(slot) : homeCpu
     markProcessReady(slot, cpu: targetCpu)
     return slot
@@ -3166,7 +3190,21 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     pReparentedOrphan[child] = false
     copyProcessName(from: parent, to: child)
     copyProcessSecurity(from: parent, to: child)
-    vfsProcessInit(slot: child, parent: parent)
+    if !vfsProcessInit(slot: child, parent: parent) {
+        address_space_destroy(childTtbr0)
+        freeKernelStackPages(kstack)
+        pTtbr0[child] = 0
+        pKstack[child] = 0
+        pSchedulerQuiesced[child] = true
+        pReparentedOrphan[child] = false
+        pRunNext[child] = noProcessSlot
+        pRunQueued[child] = false
+        fileVmasClear(child)
+        anonVmasClear(child)
+        clearSignalFrameState(child)
+        processSignalClearAllPending(child)
+        return Errno.noMem.code
+    }
     markProcessReadyOnHomeCpu(child)
     return child + 1 // pid
 }

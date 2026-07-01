@@ -613,9 +613,10 @@ userland supervisor (docs/CAPABILITIES.md §5 — **no fat in-kernel `Cell` obje
 - `CellSlot.root`: a cell carries a VFS root node (0 = unconfined). `SYS_cell_create`
   grows a `root_path` arg (NULL/"/" = unconfined); other paths resolve to a directory
   the cell's processes are confined to. `vfsApplyCellNamespace` sets a spawned
-  member's C3 `confineNodes` + `cwd` to the cell root, so it resolves `/` within the
-  subtree and any path outside (including the global root) is refused by the existing
-  `isDescendant` check. No separate per-cell mount table — pure C3 reuse.
+  member's C3 confinement root + cwd in `VFSProcessState` to the cell root, so it
+  resolves `/` within the subtree and any path outside (including the global root)
+  is refused by the existing `isDescendant` check. No separate per-cell mount table
+  — pure C3 reuse.
 - Acceptance: `make c6-cell-namespace-test` — `/bin/cellnsprobe` creates a cell
   rooted at /www and launches `/bin/cellnschild`; the child resolves a file inside
   the root but is refused /etc/motd and `/`, while the default cell stays unconfined.
@@ -801,6 +802,20 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
 - Acceptance: normal kernel build, `/bin/mmapdemo` boot smoke (anonymous mmap,
   mprotect/W^X, file-VMA cleanup), and the existing process-capacity gate continue
   to pass; no syscall ABI changes.
+
+### PT2c — lazy VFS fd tables (DONE, 2026-07-01)
+
+- The second heavyweight per-process table is now lazy. `vfs.swift` replaced the
+  static `maxVFSProcesses * maxFDs` handle array with one small `VFSProcessState`
+  per slot and a heap-backed `maxFDs` table allocated on demand for each VFS group
+  leader. Thread followers keep sharing the leader's table/cwd/confinement and do
+  not allocate a private fd table.
+- Fork/spawn still copy handle entries exactly as before, including rights,
+  close-on-exec flags, badges, and open-description refcounts. If the child table
+  cannot be allocated, process creation now fails cleanly instead of creating a
+  process with partial VFS state.
+- Acceptance: normal kernel build plus VFS/process-capacity QEMU gates continue to
+  pass; no syscall ABI changes.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 

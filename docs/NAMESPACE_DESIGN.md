@@ -21,28 +21,26 @@ kernel — not a path-syntax convention layered over a shared tree. The pieces, 
 they exist in [`kernel/vfs/vfs.swift`](../kernel/vfs/vfs.swift) and
 [`userland/lib/syscall.h`](../userland/lib/syscall.h):
 
-- **Per-process confinement root array.**
-  `private var confineNodes = [Int](repeating: 0, count: maxVFSProcesses)` at
-  `vfs.swift:260`. A value of `0` means *unconfined* (the whole namespace, the
+- **Per-process confinement state.** `VFSProcessState.confine`, stored in the
+  `vfsProcessStates` array keyed by VFS slot, is the current confinement root.
+  Access goes through the small `confineNode` / `setConfineNode` helpers in
+  `vfs.swift`. A value of `0` means *unconfined* (the whole namespace, the
   compatibility default); a non-zero value is the vnode index this process is
   confined to.
 - **`SYS_CONFINE = 50`**, defined at `userland/lib/syscall.h:59`; the userland
   wrapper at `syscall.h:236` calls `__syscall3(SYS_CONFINE, (long)path, 0, 0)`.
-- **`vfsConfine(path:)`** at `vfs.swift:3771`. It resolves the path, requires a
-  directory, and is **confine-only / monotonic**: the new root must be a
-  descendant of the current confinement
-  (`isDescendant(node, of: confineNodes[proc])` at `vfs.swift:3779`), so a
-  confined process can never widen its own reach. It also pulls cwd inside the
-  new root if cwd would fall outside it (`vfs.swift:3781`).
+- **`vfsConfine(path:)`** resolves the path, requires a directory, and is
+  **confine-only / monotonic**: the new root must be a descendant of the current
+  confinement (`isDescendant(node, of: confineNode(proc))`), so a confined process
+  can never widen its own reach. It also pulls cwd inside the new root if cwd would
+  fall outside it.
 - **Inheritance across the process lifecycle.** On fork/spawn the child inherits
-  the parent's confinement: `confineNodes[slot] = confineNodes[parent]` at
-  `vfs.swift:997` ("a confined parent's child stays confined"). The unconfined
-  paths reset the slot to `0` (`vfs.swift:1012`, `vfs.swift:1035`).
+  the parent's confinement in `vfsProcessInit` by copying the parent's leader
+  `cwdNode` and `confineNode` ("a confined parent's child stays confined"). The
+  unconfined paths reset the slot to `0`.
 - **Enforcement is pervasive, not advisory.** `confineRootForCurrentProcess()`
-  (`vfs.swift:1069`) and `confinedAllows(_)` (`vfs.swift:1163`, built on
-  `isDescendant` at `vfs.swift:1154`) feed confinement checks into `vfsOpen`
-  (`vfs.swift:2040`, check around `vfs.swift:2057`–`2060`) and into the mutating
-  and stat paths. This is the **C3** capability described in
+  and `confinedAllows(_)` feed confinement checks into `vfsOpen` and into the
+  mutating and stat paths. This is the **C3** capability described in
   [Capabilities](CAPABILITIES.md) §6.
 
 What is **missing** for true per-process namespaces is the structure underneath:
@@ -68,16 +66,16 @@ single tar), one shared open-file table, and no per-process root — the `::` is
 cosmetic, not an isolation mechanism.
 
 SwiftOS's implemented confinement **already exceeds a path-syntax-only design's
-isolation**: `confineNodes` is a per-process, inherited, kernel-enforced,
-monotonic ceiling on what a process can name, checked on every open and mutation
-— not a string convention. We therefore adopt only the *naming-convention idea*
-from that prior art, never its implementation.
+isolation**: `VFSProcessState.confine` is a per-process, inherited,
+kernel-enforced, monotonic ceiling on what a process can name, checked on every
+open and mutation — not a string convention. We therefore adopt only the
+*naming-convention idea* from that prior art, never its implementation.
 
 ## The future generalization
 
 Three pieces, sketched as a proposal — not a build plan.
 
-1. **Per-process root override.** Generalize `confineNodes` from a monotonic
+1. **Per-process root override.** Generalize `VFSProcessState.confine` from a monotonic
    *ceiling* into a per-process *root* that can be rebased (chroot / pivot-root
    grade), so a process sees its namespace root as `/`. This is roughly **~90%
    present** already: the per-process slot, inheritance, and pervasive
@@ -91,10 +89,10 @@ Three pieces, sketched as a proposal — not a build plan.
    during path walk, so two processes in different namespaces can see different
    trees at the same path. Today's grafts are global and build-time; this would
    be per-namespace and runtime. It must follow the allocation-free, fixed-table
-   style the kernel already uses for `nodes`/`confineNodes` (`maxNodes`-sized,
-   no heap growth on the hot path) and be touched only under `vfsLock` — the
-   same discipline that protects the existing tables — so the future implementer
-   inherits the right SMP/locking constraints from the start.
+   style the kernel already uses for `nodes` and VFS process state (bounded,
+   no heap growth on the path walk hot path) and be touched only under `vfsLock`
+   — the same discipline that protects the existing tables — so the future
+   implementer inherits the right SMP/locking constraints from the start.
 
 3. **The lexical-boundary path idea as a *convention*.** Adopt the `::`-style
    namespace-in-path notation purely as a **userland / tooling display and
