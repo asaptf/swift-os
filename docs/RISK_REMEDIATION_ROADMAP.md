@@ -1161,8 +1161,13 @@ dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
   low/high zoning make RAM past 1 GiB usable for bulk user data pages (the model's
   weights) while page tables stay in identity-mapped low RAM. See `docs/NOTES.md`
   (LM4a/LM4b/LM4-MM/LM4c).
-- **LM5** (planned): GGUF + Q4_K_M parser (smaller footprint, opens the GGUF
-  ecosystem). **LM6** (planned): sampling (temp/top-p/top-k) + chat template.
+- **LM5** (DONE, 2026-07-01): GGUF + Q4_K reader — a Foundation-free GGUF container
+  reader (`userland/lib/gguf.swift`) + exact Q4_K/Q6_K super-block dequant + a
+  `GGUFLlama` engine (`gguf_engine.swift`) that keeps the k-quant weights compressed
+  and dequantizes per super-block in the matmul. Serves a TinyLlama-1.1B Q4_K_M GGUF
+  (~0.6 GB, half the Q8 footprint) end to end in QEMU (`make llm-serve-gguf-test`).
+  See `docs/NOTES.md` (LM5a–LM5d). **LM6** (planned): sampling (temp/top-p/top-k)
+  + chat template.
 
 ## Phase 2 — toward a full hosting/embedded OS (record, don't build yet)
 
