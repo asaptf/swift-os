@@ -3324,15 +3324,15 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   refusal marker, the `CELLCHILD: alive in cell` marker, the three per-stage reports,
   and the `C6b OK` verdict with no `C6b FAIL`/`panic:`. Wired into `make test`.
 - **Next (C6c).** A cell carries a VFS namespace root (reusing the C3
-  confineNodes/isDescendant machinery); processes spawned into the cell resolve `/`
-  within it. Then C6d: enumerate-by-cell + teardown + optional per-cell limits.
+  confinement-state/isDescendant machinery); processes spawned into the cell resolve
+  `/` within it. Then C6d: enumerate-by-cell + teardown + optional per-cell limits.
 
 ### C6c — per-cell namespace root (DONE, 2026-06-24)
 
 - **Goal.** Give a cell a VFS root subtree so its processes resolve `/` within it
   and cannot reach anything outside — the namespace half of the Cell. Reuses the C3
-  confinement machinery (`confineNodes` + `isDescendant`); **no separate per-cell
-  mount table**.
+  confinement machinery (`VFSProcessState.confine` + `isDescendant`); **no separate
+  per-cell mount table**.
 - **`CellSlot.root`.** Each cell carries a root node (0 = unconfined, like
   globalCell). `SYS_cell_create` grows a `root_path` argument (the C6b out-param
   shifts to the second slot): NULL or `"/"` → unconfined; any other path is resolved
@@ -3340,13 +3340,12 @@ shmring plumbing) or C6 Cells. See `docs/RISK_REMEDIATION_ROADMAP.md`.
   (ENOENT/ENOTDIR), and stored as the cell root.
 - **Confinement on spawn.** `vfsApplyCellNamespace(child, cellRaw)` runs in
   `processSpawnIntoCellAsync` after the child inherits the parent's VFS state: for a
-  confined cell it overrides the child's `confineNodes[child]` + `cwdNodes[child]` to
-  the cell root. So an absolute path still resolves against the global tree but is
-  rejected by the existing C3 `isDescendant(node, confineRoot)` check if it falls
-  outside the subtree — including `/` itself (the global root is not a descendant of
-  the cell root). A child forked *within* the cell stays confined via the existing
-  parent→child `confineNodes` inheritance. The cell's cwd makes relative paths
-  resolve inside the root.
+  confined cell it overrides the child's `VFSProcessState.confine` + cwd to the cell
+  root. So an absolute path still resolves against the global tree but is rejected
+  by the existing C3 `isDescendant(node, confineRoot)` check if it falls outside the
+  subtree — including `/` itself (the global root is not a descendant of the cell
+  root). A child forked *within* the cell stays confined via the existing parent→child
+  confinement inheritance. The cell's cwd makes relative paths resolve inside the root.
 - **Probe `/bin/cellnsprobe` + `/bin/cellnschild`.** The supervisor first proves the
   default cell is unconfined (it reads `/etc/motd`), then `cell_create("/www", …)`
   and launches the child into the rooted cell. The child asserts: `open("index.html")`
@@ -7542,7 +7541,7 @@ write-through; V3c = the unprivileged-denied acceptance).
 - **Busy = computed on demand** (not a stored counter that can drift, the same
   shape as `cell_destroy`'s live-member check): `mountSubtreeBusy(root)` is true iff
   any `openDescriptions[d].kind == .file` whose `node` is `isDescendant(of: root)`,
-  or any `cwdNodes[p]` is `isDescendant(of: root)`. → `EBUSY`.
+  or any VFS process state's cwd is `isDescendant(of: root)`. → `EBUSY`.
 - **Selector** (C string): 32 hex chars ⇒ match by UUID (`datafsPeekUuid`, parsed
   hi:lo like the V2c cmdline pin), else by label (`datafsPeekLabel`). Resolves to an
   *enumerated-but-unmounted* device (`datafsDeviceMountedSlot(dev) < 0`); the slot is
@@ -8768,6 +8767,32 @@ mprotect/W^X, file-VMA cleanup), and the single-core + `-smp 4` `procmax` gate;
 no syscall ABI changes. In this local macOS environment the broader newlib-backed
 `mmapreserve`/`mapfixed` targets still require the missing newlib sysroot headers,
 so PT2b used the native Swift mmap smoke plus the process-capacity QEMU gates.
+
+### PT2c — lazy VFS fd tables (DONE, 2026-07-01)
+
+The second heavyweight process-slot resource is now lazy. `kernel/vfs/vfs.swift`
+replaces the static `maxVFSProcesses * maxFDs` `HandleEntry` array with a small
+`VFSProcessState` per slot (`handlesPtr`, `cwd`, `confine`). A process/VFS group
+leader gets its `maxFDs` table from the kernel heap when it is initialised; inactive
+slots and POSIX thread followers pay only the small state record. The table is kept
+for slot reuse rather than freed, matching the current bump-allocator reality while
+removing the compile-time `.bss` multiplier.
+
+Thread semantics from `rt-a` are preserved: `vfsThreadAttach` points a follower at
+the creator's VFS leader and clears any old private table without allocating a new
+one. `currentVFSProcess()` still resolves to the leader, so open/close/dup/fcntl,
+eventfd/socketpair, IPC badge updates, cwd, and confinement all operate on the
+shared table. `vfsHandleCount(slot:)` counts only a leader's table, so cell handle
+accounting does not double-charge follower threads.
+
+Fork/spawn copy from the parent's VFS leader, preserving handle rights, cloexec
+flags, IPC badges, and open-description refcounts. `vfsProcessInit` is now fallible:
+if the child fd table cannot be allocated, process creation unwinds the unstarted
+address space/kernel stack and returns the existing failure path (`EAGAIN` for
+spawn, `ENOMEM` for fork) instead of creating a process with partial VFS state.
+
+Acceptance: `make build`, VFS boot smokes, and the single-core + `-smp 4` `procmax`
+gate; no syscall ABI changes.
 
 ## LM series — scaling inference toward a real LLM
 

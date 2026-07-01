@@ -206,7 +206,16 @@ private let pipeCap = 1024
 private let maxVFSProcesses = kMaxProcesses  // MUST equal maxProc: handle/cwd/confine tables are slot-keyed
 private let maxEvents = 16
 
-private var handles = [HandleEntry](repeating: HandleEntry(), count: maxFDs * maxVFSProcesses)
+private struct VFSProcessState {
+    var handlesPtr: UInt = 0
+    var cwd: Int = 0
+    var confine: Int = 0
+}
+
+// PT2c: the fd table is the second heavyweight per-process resource moved out
+// of fixed slot storage. Each VFS group leader gets a maxFDs table on demand;
+// inactive slots and thread followers pay only this small state record.
+private var vfsProcessStates = [VFSProcessState](repeating: VFSProcessState(), count: maxVFSProcesses)
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var eventCounters = [EventCounter](repeating: EventCounter(), count: maxEvents)
@@ -284,19 +293,18 @@ private let maxServiceNames = 8
 private let serviceNameCap = 16
 private var serviceNames = [NameEntry](repeating: NameEntry(), count: maxServiceNames)
 private var serviceNameBytes = [UInt8](repeating: 0, count: maxServiceNames * serviceNameCap)
-private var cwdNodes = [Int](repeating: 0, count: maxVFSProcesses)
-// C3: the subtree a process is confined to — object-scoped fs authority. 0 means
-// unconfined (the whole namespace, the compatibility default). isDescendant(_, of: 0)
-// is always true, so the confinement guard is a no-op for unconfined processes.
-private var confineNodes = [Int](repeating: 0, count: maxVFSProcesses)
+// C3: VFSProcessState.confine is the subtree a process is confined to —
+// object-scoped fs authority. 0 means unconfined (the whole namespace, the
+// compatibility default). isDescendant(_, of: 0) is always true.
 
 // rt-a: POSIX threads share ONE file-descriptor table (and cwd / confinement).
-// Each VFS slot names its group leader — the slot whose handles[] region, cwd,
-// and confine the whole thread group uses. A normal process / fork child is its
-// own leader; a thread (thread_create) points at its creator's leader so an fd
-// opened by ANY thread (e.g. libuv's async-wake eventfd) is visible to all of
-// them. Without this, per-thread fd-table COPIES diverge and a wakeup written by
-// one thread never reaches the fd another polls — node -e deadlocked here.
+// Each VFS slot names its group leader — the slot whose lazily allocated fd
+// table, cwd, and confine root the whole thread group uses. A normal process /
+// fork child is its own leader; a thread (thread_create) points at its creator's
+// leader so an fd opened by ANY thread (e.g. libuv's async-wake eventfd) is
+// visible to all of them. Without this, per-thread fd-table COPIES diverge and a
+// wakeup written by one thread never reaches the fd another polls — node -e
+// deadlocked here.
 // -1 = uninitialised → treated as identity (the slot is its own leader).
 private var vfsGroupLeader = [Int](repeating: -1, count: maxVFSProcesses)
 
@@ -305,6 +313,60 @@ private func vfsLeader(_ slot: Int) -> Int {
     guard slot >= 0 && slot < maxVFSProcesses else { return slot }
     let l = vfsGroupLeader[slot]
     return (l >= 0 && l < maxVFSProcesses) ? l : slot
+}
+
+@inline(__always)
+private func vfsProcessValid(_ slot: Int) -> Bool {
+    slot >= 0 && slot < maxVFSProcesses
+}
+
+private func handleTable(_ proc: Int) -> UnsafeMutablePointer<HandleEntry>? {
+    if !vfsProcessValid(proc) { return nil }
+    let addr = vfsProcessStates[proc].handlesPtr
+    if addr == 0 { return nil }
+    return UnsafeMutablePointer<HandleEntry>(bitPattern: addr)
+}
+
+private func ensureHandleTable(_ proc: Int) -> UnsafeMutablePointer<HandleEntry>? {
+    if let table = handleTable(proc) { return table }
+    if !vfsProcessValid(proc) { return nil }
+    let bytes = MemoryLayout<HandleEntry>.stride * maxFDs
+    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
+    let table = raw.bindMemory(to: HandleEntry.self, capacity: maxFDs)
+    for fd in 0..<maxFDs { table[fd] = HandleEntry() }
+    vfsProcessStates[proc].handlesPtr = UInt(bitPattern: raw)
+    return table
+}
+
+private func clearHandleTable(_ proc: Int) {
+    guard let table = handleTable(proc) else { return }
+    for fd in 0..<maxFDs { table[fd] = HandleEntry() }
+}
+
+private func releaseHandleTableEntries(_ proc: Int) {
+    guard let table = handleTable(proc) else { return }
+    for fd in 0..<maxFDs {
+        if table[fd].inUse {
+            releaseDescription(table[fd].object)
+            table[fd] = HandleEntry()
+        }
+    }
+}
+
+private func cwdNode(_ proc: Int) -> Int {
+    vfsProcessValid(proc) ? vfsProcessStates[proc].cwd : 0
+}
+
+private func setCwdNode(_ proc: Int, _ node: Int) {
+    if vfsProcessValid(proc) { vfsProcessStates[proc].cwd = node }
+}
+
+private func confineNode(_ proc: Int) -> Int {
+    vfsProcessValid(proc) ? vfsProcessStates[proc].confine : 0
+}
+
+private func setConfineNode(_ proc: Int, _ node: Int) {
+    if vfsProcessValid(proc) { vfsProcessStates[proc].confine = node }
 }
 
 private var vfsLockWord: UInt64 = 0
@@ -1062,8 +1124,10 @@ func vfsInit() {
     vfsMountDataFs(root)
 
     for p in 0..<maxVFSProcesses {
-        cwdNodes[p] = root
-        for fd in 0..<maxFDs { handles[fdIndex(p, fd)] = HandleEntry() }
+        setCwdNode(p, root)
+        setConfineNode(p, 0)
+        clearHandleTable(p)
+        vfsGroupLeader[p] = -1
     }
     for i in 0..<maxOpenDescriptions { openDescriptions[i] = OpenDescription() }
     for i in 0..<maxPipes { pipes[i] = Pipe() }
@@ -1115,7 +1179,7 @@ private func readHandleSpec(_ base: UnsafePointer<UInt8>, _ index: Int) -> Handl
 func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
                                   specsVA: UInt = 0, specCount: UInt = 0) -> Int {
     if inherit != .explicit { return 0 }
-    if parent < 0 || parent >= maxVFSProcesses { return Errno.invalid.code }
+    if !vfsProcessValid(parent) { return Errno.invalid.code }
     if specCount > UInt(maxFDs) { return Errno.invalid.code }
     if specCount == 0 { return 0 }
     guard let specs = userReadableBuffer(specsVA, specCount * UInt(handleSpecSize)) else {
@@ -1124,14 +1188,16 @@ func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
 
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
+    let parentProc = vfsLeader(parent)
     var targetMask: UInt64 = 0
     for i in 0..<Int(specCount) {
         let spec = readHandleSpec(specs, i)
         let src = Int(spec.sourceFD)
         let dst = Int(spec.targetFD)
         if src < 0 || src >= maxFDs || dst < 0 || dst >= maxFDs { return Errno.badFD.code }
-        if !fdEntry(parent, src).inUse { return Errno.badFD.code }
-        if !hasRights(fdEntry(parent, src).rights, .transfer) { return Errno.access.code }
+        let entry = fdEntry(parentProc, src)
+        if !entry.inUse { return Errno.badFD.code }
+        if !hasRights(entry.rights, .transfer) { return Errno.access.code }
         if (spec.flags & ~handleSpecFlagCloexec) != 0 { return Errno.invalid.code }
         let bit = UInt64(1) << UInt64(dst)
         if (targetMask & bit) != 0 { return Errno.invalid.code }
@@ -1143,99 +1209,102 @@ func vfsValidateHandleInheritance(parent: Int, inherit: HandleInheritance,
 private func seedExplicitHandles(slot: Int, parent: Int, specsVA: UInt, specCount: UInt) {
     if specCount == 0 { return }
     guard let specs = userReadableBuffer(specsVA, specCount * UInt(handleSpecSize)) else { return }
+    let parentProc = vfsLeader(parent)
     for i in 0..<Int(specCount) {
         let spec = readHandleSpec(specs, i)
         let src = Int(spec.sourceFD)
         let dst = Int(spec.targetFD)
-        let parentEntry = fdEntry(parent, src)
+        let parentEntry = fdEntry(parentProc, src)
         var childEntry = parentEntry
         childEntry.rights = attenuate(parentEntry.rights, to: Rights(rawValue: spec.rightsMask))
         childEntry.cloexec = (spec.flags & handleSpecFlagCloexec) != 0
-        handles[fdIndex(slot, dst)] = childEntry
+        setFDEntry(slot, dst, childEntry)
         retainDescription(childEntry.object)
     }
 }
 
+@discardableResult
 func vfsProcessInit(slot: Int, parent: Int, inherit: HandleInheritance = .all,
-                    specsVA: UInt = 0, specCount: UInt = 0) {
+                    specsVA: UInt = 0, specCount: UInt = 0) -> Bool {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    if slot < 0 || slot >= maxVFSProcesses { return }
+    if !vfsProcessValid(slot) { return false }
     // A process (init / fork child / spawned image) owns its own fd table: it is
     // its own group leader. fork/spawn still COPY the parent's table below — that
     // is correct POSIX (a forked child gets a private copy). Only threads share,
     // via vfsThreadAttach (which bypasses this function).
     vfsGroupLeader[slot] = slot
-    if parent >= 0 && parent < maxVFSProcesses {
+    guard let table = ensureHandleTable(slot) else { return false }
+    for fd in 0..<maxFDs { table[fd] = HandleEntry() }
+
+    if vfsProcessValid(parent) {
+        let parentProc = vfsLeader(parent)
         // cwd is always inherited; the handle set depends on the mode. `.all` is
         // the fork/thread case, `.stdioOnly` is legacy spawn compatibility, and
         // `.explicit` starts empty and installs only named handle specs (C2).
-        cwdNodes[slot] = cwdNodes[parent]
-        confineNodes[slot] = confineNodes[parent] // a confined parent's child stays confined
+        setCwdNode(slot, cwdNode(parentProc))
+        setConfineNode(slot, confineNode(parentProc)) // a confined parent's child stays confined
         for fd in 0..<maxFDs {
             let e = handleInheritanceCopiesFD(inherit, fd: fd)
-                ? handles[fdIndex(parent, fd)]
+                ? fdEntry(parentProc, fd)
                 : HandleEntry()
-            handles[fdIndex(slot, fd)] = e
+            table[fd] = e
             if e.inUse { retainDescription(e.object) }
         }
         if inherit == .explicit {
             seedExplicitHandles(slot: slot, parent: parent, specsVA: specsVA, specCount: specCount)
         }
-        return
+        return true
     }
 
-    cwdNodes[slot] = 0
-    confineNodes[slot] = 0
-    for fd in 0..<maxFDs { handles[fdIndex(slot, fd)] = HandleEntry() }
-    _ = installTTY(slot: slot, fd: 0, readable: true, writable: true)
-    _ = installTTY(slot: slot, fd: 1, readable: true, writable: true)
-    _ = installTTY(slot: slot, fd: 2, readable: true, writable: true)
+    setCwdNode(slot, 0)
+    setConfineNode(slot, 0)
+    if installTTY(slot: slot, fd: 0, readable: true, writable: true) < 0 ||
+       installTTY(slot: slot, fd: 1, readable: true, writable: true) < 0 ||
+       installTTY(slot: slot, fd: 2, readable: true, writable: true) < 0 {
+        releaseHandleTableEntries(slot)
+        return false
+    }
+    return true
 }
 
 /// rt-a: attach a new thread to its creator's VFS group so they share ONE fd
 /// table, cwd, and confinement. Unlike vfsProcessInit it does NOT copy or retain
 /// the leader's handles — the thread holds no fds of its own; every fd/cwd
-/// access routes through vfsLeader() to the leader's region. Its own handles[]
-/// region is cleared so a reused slot carries no stale entries.
+/// access routes through vfsLeader() to the leader's table. Any old private table
+/// for this slot is cleared so a reused slot carries no stale entries.
 func vfsThreadAttach(slot: Int, leader: Int) {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    if slot < 0 || slot >= maxVFSProcesses { return }
-    let root = (leader >= 0 && leader < maxVFSProcesses) ? vfsLeader(leader) : slot
+    if !vfsProcessValid(slot) { return }
+    let root = vfsProcessValid(leader) ? vfsLeader(leader) : slot
     vfsGroupLeader[slot] = root
-    for fd in 0..<maxFDs { handles[fdIndex(slot, fd)] = HandleEntry() }
-    cwdNodes[slot] = 0
-    confineNodes[slot] = 0
+    clearHandleTable(slot)
+    setCwdNode(slot, 0)
+    setConfineNode(slot, 0)
 }
 
 func vfsProcessCloseAll(slot: Int) {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    if slot < 0 || slot >= maxVFSProcesses { return }
+    if !vfsProcessValid(slot) { return }
     // A thread (non-leader) owns no fds — they belong to the shared leader table.
     // Tearing them down here would close fds out from under live sibling threads,
     // so a thread exit only detaches from the group; the leader's exit closes the
     // shared table.
     if vfsGroupLeader[slot] != slot && vfsGroupLeader[slot] >= 0 {
         vfsGroupLeader[slot] = slot
-        cwdNodes[slot] = 0
-        confineNodes[slot] = 0
+        setCwdNode(slot, 0)
+        setConfineNode(slot, 0)
         return
     }
-    for fd in 0..<maxFDs {
-        let idx = fdIndex(slot, fd)
-        if handles[idx].inUse {
-            releaseDescription(handles[idx].object)
-            handles[idx] = HandleEntry()
-        }
-    }
+    releaseHandleTableEntries(slot)
     // QW3: owner-based reclaim of any endpoint still tagged to this slot. The FD
     // loop above already reclaimed endpoints reachable via this slot's FDs; this
     // is the deterministic, owner-tagged backstop.
     releaseEndpointsOwnedBy(slot)
-    cwdNodes[slot] = 0
-    confineNodes[slot] = 0
+    setCwdNode(slot, 0)
+    setConfineNode(slot, 0)
     vfsGroupLeader[slot] = slot // reset for slot reuse
 }
 
@@ -1245,12 +1314,13 @@ func vfsProcessCloseAll(slot: Int) {
 func vfsCloseCloexec(slot: Int) {
     let daif = vfsLock()
     defer { vfsUnlock(daif) }
-    if slot < 0 || slot >= maxVFSProcesses { return }
+    if !vfsProcessValid(slot) { return }
+    let proc = vfsLeader(slot)
+    guard let table = handleTable(proc) else { return }
     for fd in 0..<maxFDs {
-        let idx = fdIndex(slot, fd)
-        if handles[idx].inUse && handles[idx].cloexec {
-            releaseDescription(handles[idx].object)
-            handles[idx] = HandleEntry()
+        if table[fd].inUse && table[fd].cloexec {
+            releaseDescription(table[fd].object)
+            table[fd] = HandleEntry()
         }
     }
 }
@@ -1263,26 +1333,34 @@ private func currentVFSProcess() -> Int {
     return (slot >= 0 && slot < maxVFSProcesses) ? vfsLeader(slot) : 0
 }
 
-private func fdIndex(_ proc: Int, _ fd: Int) -> Int {
-    proc * maxFDs + fd
-}
-
 private func cwdNodeForCurrentProcess() -> Int {
-    cwdNodes[currentVFSProcess()]
+    cwdNode(currentVFSProcess())
 }
 
 private func confineRootForCurrentProcess() -> Int {
     let slot = processCurrentSlot()
     // Confinement is a group property — resolve to the leader (threads share it).
-    return (slot >= 0 && slot < maxVFSProcesses) ? confineNodes[vfsLeader(slot)] : 0
+    return vfsProcessValid(slot) ? confineNode(vfsLeader(slot)) : 0
 }
 
 private func fdEntry(_ proc: Int, _ fd: Int) -> HandleEntry {
-    handles[fdIndex(proc, fd)]
+    guard fd >= 0 && fd < maxFDs, let table = handleTable(proc) else { return HandleEntry() }
+    return table[fd]
 }
 
 private func setFDEntry(_ proc: Int, _ fd: Int, _ value: HandleEntry) {
-    handles[fdIndex(proc, fd)] = value
+    guard fd >= 0 && fd < maxFDs, let table = ensureHandleTable(proc) else { return }
+    table[fd] = value
+}
+
+private func setFDEntryCloexec(_ proc: Int, _ fd: Int, _ value: Bool) {
+    guard fd >= 0 && fd < maxFDs, let table = handleTable(proc) else { return }
+    table[fd].cloexec = value
+}
+
+private func setFDEntryBadge(_ proc: Int, _ fd: Int, _ badge: UInt32) {
+    guard fd >= 0 && fd < maxFDs, let table = handleTable(proc) else { return }
+    table[fd].badge = badge
 }
 
 private func fdEntryHasRights(_ proc: Int, _ fd: Int, _ required: Rights) -> Bool {
@@ -1293,9 +1371,10 @@ private func fdEntryHasRights(_ proc: Int, _ fd: Int, _ required: Rights) -> Boo
 /// resource-accounting aggregate (processCellStat) to charge a process's handle
 /// count to its CellId domain. Bounded by maxFDs; safe for any slot index.
 func vfsHandleCount(slot: Int) -> Int {
-    if slot < 0 || slot >= maxVFSProcesses { return 0 }
+    if !vfsProcessValid(slot) || vfsLeader(slot) != slot { return 0 }
+    guard let table = handleTable(slot) else { return 0 }
     var n = 0
-    for fd in 0..<maxFDs where fdEntry(slot, fd).inUse { n += 1 }
+    for fd in 0..<maxFDs where table[fd].inUse { n += 1 }
     return n
 }
 
@@ -1384,6 +1463,7 @@ private func confinedAllows(_ node: Int) -> Bool {
 
 private func allocFDInProcess(_ proc: Int, from start: Int = 3) -> Int {
     if start < 0 || start >= maxFDs { return -1 }
+    if !vfsProcessValid(proc) || handleTable(proc) == nil { return -1 }
     for i in start..<maxFDs where !fdEntry(proc, i).inUse { return i }
     return -1
 }
@@ -1866,8 +1946,9 @@ func vfsApplyCellNamespace(slot childSlot: Int, cellRaw: UInt32) {
     guard childSlot >= 0 && childSlot < maxVFSProcesses else { return }
     let root = cells[idx].root
     if root != 0 {
-        confineNodes[childSlot] = root
-        cwdNodes[childSlot] = root
+        let childProc = vfsLeader(childSlot)
+        setConfineNode(childProc, root)
+        setCwdNode(childProc, root)
     }
 }
 
@@ -2460,7 +2541,7 @@ private func mountSubtreeBusy(_ root: Int) -> Bool {
         }
     }
     for p in 0..<maxVFSProcesses {
-        let c = cwdNodes[p]
+        let c = cwdNode(p)
         if c > 0 && c < nodeCount && isDescendant(c, of: root) { return true }
     }
     return false
@@ -2728,14 +2809,17 @@ private func vfsS4bAccountingSelfTestLocked() -> Bool {
                             endpointRecvRefs[i] = 0
                         }
 
-                        for i in 0..<(maxFDs * maxVFSProcesses) {
-                            let entry = handles[i]
-                            if entry.inUse {
-                                let d = entry.object
-                                if d < 0 || d >= maxOpenDescriptions { return false }
-                                if !openDescriptions[d].inUse { return false }
-                                if entry.kind != openDescriptions[d].kind { return false }
-                                descRefs[d] += 1
+                        for p in 0..<maxVFSProcesses {
+                            guard let table = handleTable(p) else { continue }
+                            for fd in 0..<maxFDs {
+                                let entry = table[fd]
+                                if entry.inUse {
+                                    let d = entry.object
+                                    if d < 0 || d >= maxOpenDescriptions { return false }
+                                    if !openDescriptions[d].inUse { return false }
+                                    if entry.kind != openDescriptions[d].kind { return false }
+                                    descRefs[d] += 1
+                                }
                             }
                         }
 
@@ -2992,7 +3076,7 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     if wantRead && (caps & capFsRead) == 0 { return Errno.access.code }
     if wantWrite && (caps & capTmpWrite) == 0 { return Errno.access.code }
 
-    // C3: object-scoped confinement. A confined process (confineNodes != 0) may only
+    // C3: object-scoped confinement. A confined process (confine root != 0) may only
     // reach paths inside its subtree; isDescendant(_, of: 0) is always true, so this is
     // a no-op for the unconfined default. See docs/CAPABILITIES.md §6 (C3).
     let confineRoot = confineRootForCurrentProcess()
@@ -3045,7 +3129,7 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
     let r = posixRights(read: (f & oWrOnly) == 0 || (f & oRdWr) != 0,
                         write: (f & oWrOnly) != 0 || (f & oRdWr) != 0)
     installDescription(proc, fd, d, rights: r)
-    if (f & oCloexec) != 0 { handles[fdIndex(proc, fd)].cloexec = true }
+    if (f & oCloexec) != 0 { setFDEntryCloexec(proc, fd, true) }
     return fd
 }
 
@@ -3631,14 +3715,14 @@ func vfsFcntl(fd: Int, cmd: Int, arg: Int) -> Int {
         let d = fdEntry(proc, fd).object
         retainDescription(d)
         installDescription(proc, newfd, d, rights: fdEntry(proc, fd).rights)
-        if cmd == fDupFDCloexec { handles[fdIndex(proc, newfd)].cloexec = true }
+        if cmd == fDupFDCloexec { setFDEntryCloexec(proc, newfd, true) }
         return newfd
     case fGetFD:
         guard fdEntryHasRights(proc, fd, .getattr) else { return Errno.access.code }
         return fdEntry(proc, fd).cloexec ? fdCloexecFlag : 0
     case fSetFD:
         guard fdEntryHasRights(proc, fd, .setattr) else { return Errno.access.code }
-        handles[fdIndex(proc, fd)].cloexec = (arg & fdCloexecFlag) != 0
+        setFDEntryCloexec(proc, fd, (arg & fdCloexecFlag) != 0)
         return 0
     case fGetFL:
         guard fdEntryHasRights(proc, fd, .getattr) else { return Errno.access.code }
@@ -3854,8 +3938,8 @@ func vfsSocketpair(fdsVA: UInt, flags: Int) -> Int {
     installDescription(proc, fd0, d0, rights: posixRights(read: true, write: true))
     installDescription(proc, fd1, d1, rights: posixRights(read: true, write: true))
     if (flags & socketpairFlagCloexec) != 0 {
-        handles[fdIndex(proc, fd0)].cloexec = true
-        handles[fdIndex(proc, fd1)].cloexec = true
+        setFDEntryCloexec(proc, fd0, true)
+        setFDEntryCloexec(proc, fd1, true)
     }
 
     let raw = UnsafeMutableRawPointer(out)
@@ -3893,7 +3977,7 @@ func vfsEventfd(initval: UInt, flags: UInt) -> Int {
     openDescriptions[d].node = ev
     openDescriptions[d].flags = f & oNonblock
     installDescription(proc, fd, d, rights: posixRights(read: true, write: true))
-    if (f & oCloexec) != 0 { handles[fdIndex(proc, fd)].cloexec = true }
+    if (f & oCloexec) != 0 { setFDEntryCloexec(proc, fd, true) }
     return fd
 }
 
@@ -4112,7 +4196,7 @@ func vfsIpcBadge(fd: Int, badge: UInt32) -> Int {
     guard entry.kind == .endpoint else { return Errno.invalid.code }
     let desc = openDescriptions[entry.object]
     guard desc.kind == .endpoint, desc.pipeEnd == endpointSendEnd else { return Errno.invalid.code }
-    handles[fdIndex(proc, fd)].badge = badge
+    setFDEntryBadge(proc, fd, badge)
     return 0
 }
 
@@ -4745,7 +4829,7 @@ func vfsChdir(path pathVA: UInt) -> Int {
     if node == -1 { return Errno.noEntry.code }
     if !confinedAllows(node) { return Errno.access.code }
     if !nodes[node].isDir { return Errno.notDir.code }
-    cwdNodes[currentVFSProcess()] = node
+    setCwdNode(currentVFSProcess(), node)
     return 0
 }
 
@@ -4761,9 +4845,9 @@ func vfsConfine(path pathVA: UInt) -> Int {
     if node == -1 { return Errno.noEntry.code }
     if !nodes[node].isDir { return Errno.notDir.code }
     let proc = currentVFSProcess()
-    if !isDescendant(node, of: confineNodes[proc]) { return Errno.access.code }
-    confineNodes[proc] = node
-    if !isDescendant(cwdNodes[proc], of: node) { cwdNodes[proc] = node }
+    if !isDescendant(node, of: confineNode(proc)) { return Errno.access.code }
+    setConfineNode(proc, node)
+    if !isDescendant(cwdNode(proc), of: node) { setCwdNode(proc, node) }
     return 0
 }
 
