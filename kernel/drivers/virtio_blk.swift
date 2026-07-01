@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// virtio_blk.swift — minimal polled virtio 1.0 (modern, MMIO) block driver.
+// virtio_blk.swift — minimal polled virtio 1.0 (modern) block driver, over MMIO or PCI.
 //
 // M11b: gives the kernel synchronous, read-only access to a virtio-blk disk so
 // the packed read-only base image can be served from a real disk instead of
@@ -16,38 +16,23 @@
 // through the io.h C bridge. Single-threaded blocking reads are fine for a
 // read-only base. We clean what the device reads and invalidate what it writes;
 // no-ops under TCG, real work under a caching accelerator.
+//
+// V4: the control/data plane runs through VirtioTransportOps (like virtio_rng/net),
+// so besides legacy virtio-mmio (QEMU `virt`) a device may sit on modern virtio-pci
+// (the GICv3/Hetzner profile) — e.g. a real Hetzner Cloud Volume. Each device
+// records isPci + (for pci) its configured transport; the ring/descriptor logic and
+// the polled used-ring completion are transport-independent. V4a is the mmio-path-
+// preserving refactor; V4b adds the virtio-blk-pci discovery scan.
 
-// virtio-mmio register offsets (same layout as virtio_net.swift).
+// virtio-mmio identity registers, used only by the MMIO discovery scan
+// (virtioBlkInit). The control/data-plane registers moved behind VirtioTransportOps
+// in V4 (status/features/queue-setup/notify/ack — see virtio_transport.swift).
 private let R_MAGIC: UInt      = 0x000
 private let R_VERSION: UInt    = 0x004
 private let R_DEVID: UInt      = 0x008
-private let R_DRVFEAT: UInt    = 0x020
-private let R_DRVFEATSEL: UInt = 0x024
-private let R_DEVFEAT: UInt    = 0x010
-private let R_DEVFEATSEL: UInt = 0x014
-private let R_QSEL: UInt       = 0x030
-private let R_QNUMMAX: UInt    = 0x034
-private let R_QNUM: UInt       = 0x038
-private let R_QREADY: UInt     = 0x044
-private let R_QNOTIFY: UInt    = 0x050
-private let R_ISTATUS: UInt    = 0x060
-private let R_IACK: UInt       = 0x064
-private let R_STATUS: UInt     = 0x070
-private let R_QDESCL: UInt     = 0x080
-private let R_QDESCH: UInt     = 0x084
-private let R_QDRVL: UInt      = 0x090
-private let R_QDRVH: UInt      = 0x094
-private let R_QDEVL: UInt      = 0x0a0
-private let R_QDEVH: UInt      = 0x0a4
-private let R_CONFIG: UInt     = 0x100
 
 private let VIRTIO_MAGIC: UInt32 = 0x74726976   // "virt"
 private let VIRTIO_ID_BLOCK: UInt32 = 2
-
-private let S_ACK: UInt32    = 1
-private let S_DRV: UInt32    = 2
-private let S_DRVOK: UInt32  = 4
-private let S_FEATOK: UInt32 = 8
 
 private let BLK_QSZ = 8
 private let VIRTQ_DESC_F_NEXT: UInt16  = 1
@@ -102,6 +87,16 @@ private var blkDeviceAvailIdx = [UInt16](repeating: 0, count: maxBlkDevices)
 private var blkDeviceLastUsed = [UInt16](repeating: 0, count: maxBlkDevices)
 private var blkDeviceFlushOK = [Bool](repeating: false, count: maxBlkDevices)
 private var blkDeviceReady = [Bool](repeating: false, count: maxBlkDevices)
+// V4: transport binding per device. The block driver now drives its control/data
+// plane through VirtioTransportOps (like virtio_rng/net), so a device can sit on
+// legacy virtio-mmio (QEMU `virt`, isPci=false — the base/store/ESP/data disks)
+// or modern virtio-pci (the GICv3/Hetzner profile, isPci=true — a real Hetzner
+// Cloud Volume). The configured PCI transport MUST be stored per device: its
+// notify doorbell address is recorded in the (mutating) setupQueue and needed by
+// every later notify(). The mmio transport is stateless and rebuilt on the fly.
+private var blkDeviceIsPci = [Bool](repeating: false, count: maxBlkDevices)
+private var blkDevicePci = [VirtioPciTransport](repeating: VirtioPciTransport(VirtioPciDevice()),
+                                                count: maxBlkDevices)
 private var blkDeviceCount = 0
 private var swosbaseDevice = [Int](repeating: -1, count: maxSwosbaseImages)
 private var swosbaseCount = 0
@@ -193,6 +188,22 @@ private func blkUsedIdx() -> UInt16 {
     UnsafeRawPointer(bitPattern: blkRingBase + OFF_USED)!.load(fromByteOffset: 2, as: UInt16.self)
 }
 
+// V4: ring the request-queue doorbell / ack the completion interrupt on the ACTIVE
+// device's transport. mmio notifies by queue index; pci uses the per-queue notify
+// address recorded in the stored transport's setupQueue. Both are poll-completed by
+// the caller (the used-ring spin), so ack is only cache/register hygiene.
+private func blkActiveIsPci() -> Bool {
+    blkActiveDevice >= 0 && blkActiveDevice < maxBlkDevices && blkDeviceIsPci[blkActiveDevice]
+}
+private func blkActiveNotify() {
+    if blkActiveIsPci() { blkDevicePci[blkActiveDevice].notify(queue: 0) }
+    else { VirtioMmioTransport(blkMmio).notify(queue: 0) }
+}
+private func blkActiveAck() {
+    if blkActiveIsPci() { blkDevicePci[blkActiveDevice].ackInterrupt() }
+    else { VirtioMmioTransport(blkMmio).ackInterrupt() }
+}
+
 // --- bring-up ---------------------------------------------------------------
 private func blkSaveActiveState() {
     if blkActiveDevice < 0 || blkActiveDevice >= maxBlkDevices { return }
@@ -239,29 +250,43 @@ private func blkBringUp(_ index: Int) -> UInt64 {
         blkMultiBase = mb
     }
 
-    mmio_write32(blkMmio + R_STATUS, 0)               // reset
-    mmio_write32(blkMmio + R_STATUS, S_ACK)
-    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV)
-    // Accept VIRTIO_F_VERSION_1 (feature bit 32, word 1). In word 0 accept only
+    // V4: run the virtio control plane (reset → feature negotiation → queue setup →
+    // capacity) through the transport abstraction, so the identical sequence brings
+    // up an mmio device (QEMU `virt`) or a modern virtio-pci device (Hetzner). The
+    // configured PCI transport is stored back so its notify doorbell survives; the
+    // mmio transport is stateless and rebuilt from the device's register base.
+    if blkDeviceIsPci[index] {
+        var t = blkDevicePci[index]
+        let cap = blkBringUpXport(&t, index)
+        blkDevicePci[index] = t
+        return cap
+    }
+    var t = VirtioMmioTransport(blkDeviceMmio[index])
+    return blkBringUpXport(&t, index)
+}
+
+// V4: the transport-generic bring-up shared by the mmio and pci paths. Embedded
+// Swift monomorphizes every `t.` call (no witness table — see virtio_transport_ops).
+// The ring/bounce pages are already allocated by the caller (blkBringUp). This
+// negotiates VIRTIO_F_VERSION_1 (+ VIRTIO_BLK_F_FLUSH when offered), publishes the
+// single request virtqueue, and reads the capacity. Returns capacity in sectors, or
+// 0 on failure (mirroring the former blkMmio/blkActiveDevice failure sentinel).
+private func blkBringUpXport<T: VirtioTransportOps>(_ t: inout T, _ index: Int) -> UInt64 {
+    t.reset()
+    t.setStatus(VIRTIO_STATUS_ACK)
+    t.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER)
+
+    // Accept VIRTIO_F_VERSION_1 (feature bit 32). In word 0 accept only
     // VIRTIO_BLK_F_FLUSH if offered; ignore every other block feature.
     blkFlushOK = false
-    mmio_write32(blkMmio + R_DEVFEATSEL, 0)
-    let dev0 = mmio_read32(blkMmio + R_DEVFEAT)
-    var drv0: UInt32 = 0
-    if (dev0 & VIRTIO_BLK_F_FLUSH) != 0 {
-        drv0 |= VIRTIO_BLK_F_FLUSH
+    let devf = t.deviceFeatures()
+    var drv: UInt64 = UInt64(1) << 32
+    if (devf & UInt64(VIRTIO_BLK_F_FLUSH)) != 0 {
+        drv |= UInt64(VIRTIO_BLK_F_FLUSH)
         blkFlushOK = true
     }
-    mmio_write32(blkMmio + R_DRVFEATSEL, 1); mmio_write32(blkMmio + R_DRVFEAT, 1)
-    mmio_write32(blkMmio + R_DRVFEATSEL, 0); mmio_write32(blkMmio + R_DRVFEAT, drv0)
-    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK)
-    if (mmio_read32(blkMmio + R_STATUS) & S_FEATOK) == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
-
-    mmio_write32(blkMmio + R_QSEL, 0)
-    let maxq = mmio_read32(blkMmio + R_QNUMMAX)
-    if maxq == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
-    blkQn = maxq < UInt32(BLK_QSZ) ? maxq : UInt32(BLK_QSZ)
-    mmio_write32(blkMmio + R_QNUM, blkQn)
+    t.setDriverFeatures(drv)
+    if !t.setFeaturesOk() { blkMmio = 0; blkActiveDevice = -1; return 0 }
 
     blkZeroPage(blkRingBase)
     blkAvailIdx = 0
@@ -272,15 +297,14 @@ private func blkBringUp(_ index: Int) -> UInt64 {
     let da = UInt64(blkRingBase + OFF_DESC)
     let aa = UInt64(blkRingBase + OFF_AVAIL)
     let ua = UInt64(blkRingBase + OFF_USED)
-    mmio_write32(blkMmio + R_QDESCL, UInt32(da & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDESCH, UInt32(da >> 32))
-    mmio_write32(blkMmio + R_QDRVL,  UInt32(aa & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDRVH,  UInt32(aa >> 32))
-    mmio_write32(blkMmio + R_QDEVL,  UInt32(ua & 0xFFFF_FFFF)); mmio_write32(blkMmio + R_QDEVH,  UInt32(ua >> 32))
-    mmio_write32(blkMmio + R_QREADY, 1)
-    mmio_write32(blkMmio + R_STATUS, S_ACK | S_DRV | S_FEATOK | S_DRVOK)
+    let size = t.setupQueue(0, requested: UInt32(BLK_QSZ), desc: da, avail: aa, used: ua)
+    if size == 0 { blkMmio = 0; blkActiveDevice = -1; return 0 }
+    blkQn = size
+    t.setStatus(VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK)
 
     // Capacity (config space offset 0): number of 512-byte sectors, LE u64.
-    let lo = mmio_read32(blkMmio + R_CONFIG + 0)
-    let hi = mmio_read32(blkMmio + R_CONFIG + 4)
+    let lo = t.configRead32(0)
+    let hi = t.configRead32(4)
     blkCapacity = (UInt64(hi) << 32) | UInt64(lo)
     blkDeviceCapacity[index] = blkCapacity
     blkDeviceQn[index] = blkQn
@@ -413,7 +437,7 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
     blkAvailAdd(descIdx: 0) // chain head descriptor index
     blkClean(blkRingBase + OFF_AVAIL, 32)
 
-    mmio_write32(blkMmio + R_QNOTIFY, 0)
+    blkActiveNotify()
 
     // Poll the used ring for completion.
     let target = blkLastUsed &+ 1
@@ -423,8 +447,7 @@ private func blkDoRead(_ sector: UInt64) -> Int32 {
     }
     blkLastUsed = target
 
-    let ist = mmio_read32(blkMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+    blkActiveAck()
 
     blkInvalidate(status, 1)
     if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
@@ -464,7 +487,7 @@ private func blkDoWriteBounce(_ sector: UInt64) -> Int32 {
     blkAvailAdd(descIdx: 0)
     blkClean(blkRingBase + OFF_AVAIL, 32)
 
-    mmio_write32(blkMmio + R_QNOTIFY, 0)
+    blkActiveNotify()
 
     let target = blkLastUsed &+ 1
     while true {
@@ -473,8 +496,7 @@ private func blkDoWriteBounce(_ sector: UInt64) -> Int32 {
     }
     blkLastUsed = target
 
-    let ist = mmio_read32(blkMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+    blkActiveAck()
 
     blkInvalidate(status, 1)
     if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
@@ -529,7 +551,7 @@ private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
     blkAvailAdd(descIdx: 0)
     blkClean(blkRingBase + OFF_AVAIL, 32)
 
-    mmio_write32(blkMmio + R_QNOTIFY, 0)
+    blkActiveNotify()
 
     let target = blkLastUsed &+ 1
     while true {
@@ -538,8 +560,7 @@ private func blkDoMulti(_ sector: UInt64, _ count: Int, write: Bool) -> Int32 {
     }
     blkLastUsed = target
 
-    let ist = mmio_read32(blkMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+    blkActiveAck()
 
     blkInvalidate(status, 1)
     if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }
@@ -575,7 +596,7 @@ private func blkDoFlush() -> Int32 {
     blkAvailAdd(descIdx: 0)
     blkClean(blkRingBase + OFF_AVAIL, 32)
 
-    mmio_write32(blkMmio + R_QNOTIFY, 0)
+    blkActiveNotify()
 
     let target = blkLastUsed &+ 1
     while true {
@@ -584,8 +605,7 @@ private func blkDoFlush() -> Int32 {
     }
     blkLastUsed = target
 
-    let ist = mmio_read32(blkMmio + R_ISTATUS)
-    if ist != 0 { mmio_write32(blkMmio + R_IACK, ist) }
+    blkActiveAck()
 
     blkInvalidate(status, 1)
     if UnsafeRawPointer(bitPattern: status)!.load(fromByteOffset: 0, as: UInt8.self) != 0 { return -3 }

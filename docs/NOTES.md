@@ -7619,6 +7619,39 @@ Errno.access.code }` (the same `capConsole` gate as `device_claim`/`reboot`/
   surface is `capConsole`-gated. Next: **V4** (a real Hetzner Volume — the
   virtio-scsi/pci enumeration port only; the volume + mount abstraction is unchanged).
 
+### V4a — virtio-blk over the transport abstraction (DONE, 2026-06-28)
+
+Pure, behavior-preserving refactor that de-risks V4 before adding the PCI device
+path: the block driver now drives its control/data plane through `VirtioTransportOps`
+(like `virtio_rng`/`virtio_net`), so the *same* code brings up a legacy virtio-mmio
+disk (QEMU `virt` — the base/store/ESP/data disks) or a modern virtio-pci disk (the
+GICv3/Hetzner profile — a real Hetzner Cloud Volume). No new disk yet; every device
+is still mmio, so boot is unchanged.
+
+- `kernel/drivers/virtio_blk.swift`: the control plane in `blkBringUp` (reset →
+  feature negotiation → single-queue setup → capacity) moved into a transport-generic
+  `blkBringUpXport<T: VirtioTransportOps>`; `blkBringUp` dispatches on a new per-device
+  `blkDeviceIsPci[]` and, for a pci device, passes+stores its configured
+  `VirtioPciTransport` (`blkDevicePci[]`) so the notify doorbell recorded in the
+  mutating `setupQueue` survives. The data-plane doorbell/ack (`R_QNOTIFY`,
+  `R_ISTATUS`/`R_IACK`) at all four request sites (read/write/multi-sector/flush) route
+  through `blkActiveNotify()`/`blkActiveAck()`, which pick the active device's transport.
+  The now-unused mmio control-plane register offsets were removed (only the discovery
+  identity registers `R_MAGIC`/`R_VERSION`/`R_DEVID` remain).
+- Correctness rests on `M_*` (mmio transport) offsets being identical to the driver's
+  former `R_*` and `VirtioMmioTransport` doing exactly the former register pokes — so
+  the mmio path is byte-for-byte the pre-V4 behavior. The driver is poll-based (spins
+  on the used ring), so there is no IRQ-routing dependency for either transport.
+- Note (latent, resolved in V4b): the `blkMmio == 0` "device selected" guards in
+  read/write/flush still assume mmio; a pci device (mmio base 0) will need a
+  transport-aware selection check when V4b actually enumerates one.
+- Acceptance: no new test — the whole existing suite exercises this boot-critical
+  path and must stay green. Verified: **D0–D3 + V1 + V2a–c + V3a–c** all pass.
+- Remaining V4: **V4b** — add virtio-blk-pci discovery to `virtioBlkInit` (via
+  `virtioPciFindDevice`), enumerate `SWDATAFS` disks on PCI into `blkDataDevices[]`,
+  make device selection transport-aware, and boot a `virtio-blk-pci` data disk in a
+  new gate (the real Hetzner Volume simulation).
+
 ## QW-series — quick-win hardening (post-M13 remediation)
 
 ### QW6 — one shared `enum Errno: Int32` (DONE, 2026-06-18)

@@ -1092,11 +1092,18 @@ test, committed, review before the next):
     `/data/.system/mounts` table the V2b boot path reads (PERSIST writes through);
     busy mounts are refused; the surface is capability-gated. Next: **V4** (real
     Hetzner Volume — the enumeration port only).
-- **V4** (later, ties to H-series): a **real** Hetzner Volume — only the enumeration
-  port (virtio-scsi / virtio-pci windows the H-series already drives), not the volume
-  or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach a Volume
-  to a live VM) is deferred (QEMU `virt`/virtio-mmio has no clean hotplug; real Hetzner
-  is virtio-pci).
+- **V4** (in progress, ties to H-series): a **real** Hetzner Volume — only the
+  enumeration port (virtio-scsi / virtio-pci windows the H-series already drives), not
+  the volume or mount abstraction, which is identical to V0–V3. Runtime hotplug (attach
+  a Volume to a live VM) is deferred (QEMU `virt`/virtio-mmio has no clean hotplug; real
+  Hetzner is virtio-pci).
+  - **V4a** (DONE, 2026-06-28): behavior-preserving refactor of the boot-critical block
+    driver onto `VirtioTransportOps` (mmio or pci), with per-device `isPci` + a stored
+    `VirtioPciTransport`. Mmio path byte-identical; no new disk. Verified by the whole
+    D0–D3 + V1 + V2a–c + V3a–c suite staying green. See `docs/NOTES.md` (V4a).
+  - **V4b** (next): virtio-blk-pci discovery in `virtioBlkInit`, `SWDATAFS` disks on PCI
+    enumerated into `blkDataDevices[]`, transport-aware device selection, and a
+    `virtio-blk-pci` data-disk mount gate (the real Hetzner Volume simulation).
 
 Full design + per-stage findings to go in `docs/NOTES.md` (V-series) as work lands.
 
