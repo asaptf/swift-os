@@ -153,7 +153,11 @@ private struct AnonVma {
 // old cap of 16, which made anonVmaAdd fail -> mmap ENOMEM -> intermittent V8
 // "out of memory" at init (the cppgc/Oilpan allocation failure). 512 covers Node.
 private let maxAnonVmas = 512
-private var pAnonVmas = [AnonVma](repeating: AnonVma(), count: maxProc * maxAnonVmas)
+// PT2b: this is the first heavyweight per-process table moved out of fixed
+// process-slot storage. A slot gets its AnonVma table only after it first creates
+// or inherits anonymous/device mmap state; processes that never mmap pay one
+// pointer, not 512 VMA records.
+private var pAnonVmaTables = [UInt](repeating: 0, count: maxProc)
 
 private func fileVmasClear(_ slot: Int) {
     for i in 0..<maxFileVmas { pFileVmas[slot * maxFileVmas + i].active = false }
@@ -176,25 +180,53 @@ private func fileVmaAdd(_ slot: Int, _ base: UInt, _ pages: UInt, _ diskImage: I
 }
 
 private func anonVmasClear(_ slot: Int) {
-    for i in 0..<maxAnonVmas { pAnonVmas[slot * maxAnonVmas + i].active = false }
+    guard let table = anonVmaTable(slot) else { return }
+    for i in 0..<maxAnonVmas { table[i] = AnonVma() }
 }
-private func anonVmasCopy(_ dst: Int, _ src: Int) {
-    for i in 0..<maxAnonVmas { pAnonVmas[dst * maxAnonVmas + i] = pAnonVmas[src * maxAnonVmas + i] }
+
+private func anonVmaTable(_ slot: Int) -> UnsafeMutablePointer<AnonVma>? {
+    if !processSlotValid(slot) { return nil }
+    let addr = pAnonVmaTables[slot]
+    if addr == 0 { return nil }
+    return UnsafeMutablePointer<AnonVma>(bitPattern: addr)
+}
+
+private func anonVmaEnsureTable(_ slot: Int) -> UnsafeMutablePointer<AnonVma>? {
+    if let table = anonVmaTable(slot) { return table }
+    if !processSlotValid(slot) { return nil }
+    let bytes = MemoryLayout<AnonVma>.stride * maxAnonVmas
+    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
+    let table = raw.bindMemory(to: AnonVma.self, capacity: maxAnonVmas)
+    for i in 0..<maxAnonVmas { table[i] = AnonVma() }
+    pAnonVmaTables[slot] = UInt(bitPattern: raw)
+    return table
+}
+
+private func anonVmasCopy(_ dst: Int, _ src: Int) -> Bool {
+    if !processSlotValid(dst) || !processSlotValid(src) { return false }
+    guard let srcTable = anonVmaTable(src) else {
+        anonVmasClear(dst)
+        return true
+    }
+    guard let dstTable = anonVmaEnsureTable(dst) else { return false }
+    for i in 0..<maxAnonVmas { dstTable[i] = srcTable[i] }
+    return true
 }
 private func anonVmaAdd(_ slot: Int, _ base: UInt, _ pages: UInt) -> Bool {
+    guard let table = anonVmaEnsureTable(slot) else { return false }
     for i in 0..<maxAnonVmas {
-        let idx = slot * maxAnonVmas + i
-        if !pAnonVmas[idx].active {
-            pAnonVmas[idx] = AnonVma(active: true, base: base, pages: pages)
+        if !table[i].active {
+            table[i] = AnonVma(active: true, base: base, pages: pages)
             return true
         }
     }
     return false
 }
 private func anonVmaContains(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
+    guard let table = anonVmaTable(slot) else { return false }
     let len = pages * PageAllocator.pageSize
     for i in 0..<maxAnonVmas {
-        let v = pAnonVmas[slot * maxAnonVmas + i]
+        let v = table[i]
         if !v.active { continue }
         let vEnd = v.base + v.pages * PageAllocator.pageSize
         if addr >= v.base && addr <= vEnd && len <= vEnd - addr { return true }
@@ -202,9 +234,10 @@ private func anonVmaContains(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
     return false
 }
 private func anonVmaOverlaps(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
+    guard let table = anonVmaTable(slot) else { return false }
     let end = addr + pages * PageAllocator.pageSize
     for i in 0..<maxAnonVmas {
-        let v = pAnonVmas[slot * maxAnonVmas + i]
+        let v = table[i]
         if !v.active { continue }
         let vEnd = v.base + v.pages * PageAllocator.pageSize
         if addr < vEnd && end > v.base { return true }
@@ -212,13 +245,13 @@ private func anonVmaOverlaps(_ slot: Int, _ addr: UInt, _ pages: UInt) -> Bool {
     return false
 }
 private func anonVmasDeactivateOverlap(_ slot: Int, _ addr: UInt, _ pages: UInt) {
+    guard let table = anonVmaTable(slot) else { return }
     let end = addr + pages * PageAllocator.pageSize
     for i in 0..<maxAnonVmas {
-        let idx = slot * maxAnonVmas + i
-        if !pAnonVmas[idx].active { continue }
-        let vBase = pAnonVmas[idx].base
-        let vEnd = vBase + pAnonVmas[idx].pages * PageAllocator.pageSize
-        if addr < vEnd && end > vBase { pAnonVmas[idx].active = false }
+        if !table[i].active { continue }
+        let vBase = table[i].base
+        let vEnd = vBase + table[i].pages * PageAllocator.pageSize
+        if addr < vEnd && end > vBase { table[i].active = false }
     }
 }
 // Partial munmap with VMA split. Unlike anonVmasDeactivateOverlap (which drops
@@ -229,15 +262,15 @@ private func anonVmasDeactivateOverlap(_ slot: Int, _ addr: UInt, _ pages: UInt)
 // later mprotect(commit) can demand-fill it. The re-added segments never overlap
 // the unmapped range, so they are safe to encounter later in the same scan.
 private func anonVmasUnmapRange(_ slot: Int, _ addr: UInt, _ pages: UInt) {
+    guard let table = anonVmaTable(slot) else { return }
     let uStart = addr
     let uEnd = addr + pages * PageAllocator.pageSize
     for i in 0..<maxAnonVmas {
-        let idx = slot * maxAnonVmas + i
-        if !pAnonVmas[idx].active { continue }
-        let vBase = pAnonVmas[idx].base
-        let vEnd = vBase + pAnonVmas[idx].pages * PageAllocator.pageSize
+        if !table[i].active { continue }
+        let vBase = table[i].base
+        let vEnd = vBase + table[i].pages * PageAllocator.pageSize
         if uStart >= vEnd || uEnd <= vBase { continue } // no overlap
-        pAnonVmas[idx].active = false
+        table[i].active = false
         if vBase < uStart {
             _ = anonVmaAdd(slot, vBase, (uStart - vBase) / PageAllocator.pageSize)
         }
@@ -3067,6 +3100,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     guard parent >= 0 else { return Errno.again.code }
     let child = allocSlot()
     if child < 0 { return Errno.again.code } // EAGAIN
+    if !anonVmasCopy(child, parent) { return Errno.noMem.code }
 
     let childTtbr0 = addressSpaceCloneForActiveCpuMask(pTtbr0[parent],
                                                        processAddressSpaceActiveCpuMaskForSlot(parent))
@@ -3099,7 +3133,6 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     // so the child inherits the parent's mmap cursor verbatim.
     pMmapTop[child] = pMmapTop[parent]
     fileVmasCopy(child, parent)
-    anonVmasCopy(child, parent)
     pIsThread[child] = false
     clearSignalFrameState(child)
     processSignalClearAllPending(child) // POSIX: pending signals are not inherited
@@ -3139,6 +3172,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
 
     let slot = allocSlot()
     if slot < 0 { return Errno.again.code } // EAGAIN: process table full
+    if !anonVmasCopy(slot, creator) { return Errno.noMem.code }
 
     let kstack = pmmAllocPages(2)
     if kstack == 0 { return Errno.noMem.code } // ENOMEM
@@ -3168,7 +3202,6 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
     // need a shared cursor + lock — a follow-up; single-core today.)
     pMmapTop[slot] = pMmapTop[creator]
     fileVmasCopy(slot, creator)
-    anonVmasCopy(slot, creator)
     pIsThread[slot] = true
     clearSignalFrameState(slot)
     processSignalClearAllPending(slot)

@@ -787,6 +787,21 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
 - Acceptance: normal kernel build plus the existing process-capacity gate
   (`make procmax-test`) continue to pass; no syscall ABI changes.
 
+### PT2b — lazy anonymous-VMA tables (DONE, 2026-07-01)
+
+- The first heavyweight per-process table is no longer part of fixed process-slot
+  storage. `process.swift` replaced the static `maxProc * maxAnonVmas` anonymous-VMA
+  array with one pointer per slot plus a lazily allocated `maxAnonVmas` table on the
+  first anonymous/device mmap or when a fork/thread inherits an existing table.
+- This removes about 12 KiB of static storage per slot (512 `AnonVma` records) while
+  preserving the existing "512 covers Node/V8" per-process ceiling for processes that
+  actually use large mmap reservations. Fork/thread creation now fails cleanly with
+  `ENOMEM` if the inherited VMA table cannot be allocated instead of silently losing
+  reservation metadata.
+- Acceptance: normal kernel build, `/bin/mmapdemo` boot smoke (anonymous mmap,
+  mprotect/W^X, file-VMA cleanup), and the existing process-capacity gate continue
+  to pass; no syscall ABI changes.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
